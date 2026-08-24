@@ -55,6 +55,24 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<code', $html);
     }
 
+    public function test_default_renderer_supports_built_in_markdown_features_without_settings()
+    {
+        $html = MarkdownRenderer::render(
+            "[TOC]\n\n" .
+            "## Built In Features\n\n" .
+            "| Name | State |\n| --- | --- |\n| Table | Ready |\n\n" .
+            "- [ ] Pending\n\n" .
+            '$x + y$'
+        );
+
+        $this->assertStringContainsString('<div class="easymde-toc">', $html);
+        $this->assertStringContainsString('<a href="#built-in-features">Built In Features</a>', $html);
+        $this->assertStringContainsString('<h2 id="built-in-features">Built In Features</h2>', $html);
+        $this->assertStringContainsString('<table>', $html);
+        $this->assertStringContainsString('<input disabled type="checkbox">', $html);
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\(x + y\)</span>', $html);
+    }
+
     public function test_qingbi_liujin_wraps_tables_and_images_without_mdnice_markup()
     {
         $html = MarkdownRenderer::render(

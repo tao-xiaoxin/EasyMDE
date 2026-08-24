@@ -68,6 +68,22 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
 		$this->assertSame( $post_id, $bootstrap['imageUpload']['postId'] );
+		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
+		$this->assertTrue( $bootstrap['imageUpload']['insertAfterUpload'] );
+		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
+		$this->assertSame(
+			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
+			$bootstrap['imageUpload']['allowedMimeTypes']
+		);
+		$this->assertSame(
+			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			$bootstrap['imageUpload']['insertion']
+		);
+		$this->assertTrue( $bootstrap['settings']['markdown']['wordWrap'] );
+		$this->assertSame(
+			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			$bootstrap['mediaPicker']['insertion']
+		);
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
@@ -96,9 +112,44 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/preview' ), $bootstrap['wordpress']['previewUrl'] );
 		$this->assertArrayNotHasKey( 'revisionAdminUrl', $bootstrap['wordpress'] );
 		$this->assertSame( rest_url( 'easymde/v1/posts/' ), $bootstrap['wordpress']['revisionsUrl'] );
-		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
+		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_root_bootstrap_intersects_image_formats_with_wordpress_policy() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$remove_webp = static function ( $mime_types ) {
+			unset( $mime_types['webp'] );
+			return $mime_types;
+		};
+		add_filter( 'upload_mimes', $remove_webp );
+
+		try {
+			$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+			$this->assertNotContains( 'image/webp', $bootstrap['imageUpload']['allowedMimeTypes'] );
+			$this->assertContains( 'image/png', $bootstrap['imageUpload']['allowedMimeTypes'] );
+		} finally {
+			remove_filter( 'upload_mimes', $remove_webp );
+		}
+	}
+
+	public function test_editor_root_bootstrap_routes_remote_uploads_through_the_protected_wordpress_proxy() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+
+		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
+		$this->assertSame(
+			rest_url( 'easymde/v1/image-hosting/upload' ),
+			$bootstrap['imageUpload']['endpoint']
+		);
+		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
+		$this->assertArrayNotHasKey( 'credentials', $bootstrap['imageUpload'] );
+		$this->assertArrayNotHasKey( 'providerEndpoint', $bootstrap['imageUpload'] );
 	}
 
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {
@@ -117,11 +168,13 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+		$settings['shortcuts']['showHints']                  = false;
 		$this->assertNotWPError( $repository->update_settings( $settings ) );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
+		$this->assertFalse( $bootstrap['toolbar']['showShortcutHints'] );
 		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
 	}
 

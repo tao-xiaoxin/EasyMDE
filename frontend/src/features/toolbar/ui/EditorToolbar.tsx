@@ -478,7 +478,9 @@ export function EditorToolbar({
   });
   const shortcuts: Record<string, string> = {};
   for (const command of bootstrap.commands) {
-    shortcuts[command.id] = bootstrap.shortcuts[command.id]?.[platform] ?? '';
+    shortcuts[command.id] = false !== bootstrap.showShortcutHints
+      ? bootstrap.shortcuts[command.id]?.[platform] ?? ''
+      : '';
   }
 
   const commandsFor = (surface: string, group: string) =>

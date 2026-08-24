@@ -155,6 +155,12 @@ function TransferDialog({
 			className="easymde-settings-center__transfer-dialog-layer"
 			role="presentation"
 		>
+			<button
+				type="button"
+				className="easymde-settings-center__dialog-backdrop"
+				aria-label={strings.transferCloseOperationDialog}
+				onClick={onClose}
+			/>
 			<div
 				ref={dialogRef}
 				role="dialog"
@@ -304,7 +310,7 @@ export function TransferSettingsPage({
 		);
 	};
 	const openDialog = (kind: DialogKind, trigger: HTMLButtonElement) => {
-		if (kind === "reset" || kind === "clear-cache")
+		if (kind === "clear-cache")
 			throw new Error("settings-center-transfer-mutation-unavailable");
 		dialogTriggerRef.current = trigger;
 		setDialog(kind);
@@ -444,7 +450,8 @@ export function TransferSettingsPage({
 	return (
 		<div className="easymde-settings-center__transfer-page">
 			<p
-				className="easymde-settings-center__transfer-unavailable-notice"
+				id="easymde-transfer-unavailable"
+				className="easymde-settings-center__transfer-unavailable-notice easymde-settings-center__visually-hidden"
 				role="note"
 			>
 				{strings.transferUnavailableSettingsNotice}
@@ -485,7 +492,6 @@ export function TransferSettingsPage({
 					<div className="easymde-settings-center__transfer-import-actions">
 						<button
 							type="button"
-							disabled
 							onClick={() => importFileRef.current?.click()}
 						>
 							<Upload size={17} />
@@ -494,7 +500,6 @@ export function TransferSettingsPage({
 						<input
 							ref={importFileRef}
 							type="file"
-							disabled
 							accept="application/json,.json"
 							aria-label={strings.transferChooseConfigurationFile}
 							onChange={(event) =>
@@ -509,7 +514,8 @@ export function TransferSettingsPage({
 								</span>
 								<button
 									type="button"
-									disabled
+									disabled={importing}
+									aria-busy={importing}
 									onClick={() => {
 										void importConfiguration();
 									}}
@@ -573,7 +579,17 @@ export function TransferSettingsPage({
 						<button
 							type="button"
 							key={kind}
-							disabled={kind === "reset" || kind === "clear-cache"}
+							disabled={kind === "clear-cache"}
+							aria-describedby={
+								kind === "clear-cache"
+									? "easymde-transfer-unavailable"
+									: undefined
+							}
+							title={
+								kind === "clear-cache"
+									? strings.transferUnavailableSettingsNotice
+									: undefined
+							}
 							onClick={(event) => openDialog(kind, event.currentTarget)}
 						>
 							<Icon size={25} />

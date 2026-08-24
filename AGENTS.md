@@ -342,9 +342,13 @@ State-changing operations:
   Modern copy reports success only after both the browser write and deferred
   payload resolve; fetch or conversion failure remains an explicit copy
   failure rather than partial success.
-- Protected Mutations do not retry automatically. They handle duplicate
-  activation, cancellation, stale results, Network failure, and lost
-  authentication, capability, Nonce freshness, or Post Lock truthfully.
+- Protected Mutations do not retry automatically unless a focused approved
+  external-service contract below defines a persisted administrator-controlled
+  bound. The only current exception is the bounded Image Hosting primary- and
+  backup-write retry; Verify Upload remains single-attempt. Every
+  Mutation still handles duplicate activation, cancellation, stale results,
+  Network failure, and lost authentication, capability, Nonce freshness, or
+  Post Lock truthfully.
 
 REST:
 
@@ -672,10 +676,59 @@ WordPress.org Plugin Directory service and privacy rules remain independently
 binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
 Review Team when service classification or channel acceptance is unclear.
 
-The current runtime remains local and no external service is approved. This
-policy does not approve a URL, change CSP, alter Enqueue behavior, remove local
-assets, or change a package or build. The complete external-service Decision
-Record and official-policy sources belong to
+The browser runtime and redistributable assets remain local. The only approved
+external-service feature is administrator-configured image hosting. Cloudflare
+R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are the supported
+providers; any one may be the primary or the optional backup. Primary and
+backup writes always use the same generated object key; this is a runtime
+invariant rather than a configurable setting. WordPress owns provider API
+requests and stored credentials; ordinary browser bootstrap, settings reads,
+exports, and diagnostics receive only same-origin REST URLs, capability
+presentation, the authoritative public image URL, and redacted status. A
+provider Endpoint is the HTTPS upload API origin. The separately configured
+primary Viewing Image Domain accepts HTTP or HTTPS and is the public URL base
+that produces the one authoritative URL returned after upload. An HTTP image
+URL may be blocked as mixed content when an article is viewed over HTTPS; that
+display restriction does not turn an authoritative provider upload success
+into an upload failure. The
+editor's local image paste and drag-and-drop path always uses the protected
+same-origin Image Hosting proxy; there is no destination setting or WordPress
+media fallback. The toolbar media picker remains a separate explicit
+WordPress-native insertion entry point. Primary and backup configurations that
+identify the same physical destination are rejected with HTTP 409. The
+single persisted `uploadRetryCount` setting appears in the primary settings
+section, is a strict integer from `0` through `5`, defaults to `0`, and means
+the maximum number of extra attempts after the first failed write. The same
+configured `N` applies independently to the primary and, when enabled, backup
+destination. Each destination's attempts run serially with the exact same
+prepared bytes, object key, and provider, and stop immediately on success. No attempt switches
+providers. Exhausting the primary attempts, or exhausting the backup attempts
+when backup is enabled, fails the whole article upload: the REST response must
+not return an image URL and the editor must not insert one. The editor opens an
+accessible redacted failure message that asks the user to retry manually. A
+provider may already have stored an object because there is no reliable
+cross-provider compensating delete. Image hosting must never be silently
+substituted or reported successful before every required provider result is
+authoritative. Stored
+credentials remain server-side by default. An administrator's explicit
+password-field eye action may retrieve exactly one saved credential through a
+dedicated `manage_options`-protected POST with both the WordPress REST Nonce
+and an action-specific Nonce. That response is `no-store`, the revealed value
+exists only in current browser memory, and it must not enter persistence,
+browser Storage, exports, HTML bootstrap, logs, diagnostics, or public
+evidence. The Image Hosting verification action performs a real upload: it
+writes one plugin-owned synthetic PNG to the selected provider using the
+current `fileNameRule`, with one attempt and no provider switch, then
+reports the authoritative object path and public URL in the Settings Center
+dialog. Rules containing time or UUID variables may create a new object on
+each verification. The `{md5}` filename variable is the hexadecimal MD5 digest of
+the final bytes sent to the provider, after any enabled image processing.
+The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`.
+EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
+to the provider and derives the extension from the verified MIME type.
+This approval does not change CSP, Enqueue behavior, local runtime assets, or
+package/build ownership. The complete external-service Decision Record and
+official-policy sources belong to
 `.agents/skills/easymde/SKILL.md`; durable rationale belongs to
 `docs/REACT_DESIGN_PHILOSOPHY.md`; current facts remain in
 `docs/ARCHITECTURE.md`.

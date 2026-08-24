@@ -1,4 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "@wordpress/element";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,13 +20,23 @@ import {
 } from "../../test/settings-center-settings-fixture";
 import { SettingsCenterRoot } from "./SettingsCenterRoot";
 
-function bootstrap(): SettingsCenterBootstrap {
+function bootstrap({
+	configuredImageDomains = false,
+}: {
+	configuredImageDomains?: boolean;
+} = {}): SettingsCenterBootstrap {
 	return {
 		schemaVersion: 2,
 		closeUrl: "/wp-admin/options-general.php",
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
+			imageHostingVerificationActionNonce: "test-image-hosting-action-nonce",
+			imageHostingVerificationUrl:
+				"/wp-json/easymde/v1/image-hosting/verification",
+			imageHostingSecretRevealActionNonce:
+				"test-image-hosting-secret-reveal-action-nonce",
+			imageHostingSecretRevealUrl: "/wp-json/easymde/v1/image-hosting/secret",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -40,9 +56,20 @@ function bootstrap(): SettingsCenterBootstrap {
 			images: {
 				domain: "https://img.example.test",
 				backupDomain: "https://backup.example.test",
+				primaryCredentialsConfigured: false,
+				backupCredentialsConfigured: false,
 			},
 		},
-		settings: SETTINGS_CENTER_TEST_SETTINGS,
+		settings: configuredImageDomains
+			? {
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					images: {
+						...SETTINGS_CENTER_TEST_SETTINGS.images,
+						domain: "https://img.example.test",
+						backupDomain: "https://backup.example.test",
+					},
+				}
+			: SETTINGS_CENTER_TEST_SETTINGS,
 		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
 		strings: {
 			...Object.fromEntries(
@@ -73,10 +100,173 @@ afterEach(() => {
 	});
 });
 describe("SettingsCenterRoot global search", () => {
+	it("renders only the six implemented navigation items and sections", () => {
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+
+		expect(
+			Array.from(container.querySelectorAll("[data-nav-id]"), (element) =>
+				element.getAttribute("data-nav-id"),
+			),
+		).toEqual([
+			"general",
+			"shortcuts",
+			"images",
+			"markdown",
+			"transfer",
+			"about",
+		]);
+		expect(
+			Array.from(
+				container.querySelectorAll("[data-settings-section]"),
+				(element) => element.getAttribute("data-settings-section"),
+			),
+		).toEqual([
+			"general",
+			"shortcuts",
+			"images",
+			"markdown",
+			"transfer",
+			"about",
+		]);
+	});
+
+	it("keeps an active compact navigation item visible without scrolling the settings root", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const navigation = container.querySelector("nav");
+		const imagesButton = screen.getByRole("button", { name: "images" });
+		if (!(settingsRoot instanceof HTMLDivElement) || !navigation)
+			throw new Error("settings-center-navigation-test-elements-missing");
+
+		const rootScrollTo = vi.fn();
+		const navigationScrollTo = vi.fn();
+		const itemScrollIntoView = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: rootScrollTo,
+		});
+		Object.defineProperties(navigation, {
+			clientWidth: { configurable: true, value: 100 },
+			scrollWidth: { configurable: true, value: 300 },
+			clientHeight: { configurable: true, value: 40 },
+			scrollHeight: { configurable: true, value: 40 },
+			scrollLeft: { configurable: true, value: 20 },
+			scrollTo: { configurable: true, value: navigationScrollTo },
+		});
+		navigation.getBoundingClientRect = () =>
+			({ left: 0, right: 100, top: 0, bottom: 40 }) as DOMRect;
+		imagesButton.getBoundingClientRect = () =>
+			({ left: 180, right: 260, top: 0, bottom: 40 }) as DOMRect;
+		Object.defineProperty(imagesButton, "scrollIntoView", {
+			configurable: true,
+			value: itemScrollIntoView,
+		});
+
+		await user.click(imagesButton);
+
+		await waitFor(() =>
+			expect(navigationScrollTo).toHaveBeenCalledWith({
+				left: 180,
+				top: 0,
+				behavior: "auto",
+			}),
+		);
+		expect(itemScrollIntoView).not.toHaveBeenCalled();
+		expect(rootScrollTo).toHaveBeenCalledOnce();
+	});
+
+	it("converts scaled navigation geometry into scroll coordinates", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const navigation = container.querySelector("nav");
+		const aboutButton = screen.getByRole("button", { name: "about" });
+		if (!(settingsRoot instanceof HTMLDivElement) || !navigation)
+			throw new Error("settings-center-navigation-test-element-missing");
+
+		const navigationScrollTo = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		Object.defineProperties(navigation, {
+			clientWidth: { configurable: true, value: 100 },
+			scrollWidth: { configurable: true, value: 100 },
+			clientHeight: { configurable: true, value: 40 },
+			scrollHeight: { configurable: true, value: 240 },
+			scrollTop: { configurable: true, value: 100 },
+			scrollTo: { configurable: true, value: navigationScrollTo },
+		});
+		navigation.getBoundingClientRect = () =>
+			({
+				left: 0,
+				right: 96,
+				top: 0,
+				bottom: 38.4,
+				width: 96,
+				height: 38.4,
+			}) as DOMRect;
+		aboutButton.getBoundingClientRect = () =>
+			({ left: 0, right: 96, top: 11.52, bottom: 41.28 }) as DOMRect;
+
+		await user.click(aboutButton);
+
+		await waitFor(() =>
+			expect(navigationScrollTo).toHaveBeenCalledWith({
+				left: 0,
+				top: 103,
+				behavior: "auto",
+			}),
+		);
+	});
+
+	it("opens Help from the sidebar and restores its trigger focus", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+
+		const trigger = screen.getByRole("button", { name: "openDocumentation" });
+		await user.click(trigger);
+
+		const dialog = within(overlayRoot).getByRole("dialog", {
+			name: "aboutHelpDialogTitle",
+		});
+		expect(
+			within(dialog).getByText("aboutHelpEditorWorkflowDescription"),
+		).not.toBeNull();
+		expect(document.activeElement).toBe(
+			within(dialog).getByRole("button", {
+				name: "aboutCloseOperationDialog",
+			}),
+		);
+
+		const dialogLayer = dialog.parentElement;
+		const backdrop = dialogLayer?.querySelector<HTMLButtonElement>(
+			".easymde-settings-center__dialog-backdrop",
+		);
+		if (!backdrop)
+			throw new Error("settings-center-help-dialog-backdrop-missing");
+		await user.click(backdrop);
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+	});
+
 	it("scrolls implemented tabs within the settings container using measured sticky offsets", async () => {
 		const user = userEvent.setup();
 		const windowScrollTo = vi.spyOn(window, "scrollTo");
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const settingsRoot = container.firstElementChild;
 		const stickyHeader = container.querySelector(
 			".easymde-settings-center__sticky-header",
@@ -128,9 +318,135 @@ describe("SettingsCenterRoot global search", () => {
 		windowScrollTo.mockRestore();
 	});
 
+	it("keeps the selected section stable inside the scrollspy boundary band", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const stickyHeader = container.querySelector(
+			".easymde-settings-center__sticky-header",
+		);
+		const sections = Array.from(
+			container.querySelectorAll<HTMLElement>("[data-settings-section]"),
+		);
+		const images = container.querySelector<HTMLElement>(
+			"#settings-section-images",
+		);
+		if (
+			!(settingsRoot instanceof HTMLDivElement) ||
+			!(stickyHeader instanceof HTMLDivElement) ||
+			!images
+		)
+			throw new Error("settings-center-scrollspy-boundary-target-missing");
+
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		Object.defineProperty(settingsRoot, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 844, top: 0 }),
+		});
+		Object.defineProperty(stickyHeader, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 300, top: 112 }),
+		});
+		let imagesTop = 317;
+		for (const [index, section] of sections.entries()) {
+			Object.defineProperty(section, "getBoundingClientRect", {
+				configurable: true,
+				value: () => ({
+					bottom: index < 2 ? -100 : imagesTop + (index - 2) * 1000 + 900,
+					top: index < 2 ? -200 + index * 50 : imagesTop + (index - 2) * 1000,
+				}),
+			});
+		}
+
+		await user.click(screen.getByRole("button", { name: "images" }));
+		fireEvent.scroll(settingsRoot);
+		await waitFor(() =>
+			expect(
+				screen
+					.getByRole("button", { name: "images" })
+					.getAttribute("aria-current"),
+			).toBe("page"),
+		);
+
+		imagesTop = 340;
+		fireEvent.scroll(settingsRoot);
+		await waitFor(() =>
+			expect(
+				screen
+					.getByRole("button", { name: "shortcuts" })
+					.getAttribute("aria-current"),
+			).toBe("page"),
+		);
+	});
+
+	it("coalesces repeated scrollspy layout reads into one animation frame", () => {
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const stickyHeader = container.querySelector(
+			".easymde-settings-center__sticky-header",
+		);
+		const general = container.querySelector("#settings-section-general");
+		if (
+			!(settingsRoot instanceof HTMLDivElement) ||
+			!(stickyHeader instanceof HTMLDivElement) ||
+			!(general instanceof HTMLElement)
+		)
+			throw new Error("settings-center-scroll-coalescing-target-missing");
+
+		Object.defineProperty(settingsRoot, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 900, top: 0 }),
+		});
+		Object.defineProperty(stickyHeader, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 237, top: 0 }),
+		});
+		const generalRect = vi.fn(() => ({ bottom: 900, top: 240 }));
+		Object.defineProperty(general, "getBoundingClientRect", {
+			configurable: true,
+			value: generalRect,
+		});
+		let scheduledFrame: FrameRequestCallback | null = null;
+		const requestFrame = vi
+			.spyOn(window, "requestAnimationFrame")
+			.mockImplementation((callback) => {
+				scheduledFrame = callback;
+				return 91;
+			});
+
+		fireEvent.scroll(settingsRoot);
+		fireEvent.scroll(settingsRoot);
+		fireEvent.scroll(settingsRoot);
+
+		expect(requestFrame).toHaveBeenCalledTimes(1);
+		expect(generalRect).not.toHaveBeenCalled();
+		if (!scheduledFrame)
+			throw new Error("settings-center-scroll-coalescing-frame-missing");
+		(scheduledFrame as FrameRequestCallback)(16);
+		expect(generalRect).toHaveBeenCalledOnce();
+		requestFrame.mockRestore();
+	});
+
 	it("indexes and opens results from sections beyond General", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		const scrollTo = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: scrollTo,
+		});
 		const search = screen.getByRole<HTMLInputElement>("searchbox", {
 			name: "searchSettings",
 		});
@@ -149,6 +465,7 @@ describe("SettingsCenterRoot global search", () => {
 
 		expect(search.value).toBe("");
 		expect(screen.getByText("tableAlignment")).not.toBeNull();
+		await waitFor(() => expect(scrollTo).toHaveBeenCalledOnce());
 	});
 
 	it("reports no results only after searching the complete settings index", async () => {
@@ -167,9 +484,11 @@ describe("SettingsCenterRoot global search", () => {
 		).not.toBeNull();
 	});
 
-	it("marks image settings unavailable while keeping them searchable", async () => {
+	it("keeps owner-backed image settings searchable and focuses their control", async () => {
 		const user = userEvent.setup();
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const settingsRoot = container.firstElementChild;
 		if (!(settingsRoot instanceof HTMLDivElement))
 			throw new Error("settings-search-root-missing");
@@ -182,7 +501,7 @@ describe("SettingsCenterRoot global search", () => {
 			screen
 				.getByRole("switch", { name: "enableBackupImageHost" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 		await user.type(
 			screen.getByRole("searchbox", { name: "searchSettings" }),
 			"backupBucket",
@@ -191,46 +510,68 @@ describe("SettingsCenterRoot global search", () => {
 			screen
 				.getByRole("textbox", { name: "backupBucket" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 		await user.click(
 			await screen.findByRole("button", { name: "backupBucket" }),
 		);
 
-		const target = screen
-			.getByRole("textbox", { name: "backupBucket" })
-			.closest<HTMLElement>("[data-setting-label]");
-		if (!target) throw new Error("settings-search-unavailable-target-missing");
+		const target = screen.getByRole("textbox", { name: "backupBucket" });
 		await waitFor(() => expect(document.activeElement).toBe(target));
-		expect(target.tabIndex).toBe(-1);
 	});
 
-	it("focuses a group heading when its search result has no control", async () => {
+	it("enables only owner-backed upload formats and keeps one format selected", async () => {
 		const user = userEvent.setup();
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const settingsRoot = container.firstElementChild;
-		if (!(settingsRoot instanceof HTMLDivElement))
-			throw new Error("settings-search-root-missing");
-		Object.defineProperty(settingsRoot, "scrollTo", {
-			configurable: true,
-			value: vi.fn(),
-		});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const formats = [
+			"allowUploadJpg",
+			"allowUploadPng",
+			"allowUploadWebp",
+			"allowUploadGif",
+		];
+		const controls = formats.map((name) =>
+			screen.getByRole<HTMLInputElement>("checkbox", { name }),
+		);
+		const [jpg, png, webp, gif] = controls;
+		if (!jpg || !png || !webp || !gif)
+			throw new Error("settings-upload-format-controls-missing");
+
+		expect(controls.every((control) => !control.disabled)).toBe(true);
+		await user.click(jpg);
+		await user.click(png);
+		await user.click(webp);
+
+		expect(gif.checked).toBe(true);
+		expect(gif.disabled).toBe(false);
+		await user.click(gif);
+		expect(gif.checked).toBe(true);
+		expect(screen.getByRole("alert").textContent).toContain(
+			"uploadFormatRequired",
+		);
+		await user.click(
+			screen.getByRole("button", { name: "closeImageFeedback" }),
+		);
+		expect(screen.queryByRole("alert")).toBeNull();
+		expect(
+			screen
+				.getByRole("switch", { name: "compressImages" })
+				.matches(":disabled"),
+		).toBe(false);
+	});
+
+	it("excludes the About page from the settings search index", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
 		await user.type(
 			screen.getByRole("searchbox", { name: "searchSettings" }),
 			"aboutVersionInformation",
 		);
-		const resultLabel = await screen.findByText("aboutVersionInformation", {
-			selector: ".easymde-settings-center__search-results strong",
-		});
-		const result = resultLabel.closest<HTMLButtonElement>("button");
-		if (!result) throw new Error("settings-search-group-result-missing");
-		await user.click(result);
-
-		const target = screen.getByRole("heading", {
-			name: "aboutVersionInformation",
-		});
-		await waitFor(() => expect(document.activeElement).toBe(target));
-		expect(target.tabIndex).toBe(-1);
+		expect(await screen.findByText("noSearchResults")).not.toBeNull();
+		expect(
+			screen.queryByText("aboutVersionInformation", {
+				selector: ".easymde-settings-center__search-results strong",
+			}),
+		).toBeNull();
 	});
 
 	it("cancels pending result navigation when the settings root unmounts", async () => {
@@ -329,7 +670,10 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		const headingGroup = screen
 			.getByRole("heading", { name: "headingAndFormatting" })
 			.closest("section");
-		if (!(commonGroup instanceof HTMLElement) || !(headingGroup instanceof HTMLElement))
+		if (
+			!(commonGroup instanceof HTMLElement) ||
+			!(headingGroup instanceof HTMLElement)
+		)
 			throw new Error("shortcut-reset-visibility-groups-missing");
 
 		expect(
@@ -344,7 +688,7 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		).toBeNull();
 	});
 
-	it("preserves an empty shortcut binding when its field is cleared", async () => {
+	it("restores an empty shortcut from defaults when suggestions are enabled", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
@@ -354,10 +698,25 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		await user.clear(windowsSave);
 		await user.tab();
 
+		expect(windowsSave.value).toBe("Ctrl+S");
+	});
+
+	it("preserves an empty shortcut when suggestions are disabled", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		await user.click(
+			screen.getByRole("switch", { name: "customShortcutSuggestions" }),
+		);
+		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "saveArticle windowsLinux",
+		});
+		await user.clear(windowsSave);
+		await user.tab();
 		expect(windowsSave.value).toBe("");
 	});
 
-	it("keeps unsupported shortcut behavior switches disabled", async () => {
+	it("enables shortcut behavior and marks duplicate bindings by platform", async () => {
+		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const behavior = screen
 			.getByRole("heading", { name: "shortcutBehavior" })
@@ -368,7 +727,32 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		});
 
 		expect(hints.getAttribute("aria-checked")).toBe("true");
-		expect(hints.matches(":disabled")).toBe(true);
+		expect(hints.matches(":disabled")).toBe(false);
+		await user.clear(
+			screen.getByRole("textbox", { name: "bold windowsLinux" }),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: "bold windowsLinux" }),
+			"Ctrl+S",
+		);
+		expect(
+			screen
+				.getByRole("textbox", { name: "saveArticle windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBe("true");
+		expect(
+			screen
+				.getByRole("textbox", { name: "bold windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBe("true");
+		await user.click(
+			screen.getByRole("switch", { name: "detectShortcutConflicts" }),
+		);
+		expect(
+			screen
+				.getByRole("textbox", { name: "bold windowsLinux" })
+				.getAttribute("aria-invalid"),
+		).toBeNull();
 	});
 });
 
@@ -400,7 +784,8 @@ describe("SettingsCenterRoot images section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps backup image-host fields visible but unavailable", () => {
+	it("toggles the owner-backed backup image-host fields", async () => {
+		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const backup = screen.getByRole("switch", {
 			name: "enableBackupImageHost",
@@ -413,11 +798,13 @@ describe("SettingsCenterRoot images section", () => {
 			screen
 				.getByRole("textbox", { name: "backupBucket" })
 				.matches(":disabled"),
-		).toBe(true);
-		expect(backup.matches(":disabled")).toBe(true);
+		).toBe(false);
+		expect(backup.matches(":disabled")).toBe(false);
+		await user.click(backup);
+		expect(screen.queryByRole("textbox", { name: "backupBucket" })).toBeNull();
 	});
 
-	it("does not expose a fake image-host connection test", () => {
+	it("exposes real server-backed image-host upload verification", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const imagesSection = screen
 			.getByRole("heading", { name: "imageHostService" })
@@ -426,48 +813,85 @@ describe("SettingsCenterRoot images section", () => {
 			throw new Error("images-settings-section-missing");
 		const images = within(imagesSection);
 
-		expect(images.queryByRole("button", { name: "testConnection" })).toBeNull();
 		expect(
-			images.queryByRole("button", { name: "testBackupConnection" }),
-		).toBeNull();
-		expect(images.getByRole("note").textContent).toContain(
-			"settingsUnavailable",
-		);
+			images
+				.getByRole("button", { name: "verifyPrimaryUpload" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			images
+				.getByRole("button", { name: "verifyBackupUpload" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["uploadVerificationPending", "uploadVerificationPending"]);
 	});
 
-	it("keeps filename and upload controls unavailable", () => {
+	it("enables the server-owned filename behavior and upload formats", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const rule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
 		});
 		const gif = screen.getByRole("checkbox", { name: "allowUploadGif" });
 
-		expect(rule.matches(":disabled")).toBe(true);
-		expect(gif.matches(":disabled")).toBe(true);
+		expect(rule.matches(":disabled")).toBe(false);
+		expect(gif.matches(":disabled")).toBe(false);
 		expect(
 			screen
 				.getByRole("button", { name: "fileNamePresetMd5" })
 				.matches(":disabled"),
+		).toBe(false);
+	});
+
+	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const format = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "defaultInsertFormat",
+		});
+
+		expect(format.disabled).toBe(false);
+		await user.click(format);
+		expect(
+			screen
+				.getByRole("option", { name: "htmlImage" })
+				.getAttribute("aria-disabled"),
+		).toBe("true");
+		expect(
+			screen.getByRole<HTMLSelectElement>("combobox", {
+				name: "altTextSource",
+			}).disabled,
+		).toBe(false);
+		expect(
+			screen.getByRole<HTMLSelectElement>("combobox", {
+				name: "imageTitleField",
+			}).disabled,
+		).toBe(false);
+		expect(
+			screen
+				.getByRole("switch", { name: "imageFeaturedPlaceholder" })
+				.matches(":disabled"),
 		).toBe(true);
 	});
-	it("retains stable IDs in unavailable select controls", () => {
+	it("retains stable IDs while enabling the supported image provider", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const service = screen.getByRole<HTMLSelectElement>("combobox", {
+		const service = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "selectImageHostService",
 		});
-		const theme = screen.getByRole<HTMLSelectElement>("combobox", {
+		const theme = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "editorTheme",
 		});
 
-		expect(service.value).toBe("cloudflare-r2");
-		expect(theme.value).toBe("system");
-		expect(service.matches(":disabled")).toBe(true);
+		expect(service.textContent).toContain("cloudflareR2");
+		expect(theme.textContent).toContain("automaticFollowSystem");
+		expect(service.matches(":disabled")).toBe(false);
 		expect(theme.matches(":disabled")).toBe(true);
 	});
 });
 
 describe("SettingsCenterRoot Markdown section", () => {
-	it("renders every Markdown group after Images in the continuous settings card", () => {
+	it("renders only the remaining Markdown groups after Images in the continuous settings card", () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -487,14 +911,32 @@ describe("SettingsCenterRoot Markdown section", () => {
 			screen.getByRole("heading", { name: "markdownParsingRendering" }),
 		).not.toBeNull();
 		expect(
-			screen.getByRole("heading", { name: "markdownExtensions" }),
-		).not.toBeNull();
+			screen.queryByRole("heading", { name: "markdownExtensions" }),
+		).toBeNull();
 		expect(
 			screen.getByRole("heading", { name: "otherSettings" }),
 		).not.toBeNull();
 	});
 
-	it("keeps Markdown controls unavailable without a runtime owner", () => {
+	it("does not render settings for parser defaults or editor-owned presentation", () => {
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		for (const name of [
+			"markdownLivePreview",
+			"fixedToolbar",
+			"taskLists",
+			"emoji",
+			"mathSupport",
+			"tableExtension",
+			"footnotes",
+			"definitionLists",
+			"imageSizeSyntax",
+		]) {
+			expect(screen.queryByRole("switch", { name })).toBeNull();
+		}
+	});
+
+	it("enables word wrapping and keeps Markdown controls without runtime owners unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const markdown = document.querySelector(
 			'[data-settings-section="markdown"]',
@@ -505,6 +947,7 @@ describe("SettingsCenterRoot Markdown section", () => {
 		const lineNumbers = controls.getByRole("switch", {
 			name: "showLineNumbers",
 		});
+		const wordWrap = controls.getByRole("switch", { name: "wordWrap" });
 		const theme = controls.getByRole<HTMLSelectElement>("combobox", {
 			name: "editorTheme",
 		});
@@ -512,9 +955,20 @@ describe("SettingsCenterRoot Markdown section", () => {
 			name: "unorderedListMarker",
 		});
 
+		expect(wordWrap.matches(":disabled")).toBe(false);
+		fireEvent.click(wordWrap);
+		expect(wordWrap.getAttribute("aria-checked")).toBe("false");
+		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
 		expect(lineNumbers.matches(":disabled")).toBe(true);
 		expect(theme.matches(":disabled")).toBe(true);
 		expect(unorderedMarker.matches(":disabled")).toBe(true);
+		expect(lineNumbers.getAttribute("aria-describedby")).toBe(
+			"easymde-markdown-unavailable",
+		);
+		expect(wordWrap.getAttribute("aria-describedby")).toBeNull();
+		expect(
+			document.getElementById("easymde-markdown-unavailable"),
+		).not.toBeNull();
 	});
 });
 
@@ -543,7 +997,29 @@ describe("SettingsCenterRoot Transfer section", () => {
 		).not.toBeNull();
 	});
 
-	it("keeps unsupported import controls disabled", async () => {
+	it("imports a valid configuration into the draft and saves it explicitly", async () => {
+		const user = userEvent.setup();
+		const importedSettings: SettingsCenterSettings = {
+			...bootstrap().settings,
+			general: {
+				...bootstrap().settings.general,
+				autoFocusEditor: true,
+			},
+		};
+		const savedSettings = {
+			...importedSettings,
+			revision: importedSettings.revision + 1,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -557,14 +1033,36 @@ describe("SettingsCenterRoot Transfer section", () => {
 			"transferChooseConfigurationFile",
 		);
 
-		expect(fileInput.disabled).toBe(true);
+		expect(fileInput.disabled).toBe(false);
+		const chooseFile = transfer.getByRole("button", {
+			name: "transferChooseConfigurationFile",
+		});
+		expect(chooseFile.matches(":disabled")).toBe(false);
+		await user.upload(
+			fileInput,
+			new File(
+				[JSON.stringify({ schemaVersion: 1, settings: importedSettings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
+		);
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
+		);
 		expect(
-			transfer.getByRole("button", { name: "transferChooseConfigurationFile" })
-			.matches(":disabled"),
-		).toBe(true);
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
+				.disabled,
+		).toBe(false);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.general.autoFocusEditor).toBe(true);
+		fetch.mockRestore();
 	});
 
-	it("exports the current draft while import remains unavailable", async () => {
+	it("exports the current draft with secrets redacted", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -598,9 +1096,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			await user.click(
 				transfer.getByRole("button", { name: /transferExportConfiguration/ }),
 			);
-			expect(within(container).getByRole("status").textContent).toContain(
-				"transferExportSuccess",
-			);
+			expect(screen.getByText("transferExportSuccess")).not.toBeNull();
 			const calls = createObjectUrl.mock.calls as ReadonlyArray<
 				Readonly<[Blob]>
 			>;
@@ -619,9 +1115,10 @@ describe("SettingsCenterRoot Transfer section", () => {
 			expect(click).toHaveBeenCalledOnce();
 
 			expect(
-			transfer.getByLabelText<HTMLInputElement>("transferChooseConfigurationFile")
-				.disabled,
-		).toBe(true);
+				transfer.getByLabelText<HTMLInputElement>(
+					"transferChooseConfigurationFile",
+				).disabled,
+			).toBe(false);
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
 				configurable: true,
@@ -682,9 +1179,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			);
 			expect(click).toHaveBeenCalledOnce();
 			expect(createObjectUrl).toHaveBeenCalledOnce();
-			expect(within(container).getByRole("status").textContent).toContain(
-			"transferExportNameInvalid",
-			);
+			expect(screen.getByText("transferExportNameInvalid")).not.toBeNull();
 		} finally {
 			Object.defineProperty(URL, "createObjectURL", {
 				configurable: true,
@@ -698,7 +1193,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 		}
 	});
 
-	it("keeps unsupported transfer mutations disabled", async () => {
+	it("resets the configuration through the explicit save path and keeps cache deletion unavailable", async () => {
+		const user = userEvent.setup();
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -709,16 +1205,76 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const resetTrigger = screen.getByRole("button", {
 			name: /transferResetCurrentConfiguration/,
 		});
-		expect(resetTrigger.matches(":disabled")).toBe(true);
+		expect(resetTrigger.matches(":disabled")).toBe(false);
+		await user.click(resetTrigger);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", { name: "transferConfirmReset" }),
+		);
 		expect(
-			within(overlayRoot).queryByRole("dialog", {
-				name: "transferResetCurrentConfiguration",
-			}),
-		).toBeNull();
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
+				.disabled,
+		).toBe(false);
 		const clearCacheTrigger = screen.getByRole("button", {
 			name: /transferClearLocalCache/,
 		});
 		expect(clearCacheTrigger.matches(":disabled")).toBe(true);
+	});
+
+	it("keeps clearing blank secrets when one credential is entered after reset", async () => {
+		const user = userEvent.setup();
+		const savedSettings = {
+			...SETTINGS_CENTER_DEFAULT_SETTINGS,
+			revision: SETTINGS_CENTER_DEFAULT_SETTINGS.revision + 1,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /transferResetCurrentConfiguration/,
+			}),
+		);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", {
+				name: "transferConfirmReset",
+			}),
+		);
+		await user.type(screen.getByLabelText("accessKey"), "replacement-key");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			resetSecrets?: boolean;
+			settings: SettingsCenterSettings;
+		};
+		expect(body.resetSecrets).toBe(true);
+		expect(body.settings.images).toMatchObject({
+			accessKey: "replacement-key",
+			secretKey: "",
+			backupAccessKey: "",
+			backupSecretKey: "",
+		});
+		fetch.mockRestore();
 	});
 
 	it("shows truthful storage and configuration checks in operation dialogs", async () => {
@@ -885,6 +1441,45 @@ describe("SettingsCenterRoot About section", () => {
 });
 
 describe("SettingsCenterRoot persistence", () => {
+	it("blocks saving an identical primary and backup host and restores focus after dismissal", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch");
+		const value = bootstrap();
+		const duplicateBootstrap: SettingsCenterBootstrap = {
+			...value,
+			settings: {
+				...value.settings,
+				images: {
+					...value.settings.images,
+					backupService: "cloudflare-r2",
+					backupEndpoint: value.settings.images.endpoint,
+					backupBucket: value.settings.images.bucket,
+				},
+			},
+		};
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={duplicateBootstrap} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement)) {
+			throw new Error("settings-center-overlay-missing");
+		}
+
+		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		const trigger = screen.getByRole("button", { name: "saveSettings" });
+		await user.click(trigger);
+		const dialog = within(overlayRoot).getByRole("alertdialog", {
+			name: "duplicateImageHostTitle",
+		});
+		expect(
+			within(dialog).getByText("duplicateImageHostDescription"),
+		).not.toBeNull();
+		expect(fetch).not.toHaveBeenCalled();
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		fetch.mockRestore();
+	});
+
 	it("enables owner-backed controls while keeping unsupported fields unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		expect(
@@ -893,7 +1488,20 @@ describe("SettingsCenterRoot persistence", () => {
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
-			screen.getByRole("combobox", { name: "interfaceLanguage" }).matches(":disabled"),
+			screen.queryByRole("combobox", { name: "interfaceLanguage" }),
+		).toBeNull();
+		expect(
+			screen
+				.getByRole("combobox", { name: "defaultVisibility" })
+				.matches(":disabled"),
+		).toBe(false);
+		expect(
+			screen.queryByRole("switch", { name: "smartListRecognition" }),
+		).toBeNull();
+		expect(
+			screen
+				.getByRole("combobox", { name: "summaryMode" })
+				.matches(":disabled"),
 		).toBe(true);
 		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
@@ -904,35 +1512,51 @@ describe("SettingsCenterRoot persistence", () => {
 	it("changes an owner-backed dropdown and sends the selected value", async () => {
 		const user = userEvent.setup();
 		const payloadRef = { current: null as Record<string, unknown> | null };
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
-			payloadRef.current = JSON.parse(String(init?.body)) as Record<string, unknown>;
-			return {
-				ok: true,
-				json: async () => ({
-					settings: {
-						...bootstrap().settings,
-						revision: bootstrap().settings.revision + 1,
-						general: {
-							...bootstrap().settings.general,
-							statusBarMode: "hidden",
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				payloadRef.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...bootstrap().settings,
+							revision: bootstrap().settings.revision + 1,
+							general: {
+								...bootstrap().settings.general,
+								statusBarMode: "hidden",
+							},
 						},
-					},
-				}),
-			} as Response;
-		});
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		const select = screen.getByRole<HTMLSelectElement>("combobox", {
+		const select = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "statusBarDisplay",
 		});
-		await user.selectOptions(select, "hidden");
-		expect(select.value).toBe("hidden");
-		await user.click(screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }));
+		await user.click(select);
+		await user.click(screen.getByRole("option", { name: "hiddenStatusBar" }));
+		expect(select.textContent).toContain("hiddenStatusBar");
+		await user.click(
+			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }),
+		);
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		if (!payloadRef.current) throw new Error("settings-save-payload-missing");
 		const general = payloadRef.current.settings as Record<string, unknown>;
-		expect((general.general as Record<string, unknown>).statusBarMode).toBe("hidden");
+		expect((general.general as Record<string, unknown>).statusBarMode).toBe(
+			"hidden",
+		);
 		fetch.mockRestore();
 	});
 
@@ -940,7 +1564,13 @@ describe("SettingsCenterRoot persistence", () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
-			json: async () => ({ settings: bootstrap().settings }),
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
 		} as Response);
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
@@ -958,18 +1588,430 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
+	it("saves the bounded upload retry count as a number", async () => {
+		const user = userEvent.setup();
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const savedSettings = {
+			...bootstrap().settings,
+			revision: bootstrap().settings.revision + 1,
+			images: {
+				...bootstrap().settings.images,
+				uploadRetryCount: 5,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		fireEvent.change(
+			screen.getByRole("spinbutton", { name: "uploadRetryCount" }),
+			{ target: { value: "5" } },
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
+		if (!savedPayload.current) throw new Error("settings-save-payload-missing");
+		const payloadSettings = savedPayload.current
+			.settings as SettingsCenterSettings;
+		expect(payloadSettings.images.uploadRetryCount).toBe(5);
+		expect(
+			screen.getByRole<HTMLInputElement>("spinbutton", {
+				name: "uploadRetryCount",
+			}).value,
+		).toBe("5");
+		fetch.mockRestore();
+	});
+
+	it("shows newly saved primary credentials as configured immediately", async () => {
+		const user = userEvent.setup();
+		const savedSettings = {
+			...bootstrap().settings,
+			revision: bootstrap().settings.revision + 1,
+			images: {
+				...bootstrap().settings.images,
+				accessKey: "",
+				secretKey: "",
+			},
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: savedSettings,
+				credentialStatus: {
+					primaryConfigured: true,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		await user.type(screen.getByLabelText("accessKey"), "new-access-key");
+		await user.type(screen.getByLabelText("secretKey"), "new-secret-key");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(
+				screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+			).toBe("••••••••••••"),
+		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("secretKey").placeholder,
+		).toBe("••••••••••••");
+		fetch.mockRestore();
+	});
+
+	it("keeps a replaced primary connection stale after the saved secrets are redacted", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				const url = String(input);
+				if (url.endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...configuredBootstrap.settings,
+							revision: configuredBootstrap.settings.revision + 1,
+						},
+						credentialStatus: {
+							primaryConfigured: true,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "verifyBackupUpload" }),
+		);
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]),
+		);
+
+		await user.type(images.getByLabelText("secretKey"), "replacement-secret");
+		expect(images.getAllByRole("status")[0]?.textContent).toBe(
+			"uploadVerificationStale",
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerificationStale", "uploadVerified"]),
+		);
+		fetch.mockRestore();
+	});
+
+	it("tests the current unsaved image draft without requiring a settings save", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (!String(input).endsWith("/image-hosting/verification")) {
+					throw new Error("unexpected-settings-save");
+				}
+				const request = JSON.parse(String(init?.body)) as {
+					target: "primary";
+					revision: number;
+					settings: SettingsCenterSettings["images"];
+				};
+				expect(request).toEqual({
+					target: "primary",
+					revision: SETTINGS_CENTER_TEST_SETTINGS.revision,
+					settings: {
+						...SETTINGS_CENTER_TEST_SETTINGS.images,
+						bucket: "draft-bucket",
+						domain: "https://img.example.test",
+						backupDomain: "https://backup.example.test",
+					},
+				});
+				return {
+					ok: true,
+					json: async () => ({
+						path: "20260824/00000000-0000-4000-8000-000000000000.png",
+						status: "uploaded",
+						target: request.target,
+						url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+		const bucket = images.getByRole<HTMLInputElement>("textbox", {
+			name: "bucket",
+		});
+
+		await user.clear(bucket);
+		await user.type(bucket, "draft-bucket");
+		const testButton = images.getByRole<HTMLButtonElement>("button", {
+			name: "verifyPrimaryUpload",
+		});
+		expect(testButton.disabled).toBe(false);
+		await user.click(testButton);
+
+		await waitFor(() =>
+			expect(images.getAllByRole("status")[0]?.textContent).toBe(
+				"uploadVerified",
+			),
+		);
+		expect(fetch).toHaveBeenCalledOnce();
+		fetch.mockRestore();
+	});
+
+	it("does not revive a pre-save verification after the file-name rule is saved and then restored in the draft", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...configuredBootstrap.settings,
+							revision: configuredBootstrap.settings.revision + 1,
+							images: {
+								...configuredBootstrap.settings.images,
+								fileNameRule: "changed/{md5}.{ext}",
+							},
+						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "verifyBackupUpload" }),
+		);
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]),
+		);
+
+		const rule = images.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		await user.clear(rule);
+		await user.type(rule, "changed/{md5}.{ext}");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() =>
+			expect(
+				container
+					.querySelector("[data-save-status]")
+					?.getAttribute("data-save-status"),
+			).toBe("saved"),
+		);
+		await user.clear(rule);
+		await user.type(rule, SETTINGS_CENTER_TEST_SETTINGS.images.fileNameRule);
+
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
+		fetch.mockRestore();
+	});
+
+	it("clears configured credential presentation after a reset is saved", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...configuredBootstrap.defaultSettings,
+							revision: configuredBootstrap.settings.revision + 1,
+						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot
+				bootstrap={{
+					...configuredBootstrap,
+					drafts: {
+						images: {
+							...configuredBootstrap.drafts.images,
+							primaryCredentialsConfigured: true,
+							backupCredentialsConfigured: true,
+						},
+					},
+				}}
+			/>,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+		).toBe("••••••••••••");
+		await user.click(
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "verifyBackupUpload" }),
+		);
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]),
+		);
+
+		await user.click(
+			screen.getByRole("button", {
+				name: /transferResetCurrentConfiguration/,
+			}),
+		);
+		const resetDialog = within(overlayRoot).getByRole("dialog", {
+			name: "transferResetCurrentConfiguration",
+		});
+		await user.click(
+			within(resetDialog).getByRole("button", {
+				name: "transferConfirmReset",
+			}),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(
+				screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+			).toBe(""),
+		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("backupAccessKey").placeholder,
+		).toBe("");
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
+		fetch.mockRestore();
+	});
+
 	it("returns the successful save status to idle after a bounded acknowledgement", async () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
-			json: async () => ({ settings: bootstrap().settings }),
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
 		} as Response);
 		try {
 			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-			await user.click(
-				screen.getByRole("switch", { name: "autoFocusEditor" }),
-			);
+			await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
 			await user.click(
 				screen.getByRole<HTMLButtonElement>("button", {
 					name: "saveSettings",
@@ -1010,7 +2052,13 @@ describe("SettingsCenterRoot persistence", () => {
 				expect(new Headers(init?.headers).get("X-WP-Nonce")).toBe("test-nonce");
 				return {
 					ok: true,
-					json: async () => ({ settings: latestSettings }),
+					json: async () => ({
+						settings: latestSettings,
+						credentialStatus: {
+							primaryConfigured: true,
+							backupConfigured: false,
+						},
+					}),
 				} as Response;
 			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -1036,6 +2084,81 @@ describe("SettingsCenterRoot persistence", () => {
 			).toBe("true"),
 		);
 		expect(fetch).toHaveBeenCalledTimes(2);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+		).toBe("••••••••••••");
+		fetch.mockRestore();
+	});
+
+	it("invalidates both upload verifications after an authoritative conflict reload", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				const url = String(input);
+				if (url.endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				if (init?.method === "POST") {
+					return { ok: false, status: 409 } as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: configuredBootstrap.settings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "verifyBackupUpload" }),
+		);
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]),
+		);
+
+		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() =>
+			expect(screen.getByText("settingsConflict")).not.toBeNull(),
+		);
+		await user.click(screen.getByRole("button", { name: "reloadSettings" }));
+
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerificationStale", "uploadVerificationStale"]),
+		);
 		fetch.mockRestore();
 	});
 
@@ -1053,7 +2176,7 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(save);
 
 		await waitFor(() =>
-			 expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
+			expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
 		);
 		expect(screen.queryByText("settingsSaved")).toBeNull();
 		expect(save.disabled).toBe(false);

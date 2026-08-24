@@ -64,14 +64,18 @@ const SHORTCUT_GROUPS: ReadonlyArray<ShortcutGroup> = [
 ];
 
 function ShortcutCard({
+  conflicts,
   group,
   onChange,
+  onRestoreEmpty,
   onReset,
   strings: s,
   values
 }: {
+  conflicts: ReadonlySet<string>;
   group: ShortcutGroup;
   onChange: (id: ShortcutId, platform: keyof ShortcutValue, value: string) => void;
+  onRestoreEmpty: (id: ShortcutId, platform: keyof ShortcutValue) => void;
   onReset: (() => void) | undefined;
   strings: Strings;
   values: ShortcutValues;
@@ -102,8 +106,12 @@ function ShortcutCard({
         data-setting-group={s[group.title]}>
         <span>{s[row.label]}</span>
         <input aria-label={`${s[row.label]} ${s.windowsLinux}`} value={value.windows}
+          aria-invalid={conflicts.has(`${row.id}:windows`) ? 'true' : undefined}
+          onBlur={() => { if (!value.windows.trim()) onRestoreEmpty(row.id, 'windows'); }}
           onChange={(event) => onChange(row.id, 'windows', event.target.value)} />
         <input aria-label={`${s[row.label]} ${s.macOS}`} value={value.mac}
+          aria-invalid={conflicts.has(`${row.id}:mac`) ? 'true' : undefined}
+          onBlur={() => { if (!value.mac.trim()) onRestoreEmpty(row.id, 'mac'); }}
           onChange={(event) => onChange(row.id, 'mac', event.target.value)} />
       </div>;
     })}
@@ -130,6 +138,19 @@ export function ShortcutsSettingsPage({
   }));
   const settings = externalSettings ?? localSettings;
   const values = settings.values;
+  const conflicts = new Set<string>();
+  if (settings.detectConflicts) {
+    for (const platform of ['windows', 'mac'] as const) {
+      const owners = new Map<string, ShortcutId[]>();
+      for (const id of Object.keys(values) as ShortcutId[]) {
+        const shortcut = values[id][platform].trim().toLowerCase();
+        if (shortcut) owners.set(shortcut, [...(owners.get(shortcut) ?? []), id]);
+      }
+      for (const ids of owners.values()) {
+        if (ids.length > 1) for (const id of ids) conflicts.add(`${id}:${platform}`);
+      }
+    }
+  }
   const update = (next: ShortcutsSettings) => {
     if (onChange) onChange(next);
     else setLocalSettings(next);
@@ -145,33 +166,35 @@ export function ShortcutsSettingsPage({
     }});
   };
   const resetShortcuts = () => update({ ...settings, values: resetValues });
+  const restoreEmptyShortcut = (id: ShortcutId, platform: keyof ShortcutValue) => {
+    if (settings.showSuggestions) updateShortcut(id, platform, resetValues[id][platform]);
+  };
 
   return <div className="easymde-settings-center__shortcuts-settings">
     <div className="easymde-settings-center__shortcut-groups">
       {SHORTCUT_GROUPS.map((group, groupIndex) => <ShortcutCard
         key={group.title}
         group={group}
+        conflicts={conflicts}
         strings={s}
         values={values}
         onChange={updateShortcut}
+        onRestoreEmpty={restoreEmptyShortcut}
         onReset={groupIndex === 0 ? resetShortcuts : undefined}
       />)}
     </div>
     <section className="easymde-settings-center__shortcut-behavior">
       <h2><SlidersIcon size={25} />{s.shortcutBehavior}</h2>
-      <SettingsRow label={s.showShortcutHints} description={s.settingsUnavailableDescription}>
+      <SettingsRow label={s.showShortcutHints} description={s.showShortcutHintsDescription}>
         <SettingsToggle label={s.showShortcutHints} checked={settings.showHints}
-          disabled
           onChange={() => update({ ...settings, showHints: !settings.showHints })} />
       </SettingsRow>
-      <SettingsRow label={s.detectShortcutConflicts} description={s.settingsUnavailableDescription}>
+      <SettingsRow label={s.detectShortcutConflicts} description={s.detectShortcutConflictsDescription}>
         <SettingsToggle label={s.detectShortcutConflicts} checked={settings.detectConflicts}
-          disabled
           onChange={() => update({ ...settings, detectConflicts: !settings.detectConflicts })} />
       </SettingsRow>
-      <SettingsRow label={s.customShortcutSuggestions} description={s.settingsUnavailableDescription}>
+      <SettingsRow label={s.customShortcutSuggestions} description={s.customShortcutSuggestionsDescription}>
         <SettingsToggle label={s.customShortcutSuggestions} checked={settings.showSuggestions}
-          disabled
           onChange={() => update({ ...settings, showSuggestions: !settings.showSuggestions })} />
       </SettingsRow>
     </section>

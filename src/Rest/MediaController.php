@@ -3,6 +3,7 @@
 namespace EasyMDE\Rest;
 
 use EasyMDE\Support\Capabilities;
+use EasyMDE\Support\SettingsCenterRepository;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Server;
@@ -16,9 +17,11 @@ final class MediaController {
 	const MAX_IMAGE_BYTES = 10485760;
 
 	private $capabilities;
+	private $settings_repository;
 
-	public function __construct( Capabilities $capabilities ) {
-		$this->capabilities = $capabilities;
+	public function __construct( Capabilities $capabilities, SettingsCenterRepository $settings_repository ) {
+		$this->capabilities        = $capabilities;
+		$this->settings_repository = $settings_repository;
 	}
 
 	public function register_routes() {
@@ -71,7 +74,7 @@ final class MediaController {
 		if ( ! $this->is_allowed_image_file( $file ) ) {
 			return new WP_Error(
 				'easymde_unsupported_media_type',
-				__( 'Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE.', 'easymde' ),
+				__( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' ),
 				array( 'status' => 415 )
 			);
 		}
@@ -113,6 +116,7 @@ final class MediaController {
 				'url'      => $url,
 				'alt'      => $alt_text,
 				'filename' => $file['name'],
+				'title'    => get_the_title( $attachment_id ),
 			)
 		);
 	}
@@ -121,16 +125,7 @@ final class MediaController {
 		$checked = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'] );
 		$type    = isset( $checked['type'] ) ? $checked['type'] : '';
 
-		return in_array(
-			$type,
-			array(
-				'image/jpeg',
-				'image/png',
-				'image/gif',
-				'image/webp',
-			),
-			true
-		);
+		return in_array( $type, $this->settings_repository->get_allowed_image_mime_types(), true );
 	}
 
 	private function is_too_large( array $file ) {
@@ -159,7 +154,7 @@ final class MediaController {
 
 			return new WP_Error(
 				'easymde_unsupported_media_type',
-				__( 'Only JPEG, PNG, GIF, or WebP images can be uploaded into EasyMDE.', 'easymde' ),
+				__( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' ),
 				array( 'status' => 415 )
 			);
 		}

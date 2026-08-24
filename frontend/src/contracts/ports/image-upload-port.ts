@@ -18,10 +18,16 @@ export type ImageUploadRequest = Readonly<{
   altText: string;
   file: File;
   postId: number;
+  signal: AbortSignal;
 }>;
 
 export type ImageUploadResult =
-  | Readonly<{ alt: string; status: 'uploaded'; url: string }>
+  | Readonly<{
+      alt: string;
+      status: 'uploaded';
+      title: string;
+      url: string;
+    }>
   | Readonly<{ code: string; status: 'failed' }>;
 
 export type ImageUploadPort = Readonly<{

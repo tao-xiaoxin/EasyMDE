@@ -36,6 +36,27 @@ function assertSameOriginUrl(value: string, windowRef: Window): void {
   }
 }
 
+function assertServerStartupSurface(container: HTMLElement): void {
+  if (!container.childNodes.length) return;
+
+  const startupSurface = container.querySelector<HTMLElement>(
+    ':scope > [data-settings-center-startup]'
+  );
+  const hasOnlyExpectedNodes = Array.from(container.childNodes).every(
+    (node) =>
+      node === startupSurface ||
+      (node.nodeType === 3 && (node.textContent ?? '').trim() === '')
+  );
+  if (
+    !startupSurface ||
+    container.children.length !== 1 ||
+    container.firstElementChild !== startupSurface ||
+    !hasOnlyExpectedNodes
+  ) {
+    throw new Error('settings-center-root-not-empty');
+  }
+}
+
 export function mountSettingsCenter(
   rawBootstrap: unknown,
   runtime: SettingsCenterBrowserRuntime
@@ -44,10 +65,10 @@ export function mountSettingsCenter(
     '#easymde-settings-center-root'
   );
   if (!container) throw new Error('settings-center-root-unavailable');
-  if (container.childNodes.length) throw new Error('settings-center-root-not-empty');
 
   const bootstrap = parseSettingsCenterBootstrap(rawBootstrap);
   assertSameOriginUrl(bootstrap.closeUrl, runtime.window);
+  assertServerStartupSurface(container);
 
   const root = createRoot(container);
   let active = true;
@@ -63,10 +84,12 @@ export function mountSettingsCenter(
 declare global {
   interface Window {
     EasyMDESettingsCenterBootstrap?: unknown;
+    EasyMDESettingsCenterStarted?: boolean;
   }
 }
 
 function start(): void {
+  window.EasyMDESettingsCenterStarted = true;
   const root = document.querySelector<HTMLElement>(
     '#easymde-settings-center-root'
   );

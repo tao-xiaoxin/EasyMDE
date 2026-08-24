@@ -40,6 +40,291 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame($saved, $repository->get_settings());
     }
 
+    public function test_upload_format_runtime_contract_uses_only_enabled_formats()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['uploadFormats'] = array(
+            'jpg' => false,
+            'png' => true,
+            'webp' => false,
+            'gif' => false,
+        );
+
+        $this->assertIsArray($repository->update_settings($settings));
+        $this->assertSame(array('image/png'), $repository->get_allowed_image_mime_types());
+    }
+
+	public function test_image_upload_runtime_snapshot_keeps_credentials_server_side()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'endpoint' => 'https://synthetic.r2.cloudflarestorage.com',
+						'domain' => 'https://img.example.test',
+						'accessKey' => 'synthetic-access-key',
+						'secretKey' => 'synthetic-secret-key',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$public = $repository->get_settings();
+		$runtime = $repository->get_image_hosting_settings();
+
+		$this->assertSame('', $public['images']['accessKey']);
+		$this->assertSame('', $public['images']['secretKey']);
+		$this->assertArrayNotHasKey('accountId', $public['images']);
+		$this->assertArrayNotHasKey('accountId', $runtime['primary']);
+		$this->assertArrayNotHasKey('destination', $public['images']);
+		$this->assertArrayNotHasKey('destination', $runtime);
+		$this->assertTrue($runtime['credentialStatus']['primaryConfigured']);
+		$this->assertFalse($runtime['credentialStatus']['backupConfigured']);
+		$this->assertSame('synthetic-access-key', $runtime['primary']['accessKey']);
+		$this->assertSame('synthetic-secret-key', $runtime['primary']['secretKey']);
+	}
+
+	public function test_secret_reveal_reads_only_the_requested_current_stored_credential()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center_revision' => 11,
+				'settings_center' => array(
+					'images' => array(
+						'accessKey' => 'synthetic-primary-access',
+						'secretKey' => 'synthetic-primary-secret',
+						'backupAccessKey' => 'synthetic-backup-access',
+						'backupSecretKey' => 'synthetic-backup-secret',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('synthetic-primary-access', $repository->get_image_hosting_secret('primary', 'accessKey', 11));
+		$this->assertSame('synthetic-backup-secret', $repository->get_image_hosting_secret('backup', 'secretKey', 11));
+		foreach (
+			array(
+				array('primary', 'secretKey', 10),
+				array('other', 'secretKey', 11),
+				array('primary', 'password', 11),
+			)
+			as $invalid
+		) {
+			$result = $repository->get_image_hosting_secret($invalid[0], $invalid[1], $invalid[2]);
+			$this->assertWPError($result);
+			$this->assertSame('easymde_image_hosting_secret_unavailable', $result->get_error_code());
+			$this->assertSame(409, $result->get_error_data()['status']);
+		}
+	}
+
+	public function test_public_settings_response_uses_one_raw_option_snapshot()
+	{
+		$reads = 0;
+		$filter = static function () use ( &$reads ) {
+			$reads++;
+
+			return array(
+				'settings_center_revision' => 27,
+				'settings_center'          => array(
+					'images' => array(
+						'accessKey' => 'snapshot-access',
+						'secretKey' => 'snapshot-secret',
+					),
+				),
+			);
+		};
+		add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		try {
+			$response = $repository->get_settings_response();
+		} finally {
+			remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+		}
+
+		$this->assertSame(1, $reads);
+		$this->assertSame(27, $response['settings']['revision']);
+		$this->assertTrue($response['credentialStatus']['primaryConfigured']);
+		$this->assertFalse($response['credentialStatus']['backupConfigured']);
+		$this->assertSame('', $response['settings']['images']['accessKey']);
+		$this->assertSame('', $response['settings']['images']['secretKey']);
+	}
+
+	public function test_image_settings_do_not_expose_or_persist_an_upload_destination()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+
+		$this->assertArrayNotHasKey('destination', $settings['images']);
+		$this->assertIsArray($repository->update_settings($settings));
+		$stored = get_option(Options::EDITOR_SETTINGS);
+		$this->assertArrayNotHasKey('destination', $stored['settings_center']['images']);
+	}
+
+	public function test_update_rejects_invalid_image_runtime_identifiers_without_writing()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['endpoint'] = 'https://not-r2.example.test';
+
+		$result = $repository->update_settings($settings);
+
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code());
+		$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false));
+	}
+
+	public function test_update_accepts_official_r2_jurisdiction_endpoints()
+	{
+		foreach ( array( 'eu', 'us', 'fedramp' ) as $jurisdiction ) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['endpoint'] = 'https://synthetic-account.' . $jurisdiction . '.r2.cloudflarestorage.com';
+
+			$result = $repository->update_settings($settings);
+
+			$this->assertIsArray($result, $jurisdiction);
+			delete_option(Options::EDITOR_SETTINGS);
+		}
+	}
+
+	public function test_settings_contract_physically_omits_removed_general_fields_and_exposes_provider_coordinates()
+	{
+		$settings = (new SettingsCenterRepository(new Options(), new ToolbarRegistry()))->get_settings();
+
+		foreach (array('cleanPastedContent', 'smartListRecognition', 'defaultCategory') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['general']);
+		}
+		$this->assertArrayNotHasKey('accountId', $settings['images']);
+		foreach (array('endpoint', 'domain', 'backupEndpoint', 'backupDomain') as $field) {
+			$this->assertArrayHasKey($field, $settings['images']);
+		}
+		$this->assertSame(0, $settings['images']['uploadRetryCount']);
+		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['images']);
+		}
+	}
+
+	public function test_upload_retry_counts_are_persisted_and_projected_to_the_runtime()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['uploadRetryCount'] = 5;
+
+		$saved = $repository->update_settings($settings);
+
+		$this->assertIsArray($saved);
+		$this->assertSame(5, $saved['images']['uploadRetryCount']);
+		$runtime = $repository->get_image_hosting_settings();
+		$this->assertSame(5, $runtime['primary']['retryCount']);
+		$this->assertSame(5, $runtime['backup']['retryCount']);
+	}
+
+	public function test_http_viewing_domains_are_persisted_and_projected_to_the_runtime()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['domain'] = 'http://images.example.test';
+		$settings['images']['backupDomain'] = 'http://backup.example.test';
+
+		$saved = $repository->update_settings($settings);
+
+		$this->assertIsArray($saved);
+		$this->assertSame('http://images.example.test', $saved['images']['domain']);
+		$this->assertSame('http://backup.example.test', $saved['images']['backupDomain']);
+		$runtime = $repository->get_image_hosting_settings();
+		$this->assertSame('http://images.example.test', $runtime['primary']['domain']);
+		$this->assertSame('http://backup.example.test', $runtime['backup']['domain']);
+	}
+
+	public function test_upload_retry_counts_reject_out_of_range_and_non_integer_values_without_writing()
+	{
+		foreach (array('uploadRetryCount') as $field) {
+			foreach (array(-1, 6, '2', 2.0) as $invalid) {
+				$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+				$settings = $repository->get_settings();
+				$settings['images'][$field] = $invalid;
+
+				$result = $repository->update_settings($settings);
+
+				$this->assertWPError($result, $field . ':' . gettype($invalid));
+				$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), $field . ':' . gettype($invalid));
+				$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false), $field . ':' . gettype($invalid));
+			}
+		}
+	}
+
+	public function test_update_rejects_duplicate_primary_and_backup_destinations_before_writing()
+	{
+		$cases = array(
+			array('cloudflare-r2', 'https://same.r2.cloudflarestorage.com', 'same-bucket'),
+			array('qiniu-kodo', '', 'same-bucket'),
+			array('aliyun-oss', 'https://oss-cn-hangzhou.aliyuncs.com', 'same-bucket'),
+			array('tencent-cos', 'https://cos.ap-shanghai.myqcloud.com', 'same-bucket-1250000000'),
+		);
+
+		foreach ($cases as $case) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['service'] = $case[0];
+			$settings['images']['endpoint'] = $case[1];
+			$settings['images']['bucket'] = $case[2];
+			$settings['images']['domain'] = 'https://primary.example.test';
+			$settings['images']['backupEnabled'] = true;
+			$settings['images']['backupService'] = $case[0];
+			$settings['images']['backupEndpoint'] = strtoupper($case[1]);
+			$settings['images']['backupBucket'] = $case[2];
+			$settings['images']['backupDomain'] = 'https://different.example.test';
+
+			$result = $repository->update_settings($settings);
+
+			$this->assertWPError($result, $case[0]);
+			$this->assertSame('easymde_settings_duplicate_image_host_destination', $result->get_error_code(), $case[0]);
+			$this->assertSame(409, $result->get_error_data()['status'], $case[0]);
+			$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false), $case[0]);
+		}
+	}
+
+	public function test_disabled_backup_may_reference_the_primary_destination()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['service'] = 'qiniu-kodo';
+		$settings['images']['endpoint'] = '';
+		$settings['images']['bucket'] = 'same-bucket';
+		$settings['images']['backupEnabled'] = false;
+		$settings['images']['backupService'] = 'qiniu-kodo';
+		$settings['images']['backupBucket'] = 'same-bucket';
+
+		$this->assertIsArray($repository->update_settings($settings));
+	}
+
+	public function test_oss_public_and_internal_endpoints_are_the_same_physical_destination()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['service'] = 'aliyun-oss';
+		$settings['images']['endpoint'] = 'https://oss-cn-hangzhou.aliyuncs.com';
+		$settings['images']['bucket'] = 'same-bucket';
+		$settings['images']['backupEnabled'] = true;
+		$settings['images']['backupService'] = 'aliyun-oss';
+		$settings['images']['backupEndpoint'] = 'https://oss-cn-hangzhou-internal.aliyuncs.com';
+		$settings['images']['backupBucket'] = 'same-bucket';
+
+		$result = $repository->update_settings($settings);
+
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_duplicate_image_host_destination', $result->get_error_code());
+		$this->assertSame(409, $result->get_error_data()['status']);
+	}
+
     public function test_get_settings_normalizes_legacy_values_without_writing_or_exposing_secrets()
     {
         $legacy = array(
@@ -65,6 +350,34 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame(0, $settings['revision']);
         $this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
     }
+
+	public function test_markdown_settings_contract_omits_removed_presentation_and_capability_fields()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$markdown = $repository->get_settings()['markdown'];
+
+		foreach (
+			array(
+				'editorFontSize',
+				'editorFont',
+				'codeTheme',
+				'toc',
+				'livePreview',
+				'fixedToolbar',
+				'taskLists',
+				'emoji',
+				'math',
+				'tableExtension',
+				'footnotes',
+				'definitionLists',
+				'imageSizeSyntax',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $markdown);
+		}
+	}
 
     public function test_get_settings_imports_legacy_shortcuts_before_first_center_save()
     {
@@ -221,12 +534,16 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame('system', $settings['markdown']['editorTheme']);
 
         $settings['images']['service'] = 'Cloudflare R2';
-        $settings['images']['retryCount'] = 'Retry once';
+		$settings['images']['insertFormat'] = 'html';
+		$settings['images']['altSource'] = 'Fill on upload';
+		$settings['images']['captionMode'] = 'Fill on upload';
         $settings['markdown']['editorTheme'] = 'Follow System';
         $saved = $repository->update_settings($settings);
 
         $this->assertSame('cloudflare-r2', $saved['images']['service']);
-        $this->assertSame('once', $saved['images']['retryCount']);
+		$this->assertSame('markdown', $saved['images']['insertFormat']);
+		$this->assertSame('empty', $saved['images']['altSource']);
+		$this->assertSame('none', $saved['images']['captionMode']);
         $this->assertSame('system', $saved['markdown']['editorTheme']);
     }
 
@@ -244,6 +561,21 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame('easymde_settings_invalid_shortcut', $result->get_error_code());
         $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
     }
+
+	public function test_removed_image_host_fields_are_not_reintroduced_by_stored_data()
+	{
+		update_option(Options::EDITOR_SETTINGS, array('settings_center' => array('images' => array(
+			'fallbackDomain' => 'https://removed.example.test',
+			'backupSameObjectKey' => false,
+			'backupFailureMode' => 'abort',
+			'retryCount' => 'three-times',
+		))), false);
+		$settings = (new SettingsCenterRepository(new Options(), new ToolbarRegistry()))->get_settings();
+
+		foreach (array('fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['images']);
+		}
+	}
 
     public function test_rest_update_requires_manage_options_and_returns_sanitized_settings()
     {
@@ -271,5 +603,31 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $forbidden = rest_do_request($request);
         $this->assertSame(403, $forbidden->get_status());
         $this->assertSame('easymde_rest_cannot_manage_settings', $forbidden->as_error()->get_error_code());
+    }
+
+    public function test_rest_update_rejects_disabling_every_upload_format()
+    {
+        global $wp_rest_server;
+        $wp_rest_server = new WP_REST_Server();
+        do_action('rest_api_init');
+
+        $administrator_id = self::factory()->user->create(array('role' => 'administrator'));
+        wp_set_current_user($administrator_id);
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['uploadFormats'] = array(
+            'jpg' => false,
+            'png' => false,
+            'webp' => false,
+            'gif' => false,
+        );
+
+        $request = new WP_REST_Request('POST', '/easymde/v1/settings');
+        $request->set_header('X-EasyMDE-Settings-Nonce', wp_create_nonce('easymde_update_settings'));
+        $request->set_body_params(array('settings' => $settings));
+        $response = rest_do_request($request);
+
+        $this->assertSame(400, $response->get_status());
+        $this->assertSame('easymde_settings_invalid_payload', $response->as_error()->get_error_code());
     }
 }

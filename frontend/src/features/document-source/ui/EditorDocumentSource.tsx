@@ -43,7 +43,8 @@ export function EditorDocumentSource({
       label: editorLabel,
       lineNumbers: settings.general.showLineNumbers,
       submissionField,
-      syntaxHighlight: settings.general.syntaxHighlight
+      syntaxHighlight: settings.general.syntaxHighlight,
+      wordWrap: settings.markdown.wordWrap
     });
     let titleSession: NativeTitleSession;
     let editorSession: EditorDocumentSession;

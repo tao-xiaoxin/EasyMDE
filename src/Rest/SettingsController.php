@@ -2,6 +2,7 @@
 
 namespace EasyMDE\Rest;
 
+use EasyMDE\ImageHosting\ImageHostProviderSupport;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\SettingsCenterRepository;
 use WP_Error;
@@ -56,11 +57,7 @@ final class SettingsController {
 	public function handle_get_request( WP_REST_Request $request ) {
 		unset( $request );
 
-		return rest_ensure_response(
-			array(
-				'settings' => $this->settings_repository->get_settings(),
-			)
-		);
+		return rest_ensure_response( $this->settings_repository->get_settings_response() );
 	}
 
 	public function handle_update_request( WP_REST_Request $request ) {
@@ -79,12 +76,12 @@ final class SettingsController {
 			return $valid_reset;
 		}
 
-		$result = $this->settings_repository->update_settings( $settings, $reset );
+		$result = $this->settings_repository->update_settings_response( $settings, $reset );
 		if ( is_wp_error( $result ) ) {
 			return $result;
 		}
 
-		return rest_ensure_response( array( 'settings' => $result ) );
+		return rest_ensure_response( $result );
 	}
 
 	public function can_update_settings( WP_REST_Request $request ) {
@@ -129,9 +126,9 @@ final class SettingsController {
 
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
-			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'service', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
-			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'editorTheme', 'editorFontSize', 'editorFont', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeTheme', 'codeLineNumbers', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
+			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
+			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
+			'markdown'  => array( 'wordWrap', 'lineNumbers', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -151,35 +148,31 @@ final class SettingsController {
 				'editingMode'       => 16,
 				'statusBarMode'     => 32,
 				'autoSaveInterval'  => 8,
-				'defaultCategory'   => 16,
 				'publishVisibility' => 16,
 				'summaryMode'       => 16,
 			),
 			'images'   => array(
-				'service'           => 32,
-				'bucket'            => 160,
-				'domain'            => 255,
-				'accessKey'         => 255,
-				'secretKey'         => 255,
-				'fileNameRule'      => 160,
-				'backupService'     => 32,
-				'backupBucket'      => 160,
-				'backupDomain'      => 255,
-				'backupAccessKey'   => 255,
-				'backupSecretKey'   => 255,
-				'backupFailureMode' => 32,
-				'retryCount'        => 16,
-				'maxImageSize'      => 16,
-				'insertFormat'      => 16,
-				'altSource'         => 16,
-				'captionMode'       => 16,
+				'service'         => 32,
+				'endpoint'        => 255,
+				'bucket'          => 128,
+				'domain'          => 255,
+				'accessKey'       => 255,
+				'secretKey'       => 255,
+				'fileNameRule'    => 160,
+				'backupService'   => 32,
+				'backupEndpoint'  => 255,
+				'backupBucket'    => 128,
+				'backupDomain'    => 255,
+				'backupAccessKey' => 255,
+				'backupSecretKey' => 255,
+				'maxImageSize'    => 16,
+				'insertFormat'    => 16,
+				'altSource'       => 16,
+				'captionMode'     => 16,
 			),
 			'markdown' => array(
 				'editorTheme'     => 16,
-				'editorFontSize'  => 16,
-				'editorFont'      => 32,
 				'tableAlignment'  => 16,
-				'codeTheme'       => 16,
 				'codeLineNumbers' => 16,
 				'lineEnding'      => 16,
 				'unorderedMarker' => 120,
@@ -188,9 +181,9 @@ final class SettingsController {
 			),
 		);
 		$boolean_fields = array(
-			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'cleanPastedContent', 'smartListRecognition', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
-			'images'    => array( 'backupEnabled', 'backupSameObjectKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
-			'markdown'  => array( 'livePreview', 'wordWrap', 'lineNumbers', 'fixedToolbar', 'githubFlavor', 'smartPunctuation', 'taskLists', 'emoji', 'math', 'htmlRendering', 'tableExtension', 'footnotes', 'definitionLists', 'toc', 'imageSizeSyntax', 'pasteAsMarkdown' ),
+			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
+			'images'    => array( 'backupEnabled', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
+			'markdown'  => array( 'wordWrap', 'lineNumbers', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -208,6 +201,15 @@ final class SettingsController {
 				}
 			}
 		}
+		foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
+			if (
+				! is_int( $value['images'][ $retry_field ] ) ||
+				$value['images'][ $retry_field ] < 0 ||
+				$value['images'][ $retry_field ] > 5
+			) {
+				return $this->invalid_payload_error();
+			}
+		}
 
 		if ( ! is_array( $value['images']['uploadFormats'] ) || ! $this->has_exact_keys( $value['images']['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) ) ) {
 			return $this->invalid_payload_error();
@@ -216,6 +218,9 @@ final class SettingsController {
 			if ( ! is_bool( $enabled ) ) {
 				return $this->invalid_payload_error();
 			}
+		}
+		if ( ! in_array( true, $value['images']['uploadFormats'], true ) ) {
+			return $this->invalid_payload_error();
 		}
 
 		$shortcut_ids = array( 'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote', 'unordered-list', 'ordered-list' );
@@ -239,26 +244,20 @@ final class SettingsController {
 				'editingMode'       => array( 'live-preview', 'source', 'preview' ),
 				'statusBarMode'     => array( 'words-reading-time', 'words', 'hidden' ),
 				'autoSaveInterval'  => array( '30', '60', '120', '300' ),
-				'defaultCategory'   => array( 'none', 'current' ),
 				'publishVisibility' => array( 'public', 'private', 'password' ),
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),
 			'images'   => array(
-				'service'           => array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos', 'custom' ),
-				'backupService'     => array( 'qiniu-kodo', 'cloudflare-r2', 'aliyun-oss', 'tencent-cos', 'custom' ),
-				'backupFailureMode' => array( 'return-primary-url', 'fail-upload' ),
-				'retryCount'        => array( 'none', 'once', 'twice', 'three-times' ),
-				'maxImageSize'      => array( 'original', '1920', '2560', '3840' ),
-				'insertFormat'      => array( 'markdown', 'html', 'url' ),
-				'altSource'         => array( 'filename', 'empty', 'upload' ),
-				'captionMode'       => array( 'none', 'filename', 'upload' ),
+				'service'       => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'backupService' => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'maxImageSize'  => array( 'original', '1920', '2560', '3840' ),
+				'insertFormat'  => array( 'markdown', 'url' ),
+				'altSource'     => array( 'filename', 'empty' ),
+				'captionMode'   => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
 				'editorTheme'     => array( 'system', 'light', 'dark' ),
-				'editorFontSize'  => array( '12px', '13px', '14px', '15px', '16px', '18px' ),
-				'editorFont'      => array( 'system', 'monospace', 'source-han-sans' ),
 				'tableAlignment'  => array( 'auto', 'left', 'center' ),
-				'codeTheme'       => array( 'light', 'dark', 'follow-editor' ),
 				'codeLineNumbers' => array( 'show', 'hide' ),
 				'lineEnding'      => array( 'system', 'lf', 'crlf' ),
 				'blockquoteStyle' => array( 'standard', 'spaced' ),
@@ -276,6 +275,15 @@ final class SettingsController {
 			if ( ! $this->is_valid_domain( $value['images'][ $field ] ) ) {
 				return $this->invalid_payload_error();
 			}
+		}
+		if (
+			! $this->is_valid_provider_coordinates( $value['images']['service'], $value['images']['endpoint'] ) ||
+			! $this->is_valid_provider_coordinates( $value['images']['backupService'], $value['images']['backupEndpoint'] )
+		) {
+			return $this->invalid_payload_error();
+		}
+		if ( ! $this->is_valid_file_name_rule( $value['images']['fileNameRule'] ) ) {
+			return $this->invalid_payload_error();
 		}
 
 		return true;
@@ -306,7 +314,7 @@ final class SettingsController {
 		}
 
 		$parts = wp_parse_url( $value );
-		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'] ) ) {
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
 			return false;
 		}
 
@@ -317,6 +325,38 @@ final class SettingsController {
 		$url = esc_url_raw( $value, array( 'http', 'https' ) );
 
 		return is_string( $url ) && '' !== $url;
+	}
+
+	private function is_valid_provider_coordinates( $service, $endpoint ) {
+		if ( 'qiniu-kodo' === $service ) {
+			return '' === $endpoint;
+		}
+		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
+			return '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint );
+		}
+
+		return false;
+	}
+
+	private function is_valid_file_name_rule( $rule ) {
+		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+			return false;
+		}
+
+		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
+			return false;
+		}
+
+		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
+		foreach ( $matches[1] as $variable ) {
+			if ( ! in_array( $variable, $allowed, true ) ) {
+				return false;
+			}
+		}
+
+		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
+
+		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
 	}
 
 	private function has_exact_keys( array $value, array $expected ) {

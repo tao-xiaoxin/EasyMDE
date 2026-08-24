@@ -2,9 +2,14 @@ import type {
   ImageUploadDocumentPort,
   ImageUploadDocumentSnapshot,
   ImageUploadPort,
-  ImageUploadSelection
+  ImageUploadSelection,
 } from '../../contracts/ports/image-upload-port';
-import type { ImageUploadStrings } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type {
+  ImageUploadInsertion,
+  ImageUploadMimeType,
+  ImageUploadStrings,
+} from '../../contracts/bootstrap/image-upload-bootstrap';
+import { defaultImageAlt, imageInsertionText } from './image-insertion';
 
 export type ImageUploadSource = 'drop' | 'paste';
 
@@ -15,8 +20,11 @@ export type ImageUploadStatus = Readonly<{
 }>;
 
 type CreateImageUploadSessionOptions = Readonly<{
+  allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   document: ImageUploadDocumentPort;
   enabled: boolean;
+  insertion: ImageUploadInsertion;
+  insertAfterUpload: boolean;
   maxBytes: number;
   nextOperationId: () => string;
   onDiagnostic: (code: string) => void;
@@ -27,13 +35,33 @@ type CreateImageUploadSessionOptions = Readonly<{
   upload: ImageUploadPort;
 }>;
 
+function imageMimeType(file: File): ImageUploadMimeType | null {
+  const mimeType = file.type.toLowerCase();
+  if ('image/jpg' === mimeType) return 'image/jpeg';
+  if (['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
+    return mimeType as ImageUploadMimeType;
+  }
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  const extensionMimeTypes: Readonly<Record<string, ImageUploadMimeType>> = {
+    gif: 'image/gif',
+    jfif: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+  };
+  return extension ? (extensionMimeTypes[extension] ?? null) : null;
+}
+
 function validSelection(selection: ImageUploadSelection, value: string): boolean {
-  return Number.isInteger(selection.start)
-    && Number.isInteger(selection.end)
-    && selection.start >= 0
-    && selection.end >= selection.start
-    && selection.end <= value.length
-    && ['backward', 'forward', 'none'].includes(selection.direction);
+  return (
+    Number.isInteger(selection.start) &&
+    Number.isInteger(selection.end) &&
+    selection.start >= 0 &&
+    selection.end >= selection.start &&
+    selection.end <= value.length &&
+    ['backward', 'forward', 'none'].includes(selection.direction)
+  );
 }
 
 function documentSnapshot(document: ImageUploadDocumentPort): ImageUploadDocumentSnapshot {
@@ -58,34 +86,13 @@ function firstImageFile(transfer: DataTransfer | null): File | null {
 }
 
 function hasImageFile(transfer: DataTransfer | null): boolean {
-  return Array.from(transfer?.items ?? []).some(
-    (item) => 'file' === item.kind && /^image\//i.test(item.type)
-  ) || Array.from(transfer?.files ?? []).some((file) => /^image\//i.test(file.type));
+  return (
+    Array.from(transfer?.items ?? []).some((item) => 'file' === item.kind && /^image\//i.test(item.type)) ||
+    Array.from(transfer?.files ?? []).some((file) => /^image\//i.test(file.type))
+  );
 }
 
-function defaultAltFromFile(file: File, fallback: string): string {
-  if (!file.name) {
-    return fallback;
-  }
-  return file.name.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ');
-}
-
-function escapeAltText(value: string): string {
-  return value
-    .replace(/[\r\n\t]+/g, ' ')
-    .replace(/[[\]]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function imageMarkdown(url: string, alt: string): string {
-  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')})`;
-}
-
-function rebaseSelection(
-  initial: ImageUploadDocumentSnapshot,
-  currentValue: string
-): ImageUploadSelection {
+function rebaseSelection(initial: ImageUploadDocumentSnapshot, currentValue: string): ImageUploadSelection {
   if (currentValue === initial.value) {
     return initial.selection;
   }
@@ -114,8 +121,11 @@ function statusMessage(strings: ImageUploadStrings, source: ImageUploadSource, s
 }
 
 export function createImageUploadSession({
+  allowedMimeTypes,
   document,
   enabled,
+  insertion,
+  insertAfterUpload,
   maxBytes,
   nextOperationId,
   onDiagnostic,
@@ -123,20 +133,21 @@ export function createImageUploadSession({
   postId,
   strings,
   target,
-  upload
+  upload,
 }: CreateImageUploadSessionOptions): () => void {
   let active = true;
+  const activeUploads = new Set<AbortController>();
 
   const handleFile = async (
     event: ClipboardEvent | DragEvent,
     file: File,
-    source: ImageUploadSource
+    source: ImageUploadSource,
   ): Promise<void> => {
     const operationId = nextOperationId();
-    const reportStatus = (
-      message: string,
-      type: ImageUploadStatus['type']
-    ) => onStatus({ message, operationId, type });
+    const reportStatus = (message: string, type: ImageUploadStatus['type']) => onStatus({ message, operationId, type });
+    const reportCompletion = () => {
+      reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
+    };
     event.preventDefault();
     const dropTransfer = 'drop' === source ? (event as DragEvent).dataTransfer : null;
     if (dropTransfer) {
@@ -146,22 +157,33 @@ export function createImageUploadSession({
       reportStatus(statusMessage(strings, source, 'TooLarge'), 'error');
       return;
     }
-
-    let initial: ImageUploadDocumentSnapshot;
-    try {
-      initial = documentSnapshot(document);
-    } catch {
-      onDiagnostic('image-upload-document-snapshot-invalid');
+    const mimeType = imageMimeType(file);
+    if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
       reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       return;
     }
 
+    let initial: ImageUploadDocumentSnapshot | null = null;
+    if (insertAfterUpload) {
+      try {
+        initial = documentSnapshot(document);
+      } catch {
+        onDiagnostic('image-upload-document-snapshot-invalid');
+        reportStatus(statusMessage(strings, source, 'Failed'), 'error');
+        return;
+      }
+    }
+
     reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
+    const controller = new AbortController();
+    activeUploads.add(controller);
     try {
+      const fileNameAlt = defaultImageAlt(file.name, strings.defaultAlt);
       const result = await upload.upload({
-        altText: defaultAltFromFile(file, strings.defaultAlt),
+        altText: 'filename' === insertion.altSource ? fileNameAlt : '',
         file,
-        postId
+        postId,
+        signal: controller.signal,
       });
       if (!active) {
         onDiagnostic('image-upload-completed-after-teardown');
@@ -171,22 +193,38 @@ export function createImageUploadSession({
         reportStatus(statusMessage(strings, source, 'Failed'), 'error');
         return;
       }
+      if (!insertAfterUpload) {
+        reportCompletion();
+        return;
+      }
+      if (!initial) {
+        throw new Error('image-upload-document-snapshot-missing');
+      }
 
       const current = documentSnapshot(document);
       const selection = rebaseSelection(initial, current.value);
-      const markdown = imageMarkdown(result.url, result.alt || strings.defaultAlt);
-      const cursor = selection.start + markdown.length;
+      const inserted = imageInsertionText({
+        defaultAlt: strings.defaultAlt,
+        fileName: file.name,
+        insertion,
+        uploadedAlt: result.alt,
+        uploadedTitle: result.title,
+        url: result.url,
+      });
+      const cursor = selection.start + inserted.length;
       document.applyTextChange({
         selection: { direction: selection.direction, end: cursor, start: cursor },
-        value: current.value.slice(0, selection.start) + markdown + current.value.slice(selection.end)
+        value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end),
       });
       document.focus();
-      reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
+      reportCompletion();
     } catch {
       if (active) {
         onDiagnostic('image-upload-operation-failed');
         reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       }
+    } finally {
+      activeUploads.delete(controller);
     }
   };
 
@@ -227,6 +265,10 @@ export function createImageUploadSession({
       return;
     }
     active = false;
+    for (const controller of activeUploads) {
+      controller.abort();
+    }
+    activeUploads.clear();
     target.removeEventListener('paste', onPaste);
     target.removeEventListener('dragover', onDragOver);
     target.removeEventListener('drop', onDrop);

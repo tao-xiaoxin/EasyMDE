@@ -22,6 +22,7 @@ import type {
   NativePublishVisibility
 } from '../../../contracts/ports/native-publish-port';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
+import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 
 function format(template: string, value: string | number): string {
   return template.replace('%s', String(value)).replace('%d', String(value));
@@ -31,16 +32,21 @@ function normalizeTag(value: string): string {
   return value.replace(/\s+/gu, ' ').trim();
 }
 
-function cloneDraft(snapshot: NativePublishSnapshot): NativePublishDraft {
+function cloneDraft(
+  snapshot: NativePublishSnapshot,
+  defaults: GeneralSettings
+): NativePublishDraft {
   return {
     categoryIds: [...snapshot.categoryIds],
     excerpt: snapshot.excerpt,
     featuredImage: snapshot.featuredImage ? { ...snapshot.featuredImage } : null,
-    openPreview: true,
+    openPreview: defaults.openPreviewAfterPublish,
     password: snapshot.password,
     sticky: snapshot.sticky,
     tags: [...snapshot.tags],
-    visibility: snapshot.visibility
+    visibility: snapshot.existing
+      ? snapshot.visibility
+      : defaults.publishVisibility as NativePublishVisibility
   };
 }
 
@@ -323,6 +329,7 @@ function PublishButtonSparkles() {
 }
 
 export function ImmersivePublishDialog({
+  defaults,
   environment,
   onClose,
   onConfirm,
@@ -330,6 +337,7 @@ export function ImmersivePublishDialog({
   snapshot,
   strings
 }: Readonly<{
+  defaults: GeneralSettings;
   environment: ImmersiveEnvironmentPort;
   onClose: () => void;
   onConfirm: (draft: NativePublishDraft, original: NativePublishSnapshot) => boolean;
@@ -337,7 +345,7 @@ export function ImmersivePublishDialog({
   snapshot: NativePublishSnapshot;
   strings: ImmersiveStrings;
 }>) {
-  const [draft, setDraft] = useState(() => cloneDraft(snapshot));
+  const [draft, setDraft] = useState(() => cloneDraft(snapshot, defaults));
   const [tagInput, setTagInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
@@ -515,7 +523,7 @@ export function ImmersivePublishDialog({
               </div>
             ) : (
               <button type="button" className="easymde-publish-featured-empty" disabled={submitting || mediaPending} onClick={selectFeaturedImage}>
-                <FeaturedPlaceholder />
+                {defaults.featuredImagePlaceholder ? <FeaturedPlaceholder /> : null}
                 <strong>{strings.selectFeaturedImage}</strong>
                 <span>{strings.imageRecommendation}</span>
                 <small>{strings.imageRequirements}</small>

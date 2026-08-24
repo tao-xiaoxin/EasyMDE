@@ -800,7 +800,7 @@ Locale、Placeholder、Context、Plural、RTL 和安装包验证流程由
 - 输出尽量靠近输出位置 Escape；
 - REST 返回 Data、`WP_REST_Response` 或 `WP_Error`；
 - Client 不根据翻译文本判断错误类型；
-- Mutation 不自动 Retry；
+- Mutation 不自动 Retry；唯一当前例外是管理员显式保存的一个图床上传重试次数，该值同时作用于主、备写入，并且必须遵守受批准 External Service 合同中的严格上限、同对象 Key、严格整体失败和可见错误规则；
 - 只有有界、幂等 Read 可在支持 Abort 和过期结果保护时 Retry。
 
 ## 十三、正式数据流
@@ -1084,7 +1084,7 @@ Frontend Package Impact 的测试选择属于 `.agents/skills/easymde/SKILL.md`�
 7. Circular Dependency、Upward Import、Broad Barrel 或跨 Feature Private Deep Import；
 8. Render-time Side Effect、Effect-driven User Command、Mirrored State 或 Impossible Boolean Props；
 9. Random Key、Reorderable Domain Data 的 Index Key 或 Nested Component Definition 导致的意外重置；
-10. Silent Fallback、Swallowed Error、Fake Success、Hidden Write、Force-click Disabled Control 或 Automatic Mutation Retry；
+10. Silent Fallback、Swallowed Error、Fake Success、Hidden Write、Force-click Disabled Control，或不属于受批准有界 External Service 合同的 Automatic Mutation Retry；
 11. Stale Async Work 更新当前 Post、Root、Dialog 或 Session；
 12. Effect 缺少 Cleanup、Idempotence、Failure Handling 或 Repeated Lifecycle Safety；
 13. Browser Local Scheduling 覆盖 WordPress Site Timezone；

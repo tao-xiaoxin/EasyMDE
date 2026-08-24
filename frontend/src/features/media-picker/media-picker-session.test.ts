@@ -1,16 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type {
-  MediaPickerDocumentPort,
-  MediaPickerFramePort
-} from '../../contracts/ports/media-picker-port';
+import type { MediaPickerDocumentPort, MediaPickerFramePort } from '../../contracts/ports/media-picker-port';
 import { openMediaPickerSession } from './media-picker-session';
 
 function createDocumentPort(value = 'before IMAGE after') {
   let currentValue = value;
-  let selection = value.length >= 12
-    ? { direction: 'backward' as const, end: 12, start: 7 }
-    : { direction: 'none' as const, end: value.length, start: value.length };
+  let selection =
+    value.length >= 12
+      ? { direction: 'backward' as const, end: 12, start: 7 }
+      : { direction: 'none' as const, end: value.length, start: value.length };
   const applyTextChange = vi.fn((change) => {
     currentValue = change.value;
     selection = change.selection;
@@ -19,7 +17,7 @@ function createDocumentPort(value = 'before IMAGE after') {
   const port: MediaPickerDocumentPort = {
     applyTextChange,
     focus,
-    getSnapshot: () => ({ selection, value: currentValue })
+    getSnapshot: () => ({ selection, value: currentValue }),
   };
 
   return { applyTextChange, focus, getValue: () => currentValue, port };
@@ -38,37 +36,114 @@ function createFramePort() {
     close: () => close?.(),
     open,
     port,
-    select: (attachment: unknown) => select?.(attachment)
+    select: (attachment: unknown) => select?.(attachment),
   };
 }
 
 const strings = {
   defaultAlt: 'image',
   insertMedia: 'Insert Media',
-  placeholderAlt: 'alt text'
+  insertion: {
+    altSource: 'filename' as const,
+    captionMode: 'none' as const,
+    format: 'markdown' as const,
+  },
+  placeholderAlt: 'alt text',
 };
 
 describe('openMediaPickerSession', () => {
-  it('replaces the captured selection once and restores focus when WordPress closes', async () => {
+  it('escapes a trailing backslash in media Alt text as valid Markdown', async () => {
     const document = createDocumentPort();
     const frame = createFramePort();
-    const result = openMediaPickerSession({ document: document.port, frame: frame.port, strings });
-
-    expect(frame.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Insert Media' }));
-    frame.select({ alt: '', title: 'Selected image', url: 'https://example.test/image.png' });
-    frame.select({ alt: 'Duplicate', title: '', url: 'https://example.test/duplicate.png' });
+    const result = openMediaPickerSession({
+      document: document.port,
+      frame: frame.port,
+      strings: {
+        ...strings,
+        insertion: {
+          altSource: 'upload',
+          captionMode: 'none',
+          format: 'markdown',
+        },
+      },
+    });
+    frame.select({
+      alt: 'Media alt\\',
+      filename: 'selected-image.png',
+      title: '',
+      url: 'https://example.test/image.png',
+    });
     frame.close();
 
     await expect(result).resolves.toBe('inserted');
-    expect(document.getValue()).toBe('before ![Selected image](https://example.test/image.png) after');
+    expect(document.getValue()).toBe('before ![Media alt\\\\](https://example.test/image.png) after');
+  });
+
+  it('replaces the captured selection once and restores focus when WordPress closes', async () => {
+    const document = createDocumentPort();
+    const frame = createFramePort();
+    const result = openMediaPickerSession({
+      document: document.port,
+      frame: frame.port,
+      strings,
+    });
+
+    expect(frame.open).toHaveBeenCalledWith(expect.objectContaining({ title: 'Insert Media' }));
+    frame.select({
+      alt: '',
+      filename: 'selected-image.png',
+      title: 'Selected image',
+      url: 'https://example.test/image.png',
+    });
+    frame.select({
+      alt: 'Duplicate',
+      title: '',
+      url: 'https://example.test/duplicate.png',
+    });
+    frame.close();
+
+    await expect(result).resolves.toBe('inserted');
+    expect(document.getValue()).toBe('before ![selected image](https://example.test/image.png) after');
     expect(document.applyTextChange).toHaveBeenCalledTimes(1);
     expect(document.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies URL-only and uploaded metadata insertion preferences', async () => {
+    for (const [insertion, expected] of [
+      [{ altSource: 'filename', captionMode: 'none', format: 'url' }, 'before https://example.test/image.png after'],
+      [
+        { altSource: 'upload', captionMode: 'upload', format: 'markdown' },
+        'before ![Media alt](https://example.test/image.png "Media title") after',
+      ],
+    ] as const) {
+      const document = createDocumentPort();
+      const frame = createFramePort();
+      const result = openMediaPickerSession({
+        document: document.port,
+        frame: frame.port,
+        strings: { ...strings, insertion },
+      });
+      frame.select({
+        alt: 'Media alt',
+        filename: 'selected-image.png',
+        title: 'Media title',
+        url: 'https://example.test/image.png',
+      });
+      frame.close();
+
+      await expect(result).resolves.toBe('inserted');
+      expect(document.getValue()).toBe(expected);
+    }
   });
 
   it('leaves the document unchanged on cancel and restores focus', async () => {
     const document = createDocumentPort();
     const frame = createFramePort();
-    const result = openMediaPickerSession({ document: document.port, frame: frame.port, strings });
+    const result = openMediaPickerSession({
+      document: document.port,
+      frame: frame.port,
+      strings,
+    });
 
     frame.close();
 
@@ -81,8 +156,9 @@ describe('openMediaPickerSession', () => {
   it('inserts the established Markdown placeholder when WordPress media is unavailable', async () => {
     const document = createDocumentPort('Intro');
 
-    await expect(openMediaPickerSession({ document: document.port, frame: null, strings }))
-      .resolves.toBe('placeholder');
+    await expect(openMediaPickerSession({ document: document.port, frame: null, strings })).resolves.toBe(
+      'placeholder',
+    );
     expect(document.getValue()).toBe('Intro![alt text]()');
     expect(document.focus).toHaveBeenCalledTimes(1);
   });
@@ -90,14 +166,22 @@ describe('openMediaPickerSession', () => {
   it('rejects a stale asynchronous selection without mutating newer Markdown', async () => {
     const document = createDocumentPort();
     const frame = createFramePort();
-    const result = openMediaPickerSession({ document: document.port, frame: frame.port, strings });
+    const result = openMediaPickerSession({
+      document: document.port,
+      frame: frame.port,
+      strings,
+    });
 
     document.port.applyTextChange({
       selection: { direction: 'none', end: 7, start: 7 },
-      value: 'newer content'
+      value: 'newer content',
     });
     document.applyTextChange.mockClear();
-    frame.select({ alt: 'Stale', title: '', url: 'https://example.test/stale.png' });
+    frame.select({
+      alt: 'Stale',
+      title: '',
+      url: 'https://example.test/stale.png',
+    });
     frame.close();
 
     await expect(result).rejects.toThrow('media-picker-document-stale');
@@ -111,11 +195,12 @@ describe('openMediaPickerSession', () => {
     const frame: MediaPickerFramePort = {
       open() {
         throw new Error('Synthetic frame failure');
-      }
+      },
     };
 
-    await expect(openMediaPickerSession({ document: document.port, frame, strings }))
-      .rejects.toThrow('Synthetic frame failure');
+    await expect(openMediaPickerSession({ document: document.port, frame, strings })).rejects.toThrow(
+      'Synthetic frame failure',
+    );
     expect(document.focus).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,5 +1,6 @@
 import {
 	createElement,
+	createPortal,
 	useEffect,
 	useMemo,
 	useRef,
@@ -11,10 +12,16 @@ import type {
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
 import { ChevronRight, X } from "../../generated/lucide-icons";
+import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
+import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
-import { AboutSettingsPage } from "./AboutSettingsPage";
+import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
-import { ImagesSettingsPage } from "./ImagesSettingsPage";
+import {
+	DuplicateImageHostDialog,
+	hasDuplicateImageHostConfiguration,
+	ImagesSettingsPage,
+} from "./ImagesSettingsPage";
 import { MarkdownSettingsPage } from "./MarkdownSettingsPage";
 import { ShortcutsSettingsPage } from "./ShortcutsSettingsPage";
 import {
@@ -59,6 +66,49 @@ type SearchSection = Readonly<{
 	groups: ReadonlyArray<SearchGroup>;
 }>;
 type SaveError = "conflict" | "invalid" | "network" | "rejected" | null;
+type ImageVerificationInvalidation = Readonly<{
+	primary: boolean;
+	backup: boolean;
+}>;
+const PRIMARY_VERIFICATION_SETTING_KEYS = [
+	"fileNameRule",
+	"service",
+	"endpoint",
+	"bucket",
+	"domain",
+	"accessKey",
+	"secretKey",
+] as const;
+const BACKUP_VERIFICATION_SETTING_KEYS = [
+	"fileNameRule",
+	"domain",
+	"backupEnabled",
+	"backupService",
+	"backupEndpoint",
+	"backupBucket",
+	"backupDomain",
+	"backupAccessKey",
+	"backupSecretKey",
+] as const;
+
+function imageVerificationInvalidation(
+	previous: SettingsCenterSettings["images"],
+	requested: SettingsCenterSettings["images"],
+	resetSecrets: boolean,
+): ImageVerificationInvalidation {
+	return {
+		primary:
+			resetSecrets ||
+			PRIMARY_VERIFICATION_SETTING_KEYS.some(
+				(key) => previous[key] !== requested[key],
+			),
+		backup:
+			resetSecrets ||
+			BACKUP_VERIFICATION_SETTING_KEYS.some(
+				(key) => previous[key] !== requested[key],
+			),
+	};
+}
 const NAV_ITEMS: ReadonlyArray<
 	Readonly<{
 		id: NavId;
@@ -109,6 +159,7 @@ const NAV_ITEMS: ReadonlyArray<
 
 const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
 const SETTINGS_SECTION_ACTIVATION_OFFSET = 15;
+const SETTINGS_SECTION_ACTIVATION_HYSTERESIS = 18;
 const SETTINGS_SECTION_SCROLL_LEAD = 6;
 const SETTINGS_SEARCH_RESULT_SCROLL_TRAIL = 18;
 const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
@@ -127,6 +178,9 @@ export function SettingsCenterRoot({
 	const [settings, setSettings] = useState<SettingsCenterSettings>(
 		bootstrap.settings,
 	);
+	const [imageDraft, setImageDraft] = useState(bootstrap.drafts.images);
+	const [verificationInvalidationTokens, setVerificationInvalidationTokens] =
+		useState({ primary: 0, backup: 0 });
 	const settingsRef = useRef<SettingsCenterSettings>(bootstrap.settings);
 	const resetSecretsRef = useRef(false);
 	const [savedSettings, setSavedSettings] = useState<SettingsCenterSettings>(
@@ -137,19 +191,26 @@ export function SettingsCenterRoot({
 	>("idle");
 	const [saveConflict, setSaveConflict] = useState(false);
 	const [saveError, setSaveError] = useState<SaveError>(null);
-	const [transferMutationUnavailable, setTransferMutationUnavailable] =
-		useState(false);
 	const saveControllerRef = useRef<AbortController | null>(null);
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
+	const [duplicateSaveTrigger, setDuplicateSaveTrigger] =
+		useState<HTMLButtonElement | null>(null);
+	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
+	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
+	const sidebarHelpWasOpenRef = useRef(false);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const navigationRef = useRef<HTMLElement>(null);
 	const stickyHeaderRef = useRef<HTMLDivElement>(null);
 	const saveBarRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
 	const searchIndexSignatureRef = useRef("");
 	const searchNavigationFrameRef = useRef<number | null>(null);
 	const searchNavigationWindowRef = useRef<Window | null>(null);
+	const scrollSpyFrameRef = useRef<number | null>(null);
+	const scrollSpyWindowRef = useRef<Window | null>(null);
+	const normalizedQueryRef = useRef("");
 	const strings = bootstrap.strings;
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
@@ -157,6 +218,7 @@ export function SettingsCenterRoot({
 	const current = NAV_ITEMS.find((item) => item.id === activeTab);
 	if (!current) throw new Error("settings-center-active-tab-invalid");
 	const normalizedQuery = query.trim().toLowerCase();
+	normalizedQueryRef.current = normalizedQuery;
 	const searchSections = useMemo<ReadonlyArray<SearchSection>>(() => {
 		if (!normalizedQuery) return [];
 
@@ -188,6 +250,53 @@ export function SettingsCenterRoot({
 				: [];
 		});
 	}, [normalizedQuery, searchItems, strings]);
+	const highlightedNavId =
+		normalizedQuery && searchSections.length === 1
+			? searchSections[0]?.tabId
+			: activeTab;
+
+	useEffect(() => {
+		const navigation = navigationRef.current;
+		if (!navigation)
+			throw new Error("settings-center-navigation-element-missing");
+		if (
+			navigation.scrollWidth <= navigation.clientWidth &&
+			navigation.scrollHeight <= navigation.clientHeight
+		)
+			return;
+		const activeItem = navigation.querySelector<HTMLElement>(
+			`[data-nav-id="${highlightedNavId}"]`,
+		);
+		if (!activeItem)
+			throw new Error("settings-center-active-navigation-item-missing");
+		const navigationRect = navigation.getBoundingClientRect();
+		const activeItemRect = activeItem.getBoundingClientRect();
+		const horizontalScale =
+			navigation.clientWidth > 0 && navigationRect.width > 0
+				? navigationRect.width / navigation.clientWidth
+				: 1;
+		const verticalScale =
+			navigation.clientHeight > 0 && navigationRect.height > 0
+				? navigationRect.height / navigation.clientHeight
+				: 1;
+		const leftDelta =
+			activeItemRect.left < navigationRect.left
+				? activeItemRect.left - navigationRect.left
+				: activeItemRect.right > navigationRect.right
+					? activeItemRect.right - navigationRect.right
+					: 0;
+		const topDelta =
+			activeItemRect.top < navigationRect.top
+				? activeItemRect.top - navigationRect.top
+				: activeItemRect.bottom > navigationRect.bottom
+					? activeItemRect.bottom - navigationRect.bottom
+					: 0;
+		navigation.scrollTo({
+			left: navigation.scrollLeft + leftDelta / horizontalScale,
+			top: navigation.scrollTop + topDelta / verticalScale,
+			behavior: "auto",
+		});
+	}, [highlightedNavId]);
 	const searchResultCount = searchSections.reduce(
 		(total, section) =>
 			total +
@@ -203,6 +312,25 @@ export function SettingsCenterRoot({
 	const pageDescription = normalizedQuery
 		? formatSinglePlaceholder(strings.searchPageDescription, query.trim())
 		: strings[current.description];
+
+	useEffect(() => {
+		if (!sidebarHelpOpen) return;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") setSidebarHelpOpen(false);
+		};
+		window.addEventListener("keydown", closeOnEscape);
+		return () => window.removeEventListener("keydown", closeOnEscape);
+	}, [sidebarHelpOpen]);
+
+	useEffect(() => {
+		if (sidebarHelpOpen) {
+			sidebarHelpWasOpenRef.current = true;
+			return;
+		}
+		if (!sidebarHelpWasOpenRef.current) return;
+		sidebarHelpWasOpenRef.current = false;
+		sidebarHelpTriggerRef.current?.focus();
+	}, [sidebarHelpOpen]);
 
 	useEffect(() => {
 		const root = scrollContainerRef.current;
@@ -224,6 +352,7 @@ export function SettingsCenterRoot({
 						`settings-center-search-section-${tabId ?? "missing"}-invalid`,
 					);
 				}
+				if (tabId === "about") continue;
 				const headings = Array.from(
 					section.querySelectorAll<HTMLElement>("h2, h3"),
 				);
@@ -333,6 +462,10 @@ export function SettingsCenterRoot({
 			if (windowRef && searchNavigationFrameRef.current !== null) {
 				windowRef.cancelAnimationFrame(searchNavigationFrameRef.current);
 			}
+			const scrollWindowRef = scrollSpyWindowRef.current;
+			if (scrollWindowRef && scrollSpyFrameRef.current !== null) {
+				scrollWindowRef.cancelAnimationFrame(scrollSpyFrameRef.current);
+			}
 			saveControllerRef.current?.abort();
 		},
 		[],
@@ -383,8 +516,8 @@ export function SettingsCenterRoot({
 		container.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
 	};
 
-	const handleSettingsScroll = () => {
-		if (normalizedQuery) return;
+	const updateActiveTabFromScroll = () => {
+		if (normalizedQueryRef.current) return;
 		const container = scrollContainerRef.current;
 		if (!container) throw new Error("settings-center-scroll-container-missing");
 		const activationLine = navigationViewportTop(container);
@@ -396,9 +529,39 @@ export function SettingsCenterRoot({
 			if (section.getBoundingClientRect().top <= activationLine)
 				visibleTab = item.id;
 		}
-		setActiveTab((currentTab) =>
-			currentTab === visibleTab ? currentTab : visibleTab,
-		);
+		setActiveTab((currentTab) => {
+			if (currentTab === visibleTab) return currentTab;
+			const currentIndex = NAV_ITEMS.findIndex(
+				(item) => item.id === currentTab,
+			);
+			const visibleIndex = NAV_ITEMS.findIndex(
+				(item) => item.id === visibleTab,
+			);
+			if (Math.abs(currentIndex - visibleIndex) !== 1) return visibleTab;
+			const laterSection =
+				sectionRefs.current[
+					NAV_ITEMS[Math.max(currentIndex, visibleIndex)]?.id ?? visibleTab
+				];
+			if (!laterSection)
+				throw new Error("settings-center-scrollspy-boundary-section-missing");
+			return Math.abs(
+				laterSection.getBoundingClientRect().top - activationLine,
+			) <= SETTINGS_SECTION_ACTIVATION_HYSTERESIS
+				? currentTab
+				: visibleTab;
+		});
+	};
+
+	const handleSettingsScroll = () => {
+		if (normalizedQueryRef.current || scrollSpyFrameRef.current !== null)
+			return;
+		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
+		if (!windowRef) throw new Error("settings-center-scrollspy-window-missing");
+		scrollSpyWindowRef.current = windowRef;
+		scrollSpyFrameRef.current = windowRef.requestAnimationFrame(() => {
+			scrollSpyFrameRef.current = null;
+			updateActiveTabFromScroll();
+		});
 	};
 
 	const scheduleScrollToTarget = (
@@ -472,14 +635,18 @@ export function SettingsCenterRoot({
 		() => createWordPressSettingsPort(bootstrap.api),
 		[bootstrap.api],
 	);
+	const imageHostingVerificationPort = useMemo(
+		() => createWordPressImageHostingVerificationPort(bootstrap.api),
+		[bootstrap.api],
+	);
+	const imageHostingSecretRevealPort = useMemo(
+		() => createWordPressImageHostingSecretRevealPort(bootstrap.api),
+		[bootstrap.api],
+	);
 	const settingsDirty =
 		resetSecretsRef.current ||
 		JSON.stringify(settings) !== JSON.stringify(savedSettings);
-	const saveBarVisible =
-		settingsDirty ||
-		"idle" !== saveStatus ||
-		saveConflict ||
-		transferMutationUnavailable;
+	const saveBarVisible = settingsDirty || "idle" !== saveStatus || saveConflict;
 	const updateSettingsSection = <Key extends keyof SettingsCenterSettings>(
 		key: Key,
 		value: SettingsCenterSettings[Key],
@@ -489,21 +656,6 @@ export function SettingsCenterRoot({
 			...previousSettings,
 			[key]: value,
 		};
-		if ("images" === key && resetSecretsRef.current) {
-			const secretKeys = [
-				"accessKey",
-				"secretKey",
-				"backupAccessKey",
-				"backupSecretKey",
-			] as const;
-			const changedSecret = secretKeys.some(
-				(secretKey) =>
-					nextSettings.images[secretKey] !==
-						previousSettings.images[secretKey] &&
-					"" !== nextSettings.images[secretKey].trim(),
-			);
-			if (changedSecret) resetSecretsRef.current = false;
-		}
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveError(null);
@@ -513,7 +665,6 @@ export function SettingsCenterRoot({
 		resetSecretsRef.current = false;
 		setSaveConflict(false);
 		setSaveError(null);
-		setTransferMutationUnavailable(true);
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveStatus("idle");
@@ -522,32 +673,49 @@ export function SettingsCenterRoot({
 		resetSecretsRef.current = true;
 		setSaveConflict(false);
 		setSaveError(null);
-		setTransferMutationUnavailable(true);
 		settingsRef.current = nextSettings;
 		setSettings(nextSettings);
 		setSaveStatus("idle");
 	};
-	const saveSettings = async () => {
-		if (
-			!settingsDirty ||
-			"saving" === saveStatus ||
-			saveConflict ||
-			transferMutationUnavailable
-		)
+	const saveSettings = async (trigger: HTMLButtonElement) => {
+		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
+		if (hasDuplicateImageHostConfiguration(settings.images)) {
+			if (!overlayRoot) {
+				throw new Error("settings-center-duplicate-dialog-root-missing");
+			}
+			setDuplicateSaveTrigger(trigger);
 			return;
+		}
 		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		const requestedSettings = settings;
 		const resetSecrets = resetSecretsRef.current;
+		const verificationInvalidation = imageVerificationInvalidation(
+			savedSettings.images,
+			requestedSettings.images,
+			resetSecrets,
+		);
 		saveControllerRef.current = controller;
 		setSaveStatus("saving");
 		try {
-			const saved = await settingsPort.save(
+			const result = await settingsPort.save(
 				requestedSettings,
 				controller.signal,
 				{ resetSecrets },
 			);
 			if (controller.signal.aborted) return;
+			const saved = result.settings;
+			setImageDraft((current) => ({
+				...current,
+				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
+			}));
+			if (verificationInvalidation.primary || verificationInvalidation.backup) {
+				setVerificationInvalidationTokens((current) => ({
+					primary: current.primary + (verificationInvalidation.primary ? 1 : 0),
+					backup: current.backup + (verificationInvalidation.backup ? 1 : 0),
+				}));
+			}
 			const currentSettingsUnchanged =
 				JSON.stringify(settingsRef.current) ===
 				JSON.stringify(requestedSettings);
@@ -566,7 +734,6 @@ export function SettingsCenterRoot({
 			}
 			setSaveConflict(false);
 			setSaveError(null);
-			setTransferMutationUnavailable(false);
 			setSaveStatus(currentSettingsUnchanged ? "saved" : "idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
@@ -598,15 +765,24 @@ export function SettingsCenterRoot({
 		saveControllerRef.current = controller;
 		setSaveStatus("saving");
 		try {
-			const latest = await settingsPort.get(controller.signal);
+			const result = await settingsPort.get(controller.signal);
 			if (controller.signal.aborted) return;
+			const latest = result.settings;
 			setSavedSettings(latest);
 			settingsRef.current = latest;
 			setSettings(latest);
+			setImageDraft((current) => ({
+				...current,
+				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
+			}));
+			setVerificationInvalidationTokens((current) => ({
+				primary: current.primary + 1,
+				backup: current.backup + 1,
+			}));
 			resetSecretsRef.current = false;
 			setSaveConflict(false);
 			setSaveError(null);
-			setTransferMutationUnavailable(false);
 			setSaveStatus("idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
@@ -652,22 +828,13 @@ export function SettingsCenterRoot({
 							</div>
 						</div>
 					</div>
-					<nav aria-label={strings.settingsNavigation}>
+					<nav ref={navigationRef} aria-label={strings.settingsNavigation}>
 						{NAV_ITEMS.map(({ id, icon: NavIcon, label }) => (
 							<button
 								key={id}
 								type="button"
 								data-nav-id={id}
-								aria-current={
-									normalizedQuery
-										? searchSections.length === 1 &&
-											searchSections[0]?.tabId === id
-											? "page"
-											: undefined
-										: activeTab === id
-											? "page"
-											: undefined
-								}
+								aria-current={highlightedNavId === id ? "page" : undefined}
 								onClick={() => navigateToSection(id)}
 							>
 								<NavIcon size={25} />
@@ -686,7 +853,11 @@ export function SettingsCenterRoot({
 								<p>{strings.helpDescription}</p>
 							</div>
 						</div>
-						<button type="button" onClick={() => navigateToSection("about")}>
+						<button
+							ref={sidebarHelpTriggerRef}
+							type="button"
+							onClick={() => setSidebarHelpOpen(true)}
+						>
 							{strings.openDocumentation}
 							<ChevronRight size={12} />
 						</button>
@@ -748,30 +919,21 @@ export function SettingsCenterRoot({
 											: strings.settingsSaveRejected
 								: "saved" === saveStatus
 									? strings.settingsSaved
-									: transferMutationUnavailable
-										? strings.settingsUnavailable
-										: settingsDirty
-											? strings.settingsUnsavedChanges
-											: ""}
+									: settingsDirty
+										? strings.settingsUnsavedChanges
+										: ""}
 						</span>
 						<button
 							type="button"
 							aria-busy={"saving" === saveStatus}
 							disabled={
-								"saving" === saveStatus ||
-								transferMutationUnavailable ||
-								(!settingsDirty && !saveConflict)
+								"saving" === saveStatus || (!settingsDirty && !saveConflict)
 							}
-							title={
-								transferMutationUnavailable
-									? strings.settingsUnavailableDescription
-									: undefined
-							}
-							onClick={() => {
+							onClick={(event) => {
 								if (saveConflict) {
 									void reloadLatestSettings();
 								} else {
-									void saveSettings();
+									void saveSettings(event.currentTarget);
 								}
 							}}
 						>
@@ -914,7 +1076,21 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<ImagesSettingsPage
-										draft={bootstrap.drafts.images}
+										brandMarkUrl={bootstrap.assets.brandMarkUrl}
+										verificationInvalidationTokens={
+											verificationInvalidationTokens
+										}
+										uploadVerificationPort={imageHostingVerificationPort}
+										settingsRevision={settings.revision}
+										secretRevealPort={imageHostingSecretRevealPort}
+										runtimeCapabilities={{
+											compressImages: true,
+											insertAfterUpload: true,
+											maximumImageSize: true,
+											preserveOriginalFileName: true,
+										}}
+										draft={imageDraft}
+										overlayRoot={overlayRoot}
 										settings={settings.images}
 										onChange={(value) => updateSettingsSection("images", value)}
 										strings={strings}
@@ -976,6 +1152,27 @@ export function SettingsCenterRoot({
 				</main>
 			</div>
 			<div ref={setOverlayRoot} data-settings-overlay-root="" />
+			{sidebarHelpOpen && overlayRoot
+				? createPortal(
+						<AboutDialog
+							kind="help"
+							strings={strings}
+							documentationUrl={bootstrap.links.documentationUrl}
+							onClose={() => setSidebarHelpOpen(false)}
+						/>,
+						overlayRoot,
+					)
+				: null}
+			{duplicateSaveTrigger && overlayRoot
+				? createPortal(
+						<DuplicateImageHostDialog
+							returnFocus={duplicateSaveTrigger}
+							strings={strings}
+							onClose={() => setDuplicateSaveTrigger(null)}
+						/>,
+						overlayRoot,
+					)
+				: null}
 		</div>
 	);
 }

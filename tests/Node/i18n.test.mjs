@@ -362,6 +362,101 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	const clearSearchEntry = poEntries.find(
 		(entry) => "Clear search" === entry.msgid,
 	);
+	const qiniuKodoEntry = poEntries.find(
+		(entry) => "Qiniu Kodo" === entry.msgid,
+	);
+	const alibabaCloudOssEntry = poEntries.find(
+		(entry) => "Alibaba Cloud OSS" === entry.msgid,
+	);
+	const tencentCloudCosEntry = poEntries.find(
+		(entry) => "Tencent Cloud COS" === entry.msgid,
+	);
+	const expectedImageHostTranslations = new Map([
+		["Storage Bucket", "存储 Bucket"],
+		["Custom Endpoint", "自定义 Endpoint"],
+		["Viewing Image Domain", "查看图片域名"],
+		[
+			"Use this domain to generate the image URL returned after upload.",
+			"上传成功后，使用此域名生成返回的图片链接。",
+		],
+		["Upload Failure Retry Count", "上传失败重试次数"],
+		[
+			"Use the same number of additional attempts after the first failure for the primary and enabled backup image hosts (0–5).",
+			"主图床与已启用的备份图床共用相同的失败重试次数，均为首次失败后的额外尝试（0–5 次）。",
+		],
+		["Backup Storage Bucket", "备份存储 Bucket"],
+		["Backup Custom Domain Endpoint", "备份自定义域名 Endpoint"],
+		[
+			"After the primary image host succeeds, write the same object to backup storage. The upload succeeds only when every enabled destination succeeds.",
+			"主图床写入成功后，将同一对象写入备份存储。仅当所有已启用的目标均写入成功时，整次上传才算成功。",
+		],
+		[
+			"For Tencent Cloud COS, enter the complete bucket name in BucketName-APPID format.",
+			"腾讯云 COS 请填写完整的存储桶名称，格式为 BucketName-APPID。",
+		],
+		["Primary and Backup Image Hosts Match", "主备图床目标重复"],
+		[
+			"Change the backup service, bucket, or endpoint so it does not duplicate the primary upload target.",
+			"请修改备份图床的服务、存储桶或端点，避免与主图床使用相同的上传目标。",
+		],
+		["Revealing…", "正在显示……"],
+		["The saved credential could not be revealed.", "无法显示已保存的凭据。"],
+		["Upload Verification Status", "上传验证状态"],
+		["Backup Upload Verification Status", "备份上传验证状态"],
+		["Not Verified", "尚未验证"],
+		["Verifying Upload…", "正在验证上传……"],
+		["Upload Verified", "上传验证成功"],
+		["Settings Changed; Verify Again", "设置已更改，请重新验证"],
+		["Last verified: %s", "上次验证：%s"],
+		["Verify Upload", "验证上传"],
+		["Verify Backup Upload", "验证备份上传"],
+		["Upload Verification Succeeded", "上传验证成功"],
+		["Upload Verification Failed", "上传验证失败"],
+		[
+			"The test image was uploaded successfully. The URL below is the address inserted into articles.",
+			"测试图片已成功上传。下方链接是插入文章时使用的地址。",
+		],
+		["No article image URL was created.", "未生成文章图片链接。"],
+		[
+			"Check the image host configuration, then verify the upload again.",
+			"请检查图床配置，然后重新验证上传。",
+		],
+		[
+			"This HTTP image URL may be blocked when an article is viewed over HTTPS.",
+			"文章通过 HTTPS 访问时，此 HTTP 图片链接可能会被浏览器拦截。",
+		],
+		["Uploaded Object Path", "已上传对象路径"],
+		["Uploaded Image URL", "已上传图片链接"],
+		[
+			"Pasted image upload failed after the configured attempts were exhausted. Please try uploading the image again.",
+			"粘贴图片上传在配置的重试次数耗尽后失败。请重新上传图片。",
+		],
+		[
+			"Dropped image upload failed after the configured attempts were exhausted. Please try uploading the image again.",
+			"拖放图片上传在配置的重试次数耗尽后失败。请重新上传图片。",
+		],
+	]);
+	const removedSettingsMessages = [
+		"API Endpoint",
+		"Storage Space / Bucket",
+		"Custom Domain",
+		"Image Fallback Domain",
+		"Backup Storage Space / Bucket",
+		"Backup Custom Domain",
+		"Keep the Same Object Path",
+		"Backup Failure Handling",
+		"Retry Count",
+		"Backup Retry Count",
+		"Number of additional attempts after the first backup failure (0–5).",
+		"Cloudflare Account ID",
+		"Clean Pasted Content",
+		"Automatically remove unnecessary formatting when pasting",
+		"Smart List Recognition",
+		"Convert - or 1. to a list automatically",
+		"Default Category Behavior",
+		"Do Not Categorize Automatically",
+		"Use Current Category",
+	];
 
 	assert.equal(settingsCenterEntry.msgstr[0], "配置中心");
 	assert.equal(noSearchResultsEntry.msgstr[0], "未找到“%s”相关设置");
@@ -375,6 +470,20 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	);
 	assert.equal(searchSettingsEntry.msgstr[0], "搜索全部设置");
 	assert.equal(clearSearchEntry.msgstr[0], "清空搜索");
+	assert.equal(qiniuKodoEntry.msgstr[0], "七牛云 Kodo");
+	assert.equal(alibabaCloudOssEntry.msgstr[0], "阿里云 OSS");
+	assert.equal(tencentCloudCosEntry.msgstr[0], "腾讯云 COS");
+	for (const [msgid, translation] of expectedImageHostTranslations) {
+		const entry = poEntries.find((candidate) => msgid === candidate.msgid);
+		assert.equal(entry?.msgstr[0], translation, msgid);
+	}
+	for (const msgid of removedSettingsMessages) {
+		assert.equal(
+			poEntries.some((entry) => msgid === entry.msgid),
+			false,
+			msgid,
+		);
+	}
 	assert.ok(statSync(join(repoRoot, "languages/easymde-zh_CN.mo")).size > 0);
 
 	const result = spawnSync(

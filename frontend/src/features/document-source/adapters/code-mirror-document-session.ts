@@ -9,7 +9,7 @@ import {
   HighlightStyle,
   syntaxHighlighting
 } from '@codemirror/language';
-import { markdownLanguage } from '@codemirror/lang-markdown';
+import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown';
 import {
   Compartment,
   EditorSelection,
@@ -68,6 +68,7 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   lineNumbers?: boolean;
   submissionField: HTMLTextAreaElement;
   syntaxHighlight?: boolean;
+  wordWrap?: boolean;
 }>;
 
 const markdownHighlightStyle = HighlightStyle.define([
@@ -170,7 +171,8 @@ export function createCodeMirrorDocumentSession({
   label,
   lineNumbers: showLineNumbers = true,
   submissionField,
-  syntaxHighlight = true
+  syntaxHighlight = true,
+  wordWrap = true
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
@@ -205,11 +207,15 @@ export function createCodeMirrorDocumentSession({
         return hasImageFileTransfer(event.clipboardData);
       }
     }),
-    keymap.of([...defaultKeymap, ...historyKeymap]),
+    keymap.of([
+      ...markdownKeymap,
+      ...defaultKeymap,
+      ...historyKeymap
+    ]),
     ...(showLineNumbers ? [lineNumbers()] : []),
     // Keep line numbers in CodeMirror's own scroll-synchronized gutter;
     // each editor surface owns its presentation.
-    EditorView.lineWrapping,
+    ...(wordWrap ? [EditorView.lineWrapping] : []),
     editability.of(editabilityExtensions(submissionField)),
     EditorView.contentAttributes.of({
       'aria-label': label,

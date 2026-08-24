@@ -31,6 +31,8 @@ EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is act
 
 EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_content` for WordPress compatibility, uses WordPress media/revisions/permissions/publishing flows, and ships local runtime assets instead of requiring Jetpack, Classic Editor, another Markdown plugin, or CDN-hosted editor/rendering libraries.
 
+Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled locally. Article images may separately be stored by an administrator-configured Image Hosting provider when an author pastes or drops a local image.
+
 ## Requirements
 
 - WordPress 6.7 or newer.
@@ -52,7 +54,11 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Scroll synchronization between source and preview panes.
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
-- WordPress media library image insertion, plus local clipboard paste and drag-and-drop image upload.
+- Explicit WordPress media-library insertion through the toolbar media picker.
+- Local clipboard paste and drag-and-drop upload through the protected same-origin Image Hosting path to administrator-configured Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS; any provider can be primary or the optional backup, both writes use the same generated object key, and the primary Viewing Image Domain owns the returned public URL. One administrator-configured value allows `0` through `5` extra serial attempts for both primary and enabled backup writes. Exhausting either required destination fails the whole upload without inserting a URL; there is no provider switch or WordPress media fallback.
+- Administrator-only **Verify Upload** sends the bundled EasyMDE PNG through WordPress to the selected provider using the current file-name rule, then displays a structured result with the authoritative object path and article URL; it never retries or switches providers automatically. Upload Endpoints require HTTPS, while the Viewing Image Domain may use HTTP or HTTPS. An HTTP image URL can be blocked as mixed content on an HTTPS article page, but that display restriction is not an upload failure. Time- or UUID-based rules may create a new object on each verification.
+- Saved Image Hosting keys remain redacted during ordinary settings reads and exports. An administrator may explicitly reveal one saved field with its eye control; the protected, non-cacheable response stays only in the current page's memory.
+- `{md5}` names use the lowercase MD5 digest of the final bytes sent to the provider after any enabled image processing, matching PicFast PicGo's content-MD5 algorithm; EasyMDE derives the extension from the verified MIME type.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
 - WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.

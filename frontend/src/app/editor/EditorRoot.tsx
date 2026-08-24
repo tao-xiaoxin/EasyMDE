@@ -194,7 +194,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'enabled' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'enabled' | 'insertAfterUpload' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   isNewPost: boolean;
@@ -1631,6 +1631,7 @@ export function EditorRoot(props: EditorRootProps) {
       ? visualEditorRuntimeRef.current
       : null;
     return createImageUploadSession({
+      allowedMimeTypes: props.imageUpload.allowedMimeTypes,
       document: visualRuntime
         ? {
             applyTextChange: (change) => {
@@ -1647,6 +1648,8 @@ export function EditorRoot(props: EditorRootProps) {
           }
         : canonicalDocument,
       enabled: props.imageUpload.enabled,
+      insertion: props.imageUpload.insertion,
+      insertAfterUpload: props.imageUpload.insertAfterUpload,
       maxBytes: props.imageUpload.maxBytes,
       nextOperationId: nextImageUploadOperationId,
       onDiagnostic: props.onFailure,
@@ -1802,6 +1805,7 @@ export function EditorRoot(props: EditorRootProps) {
         <ImmersiveEditor
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
+          generalSettings={props.settings.general}
           immersivePreferencesPort={immersivePreferencesPort}
           autoSaveAllowed={props.settings.general.autoSave}
           i18n={props.immersiveI18n}

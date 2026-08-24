@@ -1,4 +1,5 @@
 export type GeneralSettings = Readonly<{
+	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
 	interfaceLanguage: string;
 	editingMode: string;
 	autoFocusEditor: boolean;
@@ -8,9 +9,6 @@ export type GeneralSettings = Readonly<{
 	autoSave: boolean;
 	autoSaveInterval: string;
 	syncScroll: boolean;
-	cleanPastedContent: boolean;
-	smartListRecognition: boolean;
-	defaultCategory: string;
 	publishVisibility: string;
 	openPreviewAfterPublish: boolean;
 	summaryMode: string;
@@ -18,27 +16,32 @@ export type GeneralSettings = Readonly<{
 }>;
 
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
+export type ImageHostProvider =
+	| "cloudflare-r2"
+	| "qiniu-kodo"
+	| "aliyun-oss"
+	| "tencent-cos";
 
 export type ImageSettings = Readonly<{
-	service: string;
+	service: ImageHostProvider;
+	endpoint: string;
 	bucket: string;
 	domain: string;
 	accessKey: string;
 	secretKey: string;
 	fileNameRule: string;
+	uploadRetryCount: number;
 	backupEnabled: boolean;
-	backupService: string;
+	backupService: ImageHostProvider;
+	backupEndpoint: string;
 	backupBucket: string;
 	backupDomain: string;
 	backupAccessKey: string;
 	backupSecretKey: string;
-	backupSameObjectKey: boolean;
-	backupFailureMode: string;
 	insertMarkdown: boolean;
 	compressImages: boolean;
 	preserveFileName: boolean;
 	copyUrl: boolean;
-	retryCount: string;
 	maxImageSize: string;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
 	insertFormat: string;
@@ -48,27 +51,14 @@ export type ImageSettings = Readonly<{
 }>;
 
 export type MarkdownSettings = Readonly<{
-	livePreview: boolean;
 	wordWrap: boolean;
 	lineNumbers: boolean;
-	fixedToolbar: boolean;
 	editorTheme: string;
-	editorFontSize: string;
-	editorFont: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;
 	tableAlignment: string;
-	codeTheme: string;
 	codeLineNumbers: string;
-	taskLists: boolean;
-	emoji: boolean;
-	math: boolean;
 	htmlRendering: boolean;
-	tableExtension: boolean;
-	footnotes: boolean;
-	definitionLists: boolean;
-	toc: boolean;
-	imageSizeSyntax: boolean;
 	pasteAsMarkdown: boolean;
 	lineEnding: string;
 	unorderedMarker: string;
@@ -108,6 +98,10 @@ export type SettingsCenterSettings = Readonly<{
 
 export type SettingsCenterApi = Readonly<{
 	actionNonce: string;
+	imageHostingVerificationActionNonce: string;
+	imageHostingVerificationUrl: string;
+	imageHostingSecretRevealActionNonce: string;
+	imageHostingSecretRevealUrl: string;
 	settingsUrl: string;
 	nonce: string;
 }>;

@@ -5,12 +5,22 @@ import type {
 } from "../../../contracts/settings-center-settings";
 
 export type SettingsCenterSettingsPort = Readonly<{
-	get(signal: AbortSignal): Promise<SettingsCenterSettings>;
+	get(signal: AbortSignal): Promise<SettingsCenterSettingsResult>;
 	save(
 		settings: SettingsCenterSettings,
 		signal: AbortSignal,
 		options?: Readonly<{ resetSecrets?: boolean }>,
-	): Promise<SettingsCenterSettings>;
+	): Promise<SettingsCenterSettingsResult>;
+}>;
+
+export type SettingsCredentialStatus = Readonly<{
+	primaryConfigured: boolean;
+	backupConfigured: boolean;
+}>;
+
+export type SettingsCenterSettingsResult = Readonly<{
+	settings: SettingsCenterSettings;
+	credentialStatus: SettingsCredentialStatus;
 }>;
 
 type FetchLike = (
@@ -46,7 +56,7 @@ async function requestSettings(
 	signal: AbortSignal,
 	init: RequestInit,
 	errorPrefix: "get" | "save",
-): Promise<SettingsCenterSettings> {
+): Promise<SettingsCenterSettingsResult> {
 	let response: Response;
 	try {
 		response = await fetchLike(endpoint, {
@@ -85,14 +95,38 @@ async function requestSettings(
 		throw new Error(`settings-center-${errorPrefix}-response-invalid`);
 	}
 
-	return parseResponseSettings(
-		(payload as Record<string, unknown>).settings,
-		`settings-center-${errorPrefix}-response-invalid`,
-	);
+	const responsePayload = payload as Record<string, unknown>;
+	const credentialStatus = responsePayload.credentialStatus;
+	if (
+		!credentialStatus ||
+		typeof credentialStatus !== "object" ||
+		Array.isArray(credentialStatus)
+	) {
+		throw new Error(`settings-center-${errorPrefix}-response-invalid`);
+	}
+	const status = credentialStatus as Record<string, unknown>;
+	if (
+		Object.keys(status).length !== 2 ||
+		typeof status.primaryConfigured !== "boolean" ||
+		typeof status.backupConfigured !== "boolean"
+	) {
+		throw new Error(`settings-center-${errorPrefix}-response-invalid`);
+	}
+
+	return {
+		settings: parseResponseSettings(
+			responsePayload.settings,
+			`settings-center-${errorPrefix}-response-invalid`,
+		),
+		credentialStatus: {
+			primaryConfigured: status.primaryConfigured,
+			backupConfigured: status.backupConfigured,
+		},
+	};
 }
 
 export function createWordPressSettingsPort(
-	api: SettingsCenterApi,
+	api: Pick<SettingsCenterApi, "actionNonce" | "nonce" | "settingsUrl">,
 	fetchLike: FetchLike = window.fetch.bind(window),
 ): SettingsCenterSettingsPort {
 	let endpoint: URL;

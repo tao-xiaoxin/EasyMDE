@@ -1,25 +1,96 @@
-import { createElement, useEffect, useRef, useState } from "@wordpress/element";
+import {
+	createElement,
+	createPortal,
+	useEffect,
+	useRef,
+	useState,
+} from "@wordpress/element";
 import type {
 	SettingsCenterBootstrap,
 	SettingsCenterStringKey,
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type {
+	ImageHostingSecretField,
+	ImageHostingSecretRevealPort,
+} from "../../contracts/ports/image-hosting-secret-reveal-port";
+import type {
+	ImageHostingTarget,
+	ImageUploadVerificationPort,
+	ImageUploadVerificationResult,
+} from "../../contracts/ports/image-hosting-verification-port";
+import type {
 	ImageSettings,
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
-import { ChevronDown, Copy, Eye, Info } from "../../generated/lucide-icons";
+import {
+	CircleCheck,
+	CircleX,
+	Copy,
+	ExternalLink,
+	Eye,
+	FolderOpen,
+	Info,
+	Link2,
+	Minus,
+	Plus,
+	RefreshCcw,
+	X,
+} from "../../generated/lucide-icons";
 import {
 	SettingsRow,
+	SettingsSelect,
 	SettingsToggle,
-	UnavailableSettingsNotice,
 } from "./SettingsControls";
 import {
 	DocumentIcon,
 	ImageLibraryIcon,
 	SlidersIcon,
 } from "./settings-center-icons";
+import { useDialogFocusTrap } from "./settings-center-utils";
 
 type ImageSettingsDraft = ImageSettings;
+
+export type ImageUploadVerificationStatus =
+	| "pending"
+	| "verifying"
+	| "verified"
+	| "error"
+	| "stale";
+
+export type ImageRuntimeCapabilities = Readonly<{
+	compressImages: boolean;
+	insertAfterUpload: boolean;
+	preserveOriginalFileName: boolean;
+	maximumImageSize: boolean;
+}>;
+
+type VerificationState = Readonly<{
+	status: ImageUploadVerificationStatus;
+	verifiedFingerprint?: string;
+	verifiedInvalidationToken?: number;
+}>;
+
+type VerificationFeedback =
+	| Readonly<{
+			kind: "success";
+			result: ImageUploadVerificationResult;
+			returnFocus: HTMLButtonElement;
+	  }>
+	| Readonly<{
+			kind: "error";
+			returnFocus: HTMLButtonElement;
+	  }>;
+
+type VerificationInvalidationTokens = Readonly<{
+	primary: number;
+	backup: number;
+}>;
+
+const DEFAULT_VERIFICATION_INVALIDATION_TOKENS: VerificationInvalidationTokens =
+	{
+		primary: 0,
+		backup: 0,
+	};
 
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<
 	Readonly<{
@@ -69,13 +140,287 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 	},
 	{ key: "gif", label: "uploadFormatGif", accessibleLabel: "allowUploadGif" },
 ];
-type SelectOption = Readonly<{ value: string; label: string }>;
+type SelectOption = Readonly<{
+	disabled?: boolean;
+	value: string;
+	label: string;
+}>;
+
+const IMAGE_HOST_PROVIDERS = [
+	"cloudflare-r2",
+	"qiniu-kodo",
+	"aliyun-oss",
+	"tencent-cos",
+] as const;
+
+function isImageHostProvider(value: string): value is ImageSettings["service"] {
+	return IMAGE_HOST_PROVIDERS.some((provider) => provider === value);
+}
+
+function normalizedIdentityValue(value: string): string {
+	return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function normalizedEndpointIdentity(
+	service: ImageSettings["service"],
+	value: string,
+): string {
+	const endpoint = normalizedIdentityValue(value);
+	if (service === "aliyun-oss") {
+		const match = endpoint.match(/^https:\/\/oss-([a-z0-9-]+)\.aliyuncs\.com$/);
+		return match?.[1]?.replace(/-internal$/, "") ?? "";
+	}
+	if (service === "tencent-cos") {
+		return (
+			endpoint.match(/^https:\/\/cos\.([a-z0-9-]+)\.myqcloud\.com$/)?.[1] ?? ""
+		);
+	}
+	return endpoint;
+}
+
+export function hasDuplicateImageHostConfiguration(
+	settings: ImageSettings,
+): boolean {
+	if (!settings.backupEnabled || settings.service !== settings.backupService) {
+		return false;
+	}
+	if (!settings.bucket.trim() || !settings.backupBucket.trim()) return false;
+	if (
+		normalizedIdentityValue(settings.bucket) !==
+		normalizedIdentityValue(settings.backupBucket)
+	) {
+		return false;
+	}
+	if (settings.service !== "qiniu-kodo") {
+		if (!settings.endpoint.trim() || !settings.backupEndpoint.trim()) {
+			return false;
+		}
+		const primaryEndpoint = normalizedEndpointIdentity(
+			settings.service,
+			settings.endpoint,
+		);
+		const backupEndpoint = normalizedEndpointIdentity(
+			settings.backupService,
+			settings.backupEndpoint,
+		);
+		return (
+			"" !== primaryEndpoint &&
+			"" !== backupEndpoint &&
+			primaryEndpoint === backupEndpoint
+		);
+	}
+	return true;
+}
+
+export function DuplicateImageHostDialog({
+	onClose,
+	returnFocus,
+	strings,
+}: {
+	onClose: () => void;
+	returnFocus: HTMLElement;
+	strings: SettingsCenterBootstrap["strings"];
+}) {
+	const closeButtonRef = useRef<HTMLButtonElement>(null);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	useDialogFocusTrap(dialogRef, closeButtonRef);
+	useEffect(() => {
+		const dialog = dialogRef.current;
+		if (!dialog) throw new Error("settings-center-duplicate-dialog-missing");
+		const ownerDocument = dialog.ownerDocument;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") onCloseRef.current();
+		};
+		ownerDocument.addEventListener("keydown", closeOnEscape);
+		return () => {
+			ownerDocument.removeEventListener("keydown", closeOnEscape);
+			returnFocus.focus();
+		};
+	}, [returnFocus]);
+
+	return (
+		<div
+			className="easymde-settings-center__transfer-dialog-layer"
+			role="presentation"
+		>
+			<button
+				type="button"
+				className="easymde-settings-center__dialog-backdrop"
+				aria-label={strings.cancel}
+				onClick={onClose}
+			/>
+			<div
+				ref={dialogRef}
+				role="alertdialog"
+				aria-modal="true"
+				aria-labelledby="easymde-duplicate-image-host-title"
+				aria-describedby="easymde-duplicate-image-host-description"
+				className="easymde-settings-center__transfer-dialog"
+			>
+				<header>
+					<span>
+						<Info size={20} />
+					</span>
+					<div>
+						<h2 id="easymde-duplicate-image-host-title">
+							{strings.duplicateImageHostTitle}
+						</h2>
+						<p id="easymde-duplicate-image-host-description">
+							{strings.duplicateImageHostDescription}
+						</p>
+					</div>
+					<button
+						ref={closeButtonRef}
+						type="button"
+						aria-label={strings.cancel}
+						onClick={onClose}
+					>
+						<X size={20} />
+					</button>
+				</header>
+			</div>
+		</div>
+	);
+}
+
+function UploadVerificationFeedbackDialog({
+	feedback,
+	onClose,
+	strings,
+}: {
+	feedback: VerificationFeedback;
+	onClose: () => void;
+	strings: SettingsCenterBootstrap["strings"];
+}) {
+	const footerCloseButtonRef = useRef<HTMLButtonElement>(null);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	useDialogFocusTrap(dialogRef, footerCloseButtonRef);
+	useEffect(() => {
+		const dialog = dialogRef.current;
+		if (!dialog)
+			throw new Error("settings-center-upload-feedback-dialog-missing");
+		const ownerDocument = dialog.ownerDocument;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") onCloseRef.current();
+		};
+		ownerDocument.addEventListener("keydown", closeOnEscape);
+		return () => {
+			ownerDocument.removeEventListener("keydown", closeOnEscape);
+			feedback.returnFocus.focus();
+		};
+	}, [feedback.returnFocus]);
+	const success = feedback.kind === "success";
+	const title = success
+		? strings.uploadVerificationSucceeded
+		: strings.uploadVerificationFailed;
+	const description = success
+		? strings.uploadVerificationSuccessDescription
+		: strings.uploadVerificationFailureDescription;
+	const insecureViewingUrl =
+		success && /^http:\/\//i.test(feedback.result.url.trim());
+	const dialogAccessibility: Readonly<{
+		"aria-describedby": string;
+		"aria-labelledby": string;
+		"aria-modal": "true";
+		role: "alertdialog" | "dialog";
+	}> = {
+		"aria-describedby": "easymde-upload-verification-description",
+		"aria-labelledby": "easymde-upload-verification-title",
+		"aria-modal": "true",
+		role: success ? "dialog" : "alertdialog",
+	};
+
+	return (
+		<div
+			className="easymde-settings-center__transfer-dialog-layer"
+			role="presentation"
+		>
+			<button
+				type="button"
+				className="easymde-settings-center__dialog-backdrop"
+				aria-label={strings.closeImageFeedback}
+				onClick={onClose}
+			/>
+			<div
+				ref={dialogRef}
+				{...dialogAccessibility}
+				className="easymde-settings-center__transfer-dialog easymde-settings-center__upload-verification-dialog"
+			>
+				<header>
+					<span className={success ? "is-success" : "is-destructive"}>
+						{success ? <CircleCheck size={22} /> : <CircleX size={22} />}
+					</span>
+					<div>
+						<h2 id="easymde-upload-verification-title">{title}</h2>
+						<p id="easymde-upload-verification-description">{description}</p>
+					</div>
+					<button
+						type="button"
+						aria-label={strings.closeImageFeedback}
+						onClick={onClose}
+					>
+						<X size={20} />
+					</button>
+				</header>
+				{success && feedback.kind === "success" ? (
+					<div className="easymde-settings-center__transfer-dialog-body easymde-settings-center__upload-verification-result">
+						<dl>
+							<div>
+								<dt>
+									<FolderOpen size={17} />
+									<span>{strings.uploadedObjectPath}</span>
+								</dt>
+								<dd>
+									<code>{feedback.result.path}</code>
+								</dd>
+							</div>
+							<div>
+								<dt>
+									<Link2 size={17} />
+									<span>{strings.uploadedImageUrl}</span>
+								</dt>
+								<dd>
+									<a
+										href={feedback.result.url}
+										target="_blank"
+										rel="noopener noreferrer"
+									>
+										<span>{feedback.result.url}</span>
+										<ExternalLink size={15} />
+									</a>
+								</dd>
+							</div>
+						</dl>
+						{insecureViewingUrl ? (
+							<p className="easymde-settings-center__upload-verification-warning">
+								<Info size={17} />
+								<span>{strings.insecureViewingDomainWarning}</span>
+							</p>
+						) : null}
+					</div>
+				) : (
+					<div className="easymde-settings-center__transfer-dialog-body easymde-settings-center__upload-verification-failure">
+						<p>{strings.uploadVerificationFailureHint}</p>
+					</div>
+				)}
+				<footer>
+					<button ref={footerCloseButtonRef} type="button" onClick={onClose}>
+						{strings.closeImageFeedback}
+					</button>
+				</footer>
+			</div>
+		</div>
+	);
+}
 
 const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Cloudflare R2": "cloudflare-r2",
 	"Aliyun OSS": "aliyun-oss",
 	"Tencent Cloud COS": "tencent-cos",
-	"Custom Upload": "custom",
 	"Qiniu Kodo": "qiniu-kodo",
 	"Return primary URL on backup failure": "return-primary-url",
 	"Fail entire upload": "fail-upload",
@@ -121,20 +466,13 @@ function CompactSelect({
 	value: string;
 }) {
 	return (
-		<div className="easymde-settings-center__compact-select">
-			<select
-				aria-label={label}
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-			>
-				{options.map((option) => (
-					<option key={option.value} value={option.value}>
-						{option.label}
-					</option>
-				))}
-			</select>
-			<ChevronDown size={15} />
-		</div>
+		<SettingsSelect
+			className="easymde-settings-center__compact-select"
+			label={label}
+			value={value}
+			onChange={onChange}
+			options={options}
+		/>
 	);
 }
 
@@ -157,48 +495,200 @@ function ImageTextInput({
 	);
 }
 
-function SecretInput({
-	hideLabel,
+function ImageNumberInput({
 	label,
 	onChange,
-	showLabel,
 	value,
 }: {
-	hideLabel: string;
 	label: string;
-	onChange: (value: string) => void;
-	showLabel: string;
-	value: string;
+	onChange: (value: number) => void;
+	value: number;
 }) {
-	const [visible, setVisible] = useState(false);
 	return (
-		<div className="easymde-settings-center__secret-input">
+		<div className="easymde-settings-center__image-number-stepper">
+			<button
+				type="button"
+				aria-label={`${label} - 1`}
+				disabled={value === 0}
+				onClick={() => onChange(value - 1)}
+			>
+				<Minus size={16} />
+			</button>
 			<input
+				className="easymde-settings-center__image-number-input"
+				type="number"
+				min={0}
+				max={5}
+				step={1}
 				aria-label={label}
-				type={visible ? "text" : "password"}
 				value={value}
-				onChange={(event) => onChange(event.target.value)}
+				onChange={(event) => {
+					const input = event.currentTarget;
+					const next = input.valueAsNumber;
+					if (Number.isInteger(next) && next >= 0 && next <= 5) {
+						onChange(next);
+						return;
+					}
+					input.value = String(value);
+				}}
 			/>
 			<button
 				type="button"
-				aria-label={visible ? hideLabel : showLabel}
-				onClick={() => setVisible((current) => !current)}
+				aria-label={`${label} + 1`}
+				disabled={value === 5}
+				onClick={() => onChange(value + 1)}
 			>
-				<Eye size={18} />
+				<Plus size={16} />
 			</button>
+		</div>
+	);
+}
+
+function SecretInput({
+	configured,
+	field,
+	hideLabel,
+	label,
+	onChange,
+	revealFailedLabel,
+	revealPort,
+	revealingLabel,
+	revision,
+	showLabel,
+	target,
+	value,
+}: {
+	configured: boolean;
+	field: ImageHostingSecretField;
+	hideLabel: string;
+	label: string;
+	onChange: (value: string) => void;
+	revealFailedLabel: string;
+	revealPort: ImageHostingSecretRevealPort | undefined;
+	revealingLabel: string;
+	revision: number;
+	showLabel: string;
+	target: ImageHostingTarget;
+	value: string;
+}) {
+	const [visible, setVisible] = useState(false);
+	const [revealedValue, setRevealedValue] = useState<string | null>(null);
+	const [revealStatus, setRevealStatus] = useState<
+		"idle" | "loading" | "error"
+	>("idle");
+	const revealAbortRef = useRef<AbortController | null>(null);
+	const canReveal = configured && Boolean(revealPort);
+	const displayValue = revealedValue ?? value;
+	useEffect(() => {
+		if (!canReveal) setVisible(false);
+	}, [canReveal]);
+	useEffect(() => {
+		setRevealedValue(null);
+		setVisible(false);
+		setRevealStatus("idle");
+		revealAbortRef.current?.abort();
+	}, [configured, field, revision, target, value]);
+	useEffect(
+		() => () => {
+			revealAbortRef.current?.abort();
+		},
+		[],
+	);
+
+	async function toggleVisibility() {
+		if (revealedValue !== null) {
+			setRevealedValue(null);
+			setVisible(false);
+			return;
+		}
+		if (value) {
+			setVisible((current) => !current);
+			return;
+		}
+		if (!configured || !revealPort || revealStatus === "loading") return;
+		const controller = new AbortController();
+		revealAbortRef.current?.abort();
+		revealAbortRef.current = controller;
+		setRevealStatus("loading");
+		try {
+			const result = await revealPort.revealSecret({
+				field,
+				revision,
+				signal: controller.signal,
+				target,
+			});
+			if (controller.signal.aborted) return;
+			setRevealedValue(result.value);
+			setVisible(true);
+			setRevealStatus("idle");
+		} catch {
+			if (controller.signal.aborted) return;
+			setRevealStatus("error");
+		} finally {
+			if (revealAbortRef.current === controller) revealAbortRef.current = null;
+		}
+	}
+	return (
+		<div className="easymde-settings-center__secret-field">
+			<div className="easymde-settings-center__secret-input">
+				<input
+					aria-label={label}
+					placeholder={configured && !value ? "••••••••••••" : undefined}
+					readOnly={revealedValue !== null}
+					type={displayValue && visible ? "text" : "password"}
+					value={displayValue}
+					onChange={(event) => {
+						setRevealedValue(null);
+						setVisible(false);
+						setRevealStatus("idle");
+						onChange(event.target.value);
+					}}
+				/>
+				{canReveal ? (
+					<button
+						type="button"
+						aria-label={
+							revealStatus === "loading"
+								? revealingLabel
+								: visible
+									? hideLabel
+									: showLabel
+						}
+						disabled={revealStatus === "loading"}
+						onClick={() => void toggleVisibility()}
+					>
+						{revealStatus === "loading" ? (
+							<RefreshCcw
+								size={17}
+								className="easymde-settings-center__verification-spinner"
+							/>
+						) : (
+							<Eye size={18} />
+						)}
+					</button>
+				) : null}
+			</div>
+			{revealStatus === "error" ? (
+				<div className="easymde-settings-center__credential-error" role="alert">
+					<Info size={15} />
+					<span>{revealFailedLabel}</span>
+				</div>
+			) : null}
 		</div>
 	);
 }
 
 function ImageField({
 	children,
+	description,
 	label,
 }: {
 	children: React.ReactNode;
+	description?: string;
 	label: string;
 }) {
 	return (
-		<SettingsRow label={label}>
+		<SettingsRow label={label} {...(description ? { description } : {})}>
 			<div className="easymde-settings-center__image-field-control">
 				{children}
 			</div>
@@ -262,7 +752,22 @@ function FileNameRuleEditor({
 		onChange(`${value.slice(0, start)}${token}${value.slice(end)}`);
 	};
 
-	const example = value;
+	const exampleValues: Readonly<Record<string, string>> = {
+		"{year}": "2026",
+		"{month}": "07",
+		"{day}": "13",
+		"{date}": "20260713",
+		"{time}": "153042",
+		"{post_id}": "128",
+		"{md5}": "a8f4c2d1",
+		"{uuid}": "a8f4c2d1",
+		"{name}": "easymde-image",
+		"{ext}": "webp",
+	};
+	const example = Object.entries(exampleValues).reduce(
+		(current, [token, replacement]) => current.replaceAll(token, replacement),
+		value,
+	);
 	return (
 		<div className="easymde-settings-center__file-name-editor">
 			<SettingsRow
@@ -337,40 +842,137 @@ function FileNameRuleEditor({
 	);
 }
 
+function verificationFingerprint(
+	settings: ImageSettings,
+	target: ImageHostingTarget,
+): string {
+	const values =
+		target === "primary"
+			? [
+					settings.fileNameRule,
+					settings.service,
+					settings.endpoint,
+					settings.bucket,
+					settings.domain,
+					settings.accessKey,
+					settings.secretKey,
+				]
+			: [
+					settings.fileNameRule,
+					settings.domain,
+					settings.backupEnabled ? "enabled" : "disabled",
+					settings.backupService,
+					settings.backupEndpoint,
+					settings.backupBucket,
+					settings.backupDomain,
+					settings.backupAccessKey,
+					settings.backupSecretKey,
+				];
+	return JSON.stringify(values);
+}
+
+function VerificationRow({
+	disabled,
+	onVerify,
+	state,
+	strings,
+	target,
+}: {
+	disabled: boolean;
+	onVerify: (trigger: HTMLButtonElement) => void;
+	state: VerificationState;
+	strings: SettingsCenterBootstrap["strings"];
+	target: ImageHostingTarget;
+}) {
+	const labelByStatus: Readonly<Record<ImageUploadVerificationStatus, string>> =
+		{
+			pending: strings.uploadVerificationPending,
+			verifying: strings.verifyingUpload,
+			verified: strings.uploadVerified,
+			error: strings.uploadVerificationFailed,
+			stale: strings.uploadVerificationStale,
+		};
+	const isVerifying = state.status === "verifying";
+	return (
+		<div
+			className={`easymde-settings-center__${target === "backup" ? "backup-" : ""}verification-divider`}
+		>
+			<SettingsRow
+				label={
+					target === "backup"
+						? strings.backupVerificationStatus
+						: strings.uploadVerificationStatus
+				}
+				minHeight={target === "backup" ? 70 : 76}
+			>
+				<div className="easymde-settings-center__verification-row">
+					<div
+						className="easymde-settings-center__verification-status"
+						data-state={state.status}
+						role="status"
+						aria-live="polite"
+					>
+						<span />
+						{labelByStatus[state.status]}
+					</div>
+					<button
+						type="button"
+						disabled={disabled || isVerifying}
+						onClick={(event) => onVerify(event.currentTarget)}
+					>
+						{isVerifying ? (
+							<RefreshCcw
+								size={15}
+								className="easymde-settings-center__verification-spinner"
+							/>
+						) : null}
+						{target === "backup"
+							? isVerifying
+								? strings.verifyingUpload
+								: strings.verifyBackupUpload
+							: isVerifying
+								? strings.verifyingUpload
+								: strings.verifyPrimaryUpload}
+					</button>
+				</div>
+			</SettingsRow>
+		</div>
+	);
+}
+
 export function ImagesSettingsPage({
+	verificationInvalidationTokens = DEFAULT_VERIFICATION_INVALIDATION_TOKENS,
+	uploadVerificationDisabled = false,
+	uploadVerificationPort,
 	draft,
 	onChange,
+	overlayRoot,
 	settings: externalSettings,
+	settingsRevision,
 	strings,
+	runtimeCapabilities,
+	secretRevealPort,
 }: {
+	brandMarkUrl: string;
+	verificationInvalidationTokens?: VerificationInvalidationTokens;
+	uploadVerificationDisabled?: boolean;
+	uploadVerificationPort?: ImageUploadVerificationPort;
 	draft: SettingsCenterBootstrap["drafts"]["images"];
 	onChange?: (settings: ImageSettingsDraft) => void;
+	overlayRoot: HTMLDivElement | null;
 	settings?: ImageSettingsDraft;
+	settingsRevision: number;
 	strings: SettingsCenterBootstrap["strings"];
+	runtimeCapabilities?: ImageRuntimeCapabilities;
+	secretRevealPort?: ImageHostingSecretRevealPort;
 }) {
 	const imageHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "cloudflare-r2", label: strings.cloudflareR2 },
+		{ value: "qiniu-kodo", label: strings.qiniuKodo },
 		{ value: "aliyun-oss", label: strings.aliyunOss },
 		{ value: "tencent-cos", label: strings.tencentCloudCos },
-		{ value: "custom", label: strings.customUpload },
 	];
-	const backupHostOptions: ReadonlyArray<SelectOption> = [
-		{ value: "qiniu-kodo", label: strings.qiniuKodo },
-		...imageHostOptions,
-	];
-	const backupFailureOptions: ReadonlyArray<SelectOption> = [
-		{
-			value: "return-primary-url",
-			label: strings.returnPrimaryUrlOnBackupFailure,
-		},
-		{ value: "fail-upload", label: strings.failEntireUpload },
-	];
-	const retryOptions: ReadonlyArray<SelectOption> = [
-		{ value: "none", label: strings.doNotRetry },
-		{ value: "once", label: strings.retryOnce },
-		{ value: "twice", label: strings.retryTwice },
-		{ value: "three-times", label: strings.retryThreeTimes },
-	];
+	const backupHostOptions = imageHostOptions;
 	const maxImageSizeOptions: ReadonlyArray<SelectOption> = [
 		{ value: "original", label: strings.originalImageSize },
 		{ value: "1920", label: strings.imageSize1920 },
@@ -379,40 +981,40 @@ export function ImagesSettingsPage({
 	];
 	const insertFormatOptions: ReadonlyArray<SelectOption> = [
 		{ value: "markdown", label: strings.markdownImage },
-		{ value: "html", label: strings.htmlImage },
+		{ value: "html", label: strings.htmlImage, disabled: true },
 		{ value: "url", label: strings.urlOnly },
 	];
 	const altSourceOptions: ReadonlyArray<SelectOption> = [
 		{ value: "filename", label: strings.useFileName },
 		{ value: "empty", label: strings.leaveEmpty },
-		{ value: "upload", label: strings.fillOnUpload },
+		{ value: "upload", label: strings.fillOnUpload, disabled: true },
 	];
 	const captionModeOptions: ReadonlyArray<SelectOption> = [
 		{ value: "none", label: strings.doNotInsert },
 		{ value: "filename", label: strings.useFileName },
-		{ value: "upload", label: strings.fillOnUpload },
+		{ value: "upload", label: strings.fillOnUpload, disabled: true },
 	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
 			service: "cloudflare-r2",
+			endpoint: "",
 			bucket: "easymde-assets",
 			domain: draft.domain,
 			accessKey: "",
 			secretKey: "",
 			fileNameRule: "{date}/{uuid}.{ext}",
+			uploadRetryCount: 0,
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
+			backupEndpoint: "",
 			backupBucket: "easymde-backup",
 			backupDomain: draft.backupDomain,
 			backupAccessKey: "",
 			backupSecretKey: "",
-			backupSameObjectKey: true,
-			backupFailureMode: "return-primary-url",
 			insertMarkdown: true,
 			compressImages: true,
 			preserveFileName: false,
 			copyUrl: false,
-			retryCount: "twice",
 			maxImageSize: "2560",
 			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
 			insertFormat: "markdown",
@@ -421,29 +1023,29 @@ export function ImagesSettingsPage({
 			featuredPlaceholder: true,
 		}),
 	);
+	const [formatError, setFormatError] = useState(false);
+	const [duplicateTrigger, setDuplicateTrigger] =
+		useState<HTMLButtonElement | null>(null);
+	const [verificationFeedback, setVerificationFeedback] =
+		useState<VerificationFeedback | null>(null);
+	const [primaryVerification, setPrimaryVerification] =
+		useState<VerificationState>({
+			status: "pending",
+		});
+	const [backupVerification, setBackupVerification] =
+		useState<VerificationState>({
+			status: "pending",
+		});
+	const verificationAbortRef = useRef<
+		Partial<Record<ImageHostingTarget, AbortController>>
+	>({});
+	const verificationInvalidationTokensRef = useRef(
+		verificationInvalidationTokens,
+	);
+	verificationInvalidationTokensRef.current = verificationInvalidationTokens;
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: ImageSettingsDraft = {
 		...rawSettings,
-		service: normalizeImageValue(
-			rawSettings.service,
-			imageHostOptions,
-			"cloudflare-r2",
-		),
-		backupService: normalizeImageValue(
-			rawSettings.backupService,
-			backupHostOptions,
-			"qiniu-kodo",
-		),
-		backupFailureMode: normalizeImageValue(
-			rawSettings.backupFailureMode,
-			backupFailureOptions,
-			"return-primary-url",
-		),
-		retryCount: normalizeImageValue(
-			rawSettings.retryCount,
-			retryOptions,
-			"twice",
-		),
 		maxImageSize: normalizeImageValue(
 			rawSettings.maxImageSize,
 			maxImageSizeOptions,
@@ -456,15 +1058,24 @@ export function ImagesSettingsPage({
 		),
 		altSource: normalizeImageValue(
 			rawSettings.altSource,
-			altSourceOptions,
+			altSourceOptions.filter((option) => !option.disabled),
 			"filename",
 		),
 		captionMode: normalizeImageValue(
 			rawSettings.captionMode,
-			captionModeOptions,
+			captionModeOptions.filter((option) => !option.disabled),
 			"none",
 		),
 	};
+	const settingsRef = useRef(settings);
+	settingsRef.current = settings;
+	useEffect(
+		() => () => {
+			verificationAbortRef.current.primary?.abort();
+			verificationAbortRef.current.backup?.abort();
+		},
+		[],
+	);
 	const selectedFormats = UPLOAD_FORMAT_OPTIONS.filter(
 		({ key }) => settings.uploadFormats[key],
 	).map(({ label }) => strings[label]);
@@ -472,21 +1083,165 @@ export function ImagesSettingsPage({
 		key: K,
 		value: ImageSettingsDraft[K],
 	) {
-		const next = { ...settings, [key]: value };
+		setValues({ [key]: value });
+	}
+	function setValues(values: Partial<ImageSettingsDraft>) {
+		const next = { ...settings, ...values };
 		if (onChange) onChange(next);
 		else setLocalSettings(next);
 	}
+	function toggleUploadFormat(key: ImageUploadFormat) {
+		const checked = settings.uploadFormats[key];
+		if (checked && selectedFormats.length === 1) {
+			setFormatError(true);
+			console.error("[EasyMDE settings] Upload format change rejected", {
+				format: key,
+				reason: "no-upload-format",
+			});
+			return;
+		}
+		setFormatError(false);
+		setValue("uploadFormats", {
+			...settings.uploadFormats,
+			[key]: !checked,
+		});
+	}
+	function effectiveVerificationState(
+		state: VerificationState,
+		target: ImageHostingTarget,
+	): VerificationState {
+		const invalidationToken = verificationInvalidationTokens[target];
+		if (
+			state.status !== "verifying" &&
+			state.verifiedFingerprint &&
+			(state.verifiedFingerprint !==
+				verificationFingerprint(settings, target) ||
+				state.verifiedInvalidationToken !== invalidationToken)
+		) {
+			return { ...state, status: "stale" };
+		}
+		return state;
+	}
+	async function verifyUpload(
+		target: ImageHostingTarget,
+		trigger: HTMLButtonElement,
+	) {
+		if (hasDuplicateImageHostConfiguration(settingsRef.current)) {
+			if (!overlayRoot) {
+				throw new Error("settings-center-duplicate-dialog-root-missing");
+			}
+			setDuplicateTrigger(trigger);
+			return;
+		}
+		if (!uploadVerificationPort) {
+			throw new Error("settings-center-image-verification-port-missing");
+		}
+		const activeController = verificationAbortRef.current[target];
+		if (activeController && !activeController.signal.aborted) return;
+		const controller = new AbortController();
+		verificationAbortRef.current[target] = controller;
+		const snapshot = settingsRef.current;
+		const verifiedFingerprint = verificationFingerprint(snapshot, target);
+		const verifiedInvalidationToken =
+			verificationInvalidationTokensRef.current[target];
+		const setState =
+			target === "primary" ? setPrimaryVerification : setBackupVerification;
+		setState({
+			status: "verifying",
+			verifiedFingerprint,
+			verifiedInvalidationToken,
+		});
+		try {
+			const result = await uploadVerificationPort.verifyUpload({
+				revision: settingsRevision,
+				target,
+				settings: snapshot,
+				signal: controller.signal,
+			});
+			if (controller.signal.aborted) return;
+			setState({
+				status:
+					verificationFingerprint(settingsRef.current, target) ===
+						verifiedFingerprint &&
+					verificationInvalidationTokensRef.current[target] ===
+						verifiedInvalidationToken
+						? "verified"
+						: "stale",
+				verifiedFingerprint,
+				verifiedInvalidationToken,
+			});
+			setVerificationFeedback({
+				kind: "success",
+				result,
+				returnFocus: trigger,
+			});
+		} catch {
+			if (controller.signal.aborted) return;
+			console.error("[EasyMDE settings] Image upload verification failed", {
+				target,
+				reason: "upload-verification-rejected",
+			});
+			setState({
+				status: "error",
+				verifiedFingerprint,
+				verifiedInvalidationToken,
+			});
+			setVerificationFeedback({
+				kind: "error",
+				returnFocus: trigger,
+			});
+		} finally {
+			if (verificationAbortRef.current[target] === controller) {
+				delete verificationAbortRef.current[target];
+			}
+		}
+	}
+	const feedbackPortal =
+		formatError && overlayRoot
+			? createPortal(
+					<div
+						className="easymde-settings-center__transfer-feedback is-error"
+						role="alert"
+					>
+						<Info size={19} />
+						<span>{strings.uploadFormatRequired}</span>
+						<button
+							type="button"
+							aria-label={strings.closeImageFeedback}
+							onClick={() => setFormatError(false)}
+						>
+							<X size={16} />
+						</button>
+					</div>,
+					overlayRoot,
+				)
+			: null;
+	const duplicatePortal =
+		duplicateTrigger && overlayRoot
+			? createPortal(
+					<DuplicateImageHostDialog
+						returnFocus={duplicateTrigger}
+						strings={strings}
+						onClose={() => setDuplicateTrigger(null)}
+					/>,
+					overlayRoot,
+				)
+			: null;
+	const verificationFeedbackPortal =
+		verificationFeedback && overlayRoot
+			? createPortal(
+					<UploadVerificationFeedbackDialog
+						feedback={verificationFeedback}
+						onClose={() => setVerificationFeedback(null)}
+						strings={strings}
+					/>,
+					overlayRoot,
+				)
+			: null;
 
 	return (
 		<div className="easymde-settings-center__images-page">
-			<UnavailableSettingsNotice
-				label={strings.settingsUnavailable}
-				description={strings.settingsUnavailableDescription}
-			/>
-			<fieldset
-				disabled
-				className="easymde-settings-center__unavailable-fields"
-			>
+			<div>
 				<section className="easymde-settings-center__image-group is-host-service">
 					<h2>
 						<ImageLibraryIcon size={25} />
@@ -499,39 +1254,75 @@ export function ImagesSettingsPage({
 									label={strings.selectImageHostService}
 									value={settings.service}
 									options={imageHostOptions}
-									onChange={(value) => setValue("service", value)}
+									onChange={(value) => {
+										if (!isImageHostProvider(value)) {
+											throw new Error("settings-center-image-provider-invalid");
+										}
+										setValues({
+											service: value,
+											endpoint: "",
+										});
+									}}
 								/>
 							</ImageField>
+							{settings.service !== "qiniu-kodo" ? (
+								<ImageField label={strings.customDomain}>
+									<ImageTextInput
+										label={strings.customDomain}
+										value={settings.endpoint}
+										onChange={(value) => setValue("endpoint", value)}
+									/>
+								</ImageField>
+							) : null}
 							<ImageField label={strings.bucket}>
-								<ImageTextInput
-									label={strings.bucket}
-									value={settings.bucket}
-									onChange={(value) => setValue("bucket", value)}
-								/>
+								<div>
+									<ImageTextInput
+										label={strings.bucket}
+										value={settings.bucket}
+										onChange={(value) => setValue("bucket", value)}
+									/>
+									{settings.service === "tencent-cos" ? (
+										<small>{strings.cosBucketHint}</small>
+									) : null}
+								</div>
 							</ImageField>
-							<ImageField label={strings.customDomain}>
+							<ImageField label={strings.imageFallbackDomain}>
 								<ImageTextInput
-									label={strings.customDomain}
+									label={strings.imageFallbackDomain}
 									value={settings.domain}
 									onChange={(value) => setValue("domain", value)}
 								/>
 							</ImageField>
 							<ImageField label={strings.accessKey}>
 								<SecretInput
+									configured={draft.primaryCredentialsConfigured}
+									field="accessKey"
 									label={strings.accessKey}
 									value={settings.accessKey}
 									showLabel={strings.showSecret}
 									hideLabel={strings.hideSecret}
 									onChange={(value) => setValue("accessKey", value)}
+									revealFailedLabel={strings.secretRevealFailed}
+									revealPort={secretRevealPort}
+									revealingLabel={strings.revealingSecret}
+									revision={settingsRevision}
+									target="primary"
 								/>
 							</ImageField>
 							<ImageField label={strings.secretKey}>
 								<SecretInput
+									configured={draft.primaryCredentialsConfigured}
+									field="secretKey"
 									label={strings.secretKey}
 									value={settings.secretKey}
 									showLabel={strings.showSecret}
 									hideLabel={strings.hideSecret}
 									onChange={(value) => setValue("secretKey", value)}
+									revealFailedLabel={strings.secretRevealFailed}
+									revealPort={secretRevealPort}
+									revealingLabel={strings.revealingSecret}
+									revision={settingsRevision}
+									target="primary"
 								/>
 							</ImageField>
 							<FileNameRuleEditor
@@ -539,8 +1330,27 @@ export function ImagesSettingsPage({
 								value={settings.fileNameRule}
 								onChange={(value) => setValue("fileNameRule", value)}
 							/>
+							<ImageField
+								label={strings.uploadRetryCount}
+								description={strings.uploadRetryCountDescription}
+							>
+								<ImageNumberInput
+									label={strings.uploadRetryCount}
+									value={settings.uploadRetryCount}
+									onChange={(value) => setValue("uploadRetryCount", value)}
+								/>
+							</ImageField>
 						</div>
 					</div>
+					{uploadVerificationPort ? (
+						<VerificationRow
+							disabled={uploadVerificationDisabled}
+							target="primary"
+							strings={strings}
+							state={effectiveVerificationState(primaryVerification, "primary")}
+							onVerify={(trigger) => void verifyUpload("primary", trigger)}
+						/>
+					) : null}
 				</section>
 
 				<section className="easymde-settings-center__image-group is-backup-host">
@@ -570,15 +1380,39 @@ export function ImagesSettingsPage({
 									label={strings.backupImageHostService}
 									value={settings.backupService}
 									options={backupHostOptions}
-									onChange={(value) => setValue("backupService", value)}
+									onChange={(value) => {
+										if (!isImageHostProvider(value)) {
+											throw new Error(
+												"settings-center-backup-image-provider-invalid",
+											);
+										}
+										setValues({
+											backupService: value,
+											backupEndpoint: "",
+										});
+									}}
 								/>
 							</ImageField>
+							{settings.backupService !== "qiniu-kodo" ? (
+								<ImageField label={strings.customDomain}>
+									<ImageTextInput
+										label={strings.customDomain}
+										value={settings.backupEndpoint}
+										onChange={(value) => setValue("backupEndpoint", value)}
+									/>
+								</ImageField>
+							) : null}
 							<ImageField label={strings.backupBucket}>
-								<ImageTextInput
-									label={strings.backupBucket}
-									value={settings.backupBucket}
-									onChange={(value) => setValue("backupBucket", value)}
-								/>
+								<div>
+									<ImageTextInput
+										label={strings.backupBucket}
+										value={settings.backupBucket}
+										onChange={(value) => setValue("backupBucket", value)}
+									/>
+									{settings.backupService === "tencent-cos" ? (
+										<small>{strings.cosBucketHint}</small>
+									) : null}
+								</div>
 							</ImageField>
 							<ImageField label={strings.backupDomain}>
 								<ImageTextInput
@@ -589,48 +1423,48 @@ export function ImagesSettingsPage({
 							</ImageField>
 							<ImageField label={strings.backupAccessKey}>
 								<SecretInput
+									configured={draft.backupCredentialsConfigured}
+									field="accessKey"
 									label={strings.backupAccessKey}
 									value={settings.backupAccessKey}
 									showLabel={strings.showBackupAccessKey}
 									hideLabel={strings.hideBackupAccessKey}
 									onChange={(value) => setValue("backupAccessKey", value)}
+									revealFailedLabel={strings.secretRevealFailed}
+									revealPort={secretRevealPort}
+									revealingLabel={strings.revealingSecret}
+									revision={settingsRevision}
+									target="backup"
 								/>
 							</ImageField>
 							<ImageField label={strings.backupSecretKey}>
 								<SecretInput
+									configured={draft.backupCredentialsConfigured}
+									field="secretKey"
 									label={strings.backupSecretKey}
 									value={settings.backupSecretKey}
 									showLabel={strings.showBackupSecretKey}
 									hideLabel={strings.hideBackupSecretKey}
 									onChange={(value) => setValue("backupSecretKey", value)}
+									revealFailedLabel={strings.secretRevealFailed}
+									revealPort={secretRevealPort}
+									revealingLabel={strings.revealingSecret}
+									revision={settingsRevision}
+									target="backup"
 								/>
 							</ImageField>
-							<ImageBehaviorRow
-								label={strings.keepSameObjectPath}
-								description={strings.keepSameObjectPathDescription}
-							>
-								<SettingsToggle
-									label={strings.keepSameObjectPath}
-									checked={settings.backupSameObjectKey}
-									onChange={() =>
-										setValue(
-											"backupSameObjectKey",
-											!settings.backupSameObjectKey,
-										)
-									}
+							{uploadVerificationPort ? (
+								<VerificationRow
+									disabled={uploadVerificationDisabled}
+									target="backup"
+									strings={strings}
+									state={effectiveVerificationState(
+										backupVerification,
+										"backup",
+									)}
+									onVerify={(trigger) => void verifyUpload("backup", trigger)}
 								/>
-							</ImageBehaviorRow>
-							<ImageBehaviorRow
-								label={strings.backupFailureHandling}
-								description={strings.backupFailureHandlingDescription}
-							>
-								<CompactSelect
-									label={strings.backupFailureHandling}
-									value={settings.backupFailureMode}
-									options={backupFailureOptions}
-									onChange={(value) => setValue("backupFailureMode", value)}
-								/>
-							</ImageBehaviorRow>
+							) : null}
 						</div>
 					) : null}
 				</section>
@@ -641,65 +1475,103 @@ export function ImagesSettingsPage({
 							<SlidersIcon size={25} />
 							{strings.uploadBehavior}
 						</h2>
-						<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
-							<SettingsToggle
-								label={strings.insertMarkdownAfterUpload}
-								checked={settings.insertMarkdown}
-								onChange={() =>
-									setValue("insertMarkdown", !settings.insertMarkdown)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.compressImages}
-							description={strings.compressImagesDescription}
+						<fieldset
+							disabled={!runtimeCapabilities?.insertAfterUpload}
+							title={
+								runtimeCapabilities?.insertAfterUpload
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
+								<SettingsToggle
+									label={strings.insertMarkdownAfterUpload}
+									checked={settings.insertMarkdown}
+									onChange={() =>
+										setValue("insertMarkdown", !settings.insertMarkdown)
+									}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.compressImages}
+							title={
+								runtimeCapabilities?.compressImages
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
+						>
+							<ImageBehaviorRow
 								label={strings.compressImages}
-								checked={settings.compressImages}
-								onChange={() =>
-									setValue("compressImages", !settings.compressImages)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.preserveOriginalFileName}
-							description={strings.preserveOriginalFileNameDescription}
+								description={strings.compressImagesDescription}
+							>
+								<SettingsToggle
+									label={strings.compressImages}
+									checked={settings.compressImages}
+									onChange={() =>
+										setValue("compressImages", !settings.compressImages)
+									}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.preserveOriginalFileName}
+							title={
+								runtimeCapabilities?.preserveOriginalFileName
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow
 								label={strings.preserveOriginalFileName}
-								checked={settings.preserveFileName}
-								onChange={() =>
-									setValue("preserveFileName", !settings.preserveFileName)
-								}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.copyImageUrl}
-							description={strings.copyImageUrlDescription}
+								description={strings.preserveOriginalFileNameDescription}
+							>
+								<SettingsToggle
+									label={strings.preserveOriginalFileName}
+									checked={settings.preserveFileName}
+									onChange={() =>
+										setValue("preserveFileName", !settings.preserveFileName)
+									}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled
+							title={strings.settingsUnavailableDescription}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow
 								label={strings.copyImageUrl}
-								checked={settings.copyUrl}
-								onChange={() => setValue("copyUrl", !settings.copyUrl)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.retryFailedUpload}>
-							<CompactSelect
-								label={strings.retryFailedUpload}
-								value={settings.retryCount}
-								options={retryOptions}
-								onChange={(value) => setValue("retryCount", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.maximumImageSize}>
-							<CompactSelect
-								label={strings.maximumImageSize}
-								value={settings.maxImageSize}
-								options={maxImageSizeOptions}
-								onChange={(value) => setValue("maxImageSize", value)}
-							/>
-						</ImageBehaviorRow>
+								description={strings.copyImageUrlDescription}
+							>
+								<SettingsToggle
+									label={strings.copyImageUrl}
+									checked={settings.copyUrl}
+									onChange={() => setValue("copyUrl", !settings.copyUrl)}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
+						<fieldset
+							disabled={!runtimeCapabilities?.maximumImageSize}
+							title={
+								runtimeCapabilities?.maximumImageSize
+									? undefined
+									: strings.settingsUnavailableDescription
+							}
+							className="easymde-settings-center__unavailable-fields"
+						>
+							<ImageBehaviorRow label={strings.maximumImageSize}>
+								<CompactSelect
+									label={strings.maximumImageSize}
+									value={settings.maxImageSize}
+									options={maxImageSizeOptions}
+									onChange={(value) => setValue("maxImageSize", value)}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
 						<SettingsRow
 							label={strings.allowedUploadFormats}
 							description={strings.allowedUploadFormatsDescription}
@@ -715,12 +1587,7 @@ export function ImagesSettingsPage({
 													type="checkbox"
 													aria-label={strings[accessibleLabel]}
 													checked={checked}
-													onChange={() =>
-														setValue("uploadFormats", {
-															...settings.uploadFormats,
-															[key]: !checked,
-														})
-													}
+													onChange={() => toggleUploadFormat(key)}
 												/>
 												<span>{strings[label]}</span>
 											</label>
@@ -760,18 +1627,27 @@ export function ImagesSettingsPage({
 								onChange={(value) => setValue("captionMode", value)}
 							/>
 						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.imageFeaturedPlaceholder}
-							description={strings.imageFeaturedPlaceholderDescription}
+						<fieldset
+							disabled
+							title={strings.settingsUnavailableDescription}
+							className="easymde-settings-center__unavailable-fields"
 						>
-							<SettingsToggle
+							<ImageBehaviorRow
 								label={strings.imageFeaturedPlaceholder}
-								checked={settings.featuredPlaceholder}
-								onChange={() =>
-									setValue("featuredPlaceholder", !settings.featuredPlaceholder)
-								}
-							/>
-						</ImageBehaviorRow>
+								description={strings.imageFeaturedPlaceholderDescription}
+							>
+								<SettingsToggle
+									label={strings.imageFeaturedPlaceholder}
+									checked={settings.featuredPlaceholder}
+									onChange={() =>
+										setValue(
+											"featuredPlaceholder",
+											!settings.featuredPlaceholder,
+										)
+									}
+								/>
+							</ImageBehaviorRow>
+						</fieldset>
 						<div className="easymde-settings-center__upload-summary">
 							<div>
 								<Info size={17} />
@@ -783,7 +1659,10 @@ export function ImagesSettingsPage({
 						</div>
 					</section>
 				</div>
-			</fieldset>
+			</div>
+			{feedbackPortal}
+			{duplicatePortal}
+			{verificationFeedbackPortal}
 		</div>
 	);
 }

@@ -23,6 +23,7 @@ final class SettingsPage {
 	public function register_hooks() {
 		add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'admin_head-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'render_settings_center_favicon' ) );
 		add_action( 'load-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'enforce_settings_center_route' ) );
 		add_filter( 'submenu_file', array( $this, 'filter_settings_center_submenu_file' ), 10, 2 );
 	}
@@ -208,8 +209,13 @@ final class SettingsPage {
 			'window.EasyMDESettingsCenterBootstrap = ' . wp_json_encode(
 				$this->get_settings_center_bootstrap(),
 				JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-			) . ';',
+			) . ';' . "\n" . $this->get_settings_center_startup_loading_script(),
 			'before'
+		);
+		wp_add_inline_script(
+			$asset['handle'],
+			$this->get_settings_center_startup_failure_script(),
+			'after'
 		);
 	}
 
@@ -218,7 +224,21 @@ final class SettingsPage {
 			return;
 		}
 
+		$settings_center_brand_mark_url = Asset::url( 'assets/images/settings-center/brand-icon-clean.png' );
+		$settings_center_close_url      = admin_url( 'options-general.php' );
+
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
+	}
+
+	public function render_settings_center_favicon() {
+		?>
+		<link
+			rel="icon"
+			type="image/png"
+			href="<?php echo esc_url( Asset::url( 'assets/images/easymde-editor-icon.png' ) ); ?>"
+			data-easymde-settings-favicon="true"
+		>
+		<?php
 	}
 
 	private function is_canonical_settings_screen() {
@@ -237,16 +257,63 @@ final class SettingsPage {
 		);
 	}
 
+	private function get_settings_center_startup_failure_script() {
+		return <<<'JS'
+(function () {
+	if (window.EasyMDESettingsCenterStarted === true) {
+		return;
+	}
+
+	var root = document.getElementById('easymde-settings-center-root');
+	var status = root && root.querySelector('[data-settings-center-startup-status]');
+	if (!root || !status) {
+		console.error('[EasyMDE] settings-center-startup-fallback-unavailable');
+		return;
+	}
+
+	status.setAttribute('role', 'alert');
+	status.setAttribute('aria-live', 'assertive');
+	status.setAttribute('aria-busy', 'false');
+	status.textContent = root.getAttribute('data-failure-message') || '';
+	console.error('[EasyMDE] settings-center-bundle-unavailable');
+}());
+JS;
+	}
+
+	private function get_settings_center_startup_loading_script() {
+		return <<<'JS'
+(function () {
+	var root = document.getElementById('easymde-settings-center-root');
+	var status = root && root.querySelector('[data-settings-center-startup-status]');
+	if (!root || !status) {
+		console.error('[EasyMDE] settings-center-loading-surface-unavailable');
+		return;
+	}
+
+	status.setAttribute('role', 'status');
+	status.setAttribute('aria-live', 'polite');
+	status.setAttribute('aria-busy', 'true');
+	status.textContent = root.getAttribute('data-loading-message') || '';
+}());
+JS;
+	}
+
 	private function get_settings_center_bootstrap() {
-		$settings = $this->settings_center_repository->get_settings();
+		$settings_response = $this->settings_center_repository->get_settings_response();
+		$settings          = $settings_response['settings'];
+		$credential_status = $settings_response['credentialStatus'];
 
 		return array(
 			'schemaVersion'   => 2,
 			'closeUrl'        => admin_url( 'options-general.php' ),
 			'api'             => array(
-				'settingsUrl' => rest_url( 'easymde/v1/settings' ),
-				'nonce'       => wp_create_nonce( 'wp_rest' ),
-				'actionNonce' => wp_create_nonce( 'easymde_update_settings' ),
+				'settingsUrl'                         => rest_url( 'easymde/v1/settings' ),
+				'nonce'                               => wp_create_nonce( 'wp_rest' ),
+				'actionNonce'                         => wp_create_nonce( 'easymde_update_settings' ),
+				'imageHostingVerificationUrl'         => rest_url( 'easymde/v1/image-hosting/verification' ),
+				'imageHostingVerificationActionNonce' => wp_create_nonce( 'easymde_verify_image_hosting_upload' ),
+				'imageHostingSecretRevealUrl'         => rest_url( 'easymde/v1/image-hosting/secret' ),
+				'imageHostingSecretRevealActionNonce' => wp_create_nonce( 'easymde_reveal_image_hosting_secret' ),
 			),
 			'assets'          => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),
@@ -263,8 +330,10 @@ final class SettingsPage {
 			),
 			'drafts'          => array(
 				'images' => array(
-					'domain'       => $settings['images']['domain'],
-					'backupDomain' => $settings['images']['backupDomain'],
+					'domain'                       => $settings['images']['domain'],
+					'backupDomain'                 => $settings['images']['backupDomain'],
+					'primaryCredentialsConfigured' => $credential_status['primaryConfigured'],
+					'backupCredentialsConfigured'  => $credential_status['backupConfigured'],
 				),
 			),
 			'defaultSettings' => $this->settings_center_repository->get_default_settings(),

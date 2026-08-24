@@ -4,7 +4,7 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import type { NativePublishCategory } from '../ports/native-publish-port';
-import type { GeneralSettings } from '../settings-center-settings';
+import type { GeneralSettings, MarkdownSettings } from '../settings-center-settings';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -74,6 +74,7 @@ export type EditorRootWordPressBootstrap = Readonly<{
 
 export type EditorRootSettingsBootstrap = Readonly<{
   general: GeneralSettings;
+  markdown: Pick<MarkdownSettings, 'wordWrap'>;
 }>;
 
 export type EditorRootBootstrap = Readonly<{
@@ -417,12 +418,15 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       settingsValue.general,
       'editor-root-settings-invalid'
     );
+    const markdown = objectValue(
+      settingsValue.markdown,
+      'editor-root-settings-invalid'
+    );
     const stringFields = [
       'interfaceLanguage',
       'editingMode',
       'statusBarMode',
       'autoSaveInterval',
-      'defaultCategory',
       'publishVisibility',
       'summaryMode'
     ] as const;
@@ -432,30 +436,54 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'syntaxHighlight',
       'autoSave',
       'syncScroll',
-      'cleanPastedContent',
-      'smartListRecognition',
       'openPreviewAfterPublish',
       'featuredImagePlaceholder'
     ] as const;
     const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
       autoSaveInterval: new Set(['30', '60', '120', '300']),
-      defaultCategory: new Set(['none', 'current']),
       editingMode: new Set(['live-preview', 'source', 'preview']),
       interfaceLanguage: new Set(['zh-CN', 'zh-TW', 'en-US']),
       publishVisibility: new Set(['public', 'private', 'password']),
       statusBarMode: new Set(['words-reading-time', 'words', 'hidden']),
       summaryMode: new Set(['auto-55', 'auto-100', 'manual'])
     };
+    const removedGeneralFields = [
+      'cleanPastedContent',
+      'smartListRecognition',
+      'defaultCategory'
+    ] as const;
     if (
-      stringFields.some((key) => 'string' !== typeof general[key])
-      || booleanFields.some((key) => 'boolean' !== typeof general[key])
-      || stringFields.some(
+      removedGeneralFields.some((key) =>
+        // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn is outside the supported browser baseline.
+        Object.prototype.hasOwnProperty.call(general, key)
+      ) ||
+      stringFields.some((key) => 'string' !== typeof general[key]) ||
+      booleanFields.some((key) => 'boolean' !== typeof general[key]) ||
+      'boolean' !== typeof markdown.wordWrap ||
+      stringFields.some(
         (key) => !allowedValues[key]?.has(general[key] as string)
       )
     ) {
       throw new Error('editor-root-settings-invalid');
     }
-    settings = { general: general as unknown as GeneralSettings };
+    settings = {
+      general: {
+        autoFocusEditor: general.autoFocusEditor as boolean,
+        autoSave: general.autoSave as boolean,
+        autoSaveInterval: general.autoSaveInterval as string,
+        editingMode: general.editingMode as string,
+        featuredImagePlaceholder: general.featuredImagePlaceholder as boolean,
+        interfaceLanguage: general.interfaceLanguage as string,
+        openPreviewAfterPublish: general.openPreviewAfterPublish as boolean,
+        publishVisibility: general.publishVisibility as string,
+        showLineNumbers: general.showLineNumbers as boolean,
+        statusBarMode: general.statusBarMode as string,
+        summaryMode: general.summaryMode as string,
+        syncScroll: general.syncScroll as boolean,
+        syntaxHighlight: general.syntaxHighlight as boolean
+      } satisfies GeneralSettings,
+      markdown: { wordWrap: markdown.wordWrap }
+    };
   } catch {
     throw new EditorRootBootstrapError('editor-root-settings-invalid');
   }

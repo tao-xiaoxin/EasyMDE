@@ -7,6 +7,7 @@ import type { ToolbarBootstrap } from '../../../contracts/bootstrap/toolbar-boot
 import { EditorToolbar } from './EditorToolbar';
 
 const bootstrap: ToolbarBootstrap = {
+  showShortcutHints: true,
   commands: [
     { id: 'bold', label: '粗体', icon: 'editor-bold', surface: 'main', action: 'wrap', group: 'format' },
     { id: 'paragraph', label: '段落', icon: 'heading', surface: 'heading-menu', action: 'paragraph', group: 'heading' },
@@ -99,6 +100,11 @@ describe('EditorToolbar', () => {
       />
     );
     expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
+  });
+
+  it('hides shortcut hints while preserving accessible command labels', () => {
+    render(<EditorToolbar bootstrap={{ ...bootstrap, showShortcutHints: false }} platform="win" executeCommand={vi.fn()} />);
+    expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体');
   });
 
   it('renders a compact ordinary heading menu without the paragraph command', async () => {

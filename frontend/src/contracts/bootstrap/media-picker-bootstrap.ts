@@ -1,6 +1,9 @@
+import { parseImageUploadInsertion, type ImageUploadInsertion } from './image-upload-bootstrap';
+
 export type MediaPickerBootstrap = Readonly<{
   defaultAlt: string;
   insertMedia: string;
+  insertion: ImageUploadInsertion;
   placeholderAlt: string;
 }>;
 
@@ -21,6 +24,7 @@ export function parseMediaPickerBootstrap(value: unknown): MediaPickerBootstrap 
   return {
     defaultAlt: stringValue(bootstrap.defaultAlt),
     insertMedia: stringValue(bootstrap.insertMedia),
-    placeholderAlt: stringValue(bootstrap.placeholderAlt)
+    insertion: parseImageUploadInsertion(bootstrap.insertion),
+    placeholderAlt: stringValue(bootstrap.placeholderAlt),
   };
 }

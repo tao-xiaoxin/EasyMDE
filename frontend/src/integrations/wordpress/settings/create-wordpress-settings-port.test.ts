@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SETTINGS_CENTER_TEST_SETTINGS } from "../../../test/settings-center-settings-fixture";
 import { createWordPressSettingsPort } from "./create-wordpress-settings-port";
 
+const CREDENTIAL_STATUS = {
+	primaryConfigured: true,
+	backupConfigured: false,
+} as const;
+
 beforeEach(() => {
 	vi.stubGlobal("window", {
 		location: new URL("https://example.test/wp-admin/options.php"),
@@ -27,7 +32,10 @@ describe("createWordPressSettingsPort", () => {
 				});
 				return {
 					ok: true,
-					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+					json: async () => ({
+						settings: SETTINGS_CENTER_TEST_SETTINGS,
+						credentialStatus: CREDENTIAL_STATUS,
+					}),
 				} as Response;
 			},
 		);
@@ -42,7 +50,10 @@ describe("createWordPressSettingsPort", () => {
 
 		await expect(
 			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
-		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+		).resolves.toEqual({
+			settings: SETTINGS_CENTER_TEST_SETTINGS,
+			credentialStatus: CREDENTIAL_STATUS,
+		});
 		expect(fetchLike).toHaveBeenCalledOnce();
 	});
 
@@ -57,7 +68,10 @@ describe("createWordPressSettingsPort", () => {
 				);
 				return {
 					ok: true,
-					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+					json: async () => ({
+						settings: SETTINGS_CENTER_TEST_SETTINGS,
+						credentialStatus: CREDENTIAL_STATUS,
+					}),
 				} as Response;
 			},
 		);
@@ -70,9 +84,10 @@ describe("createWordPressSettingsPort", () => {
 			fetchLike,
 		);
 
-		await expect(port.get(new AbortController().signal)).resolves.toEqual(
-			SETTINGS_CENTER_TEST_SETTINGS,
-		);
+		await expect(port.get(new AbortController().signal)).resolves.toEqual({
+			settings: SETTINGS_CENTER_TEST_SETTINGS,
+			credentialStatus: CREDENTIAL_STATUS,
+		});
 		expect(fetchLike).toHaveBeenCalledOnce();
 	});
 
@@ -100,7 +115,10 @@ describe("createWordPressSettingsPort", () => {
 				});
 				return {
 					ok: true,
-					json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+					json: async () => ({
+						settings: SETTINGS_CENTER_TEST_SETTINGS,
+						credentialStatus: CREDENTIAL_STATUS,
+					}),
 				} as Response;
 			},
 		);
@@ -117,7 +135,10 @@ describe("createWordPressSettingsPort", () => {
 			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal, {
 				resetSecrets: true,
 			}),
-		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+		).resolves.toEqual({
+			settings: SETTINGS_CENTER_TEST_SETTINGS,
+			credentialStatus: CREDENTIAL_STATUS,
+		});
 	});
 
 	it("rejects cross-origin endpoints before making a request", () => {
@@ -147,14 +168,20 @@ describe("createWordPressSettingsPort", () => {
 				async () =>
 					({
 						ok: true,
-						json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+						json: async () => ({
+							settings: SETTINGS_CENTER_TEST_SETTINGS,
+							credentialStatus: CREDENTIAL_STATUS,
+						}),
 					}) as Response,
 			),
 		);
 
 		await expect(
 			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
-		).resolves.toEqual(SETTINGS_CENTER_TEST_SETTINGS);
+		).resolves.toEqual({
+			settings: SETTINGS_CENTER_TEST_SETTINGS,
+			credentialStatus: CREDENTIAL_STATUS,
+		});
 	});
 
 	it("reports a failed server response instead of claiming persistence", async () => {
@@ -220,5 +247,27 @@ describe("createWordPressSettingsPort", () => {
 		await expect(
 			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
 		).rejects.toThrow("settings-center-save-response-invalid");
+	});
+
+	it("rejects a response without authoritative credential status", async () => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: true,
+						status: 200,
+						json: async () => ({ settings: SETTINGS_CENTER_TEST_SETTINGS }),
+					}) as Response,
+			),
+		);
+
+		await expect(port.get(new AbortController().signal)).rejects.toThrow(
+			"settings-center-get-response-invalid",
+		);
 	});
 });

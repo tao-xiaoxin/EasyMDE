@@ -37,6 +37,23 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('only enables CodeMirror line wrapping when the saved setting allows it', () => {
+    for (const [wordWrap, expected] of [[true, true], [false, false]] as const) {
+      const { container, submissionField } = createFixture();
+      const session = createCodeMirrorDocumentSession({
+        container,
+        label: 'Markdown source',
+        submissionField,
+        wordWrap
+      });
+
+      expect(container.querySelector('.cm-lineWrapping') !== null).toBe(expected);
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
   it('parses Markdown syntax inside the existing CodeMirror owner', () => {
     const { container, submissionField } = createFixture(
       '# Heading\n\n> Quote with **strong** and `code`'
@@ -57,6 +74,25 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(markedText).toContain('`');
 
     session.destroy();
+  });
+
+  it('always continues Markdown list markers as an editor capability', () => {
+    const { container, submissionField } = createFixture('- item');
+    submissionField.setSelectionRange(6, 6);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    session.getInputElement().dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+    expect(session.getValue()).toBe('- item\n- ');
+    session.destroy();
+    container.remove();
+    submissionField.remove();
   });
 
   it('keeps heading markers regular and colors quote content as one block', () => {

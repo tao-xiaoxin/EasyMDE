@@ -68,8 +68,12 @@ function validBootstrap() {
       }
     },
     imageUpload: {
+      actionNonce: 'synthetic-action-nonce',
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
-      endpoint: 'https://example.test/wp-json/easymde/v1/media',
+      endpoint: 'https://example.test/wp-json/easymde/v1/image-hosting/upload',
+      insertAfterUpload: true,
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       nonce: 'synthetic-nonce',
       postId: 7,
@@ -90,20 +94,18 @@ function validBootstrap() {
         autoFocusEditor: true,
         autoSave: true,
         autoSaveInterval: '60',
-        cleanPastedContent: true,
-        defaultCategory: 'none',
         editingMode: 'live-preview',
         featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        smartListRecognition: true,
         statusBarMode: 'words-reading-time',
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
-      }
+      },
+      markdown: { wordWrap: true }
     },
     layout: {
       direction: 'ltr' as const,
@@ -138,6 +140,7 @@ function validBootstrap() {
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       placeholderAlt: 'alt text'
     },
     preview: {
@@ -273,6 +276,7 @@ function validBootstrap() {
           surface: 'main'
         }
       ],
+      showShortcutHints: true,
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
       strings: {
         headingLabelFormat: 'Heading %s',
@@ -308,6 +312,19 @@ function validBootstrap() {
 }
 
 describe('parseEditorRootBootstrap', () => {
+  it.each([
+    'cleanPastedContent',
+    'smartListRecognition',
+    'defaultCategory'
+  ] as const)('rejects the removed General setting %s', (key) => {
+    const value = validBootstrap();
+    (value.settings.general as Record<string, unknown>)[key] =
+      'defaultCategory' === key ? 'none' : true;
+    expect(() => parseEditorRootBootstrap(value)).toThrowError(
+      expect.objectContaining({ code: 'editor-root-settings-invalid' })
+    );
+  });
+
   it('validates the complete single-root bootstrap contract', () => {
     expect(parseEditorRootBootstrap(validBootstrap())).toEqual({
       appearance: validBootstrap().appearance,
@@ -446,6 +463,16 @@ describe('parseEditorRootBootstrap', () => {
             ...validBootstrap().settings.general,
             autoSaveInterval: 'invalid'
           }
+        }
+      },
+      'editor-root-settings-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        settings: {
+          ...validBootstrap().settings,
+          markdown: { wordWrap: 'yes' }
         }
       },
       'editor-root-settings-invalid'

@@ -359,7 +359,10 @@ function fixture(): EditorRootProps &
       toolbar: 'Markdown toolbar'
     },
     imageUpload: {
+      allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
+      insertAfterUpload: true,
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       maxBytes: 1024,
       postId: 7,
       strings: {
@@ -378,6 +381,7 @@ function fixture(): EditorRootProps &
       upload: vi.fn().mockResolvedValue({
         alt: 'uploaded image',
         status: 'uploaded',
+        title: '',
         url: 'https://example.test/upload.png'
       } satisfies ImageUploadResult)
     },
@@ -416,6 +420,7 @@ function fixture(): EditorRootProps &
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
+      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
       placeholderAlt: 'alt text'
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',
@@ -510,20 +515,18 @@ function fixture(): EditorRootProps &
         autoFocusEditor: true,
         autoSave: true,
         autoSaveInterval: '0.5',
-        cleanPastedContent: true,
-        defaultCategory: 'none',
         editingMode: 'live-preview',
         featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        smartListRecognition: true,
         statusBarMode: 'words-reading-time',
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
-      }
+      },
+      markdown: { wordWrap: true }
     },
     shortcutBinding,
     submissionField,
@@ -2061,7 +2064,7 @@ describe('EditorRoot', () => {
     await waitFor(() => {
       expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
       expect(props.submissionField.value).toBe(
-        'Before **![uploaded image](https://example.test/upload.png)** after'
+        'Before **![visual](https://example.test/upload.png)** after'
       );
     });
     expect(
@@ -2906,14 +2909,53 @@ describe('EditorRoot', () => {
     const props = fixture();
     vi.mocked(props.nativePublishPort.read).mockReturnValue({
       ...props.nativePublishPort.read(),
-      existing: false
+      categories: [
+        {
+          children: [],
+          id: 'current-category',
+          label: '当前分类'
+        }
+      ],
+      categoryIds: ['current-category'],
+      existing: false,
+      openPreview: true
     });
-    const view = render(<EditorRoot {...props} />);
+    const view = render(<EditorRoot {...props} settings={{
+      general: {
+        ...props.settings.general,
+        featuredImagePlaceholder: false,
+        openPreviewAfterPublish: false,
+        publishVisibility: 'private'
+      },
+      markdown: props.settings.markdown
+    }} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
     fireEvent.click(view.getByRole('button', { name: '发布文章' }));
-    expect(view.getByRole('dialog', { name: '发布文章' })).not.toBeNull();
+    const dialog = view.getByRole('dialog', { name: '发布文章' });
+    expect(dialog).not.toBeNull();
     expect(view.queryByRole('button', { name: '更新文章' })).toBeNull();
+    expect(
+      (within(dialog).getByRole('radio', { name: '私密' }) as HTMLInputElement).checked
+    ).toBe(true);
+    expect(
+      (within(dialog).getByRole('switch', {
+        name: '发布后打开文章页面'
+      }) as HTMLInputElement).checked
+    ).toBe(false);
+    expect(
+      (within(dialog).getByRole('checkbox', {
+        name: '当前分类'
+      }) as HTMLInputElement).checked
+    ).toBe(true);
+    expect(dialog.querySelector('.easymde-publish-featured-placeholder')).toBeNull();
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '发布文章' })
+    );
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryIds: ['current-category'] })
+    );
   });
 
   it('keeps hierarchical WordPress category selections independent', async () => {
@@ -3971,7 +4013,8 @@ describe('EditorRoot', () => {
           ...baseProps.settings.general,
           autoSave: false,
           syncScroll: false
-        }
+        },
+        markdown: baseProps.settings.markdown
       }
     };
     const view = render(<EditorRoot {...props} />);
@@ -4948,7 +4991,7 @@ describe('EditorRoot', () => {
     await waitFor(() => {
       expect(view.getByText('Paste uploaded')).not.toBeNull();
       expect(props.submissionField.value).toBe(
-        '![uploaded image](https://example.test/upload.png)'
+        '![screen shot](https://example.test/upload.png)'
       );
     });
 
@@ -4959,6 +5002,28 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a dismissible error alert without inserting Markdown when backup retries are exhausted', async () => {
+    const props = fixture();
+    vi.mocked(props.imageUploadPort.upload).mockResolvedValue({
+      code: 'easymde_image_hosting_backup_upload_failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['image'], 'screen-shot.png', { type: 'image/png' })
+    ));
+
+    const alert = await view.findByRole('alert');
+    expect(alert.textContent).toContain('Paste failed');
+    expect(props.submissionField.value).not.toContain('![');
+    fireEvent.click(within(alert).getByRole('button', { name: '关闭' }));
+    expect(view.queryByRole('alert')).toBeNull();
   });
 
   it('preserves an upload error when the upload session remounts', async () => {

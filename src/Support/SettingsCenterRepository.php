@@ -2,6 +2,8 @@
 
 namespace EasyMDE\Support;
 
+use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
+use EasyMDE\ImageHosting\ImageHostProviderSupport;
 use WP_Error;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -19,15 +21,34 @@ final class SettingsCenterRepository {
 	}
 
 	public function get_settings( $refresh_cache = false ) {
+		return $this->settings_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
+	}
+
+	/**
+	 * Return the complete public settings response from one stored snapshot.
+	 *
+	 * @return array{settings: array, credentialStatus: array}
+	 */
+	public function get_settings_response( $refresh_cache = false ) {
+		return $this->settings_response_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
+	}
+
+	private function settings_from_stored( array $stored ) {
 		$defaults             = $this->get_defaults();
-		$stored               = $this->options->get_editor_settings( $refresh_cache );
 		$settings             = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
 		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
 		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
 
-		$settings = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		$settings['images']['endpoint']       = $this->sanitize_endpoint( $settings['images']['endpoint'] );
+		$settings['images']['domain']         = $this->sanitize_domain( $settings['images']['domain'] );
+		$settings['images']['backupEndpoint'] = $this->sanitize_endpoint( $settings['images']['backupEndpoint'] );
+		$settings['images']['backupDomain']   = $this->sanitize_domain( $settings['images']['backupDomain'] );
+		if ( ! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ) {
+			$settings['images']['fileNameRule'] = $defaults['images']['fileNameRule'];
+		}
 		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
 			foreach ( array( 'windows', 'mac' ) as $platform ) {
 				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
@@ -91,7 +112,177 @@ final class SettingsCenterRepository {
 		return $shortcuts;
 	}
 
+	public function get_allowed_image_mime_types() {
+		$settings             = $this->get_settings();
+		$formats              = $settings['images']['uploadFormats'];
+		$mime_types_by_format = array(
+			'jpg'  => 'image/jpeg',
+			'png'  => 'image/png',
+			'webp' => 'image/webp',
+			'gif'  => 'image/gif',
+		);
+		$mime_types           = array();
+
+		foreach ( $mime_types_by_format as $format => $mime_type ) {
+			if ( ! empty( $formats[ $format ] ) ) {
+				$mime_types[] = $mime_type;
+			}
+		}
+
+		return $mime_types;
+	}
+
+	/**
+	 * Return the server-only image-hosting runtime configuration.
+	 *
+	 * This method intentionally includes stored credentials. Callers must never
+	 * serialize its result into Bootstrap data, REST responses, logs, or errors.
+	 *
+	 * @return array
+	 */
+	public function get_image_hosting_settings() {
+		return $this->image_hosting_settings_from_stored( $this->options->get_editor_settings() );
+	}
+
+	/**
+	 * Return one current stored image-hosting credential for an authorized caller.
+	 *
+	 * This value must never be included in Bootstrap, ordinary settings responses,
+	 * exports, logs, diagnostics, or errors.
+	 *
+	 * @param string $target   Credential target.
+	 * @param string $field    Credential field.
+	 * @param int    $revision Expected settings revision.
+	 * @return string|WP_Error
+	 */
+	public function get_image_hosting_secret( $target, $field, $revision ) {
+		$field_map = array(
+			'primary' => array(
+				'accessKey' => 'accessKey',
+				'secretKey' => 'secretKey',
+			),
+			'backup'  => array(
+				'accessKey' => 'backupAccessKey',
+				'secretKey' => 'backupSecretKey',
+			),
+		);
+		$stored    = $this->options->get_editor_settings();
+
+		if (
+			! is_int( $revision ) ||
+			$revision !== $this->revision_from_stored( $stored ) ||
+			! isset( $field_map[ $target ][ $field ] ) ||
+			! isset( $stored['settings_center']['images'] ) ||
+			! is_array( $stored['settings_center']['images'] )
+		) {
+			return $this->secret_unavailable_error();
+		}
+
+		$stored_field = $field_map[ $target ][ $field ];
+		$value        = isset( $stored['settings_center']['images'][ $stored_field ] )
+			? $this->bounded_text( $stored['settings_center']['images'][ $stored_field ], 255 )
+			: '';
+
+		return '' !== $value ? $value : $this->secret_unavailable_error();
+	}
+
+	private function image_hosting_settings_from_stored( array $stored ) {
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
+		$images   = $settings['images'];
+
+		$images['endpoint']        = $this->sanitize_endpoint( $images['endpoint'] );
+		$images['bucket']          = $this->bounded_text( $images['bucket'], 128 );
+		$images['domain']          = $this->sanitize_domain( $images['domain'] );
+		$images['accessKey']       = $this->bounded_text( $images['accessKey'], 255 );
+		$images['secretKey']       = $this->bounded_text( $images['secretKey'], 255 );
+		$images['backupBucket']    = $this->bounded_text( $images['backupBucket'], 128 );
+		$images['backupEndpoint']  = $this->sanitize_endpoint( $images['backupEndpoint'] );
+		$images['backupDomain']    = $this->sanitize_domain( $images['backupDomain'] );
+		$images['backupAccessKey'] = $this->bounded_text( $images['backupAccessKey'], 255 );
+		$images['backupSecretKey'] = $this->bounded_text( $images['backupSecretKey'], 255 );
+		if ( ! $this->is_valid_file_name_rule( $images['fileNameRule'] ) ) {
+			$images['fileNameRule'] = $this->get_defaults()['images']['fileNameRule'];
+		}
+
+		return array(
+			'revision'         => $this->revision_from_stored( $stored ),
+			'primary'          => array(
+				'retryCount' => $images['uploadRetryCount'],
+				'service'    => $images['service'],
+				'endpoint'   => $images['endpoint'],
+				'bucket'     => $images['bucket'],
+				'domain'     => $images['domain'],
+				'accessKey'  => $images['accessKey'],
+				'secretKey'  => $images['secretKey'],
+			),
+			'backup'           => array(
+				'enabled'    => $images['backupEnabled'],
+				'retryCount' => $images['uploadRetryCount'],
+				'service'    => $images['backupService'],
+				'endpoint'   => $images['backupEndpoint'],
+				'bucket'     => $images['backupBucket'],
+				'domain'     => $images['backupDomain'],
+				'accessKey'  => $images['backupAccessKey'],
+				'secretKey'  => $images['backupSecretKey'],
+			),
+			'fileNameRule'     => $images['fileNameRule'],
+			'behaviors'        => array(
+				'insertAfterUpload'    => $images['insertMarkdown'],
+				'autoCompress'         => $images['compressImages'],
+				'preserveOriginalName' => $images['preserveFileName'],
+				'copyUrl'              => $images['copyUrl'],
+				'maxImageSize'         => $images['maxImageSize'],
+				'uploadFormats'        => array_keys( array_filter( $images['uploadFormats'] ) ),
+				'insertFormat'         => $images['insertFormat'],
+				'altSource'            => $images['altSource'],
+				'captionMode'          => $images['captionMode'],
+				'featuredPlaceholder'  => $images['featuredPlaceholder'],
+			),
+			'credentialStatus' => array(
+				'primaryConfigured' => '' !== $images['accessKey'] && '' !== $images['secretKey'],
+				'backupConfigured'  => '' !== $images['backupAccessKey'] && '' !== $images['backupSecretKey'],
+			),
+		);
+	}
+
+	/**
+	 * Return non-secret credential-presence metadata for presentation adapters.
+	 *
+	 * @return array{primaryConfigured: bool, backupConfigured: bool}
+	 */
+	public function get_image_credential_status() {
+		$response = $this->get_settings_response();
+
+		return $response['credentialStatus'];
+	}
+
 	public function update_settings( $input, $reset_secrets = false ) {
+		$next = $this->persist_settings( $input, $reset_secrets );
+		if ( is_wp_error( $next ) ) {
+			return $next;
+		}
+
+		return $this->settings_from_stored( $next );
+	}
+
+	/**
+	 * Persist settings and return the public response from the exact CAS result.
+	 *
+	 * @return array|WP_Error
+	 */
+	public function update_settings_response( $input, $reset_secrets = false ) {
+		$next = $this->persist_settings( $input, $reset_secrets );
+		if ( is_wp_error( $next ) ) {
+			return $next;
+		}
+
+		return $this->settings_response_from_stored( $next );
+	}
+
+	private function persist_settings( $input, $reset_secrets = false ) {
 		if ( ! is_array( $input ) || ! array_key_exists( 'revision', $input ) || ! is_int( $input['revision'] ) || $input['revision'] < 0 ) {
 			return new WP_Error(
 				'easymde_settings_invalid_payload',
@@ -142,7 +333,16 @@ final class SettingsCenterRepository {
 				: $this->persistence_error();
 		}
 
-		return $this->get_settings( true );
+		return $next;
+	}
+
+	private function settings_response_from_stored( array $stored ) {
+		$runtime = $this->image_hosting_settings_from_stored( $stored );
+
+		return array(
+			'settings'         => $this->settings_from_stored( $stored ),
+			'credentialStatus' => $runtime['credentialStatus'],
+		);
 	}
 
 	private function stored_settings_for_write( array $stored ) {
@@ -202,6 +402,14 @@ final class SettingsCenterRepository {
 		);
 	}
 
+	private function secret_unavailable_error() {
+		return new WP_Error(
+			'easymde_image_hosting_secret_unavailable',
+			__( 'The image-hosting configuration is unavailable.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
 
 	private function revision_from_stored( array $stored ) {
 		return isset( $stored['settings_center_revision'] ) && is_numeric( $stored['settings_center_revision'] )
@@ -234,9 +442,6 @@ final class SettingsCenterRepository {
 				'autoSave'                 => true,
 				'autoSaveInterval'         => '60',
 				'syncScroll'               => true,
-				'cleanPastedContent'       => true,
-				'smartListRecognition'     => true,
-				'defaultCategory'          => 'none',
 				'publishVisibility'        => 'public',
 				'openPreviewAfterPublish'  => true,
 				'summaryMode'              => 'auto-55',
@@ -244,6 +449,7 @@ final class SettingsCenterRepository {
 			),
 			'images'    => array(
 				'service'             => 'cloudflare-r2',
+				'endpoint'            => '',
 				'bucket'              => 'easymde-assets',
 				'domain'              => '',
 				'accessKey'           => '',
@@ -251,17 +457,16 @@ final class SettingsCenterRepository {
 				'fileNameRule'        => '{date}/{uuid}.{ext}',
 				'backupEnabled'       => false,
 				'backupService'       => 'qiniu-kodo',
+				'backupEndpoint'      => '',
 				'backupBucket'        => 'easymde-backup',
 				'backupDomain'        => '',
 				'backupAccessKey'     => '',
 				'backupSecretKey'     => '',
-				'backupSameObjectKey' => true,
-				'backupFailureMode'   => 'return-primary-url',
+				'uploadRetryCount'    => 0,
 				'insertMarkdown'      => true,
 				'compressImages'      => true,
 				'preserveFileName'    => false,
 				'copyUrl'             => false,
-				'retryCount'          => 'twice',
 				'maxImageSize'        => '2560',
 				'uploadFormats'       => array(
 					'jpg'  => true,
@@ -275,27 +480,14 @@ final class SettingsCenterRepository {
 				'featuredPlaceholder' => true,
 			),
 			'markdown'  => array(
-				'livePreview'      => true,
 				'wordWrap'         => true,
 				'lineNumbers'      => false,
-				'fixedToolbar'     => true,
 				'editorTheme'      => 'system',
-				'editorFontSize'   => '14px',
-				'editorFont'       => 'system',
 				'githubFlavor'     => true,
 				'smartPunctuation' => true,
 				'tableAlignment'   => 'auto',
-				'codeTheme'        => 'light',
 				'codeLineNumbers'  => 'show',
-				'taskLists'        => true,
-				'emoji'            => true,
-				'math'             => true,
 				'htmlRendering'    => false,
-				'tableExtension'   => true,
-				'footnotes'        => true,
-				'definitionLists'  => true,
-				'toc'              => false,
-				'imageSizeSyntax'  => true,
 				'pasteAsMarkdown'  => true,
 				'lineEnding'       => 'system',
 				'unorderedMarker'  => '-',
@@ -345,6 +537,24 @@ final class SettingsCenterRepository {
 
 	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
 		$defaults = $this->get_defaults();
+		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
+			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
+				if (
+					array_key_exists( $retry_field, $input['images'] ) &&
+					(
+						! is_int( $input['images'][ $retry_field ] ) ||
+						$input['images'][ $retry_field ] < 0 ||
+						$input['images'][ $retry_field ] > 5
+					)
+				) {
+					return new WP_Error(
+						'easymde_settings_invalid_payload',
+						__( 'The settings payload is invalid.', 'easymde' ),
+						array( 'status' => 400 )
+					);
+				}
+			}
+		}
 		$base     = $this->merge_settings( $defaults, $stored_settings );
 		$settings = $this->merge_settings( $base, $input );
 		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
@@ -354,6 +564,17 @@ final class SettingsCenterRepository {
 			);
 		}
 		$settings = $this->normalize_enum_settings( $settings );
+		if (
+			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'] ) ||
+			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'] ) ||
+			! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] )
+		) {
+			return new WP_Error(
+				'easymde_settings_invalid_payload',
+				__( 'The settings payload is invalid.', 'easymde' ),
+				array( 'status' => 400 )
+			);
+		}
 
 		foreach ( $settings['general'] as $key => $value ) {
 			$settings['general'][ $key ] = is_bool( $value ) ? $value : $this->bounded_text( $value, 80 );
@@ -374,8 +595,12 @@ final class SettingsCenterRepository {
 						? (bool) $settings['images']['uploadFormats'][ $format ]
 						: (bool) $enabled;
 				}
-			} elseif ( 'domain' === $key || 'backupDomain' === $key ) {
+			} elseif ( in_array( $key, array( 'domain', 'backupDomain' ), true ) ) {
 				$settings['images'][ $key ] = $this->sanitize_domain( $value );
+			} elseif ( 'endpoint' === $key || 'backupEndpoint' === $key ) {
+				$settings['images'][ $key ] = $this->sanitize_endpoint( $value );
+			} elseif ( 'uploadRetryCount' === $key ) {
+				$settings['images'][ $key ] = $value;
 			} elseif ( is_bool( $value ) ) {
 				$settings['images'][ $key ] = $value;
 			} else {
@@ -400,6 +625,20 @@ final class SettingsCenterRepository {
 		$settings['shortcuts']['detectConflicts'] = (bool) $settings['shortcuts']['detectConflicts'];
 		$settings['shortcuts']['showSuggestions'] = (bool) $settings['shortcuts']['showSuggestions'];
 
+		if (
+			! empty( $settings['images']['backupEnabled'] ) &&
+			ImageHostDestinationIdentity::are_same(
+				$this->destination_config( $settings['images'], false ),
+				$this->destination_config( $settings['images'], true )
+			)
+		) {
+			return new WP_Error(
+				'easymde_settings_duplicate_image_host_destination',
+				__( 'The primary and backup image hosts must use different storage destinations.', 'easymde' ),
+				array( 'status' => 409 )
+			);
+		}
+
 		return $settings;
 	}
 	private function normalize_enum_settings( array $settings ) {
@@ -409,25 +648,20 @@ final class SettingsCenterRepository {
 				'editingMode'       => 'live-preview',
 				'statusBarMode'     => 'words-reading-time',
 				'autoSaveInterval'  => '60',
-				'defaultCategory'   => 'none',
 				'publishVisibility' => 'public',
 				'summaryMode'       => 'auto-55',
 			),
 			'images'   => array(
-				'service'           => 'cloudflare-r2',
-				'backupService'     => 'qiniu-kodo',
-				'backupFailureMode' => 'return-primary-url',
-				'retryCount'        => 'twice',
-				'maxImageSize'      => '2560',
-				'insertFormat'      => 'markdown',
-				'altSource'         => 'filename',
-				'captionMode'       => 'none',
+				'service'       => 'cloudflare-r2',
+				'backupService' => 'qiniu-kodo',
+				'maxImageSize'  => '2560',
+				'insertFormat'  => 'markdown',
+				'altSource'     => 'filename',
+				'captionMode'   => 'none',
 			),
 			'markdown' => array(
 				'editorTheme'     => 'system',
-				'editorFont'      => 'system',
 				'tableAlignment'  => 'auto',
-				'codeTheme'       => 'light',
 				'codeLineNumbers' => 'show',
 				'lineEnding'      => 'system',
 				'blockquoteStyle' => 'standard',
@@ -456,10 +690,6 @@ final class SettingsCenterRepository {
 					'120' => '120',
 					'300' => '300',
 				),
-				'defaultCategory'   => array(
-					'none'    => 'none',
-					'current' => 'current',
-				),
 				'publishVisibility' => array(
 					'public'   => 'public',
 					'private'  => 'private',
@@ -472,45 +702,19 @@ final class SettingsCenterRepository {
 				),
 			),
 			'images'   => array(
-				'service'           => array(
-					'cloudflare-r2'     => 'cloudflare-r2',
-					'Cloudflare R2'     => 'cloudflare-r2',
-					'aliyun-oss'        => 'aliyun-oss',
-					'Aliyun OSS'        => 'aliyun-oss',
-					'tencent-cos'       => 'tencent-cos',
-					'Tencent Cloud COS' => 'tencent-cos',
-					'custom'            => 'custom',
-					'Custom Upload'     => 'custom',
+				'service'       => array(
+					'cloudflare-r2' => 'cloudflare-r2',
+					'qiniu-kodo'    => 'qiniu-kodo',
+					'aliyun-oss'    => 'aliyun-oss',
+					'tencent-cos'   => 'tencent-cos',
 				),
-				'backupService'     => array(
-					'qiniu-kodo'        => 'qiniu-kodo',
-					'Qiniu Kodo'        => 'qiniu-kodo',
-					'cloudflare-r2'     => 'cloudflare-r2',
-					'Cloudflare R2'     => 'cloudflare-r2',
-					'aliyun-oss'        => 'aliyun-oss',
-					'Aliyun OSS'        => 'aliyun-oss',
-					'tencent-cos'       => 'tencent-cos',
-					'Tencent Cloud COS' => 'tencent-cos',
-					'custom'            => 'custom',
-					'Custom Upload'     => 'custom',
+				'backupService' => array(
+					'qiniu-kodo'    => 'qiniu-kodo',
+					'cloudflare-r2' => 'cloudflare-r2',
+					'aliyun-oss'    => 'aliyun-oss',
+					'tencent-cos'   => 'tencent-cos',
 				),
-				'backupFailureMode' => array(
-					'return-primary-url'                   => 'return-primary-url',
-					'Return primary URL on backup failure' => 'return-primary-url',
-					'fail-upload'                          => 'fail-upload',
-					'Fail entire upload'                   => 'fail-upload',
-				),
-				'retryCount'        => array(
-					'none'              => 'none',
-					'Do not retry'      => 'none',
-					'once'              => 'once',
-					'Retry once'        => 'once',
-					'twice'             => 'twice',
-					'Retry twice'       => 'twice',
-					'three-times'       => 'three-times',
-					'Retry three times' => 'three-times',
-				),
-				'maxImageSize'      => array(
+				'maxImageSize'  => array(
 					'original'            => 'original',
 					'Original image size' => 'original',
 					'1920'                => '1920',
@@ -520,29 +724,29 @@ final class SettingsCenterRepository {
 					'3840'                => '3840',
 					'3840px'              => '3840',
 				),
-				'insertFormat'      => array(
+				'insertFormat'  => array(
 					'markdown'       => 'markdown',
 					'Markdown image' => 'markdown',
-					'html'           => 'html',
-					'HTML image'     => 'html',
+					'html'           => 'markdown',
+					'HTML image'     => 'markdown',
 					'url'            => 'url',
 					'URL only'       => 'url',
 				),
-				'altSource'         => array(
+				'altSource'     => array(
 					'filename'       => 'filename',
 					'Use file name'  => 'filename',
 					'empty'          => 'empty',
 					'Leave empty'    => 'empty',
-					'upload'         => 'upload',
-					'Fill on upload' => 'upload',
+					'upload'         => 'empty',
+					'Fill on upload' => 'empty',
 				),
-				'captionMode'       => array(
+				'captionMode'   => array(
 					'none'           => 'none',
 					'Do not insert'  => 'none',
 					'filename'       => 'filename',
 					'Use file name'  => 'filename',
-					'upload'         => 'upload',
-					'Fill on upload' => 'upload',
+					'upload'         => 'none',
+					'Fill on upload' => 'none',
 				),
 			),
 			'markdown' => array(
@@ -554,14 +758,6 @@ final class SettingsCenterRepository {
 					'dark'          => 'dark',
 					'Dark'          => 'dark',
 				),
-				'editorFont'      => array(
-					'system'          => 'system',
-					'System Default'  => 'system',
-					'monospace'       => 'monospace',
-					'Monospace'       => 'monospace',
-					'source-han-sans' => 'source-han-sans',
-					'Source Han Sans' => 'source-han-sans',
-				),
 				'tableAlignment'  => array(
 					'auto'                  => 'auto',
 					'Auto align by content' => 'auto',
@@ -569,14 +765,6 @@ final class SettingsCenterRepository {
 					'Align left'            => 'left',
 					'center'                => 'center',
 					'Align center'          => 'center',
-				),
-				'codeTheme'       => array(
-					'light'         => 'light',
-					'Light'         => 'light',
-					'dark'          => 'dark',
-					'Dark'          => 'dark',
-					'follow-editor' => 'follow-editor',
-					'Follow editor' => 'follow-editor',
 				),
 				'codeLineNumbers' => array(
 					'show' => 'show',
@@ -629,7 +817,7 @@ final class SettingsCenterRepository {
 			return '';
 		}
 		$parts = wp_parse_url( $value );
-		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'], $parts['pass'], $parts['query'], $parts['fragment'] ) ) {
+		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
 			return '';
 		}
 		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
@@ -638,6 +826,56 @@ final class SettingsCenterRepository {
 		$url = esc_url_raw( $value, array( 'http', 'https' ) );
 
 		return is_string( $url ) ? $this->bounded_text( $url, 255 ) : '';
+	}
+
+	private function sanitize_endpoint( $value ) {
+		$value = strtolower( rtrim( trim( (string) $value ), '/' ) );
+
+		return $this->is_valid_endpoint( $value ) ? $this->bounded_text( $value, 255 ) : '';
+	}
+
+	private function is_valid_endpoint( $value ) {
+		return is_string( $value ) && ( '' === $value || ImageHostProviderSupport::validate_r2_endpoint( $value ) || ImageHostProviderSupport::validate_oss_endpoint( $value ) || ImageHostProviderSupport::validate_cos_endpoint( $value ) );
+	}
+
+	private function is_valid_provider_coordinates( $service, $endpoint ) {
+		if ( 'qiniu-kodo' === $service ) {
+			return '' === $endpoint;
+		}
+		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
+			return '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint );
+		}
+
+		return false;
+	}
+
+	private function destination_config( array $images, $backup ) {
+		return array(
+			'service'  => $images[ $backup ? 'backupService' : 'service' ],
+			'endpoint' => $images[ $backup ? 'backupEndpoint' : 'endpoint' ],
+			'bucket'   => $images[ $backup ? 'backupBucket' : 'bucket' ],
+		);
+	}
+
+	private function is_valid_file_name_rule( $rule ) {
+		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+			return false;
+		}
+
+		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
+			return false;
+		}
+
+		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
+		foreach ( $matches[1] as $variable ) {
+			if ( ! in_array( $variable, $allowed, true ) ) {
+				return false;
+			}
+		}
+
+		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
+
+		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
 	}
 
 	private function normalize_shortcut( $value, $is_mac ) {

@@ -58,6 +58,14 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
         $this->assertStringContainsString('data-failure-message=', $output);
+        $this->assertStringContainsString('data-settings-center-startup', $output);
+        $this->assertStringContainsString('easymde-settings-center__frame', $output);
+        $this->assertStringContainsString('easymde-settings-center__sidebar', $output);
+        $this->assertStringContainsString('easymde-settings-center__brand-wrap', $output);
+        $this->assertStringContainsString('easymde-settings-center__brand', $output);
+        $this->assertStringContainsString('data-loading-message=', $output);
+        $this->assertStringContainsString('Loading EasyMDE Settings Center', $output);
+        $this->assertStringContainsString(esc_url(admin_url('options-general.php')), $output);
         $this->assertStringNotContainsString('options.php', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
@@ -101,11 +109,20 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
         $this->assertSame('', $bootstrap['drafts']['images']['domain']);
+		$this->assertFalse( $bootstrap['drafts']['images']['primaryCredentialsConfigured'] );
+		$this->assertFalse( $bootstrap['drafts']['images']['backupCredentialsConfigured'] );
         $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
-        $this->assertArrayNotHasKey('testingConnection', $bootstrap['strings']);
+		$this->assertNotEmpty( $bootstrap['api']['imageHostingVerificationActionNonce'] );
+		$this->assertStringContainsString(
+			'/easymde/v1/image-hosting/verification',
+			$bootstrap['api']['imageHostingVerificationUrl']
+		);
+		$this->assertNotEmpty( $bootstrap['api']['imageHostingSecretRevealActionNonce'] );
+		$this->assertStringContainsString(
+			'/easymde/v1/image-hosting/secret',
+			$bootstrap['api']['imageHostingSecretRevealUrl']
+		);
         $this->assertArrayHasKey('settingsUnavailable', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('connected', $bootstrap['strings']);
-        $this->assertArrayNotHasKey('lastTest', $bootstrap['strings']);
         $this->assertArrayNotHasKey('promptManagement', $bootstrap['strings']);
         $this->assertArrayHasKey('transferExportConfiguration', $bootstrap['strings']);
         $this->assertArrayHasKey('transferConfigurationManagement', $bootstrap['strings']);
@@ -124,6 +141,19 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
+			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
+			'uploadRetryCount', 'uploadRetryCountDescription',
+			'duplicateImageHostTitle', 'duplicateImageHostDescription',
+            'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'revealingSecret', 'secretRevealFailed',
+			'uploadVerificationStatus', 'backupVerificationStatus', 'uploadVerificationPending',
+			'verifyingUpload', 'uploadVerified', 'uploadVerificationFailed', 'uploadVerificationStale',
+			'lastVerified', 'verifyPrimaryUpload', 'verifyBackupUpload', 'uploadVerificationSucceeded',
+			'uploadVerificationSuccessDescription', 'uploadVerificationFailureDescription',
+			'uploadVerificationFailureHint', 'insecureViewingDomainWarning',
+			'uploadedObjectPath', 'uploadedImageUrl', 'closeImageFeedback',
+			'imageHostFailureConfiguration', 'imageHostFailureAuthentication',
+            'imageHostFailureAuthorization', 'imageHostFailureNetwork', 'imageHostFailureTimeout',
+            'imageHostFailureProvider', 'imageHostFailureInvalidResponse',
             'transferExportConfiguration', 'transferConfigurationManagement',
             'transferFileSelectedNotice', 'transferExportNameInvalid', 'transferChecksSummary', 'transferChecksPassed',
             'aboutVersionInformation', 'aboutPluginIntroduction',
@@ -133,6 +163,110 @@ final class SettingsPageTest extends WP_UnitTestCase
             $this->assertIsString( $bootstrap['strings'][ $key ] );
             $this->assertNotSame( '', $bootstrap['strings'][ $key ] );
         }
+        $this->assertArrayNotHasKey('uploadDestination', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
+        $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
+		foreach (
+			array(
+				'providerApiEndpoint',
+				'backupRetryCount',
+				'backupRetryCountDescription',
+				'keepSameObjectPath',
+				'keepSameObjectPathDescription',
+				'backupFailureHandling',
+				'backupFailureHandlingDescription',
+				'returnPrimaryUrlOnBackupFailure',
+				'failEntireUpload',
+				'retryFailedUpload',
+				'doNotRetry',
+				'retryOnce',
+			)
+			as $removed_image_string
+		) {
+			$this->assertArrayNotHasKey( $removed_image_string, $bootstrap['strings'] );
+		}
+		foreach (
+			array(
+				'r2AccountId',
+				'cleanPastedContent',
+				'cleanPastedContentDescription',
+				'smartListRecognition',
+				'smartListRecognitionDescription',
+				'defaultCategory',
+				'noAutomaticCategory',
+				'currentCategory',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $bootstrap['strings']);
+		}
+		foreach (
+			array(
+				'markdownLivePreview',
+				'livePreviewDescription',
+				'fixedToolbar',
+				'fixedToolbarDescription',
+				'taskLists',
+				'taskListsDescription',
+				'emoji',
+				'emojiDescription',
+				'mathSupport',
+				'mathSupportDescription',
+				'markdownExtensions',
+				'tableExtension',
+				'tableExtensionDescription',
+				'footnotes',
+				'footnotesDescription',
+				'definitionLists',
+				'definitionListsDescription',
+				'imageSizeSyntax',
+				'imageSizeSyntaxDescription',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $bootstrap['strings']);
+		}
+		$this->assertArrayHasKey('livePreview', $bootstrap['strings']);
+		$this->assertArrayHasKey('math', $bootstrap['strings']);
+    }
+
+    public function test_settings_center_bootstrap_projects_one_authoritative_option_snapshot()
+    {
+        $reads = 0;
+        $filter = static function () use ( &$reads ) {
+            $reads++;
+
+            return array(
+                'settings_center_revision' => 19,
+                'settings_center'          => array(
+                    'images' => array(
+                        'domain'    => 'https://snapshot.example.test',
+                        'accessKey' => 'snapshot-access',
+                        'secretKey' => 'snapshot-secret',
+                    ),
+                ),
+            );
+        };
+        add_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        $settings_page = $this->settings_page();
+        $method = new ReflectionMethod(SettingsPage::class, 'get_settings_center_bootstrap');
+        $method->setAccessible(true);
+
+        try {
+            $bootstrap = $method->invoke($settings_page);
+        } finally {
+            remove_filter( 'pre_option_' . Options::EDITOR_SETTINGS, $filter );
+        }
+
+        $this->assertSame(1, $reads);
+        $this->assertSame(19, $bootstrap['settings']['revision']);
+        $this->assertSame('https://snapshot.example.test', $bootstrap['drafts']['images']['domain']);
+        $this->assertTrue($bootstrap['drafts']['images']['primaryCredentialsConfigured']);
+        $this->assertFalse($bootstrap['drafts']['images']['backupCredentialsConfigured']);
+        $this->assertSame('', $bootstrap['settings']['images']['accessKey']);
+        $this->assertSame('', $bootstrap['settings']['images']['secretKey']);
+        $this->assertStringNotContainsString('snapshot-secret', wp_json_encode($bootstrap));
     }
 
     public function test_settings_center_assets_load_only_on_the_canonical_screen()
@@ -152,6 +286,37 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertTrue(wp_style_is('easymde-admin-settings-center', 'enqueued'));
         $this->assertNotEmpty(
             wp_scripts()->get_data('easymde-admin-settings-center', 'before')
+        );
+        $this->assertNotEmpty(
+            wp_scripts()->get_data('easymde-admin-settings-center', 'after')
+        );
+    }
+
+    public function test_settings_center_uses_the_immersive_editor_logo_as_its_favicon()
+    {
+        $settings_page = $this->settings_page();
+        $settings_page->register_hooks();
+
+        $this->assertSame(
+            10,
+            has_action(
+                'admin_head-toplevel_page_easymde',
+                array($settings_page, 'render_settings_center_favicon')
+            )
+        );
+
+        ob_start();
+        $settings_page->render_settings_center_favicon();
+        $output = ob_get_clean();
+
+        $this->assertStringContainsString('data-easymde-settings-favicon="true"', $output);
+        $this->assertStringContainsString('rel="icon"', $output);
+        $this->assertStringContainsString('type="image/png"', $output);
+        $this->assertStringContainsString('/assets/images/easymde-editor-icon.png', $output);
+
+        remove_action(
+            'admin_head-toplevel_page_easymde',
+            array($settings_page, 'render_settings_center_favicon')
         );
     }
 

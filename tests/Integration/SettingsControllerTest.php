@@ -39,6 +39,13 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( '', $data['settings']['images']['accessKey'] );
         $this->assertSame( '', $data['settings']['images']['secretKey'] );
+		foreach ( array( 'cleanPastedContent', 'smartListRecognition', 'defaultCategory' ) as $removed ) {
+			$this->assertArrayNotHasKey( $removed, $data['settings']['general'] );
+		}
+		$this->assertArrayNotHasKey( 'accountId', $data['settings']['images'] );
+		foreach ( array( 'endpoint', 'region', 'fallbackDomain', 'backupEndpoint', 'backupRegion' ) as $field ) {
+			$this->assertArrayHasKey( $field, $data['settings']['images'] );
+		}
 		$this->assertSame(
 			array(
 				'wordWrap',
@@ -124,6 +131,75 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $this->assertFalse( $data['settings']['general']['autoSave'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
+
+	public function test_post_accepts_each_supported_image_host_service_as_primary()
+	{
+		$cases = array(
+			array( 'cloudflare-r2', 'https://synthetic.r2.cloudflarestorage.com', '', 'synthetic-bucket' ),
+			array( 'qiniu-kodo', '', '', 'synthetic-bucket' ),
+			array( 'aliyun-oss', '', 'cn-hangzhou', 'synthetic-bucket' ),
+			array( 'tencent-cos', '', 'ap-shanghai', 'synthetic-bucket-1250000000' ),
+		);
+
+		foreach ( $cases as $case ) {
+			$settings = $this->current_settings();
+			$settings['images']['service'] = $case[0];
+			$settings['images']['endpoint'] = $case[1];
+			$settings['images']['region'] = $case[2];
+			$settings['images']['bucket'] = $case[3];
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 200, $response->get_status(), $case[0] );
+			$this->assertSame( $case[0], $response->get_data()['settings']['images']['service'], $case[0] );
+		}
+	}
+
+	public function test_post_accepts_official_r2_jurisdiction_endpoints()
+	{
+		foreach ( array( 'eu', 'us', 'fedramp' ) as $jurisdiction ) {
+			$settings = $this->current_settings();
+			$settings['images']['endpoint'] = 'https://synthetic-account.' . $jurisdiction . '.r2.cloudflarestorage.com';
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 200, $response->get_status(), $jurisdiction );
+		}
+	}
+
+	public function test_post_rejects_non_applicable_provider_coordinates()
+	{
+		$qiniu = $this->current_settings();
+		$qiniu['images']['service'] = 'qiniu-kodo';
+		$qiniu['images']['endpoint'] = 'https://synthetic.r2.cloudflarestorage.com';
+		$oss = $this->current_settings();
+		$oss['images']['service'] = 'aliyun-oss';
+		$oss['images']['endpoint'] = 'https://synthetic.r2.cloudflarestorage.com';
+		$r2 = $this->current_settings();
+		$r2['images']['region'] = 'cn-hangzhou';
+
+		foreach ( array( $qiniu, $oss, $r2 ) as $settings ) {
+			$response = $this->post_json( array( 'settings' => $settings ) );
+			$this->assertSame( 400, $response->get_status() );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+		}
+	}
+
+	public function test_post_rejects_duplicate_enabled_image_host_destinations_with_a_conflict()
+	{
+		$settings = $this->current_settings();
+		$settings['images']['service'] = 'qiniu-kodo';
+		$settings['images']['endpoint'] = '';
+		$settings['images']['bucket'] = 'same-bucket';
+		$settings['images']['backupEnabled'] = true;
+		$settings['images']['backupService'] = 'qiniu-kodo';
+		$settings['images']['backupBucket'] = 'SAME-BUCKET';
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 409, $response->get_status() );
+		$this->assertSame( 'easymde_settings_duplicate_image_host_destination', $response->as_error()->get_error_code() );
+	}
 
     public function test_successful_post_and_following_get_return_authoritative_credential_status_without_secrets() {
         $settings = $this->current_settings();
@@ -331,12 +407,17 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$invalid_rule_response = $this->post_json( array( 'settings' => $invalid_rule ) );
 
 		$unsupported_provider = $this->current_settings();
-		$unsupported_provider['images']['service'] = 'aliyun-oss';
+		$unsupported_provider['images']['service'] = 'unsupported-provider';
 		$unsupported_provider_response = $this->post_json( array( 'settings' => $unsupported_provider ) );
 
-		$invalid_account = $this->current_settings();
-		$invalid_account['images']['accountId'] = 'invalid account id';
-		$invalid_account_response = $this->post_json( array( 'settings' => $invalid_account ) );
+		$invalid_endpoint = $this->current_settings();
+		$invalid_endpoint['images']['endpoint'] = 'https://not-r2.example.test';
+		$invalid_endpoint_response = $this->post_json( array( 'settings' => $invalid_endpoint ) );
+
+		$invalid_region = $this->current_settings();
+		$invalid_region['images']['service'] = 'aliyun-oss';
+		$invalid_region['images']['region'] = 'cn-hangzhou-';
+		$invalid_region_response = $this->post_json( array( 'settings' => $invalid_region ) );
 
         $too_long_bucket = $this->current_settings();
 		$too_long_bucket['images']['bucket'] = str_repeat( 'a', 129 );
@@ -352,8 +433,10 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_rule_response->as_error()->get_error_code() );
 		$this->assertSame( 400, $unsupported_provider_response->get_status() );
 		$this->assertSame( 'easymde_settings_invalid_payload', $unsupported_provider_response->as_error()->get_error_code() );
-		$this->assertSame( 400, $invalid_account_response->get_status() );
-		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_account_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $invalid_endpoint_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_endpoint_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $invalid_region_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $invalid_region_response->as_error()->get_error_code() );
         $this->assertSame( 400, $too_long_bucket_response->get_status() );
         $this->assertSame( 'easymde_settings_invalid_payload', $too_long_bucket_response->as_error()->get_error_code() );
     }

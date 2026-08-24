@@ -95,15 +95,12 @@ function validBootstrap() {
         autoFocusEditor: true,
         autoSave: true,
         autoSaveInterval: '60',
-        cleanPastedContent: true,
-        defaultCategory: 'none',
         editingMode: 'live-preview',
         featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        smartListRecognition: true,
         statusBarMode: 'words-reading-time',
         summaryMode: 'auto-55',
         syncScroll: true,
@@ -316,6 +313,19 @@ function validBootstrap() {
 }
 
 describe('parseEditorRootBootstrap', () => {
+  it.each([
+    'cleanPastedContent',
+    'smartListRecognition',
+    'defaultCategory'
+  ] as const)('rejects the removed General setting %s', (key) => {
+    const value = validBootstrap();
+    (value.settings.general as Record<string, unknown>)[key] =
+      'defaultCategory' === key ? 'none' : true;
+    expect(() => parseEditorRootBootstrap(value)).toThrowError(
+      expect.objectContaining({ code: 'editor-root-settings-invalid' })
+    );
+  });
+
   it('validates the complete single-root bootstrap contract', () => {
     expect(parseEditorRootBootstrap(validBootstrap())).toEqual({
       appearance: validBootstrap().appearance,

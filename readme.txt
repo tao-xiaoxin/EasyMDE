@@ -26,7 +26,7 @@ EasyMDE is self-contained and does not require Jetpack, Classic Editor, another 
 * Heading, appearance, and output controls in compact popovers.
 * Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
 * Explicit WordPress media library insertion through the toolbar media picker.
-* Local image paste and drag-and-drop upload through the protected same-origin Image Hosting path to configured Cloudflare R2, with optional Qiniu Kodo backup and no WordPress media fallback.
+* Local image paste and drag-and-drop upload through the protected same-origin Image Hosting path to administrator-configured Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS; any provider can be primary or the optional same-object-key backup, with no WordPress media fallback or automatic retry.
 * REST-powered server preview.
 * Browser local draft autosave and recovery.
 * Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
@@ -90,6 +90,20 @@ The plugin clones the rendered preview and inlines important computed styles for
 
 If rich-text clipboard access is unavailable, EasyMDE uses available fallback methods or shows a clear error message without affecting article content.
 
+== External Services ==
+
+EasyMDE's JavaScript, CSS, fonts, icons, and rendering libraries remain bundled locally. Article images use an external object-storage service only after an administrator explicitly selects, configures, and saves an Image Hosting provider. That administrator action authorizes the requests described below. The browser sends files only to EasyMDE's protected same-origin REST route; provider credentials remain on the WordPress server and are never sent to the browser.
+
+Cloudflare R2 is contacted only when it is the saved primary or enabled backup and an authorized author pastes or drops an accepted local image, or when an administrator explicitly tests that saved connection. For an upload, WordPress sends the image bytes, verified MIME type, generated object key, and minimum signed request metadata to the configured official R2 S3 API endpoint. A connection test sends a signed bucket request without image bytes or article content. Documentation: https://developers.cloudflare.com/r2/ . Terms: https://www.cloudflare.com/terms/ . Privacy policy: https://www.cloudflare.com/privacypolicy/ .
+
+Qiniu Kodo is contacted only when it is the saved primary or enabled backup and an authorized author pastes or drops an accepted local image, or when an administrator explicitly tests that saved connection. For an upload, WordPress sends the image bytes, verified MIME type, generated object key, and minimum signed request metadata to Qiniu's official Kodo upload API. A connection test sends a signed bucket-list request without image bytes or article content. Documentation: https://developer.qiniu.com/kodo . Terms: https://www.qiniu.com/user-agreement . Privacy policy: https://www.qiniu.com/agreements/privacy-right .
+
+Alibaba Cloud OSS is contacted only when it is the saved primary or enabled backup and an authorized author pastes or drops an accepted local image, or when an administrator explicitly tests that saved connection. For an upload, WordPress sends the image bytes, verified MIME type, generated object key, and minimum signed request metadata to the official OSS API host derived from the saved region and bucket. A connection test sends a signed bucket-information request without image bytes or article content. Documentation: https://www.alibabacloud.com/help/en/oss . Terms: https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-product-terms-of-service . Privacy policy: https://www.alibabacloud.com/help/en/legal/latest/kcpor .
+
+Tencent Cloud COS is contacted only when it is the saved primary or enabled backup and an authorized author pastes or drops an accepted local image, or when an administrator explicitly tests that saved connection. For an upload, WordPress sends the image bytes, verified MIME type, generated object key, and minimum signed request metadata to the official COS API host derived from the saved region and bucket. A connection test sends a signed bucket request without image bytes or article content. Documentation: https://www.tencentcloud.com/document/product/436 . Terms: https://www.tencentcloud.com/document/product/301/9248 . Privacy policy: https://www.tencentcloud.com/document/product/301/17345 .
+
+Any supported provider may be primary or the optional same-object-key backup. Provider API endpoints or regions are separate from administrator-configured public delivery and optional fallback domains. A fallback domain only adds an explicit same-key `fallbackUrl` to a successful result; it does not perform another upload or silently replace the primary URL. A primary and backup that identify the same physical destination are rejected. Requests are not retried automatically, providers are not silently substituted, and paste and drag-and-drop never fall back to the WordPress media library. The toolbar media button remains the separate WordPress-native workflow.
+
 == Installation ==
 
 1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
@@ -109,7 +123,7 @@ No. EasyMDE opens post types explicitly supported by the plugin, `post` and `pag
 
 = Does EasyMDE use external CDN assets? =
 
-No. Mermaid, KaTeX, Highlight.js, and plugin assets are bundled locally.
+No plugin runtime assets are loaded from an external CDN. Mermaid, KaTeX, Highlight.js, and other plugin assets are bundled locally. Article images may separately use the administrator-configured object-storage service described under **External Services**.
 
 = Does EasyMDE include translations? =
 
@@ -133,11 +147,7 @@ Yes. Use the media button in the EasyMDE toolbar to insert an image from the Wor
 
 = Does EasyMDE send images to an external service? =
 
-Yes, when an author pastes or drops a local JPEG, PNG, GIF, or WebP image into the Markdown source. Those actions use the protected same-origin Image Hosting path; the WordPress server sends the image bytes, MIME type, and generated object key to the configured Cloudflare R2 primary host, with optional Qiniu Kodo same-key backup. Provider credentials remain on the WordPress server and are not sent to the browser. Paste and drag-and-drop have no destination switch or WordPress media-library fallback; use the toolbar media button for the separate WordPress-native media workflow.
-
-Cloudflare R2 documentation and policies: https://developers.cloudflare.com/r2/ , https://www.cloudflare.com/privacypolicy/ , https://www.cloudflare.com/terms/
-
-Qiniu Kodo documentation and privacy policy: https://developer.qiniu.com/kodo , https://www.qiniu.com/static/%E4%B8%83%E7%89%9B%E4%BA%91%E9%9A%90%E7%A7%81%E6%9D%83%E6%94%BF%E7%AD%962021%E7%89%88.pdf
+Yes, but only after an administrator explicitly configures a provider and an authorized author pastes or drops an accepted local image, or when the administrator tests the saved connection. See **External Services** for the exact trigger, transmitted fields, provider links, terms, privacy policies, and failure behavior.
 
 = Can I copy an article into the WeChat Official Accounts editor? =
 

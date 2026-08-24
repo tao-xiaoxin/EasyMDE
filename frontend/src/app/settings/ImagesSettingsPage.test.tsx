@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement, useState } from "@wordpress/element";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import type { ImageConnectionTestPort } from "../../contracts/ports/image-hostin
 import type { ImageSettings } from "../../contracts/settings-center-settings";
 import { SETTINGS_CENTER_TEST_SETTINGS } from "../../test/settings-center-settings-fixture";
 import {
+	hasDuplicateImageHostConfiguration,
 	type ImageRuntimeCapabilities,
 	ImagesSettingsPage,
 } from "./ImagesSettingsPage";
@@ -22,7 +23,6 @@ const strings = Object.fromEntries(
 function settings(overrides: Partial<ImageSettings> = {}): ImageSettings {
 	return {
 		...SETTINGS_CENTER_TEST_SETTINGS.images,
-		accountId: "example-account",
 		...overrides,
 	};
 }
@@ -55,7 +55,9 @@ function Harness({
 	const [current, setCurrent] = useState(initialSettings);
 	return (
 		<ImagesSettingsPage
-			{...(connectionInvalidationTokens ? { connectionInvalidationTokens } : {})}
+			{...(connectionInvalidationTokens
+				? { connectionInvalidationTokens }
+				: {})}
 			{...(connectionTestDisabled ? { connectionTestDisabled } : {})}
 			{...(connectionTestPort ? { connectionTestPort } : {})}
 			draft={{
@@ -83,7 +85,7 @@ describe("ImagesSettingsPage", () => {
 		expect(screen.queryByText("uploadDestination")).toBeNull();
 	});
 
-	it("keeps unsupported providers visible but unavailable", async () => {
+	it("offers every implemented provider for primary and backup storage", async () => {
 		const user = userEvent.setup();
 		render(<Harness />);
 		const primary = screen.getByRole<HTMLButtonElement>("combobox", {
@@ -96,18 +98,16 @@ describe("ImagesSettingsPage", () => {
 		expect(screen.queryByRole("option", { name: "customUpload" })).toBeNull();
 		expect(
 			screen
-				.getByRole("option", {
-					name: "aliyunOss",
-				})
+				.getByRole("option", { name: "aliyunOss" })
 				.getAttribute("aria-disabled"),
-		).toBe("true");
+		).not.toBe("true");
 		await user.click(backup);
 		expect(screen.queryByRole("option", { name: "customUpload" })).toBeNull();
 		expect(
 			screen
 				.getByRole("option", { name: "cloudflareR2" })
 				.getAttribute("aria-disabled"),
-		).toBe("true");
+		).not.toBe("true");
 		expect(
 			screen.queryByRole("combobox", { name: "retryFailedUpload" }),
 		).toBeNull();
@@ -144,6 +144,75 @@ describe("ImagesSettingsPage", () => {
 				.getByRole("combobox", { name: "backupFailureHandling" })
 				.matches(":disabled"),
 		).toBe(true);
+	});
+
+	it("renders only the provider-specific endpoint or region fields", async () => {
+		const user = userEvent.setup();
+		render(<Harness />);
+		const primary = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "selectImageHostService",
+		});
+
+		expect(
+			screen.getByRole("textbox", { name: "r2ApiEndpoint" }),
+		).not.toBeNull();
+		expect(
+			screen.queryByRole("textbox", { name: "providerRegion" }),
+		).toBeNull();
+		expect(screen.queryByRole("textbox", { name: "r2AccountId" })).toBeNull();
+		expect(
+			screen.getByRole("textbox", { name: "imageFallbackDomain" }),
+		).not.toBeNull();
+		expect(screen.getByText("imageFallbackDomainDescription")).not.toBeNull();
+
+		await user.click(primary);
+		await user.click(screen.getByRole("option", { name: "aliyunOss" }));
+		expect(screen.queryByRole("textbox", { name: "r2ApiEndpoint" })).toBeNull();
+		expect(
+			screen.getByRole("textbox", { name: "providerRegion" }),
+		).not.toBeNull();
+
+		await user.click(primary);
+		await user.click(screen.getByRole("option", { name: "qiniuKodo" }));
+		expect(screen.queryByRole("textbox", { name: "r2ApiEndpoint" })).toBeNull();
+		expect(
+			screen.queryByRole("textbox", { name: "providerRegion" }),
+		).toBeNull();
+	});
+
+	it("does not treat an incomplete same-provider draft as a duplicate destination", () => {
+		expect(
+			hasDuplicateImageHostConfiguration(
+				settings({
+					backupService: "cloudflare-r2",
+					backupEndpoint: "",
+					backupBucket: SETTINGS_CENTER_TEST_SETTINGS.images.bucket,
+					endpoint: "",
+				}),
+			),
+		).toBe(false);
+		expect(
+			hasDuplicateImageHostConfiguration(
+				settings({
+					service: "aliyun-oss",
+					region: "",
+					backupService: "aliyun-oss",
+					backupRegion: "",
+					backupBucket: SETTINGS_CENTER_TEST_SETTINGS.images.bucket,
+				}),
+			),
+		).toBe(false);
+	});
+
+	it("shows the COS name-APPID bucket requirement for either target", async () => {
+		const user = userEvent.setup();
+		render(<Harness />);
+		const primary = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "selectImageHostService",
+		});
+		await user.click(primary);
+		await user.click(screen.getByRole("option", { name: "tencentCloudCos" }));
+		expect(screen.getByText("cosBucketHint")).not.toBeNull();
 	});
 
 	it("enables only explicitly runtime-backed upload behaviors", () => {
@@ -264,18 +333,75 @@ describe("ImagesSettingsPage", () => {
 		expect(screen.getByText("2026-08-23 08:00")).not.toBeNull();
 
 		await user.type(
-			screen.getByRole("textbox", { name: "r2AccountId" }),
-			"-changed",
+			screen.getByRole("textbox", { name: "r2ApiEndpoint" }),
+			"/changed",
 		);
 		expect(screen.getAllByRole("status")[0]?.textContent).toBe(
 			"connectionStale",
 		);
 	});
 
-	it("invalidates only the connection targeted by an authoritative save token", async () => {
-		const testConnection = vi.fn(
-			async () => ({ testedAt: "2026-08-23 08:00" }),
+	it("blocks testing an identical enabled backup configuration in an accessible alert dialog", async () => {
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const testConnection = vi.fn(async () => ({
+			testedAt: "2026-08-23 08:00",
+		}));
+		const user = userEvent.setup();
+		render(
+			<Harness
+				overlayRoot={overlayRoot}
+				connectionTestPort={{ testConnection }}
+				initialSettings={settings({
+					backupService: "cloudflare-r2",
+					backupEndpoint: SETTINGS_CENTER_TEST_SETTINGS.images.endpoint,
+					backupBucket: SETTINGS_CENTER_TEST_SETTINGS.images.bucket,
+				})}
+			/>,
 		);
+
+		const trigger = screen.getByRole("button", {
+			name: "testPrimaryConnection",
+		});
+		await user.click(trigger);
+		const dialog = within(overlayRoot).getByRole("alertdialog", {
+			name: "duplicateImageHostTitle",
+		});
+		expect(
+			within(dialog).getByText("duplicateImageHostDescription"),
+		).not.toBeNull();
+		expect(testConnection).not.toHaveBeenCalled();
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		overlayRoot.remove();
+	});
+
+	it("allows the same provider when primary and backup buckets differ", async () => {
+		const testConnection = vi.fn(async () => ({
+			testedAt: "2026-08-23 08:00",
+		}));
+		const user = userEvent.setup();
+		render(
+			<Harness
+				connectionTestPort={{ testConnection }}
+				initialSettings={settings({
+					backupService: "cloudflare-r2",
+					backupEndpoint: SETTINGS_CENTER_TEST_SETTINGS.images.endpoint,
+					backupBucket: "different-bucket",
+				})}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("button", { name: "testPrimaryConnection" }),
+		);
+		expect(testConnection).toHaveBeenCalledTimes(1);
+	});
+
+	it("invalidates only the connection targeted by an authoritative save token", async () => {
+		const testConnection = vi.fn(async () => ({
+			testedAt: "2026-08-23 08:00",
+		}));
 		const user = userEvent.setup();
 		const { rerender } = render(
 			<Harness
@@ -290,9 +416,9 @@ describe("ImagesSettingsPage", () => {
 		await user.click(
 			screen.getByRole("button", { name: "testBackupConnection" }),
 		);
-		expect(screen.getAllByRole("status").map((status) => status.textContent)).toEqual(
-			["connected", "connected"],
-		);
+		expect(
+			screen.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["connected", "connected"]);
 
 		rerender(
 			<Harness
@@ -301,9 +427,9 @@ describe("ImagesSettingsPage", () => {
 			/>,
 		);
 
-		expect(screen.getAllByRole("status").map((status) => status.textContent)).toEqual(
-			["connectionStale", "connected"],
-		);
+		expect(
+			screen.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["connectionStale", "connected"]);
 	});
 
 	it("reports a rejected connection without exposing the provider error", async () => {

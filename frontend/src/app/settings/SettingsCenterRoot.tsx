@@ -16,7 +16,11 @@ import { createWordPressImageHostingConnectionPort } from "../../integrations/wo
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
-import { ImagesSettingsPage } from "./ImagesSettingsPage";
+import {
+	DuplicateImageHostDialog,
+	hasDuplicateImageHostConfiguration,
+	ImagesSettingsPage,
+} from "./ImagesSettingsPage";
 import { MarkdownSettingsPage } from "./MarkdownSettingsPage";
 import { ShortcutsSettingsPage } from "./ShortcutsSettingsPage";
 import {
@@ -67,15 +71,19 @@ type ImageConnectionInvalidation = Readonly<{
 }>;
 const PRIMARY_CONNECTION_SETTING_KEYS = [
 	"service",
-	"accountId",
+	"endpoint",
+	"region",
 	"bucket",
 	"domain",
+	"fallbackDomain",
 	"accessKey",
 	"secretKey",
 ] as const;
 const BACKUP_CONNECTION_SETTING_KEYS = [
 	"backupEnabled",
 	"backupService",
+	"backupEndpoint",
+	"backupRegion",
 	"backupBucket",
 	"backupDomain",
 	"backupAccessKey",
@@ -150,6 +158,7 @@ const NAV_ITEMS: ReadonlyArray<
 
 const SETTINGS_SAVE_CONFIRMATION_DURATION = 2000;
 const SETTINGS_SECTION_ACTIVATION_OFFSET = 15;
+const SETTINGS_SECTION_ACTIVATION_HYSTERESIS = 18;
 const SETTINGS_SECTION_SCROLL_LEAD = 6;
 const SETTINGS_SEARCH_RESULT_SCROLL_TRAIL = 18;
 const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
@@ -185,6 +194,8 @@ export function SettingsCenterRoot({
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
+	const [duplicateSaveTrigger, setDuplicateSaveTrigger] =
+		useState<HTMLButtonElement | null>(null);
 	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
 	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
 	const sidebarHelpWasOpenRef = useRef(false);
@@ -257,7 +268,25 @@ export function SettingsCenterRoot({
 		);
 		if (!activeItem)
 			throw new Error("settings-center-active-navigation-item-missing");
-		activeItem.scrollIntoView({ block: "nearest", inline: "nearest" });
+		const navigationRect = navigation.getBoundingClientRect();
+		const activeItemRect = activeItem.getBoundingClientRect();
+		const leftDelta =
+			activeItemRect.left < navigationRect.left
+				? activeItemRect.left - navigationRect.left
+				: activeItemRect.right > navigationRect.right
+					? activeItemRect.right - navigationRect.right
+					: 0;
+		const topDelta =
+			activeItemRect.top < navigationRect.top
+				? activeItemRect.top - navigationRect.top
+				: activeItemRect.bottom > navigationRect.bottom
+					? activeItemRect.bottom - navigationRect.bottom
+					: 0;
+		navigation.scrollTo({
+			left: navigation.scrollLeft + leftDelta,
+			top: navigation.scrollTop + topDelta,
+			behavior: "auto",
+		});
 	}, [highlightedNavId]);
 	const searchResultCount = searchSections.reduce(
 		(total, section) =>
@@ -491,9 +520,27 @@ export function SettingsCenterRoot({
 			if (section.getBoundingClientRect().top <= activationLine)
 				visibleTab = item.id;
 		}
-		setActiveTab((currentTab) =>
-			currentTab === visibleTab ? currentTab : visibleTab,
-		);
+		setActiveTab((currentTab) => {
+			if (currentTab === visibleTab) return currentTab;
+			const currentIndex = NAV_ITEMS.findIndex(
+				(item) => item.id === currentTab,
+			);
+			const visibleIndex = NAV_ITEMS.findIndex(
+				(item) => item.id === visibleTab,
+			);
+			if (Math.abs(currentIndex - visibleIndex) !== 1) return visibleTab;
+			const laterSection =
+				sectionRefs.current[
+					NAV_ITEMS[Math.max(currentIndex, visibleIndex)]?.id ?? visibleTab
+				];
+			if (!laterSection)
+				throw new Error("settings-center-scrollspy-boundary-section-missing");
+			return Math.abs(
+				laterSection.getBoundingClientRect().top - activationLine,
+			) <= SETTINGS_SECTION_ACTIVATION_HYSTERESIS
+				? currentTab
+				: visibleTab;
+		});
 	};
 
 	const handleSettingsScroll = () => {
@@ -617,8 +664,15 @@ export function SettingsCenterRoot({
 		setSettings(nextSettings);
 		setSaveStatus("idle");
 	};
-	const saveSettings = async () => {
+	const saveSettings = async (trigger: HTMLButtonElement) => {
 		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
+		if (hasDuplicateImageHostConfiguration(settings.images)) {
+			if (!overlayRoot) {
+				throw new Error("settings-center-duplicate-dialog-root-missing");
+			}
+			setDuplicateSaveTrigger(trigger);
+			return;
+		}
 		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		const requestedSettings = settings;
@@ -640,15 +694,12 @@ export function SettingsCenterRoot({
 			const saved = result.settings;
 			setImageDraft((current) => ({
 				...current,
-				primaryCredentialsConfigured:
-					result.credentialStatus.primaryConfigured,
-				backupCredentialsConfigured:
-					result.credentialStatus.backupConfigured,
+				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
 			}));
 			if (connectionInvalidation.primary || connectionInvalidation.backup) {
 				setConnectionInvalidationTokens((current) => ({
-					primary:
-						current.primary + (connectionInvalidation.primary ? 1 : 0),
+					primary: current.primary + (connectionInvalidation.primary ? 1 : 0),
 					backup: current.backup + (connectionInvalidation.backup ? 1 : 0),
 				}));
 			}
@@ -709,10 +760,8 @@ export function SettingsCenterRoot({
 			setSettings(latest);
 			setImageDraft((current) => ({
 				...current,
-				primaryCredentialsConfigured:
-					result.credentialStatus.primaryConfigured,
-				backupCredentialsConfigured:
-					result.credentialStatus.backupConfigured,
+				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
+				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
 			}));
 			setConnectionInvalidationTokens((current) => ({
 				primary: current.primary + 1,
@@ -867,11 +916,11 @@ export function SettingsCenterRoot({
 							disabled={
 								"saving" === saveStatus || (!settingsDirty && !saveConflict)
 							}
-							onClick={() => {
+							onClick={(event) => {
 								if (saveConflict) {
 									void reloadLatestSettings();
 								} else {
-									void saveSettings();
+									void saveSettings(event.currentTarget);
 								}
 							}}
 						>
@@ -1093,6 +1142,16 @@ export function SettingsCenterRoot({
 							strings={strings}
 							documentationUrl={bootstrap.links.documentationUrl}
 							onClose={() => setSidebarHelpOpen(false)}
+						/>,
+						overlayRoot,
+					)
+				: null}
+			{duplicateSaveTrigger && overlayRoot
+				? createPortal(
+						<DuplicateImageHostDialog
+							returnFocus={duplicateSaveTrigger}
+							strings={strings}
+							onClose={() => setDuplicateSaveTrigger(null)}
 						/>,
 						overlayRoot,
 					)

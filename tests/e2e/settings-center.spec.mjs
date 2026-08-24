@@ -1130,6 +1130,33 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(main).toHaveCSS("width", "390px");
 	await expect(nav).toHaveCSS("overflow-x", "auto");
 	await expect(help).toBeInViewport();
+	const imagesNav = nav.locator('button[data-nav-id="images"]');
+	const expectedImagesTitle = (await imagesNav.textContent())?.trim();
+	if (!expectedImagesTitle)
+		throw new Error("settings-center-images-navigation-label-missing");
+	await imagesNav.click();
+	const navigationFrames = await page.evaluate(async (expectedTitle) => {
+		const frames = [];
+		for (let index = 0; index < 12; index += 1) {
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+			frames.push({
+				active: document
+					.querySelector('nav [aria-current="page"]')
+					?.getAttribute("data-nav-id"),
+				title: document.querySelector("h1")?.textContent?.trim(),
+				expectedTitle,
+			});
+		}
+		return frames;
+	}, expectedImagesTitle);
+	expect(navigationFrames).toEqual(
+		Array.from({ length: 12 }, () => ({
+			active: "images",
+			title: expectedImagesTitle,
+			expectedTitle: expectedImagesTitle,
+		})),
+	);
+	await nav.locator('button[data-nav-id="general"]').click();
 	await headerDescription.evaluate((element) => {
 		element.textContent =
 			"Configure image upload and storage services with supported image hosts.";

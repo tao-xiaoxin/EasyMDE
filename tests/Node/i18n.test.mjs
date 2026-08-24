@@ -371,6 +371,34 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	const tencentCloudCosEntry = poEntries.find(
 		(entry) => "Tencent Cloud COS" === entry.msgid,
 	);
+	const expectedImageHostTranslations = new Map([
+		["R2 API Endpoint", "R2 API 端点"],
+		["Region", "区域"],
+		["Image Fallback Domain", "图片回溯域名"],
+		[
+			"Use the same object path to generate an alternate read URL. This does not automatically replace the primary URL returned after upload.",
+			"使用相同对象路径生成备用读取地址；不会自动替换上传返回的主链接。",
+		],
+		[
+			"For Tencent Cloud COS, enter the complete bucket name in BucketName-APPID format.",
+			"腾讯云 COS 请填写完整的存储桶名称，格式为 BucketName-APPID。",
+		],
+		["Primary and Backup Image Hosts Match", "主备图床目标重复"],
+		[
+			"Change the backup service, bucket, endpoint, or region so it does not duplicate the primary upload target.",
+			"请修改备份图床的服务、存储桶、端点或区域，避免与主图床使用相同的上传目标。",
+		],
+	]);
+	const removedSettingsMessages = [
+		"Cloudflare Account ID",
+		"Clean Pasted Content",
+		"Automatically remove unnecessary formatting when pasting",
+		"Smart List Recognition",
+		"Convert - or 1. to a list automatically",
+		"Default Category Behavior",
+		"Do Not Categorize Automatically",
+		"Use Current Category",
+	];
 
 	assert.equal(settingsCenterEntry.msgstr[0], "配置中心");
 	assert.equal(noSearchResultsEntry.msgstr[0], "未找到“%s”相关设置");
@@ -387,6 +415,17 @@ test("gettext catalog files are current and contain real zh_CN translations", ()
 	assert.equal(qiniuKodoEntry.msgstr[0], "七牛云 Kodo");
 	assert.equal(alibabaCloudOssEntry.msgstr[0], "阿里云 OSS");
 	assert.equal(tencentCloudCosEntry.msgstr[0], "腾讯云 COS");
+	for (const [msgid, translation] of expectedImageHostTranslations) {
+		const entry = poEntries.find((candidate) => msgid === candidate.msgid);
+		assert.equal(entry?.msgstr[0], translation, msgid);
+	}
+	for (const msgid of removedSettingsMessages) {
+		assert.equal(
+			poEntries.some((entry) => msgid === entry.msgid),
+			false,
+			msgid,
+		);
+	}
 	assert.ok(statSync(join(repoRoot, "languages/easymde-zh_CN.mo")).size > 0);
 
 	const result = spawnSync(

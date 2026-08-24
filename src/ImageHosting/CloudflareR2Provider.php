@@ -14,7 +14,8 @@ final class CloudflareR2Provider {
 	const PROVIDER_ID = 'cloudflare-r2';
 
 	private $transport;
-	private $account_id;
+	private $endpoint;
+	private $host;
 	private $access_key_id;
 	private $secret_access_key;
 	private $bucket_name;
@@ -23,7 +24,7 @@ final class CloudflareR2Provider {
 
 	public function __construct(
 		HttpTransport $transport,
-		$account_id,
+		$endpoint,
 		$access_key_id,
 		$secret_access_key,
 		$bucket_name,
@@ -31,7 +32,7 @@ final class CloudflareR2Provider {
 		?callable $clock = null
 	) {
 		if (
-			! ImageHostProviderSupport::validate_identifier( $account_id ) ||
+			! ImageHostProviderSupport::validate_r2_endpoint( $endpoint ) ||
 			! ImageHostProviderSupport::validate_identifier( $bucket_name ) ||
 			! ImageHostProviderSupport::validate_credential( $access_key_id ) ||
 			! ImageHostProviderSupport::validate_credential( $secret_access_key )
@@ -40,7 +41,8 @@ final class CloudflareR2Provider {
 		}
 
 		$this->transport         = $transport;
-		$this->account_id        = $account_id;
+		$this->endpoint          = strtolower( rtrim( $endpoint, '/' ) );
+		$this->host              = (string) wp_parse_url( $this->endpoint, PHP_URL_HOST );
 		$this->access_key_id     = $access_key_id;
 		$this->secret_access_key = $secret_access_key;
 		$this->bucket_name       = $bucket_name;
@@ -95,7 +97,7 @@ final class CloudflareR2Provider {
 		}
 
 		$now          = $now->setTimezone( new DateTimeZone( 'UTC' ) );
-		$host         = $this->account_id . '.r2.cloudflarestorage.com';
+		$host         = $this->host;
 		$payload_hash = hash( 'sha256', $body );
 		$amz_date     = $now->format( 'Ymd\THis\Z' );
 		$date         = $now->format( 'Ymd' );
@@ -119,7 +121,7 @@ final class CloudflareR2Provider {
 
 		return $this->transport->request(
 			$method,
-			'https://' . $host . $path,
+			$this->endpoint . $path,
 			ImageHostProviderSupport::request_arguments( $headers, $body )
 		);
 	}

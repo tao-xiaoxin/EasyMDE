@@ -31,6 +31,8 @@ EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is act
 
 EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_content` for WordPress compatibility, uses WordPress media/revisions/permissions/publishing flows, and ships local runtime assets instead of requiring Jetpack, Classic Editor, another Markdown plugin, or CDN-hosted editor/rendering libraries.
 
+Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled locally. Article images may separately be stored by an administrator-configured Image Hosting provider when an author pastes or drops a local image.
+
 ## Requirements
 
 - WordPress 6.7 or newer.
@@ -53,7 +55,7 @@ EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_con
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
 - Explicit WordPress media-library insertion through the toolbar media picker.
-- Local clipboard paste and drag-and-drop upload through the protected same-origin Image Hosting path to configured Cloudflare R2, with optional Qiniu Kodo backup and no WordPress media fallback.
+- Local clipboard paste and drag-and-drop upload through the protected same-origin Image Hosting path to administrator-configured Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS; any provider can be primary or the optional same-object-key backup, with no WordPress media fallback or automatic retry.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
 - WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.

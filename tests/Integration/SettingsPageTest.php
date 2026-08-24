@@ -136,7 +136,8 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
-            'r2AccountId',
+			'r2ApiEndpoint', 'providerRegion', 'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
+			'duplicateImageHostTitle', 'duplicateImageHostDescription',
             'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'credentialsConfiguredHint',
             'replaceCredentialsHint', 'connectionStatus', 'backupConnectionStatus', 'connectionPending', 'testingConnection', 'connected',
             'connectionFailed', 'connectionStale', 'lastTested', 'testPrimaryConnection',
@@ -156,6 +157,21 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
         $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
         $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
+		foreach (
+			array(
+				'r2AccountId',
+				'cleanPastedContent',
+				'cleanPastedContentDescription',
+				'smartListRecognition',
+				'smartListRecognitionDescription',
+				'defaultCategory',
+				'noAutomaticCategory',
+				'currentCategory',
+			)
+			as $removed_key
+		) {
+			$this->assertArrayNotHasKey($removed_key, $bootstrap['strings']);
+		}
 		foreach (
 			array(
 				'markdownLivePreview',

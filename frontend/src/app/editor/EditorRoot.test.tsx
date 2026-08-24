@@ -516,15 +516,12 @@ function fixture(): EditorRootProps &
         autoFocusEditor: true,
         autoSave: true,
         autoSaveInterval: '0.5',
-        cleanPastedContent: true,
-        defaultCategory: 'none',
         editingMode: 'live-preview',
         featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        smartListRecognition: true,
         statusBarMode: 'words-reading-time',
         summaryMode: 'auto-55',
         syncScroll: true,
@@ -2913,6 +2910,13 @@ describe('EditorRoot', () => {
     const props = fixture();
     vi.mocked(props.nativePublishPort.read).mockReturnValue({
       ...props.nativePublishPort.read(),
+      categories: [
+        {
+          children: [],
+          id: 'current-category',
+          label: '当前分类'
+        }
+      ],
       categoryIds: ['current-category'],
       existing: false,
       openPreview: true
@@ -2920,7 +2924,6 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} settings={{
       general: {
         ...props.settings.general,
-        defaultCategory: 'none',
         featuredImagePlaceholder: false,
         openPreviewAfterPublish: false,
         publishVisibility: 'private'
@@ -2941,7 +2944,19 @@ describe('EditorRoot', () => {
         name: '发布后打开文章页面'
       }) as HTMLInputElement).checked
     ).toBe(false);
+    expect(
+      (within(dialog).getByRole('checkbox', {
+        name: '当前分类'
+      }) as HTMLInputElement).checked
+    ).toBe(true);
     expect(dialog.querySelector('.easymde-publish-featured-placeholder')).toBeNull();
+
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: '发布文章' })
+    );
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryIds: ['current-category'] })
+    );
   });
 
   it('keeps hierarchical WordPress category selections independent', async () => {

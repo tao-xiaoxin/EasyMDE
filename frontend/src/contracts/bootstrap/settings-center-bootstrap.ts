@@ -52,11 +52,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"autoSaveInterval",
 	"syncScroll",
 	"syncScrollDescription",
-	"cleanPastedContent",
-	"cleanPastedContentDescription",
-	"smartListRecognition",
-	"smartListRecognitionDescription",
-	"defaultCategory",
 	"defaultVisibility",
 	"openPreviewAfterPublish",
 	"openPreviewAfterPublishDescription",
@@ -74,8 +69,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"seconds60",
 	"minutes2",
 	"minutes5",
-	"noAutomaticCategory",
-	"currentCategory",
 	"publicVisibility",
 	"privateVisibility",
 	"passwordProtected",
@@ -122,7 +115,13 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"cloudflareR2",
 	"aliyunOss",
 	"tencentCloudCos",
-	"r2AccountId",
+	"r2ApiEndpoint",
+	"providerRegion",
+	"imageFallbackDomain",
+	"imageFallbackDomainDescription",
+	"cosBucketHint",
+	"duplicateImageHostTitle",
+	"duplicateImageHostDescription",
 	"bucket",
 	"customDomain",
 	"accessKey",
@@ -489,6 +488,37 @@ function assertSettingsDomain(value: unknown, code: string): void {
 	}
 }
 
+function assertR2Endpoint(value: unknown, code: string): void {
+	if (value === "") return;
+	if (
+		typeof value !== "string" ||
+		!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.(?:eu|us|fedramp))?\.r2\.cloudflarestorage\.com$/i.test(
+			value,
+		)
+	) {
+		throw new Error(code);
+	}
+}
+
+function assertProviderSpecificFields(
+	provider: unknown,
+	endpoint: unknown,
+	region: unknown,
+	prefix: "" | "backup",
+): void {
+	const endpointKey = prefix ? "backupEndpoint" : "endpoint";
+	const regionKey = prefix ? "backupRegion" : "region";
+	const endpointCode = `settings-center-images-${endpointKey}-invalid`;
+	const regionCode = `settings-center-images-${regionKey}-invalid`;
+	if (provider === "cloudflare-r2") {
+		assertR2Endpoint(endpoint, endpointCode);
+		if (region !== "") throw new Error(regionCode);
+		return;
+	}
+	if (endpoint !== "") throw new Error(endpointCode);
+	if (provider === "qiniu-kodo" && region !== "") throw new Error(regionCode);
+}
+
 const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"year",
 	"month",
@@ -502,13 +532,13 @@ const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"ext",
 ]);
 
-function assertImageAccountId(value: unknown): void {
+function assertProviderRegion(value: unknown, code: string): void {
 	if (
 		typeof value !== "string" ||
 		value.length > 64 ||
-		(value !== "" && !/^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(value))
+		(value !== "" && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value))
 	) {
-		throw new Error("settings-center-images-accountId-invalid");
+		throw new Error(code);
 	}
 }
 
@@ -617,7 +647,6 @@ export function parseSettingsCenterSettings(
 		editingMode: 16,
 		statusBarMode: 32,
 		autoSaveInterval: 8,
-		defaultCategory: 16,
 		publishVisibility: 16,
 		summaryMode: 16,
 	};
@@ -627,8 +656,6 @@ export function parseSettingsCenterSettings(
 		"syntaxHighlight",
 		"autoSave",
 		"syncScroll",
-		"cleanPastedContent",
-		"smartListRecognition",
 		"openPreviewAfterPublish",
 		"featuredImagePlaceholder",
 	];
@@ -644,20 +671,23 @@ export function parseSettingsCenterSettings(
 		editingMode: ["live-preview", "source", "preview"],
 		statusBarMode: ["words-reading-time", "words", "hidden"],
 		autoSaveInterval: ["30", "60", "120", "300"],
-		defaultCategory: ["none", "current"],
 		publishVisibility: ["public", "private", "password"],
 		summaryMode: ["auto-55", "auto-100", "manual"],
 	});
 
 	const imageStrings = {
 		service: 32,
-		accountId: 64,
+		endpoint: 255,
+		region: 64,
 		bucket: 128,
 		domain: 255,
+		fallbackDomain: 255,
 		accessKey: 255,
 		secretKey: 255,
 		fileNameRule: 160,
 		backupService: 32,
+		backupEndpoint: 255,
+		backupRegion: 64,
 		backupBucket: 128,
 		backupDomain: 255,
 		backupAccessKey: 255,
@@ -685,11 +715,15 @@ export function parseSettingsCenterSettings(
 		[...Object.keys(imageStrings), ...imageBooleans, "uploadFormats"],
 		"settings-center-images-settings-invalid",
 	);
-	assertImageAccountId(images.accountId);
+	assertProviderRegion(images.region, "settings-center-images-region-invalid");
+	assertProviderRegion(
+		images.backupRegion,
+		"settings-center-images-backupRegion-invalid",
+	);
 	assertImageFileNameRule(images.fileNameRule);
 	assertEnumFields(images, "images", {
-		service: ["cloudflare-r2"],
-		backupService: ["qiniu-kodo"],
+		service: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
+		backupService: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
 		backupFailureMode: ["return-primary-url"],
 		retryCount: ["none"],
 		maxImageSize: ["original", "1920", "2560", "3840"],
@@ -699,8 +733,24 @@ export function parseSettingsCenterSettings(
 	});
 	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");
 	assertSettingsDomain(
+		images.fallbackDomain,
+		"settings-center-images-fallbackDomain-invalid",
+	);
+	assertSettingsDomain(
 		images.backupDomain,
 		"settings-center-images-backupDomain-invalid",
+	);
+	assertProviderSpecificFields(
+		images.service,
+		images.endpoint,
+		images.region,
+		"",
+	);
+	assertProviderSpecificFields(
+		images.backupService,
+		images.backupEndpoint,
+		images.backupRegion,
+		"backup",
 	);
 	const uploadFormats = parseObject(
 		images.uploadFormats,
@@ -941,10 +991,8 @@ export function parseSettingsCenterBootstrap(
 					imageDraft.backupDomain,
 					"settings-center-images-backup-domain-invalid",
 				),
-				primaryCredentialsConfigured:
-					imageDraft.primaryCredentialsConfigured,
-				backupCredentialsConfigured:
-					imageDraft.backupCredentialsConfigured,
+				primaryCredentialsConfigured: imageDraft.primaryCredentialsConfigured,
+				backupCredentialsConfigured: imageDraft.backupCredentialsConfigured,
 			},
 		},
 		settings: parseSettingsCenterSettings(root.settings),

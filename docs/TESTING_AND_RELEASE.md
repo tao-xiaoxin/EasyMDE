@@ -56,8 +56,12 @@ image.
 
 Image-hosting provider, runtime, and REST tests use synthetic credentials,
 fixed fake transports, and local WordPress temporary files. They must not read
-developer upload-tool configuration or contact a real Cloudflare R2 or Qiniu
-Kodo account. The focused PHP suite is:
+developer upload-tool configuration or contact a real Cloudflare R2, Qiniu
+Kodo, Alibaba Cloud OSS, or Tencent Cloud COS account. Coverage includes each
+provider's request signing and official endpoint construction, any-provider
+primary/backup orchestration, duplicate physical-destination rejection with
+HTTP 409, explicit `fallbackUrl` generation, redacted partial backup failure,
+and the no-retry/no-provider-switch contract. The focused PHP suite is:
 
 ```bash
 scripts/run-ci-image.sh --filter 'ImageHost|ImageHosting'
@@ -65,7 +69,11 @@ scripts/run-ci-image.sh --filter 'ImageHost|ImageHosting'
 
 Browser tests may intercept the same-origin WordPress connection/upload routes
 to exercise pending, success, failure, stale, and backup states. They must not
-fulfill or redirect a browser request to a provider endpoint.
+fulfill or redirect a browser request to a provider endpoint. Browser coverage
+also verifies that all four providers are selectable for primary and backup,
+duplicate settings produce the accessible blocking dialog, and a returned
+`fallbackUrl` is validated without replacing the primary URL inserted into the
+document.
 
 The builder requires the digest-pinned Composer 2.10.2 and PHP 8.3.32 base
 images to already exist locally, installs the exact `composer.lock` development

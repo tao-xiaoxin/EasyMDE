@@ -37,10 +37,7 @@ function cloneDraft(
   defaults: GeneralSettings
 ): NativePublishDraft {
   return {
-    categoryIds:
-      !snapshot.existing && 'none' === defaults.defaultCategory
-        ? []
-        : [...snapshot.categoryIds],
+    categoryIds: [...snapshot.categoryIds],
     excerpt: snapshot.excerpt,
     featuredImage: snapshot.featuredImage ? { ...snapshot.featuredImage } : null,
     openPreview: defaults.openPreviewAfterPublish,

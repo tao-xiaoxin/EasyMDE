@@ -9,9 +9,6 @@ export type GeneralSettings = Readonly<{
 	autoSave: boolean;
 	autoSaveInterval: string;
 	syncScroll: boolean;
-	cleanPastedContent: boolean;
-	smartListRecognition: boolean;
-	defaultCategory: string;
 	publishVisibility: string;
 	openPreviewAfterPublish: boolean;
 	summaryMode: string;
@@ -19,17 +16,26 @@ export type GeneralSettings = Readonly<{
 }>;
 
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
+export type ImageHostProvider =
+	| "cloudflare-r2"
+	| "qiniu-kodo"
+	| "aliyun-oss"
+	| "tencent-cos";
 
 export type ImageSettings = Readonly<{
-	service: "cloudflare-r2";
-	accountId: string;
+	service: ImageHostProvider;
+	endpoint: string;
+	region: string;
 	bucket: string;
 	domain: string;
+	fallbackDomain: string;
 	accessKey: string;
 	secretKey: string;
 	fileNameRule: string;
 	backupEnabled: boolean;
-	backupService: "qiniu-kodo";
+	backupService: ImageHostProvider;
+	backupEndpoint: string;
+	backupRegion: string;
 	backupBucket: string;
 	backupDomain: string;
 	backupAccessKey: string;

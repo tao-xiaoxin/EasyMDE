@@ -7,6 +7,7 @@ describe('createWordPressImageUploadPort', () => {
     const apiFetch = vi.fn().mockResolvedValue({
       alt: 'screen shot',
       backup: { status: 'disabled' },
+      fallbackUrl: 'https://fallback.example.test/uploads/screen-shot.png',
       title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
     });
@@ -30,12 +31,15 @@ describe('createWordPressImageUploadPort', () => {
       })
     ).resolves.toEqual({
       alt: 'screen shot',
+      fallbackUrl: 'https://fallback.example.test/uploads/screen-shot.png',
       status: 'uploaded',
       title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
     });
     const request = apiFetch.mock.calls[0]?.[0];
-    expect(request.url).toBe('https://example.test/wp-json/easymde/v1/image-hosting/upload');
+    expect(request.url).toBe(
+      'https://example.test/wp-json/easymde/v1/image-hosting/upload'
+    );
     expect(request.method).toBe('POST');
     expect(request.headers).toEqual({
       'X-EasyMDE-Image-Hosting-Nonce': 'synthetic-image-hosting-nonce',
@@ -47,6 +51,39 @@ describe('createWordPressImageUploadPort', () => {
     expect((request.body.get('file') as File).name).toBe('screen-shot.png');
   });
 
+  it.each([
+    ['a relative fallback URL', '/uploads/image.png'],
+    ['an insecure fallback URL', 'http://fallback.example.test/image.png'],
+    [
+      'a credentialed fallback URL',
+      'https://user@fallback.example.test/image.png'
+    ]
+  ])('rejects %s', async (_label, fallbackUrl) => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'image',
+        backup: { status: 'disabled' },
+        fallbackUrl,
+        title: '',
+        url: 'https://images.example.test/image.png'
+      }),
+      endpoint: '/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 0,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
   it('accepts a remote upload response without a WordPress attachment id', async () => {
     const apiFetch = vi.fn().mockResolvedValue({
       alt: 'remote alt',
@@ -54,6 +91,7 @@ describe('createWordPressImageUploadPort', () => {
         code: 'easymde_image_hosting_backup_upload_failed',
         status: 'failed'
       },
+      fallbackUrl: '',
       title: '',
       url: 'https://images.example.test/2026/08/image.png'
     });

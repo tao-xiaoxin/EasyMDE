@@ -28,6 +28,7 @@ import {
 	ImageLibraryIcon,
 	SlidersIcon,
 } from "./settings-center-icons";
+import { useDialogFocusTrap } from "./settings-center-utils";
 
 type ImageSettingsDraft = ImageSettings;
 
@@ -115,6 +116,126 @@ type SelectOption = Readonly<{
 	value: string;
 	label: string;
 }>;
+
+const IMAGE_HOST_PROVIDERS = [
+	"cloudflare-r2",
+	"qiniu-kodo",
+	"aliyun-oss",
+	"tencent-cos",
+] as const;
+
+function isImageHostProvider(value: string): value is ImageSettings["service"] {
+	return IMAGE_HOST_PROVIDERS.some((provider) => provider === value);
+}
+
+function normalizedIdentityValue(value: string): string {
+	return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+export function hasDuplicateImageHostConfiguration(
+	settings: ImageSettings,
+): boolean {
+	if (!settings.backupEnabled || settings.service !== settings.backupService) {
+		return false;
+	}
+	if (!settings.bucket.trim() || !settings.backupBucket.trim()) return false;
+	if (
+		normalizedIdentityValue(settings.bucket) !==
+		normalizedIdentityValue(settings.backupBucket)
+	) {
+		return false;
+	}
+	if (settings.service === "cloudflare-r2") {
+		if (!settings.endpoint.trim() || !settings.backupEndpoint.trim()) {
+			return false;
+		}
+		return (
+			normalizedIdentityValue(settings.endpoint) ===
+			normalizedIdentityValue(settings.backupEndpoint)
+		);
+	}
+	if (settings.service === "aliyun-oss" || settings.service === "tencent-cos") {
+		if (!settings.region.trim() || !settings.backupRegion.trim()) return false;
+		return (
+			normalizedIdentityValue(settings.region) ===
+			normalizedIdentityValue(settings.backupRegion)
+		);
+	}
+	return true;
+}
+
+export function DuplicateImageHostDialog({
+	onClose,
+	returnFocus,
+	strings,
+}: {
+	onClose: () => void;
+	returnFocus: HTMLElement;
+	strings: SettingsCenterBootstrap["strings"];
+}) {
+	const closeButtonRef = useRef<HTMLButtonElement>(null);
+	const dialogRef = useRef<HTMLDivElement>(null);
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	useDialogFocusTrap(dialogRef, closeButtonRef);
+	useEffect(() => {
+		const dialog = dialogRef.current;
+		if (!dialog) throw new Error("settings-center-duplicate-dialog-missing");
+		const ownerDocument = dialog.ownerDocument;
+		const closeOnEscape = (event: KeyboardEvent) => {
+			if (event.key === "Escape") onCloseRef.current();
+		};
+		ownerDocument.addEventListener("keydown", closeOnEscape);
+		return () => {
+			ownerDocument.removeEventListener("keydown", closeOnEscape);
+			returnFocus.focus();
+		};
+	}, [returnFocus]);
+
+	return (
+		<div
+			className="easymde-settings-center__transfer-dialog-layer"
+			role="presentation"
+		>
+			<button
+				type="button"
+				className="easymde-settings-center__dialog-backdrop"
+				aria-label={strings.cancel}
+				onClick={onClose}
+			/>
+			<div
+				ref={dialogRef}
+				role="alertdialog"
+				aria-modal="true"
+				aria-labelledby="easymde-duplicate-image-host-title"
+				aria-describedby="easymde-duplicate-image-host-description"
+				className="easymde-settings-center__transfer-dialog"
+			>
+				<header>
+					<span>
+						<Info size={20} />
+					</span>
+					<div>
+						<h2 id="easymde-duplicate-image-host-title">
+							{strings.duplicateImageHostTitle}
+						</h2>
+						<p id="easymde-duplicate-image-host-description">
+							{strings.duplicateImageHostDescription}
+						</p>
+					</div>
+					<button
+						ref={closeButtonRef}
+						type="button"
+						aria-label={strings.cancel}
+						onClick={onClose}
+					>
+						<X size={20} />
+					</button>
+				</header>
+			</div>
+		</div>
+	);
+}
 
 const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Cloudflare R2": "cloudflare-r2",
@@ -232,13 +353,15 @@ function SecretInput({
 
 function ImageField({
 	children,
+	description,
 	label,
 }: {
 	children: React.ReactNode;
+	description?: string;
 	label: string;
 }) {
 	return (
-		<SettingsRow label={label}>
+		<SettingsRow label={label} {...(description ? { description } : {})}>
 			<div className="easymde-settings-center__image-field-control">
 				{children}
 			</div>
@@ -400,15 +523,19 @@ function connectionFingerprint(
 		target === "primary"
 			? [
 					settings.service,
-					settings.accountId,
+					settings.endpoint,
+					settings.region,
 					settings.bucket,
 					settings.domain,
+					settings.fallbackDomain,
 					settings.accessKey,
 					settings.secretKey,
 				]
 			: [
 					settings.backupEnabled ? "enabled" : "disabled",
 					settings.backupService,
+					settings.backupEndpoint,
+					settings.backupRegion,
 					settings.backupBucket,
 					settings.backupDomain,
 					settings.backupAccessKey,
@@ -425,7 +552,7 @@ function ConnectionRow({
 	target,
 }: {
 	disabled: boolean;
-	onTest: () => void;
+	onTest: (trigger: HTMLButtonElement) => void;
 	state: ConnectionState;
 	strings: SettingsCenterBootstrap["strings"];
 	target: ImageConnectionTarget;
@@ -470,7 +597,7 @@ function ConnectionRow({
 					<button
 						type="button"
 						disabled={disabled || isTesting}
-						onClick={onTest}
+						onClick={(event) => onTest(event.currentTarget)}
 					>
 						{isTesting ? (
 							<RefreshCcw
@@ -511,17 +638,11 @@ export function ImagesSettingsPage({
 }) {
 	const imageHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "cloudflare-r2", label: strings.cloudflareR2 },
-		{ value: "aliyun-oss", label: strings.aliyunOss, disabled: true },
-		{
-			value: "tencent-cos",
-			label: strings.tencentCloudCos,
-			disabled: true,
-		},
-	];
-	const backupHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "qiniu-kodo", label: strings.qiniuKodo },
-		...imageHostOptions.map((option) => ({ ...option, disabled: true })),
+		{ value: "aliyun-oss", label: strings.aliyunOss },
+		{ value: "tencent-cos", label: strings.tencentCloudCos },
 	];
+	const backupHostOptions = imageHostOptions;
 	const backupFailureOptions: ReadonlyArray<SelectOption> = [
 		{
 			value: "return-primary-url",
@@ -552,14 +673,18 @@ export function ImagesSettingsPage({
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
 			service: "cloudflare-r2",
-			accountId: "",
+			endpoint: "",
+			region: "",
 			bucket: "easymde-assets",
 			domain: draft.domain,
+			fallbackDomain: "",
 			accessKey: "",
 			secretKey: "",
 			fileNameRule: "{date}/{uuid}.{ext}",
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
+			backupEndpoint: "",
+			backupRegion: "",
 			backupBucket: "easymde-backup",
 			backupDomain: draft.backupDomain,
 			backupAccessKey: "",
@@ -580,6 +705,8 @@ export function ImagesSettingsPage({
 		}),
 	);
 	const [formatError, setFormatError] = useState(false);
+	const [duplicateTrigger, setDuplicateTrigger] =
+		useState<HTMLButtonElement | null>(null);
 	const [primaryConnection, setPrimaryConnection] = useState<ConnectionState>({
 		status: "pending",
 	});
@@ -594,8 +721,6 @@ export function ImagesSettingsPage({
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: ImageSettingsDraft = {
 		...rawSettings,
-		service: "cloudflare-r2",
-		backupService: "qiniu-kodo",
 		backupFailureMode: normalizeImageValue(
 			rawSettings.backupFailureMode,
 			[
@@ -644,7 +769,10 @@ export function ImagesSettingsPage({
 		key: K,
 		value: ImageSettingsDraft[K],
 	) {
-		const next = { ...settings, [key]: value };
+		setValues({ [key]: value });
+	}
+	function setValues(values: Partial<ImageSettingsDraft>) {
+		const next = { ...settings, ...values };
 		if (onChange) onChange(next);
 		else setLocalSettings(next);
 	}
@@ -679,7 +807,17 @@ export function ImagesSettingsPage({
 		}
 		return state;
 	}
-	async function testConnection(target: ImageConnectionTarget) {
+	async function testConnection(
+		target: ImageConnectionTarget,
+		trigger: HTMLButtonElement,
+	) {
+		if (hasDuplicateImageHostConfiguration(settingsRef.current)) {
+			if (!overlayRoot) {
+				throw new Error("settings-center-duplicate-dialog-root-missing");
+			}
+			setDuplicateTrigger(trigger);
+			return;
+		}
 		if (!connectionTestPort) {
 			throw new Error("settings-center-image-connection-port-missing");
 		}
@@ -749,6 +887,17 @@ export function ImagesSettingsPage({
 					overlayRoot,
 				)
 			: null;
+	const duplicatePortal =
+		duplicateTrigger && overlayRoot
+			? createPortal(
+					<DuplicateImageHostDialog
+						returnFocus={duplicateTrigger}
+						strings={strings}
+						onClose={() => setDuplicateTrigger(null)}
+					/>,
+					overlayRoot,
+				)
+			: null;
 
 	return (
 		<div className="easymde-settings-center__images-page">
@@ -766,29 +915,66 @@ export function ImagesSettingsPage({
 									value={settings.service}
 									options={imageHostOptions}
 									onChange={(value) => {
-										if (value === "cloudflare-r2") setValue("service", value);
+										if (!isImageHostProvider(value)) {
+											throw new Error("settings-center-image-provider-invalid");
+										}
+										setValues({
+											service: value,
+											...(value === "cloudflare-r2"
+												? { region: "" }
+												: {
+														endpoint: "",
+														...(value === "qiniu-kodo" ? { region: "" } : {}),
+													}),
+										});
 									}}
 								/>
 							</ImageField>
-							<ImageField label={strings.r2AccountId}>
-								<ImageTextInput
-									label={strings.r2AccountId}
-									value={settings.accountId}
-									onChange={(value) => setValue("accountId", value)}
-								/>
-							</ImageField>
+							{settings.service === "cloudflare-r2" ? (
+								<ImageField label={strings.r2ApiEndpoint}>
+									<ImageTextInput
+										label={strings.r2ApiEndpoint}
+										value={settings.endpoint}
+										onChange={(value) => setValue("endpoint", value)}
+									/>
+								</ImageField>
+							) : settings.service === "aliyun-oss" ||
+								settings.service === "tencent-cos" ? (
+								<ImageField label={strings.providerRegion}>
+									<ImageTextInput
+										label={strings.providerRegion}
+										value={settings.region}
+										onChange={(value) => setValue("region", value)}
+									/>
+								</ImageField>
+							) : null}
 							<ImageField label={strings.bucket}>
-								<ImageTextInput
-									label={strings.bucket}
-									value={settings.bucket}
-									onChange={(value) => setValue("bucket", value)}
-								/>
+								<div>
+									<ImageTextInput
+										label={strings.bucket}
+										value={settings.bucket}
+										onChange={(value) => setValue("bucket", value)}
+									/>
+									{settings.service === "tencent-cos" ? (
+										<small>{strings.cosBucketHint}</small>
+									) : null}
+								</div>
 							</ImageField>
 							<ImageField label={strings.customDomain}>
 								<ImageTextInput
 									label={strings.customDomain}
 									value={settings.domain}
 									onChange={(value) => setValue("domain", value)}
+								/>
+							</ImageField>
+							<ImageField
+								label={strings.imageFallbackDomain}
+								description={strings.imageFallbackDomainDescription}
+							>
+								<ImageTextInput
+									label={strings.imageFallbackDomain}
+									value={settings.fallbackDomain}
+									onChange={(value) => setValue("fallbackDomain", value)}
 								/>
 							</ImageField>
 							<ImageField label={strings.accessKey}>
@@ -824,7 +1010,7 @@ export function ImagesSettingsPage({
 							target="primary"
 							strings={strings}
 							state={effectiveConnectionState(primaryConnection, "primary")}
-							onTest={() => void testConnection("primary")}
+							onTest={(trigger) => void testConnection("primary", trigger)}
 						/>
 					) : null}
 				</section>
@@ -857,18 +1043,54 @@ export function ImagesSettingsPage({
 									value={settings.backupService}
 									options={backupHostOptions}
 									onChange={(value) => {
-										if (value === "qiniu-kodo") {
-											setValue("backupService", value);
+										if (!isImageHostProvider(value)) {
+											throw new Error(
+												"settings-center-backup-image-provider-invalid",
+											);
 										}
+										setValues({
+											backupService: value,
+											...(value === "cloudflare-r2"
+												? { backupRegion: "" }
+												: {
+														backupEndpoint: "",
+														...(value === "qiniu-kodo"
+															? { backupRegion: "" }
+															: {}),
+													}),
+										});
 									}}
 								/>
 							</ImageField>
+							{settings.backupService === "cloudflare-r2" ? (
+								<ImageField label={strings.r2ApiEndpoint}>
+									<ImageTextInput
+										label={strings.r2ApiEndpoint}
+										value={settings.backupEndpoint}
+										onChange={(value) => setValue("backupEndpoint", value)}
+									/>
+								</ImageField>
+							) : settings.backupService === "aliyun-oss" ||
+								settings.backupService === "tencent-cos" ? (
+								<ImageField label={strings.providerRegion}>
+									<ImageTextInput
+										label={strings.providerRegion}
+										value={settings.backupRegion}
+										onChange={(value) => setValue("backupRegion", value)}
+									/>
+								</ImageField>
+							) : null}
 							<ImageField label={strings.backupBucket}>
-								<ImageTextInput
-									label={strings.backupBucket}
-									value={settings.backupBucket}
-									onChange={(value) => setValue("backupBucket", value)}
-								/>
+								<div>
+									<ImageTextInput
+										label={strings.backupBucket}
+										value={settings.backupBucket}
+										onChange={(value) => setValue("backupBucket", value)}
+									/>
+									{settings.backupService === "tencent-cos" ? (
+										<small>{strings.cosBucketHint}</small>
+									) : null}
+								</div>
 							</ImageField>
 							<ImageField label={strings.backupDomain}>
 								<ImageTextInput
@@ -936,7 +1158,7 @@ export function ImagesSettingsPage({
 									target="backup"
 									strings={strings}
 									state={effectiveConnectionState(backupConnection, "backup")}
-									onTest={() => void testConnection("backup")}
+									onTest={(trigger) => void testConnection("backup", trigger)}
 								/>
 							) : null}
 						</div>
@@ -1135,6 +1357,7 @@ export function ImagesSettingsPage({
 				</div>
 			</div>
 			{feedbackPortal}
+			{duplicatePortal}
 		</div>
 	);
 }

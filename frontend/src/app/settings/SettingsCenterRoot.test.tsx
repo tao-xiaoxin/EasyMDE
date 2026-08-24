@@ -115,6 +115,54 @@ describe("SettingsCenterRoot global search", () => {
 		]);
 	});
 
+	it("keeps an active compact navigation item visible without scrolling the settings root", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const navigation = container.querySelector("nav");
+		const imagesButton = screen.getByRole("button", { name: "images" });
+		if (!(settingsRoot instanceof HTMLDivElement) || !navigation)
+			throw new Error("settings-center-navigation-test-elements-missing");
+
+		const rootScrollTo = vi.fn();
+		const navigationScrollTo = vi.fn();
+		const itemScrollIntoView = vi.fn();
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: rootScrollTo,
+		});
+		Object.defineProperties(navigation, {
+			clientWidth: { configurable: true, value: 100 },
+			scrollWidth: { configurable: true, value: 300 },
+			clientHeight: { configurable: true, value: 40 },
+			scrollHeight: { configurable: true, value: 40 },
+			scrollLeft: { configurable: true, value: 20 },
+			scrollTo: { configurable: true, value: navigationScrollTo },
+		});
+		navigation.getBoundingClientRect = () =>
+			({ left: 0, right: 100, top: 0, bottom: 40 }) as DOMRect;
+		imagesButton.getBoundingClientRect = () =>
+			({ left: 180, right: 260, top: 0, bottom: 40 }) as DOMRect;
+		Object.defineProperty(imagesButton, "scrollIntoView", {
+			configurable: true,
+			value: itemScrollIntoView,
+		});
+
+		await user.click(imagesButton);
+
+		await waitFor(() =>
+			expect(navigationScrollTo).toHaveBeenCalledWith({
+				left: 180,
+				top: 0,
+				behavior: "auto",
+			}),
+		);
+		expect(itemScrollIntoView).not.toHaveBeenCalled();
+		expect(rootScrollTo).toHaveBeenCalledOnce();
+	});
+
 	it("opens Help from the sidebar and restores its trigger focus", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
@@ -204,6 +252,72 @@ describe("SettingsCenterRoot global search", () => {
 		expect(scrollTo).toHaveBeenCalledWith({ top: 807, behavior: "auto" });
 		expect(windowScrollTo).not.toHaveBeenCalled();
 		windowScrollTo.mockRestore();
+	});
+
+	it("keeps the selected section stable inside the scrollspy boundary band", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const settingsRoot = container.firstElementChild;
+		const stickyHeader = container.querySelector(
+			".easymde-settings-center__sticky-header",
+		);
+		const sections = Array.from(
+			container.querySelectorAll<HTMLElement>("[data-settings-section]"),
+		);
+		const images = container.querySelector<HTMLElement>(
+			"#settings-section-images",
+		);
+		if (
+			!(settingsRoot instanceof HTMLDivElement) ||
+			!(stickyHeader instanceof HTMLDivElement) ||
+			!images
+		)
+			throw new Error("settings-center-scrollspy-boundary-target-missing");
+
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		Object.defineProperty(settingsRoot, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 844, top: 0 }),
+		});
+		Object.defineProperty(stickyHeader, "getBoundingClientRect", {
+			configurable: true,
+			value: () => ({ bottom: 300, top: 112 }),
+		});
+		let imagesTop = 317;
+		for (const [index, section] of sections.entries()) {
+			Object.defineProperty(section, "getBoundingClientRect", {
+				configurable: true,
+				value: () => ({
+					bottom: index < 2 ? -100 : imagesTop + (index - 2) * 1000 + 900,
+					top: index < 2 ? -200 + index * 50 : imagesTop + (index - 2) * 1000,
+				}),
+			});
+		}
+
+		await user.click(screen.getByRole("button", { name: "images" }));
+		fireEvent.scroll(settingsRoot);
+		await waitFor(() =>
+			expect(
+				screen
+					.getByRole("button", { name: "images" })
+					.getAttribute("aria-current"),
+			).toBe("page"),
+		);
+
+		imagesTop = 340;
+		fireEvent.scroll(settingsRoot);
+		await waitFor(() =>
+			expect(
+				screen
+					.getByRole("button", { name: "shortcuts" })
+					.getAttribute("aria-current"),
+			).toBe("page"),
+		);
 	});
 
 	it("coalesces repeated scrollspy layout reads into one animation frame", () => {
@@ -1263,6 +1377,45 @@ describe("SettingsCenterRoot About section", () => {
 });
 
 describe("SettingsCenterRoot persistence", () => {
+	it("blocks saving an identical primary and backup host and restores focus after dismissal", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch");
+		const value = bootstrap();
+		const duplicateBootstrap: SettingsCenterBootstrap = {
+			...value,
+			settings: {
+				...value.settings,
+				images: {
+					...value.settings.images,
+					backupService: "cloudflare-r2",
+					backupEndpoint: value.settings.images.endpoint,
+					backupBucket: value.settings.images.bucket,
+				},
+			},
+		};
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={duplicateBootstrap} />,
+		);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement)) {
+			throw new Error("settings-center-overlay-missing");
+		}
+
+		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		const trigger = screen.getByRole("button", { name: "saveSettings" });
+		await user.click(trigger);
+		const dialog = within(overlayRoot).getByRole("alertdialog", {
+			name: "duplicateImageHostTitle",
+		});
+		expect(
+			within(dialog).getByText("duplicateImageHostDescription"),
+		).not.toBeNull();
+		expect(fetch).not.toHaveBeenCalled();
+		await user.keyboard("{Escape}");
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		fetch.mockRestore();
+	});
+
 	it("enables owner-backed controls while keeping unsupported fields unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		expect(
@@ -1279,10 +1432,8 @@ describe("SettingsCenterRoot persistence", () => {
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
-			screen
-				.getByRole("switch", { name: "smartListRecognition" })
-				.matches(":disabled"),
-		).toBe(false);
+			screen.queryByRole("switch", { name: "smartListRecognition" }),
+		).toBeNull();
 		expect(
 			screen
 				.getByRole("combobox", { name: "summaryMode" })
@@ -1401,20 +1552,21 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 
 		await waitFor(() =>
-			expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
-				"••••••••••••",
-			),
+			expect(
+				screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+			).toBe("••••••••••••"),
 		);
-		expect(screen.getByLabelText<HTMLInputElement>("secretKey").placeholder).toBe(
-			"••••••••••••",
-		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("secretKey").placeholder,
+		).toBe("••••••••••••");
 		fetch.mockRestore();
 	});
 
 	it("keeps a replaced primary connection stale after the saved secrets are redacted", async () => {
 		const user = userEvent.setup();
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(
-			async (input, init) => {
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
 				const url = String(input);
 				if (url.endsWith("/image-hosting/connection")) {
 					const request = JSON.parse(String(init?.body)) as {
@@ -1444,8 +1596,7 @@ describe("SettingsCenterRoot persistence", () => {
 						},
 					}),
 				} as Response;
-			},
-		);
+			});
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -1463,9 +1614,9 @@ describe("SettingsCenterRoot persistence", () => {
 			images.getByRole("button", { name: "testBackupConnection" }),
 		);
 		await waitFor(() =>
-			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-				["connected", "connected"],
-			),
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["connected", "connected"]),
 		);
 
 		await user.type(images.getByLabelText("secretKey"), "replacement-secret");
@@ -1475,9 +1626,9 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 
 		await waitFor(() =>
-			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-				["connectionStale", "connected"],
-			),
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["connectionStale", "connected"]),
 		);
 		fetch.mockRestore();
 	});
@@ -1485,8 +1636,9 @@ describe("SettingsCenterRoot persistence", () => {
 	it("clears configured credential presentation after a reset is saved", async () => {
 		const user = userEvent.setup();
 		const configuredBootstrap = bootstrap();
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(
-			async (input, init) => {
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
 				if (String(input).endsWith("/image-hosting/connection")) {
 					const request = JSON.parse(String(init?.body)) as {
 						target: "primary" | "backup";
@@ -1515,8 +1667,7 @@ describe("SettingsCenterRoot persistence", () => {
 						},
 					}),
 				} as Response;
-			},
-		);
+			});
 		const { container } = render(
 			<SettingsCenterRoot
 				bootstrap={{
@@ -1540,9 +1691,9 @@ describe("SettingsCenterRoot persistence", () => {
 		if (!(imagesSection instanceof HTMLElement))
 			throw new Error("settings-center-images-section-missing");
 		const images = within(imagesSection);
-		expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
-			"••••••••••••",
-		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+		).toBe("••••••••••••");
 		await user.click(
 			images.getByRole("button", { name: "testPrimaryConnection" }),
 		);
@@ -1550,9 +1701,9 @@ describe("SettingsCenterRoot persistence", () => {
 			images.getByRole("button", { name: "testBackupConnection" }),
 		);
 		await waitFor(() =>
-			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-				["connected", "connected"],
-			),
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["connected", "connected"]),
 		);
 
 		await user.click(
@@ -1571,16 +1722,16 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 
 		await waitFor(() =>
-			expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
-				"",
-			),
+			expect(
+				screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+			).toBe(""),
 		);
 		expect(
 			screen.getByLabelText<HTMLInputElement>("backupAccessKey").placeholder,
 		).toBe("");
-		expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-			["connectionStale", "connectionStale"],
-		);
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["connectionStale", "connectionStale"]);
 		fetch.mockRestore();
 	});
 
@@ -1672,16 +1823,17 @@ describe("SettingsCenterRoot persistence", () => {
 			).toBe("true"),
 		);
 		expect(fetch).toHaveBeenCalledTimes(2);
-		expect(screen.getByLabelText<HTMLInputElement>("accessKey").placeholder).toBe(
-			"••••••••••••",
-		);
+		expect(
+			screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
+		).toBe("••••••••••••");
 		fetch.mockRestore();
 	});
 
 	it("invalidates both connection tests after an authoritative conflict reload", async () => {
 		const user = userEvent.setup();
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(
-			async (input, init) => {
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
 				const url = String(input);
 				if (url.endsWith("/image-hosting/connection")) {
 					const request = JSON.parse(String(init?.body)) as {
@@ -1711,8 +1863,7 @@ describe("SettingsCenterRoot persistence", () => {
 						},
 					}),
 				} as Response;
-			},
-		);
+			});
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -1730,9 +1881,9 @@ describe("SettingsCenterRoot persistence", () => {
 			images.getByRole("button", { name: "testBackupConnection" }),
 		);
 		await waitFor(() =>
-			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-				["connected", "connected"],
-			),
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["connected", "connected"]),
 		);
 
 		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
@@ -1743,9 +1894,9 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(screen.getByRole("button", { name: "reloadSettings" }));
 
 		await waitFor(() =>
-			expect(images.getAllByRole("status").map((status) => status.textContent)).toEqual(
-				["connectionStale", "connectionStale"],
-			),
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["connectionStale", "connectionStale"]),
 		);
 		fetch.mockRestore();
 	});

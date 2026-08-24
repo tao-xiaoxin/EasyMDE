@@ -66,7 +66,6 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   container: HTMLElement;
   label: string;
   lineNumbers?: boolean;
-  smartListRecognition?: boolean;
   submissionField: HTMLTextAreaElement;
   syntaxHighlight?: boolean;
   wordWrap?: boolean;
@@ -171,7 +170,6 @@ export function createCodeMirrorDocumentSession({
   container,
   label,
   lineNumbers: showLineNumbers = true,
-  smartListRecognition = true,
   submissionField,
   syntaxHighlight = true,
   wordWrap = true
@@ -210,7 +208,7 @@ export function createCodeMirrorDocumentSession({
       }
     }),
     keymap.of([
-      ...(smartListRecognition ? markdownKeymap : []),
+      ...markdownKeymap,
       ...defaultKeymap,
       ...historyKeymap
     ]),

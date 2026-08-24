@@ -28,6 +28,13 @@ final class ImageHostProviderSupport {
 		return is_string( $value ) && '' !== $value && strlen( $value ) <= 2048 && 0 === preg_match( '/[\x00-\x1F\x7F]/', $value );
 	}
 
+	public static function validate_r2_endpoint( $value ) {
+		return is_string( $value ) && 1 === preg_match(
+			'#^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.(?:eu|us|fedramp))?\.r2\.cloudflarestorage\.com$#D',
+			strtolower( $value )
+		);
+	}
+
 	public static function normalize_public_base_url( $url ) {
 		$url   = rtrim( (string) $url, '/' );
 		$parts = wp_parse_url( $url );

@@ -125,6 +125,9 @@ final class ImageHostingController {
 
 		$result = $this->runtime->test_connection( $settings, $target );
 		if ( is_wp_error( $result ) ) {
+			if ( 'easymde_image_hosting_duplicate_destination' === $result->get_error_code() ) {
+				return $this->duplicate_destination_error();
+			}
 			return $this->connection_failed_error();
 		}
 		if ( ! is_array( $result ) || ! isset( $result['status'] ) || 'connected' !== $result['status'] ) {
@@ -156,6 +159,9 @@ final class ImageHostingController {
 
 		$result = $this->runtime->upload( $settings, $file );
 		if ( is_wp_error( $result ) ) {
+			if ( 'easymde_image_hosting_duplicate_destination' === $result->get_error_code() ) {
+				return $this->duplicate_destination_error();
+			}
 			return $this->upload_failed_error();
 		}
 
@@ -276,24 +282,28 @@ final class ImageHostingController {
 	}
 
 	private function project_upload_result( $result ) {
-		if ( ! is_array( $result ) || ! isset( $result['url'], $result['alt'], $result['title'], $result['backup'] ) || ! is_array( $result['backup'] ) ) {
+		if ( ! is_array( $result ) || ! isset( $result['url'], $result['fallbackUrl'], $result['alt'], $result['title'], $result['backup'] ) || ! is_array( $result['backup'] ) ) {
 			return $this->invalid_runtime_result_error();
 		}
 
-		$url    = is_string( $result['url'] ) ? esc_url_raw( $result['url'], array( 'https' ) ) : '';
-		$alt    = is_string( $result['alt'] ) ? sanitize_text_field( $result['alt'] ) : null;
-		$title  = is_string( $result['title'] ) ? sanitize_text_field( $result['title'] ) : null;
-		$backup = $this->project_backup_result( $result['backup'] );
-		if ( '' === $url || null === $alt || null === $title || is_wp_error( $backup ) ) {
+		$url          = is_string( $result['url'] ) ? esc_url_raw( $result['url'], array( 'https' ) ) : '';
+		$fallback_url = is_string( $result['fallbackUrl'] ) && $this->is_valid_https_result_url( $result['fallbackUrl'], true )
+			? $result['fallbackUrl']
+			: null;
+		$alt          = is_string( $result['alt'] ) ? sanitize_text_field( $result['alt'] ) : null;
+		$title        = is_string( $result['title'] ) ? sanitize_text_field( $result['title'] ) : null;
+		$backup       = $this->project_backup_result( $result['backup'] );
+		if ( '' === $url || null === $fallback_url || null === $alt || null === $title || is_wp_error( $backup ) ) {
 			return $this->invalid_runtime_result_error();
 		}
 
 		return rest_ensure_response(
 			array(
-				'url'    => $url,
-				'alt'    => $alt,
-				'title'  => $title,
-				'backup' => $backup,
+				'url'         => $url,
+				'fallbackUrl' => $fallback_url,
+				'alt'         => $alt,
+				'title'       => $title,
+				'backup'      => $backup,
 			)
 		);
 	}
@@ -314,6 +324,25 @@ final class ImageHostingController {
 		}
 
 		return $projected;
+	}
+
+	private function is_valid_https_result_url( $value, $allow_empty ) {
+		if ( ! is_string( $value ) || ( '' === $value && ! $allow_empty ) ) {
+			return false;
+		}
+		if ( '' === $value ) {
+			return true;
+		}
+
+		$parts = wp_parse_url( $value );
+		return is_array( $parts ) &&
+			isset( $parts['scheme'], $parts['host'] ) &&
+			'https' === strtolower( (string) $parts['scheme'] ) &&
+			! isset( $parts['user'] ) &&
+			! isset( $parts['pass'] ) &&
+			! isset( $parts['query'] ) &&
+			! isset( $parts['fragment'] ) &&
+			esc_url_raw( $value, array( 'https' ) ) === $value;
 	}
 
 	private function service_for_target( array $settings, $target ) {
@@ -367,6 +396,14 @@ final class ImageHostingController {
 			'easymde_image_hosting_connection_failed',
 			__( 'The image-hosting connection could not be verified.', 'easymde' ),
 			array( 'status' => 502 )
+		);
+	}
+
+	private function duplicate_destination_error() {
+		return new WP_Error(
+			'easymde_image_hosting_duplicate_destination',
+			__( 'The primary and backup image hosts must use different storage destinations.', 'easymde' ),
+			array( 'status' => 409 )
 		);
 	}
 

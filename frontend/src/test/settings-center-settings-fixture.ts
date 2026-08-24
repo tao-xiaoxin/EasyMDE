@@ -12,24 +12,26 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     autoSave: true,
     autoSaveInterval: '60',
     syncScroll: true,
-    cleanPastedContent: true,
-    smartListRecognition: true,
-    defaultCategory: 'none',
     publishVisibility: 'public',
     openPreviewAfterPublish: true,
     summaryMode: 'auto-55',
-    featuredImagePlaceholder: true,
+    featuredImagePlaceholder: true
   },
   images: {
     service: 'cloudflare-r2',
-    accountId: '',
+    endpoint:
+      'https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com',
+    region: '',
     bucket: 'easymde-assets',
     domain: '',
+    fallbackDomain: '',
     accessKey: '',
     secretKey: '',
     fileNameRule: '{date}/{uuid}.{ext}',
     backupEnabled: true,
     backupService: 'qiniu-kodo',
+    backupEndpoint: '',
+    backupRegion: '',
     backupBucket: 'easymde-backup',
     backupDomain: '',
     backupAccessKey: '',
@@ -46,7 +48,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     insertFormat: 'markdown',
     altSource: 'filename',
     captionMode: 'none',
-    featuredPlaceholder: true,
+    featuredPlaceholder: true
   },
   markdown: {
     wordWrap: true,
@@ -61,7 +63,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
     lineEnding: 'system',
     unorderedMarker: '-',
     orderedStart: '1',
-    blockquoteStyle: 'standard',
+    blockquoteStyle: 'standard'
   },
   shortcuts: {
     values: {
@@ -74,18 +76,18 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
       'heading-two': { windows: 'Ctrl+2', mac: 'Cmd+2' },
       quote: { windows: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
       'unordered-list': { windows: 'Ctrl+Shift+U', mac: 'Cmd+Shift+U' },
-      'ordered-list': { windows: 'Ctrl+Shift+O', mac: 'Cmd+Shift+O' },
+      'ordered-list': { windows: 'Ctrl+Shift+O', mac: 'Cmd+Shift+O' }
     },
     showHints: true,
     detectConflicts: true,
-    showSuggestions: true,
-  },
+    showSuggestions: true
+  }
 };
 export const SETTINGS_CENTER_DEFAULT_SETTINGS: SettingsCenterSettings = {
   ...SETTINGS_CENTER_TEST_SETTINGS,
   revision: 0,
   general: {
     ...SETTINGS_CENTER_TEST_SETTINGS.general,
-    autoFocusEditor: true,
-  },
+    autoFocusEditor: true
+  }
 };

@@ -17,8 +17,7 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
 			imageHostingActionNonce: "test-image-hosting-action-nonce",
-			imageHostingConnectionUrl:
-				"/wp-json/easymde/v1/image-hosting/connection",
+			imageHostingConnectionUrl: "/wp-json/easymde/v1/image-hosting/connection",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -117,10 +116,78 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("accepts only the canonical Cloudflare R2 API endpoint shape", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.endpoint = "https://api.example.test";
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-endpoint-invalid",
+		);
+	});
+
+	it("accepts the same hyphenated R2 endpoint identity as PHP", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.endpoint =
+			"https://synthetic-account.r2.cloudflarestorage.com";
+		expect(parseSettingsCenterSettings(settings).images.endpoint).toBe(
+			settings.images.endpoint,
+		);
+	});
+
+	it.each(["eu", "us", "fedramp"])(
+		"accepts the official Cloudflare R2 %s jurisdiction endpoint",
+		(jurisdiction) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.endpoint = `https://synthetic-account.${jurisdiction}.r2.cloudflarestorage.com`;
+			expect(parseSettingsCenterSettings(settings).images.endpoint).toBe(
+				settings.images.endpoint,
+			);
+		},
+	);
+
+	it.each([
+		"https://synthetic-account.unknown.r2.cloudflarestorage.com",
+		"https://synthetic-account.eu.r2.cloudflarestorage.com:443",
+		"https://synthetic-account.eu.r2.cloudflarestorage.com/path",
+		"https://synthetic-account.eu.r2.cloudflarestorage.com/",
+	])("rejects a noncanonical R2 endpoint: %s", (endpoint) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.endpoint = endpoint;
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-endpoint-invalid",
+		);
+	});
+
+	it("rejects provider fields that do not belong to the selected service", () => {
+		const qiniu = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		qiniu.images.service = "qiniu-kodo";
+		qiniu.images.endpoint =
+			"https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com";
+		expect(() => parseSettingsCenterSettings(qiniu)).toThrow(
+			"settings-center-images-endpoint-invalid",
+		);
+
+		const oss = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		oss.images.service = "aliyun-oss";
+		oss.images.endpoint = "";
+		oss.images.region = "cn-hangzhou";
+		expect(parseSettingsCenterSettings(oss).images.region).toBe("cn-hangzhou");
+	});
+
 	it.each([
 		["a removed upload destination", "destination", "remote"],
-		["an unsupported primary provider", "service", "aliyun-oss"],
-		["an invalid R2 account ID", "accountId", "invalid account id"],
+		["a removed R2 account ID", "accountId", "synthetic-account"],
 	] as const)("rejects %s", (_label, key, value) => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
@@ -131,8 +198,33 @@ describe("parseSettingsCenterBootstrap", () => {
 	});
 
 	it.each([
+		"cloudflare-r2",
+		"qiniu-kodo",
+		"aliyun-oss",
+		"tencent-cos",
+	] as const)(
+		"accepts the implemented %s provider for primary and backup storage",
+		(service) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.service = service;
+			settings.images.backupService = service;
+			if (service !== "cloudflare-r2") {
+				settings.images.endpoint = "";
+			}
+			expect(parseSettingsCenterSettings(settings).images.service).toBe(
+				service,
+			);
+		},
+	);
+
+	it.each([
 		["domain", "http://img.example.test"],
+		["fallbackDomain", "http://fallback.example.test"],
+		["endpoint", "http://api.example.test"],
 		["backupDomain", "//backup.example.test"],
+		["backupEndpoint", "//api.example.test"],
 	] as const)("rejects a non-HTTPS %s", (key, value) => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
@@ -140,6 +232,22 @@ describe("parseSettingsCenterBootstrap", () => {
 		settings.images[key] = value;
 
 		expect(() => parseSettingsCenterSettings(settings)).toThrow();
+	});
+
+	it("physically rejects the removed General settings fields", () => {
+		for (const key of [
+			"cleanPastedContent",
+			"smartListRecognition",
+			"defaultCategory",
+		] as const) {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.general[key] = true;
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-general-settings-invalid",
+			);
+		}
 	});
 
 	it.each([
@@ -171,6 +279,20 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("simplifiedChinese");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("traditionalChinese");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("english");
+	});
+
+	it("does not expose strings for removed General settings", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining([
+				"cleanPastedContent",
+				"cleanPastedContentDescription",
+				"smartListRecognition",
+				"smartListRecognitionDescription",
+				"defaultCategory",
+				"noAutomaticCategory",
+				"currentCategory",
+			]),
+		);
 	});
 
 	it("does not expose removed Markdown settings strings", () => {
@@ -216,7 +338,11 @@ describe("parseSettingsCenterBootstrap", () => {
 	});
 
 	it("parses the Markdown settings contract without removed presentation fields", () => {
-		expect(Object.keys(parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).markdown)).toEqual([
+		expect(
+			Object.keys(
+				parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).markdown,
+			),
+		).toEqual([
 			"wordWrap",
 			"lineNumbers",
 			"editorTheme",
@@ -297,7 +423,11 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("customUpload");
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
 			expect.arrayContaining([
-				"r2AccountId",
+				"r2ApiEndpoint",
+				"providerRegion",
+				"imageFallbackDomain",
+				"duplicateImageHostTitle",
+				"duplicateImageHostDescription",
 				"primaryCredentialsConfigured",
 				"backupCredentialsConfigured",
 				"credentialsConfiguredHint",

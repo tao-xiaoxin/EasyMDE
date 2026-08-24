@@ -2074,6 +2074,62 @@ Rules:
   remote URL, Dev Server URL, private host, remotely mutable executable, or
   silent local-to-remote substitution appears.
 
+#### Approved External Service: Administrator-Configured Image Hosting
+
+Service and owning Feature: EasyMDE Image Hosting with Cloudflare R2, Qiniu
+Kodo, Alibaba Cloud OSS, or Tencent Cloud COS. Any one configured provider may
+own the primary write or the optional explicit same-object-key backup write.
+
+Substantive remote functionality and operator evidence: each service stores
+image objects through its official object-storage API. Official provider
+documentation and policy sources are:
+
+- Cloudflare R2: `https://developers.cloudflare.com/r2/`,
+  `https://www.cloudflare.com/terms/`, and
+  `https://www.cloudflare.com/privacypolicy/`;
+- Qiniu Kodo: `https://developer.qiniu.com/kodo`,
+  `https://www.qiniu.com/user-agreement`, and
+  `https://www.qiniu.com/agreements/privacy-right`;
+- Alibaba Cloud OSS: `https://www.alibabacloud.com/help/en/oss`,
+  `https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-product-terms-of-service`,
+  and `https://www.alibabacloud.com/help/en/legal/latest/kcpor`; and
+- Tencent Cloud COS: `https://www.tencentcloud.com/document/product/436`,
+  `https://www.tencentcloud.com/document/product/301/9248`, and
+  `https://www.tencentcloud.com/document/product/301/17345`.
+
+Exact data and authentication: only when an authorized author pastes or drops
+an accepted local image, or an administrator explicitly tests a saved
+connection, WordPress sends the provider the image bytes when applicable,
+verified MIME type, generated object key, and the minimum signed request
+metadata. Provider credentials stay server-side and are never returned to the
+browser. An administrator explicitly configures and saves a provider before
+use; that act authorizes the described service requests for the site.
+
+Endpoint and URL ownership: provider API origins are fixed or validated from
+provider-specific coordinates. Administrator-configured public delivery and
+optional fallback domains are output URL bases, not upload API endpoints. The
+browser calls only protected same-origin REST routes. A configured fallback
+domain adds an explicit `fallbackUrl` to a successful response; it never
+silently replaces the primary URL or triggers another upload.
+
+Failure and reliability: protected uploads and connection tests do not retry
+automatically or switch providers. Primary and backup settings that identify
+the same physical destination are rejected with HTTP 409. A primary failure is
+an explicit failure. A backup failure after primary success returns the
+authoritative primary URL plus a redacted partial-failure state. There is no
+cross-provider rollback claim, WordPress media fallback, remote client SDK,
+tracking, telemetry, or remotely loaded executable asset.
+
+Release and removal: provider contracts have deterministic signing, endpoint,
+error, duplicate-destination, REST, and browser tests using synthetic
+credentials and fake transports. Real-account verification is an explicitly
+authorized local operator action and never a CI or release input. Removing or
+changing a provider requires matching settings, runtime, disclosure, i18n,
+testing, and migration review. Re-review is required for every trigger listed
+by the general gate above. Maintainer approval is the focused human request
+authorizing these four providers; retention and deletion remain governed by
+the administrator's provider account and the linked provider policies.
+
 Approval is scoped to the recorded service and Feature. It does not authorize
 another service, another Feature, more data, another endpoint, or a remotely
 hosted client runtime. If any required field or applicable rule is unverified,

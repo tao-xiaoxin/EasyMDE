@@ -24,7 +24,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 				return array(
 					'primary'     => array(
 						'service'   => 'cloudflare-r2',
-						'accountId' => 'synthetic-account',
+						'endpoint'  => 'https://synthetic-account.r2.cloudflarestorage.com',
+						'region'    => '',
 						'bucket'    => 'synthetic-primary',
 						'domain'    => 'https://images.example.test',
 						'accessKey' => 'synthetic-access',
@@ -33,6 +34,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 					'backup'      => array(
 						'enabled'       => true,
 						'service'       => 'qiniu-kodo',
+						'endpoint'      => '',
+						'region'        => '',
 						'bucket'        => 'synthetic-backup',
 						'domain'        => 'https://backup.example.test',
 						'accessKey'     => 'synthetic-backup-access',
@@ -40,6 +43,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'sameObjectKey' => true,
 						'failureMode'   => 'continue',
 					),
+					'fallbackDomain' => 'https://fallback.example.test',
 					'behaviors'   => array(
 						'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
 					),
@@ -52,10 +56,11 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			public $upload_calls     = array();
 			public $connection_result = array( 'status' => 'connected' );
 			public $upload_result = array(
-				'url'    => 'https://images.example.test/2026/08/example.png',
-				'alt'    => 'example',
-				'title'  => 'Example',
-				'backup' => array( 'status' => 'uploaded' ),
+				'url'         => 'https://images.example.test/2026/08/example.png',
+				'fallbackUrl' => 'https://fallback.example.test/2026/08/example.png',
+				'alt'         => 'example',
+				'title'       => 'Example',
+				'backup'      => array( 'status' => 'uploaded' ),
 			);
 
 			public function test_connection( array $settings, $target ) {
@@ -151,10 +156,11 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			$this->assertSame( 200, $response->get_status() );
 			$this->assertSame(
 				array(
-					'url'    => 'https://images.example.test/2026/08/example.png',
-					'alt'    => 'example',
-					'title'  => 'Example',
-					'backup' => array( 'status' => 'uploaded' ),
+					'url'         => 'https://images.example.test/2026/08/example.png',
+					'fallbackUrl' => 'https://fallback.example.test/2026/08/example.png',
+					'alt'         => 'example',
+					'title'       => 'Example',
+					'backup'      => array( 'status' => 'uploaded' ),
 				),
 				$response->get_data()
 			);
@@ -273,6 +279,36 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_duplicate_destination_runtime_failures_preserve_only_the_stable_409_contract() {
+		$this->runtime->connection_result = new WP_Error(
+			'easymde_image_hosting_duplicate_destination',
+			'Unsafe synthetic runtime detail.',
+			array( 'status' => 500, 'raw' => 'synthetic-secret' )
+		);
+		$connection = rest_do_request( $this->connection_request( array( 'target' => 'primary' ) ) );
+
+		$this->runtime->upload_result = new WP_Error(
+			'easymde_image_hosting_duplicate_destination',
+			'Unsafe synthetic runtime detail.',
+			array( 'status' => 500, 'raw' => 'synthetic-secret' )
+		);
+		$file   = $this->png_file();
+		$upload = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			foreach ( array( $connection, $upload ) as $response ) {
+				$this->assertSame( 409, $response->get_status() );
+				$this->assertSame( 'easymde_image_hosting_duplicate_destination', $response->as_error()->get_error_code() );
+				$this->assertStringNotContainsString( 'Unsafe synthetic runtime detail', wp_json_encode( $response->get_data() ) );
+				$this->assertStringNotContainsString( 'synthetic-secret', wp_json_encode( $response->get_data() ) );
+			}
+			$this->assertCount( 1, $this->runtime->connection_calls );
+			$this->assertCount( 1, $this->runtime->upload_calls );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
 	public function test_backup_failure_status_preserves_only_a_stable_code() {
 		$this->runtime->upload_result['backup'] = array(
 			'status' => 'failed',
@@ -309,6 +345,27 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			$this->assertSame( 500, $response->get_status() );
 			$this->assertSame( 'easymde_image_hosting_invalid_runtime_result', $response->get_data()['code'] );
 			$this->assertStringNotContainsString( 'synthetic-upstream-error', wp_json_encode( $response->get_data() ) );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_upload_requires_a_valid_explicit_fallback_url_field() {
+		$file = $this->png_file();
+		unset( $this->runtime->upload_result['fallbackUrl'] );
+		$missing = rest_do_request( $this->upload_request( $file ) );
+		$this->runtime->upload_result['fallbackUrl'] = 'https://user:pass@fallback.example.test/image.png';
+		$unsafe = rest_do_request( $this->upload_request( $file ) );
+		$this->runtime->upload_result['fallbackUrl'] = '';
+		$empty = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 500, $missing->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_runtime_result', $missing->get_data()['code'] );
+			$this->assertSame( 500, $unsafe->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_runtime_result', $unsafe->get_data()['code'] );
+			$this->assertSame( 200, $empty->get_status() );
+			$this->assertSame( '', $empty->get_data()['fallbackUrl'] );
 		} finally {
 			unlink( $file['tmp_name'] );
 		}

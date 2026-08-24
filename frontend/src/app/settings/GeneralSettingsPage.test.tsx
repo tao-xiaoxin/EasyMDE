@@ -37,4 +37,25 @@ describe("GeneralSettingsPage", () => {
 			"statusBarDisplay",
 		]);
 	});
+
+	it("does not expose editor capabilities or WordPress category ownership as settings", () => {
+		render(
+			<GeneralSettingsPage
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("switch", { name: "cleanPastedContent" }),
+		).toBeNull();
+		expect(
+			screen.queryByRole("switch", { name: "smartListRecognition" }),
+		).toBeNull();
+		expect(
+			screen.queryByRole("combobox", { name: "defaultCategory" }),
+		).toBeNull();
+	});
 });

@@ -48,6 +48,9 @@ final class ImageHostingRuntime {
 		if ( 'backup' === $target && ( empty( $settings['backup']['enabled'] ) || empty( $settings['backup']['sameObjectKey'] ) ) ) {
 			return $this->configuration_error();
 		}
+		if ( $this->has_duplicate_destinations( $settings ) ) {
+			return $this->duplicate_destination_error();
+		}
 
 		$config = isset( $settings[ $target ] ) && is_array( $settings[ $target ] ) ? $settings[ $target ] : array();
 		try {
@@ -65,6 +68,9 @@ final class ImageHostingRuntime {
 	public function upload( array $settings, array $file ) {
 		if ( ! $this->is_valid_upload_configuration( $settings ) || ! $this->is_valid_file( $file ) ) {
 			return $this->configuration_error();
+		}
+		if ( $this->has_duplicate_destinations( $settings ) ) {
+			return $this->duplicate_destination_error();
 		}
 		try {
 			$primary_provider = $this->create_provider( $settings['primary'] );
@@ -130,10 +136,11 @@ final class ImageHostingRuntime {
 			}
 
 			return array(
-				'url'    => $primary_result->get_url(),
-				'alt'    => $this->derived_text( $settings['behaviors']['altSource'], $file['name'] ),
-				'title'  => $this->derived_text( $settings['behaviors']['captionMode'], $file['name'] ),
-				'backup' => $backup,
+				'url'         => $primary_result->get_url(),
+				'fallbackUrl' => $this->fallback_url( $settings, $key ),
+				'alt'         => $this->derived_text( $settings['behaviors']['altSource'], $file['name'] ),
+				'title'       => $this->derived_text( $settings['behaviors']['captionMode'], $file['name'] ),
+				'backup'      => $backup,
 			);
 		} catch ( ImageHostException $exception ) {
 			return $this->configuration_error();
@@ -149,7 +156,7 @@ final class ImageHostingRuntime {
 		if ( 'cloudflare-r2' === $service ) {
 			return new CloudflareR2Provider(
 				$this->transport,
-				isset( $config['accountId'] ) ? $config['accountId'] : '',
+				isset( $config['endpoint'] ) ? $config['endpoint'] : '',
 				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
 				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
 				isset( $config['bucket'] ) ? $config['bucket'] : '',
@@ -162,6 +169,35 @@ final class ImageHostingRuntime {
 			$clock = $this->clock;
 			return new QiniuKodoProvider(
 				$this->transport,
+				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
+				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
+				isset( $config['bucket'] ) ? $config['bucket'] : '',
+				isset( $config['domain'] ) ? $config['domain'] : '',
+				static function () use ( $clock ) {
+					$now = call_user_func( $clock );
+
+					return $now instanceof DateTimeImmutable ? $now->getTimestamp() : 0;
+				}
+			);
+		}
+
+		if ( 'aliyun-oss' === $service ) {
+			return new AlibabaOssProvider(
+				$this->transport,
+				isset( $config['region'] ) ? $config['region'] : '',
+				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
+				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
+				isset( $config['bucket'] ) ? $config['bucket'] : '',
+				isset( $config['domain'] ) ? $config['domain'] : '',
+				$this->clock
+			);
+		}
+
+		if ( 'tencent-cos' === $service ) {
+			$clock = $this->clock;
+			return new TencentCosProvider(
+				$this->transport,
+				isset( $config['region'] ) ? $config['region'] : '',
 				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
 				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
 				isset( $config['bucket'] ) ? $config['bucket'] : '',
@@ -236,6 +272,12 @@ final class ImageHostingRuntime {
 			);
 		}
 
+		if ( ! function_exists( 'wp_tempnam' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+		if ( ! function_exists( 'wp_tempnam' ) ) {
+			return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
+		}
 		$temporary_path = wp_tempnam( 'easymde-image-host' );
 		if ( ! is_string( $temporary_path ) || '' === $temporary_path ) {
 			return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
@@ -319,10 +361,11 @@ final class ImageHostingRuntime {
 
 	private function is_valid_upload_configuration( array $settings ) {
 		if (
-			! isset( $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['behaviors'] ) ||
+			! isset( $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['fallbackDomain'], $settings['behaviors'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! is_array( $settings['backup'] ) ||
-			! is_array( $settings['behaviors'] )
+			! is_array( $settings['behaviors'] ) ||
+			! $this->is_valid_fallback_domain( $settings['fallbackDomain'] )
 		) {
 			return false;
 		}
@@ -346,6 +389,26 @@ final class ImageHostingRuntime {
 		);
 	}
 
+	private function is_valid_fallback_domain( $value ) {
+		if ( ! is_string( $value ) ) {
+			return false;
+		}
+		if ( '' === $value ) {
+			return true;
+		}
+
+		$parts = wp_parse_url( $value );
+		return is_array( $parts ) &&
+			isset( $parts['scheme'], $parts['host'] ) &&
+			'https' === strtolower( (string) $parts['scheme'] ) &&
+			! isset( $parts['user'] ) &&
+			! isset( $parts['pass'] ) &&
+			! isset( $parts['port'] ) &&
+			! isset( $parts['query'] ) &&
+			! isset( $parts['fragment'] ) &&
+			( ! isset( $parts['path'] ) || '' === $parts['path'] || '/' === $parts['path'] );
+	}
+
 	private function is_valid_file( array $file ) {
 		return isset( $file['name'], $file['type'], $file['tmp_name'] ) &&
 			is_string( $file['name'] ) &&
@@ -358,6 +421,28 @@ final class ImageHostingRuntime {
 
 	private function configuration_error() {
 		return $this->operation_error( 'easymde_image_hosting_configuration_invalid' );
+	}
+
+	private function duplicate_destination_error() {
+		return new WP_Error(
+			'easymde_image_hosting_duplicate_destination',
+			__( 'The primary and backup image hosts must use different storage destinations.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
+	private function has_duplicate_destinations( array $settings ) {
+		return ! empty( $settings['backup']['enabled'] ) &&
+			isset( $settings['primary'], $settings['backup'] ) &&
+			is_array( $settings['primary'] ) &&
+			is_array( $settings['backup'] ) &&
+			ImageHostDestinationIdentity::are_same( $settings['primary'], $settings['backup'] );
+	}
+
+	private function fallback_url( array $settings, $key ) {
+		$domain = isset( $settings['fallbackDomain'] ) ? (string) $settings['fallbackDomain'] : '';
+
+		return '' === $domain ? '' : ImageHostProviderSupport::public_url( $domain, $key );
 	}
 
 	private function operation_error( $error_code ) {

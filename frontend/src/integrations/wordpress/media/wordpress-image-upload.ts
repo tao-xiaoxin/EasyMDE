@@ -61,13 +61,35 @@ function uploadedResult(value: unknown): ImageUploadResult {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error('image-upload-response-invalid');
   }
+  if ('string' !== typeof response.fallbackUrl) {
+    throw new Error('image-upload-response-invalid');
+  }
+  let fallbackUrl: string | undefined;
+  if (response.fallbackUrl !== '') {
+    try {
+      const parsedFallbackUrl = new URL(response.fallbackUrl);
+      if (
+        parsedFallbackUrl.protocol !== 'https:' ||
+        parsedFallbackUrl.username ||
+        parsedFallbackUrl.password ||
+        response.fallbackUrl.length > 2048
+      ) {
+        throw new Error('image-upload-response-invalid');
+      }
+      fallbackUrl = response.fallbackUrl;
+    } catch {
+      throw new Error('image-upload-response-invalid');
+    }
+  }
   let warning: 'backup-upload-failed' | undefined;
   const backup = response.backup;
   if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
     throw new Error('image-upload-response-invalid');
   }
   const backupResult = backup as Record<string, unknown>;
-  if (!['disabled', 'uploaded', 'failed'].includes(String(backupResult.status))) {
+  if (
+    !['disabled', 'uploaded', 'failed'].includes(String(backupResult.status))
+  ) {
     throw new Error('image-upload-response-invalid');
   }
   if ('failed' === backupResult.status) {
@@ -81,6 +103,7 @@ function uploadedResult(value: unknown): ImageUploadResult {
     status: 'uploaded',
     title: response.title,
     url: response.url,
+    ...(fallbackUrl ? { fallbackUrl } : {}),
     ...(warning ? { warning } : {})
   };
 }

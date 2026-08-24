@@ -29,9 +29,6 @@ const DEFAULT_DRAFT: Draft = {
 	autoSave: true,
 	autoSaveInterval: "60",
 	syncScroll: true,
-	cleanPastedContent: true,
-	smartListRecognition: true,
-	defaultCategory: "none",
 	publishVisibility: "public",
 	openPreviewAfterPublish: true,
 	summaryMode: "auto-55",
@@ -76,9 +73,6 @@ export function matchesGeneralSettingsQuery(
 		[s.autoSave, s.autoSaveDescription],
 		[s.autoSaveInterval],
 		[s.syncScroll, s.syncScrollDescription],
-		[s.cleanPastedContent, s.cleanPastedContentDescription],
-		[s.smartListRecognition, s.smartListRecognitionDescription],
-		[s.defaultCategory],
 		[s.defaultVisibility],
 		[s.openPreviewAfterPublish, s.openPreviewAfterPublishDescription],
 		[s.summaryMode, s.summaryModeDescription],
@@ -254,50 +248,8 @@ export function GeneralSettingsPage({
 						onChange={() => setValue("syncScroll", !draft.syncScroll)}
 					/>
 				</SettingsRow>
-				<fieldset
-					disabled
-					className="easymde-settings-center__unavailable-fields"
-				>
-					<SettingsRow
-						label={s.cleanPastedContent}
-						description={s.cleanPastedContentDescription}
-						query={normalizedQuery}
-					>
-						<SettingsToggle
-							label={s.cleanPastedContent}
-							checked={draft.cleanPastedContent}
-							onChange={() =>
-								setValue("cleanPastedContent", !draft.cleanPastedContent)
-							}
-						/>
-					</SettingsRow>
-				</fieldset>
-				<SettingsRow
-					label={s.smartListRecognition}
-					description={s.smartListRecognitionDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.smartListRecognition}
-						checked={draft.smartListRecognition}
-						onChange={() =>
-							setValue("smartListRecognition", !draft.smartListRecognition)
-						}
-					/>
-				</SettingsRow>
 			</SettingsSection>
 			<SettingsSection icon={DocumentIcon} title={s.documentDefaults}>
-				<SettingsRow label={s.defaultCategory} query={normalizedQuery}>
-					<NativeSelect
-						label={s.defaultCategory}
-						value={draft.defaultCategory}
-						onChange={(value) => setValue("defaultCategory", value)}
-						options={[
-							["none", s.noAutomaticCategory],
-							["current", s.currentCategory],
-						]}
-					/>
-				</SettingsRow>
 				<SettingsRow label={s.defaultVisibility} query={normalizedQuery}>
 					<NativeSelect
 						label={s.defaultVisibility}

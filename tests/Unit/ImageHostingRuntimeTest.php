@@ -101,6 +101,64 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$this->assertSame( 'GET', $transport->requests[1][0] );
 	}
 
+	public function test_connection_dispatches_all_supported_primary_providers() {
+		$cases = array(
+			array('cloudflare-r2', 'https://synthetic-account.r2.cloudflarestorage.com', '', 'synthetic-primary', HttpResponse::success(200, ''), 'HEAD'),
+			array('qiniu-kodo', '', '', 'synthetic-primary', HttpResponse::success(200, '["synthetic-primary"]'), 'GET'),
+			array('aliyun-oss', '', 'cn-hangzhou', 'synthetic-primary', HttpResponse::success(200, ''), 'GET'),
+			array('tencent-cos', '', 'ap-shanghai', 'synthetic-primary-1250000000', HttpResponse::success(200, ''), 'HEAD'),
+		);
+
+		foreach ($cases as $case) {
+			$transport = new ImageHostingRuntimeFakeTransport(array($case[4]));
+			$settings = $this->settings();
+			$settings['backup']['enabled'] = false;
+			$settings['primary']['service'] = $case[0];
+			$settings['primary']['endpoint'] = $case[1];
+			$settings['primary']['region'] = $case[2];
+			$settings['primary']['bucket'] = $case[3];
+
+			$this->assertSame(array('status' => 'connected'), $this->runtime($transport)->test_connection($settings, 'primary'), $case[0]);
+			$this->assertSame($case[5], $transport->requests[0][0], $case[0]);
+		}
+	}
+
+	public function test_duplicate_primary_and_backup_destinations_fail_before_network_requests() {
+		$transport = new ImageHostingRuntimeFakeTransport(array());
+		$settings = $this->settings();
+		$settings['backup']['service'] = 'cloudflare-r2';
+		$settings['backup']['endpoint'] = strtoupper($settings['primary']['endpoint']);
+		$settings['backup']['region'] = '';
+		$settings['backup']['bucket'] = strtoupper($settings['primary']['bucket']);
+		$settings['backup']['domain'] = 'https://different.example.test';
+		$file = $this->file('image.png', 'image/png', 'source-image-bytes');
+
+		$connection = $this->runtime($transport)->test_connection($settings, 'primary');
+		$upload = $this->runtime($transport)->upload($settings, $file);
+
+		$this->assertWPError($connection);
+		$this->assertSame('easymde_image_hosting_duplicate_destination', $connection->get_error_code());
+		$this->assertSame(409, $connection->get_error_data()['status']);
+		$this->assertWPError($upload);
+		$this->assertSame('easymde_image_hosting_duplicate_destination', $upload->get_error_code());
+		$this->assertSame(409, $upload->get_error_data()['status']);
+		$this->assertCount(0, $transport->requests);
+	}
+
+	public function test_invalid_fallback_domain_fails_before_network_requests() {
+		$transport = new ImageHostingRuntimeFakeTransport(array());
+		$settings = $this->settings();
+		$settings['backup']['enabled'] = false;
+		$settings['fallbackDomain'] = 'https://user:pass@fallback.example.test';
+		$file = $this->file('image.png', 'image/png', 'source-image-bytes');
+
+		$result = $this->runtime($transport)->upload($settings, $file);
+
+		$this->assertWPError($result);
+		$this->assertSame('easymde_image_hosting_configuration_invalid', $result->get_error_code());
+		$this->assertCount(0, $transport->requests);
+	}
+
 	public function test_upload_writes_primary_then_backup_with_the_same_key() {
 		$transport = new ImageHostingRuntimeFakeTransport(
 			array(
@@ -114,6 +172,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$result = $runtime->upload( $this->settings(), $file );
 
 		$this->assertSame( 'https://images.example.test/20260713/00000000-0000-4000-8000-000000000000.png', $result['url'] );
+		$this->assertSame( 'https://fallback.example.test/20260713/00000000-0000-4000-8000-000000000000.png', $result['fallbackUrl'] );
 		$this->assertSame( 'Example Image', $result['alt'] );
 		$this->assertSame( '', $result['title'] );
 		$this->assertSame( array( 'status' => 'uploaded' ), $result['backup'] );
@@ -189,6 +248,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$transport = new ImageHostingRuntimeFakeTransport( array( HttpResponse::success( 200, '' ) ) );
 		$settings  = $this->settings();
 		$settings['backup']['enabled'] = false;
+		$settings['fallbackDomain'] = '';
 		$settings['behaviors']['preserveOriginalName'] = true;
 		$settings['behaviors']['altSource'] = 'empty';
 		$settings['behaviors']['captionMode'] = 'filename';
@@ -199,6 +259,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$this->assertSame( '', $result['alt'] );
 		$this->assertSame( 'Clean Name', $result['title'] );
 		$this->assertSame( array( 'status' => 'disabled' ), $result['backup'] );
+		$this->assertSame( '', $result['fallbackUrl'] );
 	}
 
 	public function test_auto_compress_resizes_non_gif_images_and_removes_owned_temporary_files() {
@@ -327,7 +388,8 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		return array(
 			'primary'     => array(
 				'service'   => 'cloudflare-r2',
-				'accountId' => 'synthetic-account',
+				'endpoint'  => 'https://synthetic-account.r2.cloudflarestorage.com',
+				'region'    => '',
 				'bucket'    => 'synthetic-primary',
 				'domain'    => 'https://images.example.test',
 				'accessKey' => 'SYNTHETIC_ACCESS',
@@ -336,6 +398,8 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 			'backup'      => array(
 				'enabled'       => true,
 				'service'       => 'qiniu-kodo',
+				'endpoint'      => '',
+				'region'        => '',
 				'bucket'        => 'synthetic-backup',
 				'domain'        => 'https://backup.example.test',
 				'accessKey'     => 'SYNTHETIC_BACKUP_ACCESS',
@@ -343,6 +407,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 				'sameObjectKey' => true,
 				'failureMode'   => 'continue',
 			),
+			'fallbackDomain' => 'https://fallback.example.test',
 			'fileNameRule' => '{date}/{uuid}.{ext}',
 			'behaviors'    => array(
 				'autoCompress'         => false,

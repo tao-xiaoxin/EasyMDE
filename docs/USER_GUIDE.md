@@ -39,17 +39,29 @@ use the protected same-origin Image Hosting upload path configured by the site
 administrator; there is no destination selector or WordPress media-library
 fallback for these actions.
 
-An administrator configures Cloudflare R2 in **EasyMDE > Image Hosting**, saves
-the settings, and tests the saved connection. Without a valid saved primary
-configuration, paste and drag-and-drop fail explicitly. Qiniu Kodo can be
-enabled as an optional same-key backup. Provider credentials remain on the
-WordPress server and are not returned to the browser. The settings page shows
-whether credentials are configured; entering a new key replaces it on save,
-while an empty field keeps the stored value. Uploads are not retried
-automatically. If the backup upload fails after R2 succeeds, the R2 URL remains
-usable and EasyMDE reports the partial failure. EasyMDE does not offer an
-all-or-nothing mode because these providers do not expose a reliable
-cross-provider rollback transaction.
+An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
+Tencent Cloud COS in **EasyMDE > Image Hosting**, saves the settings, and tests
+the saved connection. Any supported provider can be the primary or the optional
+same-object-key backup. Without a valid saved primary configuration, paste and
+drag-and-drop fail explicitly. Provider credentials remain on the WordPress
+server and are not returned to the browser. The settings page shows whether
+credentials are configured; entering a new key replaces it on save, while an
+empty field keeps the stored value.
+
+The R2 API endpoint and the OSS/COS region select the provider upload API.
+These values are separate from the public delivery domain used in inserted
+image URLs. An optional image fallback domain creates an additional
+`fallbackUrl` for the same object key after a successful primary upload; it does
+not change the inserted primary URL, perform another upload, or silently switch
+traffic.
+
+The primary and backup must not identify the same physical provider bucket.
+EasyMDE rejects a duplicate destination with a message before it can be saved
+or used. Uploads and connection tests are not retried automatically and never
+switch providers. If the backup upload fails after the primary succeeds, the
+primary URL remains usable and EasyMDE reports the partial failure. EasyMDE
+does not offer an all-or-nothing mode because these providers do not expose a
+reliable cross-provider rollback transaction.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

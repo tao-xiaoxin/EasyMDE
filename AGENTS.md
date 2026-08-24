@@ -673,14 +673,20 @@ binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
 Review Team when service classification or channel acceptance is unclear.
 
 The browser runtime and redistributable assets remain local. The only approved
-external-service feature is administrator-configured image hosting: Cloudflare
-R2 is the primary provider and Qiniu Kodo may be enabled as an explicit same-key
-backup. WordPress owns provider requests and credentials; the browser receives
-only same-origin REST URLs, capability presentation, and redacted status. The
+external-service feature is administrator-configured image hosting. Cloudflare
+R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are the supported
+providers; any one may be the primary or the optional explicit same-object-key
+backup. WordPress owns provider API requests and credentials; the browser
+receives only same-origin REST URLs, capability presentation, public/fallback
+URLs, and redacted status. Provider API endpoints are distinct from
+administrator-configured public delivery and optional fallback domains. The
 editor's local image paste and drag-and-drop path always uses the protected
 same-origin Image Hosting proxy; there is no destination setting or WordPress
 media fallback. The toolbar media picker remains a separate explicit
-WordPress-native insertion entry point. Image hosting must never be silently
+WordPress-native insertion entry point. Primary and backup configurations that
+identify the same physical destination are rejected with HTTP 409. A configured
+fallback domain produces an explicit `fallbackUrl` result; it never silently
+replaces the authoritative primary URL. Image hosting must never be silently
 substituted, automatically retried, or reported successful before the provider
 result is authoritative.
 This approval does not change CSP, Enqueue behavior, local runtime assets, or

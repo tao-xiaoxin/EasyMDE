@@ -42,7 +42,6 @@ export function EditorDocumentSource({
       container: hostRef.current,
       label: editorLabel,
       lineNumbers: settings.general.showLineNumbers,
-      smartListRecognition: settings.general.smartListRecognition,
       submissionField,
       syntaxHighlight: settings.general.syntaxHighlight,
       wordWrap: settings.markdown.wordWrap

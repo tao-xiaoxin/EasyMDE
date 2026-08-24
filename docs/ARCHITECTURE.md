@@ -546,18 +546,35 @@ fallback.
 
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.
-Cloudflare R2 is the supported primary and Qiniu Kodo is the supported optional
-same-key backup. Provider endpoints are fixed HTTPS origins, requests use a
-ten-second timeout with redirects disabled, and protected uploads are never
-retried automatically. The runtime may resize/compress JPEG, PNG, and WebP
-through WordPress image editors; GIF bytes remain unchanged to preserve
-animation. If the optional backup fails after the primary upload succeeds, the
-runtime returns the authoritative R2 URL plus a stable redacted backup failure
-code. The editor inserts the primary URL and reports the partial failure; it
-does not claim that both writes succeeded. An all-or-nothing mode is not exposed
-because the provider contract has no reliable compensating delete operation.
-Raw provider responses, object keys, credentials, and private endpoint details
-never enter REST responses or browser bootstrap.
+Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are supported
+symmetrically: any one may be the primary or the optional same-object-key
+backup. R2 uses the administrator-saved, validated S3 API endpoint; Kodo uses
+its fixed official upload and management API origins; OSS and COS derive their
+official API hosts from the validated region and bucket. These provider API
+origins are separate from administrator-configured public delivery domains and
+the optional fallback domain. Requests use a ten-second timeout with redirects
+disabled, and protected uploads and connection tests are never retried
+automatically or switched to another provider.
+
+Before save, connection testing, or upload, the settings owner and runtime both
+derive a credential-free physical-destination identity. An enabled backup that
+matches the primary provider coordinates and bucket is rejected with
+`easymde_settings_duplicate_image_host_destination` or
+`easymde_image_hosting_duplicate_destination` and HTTP 409. Matching or
+different public domains do not disguise one physical storage target.
+
+The runtime may resize/compress JPEG, PNG, and WebP through WordPress image
+editors; GIF bytes remain unchanged to preserve animation. A successful upload
+returns the authoritative primary URL. When an optional fallback domain is
+configured, the same object key also produces an explicit `fallbackUrl`; the
+browser validates and exposes this value but the editor continues to insert the
+primary URL and never silently changes read origin. If the optional backup fails
+after the primary upload succeeds, the runtime returns the authoritative
+primary URL plus a stable redacted backup failure code. The editor reports the
+partial failure and does not claim that both writes succeeded. An all-or-nothing
+mode is not exposed because the provider contract has no reliable compensating
+delete operation. Raw provider responses, object keys, credentials, and private
+endpoint details never enter REST responses or browser bootstrap.
 
 The connection route tests the saved server configuration only. Settings must
 be saved before testing, and any relevant draft edit makes the last result

@@ -1318,7 +1318,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(generalSection.locator('[role="switch"]').first()).toBeEnabled();
 	await expect(
 		generalSection.getByRole("combobox", {
-			name: /默认摘要同步方式|default summary mode/i,
+			name: /默认摘要同步方式|default summary sync method/i,
 		}),
 	).toBeDisabled();
 	await expect(

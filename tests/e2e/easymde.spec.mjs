@@ -441,6 +441,12 @@ async function triggerNativeAutosave(page) {
   }));
 }
 
+async function readyNativeDraftSave(page) {
+  const savePost = page.locator('#save-post');
+  await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
+  return savePost;
+}
+
 function canonicalMarkdownForSite(pluginAssetUrl) {
   return fullCapabilityMarkdown.replace(
     /https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
@@ -2132,8 +2138,9 @@ test.describe('EasyMDE editor workflows', () => {
     }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
 
     await page.locator('#title').fill(title);
+    const savePost = await readyNativeDraftSave(page);
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await navigation;
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
@@ -2185,7 +2192,7 @@ test.describe('EasyMDE editor workflows', () => {
       await page.keyboard.press('Enter');
       await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 
-      const savePost = page.locator('#save-post');
+      const savePost = await readyNativeDraftSave(page);
       await savePost.focus();
       await expect(savePost).toBeFocused();
       const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -3266,8 +3273,9 @@ test.describe('EasyMDE editor workflows', () => {
       .click();
 
     const postId = await currentPostId(page);
-    const savedNavigation = page.waitForNavigation({ waitUntil: 'load' });
-    await page.locator('#save-post').click();
+    const savePost = await readyNativeDraftSave(page);
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
     await savedNavigation;
     expect(postMetaValue(postId, '_easymde_markdown_theme')).toBe('custom');
     expect(postMetaValue(postId, '_easymde_code_theme')).toBe(terminalNoir.id);
@@ -4099,8 +4107,9 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'server state must remain unchanged');
+    const savePost = await readyNativeDraftSave(page);
     const saveNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await saveNavigation;
     const postId = await currentPostId(page);
     const before = postPersistenceSnapshot(postId);
@@ -4150,14 +4159,16 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, '# First revision', 'First revision');
+    let savePost = await readyNativeDraftSave(page);
     let navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await navigation;
 
     await fillMarkdownAndWaitForPreview(page, '# Second revision', 'Second revision');
+    savePost = await readyNativeDraftSave(page);
     navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').focus();
-    await page.locator('#save-post').press('Enter');
+    await savePost.focus();
+    await savePost.press('Enter');
     await navigation;
 
     const immersiveLabels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);

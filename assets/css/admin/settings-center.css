@@ -2584,24 +2584,6 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	white-space: normal;
 }
 
-.easymde-settings-center__upload-verification-dialog > footer button {
-	min-width: 96px;
-	height: 44px;
-	border-color: #0867f4;
-	background: #0867f4;
-	color: #fff;
-}
-
-.easymde-settings-center__upload-verification-dialog > footer button:hover {
-	border-color: #075bd5;
-	background: #075bd5;
-}
-
-.easymde-settings-center__upload-verification-dialog > footer button:active {
-	border-color: #064eb8;
-	background: #064eb8;
-}
-
 .easymde-settings-center__transfer-warning {
 	padding: 13px 14px;
 	border: 1px solid #ffd7da;
@@ -2775,6 +2757,24 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 
 .easymde-settings-center__transfer-dialog > footer button + button:hover {
 	background: #c92c36;
+}
+
+.easymde-settings-center__upload-verification-dialog > footer button {
+	min-width: 96px;
+	height: 44px;
+	border-color: #0867f4;
+	background: #0867f4;
+	color: #fff;
+}
+
+.easymde-settings-center__upload-verification-dialog > footer button:hover {
+	border-color: #075bd5;
+	background: #075bd5;
+}
+
+.easymde-settings-center__upload-verification-dialog > footer button:active {
+	border-color: #064eb8;
+	background: #064eb8;
 }
 
 .easymde-settings-center__about-dialog > footer .is-primary-action {

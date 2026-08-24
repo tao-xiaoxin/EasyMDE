@@ -790,23 +790,29 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		".easymde-settings-center__verification-status",
 	);
 	const verificationButton = verification.locator("> button");
+	const verificationStrings = await page.evaluate(() => ({
+		close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
+		success:
+			window.EasyMDESettingsCenterBootstrap.strings.uploadVerificationSucceeded,
+		verifying: window.EasyMDESettingsCenterBootstrap.strings.verifyingUpload,
+		warning:
+			window.EasyMDESettingsCenterBootstrap.strings
+				.insecureViewingDomainWarning,
+	}));
+	await primary
+		.getByRole("textbox", {
+			name: /查看图片域名|Viewing Image Domain/u,
+		})
+		.fill("http://images.example.test");
 	await verificationButton.click();
 	await expect(verificationButton).toBeDisabled();
-	await expect(verificationButton).toHaveText(/验证上传中|Verifying Upload/u);
+	await expect(verificationButton).toHaveText(verificationStrings.verifying);
 	releaseFirstVerification();
 	await expect(uploadVerificationStatus).toHaveAttribute(
 		"data-state",
 		"verified",
 	);
 	await expect(verificationButton).toBeEnabled();
-	const verificationStrings = await page.evaluate(() => ({
-		close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
-		success:
-			window.EasyMDESettingsCenterBootstrap.strings.uploadVerificationSucceeded,
-		warning:
-			window.EasyMDESettingsCenterBootstrap.strings
-				.insecureViewingDomainWarning,
-	}));
 	const successDialog = page.getByRole("dialog", {
 		name: verificationStrings.success,
 	});
@@ -962,12 +968,12 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	await expect(decrement).toBeDisabled();
 	await expect(increment).toBeEnabled();
 	await increment.click();
-	await expect(retryInput).toHaveValue(1);
+	await expect(retryInput).toHaveValue("1");
 	await retryInput.fill("5");
 	await expect(increment).toBeDisabled();
 	await expect(decrement).toBeEnabled();
 	await decrement.click();
-	await expect(retryInput).toHaveValue(4);
+	await expect(retryInput).toHaveValue("4");
 	await retryInput.fill(testRetryCount);
 	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
 	await expect(page.locator("[data-save-status]")).toHaveAttribute(
@@ -979,7 +985,7 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 	await page.locator('button[data-nav-id="images"]').click();
 	await expect(page.getByRole("spinbutton", { name: retryLabel })).toHaveValue(
-		Number(testRetryCount),
+		testRetryCount,
 	);
 
 	await page

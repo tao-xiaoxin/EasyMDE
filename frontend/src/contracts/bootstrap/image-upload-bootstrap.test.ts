@@ -33,6 +33,25 @@ describe('parseImageUploadBootstrap', () => {
     expect(parseImageUploadBootstrap(validBootstrap)).not.toHaveProperty('credentials');
   });
 
+  it.each([
+    ['array filename', ['filename']],
+    ['array none', ['none']],
+    ['boxed filename', new String('filename')],
+    ['coercible object', { toString: (): string => 'none' }]
+  ])('rejects a non-string title display: %s', (_label, titleDisplay) => {
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      insertion: { titleDisplay }
+    })).toThrow('image-upload-insertion-invalid');
+  });
+
+  it('rejects extra image insertion keys', () => {
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      insertion: { titleDisplay: 'none', unexpected: true }
+    })).toThrow('image-upload-insertion-invalid');
+  });
+
   it('rejects invalid limits and incomplete translated strings', () => {
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,

@@ -54,7 +54,8 @@ export function parseImageUploadInsertion(value: unknown): ImageUploadInsertion 
   }
   const insertion = value as Record<string, unknown>;
   if (
-    !['filename', 'none'].includes(String(insertion.titleDisplay)) ||
+    'string' !== typeof insertion.titleDisplay ||
+    !['filename', 'none'].includes(insertion.titleDisplay) ||
     1 !== Object.keys(insertion).length
   ) {
     throw new Error('image-upload-insertion-invalid');

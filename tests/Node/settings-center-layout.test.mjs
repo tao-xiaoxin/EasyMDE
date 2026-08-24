@@ -223,6 +223,9 @@ test("image number inputs use one horizontal stepper without native vertical con
 	const value = cssRuleBody(
 		".easymde-settings-center__image-number-value",
 	);
+	const unit = cssRuleBody(
+		".easymde-settings-center__image-number-value > span",
+	);
 	const webkitSpinner = cssRuleBody(
 		".easymde-settings-center__image-number-input::-webkit-inner-spin-button",
 	);
@@ -238,6 +241,7 @@ test("image number inputs use one horizontal stepper without native vertical con
 	assert.match(value, /display:\s*grid;/);
 	assert.match(value, /grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
 	assert.match(value, /min-width:\s*0;/);
+	assert.match(unit, /font-size:\s*15\.5px;/);
 	assert.match(input, /appearance:\s*textfield;/);
 	assert.match(input, /min-width:\s*0;/);
 	assert.match(webkitSpinner, /appearance:\s*none;/);

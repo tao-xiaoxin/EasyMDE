@@ -3,6 +3,7 @@
 namespace EasyMDE;
 
 use EasyMDE\Admin\AdminAssets;
+use EasyMDE\Admin\EditorMediaUploadPolicy;
 use EasyMDE\Admin\EditorSaveHandler;
 use EasyMDE\Admin\EditorScreen;
 use EasyMDE\Admin\PostModeController;
@@ -107,6 +108,7 @@ final class Plugin {
 			$post_mode_controller,
 			new EditorScreen( $post_document, $post_mode_controller, $theme_state_repository ),
 			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_center_repository ),
+			new EditorMediaUploadPolicy( $post_document, $settings_center_repository ),
 			new EditorSaveHandler( $post_document, $theme_state_repository ),
 			$frontend_assets,
 			new ContentFilter( $post_document, $theme_state_repository ),

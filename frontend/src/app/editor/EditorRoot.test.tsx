@@ -2882,15 +2882,23 @@ describe('EditorRoot', () => {
     expect(dialog.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('keeps the reference featured-image guidance independent from the direct-upload limit', async () => {
+  it('renders the effective image-upload guidance supplied by WordPress', async () => {
     const props = fixture();
-    const view = render(<EditorRoot {...props} />);
+    const view = render(
+      <EditorRoot
+        {...props}
+        immersiveStrings={{
+          ...props.immersiveStrings,
+          imageRequirements: '支持 JPG、PNG、WebP 格式，最大 3 MB'
+        }}
+      />
+    );
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     expect(
       within(view.getByRole('dialog', { name: '更新文章' })).getByText(
-        '支持 JPG、PNG、WebP 格式，最大 5MB'
+        '支持 JPG、PNG、WebP 格式，最大 3 MB'
       )
     ).not.toBeNull();
   });

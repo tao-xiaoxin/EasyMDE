@@ -742,7 +742,7 @@ export interface SettingsRuntime {
 
 Add a Feature-specific capability such as `CustomCssPort` or `AiPort` to the owning Runtime only when that Feature and a real Adapter are implemented. `AppearancePort` implementations belong to the focused WordPress appearance integration rather than a generic REST service.
 
-Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade. If an approved AI Feature is added, its browser `AiPort` Adapter belongs under `integrations/wordpress/ai/` and talks only to the authorized EasyMDE server boundary; provider credentials and provider-specific authority stay in focused PHP/server code, never in `frontend/`.
+Keep concrete ownership discoverable. `DocumentPort`, `SavePort`, `SessionPort`, `PreviewPort`, `AppearancePort`, `CustomCssPort`, `PublishingPort`, `RevisionPort`, `MediaPort`, and `SettingsPort` implementations belong to their focused `integrations/wordpress/<capability>/` directories when the capability exists. `PreviewPort` owns the server request and response contract; `integrations/preview-runtime/` owns only post-response Mermaid, KaTeX, Highlight.js, and TOC enhancement. Browser `StoragePort`, `ClipboardPort`, and browser diagnostics implementations belong to their corresponding `integrations/browser/` directories. Shared REST transport may live under `integrations/wordpress/rest/`, but it must not become the owner of Feature semantics or a generic service facade. If an approved AI Feature is added, its browser `AiPort` Adapter belongs under `integrations/wordpress/ai/` and talks only to the authorized EasyMDE server boundary; provider-specific authority and credential storage stay in focused PHP/server code. The approved Image Hosting secret-reveal Port is the only exception that may hold one explicitly requested saved credential transiently in component memory under its dedicated contract; it never becomes credential storage or authority in `frontend/`.
 
 Representative result contract:
 
@@ -788,7 +788,9 @@ Rules:
 - disabling a button is presentation, not the concurrency control itself; enforce the policy in the owning Controller, Store, or Port Adapter;
 - do not report `cancelled` when an Abort only stopped the browser from observing a Mutation that may already have committed; reconcile with the authoritative WordPress result;
 - WordPress-owned writes are pessimistic by default; Optimistic or Undoable behavior requires an explicitly approved reversible contract, rollback, reconciliation, and accessibility behavior;
-- do not retry Mutations automatically.
+- do not retry Mutations automatically outside the approved bounded Image
+  Hosting primary- and backup-write contract defined by the External Service
+  Decision Gate.
 
 Only Entrypoints and relevant Integrations may know `window.EasyMDEConfig`, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser Storage, Clipboard APIs, or legacy `execCommand` fallback.
 
@@ -814,7 +816,7 @@ Rules:
 - increment a version when old consumers cannot safely interpret a new payload;
 - never change a field's meaning in place;
 - keep endpoint URLs, limits, locale, text direction, Site timezone, Storage identity, and Feature availability in the owning contract;
-- do not serialize credentials, Cookies, private configuration, or unrelated article content;
+- do not serialize credentials, Cookies, private configuration, or unrelated article content in bootstrap or ordinary contracts; the approved Image Hosting secret-reveal response is the only credential exception and must follow its exact one-field, `no-store`, transient-memory contract;
 - add cross-language fixtures that serialize representative PHP payloads and parse them with TypeScript runtime schemas;
 - do not add OpenAPI, GraphQL code generation, tRPC, or a schema library merely because another project uses it.
 
@@ -827,7 +829,8 @@ REST rules:
 - return data, `WP_REST_Response`, or `WP_Error`;
 - preserve stable Error Codes and Status separately from translated messages;
 - do not expose raw response HTML as a user message;
-- do not retry Mutations automatically;
+- do not retry Mutations automatically outside the approved bounded Image
+  Hosting primary- and backup-write contract;
 - only bounded idempotent Reads may retry with cancellation and stale-result protection.
 
 ### Public Compatibility and Extension Contracts
@@ -930,8 +933,9 @@ For Save, Publish, Upload, Revision Restore, Settings, and Clipboard operations:
   close, focus, preview, cancellation, fallback, or teardown;
 - enforce the declared single-flight, ordered, or parallel-keyed policy in the
   owner rather than relying only on a disabled control;
-- never retry a Mutation automatically or report success before the real
-  WordPress or browser owner succeeds;
+- never retry a Mutation automatically outside the approved bounded Image
+  Hosting primary- and backup-write contract, or report success before the
+  real WordPress or browser owner succeeds;
 - bind completion to the current Site, User, Post, Root, Dialog, Feature, and
   transaction identity as applicable;
 - handle cancellation, late or stale completion, Network failure, and loss of
@@ -2063,10 +2067,14 @@ Rules:
   server authorization.
 - Test DNS, connection, timeout, HTTP, CORS, CSP, authentication expiry,
   cancellation, stale response, rate-limit, offline, slow-response, duplicate
-  activation, and partial-failure paths relevant to the owning Feature.
-- Protected Mutations do not retry automatically. Optional enhancements
-  degrade with truthful visible State, no hidden write, no content corruption,
-  no unusable editor, no silent provider substitution, and no infinite retry.
+  activation, and strict failure paths relevant to the owning Feature.
+- Protected Mutations do not retry automatically unless the focused approved
+  external-service record defines a persisted administrator-controlled bound.
+  The only current exception is the Image Hosting primary- and backup-write
+  contract below; Verify Upload remains single-attempt. Optional
+  enhancements degrade with truthful visible State, no hidden write, no
+  content corruption, no unusable editor, no silent provider substitution, and
+  no infinite retry.
 - Re-review any change to the operator, endpoint, terms, data fields, retention,
   subprocessors, authentication, privacy behavior, consent, failure contract,
   owning Feature, or distribution channel.
@@ -2078,7 +2086,9 @@ Rules:
 
 Service and owning Feature: EasyMDE Image Hosting with Cloudflare R2, Qiniu
 Kodo, Alibaba Cloud OSS, or Tencent Cloud COS. Any one configured provider may
-own the primary write or the optional explicit same-object-key backup write.
+own the primary write or the optional backup write. Primary and backup writes
+always use the same generated object key; this is a runtime invariant and is
+not exposed as a setting.
 
 Substantive remote functionality and operator evidence: each service stores
 image objects through its official object-storage API. Official provider
@@ -2098,31 +2108,70 @@ documentation and policy sources are:
   `https://www.tencentcloud.com/document/product/301/17345`.
 
 Exact data and authentication: only when an authorized author pastes or drops
-an accepted local image, or an administrator explicitly tests a saved
-connection, WordPress sends the provider the image bytes when applicable,
-verified MIME type, generated object key, and the minimum signed request
-metadata. Provider credentials stay server-side and are never returned to the
-browser. An administrator explicitly configures and saves a provider before
-use; that act authorizes the described service requests for the site.
+an accepted local image, or an administrator explicitly invokes Verify Upload
+for the current Image Hosting form, WordPress sends the provider image bytes,
+the verified MIME type, generated object key, and minimum signed request
+metadata. Ordinary bootstrap and settings responses, exports, HTML, logs,
+diagnostics, and public evidence must not contain provider credentials. The
+only browser disclosure exception is an administrator's explicit eye action:
+a dedicated POST requires `manage_options`, the WordPress REST Nonce, an
+action-specific Nonce, an exact primary/backup target and Access Key/Secret Key
+field, and returns exactly that saved field with `Cache-Control: no-store`.
+Keep the revealed value only in current component memory; do not persist it,
+place it in browser Storage, silently fetch it on load, or retain it after the
+owning Settings surface is torn down. Verify Upload sends the exact draft and
+revision through the protected same-origin route; blank draft credentials may
+reuse saved values only when the revision and physical destination identity
+still match.
 
-Endpoint and URL ownership: provider API origins are fixed or validated from
-provider-specific coordinates. Administrator-configured public delivery and
-optional fallback domains are output URL bases, not upload API endpoints. The
-browser calls only protected same-origin REST routes. A configured fallback
-domain adds an explicit `fallbackUrl` to a successful response; it never
-silently replaces the primary URL or triggers another upload.
+Endpoint and URL ownership: a provider Endpoint is the validated HTTPS upload
+API origin. The separately configured primary Viewing Image Domain accepts
+HTTP or HTTPS and is the public URL base for the uploaded object. The runtime
+returns one authoritative image URL built from that domain and the generated
+object key. An HTTP image URL may be blocked as mixed content when an article
+is viewed over HTTPS; that browser display restriction is not an upload
+failure. The browser calls only protected same-origin REST routes.
 
-Failure and reliability: protected uploads and connection tests do not retry
-automatically or switch providers. Primary and backup settings that identify
-the same physical destination are rejected with HTTP 409. A primary failure is
-an explicit failure. A backup failure after primary success returns the
-authoritative primary URL plus a redacted partial-failure state. There is no
-cross-provider rollback claim, WordPress media fallback, remote client SDK,
-tracking, telemetry, or remotely loaded executable asset.
+Failure and reliability: Verify Upload uses one attempt and never switches
+providers. It writes one plugin-owned
+synthetic PNG through the current `fileNameRule` on only the selected provider.
+A rule containing time or UUID variables may create a new object on each
+verification. A successful response contains the authoritative object path and
+public URL. The Settings Center reports the successful test-image upload,
+explains that the URL is the address inserted into articles, and presents both
+values in its accessible message dialog; an HTTP URL also receives a
+mixed-content warning. A failed response states that no article image URL was
+created and prompts the administrator to check the image-host configuration
+before verifying again. The uploaded validation object is governed by the
+administrator's provider retention/deletion policy. Primary and backup settings that identify
+the same physical destination are rejected with HTTP 409. The single persisted
+`uploadRetryCount` is shown in the primary settings section, accepts only a
+strict integer from `0` through `5`, defaults to `0`, and defines the maximum
+number of extra attempts after a destination's first failed write. The same
+configured `N` applies independently to the primary and, when enabled, backup
+destination. Attempts for each destination are serial, reuse the exact prepared
+bytes, object key, and provider, and stop on the first success. Exhausting the primary attempts, or
+exhausting the backup attempts when backup is enabled, fails the whole article
+upload. The response contains no image URL, the editor inserts nothing, and an
+accessible redacted failure message asks the user to retry manually. Repeated
+provider requests may overwrite the same object and may incur provider request
+charges; an object may remain after overall failure because there is no
+reliable cross-provider compensating delete. There is no provider switch,
+WordPress media fallback, remote client SDK, tracking, telemetry, or remotely
+loaded executable asset.
+
+Object-key compatibility: `{md5}` is the lowercase hexadecimal MD5 digest of
+the final bytes sent to the provider, after any enabled image transformation.
+The inspected PicFast PicGo helper computes
+`hashlib.md5(file_data).hexdigest()`. EasyMDE mirrors that content-digest
+algorithm over the exact final bytes sent to the provider and derives the
+extension from the verified MIME type rather than trusting a filename.
 
 Release and removal: provider contracts have deterministic signing, endpoint,
-error, duplicate-destination, REST, and browser tests using synthetic
-credentials and fake transports. Real-account verification is an explicitly
+error, duplicate-destination, secret-reveal, the single bounded retry setting
+applied to primary/backup writes, strict overall failure, REST, and browser
+tests using synthetic credentials and fake transports. Real-account
+verification is an explicitly
 authorized local operator action and never a CI or release input. Removing or
 changing a provider requires matching settings, runtime, disclosure, i18n,
 testing, and migration review. Re-review is required for every trigger listed
@@ -2266,7 +2315,7 @@ Do not introduce:
 7. Circular dependencies, upward imports, broad Barrels, Feature-private deep imports, catch-all directories, or speculative abstraction layers.
 8. Render-time side effects, Effect-driven user commands, mirrored State, duplicated authority, or impossible boolean-prop combinations.
 9. Random Keys, index Keys for reorderable Domain data, or accidental State reset through nested component definitions.
-10. Silent fallback, swallowed errors, fake success, hidden writes, force-clicked disabled controls, or automatic Mutation retries.
+10. Silent fallback, swallowed errors, fake success, hidden writes, force-clicked disabled controls, or automatic Mutation retries outside an explicit bounded approved-service contract.
 11. Stale async work updating the current Post, Root, Dialog, or Session.
 12. Effects without cleanup, idempotence, failure handling, and repeated-lifecycle safety.
 13. Browser-local scheduling overriding WordPress Site timezone.

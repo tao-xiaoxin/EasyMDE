@@ -12,7 +12,8 @@ import type {
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
 import { ChevronRight, X } from "../../generated/lucide-icons";
-import { createWordPressImageHostingConnectionPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-connection-port";
+import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
+import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
@@ -65,45 +66,45 @@ type SearchSection = Readonly<{
 	groups: ReadonlyArray<SearchGroup>;
 }>;
 type SaveError = "conflict" | "invalid" | "network" | "rejected" | null;
-type ImageConnectionInvalidation = Readonly<{
+type ImageVerificationInvalidation = Readonly<{
 	primary: boolean;
 	backup: boolean;
 }>;
-const PRIMARY_CONNECTION_SETTING_KEYS = [
+const PRIMARY_VERIFICATION_SETTING_KEYS = [
+	"fileNameRule",
 	"service",
 	"endpoint",
-	"region",
 	"bucket",
 	"domain",
-	"fallbackDomain",
 	"accessKey",
 	"secretKey",
 ] as const;
-const BACKUP_CONNECTION_SETTING_KEYS = [
+const BACKUP_VERIFICATION_SETTING_KEYS = [
+	"fileNameRule",
+	"domain",
 	"backupEnabled",
 	"backupService",
 	"backupEndpoint",
-	"backupRegion",
 	"backupBucket",
 	"backupDomain",
 	"backupAccessKey",
 	"backupSecretKey",
 ] as const;
 
-function imageConnectionInvalidation(
+function imageVerificationInvalidation(
 	previous: SettingsCenterSettings["images"],
 	requested: SettingsCenterSettings["images"],
 	resetSecrets: boolean,
-): ImageConnectionInvalidation {
+): ImageVerificationInvalidation {
 	return {
 		primary:
 			resetSecrets ||
-			PRIMARY_CONNECTION_SETTING_KEYS.some(
+			PRIMARY_VERIFICATION_SETTING_KEYS.some(
 				(key) => previous[key] !== requested[key],
 			),
 		backup:
 			resetSecrets ||
-			BACKUP_CONNECTION_SETTING_KEYS.some(
+			BACKUP_VERIFICATION_SETTING_KEYS.some(
 				(key) => previous[key] !== requested[key],
 			),
 	};
@@ -178,7 +179,7 @@ export function SettingsCenterRoot({
 		bootstrap.settings,
 	);
 	const [imageDraft, setImageDraft] = useState(bootstrap.drafts.images);
-	const [connectionInvalidationTokens, setConnectionInvalidationTokens] =
+	const [verificationInvalidationTokens, setVerificationInvalidationTokens] =
 		useState({ primary: 0, backup: 0 });
 	const settingsRef = useRef<SettingsCenterSettings>(bootstrap.settings);
 	const resetSecretsRef = useRef(false);
@@ -634,8 +635,12 @@ export function SettingsCenterRoot({
 		() => createWordPressSettingsPort(bootstrap.api),
 		[bootstrap.api],
 	);
-	const imageHostingConnectionPort = useMemo(
-		() => createWordPressImageHostingConnectionPort(bootstrap.api),
+	const imageHostingVerificationPort = useMemo(
+		() => createWordPressImageHostingVerificationPort(bootstrap.api),
+		[bootstrap.api],
+	);
+	const imageHostingSecretRevealPort = useMemo(
+		() => createWordPressImageHostingSecretRevealPort(bootstrap.api),
 		[bootstrap.api],
 	);
 	const settingsDirty =
@@ -685,7 +690,7 @@ export function SettingsCenterRoot({
 		const controller = new AbortController();
 		const requestedSettings = settings;
 		const resetSecrets = resetSecretsRef.current;
-		const connectionInvalidation = imageConnectionInvalidation(
+		const verificationInvalidation = imageVerificationInvalidation(
 			savedSettings.images,
 			requestedSettings.images,
 			resetSecrets,
@@ -705,10 +710,10 @@ export function SettingsCenterRoot({
 				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
 				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
 			}));
-			if (connectionInvalidation.primary || connectionInvalidation.backup) {
-				setConnectionInvalidationTokens((current) => ({
-					primary: current.primary + (connectionInvalidation.primary ? 1 : 0),
-					backup: current.backup + (connectionInvalidation.backup ? 1 : 0),
+			if (verificationInvalidation.primary || verificationInvalidation.backup) {
+				setVerificationInvalidationTokens((current) => ({
+					primary: current.primary + (verificationInvalidation.primary ? 1 : 0),
+					backup: current.backup + (verificationInvalidation.backup ? 1 : 0),
 				}));
 			}
 			const currentSettingsUnchanged =
@@ -771,7 +776,7 @@ export function SettingsCenterRoot({
 				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
 				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
 			}));
-			setConnectionInvalidationTokens((current) => ({
+			setVerificationInvalidationTokens((current) => ({
 				primary: current.primary + 1,
 				backup: current.backup + 1,
 			}));
@@ -1071,9 +1076,13 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<ImagesSettingsPage
-										connectionInvalidationTokens={connectionInvalidationTokens}
-										connectionTestDisabled={settingsDirty}
-										connectionTestPort={imageHostingConnectionPort}
+										brandMarkUrl={bootstrap.assets.brandMarkUrl}
+										verificationInvalidationTokens={
+											verificationInvalidationTokens
+										}
+										uploadVerificationPort={imageHostingVerificationPort}
+										settingsRevision={settings.revision}
+										secretRevealPort={imageHostingSecretRevealPort}
 										runtimeCapabilities={{
 											compressImages: true,
 											insertAfterUpload: true,

@@ -24,11 +24,9 @@ export type ImageUploadRequest = Readonly<{
 export type ImageUploadResult =
   | Readonly<{
       alt: string;
-      fallbackUrl?: string;
       status: 'uploaded';
       title: string;
       url: string;
-      warning?: 'backup-upload-failed';
     }>
   | Readonly<{ code: string; status: 'failed' }>;
 

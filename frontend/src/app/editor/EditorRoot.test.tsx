@@ -366,7 +366,6 @@ function fixture(): EditorRootProps &
       maxBytes: 1024,
       postId: 7,
       strings: {
-        backupFailed: 'Primary uploaded; backup failed',
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
         dropTooLarge: 'Drop too large',
@@ -5003,6 +5002,28 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a dismissible error alert without inserting Markdown when backup retries are exhausted', async () => {
+    const props = fixture();
+    vi.mocked(props.imageUploadPort.upload).mockResolvedValue({
+      code: 'easymde_image_hosting_backup_upload_failed',
+      status: 'failed'
+    });
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+
+    source?.dispatchEvent(imageTransferEvent(
+      'paste',
+      new File(['image'], 'screen-shot.png', { type: 'image/png' })
+    ));
+
+    const alert = await view.findByRole('alert');
+    expect(alert.textContent).toContain('Paste failed');
+    expect(props.submissionField.value).not.toContain('![');
+    fireEvent.click(within(alert).getByRole('button', { name: '关闭' }));
+    expect(view.queryByRole('alert')).toBeNull();
   });
 
   it('preserves an upload error when the upload session remounts', async () => {

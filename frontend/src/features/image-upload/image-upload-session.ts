@@ -2,7 +2,6 @@ import type {
   ImageUploadDocumentPort,
   ImageUploadDocumentSnapshot,
   ImageUploadPort,
-  ImageUploadResult,
   ImageUploadSelection,
 } from '../../contracts/ports/image-upload-port';
 import type {
@@ -146,12 +145,7 @@ export function createImageUploadSession({
   ): Promise<void> => {
     const operationId = nextOperationId();
     const reportStatus = (message: string, type: ImageUploadStatus['type']) => onStatus({ message, operationId, type });
-    const reportCompletion = (result: Extract<ImageUploadResult, { status: 'uploaded' }>) => {
-      if ('backup-upload-failed' === result.warning) {
-        onDiagnostic('image-upload-backup-upload-failed');
-        reportStatus(strings.backupFailed, 'error');
-        return;
-      }
+    const reportCompletion = () => {
       reportStatus(statusMessage(strings, source, 'Uploaded'), 'success');
     };
     event.preventDefault();
@@ -200,7 +194,7 @@ export function createImageUploadSession({
         return;
       }
       if (!insertAfterUpload) {
-        reportCompletion(result);
+        reportCompletion();
         return;
       }
       if (!initial) {
@@ -223,7 +217,7 @@ export function createImageUploadSession({
         value: current.value.slice(0, selection.start) + inserted + current.value.slice(selection.end),
       });
       document.focus();
-      reportCompletion(result);
+      reportCompletion();
     } catch {
       if (active) {
         onDiagnostic('image-upload-operation-failed');

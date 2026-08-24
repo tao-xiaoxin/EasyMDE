@@ -199,19 +199,75 @@ test("Settings Center preserves reference Help geometry until the mobile layout"
 	);
 	assert.match(
 		settingsCss,
-		/\.easymde-settings-center__connection-divider \.easymde-settings-center__row-control,[\s\S]*?\.easymde-settings-center__backup-connection-divider \.easymde-settings-center__row-control\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/,
+		/\.easymde-settings-center__verification-divider \.easymde-settings-center__row-control,[\s\S]*?\.easymde-settings-center__backup-verification-divider \.easymde-settings-center__row-control\s*\{[^}]*width:\s*100%;[^}]*justify-self:\s*stretch;/,
 	);
 	assert.match(
 		settingsCss,
-		/\.easymde-settings-center__connection-row\s*\{[^}]*width:\s*520px;[^}]*max-width:\s*100%;/,
+		/\.easymde-settings-center__verification-row\s*\{[^}]*width:\s*520px;[^}]*max-width:\s*100%;/,
 	);
 	assert.match(
 		compactRules,
-		/\.easymde-settings-center__connection-row\s*\{[^}]*flex-wrap:\s*wrap;/,
+		/\.easymde-settings-center__verification-row\s*\{[^}]*flex-wrap:\s*wrap;/,
 	);
 	assert.match(
 		settingsCss,
 		/@media\s*\(max-width:\s*840px\)\s*and\s*\(max-height:\s*500px\)[\s\S]*?grid-template-columns:\s*116px\s+minmax\(0,\s*1fr\)\s+148px;/,
+	);
+});
+
+test("image upload retries use one horizontal stepper without native vertical controls", () => {
+	const stepper = cssRuleBody(".easymde-settings-center__image-number-stepper");
+	const input = cssRuleBody(
+		".easymde-settings-center .easymde-settings-center__image-number-input",
+	);
+	const webkitSpinner = cssRuleBody(
+		".easymde-settings-center__image-number-input::-webkit-inner-spin-button",
+	);
+
+	assert.match(stepper, /display:\s*grid;/);
+	assert.match(
+		stepper,
+		/grid-template-columns:\s*39px minmax\(0,\s*1fr\) 39px;/,
+	);
+	assert.match(stepper, /height:\s*39px;/);
+	assert.match(stepper, /max-width:\s*100%;/);
+	assert.match(stepper, /border:\s*1px solid #d4dce8;/);
+	assert.match(input, /appearance:\s*textfield;/);
+	assert.match(input, /min-width:\s*0;/);
+	assert.match(webkitSpinner, /appearance:\s*none;/);
+	assert.match(webkitSpinner, /margin:\s*0;/);
+});
+
+test("upload verification feedback uses a compact viewport-safe dialog with accessible actions", () => {
+	const dialog = cssRuleBody(
+		".easymde-settings-center__upload-verification-dialog",
+	);
+	const closeButton = cssRuleBody(
+		".easymde-settings-center__upload-verification-dialog > footer button",
+	);
+	const resultRows = cssRuleBody(
+		".easymde-settings-center__upload-verification-result dl > div",
+	);
+
+	assert.match(dialog, /max-width:\s*520px;/);
+	assert.match(dialog, /border-radius:\s*8px;/);
+	assert.match(closeButton, /height:\s*44px;/);
+	assert.match(closeButton, /min-width:\s*96px;/);
+	assert.match(
+		settingsCss,
+		/\.easymde-settings-center__upload-verification-result a\s*\{[^}]*display:\s*inline-flex;[^}]*min-height:\s*44px;/,
+	);
+	assert.match(
+		resultRows,
+		/grid-template-columns:\s*132px minmax\(0,\s*1fr\);/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*480px\)[\s\S]*?\.easymde-settings-center__upload-verification-dialog\s*\{[^}]*max-height:\s*calc\(100dvh - 24px\);/,
+	);
+	assert.match(
+		settingsCss,
+		/@media\s*\(max-width:\s*480px\)[\s\S]*?\.easymde-settings-center__upload-verification-result dl > div\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
 	);
 });
 

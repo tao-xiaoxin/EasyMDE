@@ -40,28 +40,71 @@ administrator; there is no destination selector or WordPress media-library
 fallback for these actions.
 
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
-Tencent Cloud COS in **EasyMDE > Image Hosting**, saves the settings, and tests
-the saved connection. Any supported provider can be the primary or the optional
-same-object-key backup. Without a valid saved primary configuration, paste and
-drag-and-drop fail explicitly. Provider credentials remain on the WordPress
-server and are not returned to the browser. The settings page shows whether
-credentials are configured; entering a new key replaces it on save, while an
-empty field keeps the stored value.
+Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates
+the current form without saving it by uploading the EasyMDE icon as a synthetic
+PNG through the current file-name rule on the selected provider. Rules that use
+time or UUID variables may create a new object on each verification.
+The button remains disabled and shows its in-progress state until the result is
+known. Success opens a structured Settings Center message dialog that confirms
+the test-image upload, explains that the shown URL is inserted into articles,
+and lists the uploaded object path and primary Viewing Image Domain URL.
+Failure states that no article image URL was created, shows the redacted error,
+and asks the administrator to check the configuration before verifying again. Any
+supported provider can be the primary or the optional
+backup. Primary and backup writes always use the same generated object key;
+there is no setting for changing that invariant. **Upload Retry Count** appears
+once in the primary settings, accepts `0` through `5`, and defaults to `0`.
+That one value is the number of extra serial attempts after a destination's
+first failed write and applies to both primary and enabled backup writes. Every
+attempt uses the same image bytes, object key, and provider, and stops after the
+first success. **Verify Upload** is never retried. If the
+primary exhausts its attempts, or an enabled backup exhausts its attempts, the
+whole article upload fails: EasyMDE inserts no URL and opens an accessible
+error message asking the author to retry manually. Repeated requests may
+overwrite the same stored object and may incur provider request charges; an
+object may remain after failure because cross-provider rollback is unavailable.
+Without a valid saved primary configuration, paste and drag-and-drop fail
+explicitly. Provider credentials
+remain on the WordPress server during ordinary settings reads. The settings
+page shows whether credentials are configured; entering a new key replaces it
+on save, while an empty field keeps the stored value. An administrator can use
+the eye control to explicitly retrieve the corresponding saved Access Key or
+Secret Key. That one-field response is not cached, is kept only in the current
+page's memory, and is not saved to browser Storage, bootstrap data, exports, or
+logs.
 
-The R2 API endpoint and the OSS/COS region select the provider upload API.
-These values are separate from the public delivery domain used in inserted
-image URLs. An optional image fallback domain creates an additional
-`fallbackUrl` for the same object key after a successful primary upload; it does
-not change the inserted primary URL, perform another upload, or silently switch
-traffic.
+Newly entered credentials are sent only through the protected same-origin
+verification request to WordPress. If the fields are blank, WordPress may reuse saved
+credentials only when the settings revision and physical destination still
+match; changing the destination requires entering its credentials.
+
+R2, OSS, and COS use one provider API endpoint field. For OSS and COS, the
+plugin derives the signing region from the validated official HTTPS endpoint; the
+region is not entered or stored separately. Use the provider's standard public
+service endpoint, such as `https://oss-cn-hangzhou.aliyuncs.com` for OSS or
+`https://cos.ap-shanghai.myqcloud.com` for COS.
+These HTTPS provider API Endpoints are used only for upload requests. The separately
+configured primary Viewing Image Domain may use HTTP or HTTPS and is the public
+URL base used after upload. EasyMDE returns and inserts one authoritative URL
+built from that domain and the generated object key. An HTTP image URL can be
+blocked as mixed content when the article itself is viewed over HTTPS; this is
+a browser display restriction, not an upload failure. The verification dialog
+warns about that risk. A backup provider writes the same object key but does
+not replace the URL displayed in the article.
 
 The primary and backup must not identify the same physical provider bucket.
 EasyMDE rejects a duplicate destination with a message before it can be saved
-or used. Uploads and connection tests are not retried automatically and never
-switch providers. If the backup upload fails after the primary succeeds, the
-primary URL remains usable and EasyMDE reports the partial failure. EasyMDE
+or used. Article primary and backup writes use the configured bounded attempts
+described above; verification uses one attempt, and no operation switches
+providers. Exhaustion is the strict whole-upload failure described above.
+EasyMDE
 does not offer an all-or-nothing mode because these providers do not expose a
 reliable cross-provider rollback transaction.
+
+The `{md5}` filename variable is the lowercase hexadecimal MD5 digest of the
+final bytes sent to the provider, after any enabled image processing. This
+matches PicFast PicGo's content-MD5 algorithm; EasyMDE derives the extension
+from the verified MIME type rather than trusting the original filename.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

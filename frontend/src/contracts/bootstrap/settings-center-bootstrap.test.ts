@@ -16,8 +16,12 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
-			imageHostingActionNonce: "test-image-hosting-action-nonce",
-			imageHostingConnectionUrl: "/wp-json/easymde/v1/image-hosting/connection",
+			imageHostingVerificationActionNonce: "test-image-hosting-action-nonce",
+			imageHostingVerificationUrl:
+				"/wp-json/easymde/v1/image-hosting/verification",
+			imageHostingSecretRevealActionNonce:
+				"test-image-hosting-secret-reveal-action-nonce",
+			imageHostingSecretRevealUrl: "/wp-json/easymde/v1/image-hosting/secret",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -57,7 +61,7 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			transferFileSelectedNotice: "Selected %s",
 			transferChecksSummary: "%s key configuration items checked",
 			transferChecksPassed: "%s items passed",
-			lastTested: "Last tested: %s",
+			lastVerified: "Last tested: %s",
 			noSearchResults,
 		},
 	};
@@ -78,9 +82,9 @@ describe("parseSettingsCenterBootstrap", () => {
 			},
 		],
 		[
-			"an invalid enum",
+			"a removed image field",
 			(settings: MutableSettingsRecord) => {
-				settings.images.retryCount = "forever";
+				settings.images.retryCount = "none";
 			},
 		],
 		[
@@ -102,6 +106,34 @@ describe("parseSettingsCenterBootstrap", () => {
 			) as unknown as MutableSettingsRecord;
 			mutate(settings);
 			expect(() => parseSettingsCenterSettings(settings)).toThrow();
+		},
+	);
+
+	it.each([0, 1, 5])(
+		"accepts a bounded upload retry count of %s",
+		(uploadRetryCount) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.uploadRetryCount = uploadRetryCount;
+
+			expect(
+				parseSettingsCenterSettings(settings).images.uploadRetryCount,
+			).toBe(uploadRetryCount);
+		},
+	);
+
+	it.each([-1, 6, 1.5, "1", null])(
+		"rejects an invalid upload retry count of %s",
+		(uploadRetryCount) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.uploadRetryCount = uploadRetryCount;
+
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-images-uploadRetryCount-invalid",
+			);
 		},
 	);
 
@@ -180,14 +212,17 @@ describe("parseSettingsCenterBootstrap", () => {
 			SETTINGS_CENTER_TEST_SETTINGS,
 		) as unknown as MutableSettingsRecord;
 		oss.images.service = "aliyun-oss";
-		oss.images.endpoint = "";
-		oss.images.region = "cn-hangzhou";
-		expect(parseSettingsCenterSettings(oss).images.region).toBe("cn-hangzhou");
+		oss.images.endpoint = "https://oss-cn-hangzhou.aliyuncs.com";
+		expect(parseSettingsCenterSettings(oss).images.endpoint).toBe(
+			"https://oss-cn-hangzhou.aliyuncs.com",
+		);
 	});
 
 	it.each([
 		["a removed upload destination", "destination", "remote"],
 		["a removed R2 account ID", "accountId", "synthetic-account"],
+		["a removed primary Region", "region", "cn-hangzhou"],
+		["a removed backup Region", "backupRegion", "ap-shanghai"],
 	] as const)("rejects %s", (_label, key, value) => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
@@ -221,11 +256,29 @@ describe("parseSettingsCenterBootstrap", () => {
 
 	it.each([
 		["domain", "http://img.example.test"],
-		["fallbackDomain", "http://fallback.example.test"],
+		["backupDomain", "http://backup.example.test"],
+	] as const)("accepts an HTTP viewing %s", (key, value) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images[key] = value;
+
+		expect(parseSettingsCenterSettings(settings).images[key]).toBe(value);
+	});
+
+	it.each([
 		["endpoint", "http://api.example.test"],
-		["backupDomain", "//backup.example.test"],
-		["backupEndpoint", "//api.example.test"],
-	] as const)("rejects a non-HTTPS %s", (key, value) => {
+		["backupEndpoint", "http://api.example.test"],
+		["domain", "//img.example.test"],
+		["backupDomain", "ftp://backup.example.test"],
+		["domain", "http://user:pass@img.example.test"],
+		["backupDomain", "http://backup.example.test:8080"],
+		["domain", "http://img.example.test:80"],
+		["backupDomain", "https://backup.example.test:443"],
+		["domain", "http://img.example.test/path"],
+		["backupDomain", "http://backup.example.test?token=value"],
+		["domain", "http://img.example.test#fragment"],
+	] as const)("rejects an unsafe image %s", (key, value) => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
 		) as unknown as MutableSettingsRecord;
@@ -248,6 +301,23 @@ describe("parseSettingsCenterBootstrap", () => {
 				"settings-center-general-settings-invalid",
 			);
 		}
+	});
+
+	it.each([
+		["fallbackDomain", "https://legacy.example.test"],
+		["backupSameObjectKey", true],
+		["backupFailureMode", "return-primary-url"],
+		["backupRetryCount", 1],
+		["retryCount", "none"],
+	] as const)("physically rejects the removed image field %s", (key, value) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images[key] = value;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-settings-invalid",
+		);
 	});
 
 	it.each([
@@ -421,27 +491,43 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("wordpressMediaLibrary");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("remoteImageHost");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("customUpload");
+		for (const removedKey of [
+			"providerApiEndpoint",
+			"keepSameObjectPath",
+			"keepSameObjectPathDescription",
+			"backupFailureHandling",
+			"backupFailureHandlingDescription",
+			"returnPrimaryUrlOnBackupFailure",
+			"failEntireUpload",
+			"retryFailedUpload",
+			"doNotRetry",
+			"retryOnce",
+			"retryTwice",
+			"retryThreeTimes",
+		]) {
+			expect(SETTINGS_CENTER_STRING_KEYS).not.toContain(removedKey);
+		}
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
 			expect.arrayContaining([
-				"r2ApiEndpoint",
-				"providerRegion",
 				"imageFallbackDomain",
 				"duplicateImageHostTitle",
 				"duplicateImageHostDescription",
 				"primaryCredentialsConfigured",
 				"backupCredentialsConfigured",
-				"credentialsConfiguredHint",
-				"replaceCredentialsHint",
-				"connectionStatus",
-				"backupConnectionStatus",
-				"connectionPending",
-				"testingConnection",
-				"connected",
-				"connectionFailed",
-				"connectionStale",
-				"lastTested",
-				"testPrimaryConnection",
-				"testBackupConnection",
+				"uploadVerificationStatus",
+				"backupVerificationStatus",
+				"uploadVerificationPending",
+				"verifyingUpload",
+				"uploadVerified",
+				"uploadVerificationFailed",
+				"uploadVerificationStale",
+				"lastVerified",
+				"verifyPrimaryUpload",
+				"verifyBackupUpload",
+				"uploadVerificationSuccessDescription",
+				"uploadVerificationFailureDescription",
+				"uploadVerificationFailureHint",
+				"insecureViewingDomainWarning",
 				"imageHostFailureConfiguration",
 				"imageHostFailureAuthentication",
 				"imageHostFailureAuthorization",
@@ -457,9 +543,9 @@ describe("parseSettingsCenterBootstrap", () => {
 		"rejects an invalid last-tested template: %s",
 		(template) => {
 			const value = bootstrap();
-			value.strings.lastTested = template;
+			value.strings.lastVerified = template;
 			expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-				"settings-center-lastTested-template-invalid",
+				"settings-center-lastVerified-template-invalid",
 			);
 		},
 	);
@@ -542,7 +628,7 @@ describe("parseSettingsCenterBootstrap", () => {
 			backupCredentialsConfigured: false,
 		});
 	});
-	it.each(["retryCount", "maxImageSize"] as const)(
+	it.each(["maxImageSize"] as const)(
 		"rejects a missing image field: %s",
 		(key) => {
 			const value = bootstrap();
@@ -562,7 +648,7 @@ describe("parseSettingsCenterBootstrap", () => {
 		},
 	);
 
-	it.each(["retryCount", "maxImageSize"] as const)(
+	it.each(["maxImageSize"] as const)(
 		"rejects a non-string image field: %s",
 		(key) => {
 			const value = bootstrap();

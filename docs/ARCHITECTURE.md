@@ -154,7 +154,9 @@ Post Lock, capability, and connection state through `wp.hooks`. It blocks new
 protected operations at the owning boundary while preserving unsaved content,
 the Dirty baseline, Local Draft recovery, and the complete native form. Save,
 Publish, Media, Custom CSS, and Revision operations report only authoritative
-results and never retry protected mutations automatically.
+results and never retry protected mutations automatically. The separately
+approved bounded Image Hosting primary- and backup-write contract is the only
+current exception; Verify Upload remains single-attempt.
 
 Local Draft recovery uses the versioned
 `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a
@@ -513,7 +515,8 @@ Current routes:
 
 - `POST /easymde/v1/preview`
 - `POST /easymde/v1/media`
-- `POST /easymde/v1/image-hosting/connection`
+- `POST /easymde/v1/image-hosting/verification`
+- `POST /easymde/v1/image-hosting/secret`
 - `POST /easymde/v1/image-hosting/upload`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
@@ -524,9 +527,9 @@ Current routes:
 - `GET /easymde/v1/settings`
 - `POST /easymde/v1/settings`
 
-Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Both image-upload routes require `upload_files`; when a `post_id` is present they also require `current_user_can( 'edit_post', $post_id )`, and without a `post_id` they require `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap and transfer exports do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials.
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
 
 Preview Markdown payloads are capped at 1 MiB. EasyMDE paste and drop uploads
 accept local JPEG, PNG, GIF, and WebP files only and follow one browser path:
@@ -547,40 +550,76 @@ fallback.
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.
 Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are supported
-symmetrically: any one may be the primary or the optional same-object-key
-backup. R2 uses the administrator-saved, validated S3 API endpoint; Kodo uses
+symmetrically: any one may be the primary or the optional backup. Primary and
+backup writes use one generated object key as a fixed runtime invariant, not a
+configurable setting. R2 uses the administrator-saved, validated HTTPS S3 API
+endpoint; Kodo uses
 its fixed official upload and management API origins; OSS and COS derive their
-official API hosts from the validated region and bucket. These provider API
-origins are separate from administrator-configured public delivery domains and
-the optional fallback domain. Requests use a ten-second timeout with redirects
-disabled, and protected uploads and connection tests are never retried
-automatically or switched to another provider.
+official API hosts from the validated provider endpoint and bucket. OSS and COS
+derive the signing region from that endpoint rather than persisting a separate
+region setting. These HTTPS provider API origins are separate from the
+administrator-configured Viewing Image Domain, which accepts HTTP or HTTPS and
+is the public URL base used in the upload result. An HTTP image URL may be
+blocked as mixed content on an HTTPS article page; that browser display
+restriction does not change the provider upload result. Each provider request
+uses a ten-second timeout with redirects disabled. Article primary and backup
+writes may use the persisted bounded retry contract described below. Verify
+Upload remains single-attempt, and no operation switches providers.
 
-Before save, connection testing, or upload, the settings owner and runtime both
+Before save, verification upload, or article upload, the settings owner and runtime both
 derive a credential-free physical-destination identity. An enabled backup that
 matches the primary provider coordinates and bucket is rejected with
 `easymde_settings_duplicate_image_host_destination` or
 `easymde_image_hosting_duplicate_destination` and HTTP 409. Matching or
-different public domains do not disguise one physical storage target.
+different Viewing Image Domains do not disguise one physical storage target.
 
 The runtime may resize/compress JPEG, PNG, and WebP through WordPress image
 editors; GIF bytes remain unchanged to preserve animation. A successful upload
-returns the authoritative primary URL. When an optional fallback domain is
-configured, the same object key also produces an explicit `fallbackUrl`; the
-browser validates and exposes this value but the editor continues to insert the
-primary URL and never silently changes read origin. If the optional backup fails
-after the primary upload succeeds, the runtime returns the authoritative
-primary URL plus a stable redacted backup failure code. The editor reports the
-partial failure and does not claim that both writes succeeded. An all-or-nothing
-mode is not exposed because the provider contract has no reliable compensating
-delete operation. Raw provider responses, object keys, credentials, and private
-endpoint details never enter REST responses or browser bootstrap.
+returns one authoritative URL built from the primary Viewing Image Domain and generated
+object key. The single persisted `uploadRetryCount` appears in the primary
+settings section, is a strict integer from `0` through `5`, defaults to `0`,
+and means the maximum number of extra attempts after a destination's first
+failed write. The same configured `N` applies independently to the primary and,
+when enabled, backup destination. Attempts for each destination run serially,
+reuse the exact prepared bytes, object key, and provider, and stop on the first success. The
+runtime proceeds to backup only after primary success. Exhausting the primary
+attempts, or exhausting the backup attempts when backup is enabled, fails the
+whole article upload with a stable redacted error: REST returns no image URL,
+the editor inserts nothing, and its accessible error message asks the user to
+retry manually. The runtime never switches providers. A provider object may
+remain after overall failure because the provider contract has no reliable
+cross-provider compensating delete operation. Raw provider responses,
+credentials, and private endpoint details never enter REST responses or
+browser bootstrap. Only a wholly successful article upload may return its
+authoritative object path and public URL. Successful verification responses
+may return their authoritative object path and public URL; those are not
+credential-bearing provider responses.
 
-The connection route tests the saved server configuration only. Settings must
-be saved before testing, and any relevant draft edit makes the last result
-stale. Credential reads return only configured/not-configured booleans; blank
-secret fields preserve stored values and the explicit reset path remains the
-only deletion owner.
+The image-hosting verification route is the Settings Center's Verify Upload mutation; it does
+not perform a metadata-only bucket probe. The protected same-origin request
+carries the exact draft and settings revision, while newly entered credentials
+remain inside that request. Blank draft credentials may reuse stored
+credentials only when both revision and physical destination identity still
+match. The runtime generates the plugin-owned EasyMDE PNG object key through
+the current `fileNameRule`, the shared `ObjectKeyBuilder`, the current UTC
+clock and UUID owner, and `post_id = 0`, then uploads only to the selected
+target. Rules containing time or UUID variables may create a new object on
+each verification. Success returns `status: uploaded`, the object path, and the
+primary Viewing Image Domain URL; the accessible dialog identifies the
+successful test-image upload, explains that the URL is inserted into articles,
+and warns when an HTTP URL could be blocked on an HTTPS article page. Failure
+is explicit, states that no article image URL was created, prompts the
+administrator to check the configuration and verify again, and uses one
+attempt with no provider switch. Any relevant draft edit makes the last result
+stale.
+Ordinary credential reads expose only configured/not-configured booleans; only
+the dedicated explicit reveal route may return one saved field under the
+protected, `no-store`, browser-memory-only contract above.
+
+`ObjectKeyBuilder` defines `{md5}` as the lowercase hexadecimal MD5 digest of
+the final bytes sent to the provider, after optional resize/compression. This
+mirrors PicFast PicGo's `hashlib.md5(file_data).hexdigest()` content-digest
+algorithm; EasyMDE derives the extension from the verified MIME type.
 
 ## Compatibility Facade
 

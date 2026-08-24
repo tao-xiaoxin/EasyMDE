@@ -12,6 +12,7 @@ final class TencentCosProvider {
 	const SIGNATURE_LIFETIME = 3600;
 
 	private $transport;
+	private $endpoint_host;
 	private $region;
 	private $secret_id;
 	private $secret_key;
@@ -21,7 +22,7 @@ final class TencentCosProvider {
 
 	public function __construct(
 		HttpTransport $transport,
-		$region,
+		$endpoint,
 		$secret_id,
 		$secret_key,
 		$bucket_name,
@@ -29,7 +30,7 @@ final class TencentCosProvider {
 		?callable $clock = null
 	) {
 		if (
-			! $this->is_valid_region( $region ) ||
+			! ImageHostProviderSupport::validate_cos_endpoint( $endpoint ) ||
 			! $this->is_valid_bucket_name( $bucket_name ) ||
 			! ImageHostProviderSupport::validate_credential( $secret_id ) ||
 			! ImageHostProviderSupport::validate_credential( $secret_key )
@@ -38,15 +39,19 @@ final class TencentCosProvider {
 		}
 
 		$this->transport       = $transport;
-		$this->region          = $region;
+		$this->endpoint_host   = substr( strtolower( $endpoint ), 8 );
+		$this->region          = ImageHostProviderSupport::region_from_cos_endpoint( $endpoint );
 		$this->secret_id       = $secret_id;
 		$this->secret_key      = $secret_key;
 		$this->bucket_name     = $bucket_name;
-		$this->public_base_url = ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
+		$this->public_base_url = '' === $public_base_url ? '' : ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
 		$this->clock           = null === $clock ? 'time' : $clock;
 	}
 
 	public function upload( $bytes, $mime_type, $object_key ) {
+		if ( '' === $this->public_base_url ) {
+			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_invalid_public_url' );
+		}
 		$input_error = ImageHostProviderSupport::validate_upload( $bytes, $mime_type, $object_key );
 		if ( '' !== $input_error ) {
 			return ImageHostResult::failed( self::PROVIDER_ID, $input_error );
@@ -67,25 +72,13 @@ final class TencentCosProvider {
 		);
 	}
 
-	public function probe() {
-		$response = $this->send_signed_request( 'HEAD', '', '', '' );
-		if ( ! $response->is_success() || ! $this->is_success_status( $response->get_status_code() ) ) {
-			return ImageHostResult::failed(
-				self::PROVIDER_ID,
-				ImageHostProviderSupport::response_error_code( $response, 'tencent_cos_probe_rejected' )
-			);
-		}
-
-		return ImageHostResult::connected( self::PROVIDER_ID );
-	}
-
 	private function send_signed_request( $method, $object_key, $body, $mime_type ) {
 		$timestamp = (int) call_user_func( $this->clock );
 		if ( $timestamp <= 0 ) {
 			return HttpResponse::failure( 'transport_failure' );
 		}
 
-		$host      = $this->bucket_name . '.cos.' . $this->region . '.myqcloud.com';
+		$host      = $this->bucket_name . '.' . $this->endpoint_host;
 		$wire_path = '/' . ( '' === $object_key ? '' : ImageHostProviderSupport::encode_object_key( $object_key ) );
 		$sign_path = '/' . $object_key;
 		$headers   = array(
@@ -144,10 +137,6 @@ final class TencentCosProvider {
 		// The protocol requires the binary MD5 digest encoded as standard Base64.
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		return base64_encode( md5( $body, true ) );
-	}
-
-	private function is_valid_region( $region ) {
-		return is_string( $region ) && 1 === preg_match( '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $region );
 	}
 
 	private function is_valid_bucket_name( $bucket_name ) {

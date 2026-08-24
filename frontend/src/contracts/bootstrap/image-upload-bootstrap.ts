@@ -1,5 +1,4 @@
 export type ImageUploadStrings = Readonly<{
-  backupFailed: string;
   defaultAlt: string;
   dropFailed: string;
   dropTooLarge: string;
@@ -130,7 +129,6 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),
     strings: {
-      backupFailed: stringValue(messages.backupFailed, 'image-upload-string-invalid'),
       defaultAlt: stringValue(messages.defaultAlt, 'image-upload-string-invalid'),
       dropFailed: stringValue(messages.dropFailed, 'image-upload-string-invalid'),
       dropTooLarge: stringValue(messages.dropTooLarge, 'image-upload-string-invalid'),

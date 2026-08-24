@@ -20,20 +20,15 @@ final class ImageHostDestinationIdentity {
 			return '';
 		}
 
-		if ( 'cloudflare-r2' === $service ) {
+		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
 			$endpoint = isset( $config['endpoint'] ) ? strtolower( rtrim( trim( (string) $config['endpoint'] ), '/' ) ) : '';
+			$endpoint = ImageHostProviderSupport::destination_endpoint_identity( $service, $endpoint );
 
 			return '' === $endpoint ? '' : $service . '|' . $endpoint . '|' . $bucket;
 		}
 
 		if ( 'qiniu-kodo' === $service ) {
 			return $service . '|' . $bucket;
-		}
-
-		if ( in_array( $service, array( 'aliyun-oss', 'tencent-cos' ), true ) ) {
-			$region = isset( $config['region'] ) ? strtolower( trim( (string) $config['region'] ) ) : '';
-
-			return '' === $region ? '' : $service . '|' . $region . '|' . $bucket;
 		}
 
 		return '';

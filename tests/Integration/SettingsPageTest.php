@@ -112,10 +112,15 @@ final class SettingsPageTest extends WP_UnitTestCase
 		$this->assertFalse( $bootstrap['drafts']['images']['primaryCredentialsConfigured'] );
 		$this->assertFalse( $bootstrap['drafts']['images']['backupCredentialsConfigured'] );
         $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
-		$this->assertNotEmpty( $bootstrap['api']['imageHostingActionNonce'] );
+		$this->assertNotEmpty( $bootstrap['api']['imageHostingVerificationActionNonce'] );
 		$this->assertStringContainsString(
-			'/easymde/v1/image-hosting/connection',
-			$bootstrap['api']['imageHostingConnectionUrl']
+			'/easymde/v1/image-hosting/verification',
+			$bootstrap['api']['imageHostingVerificationUrl']
+		);
+		$this->assertNotEmpty( $bootstrap['api']['imageHostingSecretRevealActionNonce'] );
+		$this->assertStringContainsString(
+			'/easymde/v1/image-hosting/secret',
+			$bootstrap['api']['imageHostingSecretRevealUrl']
 		);
         $this->assertArrayHasKey('settingsUnavailable', $bootstrap['strings']);
         $this->assertArrayNotHasKey('promptManagement', $bootstrap['strings']);
@@ -136,12 +141,17 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
             'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
-			'r2ApiEndpoint', 'providerRegion', 'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
+			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
+			'uploadRetryCount', 'uploadRetryCountDescription',
 			'duplicateImageHostTitle', 'duplicateImageHostDescription',
-            'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'credentialsConfiguredHint',
-            'replaceCredentialsHint', 'connectionStatus', 'backupConnectionStatus', 'connectionPending', 'testingConnection', 'connected',
-            'connectionFailed', 'connectionStale', 'lastTested', 'testPrimaryConnection',
-            'testBackupConnection', 'imageHostFailureConfiguration', 'imageHostFailureAuthentication',
+            'primaryCredentialsConfigured', 'backupCredentialsConfigured', 'revealingSecret', 'secretRevealFailed',
+			'uploadVerificationStatus', 'backupVerificationStatus', 'uploadVerificationPending',
+			'verifyingUpload', 'uploadVerified', 'uploadVerificationFailed', 'uploadVerificationStale',
+			'lastVerified', 'verifyPrimaryUpload', 'verifyBackupUpload', 'uploadVerificationSucceeded',
+			'uploadVerificationSuccessDescription', 'uploadVerificationFailureDescription',
+			'uploadVerificationFailureHint', 'insecureViewingDomainWarning',
+			'uploadedObjectPath', 'uploadedImageUrl', 'closeImageFeedback',
+			'imageHostFailureConfiguration', 'imageHostFailureAuthentication',
             'imageHostFailureAuthorization', 'imageHostFailureNetwork', 'imageHostFailureTimeout',
             'imageHostFailureProvider', 'imageHostFailureInvalidResponse',
             'transferExportConfiguration', 'transferConfigurationManagement',
@@ -157,6 +167,25 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
         $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
         $this->assertArrayNotHasKey('customUpload', $bootstrap['strings']);
+		foreach (
+			array(
+				'providerApiEndpoint',
+				'backupRetryCount',
+				'backupRetryCountDescription',
+				'keepSameObjectPath',
+				'keepSameObjectPathDescription',
+				'backupFailureHandling',
+				'backupFailureHandlingDescription',
+				'returnPrimaryUrlOnBackupFailure',
+				'failEntireUpload',
+				'retryFailedUpload',
+				'doNotRetry',
+				'retryOnce',
+			)
+			as $removed_image_string
+		) {
+			$this->assertArrayNotHasKey( $removed_image_string, $bootstrap['strings'] );
+		}
 		foreach (
 			array(
 				'r2AccountId',

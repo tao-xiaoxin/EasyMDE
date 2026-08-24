@@ -25,28 +25,23 @@ export type ImageHostProvider =
 export type ImageSettings = Readonly<{
 	service: ImageHostProvider;
 	endpoint: string;
-	region: string;
 	bucket: string;
 	domain: string;
-	fallbackDomain: string;
 	accessKey: string;
 	secretKey: string;
 	fileNameRule: string;
+	uploadRetryCount: number;
 	backupEnabled: boolean;
 	backupService: ImageHostProvider;
 	backupEndpoint: string;
-	backupRegion: string;
 	backupBucket: string;
 	backupDomain: string;
 	backupAccessKey: string;
 	backupSecretKey: string;
-	backupSameObjectKey: boolean;
-	backupFailureMode: string;
 	insertMarkdown: boolean;
 	compressImages: boolean;
 	preserveFileName: boolean;
 	copyUrl: boolean;
-	retryCount: string;
 	maxImageSize: string;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
 	insertFormat: string;
@@ -103,8 +98,10 @@ export type SettingsCenterSettings = Readonly<{
 
 export type SettingsCenterApi = Readonly<{
 	actionNonce: string;
-	imageHostingActionNonce: string;
-	imageHostingConnectionUrl: string;
+	imageHostingVerificationActionNonce: string;
+	imageHostingVerificationUrl: string;
+	imageHostingSecretRevealActionNonce: string;
+	imageHostingSecretRevealUrl: string;
 	settingsUrl: string;
 	nonce: string;
 }>;

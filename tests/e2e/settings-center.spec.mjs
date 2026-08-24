@@ -744,17 +744,24 @@ test("runs the image-hosting interaction contract without exposing credentials",
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
+	const verificationPayloads = [];
+	let releaseFirstVerification;
+	const firstVerificationGate = new Promise((resolve) => {
+		releaseFirstVerification = resolve;
+	});
 	await page.route(
-		"**/wp-json/easymde/v1/image-hosting/connection",
+		"**/wp-json/easymde/v1/image-hosting/verification",
 		async (route) => {
 			const payload = route.request().postDataJSON();
+			verificationPayloads.push(payload);
+			if (verificationPayloads.length === 1) await firstVerificationGate;
 			await route.fulfill({
 				contentType: "application/json",
 				json: {
 					target: payload.target,
-					service: payload.target === "backup" ? "qiniu-kodo" : "cloudflare-r2",
-					status: "connected",
-					testedAt: "2026-08-23T08:00:00+00:00",
+					status: "uploaded",
+					path: `verification/${payload.target}.ico`,
+					url: `http://images.example.test/verification/${payload.target}.ico`,
 				},
 				status: 200,
 			});
@@ -776,20 +783,87 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		}),
 	).toHaveCount(0);
 	const primary = images.locator(".is-host-service");
-	const connection = primary.locator(
-		".easymde-settings-center__connection-row",
+	const verification = primary.locator(
+		".easymde-settings-center__verification-row",
 	);
-	const connectionStatus = connection.locator(
-		".easymde-settings-center__connection-status",
+	const uploadVerificationStatus = verification.locator(
+		".easymde-settings-center__verification-status",
 	);
-	const connectionButton = connection.locator("> button");
-	await connectionButton.click();
-	await expect(connectionStatus).toHaveAttribute("data-state", "connected");
+	const verificationButton = verification.locator("> button");
+	await verificationButton.click();
+	await expect(verificationButton).toBeDisabled();
+	await expect(verificationButton).toHaveText(/验证上传中|Verifying Upload/u);
+	releaseFirstVerification();
+	await expect(uploadVerificationStatus).toHaveAttribute(
+		"data-state",
+		"verified",
+	);
+	await expect(verificationButton).toBeEnabled();
+	const verificationStrings = await page.evaluate(() => ({
+		close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
+		success:
+			window.EasyMDESettingsCenterBootstrap.strings.uploadVerificationSucceeded,
+		warning:
+			window.EasyMDESettingsCenterBootstrap.strings
+				.insecureViewingDomainWarning,
+	}));
+	const successDialog = page.getByRole("dialog", {
+		name: verificationStrings.success,
+	});
+	await expect(successDialog).toBeVisible();
+	await expect(
+		successDialog.getByText(verificationStrings.warning),
+	).toBeVisible();
+	const footerClose = successDialog.locator("footer button");
+	await expect(footerClose).toHaveText(verificationStrings.close);
+	await expect(footerClose).toBeFocused();
+	await page.setViewportSize({ width: 390, height: 844 });
+	const dialogGeometry = await successDialog.boundingBox();
+	expect(dialogGeometry).not.toBeNull();
+	expect(dialogGeometry.x).toBeGreaterThanOrEqual(12);
+	expect(dialogGeometry.x + dialogGeometry.width).toBeLessThanOrEqual(378);
+	await expect(footerClose).toHaveCSS("height", "44px");
+	expect(
+		await page.evaluate(
+			() => document.documentElement.scrollWidth <= window.innerWidth,
+		),
+	).toBe(true);
+	await footerClose.click();
+	await expect(verificationButton).toBeFocused();
+	await page.setViewportSize({ width: 1440, height: 900 });
+	expect(verificationPayloads[0]).toMatchObject({
+		revision: expect.any(Number),
+		settings: expect.objectContaining({ service: "cloudflare-r2" }),
+		target: "primary",
+	});
 
 	const bucket = primary.locator("input").nth(1);
 	await bucket.fill(`${await bucket.inputValue()}-draft`);
-	await expect(connectionStatus).toHaveAttribute("data-state", "stale");
-	await expect(connectionButton).toBeDisabled();
+	await expect(uploadVerificationStatus).toHaveAttribute("data-state", "stale");
+	await expect(verificationButton).toBeEnabled();
+	await verificationButton.click();
+	await expect(uploadVerificationStatus).toHaveAttribute(
+		"data-state",
+		"verified",
+	);
+	await page
+		.getByRole("dialog", { name: verificationStrings.success })
+		.locator("footer button")
+		.click();
+	expect(verificationPayloads).toHaveLength(2);
+	expect(verificationPayloads[1].settings.bucket).toBe(
+		await bucket.inputValue(),
+	);
+	await expect(
+		primary.getByRole("textbox", {
+			name: /自定义 Endpoint|Custom Endpoint/u,
+		}),
+	).toHaveCount(1);
+	await expect(
+		primary.getByRole("textbox", {
+			name: /查看图片域名|Viewing Image Domain/u,
+		}),
+	).toHaveCount(1);
 
 	const accessKey = primary
 		.locator(".easymde-settings-center__secret-input")
@@ -836,7 +910,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		backup.getByRole("switch", {
 			name: /保持.*对象路径|Keep.*Object Path/u,
 		}),
-	).toBeDisabled();
+	).toHaveCount(0);
 
 	const formats = images.locator(
 		".easymde-settings-center__upload-formats input",
@@ -852,6 +926,70 @@ test("runs the image-hosting interaction contract without exposing credentials",
 
 	await page.reload();
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+});
+
+test("persists the bounded upload retry count across a settings-center refresh", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+	const retryLabel = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.uploadRetryCount,
+	);
+	const retryInput = page.getByRole("spinbutton", { name: retryLabel });
+	const decrement = page.getByRole("button", { name: `${retryLabel} - 1` });
+	const increment = page.getByRole("button", { name: `${retryLabel} + 1` });
+	const originalRetryCount = await retryInput.inputValue();
+	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
+	await expect(retryInput).toHaveAttribute("min", "0");
+	await expect(retryInput).toHaveAttribute("max", "5");
+	const geometry = await Promise.all([
+		decrement.boundingBox(),
+		retryInput.boundingBox(),
+		increment.boundingBox(),
+	]);
+	expect(geometry.every(Boolean)).toBe(true);
+	expect(geometry[0].x).toBeLessThan(geometry[1].x);
+	expect(geometry[1].x).toBeLessThan(geometry[2].x);
+	expect(geometry[2].x + geometry[2].width).toBeLessThanOrEqual(390);
+	expect(Math.abs(geometry[0].y - geometry[1].y)).toBeLessThan(1);
+	expect(Math.abs(geometry[1].y - geometry[2].y)).toBeLessThan(1);
+
+	await retryInput.fill("0");
+	await expect(decrement).toBeDisabled();
+	await expect(increment).toBeEnabled();
+	await increment.click();
+	await expect(retryInput).toHaveValue(1);
+	await retryInput.fill("5");
+	await expect(increment).toBeDisabled();
+	await expect(decrement).toBeEnabled();
+	await decrement.click();
+	await expect(retryInput).toHaveValue(4);
+	await retryInput.fill(testRetryCount);
+	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
+	await expect(page.locator("[data-save-status]")).toHaveAttribute(
+		"data-save-status",
+		"saved",
+	);
+
+	await page.reload();
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+	await expect(page.getByRole("spinbutton", { name: retryLabel })).toHaveValue(
+		Number(testRetryCount),
+	);
+
+	await page
+		.getByRole("spinbutton", { name: retryLabel })
+		.fill(originalRetryCount);
+	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
+	await expect(page.locator("[data-save-status]")).toHaveAttribute(
+		"data-save-status",
+		"saved",
+	);
 });
 
 test("matches the reference Settings Center header geometry", async ({
@@ -1348,9 +1486,9 @@ test("keeps reference Help geometry stable while compact content stays inside it
 	const uploadFormats = settingsCenter.locator(
 		".easymde-settings-center__upload-formats",
 	);
-	const primaryConnection = settingsCenter
+	const primaryVerification = settingsCenter
 		.locator(
-			'[data-settings-section="images"] .easymde-settings-center__connection-row',
+			'[data-settings-section="images"] .easymde-settings-center__verification-row',
 		)
 		.first();
 
@@ -1389,13 +1527,13 @@ test("keeps reference Help geometry stable while compact content stays inside it
 		expect(overflow).toBeLessThanOrEqual(0.75);
 	};
 
-	const expectPrimaryConnectionContained = async () => {
-		const containment = await primaryConnection.evaluate((element) => {
+	const expectPrimaryVerificationContained = async () => {
+		const containment = await primaryVerification.evaluate((element) => {
 			const section = element.closest(
 				".easymde-settings-center__settings-section",
 			);
 			if (!section)
-				throw new Error("settings-center-connection-section-missing");
+				throw new Error("settings-center-verification-section-missing");
 			const elementBounds = element.getBoundingClientRect();
 			const sectionBounds = section.getBoundingClientRect();
 			const rightmost = [element, ...element.querySelectorAll("*")].reduce(
@@ -1460,7 +1598,7 @@ test("keeps reference Help geometry stable while compact content stays inside it
 		await page.setViewportSize({ width, height: 753 });
 		await expectReferenceSidebar();
 		await expectUploadFormatsContained();
-		await expectPrimaryConnectionContained();
+		await expectPrimaryVerificationContained();
 		await expectEverySectionContained();
 		await expect
 			.poll(async () =>

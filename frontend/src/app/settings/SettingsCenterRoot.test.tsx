@@ -20,15 +20,23 @@ import {
 } from "../../test/settings-center-settings-fixture";
 import { SettingsCenterRoot } from "./SettingsCenterRoot";
 
-function bootstrap(): SettingsCenterBootstrap {
+function bootstrap({
+	configuredImageDomains = false,
+}: {
+	configuredImageDomains?: boolean;
+} = {}): SettingsCenterBootstrap {
 	return {
 		schemaVersion: 2,
 		closeUrl: "/wp-admin/options-general.php",
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
-			imageHostingActionNonce: "test-image-hosting-action-nonce",
-			imageHostingConnectionUrl: "/wp-json/easymde/v1/image-hosting/connection",
+			imageHostingVerificationActionNonce: "test-image-hosting-action-nonce",
+			imageHostingVerificationUrl:
+				"/wp-json/easymde/v1/image-hosting/verification",
+			imageHostingSecretRevealActionNonce:
+				"test-image-hosting-secret-reveal-action-nonce",
+			imageHostingSecretRevealUrl: "/wp-json/easymde/v1/image-hosting/secret",
 			nonce: "test-nonce",
 		},
 		assets: {
@@ -52,7 +60,16 @@ function bootstrap(): SettingsCenterBootstrap {
 				backupCredentialsConfigured: false,
 			},
 		},
-		settings: SETTINGS_CENTER_TEST_SETTINGS,
+		settings: configuredImageDomains
+			? {
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					images: {
+						...SETTINGS_CENTER_TEST_SETTINGS.images,
+						domain: "https://img.example.test",
+						backupDomain: "https://backup.example.test",
+					},
+				}
+			: SETTINGS_CENTER_TEST_SETTINGS,
 		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
 		strings: {
 			...Object.fromEntries(
@@ -787,7 +804,7 @@ describe("SettingsCenterRoot images section", () => {
 		expect(screen.queryByRole("textbox", { name: "backupBucket" })).toBeNull();
 	});
 
-	it("exposes real server-backed image-host connection tests", () => {
+	it("exposes real server-backed image-host upload verification", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const imagesSection = screen
 			.getByRole("heading", { name: "imageHostService" })
@@ -798,17 +815,17 @@ describe("SettingsCenterRoot images section", () => {
 
 		expect(
 			images
-				.getByRole("button", { name: "testPrimaryConnection" })
+				.getByRole("button", { name: "verifyPrimaryUpload" })
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
 			images
-				.getByRole("button", { name: "testBackupConnection" })
+				.getByRole("button", { name: "verifyBackupUpload" })
 				.matches(":disabled"),
 		).toBe(false);
 		expect(
 			images.getAllByRole("status").map((status) => status.textContent),
-		).toEqual(["connectionPending", "connectionPending"]);
+		).toEqual(["uploadVerificationPending", "uploadVerificationPending"]);
 	});
 
 	it("enables the server-owned filename behavior and upload formats", () => {
@@ -1571,6 +1588,58 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
+	it("saves the bounded upload retry count as a number", async () => {
+		const user = userEvent.setup();
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const savedSettings = {
+			...bootstrap().settings,
+			revision: bootstrap().settings.revision + 1,
+			images: {
+				...bootstrap().settings.images,
+				uploadRetryCount: 5,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		fireEvent.change(
+			screen.getByRole("spinbutton", { name: "uploadRetryCount" }),
+			{ target: { value: "5" } },
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
+		if (!savedPayload.current) throw new Error("settings-save-payload-missing");
+		const payloadSettings = savedPayload.current
+			.settings as SettingsCenterSettings;
+		expect(payloadSettings.images.uploadRetryCount).toBe(5);
+		expect(
+			screen.getByRole<HTMLInputElement>("spinbutton", {
+				name: "uploadRetryCount",
+			}).value,
+		).toBe("5");
+		fetch.mockRestore();
+	});
+
 	it("shows newly saved primary credentials as configured immediately", async () => {
 		const user = userEvent.setup();
 		const savedSettings = {
@@ -1611,22 +1680,22 @@ describe("SettingsCenterRoot persistence", () => {
 
 	it("keeps a replaced primary connection stale after the saved secrets are redacted", async () => {
 		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockImplementation(async (input, init) => {
 				const url = String(input);
-				if (url.endsWith("/image-hosting/connection")) {
+				if (url.endsWith("/image-hosting/verification")) {
 					const request = JSON.parse(String(init?.body)) as {
 						target: "primary" | "backup";
 					};
 					return {
 						ok: true,
 						json: async () => ({
-							service:
-								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
-							status: "connected",
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
 							target: request.target,
-							testedAt: "2026-08-23T08:00:00Z",
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
 						}),
 					} as Response;
 				}
@@ -1634,8 +1703,8 @@ describe("SettingsCenterRoot persistence", () => {
 					ok: true,
 					json: async () => ({
 						settings: {
-							...bootstrap().settings,
-							revision: bootstrap().settings.revision + 1,
+							...configuredBootstrap.settings,
+							revision: configuredBootstrap.settings.revision + 1,
 						},
 						credentialStatus: {
 							primaryConfigured: true,
@@ -1645,7 +1714,7 @@ describe("SettingsCenterRoot persistence", () => {
 				} as Response;
 			});
 		const { container } = render(
-			<SettingsCenterRoot bootstrap={bootstrap()} />,
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
 		);
 		const imagesSection = container.querySelector(
 			'[data-settings-section="images"]',
@@ -1655,49 +1724,194 @@ describe("SettingsCenterRoot persistence", () => {
 		const images = within(imagesSection);
 
 		await user.click(
-			images.getByRole("button", { name: "testPrimaryConnection" }),
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
 		);
 		await user.click(
-			images.getByRole("button", { name: "testBackupConnection" }),
+			images.getByRole("button", { name: "verifyBackupUpload" }),
 		);
 		await waitFor(() =>
 			expect(
 				images.getAllByRole("status").map((status) => status.textContent),
-			).toEqual(["connected", "connected"]),
+			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
 		await user.type(images.getByLabelText("secretKey"), "replacement-secret");
 		expect(images.getAllByRole("status")[0]?.textContent).toBe(
-			"connectionStale",
+			"uploadVerificationStale",
 		);
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 
 		await waitFor(() =>
 			expect(
 				images.getAllByRole("status").map((status) => status.textContent),
-			).toEqual(["connectionStale", "connected"]),
+			).toEqual(["uploadVerificationStale", "uploadVerified"]),
 		);
 		fetch.mockRestore();
 	});
 
-	it("clears configured credential presentation after a reset is saved", async () => {
+	it("tests the current unsaved image draft without requiring a settings save", async () => {
 		const user = userEvent.setup();
-		const configuredBootstrap = bootstrap();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockImplementation(async (input, init) => {
-				if (String(input).endsWith("/image-hosting/connection")) {
+				if (!String(input).endsWith("/image-hosting/verification")) {
+					throw new Error("unexpected-settings-save");
+				}
+				const request = JSON.parse(String(init?.body)) as {
+					target: "primary";
+					revision: number;
+					settings: SettingsCenterSettings["images"];
+				};
+				expect(request).toEqual({
+					target: "primary",
+					revision: SETTINGS_CENTER_TEST_SETTINGS.revision,
+					settings: {
+						...SETTINGS_CENTER_TEST_SETTINGS.images,
+						bucket: "draft-bucket",
+						domain: "https://img.example.test",
+						backupDomain: "https://backup.example.test",
+					},
+				});
+				return {
+					ok: true,
+					json: async () => ({
+						path: "20260824/00000000-0000-4000-8000-000000000000.png",
+						status: "uploaded",
+						target: request.target,
+						url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+		const bucket = images.getByRole<HTMLInputElement>("textbox", {
+			name: "bucket",
+		});
+
+		await user.clear(bucket);
+		await user.type(bucket, "draft-bucket");
+		const testButton = images.getByRole<HTMLButtonElement>("button", {
+			name: "verifyPrimaryUpload",
+		});
+		expect(testButton.disabled).toBe(false);
+		await user.click(testButton);
+
+		await waitFor(() =>
+			expect(images.getAllByRole("status")[0]?.textContent).toBe(
+				"uploadVerified",
+			),
+		);
+		expect(fetch).toHaveBeenCalledOnce();
+		fetch.mockRestore();
+	});
+
+	it("does not revive a pre-save verification after the file-name rule is saved and then restored in the draft", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
 					const request = JSON.parse(String(init?.body)) as {
 						target: "primary" | "backup";
 					};
 					return {
 						ok: true,
 						json: async () => ({
-							service:
-								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
-							status: "connected",
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
 							target: request.target,
-							testedAt: "2026-08-23T08:00:00Z",
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...configuredBootstrap.settings,
+							revision: configuredBootstrap.settings.revision + 1,
+							images: {
+								...configuredBootstrap.settings.images,
+								fileNameRule: "changed/{md5}.{ext}",
+							},
+						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+		);
+		const imagesSection = container.querySelector(
+			'[data-settings-section="images"]',
+		);
+		if (!(imagesSection instanceof HTMLElement))
+			throw new Error("settings-center-images-section-missing");
+		const images = within(imagesSection);
+
+		await user.click(
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await user.click(
+			images.getByRole("button", { name: "verifyBackupUpload" }),
+		);
+		await waitFor(() =>
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]),
+		);
+
+		const rule = images.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		await user.clear(rule);
+		await user.type(rule, "changed/{md5}.{ext}");
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() =>
+			expect(
+				container
+					.querySelector("[data-save-status]")
+					?.getAttribute("data-save-status"),
+			).toBe("saved"),
+		);
+		await user.clear(rule);
+		await user.type(rule, SETTINGS_CENTER_TEST_SETTINGS.images.fileNameRule);
+
+		expect(
+			images.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
+		fetch.mockRestore();
+	});
+
+	it("clears configured credential presentation after a reset is saved", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
 						}),
 					} as Response;
 				}
@@ -1742,15 +1956,15 @@ describe("SettingsCenterRoot persistence", () => {
 			screen.getByLabelText<HTMLInputElement>("accessKey").placeholder,
 		).toBe("••••••••••••");
 		await user.click(
-			images.getByRole("button", { name: "testPrimaryConnection" }),
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
 		);
 		await user.click(
-			images.getByRole("button", { name: "testBackupConnection" }),
+			images.getByRole("button", { name: "verifyBackupUpload" }),
 		);
 		await waitFor(() =>
 			expect(
 				images.getAllByRole("status").map((status) => status.textContent),
-			).toEqual(["connected", "connected"]),
+			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
 		await user.click(
@@ -1778,7 +1992,7 @@ describe("SettingsCenterRoot persistence", () => {
 		).toBe("");
 		expect(
 			images.getAllByRole("status").map((status) => status.textContent),
-		).toEqual(["connectionStale", "connectionStale"]);
+		).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
 		fetch.mockRestore();
 	});
 
@@ -1876,24 +2090,24 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
-	it("invalidates both connection tests after an authoritative conflict reload", async () => {
+	it("invalidates both upload verifications after an authoritative conflict reload", async () => {
 		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockImplementation(async (input, init) => {
 				const url = String(input);
-				if (url.endsWith("/image-hosting/connection")) {
+				if (url.endsWith("/image-hosting/verification")) {
 					const request = JSON.parse(String(init?.body)) as {
 						target: "primary" | "backup";
 					};
 					return {
 						ok: true,
 						json: async () => ({
-							service:
-								request.target === "primary" ? "cloudflare-r2" : "qiniu-kodo",
-							status: "connected",
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
 							target: request.target,
-							testedAt: "2026-08-23T08:00:00Z",
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
 						}),
 					} as Response;
 				}
@@ -1903,7 +2117,7 @@ describe("SettingsCenterRoot persistence", () => {
 				return {
 					ok: true,
 					json: async () => ({
-						settings: bootstrap().settings,
+						settings: configuredBootstrap.settings,
 						credentialStatus: {
 							primaryConfigured: false,
 							backupConfigured: false,
@@ -1912,7 +2126,7 @@ describe("SettingsCenterRoot persistence", () => {
 				} as Response;
 			});
 		const { container } = render(
-			<SettingsCenterRoot bootstrap={bootstrap()} />,
+			<SettingsCenterRoot bootstrap={configuredBootstrap} />,
 		);
 		const imagesSection = container.querySelector(
 			'[data-settings-section="images"]',
@@ -1922,15 +2136,15 @@ describe("SettingsCenterRoot persistence", () => {
 		const images = within(imagesSection);
 
 		await user.click(
-			images.getByRole("button", { name: "testPrimaryConnection" }),
+			images.getByRole("button", { name: "verifyPrimaryUpload" }),
 		);
 		await user.click(
-			images.getByRole("button", { name: "testBackupConnection" }),
+			images.getByRole("button", { name: "verifyBackupUpload" }),
 		);
 		await waitFor(() =>
 			expect(
 				images.getAllByRole("status").map((status) => status.textContent),
-			).toEqual(["connected", "connected"]),
+			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
 		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
@@ -1943,7 +2157,7 @@ describe("SettingsCenterRoot persistence", () => {
 		await waitFor(() =>
 			expect(
 				images.getAllByRole("status").map((status) => status.textContent),
-			).toEqual(["connectionStale", "connectionStale"]),
+			).toEqual(["uploadVerificationStale", "uploadVerificationStale"]),
 		);
 		fetch.mockRestore();
 	});

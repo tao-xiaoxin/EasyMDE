@@ -7,7 +7,6 @@ describe('createWordPressImageUploadPort', () => {
     const apiFetch = vi.fn().mockResolvedValue({
       alt: 'screen shot',
       backup: { status: 'disabled' },
-      fallbackUrl: 'https://fallback.example.test/uploads/screen-shot.png',
       title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
     });
@@ -31,7 +30,6 @@ describe('createWordPressImageUploadPort', () => {
       })
     ).resolves.toEqual({
       alt: 'screen shot',
-      fallbackUrl: 'https://fallback.example.test/uploads/screen-shot.png',
       status: 'uploaded',
       title: 'Uploaded title',
       url: 'https://example.test/uploads/screen-shot.png'
@@ -51,20 +49,13 @@ describe('createWordPressImageUploadPort', () => {
     expect((request.body.get('file') as File).name).toBe('screen-shot.png');
   });
 
-  it.each([
-    ['a relative fallback URL', '/uploads/image.png'],
-    ['an insecure fallback URL', 'http://fallback.example.test/image.png'],
-    [
-      'a credentialed fallback URL',
-      'https://user@fallback.example.test/image.png'
-    ]
-  ])('rejects %s', async (_label, fallbackUrl) => {
+  it('rejects the removed fallback URL response field', async () => {
     const port = createWordPressImageUploadPort({
       actionNonce: 'synthetic-image-hosting-nonce',
       apiFetch: vi.fn().mockResolvedValue({
         alt: 'image',
         backup: { status: 'disabled' },
-        fallbackUrl,
+        fallbackUrl: 'https://fallback.example.test/image.png',
         title: '',
         url: 'https://images.example.test/image.png'
       }),
@@ -84,14 +75,109 @@ describe('createWordPressImageUploadPort', () => {
     ).rejects.toThrow('image-upload-response-invalid');
   });
 
-  it('accepts a remote upload response without a WordPress attachment id', async () => {
+  it('accepts an authoritative HTTP upload URL', async () => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'image',
+        backup: { status: 'disabled' },
+        title: '',
+        url: 'http://images.example.test/image.png'
+      }),
+      endpoint: '/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 0,
+        signal: new AbortController().signal
+      })
+    ).resolves.toEqual({
+      alt: 'image',
+      status: 'uploaded',
+      title: '',
+      url: 'http://images.example.test/image.png'
+    });
+  });
+
+  it.each([
+    'ftp://images.example.test/image.png',
+    'https://user:password@images.example.test/image.png',
+    'https://images.example.test:8443/image.png',
+    'https://images.example.test:443/image.png',
+    'http://images.example.test:80/image.png',
+    'https://images.example.test/image.png?token=secret',
+    'https://images.example.test/image.png#fragment'
+  ])('rejects an unsafe upload URL: %s', async (url) => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'image',
+        backup: { status: 'disabled' },
+        title: '',
+        url
+      }),
+      endpoint: '/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 0,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
+  it.each([
+    { status: 'disabled', extra: 'unexpected' },
+    { status: 'uploaded', code: 'unexpected' },
+    {
+      status: 'failed',
+      code: 'easymde_image_hosting_backup_upload_failed',
+      raw: 'unexpected'
+    }
+  ])('rejects a non-exact backup response: %j', async (backup) => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'image',
+        backup,
+        title: '',
+        url: 'https://images.example.test/image.png'
+      }),
+      endpoint: '/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 0,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
+  it('rejects a partial-success backup response instead of inserting its primary URL', async () => {
     const apiFetch = vi.fn().mockResolvedValue({
       alt: 'remote alt',
       backup: {
         code: 'easymde_image_hosting_backup_upload_failed',
         status: 'failed'
       },
-      fallbackUrl: '',
       title: '',
       url: 'https://images.example.test/2026/08/image.png'
     });
@@ -111,20 +197,14 @@ describe('createWordPressImageUploadPort', () => {
         postId: 17,
         signal: new AbortController().signal
       })
-    ).resolves.toEqual({
-      alt: 'remote alt',
-      status: 'uploaded',
-      title: '',
-      url: 'https://images.example.test/2026/08/image.png',
-      warning: 'backup-upload-failed'
-    });
+    ).rejects.toThrow('image-upload-response-invalid');
     expect(apiFetch.mock.calls[0]?.[0].headers).toEqual({
       'X-EasyMDE-Image-Hosting-Nonce': 'synthetic-image-hosting-nonce',
       'X-WP-Nonce': 'synthetic-nonce'
     });
   });
 
-  it('rejects a success response that omits the fallback URL field', async () => {
+  it('accepts a success response without the removed fallback URL field', async () => {
     const port = createWordPressImageUploadPort({
       actionNonce: 'synthetic-image-hosting-nonce',
       apiFetch: vi.fn().mockResolvedValue({
@@ -146,7 +226,12 @@ describe('createWordPressImageUploadPort', () => {
         postId: 17,
         signal: new AbortController().signal
       })
-    ).rejects.toThrow('image-upload-response-invalid');
+    ).resolves.toEqual({
+      alt: 'remote alt',
+      status: 'uploaded',
+      title: '',
+      url: 'https://images.example.test/2026/08/image.png'
+    });
   });
 
   it('maps request rejection and rejects invalid success payloads separately', async () => {

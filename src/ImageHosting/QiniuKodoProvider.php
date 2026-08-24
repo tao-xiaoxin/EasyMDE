@@ -10,7 +10,6 @@ final class QiniuKodoProvider {
 
 	const PROVIDER_ID    = 'qiniu-kodo';
 	const UPLOAD_URL     = 'https://upload.qiniup.com';
-	const BUCKETS_URL    = 'https://rs.qbox.me/buckets';
 	const TOKEN_LIFETIME = 3600;
 
 	private $transport;
@@ -40,11 +39,14 @@ final class QiniuKodoProvider {
 		$this->access_key      = $access_key;
 		$this->secret_key      = $secret_key;
 		$this->bucket_name     = $bucket_name;
-		$this->public_base_url = ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
+		$this->public_base_url = '' === $public_base_url ? '' : ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
 		$this->clock           = null === $clock ? 'time' : $clock;
 	}
 
 	public function upload( $bytes, $mime_type, $object_key ) {
+		if ( '' === $this->public_base_url ) {
+			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_invalid_public_url' );
+		}
 		$input_error = ImageHostProviderSupport::validate_upload( $bytes, $mime_type, $object_key );
 		if ( '' !== $input_error ) {
 			return ImageHostResult::failed( self::PROVIDER_ID, $input_error );
@@ -87,33 +89,6 @@ final class QiniuKodoProvider {
 			$object_key,
 			ImageHostProviderSupport::public_url( $this->public_base_url, $object_key )
 		);
-	}
-
-	public function probe() {
-		$authorization = 'QBox ' . $this->access_key . ':' . $this->url_safe_base64(
-			hash_hmac( 'sha1', "/buckets\n", $this->secret_key, true )
-		);
-		$response      = $this->transport->request(
-			'GET',
-			self::BUCKETS_URL,
-			ImageHostProviderSupport::request_arguments(
-				array( 'Authorization' => $authorization )
-			)
-		);
-
-		if ( ! $response->is_success() || 200 !== $response->get_status_code() ) {
-			return ImageHostResult::failed(
-				self::PROVIDER_ID,
-				ImageHostProviderSupport::response_error_code( $response, 'qiniu_probe_rejected' )
-			);
-		}
-
-		$buckets = json_decode( $response->get_body(), true );
-		if ( ! is_array( $buckets ) || ! in_array( $this->bucket_name, $buckets, true ) ) {
-			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_bucket_not_found' );
-		}
-
-		return ImageHostResult::connected( self::PROVIDER_ID );
 	}
 
 	private function create_upload_token( $object_key, $deadline ) {

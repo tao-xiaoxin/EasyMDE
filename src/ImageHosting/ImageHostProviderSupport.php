@@ -35,23 +35,87 @@ final class ImageHostProviderSupport {
 		);
 	}
 
+	public static function validate_oss_endpoint( $value ) {
+		return '' !== self::region_from_oss_endpoint( $value );
+	}
+
+	public static function validate_cos_endpoint( $value ) {
+		return '' !== self::region_from_cos_endpoint( $value );
+	}
+
+	public static function region_from_oss_endpoint( $value ) {
+		$region = self::region_from_endpoint(
+			$value,
+			'#^https://oss-([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.aliyuncs\.com$#D'
+		);
+
+		return '-internal' === substr( $region, -9 ) ? substr( $region, 0, -9 ) : $region;
+	}
+
+	public static function destination_endpoint_identity( $service, $value ) {
+		if ( 'aliyun-oss' === $service ) {
+			return self::region_from_oss_endpoint( $value );
+		}
+
+		if ( 'tencent-cos' === $service ) {
+			return self::region_from_cos_endpoint( $value );
+		}
+
+		return 'cloudflare-r2' === $service && self::validate_r2_endpoint( $value )
+			? strtolower( $value )
+			: '';
+	}
+
+	public static function region_from_cos_endpoint( $value ) {
+		return self::region_from_endpoint(
+			$value,
+			'#^https://cos\.([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.myqcloud\.com$#D'
+		);
+	}
+
+	public static function validate_provider_endpoint( $service, $value ) {
+		if ( 'cloudflare-r2' === $service ) {
+			return self::validate_r2_endpoint( $value );
+		}
+		if ( 'aliyun-oss' === $service ) {
+			return self::validate_oss_endpoint( $value );
+		}
+		if ( 'tencent-cos' === $service ) {
+			return self::validate_cos_endpoint( $value );
+		}
+
+		return 'qiniu-kodo' === $service && '' === $value;
+	}
+
+	private static function region_from_endpoint( $value, $pattern ) {
+		if ( ! is_string( $value ) || 1 !== preg_match( $pattern, strtolower( $value ), $matches ) ) {
+			return '';
+		}
+
+		return $matches[1];
+	}
+
 	public static function normalize_public_base_url( $url ) {
-		$url   = rtrim( (string) $url, '/' );
-		$parts = wp_parse_url( $url );
+		$url       = (string) $url;
+		$parts     = wp_parse_url( $url );
+		$sanitized = esc_url_raw( $url, array( 'http', 'https' ) );
 
 		if (
 			! is_array( $parts ) ||
-			'https' !== strtolower( isset( $parts['scheme'] ) ? $parts['scheme'] : '' ) ||
+			! in_array( strtolower( isset( $parts['scheme'] ) ? $parts['scheme'] : '' ), array( 'http', 'https' ), true ) ||
 			empty( $parts['host'] ) ||
 			isset( $parts['user'] ) ||
 			isset( $parts['pass'] ) ||
+			isset( $parts['port'] ) ||
 			isset( $parts['query'] ) ||
-			isset( $parts['fragment'] )
+			isset( $parts['fragment'] ) ||
+			( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ||
+			$sanitized !== $url
 		) {
 			throw new ImageHostException( 'image_host_invalid_public_url' );
 		}
 
-		return $url;
+		return isset( $parts['path'] ) && '/' === $parts['path'] ? substr( $url, 0, -1 ) : $url;
 	}
 
 	public static function validate_upload( $bytes, $mime_type, $object_key ) {

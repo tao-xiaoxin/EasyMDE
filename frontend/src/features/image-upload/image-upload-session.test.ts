@@ -5,7 +5,6 @@ import type { ImageUploadInsertion, ImageUploadMimeType } from '../../contracts/
 import { createImageUploadSession } from './image-upload-session';
 
 const strings = {
-  backupFailed: 'Primary uploaded; backup failed',
   defaultAlt: 'image',
   dropFailed: 'Drop failed',
   dropTooLarge: 'Drop too large',
@@ -108,23 +107,19 @@ function setup(
 }
 
 describe('createImageUploadSession', () => {
-  it('reports a backup failure after inserting the successful primary URL', async () => {
+  it('does not insert Markdown when the server reports an exhausted backup failure', async () => {
     const session = setup(
       Promise.resolve({
-        alt: '',
-        status: 'uploaded',
-        title: '',
-        url: 'https://example.test/image.png',
-        warning: 'backup-upload-failed',
+        code: 'easymde_image_hosting_backup_upload_failed',
+        status: 'failed',
       }),
     );
 
     session.target.dispatchEvent(transferEvent('drop', new File(['image'], 'image.png', { type: 'image/png' })));
     await vi.waitFor(() => expect(session.statuses.at(-1)?.type).toBe('error'));
 
-    expect(session.getSnapshot().value).toContain('https://example.test/image.png');
-    expect(session.statuses.at(-1)?.message).toBe(strings.backupFailed);
-    expect(session.diagnostics).toContain('image-upload-backup-upload-failed');
+    expect(session.getSnapshot().value).toBe('Hello world');
+    expect(session.statuses.at(-1)?.message).toBe(strings.dropFailed);
   });
 
   it('uploads without reading or changing the document when insertion is disabled', async () => {

@@ -115,8 +115,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"cloudflareR2",
 	"aliyunOss",
 	"tencentCloudCos",
-	"r2ApiEndpoint",
-	"providerRegion",
 	"imageFallbackDomain",
 	"imageFallbackDomainDescription",
 	"cosBucketHint",
@@ -128,20 +126,28 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"secretKey",
 	"showSecret",
 	"hideSecret",
+	"revealingSecret",
+	"secretRevealFailed",
 	"primaryCredentialsConfigured",
 	"backupCredentialsConfigured",
-	"credentialsConfiguredHint",
-	"replaceCredentialsHint",
-	"connectionStatus",
-	"backupConnectionStatus",
-	"connectionPending",
-	"testingConnection",
-	"connected",
-	"connectionFailed",
-	"connectionStale",
-	"lastTested",
-	"testPrimaryConnection",
-	"testBackupConnection",
+	"uploadVerificationStatus",
+	"backupVerificationStatus",
+	"uploadVerificationPending",
+	"verifyingUpload",
+	"uploadVerified",
+	"uploadVerificationFailed",
+	"uploadVerificationStale",
+	"lastVerified",
+	"verifyPrimaryUpload",
+	"verifyBackupUpload",
+	"uploadVerificationSucceeded",
+	"uploadVerificationSuccessDescription",
+	"uploadVerificationFailureDescription",
+	"uploadVerificationFailureHint",
+	"insecureViewingDomainWarning",
+	"uploadedObjectPath",
+	"uploadedImageUrl",
+	"closeImageFeedback",
 	"imageHostFailureConfiguration",
 	"imageHostFailureAuthentication",
 	"imageHostFailureAuthorization",
@@ -183,16 +189,12 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"backupDomain",
 	"backupAccessKey",
 	"backupSecretKey",
+	"uploadRetryCount",
+	"uploadRetryCountDescription",
 	"showBackupAccessKey",
 	"hideBackupAccessKey",
 	"showBackupSecretKey",
 	"hideBackupSecretKey",
-	"keepSameObjectPath",
-	"keepSameObjectPathDescription",
-	"backupFailureHandling",
-	"backupFailureHandlingDescription",
-	"returnPrimaryUrlOnBackupFailure",
-	"failEntireUpload",
 	"uploadBehavior",
 	"insertMarkdownAfterUpload",
 	"compressImages",
@@ -201,11 +203,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"preserveOriginalFileNameDescription",
 	"copyImageUrl",
 	"copyImageUrlDescription",
-	"retryFailedUpload",
-	"doNotRetry",
-	"retryOnce",
-	"retryTwice",
-	"retryThreeTimes",
 	"maximumImageSize",
 	"originalImageSize",
 	"imageSize1920",
@@ -214,7 +211,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"allowedUploadFormats",
 	"allowedUploadFormatsDescription",
 	"uploadFormatRequired",
-	"closeImageFeedback",
 	"uploadFormatJpg",
 	"uploadFormatPng",
 	"uploadFormatWebp",
@@ -467,16 +463,25 @@ function assertEnumFields(
 	}
 }
 
+function hasExplicitUrlPort(value: string): boolean {
+	const authority = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+	if (authority.startsWith("[")) {
+		return authority.slice(authority.indexOf("]") + 1).startsWith(":");
+	}
+	return authority.includes(":");
+}
+
 function assertSettingsDomain(value: unknown, code: string): void {
 	if (value === "") return;
 	if (typeof value !== "string") throw new Error(code);
 	try {
 		const url = new URL(value);
 		if (
-			url.protocol !== "https:" ||
+			(url.protocol !== "http:" && url.protocol !== "https:") ||
 			url.username ||
 			url.password ||
 			url.port ||
+			hasExplicitUrlPort(value) ||
 			url.search ||
 			url.hash ||
 			(url.pathname !== "" && url.pathname !== "/")
@@ -500,23 +505,50 @@ function assertR2Endpoint(value: unknown, code: string): void {
 	}
 }
 
+function assertOssEndpoint(value: unknown, code: string): void {
+	if (value === "") return;
+	if (
+		typeof value !== "string" ||
+		!/^https:\/\/oss-[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.aliyuncs\.com$/.test(
+			value,
+		)
+	) {
+		throw new Error(code);
+	}
+}
+
+function assertCosEndpoint(value: unknown, code: string): void {
+	if (value === "") return;
+	if (
+		typeof value !== "string" ||
+		!/^https:\/\/cos\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myqcloud\.com$/.test(
+			value,
+		)
+	) {
+		throw new Error(code);
+	}
+}
+
 function assertProviderSpecificFields(
 	provider: unknown,
 	endpoint: unknown,
-	region: unknown,
 	prefix: "" | "backup",
 ): void {
 	const endpointKey = prefix ? "backupEndpoint" : "endpoint";
-	const regionKey = prefix ? "backupRegion" : "region";
 	const endpointCode = `settings-center-images-${endpointKey}-invalid`;
-	const regionCode = `settings-center-images-${regionKey}-invalid`;
 	if (provider === "cloudflare-r2") {
 		assertR2Endpoint(endpoint, endpointCode);
-		if (region !== "") throw new Error(regionCode);
+		return;
+	}
+	if (provider === "aliyun-oss") {
+		assertOssEndpoint(endpoint, endpointCode);
+		return;
+	}
+	if (provider === "tencent-cos") {
+		assertCosEndpoint(endpoint, endpointCode);
 		return;
 	}
 	if (endpoint !== "") throw new Error(endpointCode);
-	if (provider === "qiniu-kodo" && region !== "") throw new Error(regionCode);
 }
 
 const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
@@ -531,16 +563,6 @@ const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"name",
 	"ext",
 ]);
-
-function assertProviderRegion(value: unknown, code: string): void {
-	if (
-		typeof value !== "string" ||
-		value.length > 64 ||
-		(value !== "" && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value))
-	) {
-		throw new Error(code);
-	}
-}
 
 function assertImageFileNameRule(value: unknown): void {
 	if (typeof value !== "string" || value.length === 0 || value.length > 160) {
@@ -678,22 +700,17 @@ export function parseSettingsCenterSettings(
 	const imageStrings = {
 		service: 32,
 		endpoint: 255,
-		region: 64,
 		bucket: 128,
 		domain: 255,
-		fallbackDomain: 255,
 		accessKey: 255,
 		secretKey: 255,
 		fileNameRule: 160,
 		backupService: 32,
 		backupEndpoint: 255,
-		backupRegion: 64,
 		backupBucket: 128,
 		backupDomain: 255,
 		backupAccessKey: 255,
 		backupSecretKey: 255,
-		backupFailureMode: 32,
-		retryCount: 16,
 		maxImageSize: 16,
 		insertFormat: 16,
 		altSource: 16,
@@ -701,7 +718,6 @@ export function parseSettingsCenterSettings(
 	};
 	const imageBooleans = [
 		"backupEnabled",
-		"backupSameObjectKey",
 		"insertMarkdown",
 		"compressImages",
 		"preserveFileName",
@@ -710,22 +726,27 @@ export function parseSettingsCenterSettings(
 	];
 	const images = parseSettingsStringFields(root, "images", imageStrings);
 	parseSettingsBooleanFields(images, "images", imageBooleans);
+	if (
+		!Number.isInteger(images.uploadRetryCount) ||
+		(images.uploadRetryCount as number) < 0 ||
+		(images.uploadRetryCount as number) > 5
+	) {
+		throw new Error("settings-center-images-uploadRetryCount-invalid");
+	}
 	assertExactKeys(
 		images,
-		[...Object.keys(imageStrings), ...imageBooleans, "uploadFormats"],
+		[
+			...Object.keys(imageStrings),
+			...imageBooleans,
+			"uploadRetryCount",
+			"uploadFormats",
+		],
 		"settings-center-images-settings-invalid",
-	);
-	assertProviderRegion(images.region, "settings-center-images-region-invalid");
-	assertProviderRegion(
-		images.backupRegion,
-		"settings-center-images-backupRegion-invalid",
 	);
 	assertImageFileNameRule(images.fileNameRule);
 	assertEnumFields(images, "images", {
 		service: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
 		backupService: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
-		backupFailureMode: ["return-primary-url"],
-		retryCount: ["none"],
 		maxImageSize: ["original", "1920", "2560", "3840"],
 		insertFormat: ["markdown", "url"],
 		altSource: ["filename", "empty"],
@@ -733,23 +754,13 @@ export function parseSettingsCenterSettings(
 	});
 	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");
 	assertSettingsDomain(
-		images.fallbackDomain,
-		"settings-center-images-fallbackDomain-invalid",
-	);
-	assertSettingsDomain(
 		images.backupDomain,
 		"settings-center-images-backupDomain-invalid",
 	);
-	assertProviderSpecificFields(
-		images.service,
-		images.endpoint,
-		images.region,
-		"",
-	);
+	assertProviderSpecificFields(images.service, images.endpoint, "");
 	assertProviderSpecificFields(
 		images.backupService,
 		images.backupEndpoint,
-		images.backupRegion,
 		"backup",
 	);
 	const uploadFormats = parseObject(
@@ -913,7 +924,7 @@ export function parseSettingsCenterBootstrap(
 		"transferFileSelectedNotice",
 		"transferChecksSummary",
 		"transferChecksPassed",
-		"lastTested",
+		"lastVerified",
 	] as const) {
 		if ((strings[key].match(/%s/g) ?? []).length !== 1) {
 			throw new Error(`settings-center-${key}-template-invalid`);
@@ -927,13 +938,21 @@ export function parseSettingsCenterBootstrap(
 				api.actionNonce,
 				"settings-center-api-action-nonce-invalid",
 			),
-			imageHostingActionNonce: parseString(
-				api.imageHostingActionNonce,
+			imageHostingVerificationActionNonce: parseString(
+				api.imageHostingVerificationActionNonce,
 				"settings-center-image-hosting-action-nonce-invalid",
 			),
-			imageHostingConnectionUrl: parseString(
-				api.imageHostingConnectionUrl,
+			imageHostingVerificationUrl: parseString(
+				api.imageHostingVerificationUrl,
 				"settings-center-image-hosting-url-invalid",
+			),
+			imageHostingSecretRevealActionNonce: parseString(
+				api.imageHostingSecretRevealActionNonce,
+				"settings-center-image-hosting-secret-action-nonce-invalid",
+			),
+			imageHostingSecretRevealUrl: parseString(
+				api.imageHostingSecretRevealUrl,
+				"settings-center-image-hosting-secret-url-invalid",
 			),
 			settingsUrl: parseString(
 				api.settingsUrl,

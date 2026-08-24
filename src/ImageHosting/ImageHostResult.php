@@ -26,10 +26,6 @@ final class ImageHostResult {
 		return new self( true, $provider, $key, $url, '' );
 	}
 
-	public static function connected( $provider ) {
-		return new self( true, $provider, '', '', '' );
-	}
-
 	public static function failed( $provider, $error_code ) {
 		return new self( false, $provider, '', '', $error_code );
 	}

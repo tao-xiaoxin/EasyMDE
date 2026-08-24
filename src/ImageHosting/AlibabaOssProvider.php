@@ -14,6 +14,7 @@ final class AlibabaOssProvider {
 	const PROVIDER_ID = 'aliyun-oss';
 
 	private $transport;
+	private $endpoint_host;
 	private $region;
 	private $access_key_id;
 	private $secret_access_key;
@@ -23,7 +24,7 @@ final class AlibabaOssProvider {
 
 	public function __construct(
 		HttpTransport $transport,
-		$region,
+		$endpoint,
 		$access_key_id,
 		$secret_access_key,
 		$bucket_name,
@@ -31,7 +32,7 @@ final class AlibabaOssProvider {
 		?callable $clock = null
 	) {
 		if (
-			! $this->is_valid_region( $region ) ||
+			! ImageHostProviderSupport::validate_oss_endpoint( $endpoint ) ||
 			! $this->is_valid_bucket_name( $bucket_name ) ||
 			! ImageHostProviderSupport::validate_credential( $access_key_id ) ||
 			! ImageHostProviderSupport::validate_credential( $secret_access_key )
@@ -40,11 +41,12 @@ final class AlibabaOssProvider {
 		}
 
 		$this->transport         = $transport;
-		$this->region            = $region;
+		$this->endpoint_host     = substr( strtolower( $endpoint ), 8 );
+		$this->region            = ImageHostProviderSupport::region_from_oss_endpoint( $endpoint );
 		$this->access_key_id     = $access_key_id;
 		$this->secret_access_key = $secret_access_key;
 		$this->bucket_name       = $bucket_name;
-		$this->public_base_url   = ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
+		$this->public_base_url   = '' === $public_base_url ? '' : ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
 		$this->clock             = $clock;
 		if ( null === $this->clock ) {
 			$this->clock = static function () {
@@ -54,6 +56,9 @@ final class AlibabaOssProvider {
 	}
 
 	public function upload( $bytes, $mime_type, $object_key ) {
+		if ( '' === $this->public_base_url ) {
+			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_invalid_public_url' );
+		}
 		$input_error = ImageHostProviderSupport::validate_upload( $bytes, $mime_type, $object_key );
 		if ( '' !== $input_error ) {
 			return ImageHostResult::failed( self::PROVIDER_ID, $input_error );
@@ -74,18 +79,6 @@ final class AlibabaOssProvider {
 		);
 	}
 
-	public function probe() {
-		$response = $this->send_signed_request( 'GET', '', array( 'bucketInfo' => '' ), '', '' );
-		if ( ! $response->is_success() || ! $this->is_success_status( $response->get_status_code() ) ) {
-			return ImageHostResult::failed(
-				self::PROVIDER_ID,
-				ImageHostProviderSupport::response_error_code( $response, 'aliyun_oss_probe_rejected' )
-			);
-		}
-
-		return ImageHostResult::connected( self::PROVIDER_ID );
-	}
-
 	private function send_signed_request( $method, $object_key, array $query, $body, $mime_type ) {
 		$now = call_user_func( $this->clock );
 		if ( ! $now instanceof DateTimeImmutable ) {
@@ -93,7 +86,7 @@ final class AlibabaOssProvider {
 		}
 
 		$now            = $now->setTimezone( new DateTimeZone( 'UTC' ) );
-		$host           = $this->bucket_name . '.oss-' . $this->region . '.aliyuncs.com';
+		$host           = $this->bucket_name . '.' . $this->endpoint_host;
 		$request_path   = '/' . ( '' === $object_key ? '' : ImageHostProviderSupport::encode_object_key( $object_key ) );
 		$canonical_path = '/' . rawurlencode( $this->bucket_name ) . $request_path;
 		$query_string   = $this->canonical_query( $query );
@@ -120,10 +113,6 @@ final class AlibabaOssProvider {
 		);
 
 		$url = 'https://' . $host . $request_path;
-		if ( array_key_exists( 'bucketInfo', $query ) ) {
-			$url .= '?bucketInfo';
-		}
-
 		return $this->transport->request(
 			$method,
 			$url,
@@ -181,10 +170,6 @@ final class AlibabaOssProvider {
 		// The protocol requires the binary MD5 digest encoded as standard Base64.
 		// phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode
 		return base64_encode( md5( $body, true ) );
-	}
-
-	private function is_valid_region( $region ) {
-		return is_string( $region ) && 1 === preg_match( '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $region );
 	}
 
 	private function is_valid_bucket_name( $bucket_name ) {

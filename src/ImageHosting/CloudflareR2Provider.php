@@ -46,7 +46,7 @@ final class CloudflareR2Provider {
 		$this->access_key_id     = $access_key_id;
 		$this->secret_access_key = $secret_access_key;
 		$this->bucket_name       = $bucket_name;
-		$this->public_base_url   = ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
+		$this->public_base_url   = '' === $public_base_url ? '' : ImageHostProviderSupport::normalize_public_base_url( $public_base_url );
 		$this->clock             = $clock;
 		if ( null === $this->clock ) {
 			$this->clock = static function () {
@@ -56,6 +56,9 @@ final class CloudflareR2Provider {
 	}
 
 	public function upload( $bytes, $mime_type, $object_key ) {
+		if ( '' === $this->public_base_url ) {
+			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_invalid_public_url' );
+		}
 		$input_error = ImageHostProviderSupport::validate_upload( $bytes, $mime_type, $object_key );
 		if ( '' !== $input_error ) {
 			return ImageHostResult::failed( self::PROVIDER_ID, $input_error );
@@ -75,19 +78,6 @@ final class CloudflareR2Provider {
 			$object_key,
 			ImageHostProviderSupport::public_url( $this->public_base_url, $object_key )
 		);
-	}
-
-	public function probe() {
-		$path     = '/' . rawurlencode( $this->bucket_name );
-		$response = $this->send_signed_request( 'HEAD', $path, '', '' );
-		if ( ! $response->is_success() || ! $this->is_success_status( $response->get_status_code() ) ) {
-			return ImageHostResult::failed(
-				self::PROVIDER_ID,
-				ImageHostProviderSupport::response_error_code( $response, 'r2_probe_rejected' )
-			);
-		}
-
-		return ImageHostResult::connected( self::PROVIDER_ID );
 	}
 
 	private function send_signed_request( $method, $path, $body, $mime_type ) {

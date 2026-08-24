@@ -2,9 +2,12 @@
 
 namespace EasyMDE\Rest;
 
+use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
+use EasyMDE\ImageHosting\ImageHostProviderSupport;
 use EasyMDE\Support\Capabilities;
 use WP_Error;
 use WP_REST_Request;
+use WP_REST_Response;
 use WP_REST_Server;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -13,25 +16,31 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class ImageHostingController {
 
-	const CONNECTION_NONCE_ACTION = 'easymde_test_image_hosting';
-	const UPLOAD_NONCE_ACTION     = 'easymde_upload_image_hosting';
-	const NONCE_HEADER            = 'X-EasyMDE-Image-Hosting-Nonce';
-	const MAX_IMAGE_BYTES         = 10485760;
-	const MAX_CONNECTION_BODY     = 1024;
+	const VERIFICATION_NONCE_ACTION  = 'easymde_verify_image_hosting_upload';
+	const SECRET_REVEAL_NONCE_ACTION = 'easymde_reveal_image_hosting_secret';
+	const UPLOAD_NONCE_ACTION        = 'easymde_upload_image_hosting';
+	const NONCE_HEADER               = 'X-EasyMDE-Image-Hosting-Nonce';
+	const SECRET_NONCE_HEADER        = 'X-EasyMDE-Image-Hosting-Secret-Nonce';
+	const MAX_IMAGE_BYTES            = 10485760;
+	const MAX_VERIFICATION_BODY      = 8192;
 
 	private $capabilities;
 	private $settings_provider;
 	private $runtime;
 
 	/**
-	 * The settings provider must expose get_image_hosting_settings().
-	 * The runtime must expose test_connection() and upload().
+	 * The settings provider must expose get_image_hosting_settings() and get_image_hosting_secret().
+	 * The runtime must expose validate_upload() and upload().
 	 */
 	public function __construct( Capabilities $capabilities, $settings_provider, $runtime ) {
-		if ( ! is_object( $settings_provider ) || ! is_callable( array( $settings_provider, 'get_image_hosting_settings' ) ) ) {
+		if (
+			! is_object( $settings_provider ) ||
+			! is_callable( array( $settings_provider, 'get_image_hosting_settings' ) ) ||
+			! is_callable( array( $settings_provider, 'get_image_hosting_secret' ) )
+		) {
 			throw new \InvalidArgumentException( 'The image-hosting settings provider is invalid.' );
 		}
-		if ( ! is_object( $runtime ) || ! is_callable( array( $runtime, 'test_connection' ) ) || ! is_callable( array( $runtime, 'upload' ) ) ) {
+		if ( ! is_object( $runtime ) || ! is_callable( array( $runtime, 'validate_upload' ) ) || ! is_callable( array( $runtime, 'upload' ) ) ) {
 			throw new \InvalidArgumentException( 'The image-hosting runtime is invalid.' );
 		}
 
@@ -43,11 +52,11 @@ final class ImageHostingController {
 	public function register_routes() {
 		register_rest_route(
 			'easymde/v1',
-			'/image-hosting/connection',
+			'/image-hosting/verification',
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
-				'callback'            => array( $this, 'handle_connection_request' ),
-				'permission_callback' => array( $this, 'can_test_connection' ),
+				'callback'            => array( $this, 'handle_verification_request' ),
+				'permission_callback' => array( $this, 'can_verify_upload' ),
 			)
 		);
 
@@ -67,20 +76,33 @@ final class ImageHostingController {
 				),
 			)
 		);
+
+		register_rest_route(
+			'easymde/v1',
+			'/image-hosting/secret',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_secret_reveal_request' ),
+				'permission_callback' => array( $this, 'can_reveal_secret' ),
+			)
+		);
 	}
 
-	public function can_test_connection( WP_REST_Request $request ) {
+	public function can_verify_upload( WP_REST_Request $request ) {
 		$capability = $this->capabilities->can_manage_settings( $request );
 		if ( is_wp_error( $capability ) ) {
 			return $capability;
 		}
 
-		if ( ! $this->has_valid_nonce( $request, self::CONNECTION_NONCE_ACTION ) ) {
+		if (
+			! $this->has_valid_nonce( $request, 'wp_rest', 'X-WP-Nonce' ) ||
+			! $this->has_valid_nonce( $request, self::VERIFICATION_NONCE_ACTION )
+		) {
 			return $this->invalid_nonce_error();
 		}
 
 		$content_length = absint( $request->get_header( 'Content-Length' ) );
-		if ( $content_length > self::MAX_CONNECTION_BODY || strlen( (string) $request->get_body() ) > self::MAX_CONNECTION_BODY ) {
+		if ( $content_length > self::MAX_VERIFICATION_BODY || strlen( (string) $request->get_body() ) > self::MAX_VERIFICATION_BODY ) {
 			return new WP_Error(
 				'easymde_image_hosting_payload_too_large',
 				__( 'The image-hosting request is too large.', 'easymde' ),
@@ -102,13 +124,40 @@ final class ImageHostingController {
 			: $this->invalid_nonce_error();
 	}
 
-	public function handle_connection_request( WP_REST_Request $request ) {
+	public function can_reveal_secret( WP_REST_Request $request ) {
+		$capability = $this->capabilities->can_manage_settings( $request );
+		if ( is_wp_error( $capability ) ) {
+			return $capability;
+		}
+
+		if ( ! $this->has_valid_nonce( $request, 'wp_rest', 'X-WP-Nonce' ) ) {
+			return $this->invalid_nonce_error();
+		}
+
+		return $this->has_valid_nonce( $request, self::SECRET_REVEAL_NONCE_ACTION, self::SECRET_NONCE_HEADER )
+			? true
+			: $this->invalid_nonce_error();
+	}
+
+	public function handle_verification_request( WP_REST_Request $request ) {
 		$payload = $request->get_json_params();
-		if ( ! is_array( $payload ) || ! $this->has_exact_keys( $payload, array( 'target' ) ) || ! in_array( $payload['target'], array( 'primary', 'backup' ), true ) ) {
+		if (
+			! is_array( $payload ) ||
+			! $this->has_exact_keys( $payload, array( 'target', 'revision', 'settings' ) ) ||
+			! in_array( $payload['target'], array( 'primary', 'backup' ), true ) ||
+			! is_int( $payload['revision'] ) ||
+			$payload['revision'] < 0 ||
+			! is_array( $payload['settings'] ) ||
+			! $this->is_valid_verification_draft( $payload['settings'] )
+		) {
 			return $this->invalid_request_error();
 		}
 
-		$settings = $this->get_runtime_settings();
+		$stored = $this->get_runtime_settings();
+		if ( is_wp_error( $stored ) ) {
+			return $stored;
+		}
+		$settings = $this->runtime_settings_from_verification_draft( $payload, $stored );
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
@@ -123,25 +172,70 @@ final class ImageHostingController {
 			);
 		}
 
-		$result = $this->runtime->test_connection( $settings, $target );
+		$result = $this->runtime->validate_upload( $settings, $target );
 		if ( is_wp_error( $result ) ) {
 			if ( 'easymde_image_hosting_duplicate_destination' === $result->get_error_code() ) {
 				return $this->duplicate_destination_error();
 			}
-			return $this->connection_failed_error();
+			return $this->validation_upload_failed_error();
 		}
-		if ( ! is_array( $result ) || ! isset( $result['status'] ) || 'connected' !== $result['status'] ) {
+		if (
+			! is_array( $result ) ||
+			! $this->has_exact_keys( $result, array( 'status', 'path', 'url' ) ) ||
+				'uploaded' !== $result['status'] ||
+				! is_string( $result['path'] ) ||
+				! ImageHostProviderSupport::is_valid_object_key( $result['path'] )
+			) {
+				return $this->invalid_runtime_result_error();
+		}
+			$url          = is_string( $result['url'] ) ? $this->validated_upload_url( $result['url'] ) : '';
+			$expected_url = ImageHostProviderSupport::public_url( $settings['primary']['domain'], $result['path'] );
+		if ( '' === $url || $expected_url !== $url ) {
 			return $this->invalid_runtime_result_error();
 		}
 
 		return rest_ensure_response(
 			array(
-				'target'   => $target,
-				'service'  => $service,
-				'status'   => 'connected',
-				'testedAt' => gmdate( 'c' ),
+				'target' => $target,
+				'status' => 'uploaded',
+				'path'   => $result['path'],
+				'url'    => $url,
 			)
 		);
+	}
+
+	public function handle_secret_reveal_request( WP_REST_Request $request ) {
+		$payload = $request->get_json_params();
+		if (
+			! is_array( $payload ) ||
+			! $this->has_exact_keys( $payload, array( 'target', 'field', 'revision' ) ) ||
+			! in_array( $payload['target'], array( 'primary', 'backup' ), true ) ||
+			! in_array( $payload['field'], array( 'accessKey', 'secretKey' ), true ) ||
+			! is_int( $payload['revision'] ) ||
+			$payload['revision'] < 0
+		) {
+			return $this->invalid_request_error();
+		}
+
+		$value = $this->settings_provider->get_image_hosting_secret(
+			$payload['target'],
+			$payload['field'],
+			$payload['revision']
+		);
+		if ( is_wp_error( $value ) || ! is_string( $value ) || '' === $value || strlen( $value ) > 255 ) {
+			return $this->secret_unavailable_error();
+		}
+
+		$response = new WP_REST_Response(
+			array(
+				'target' => $payload['target'],
+				'field'  => $payload['field'],
+				'value'  => $value,
+			)
+		);
+		$response->header( 'Cache-Control', 'no-store, private' );
+
+		return $response;
 	}
 
 	public function handle_upload_request( WP_REST_Request $request ) {
@@ -165,7 +259,7 @@ final class ImageHostingController {
 			return $this->upload_failed_error();
 		}
 
-		return $this->project_upload_result( $result );
+		return $this->project_upload_result( $result, $settings );
 	}
 
 	private function get_runtime_settings() {
@@ -281,52 +375,194 @@ final class ImageHostingController {
 		return in_array( $extension, $formats, true );
 	}
 
-	private function project_upload_result( $result ) {
-		if ( ! is_array( $result ) || ! isset( $result['url'], $result['fallbackUrl'], $result['alt'], $result['title'], $result['backup'] ) || ! is_array( $result['backup'] ) ) {
+	private function is_valid_verification_draft( array $draft ) {
+		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' );
+		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
+			return false;
+		}
+
+		foreach ( array( 'backupEnabled', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ) as $field ) {
+			if ( ! is_bool( $draft[ $field ] ) ) {
+				return false;
+			}
+		}
+		if ( ! is_int( $draft['uploadRetryCount'] ) || $draft['uploadRetryCount'] < 0 || $draft['uploadRetryCount'] > 5 ) {
+			return false;
+		}
+		$limits = array(
+			'service'         => 32,
+			'endpoint'        => 255,
+			'bucket'          => 128,
+			'domain'          => 255,
+			'accessKey'       => 255,
+			'secretKey'       => 255,
+			'fileNameRule'    => 160,
+			'backupService'   => 32,
+			'backupEndpoint'  => 255,
+			'backupBucket'    => 128,
+			'backupDomain'    => 255,
+			'backupAccessKey' => 255,
+			'backupSecretKey' => 255,
+			'maxImageSize'    => 16,
+			'insertFormat'    => 32,
+			'altSource'       => 32,
+			'captionMode'     => 32,
+		);
+		foreach ( $limits as $field => $limit ) {
+			if ( ! is_string( $draft[ $field ] ) || strlen( $draft[ $field ] ) > $limit || 1 === preg_match( '/[\x00-\x1F\x7F]/', $draft[ $field ] ) ) {
+				return false;
+			}
+		}
+		if (
+			! $this->is_valid_provider_coordinates( $draft['service'], $draft['endpoint'] ) ||
+			! $this->is_valid_provider_coordinates( $draft['backupService'], $draft['backupEndpoint'] ) ||
+			! $this->is_valid_public_result_url( $draft['domain'], true ) ||
+			! $this->is_valid_public_result_url( $draft['backupDomain'], true ) ||
+			! in_array( $draft['maxImageSize'], array( 'original', '1920', '2560', '3840' ), true ) ||
+			! in_array( $draft['insertFormat'], array( 'markdown', 'url' ), true ) ||
+			! in_array( $draft['altSource'], array( 'filename', 'empty' ), true ) ||
+			! in_array( $draft['captionMode'], array( 'none', 'filename' ), true ) ||
+			! is_array( $draft['uploadFormats'] ) ||
+			! $this->has_exact_keys( $draft['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) )
+		) {
+			return false;
+		}
+		foreach ( $draft['uploadFormats'] as $enabled ) {
+			if ( ! is_bool( $enabled ) ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private function is_valid_provider_coordinates( $service, $endpoint ) {
+		if ( 'qiniu-kodo' === $service ) {
+			return '' === $endpoint;
+		}
+
+		return in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) &&
+			( '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint ) );
+	}
+
+	private function runtime_settings_from_verification_draft( array $payload, array $stored ) {
+		$draft           = $payload['settings'];
+		$target          = $payload['target'];
+		$primary         = $this->verification_config_from_draft( $draft, false );
+		$backup          = array( 'enabled' => $draft['backupEnabled'] ) + $this->verification_config_from_draft( $draft, true );
+		$selected        = 'primary' === $target ? $primary : $backup;
+		$stored_selected = isset( $stored[ $target ] ) && is_array( $stored[ $target ] ) ? $stored[ $target ] : array();
+		$has_access      = '' !== $selected['accessKey'];
+		$has_secret      = '' !== $selected['secretKey'];
+
+		if ( $has_access !== $has_secret ) {
+			return $this->draft_credentials_required_error();
+		}
+		if ( ! $has_access ) {
+			$stored_revision = isset( $stored['revision'] ) && is_int( $stored['revision'] ) ? $stored['revision'] : -1;
+			if (
+				$payload['revision'] !== $stored_revision ||
+				! ImageHostDestinationIdentity::are_same( $selected, $stored_selected ) ||
+				! isset( $stored_selected['accessKey'], $stored_selected['secretKey'] ) ||
+				! ImageHostProviderSupport::validate_credential( $stored_selected['accessKey'] ) ||
+				! ImageHostProviderSupport::validate_credential( $stored_selected['secretKey'] )
+			) {
+				return $this->draft_credentials_required_error();
+			}
+			$selected['accessKey'] = $stored_selected['accessKey'];
+			$selected['secretKey'] = $stored_selected['secretKey'];
+		}
+
+		if ( 'primary' === $target ) {
+			$primary = $selected;
+		} else {
+			$backup = array( 'enabled' => $draft['backupEnabled'] ) + $selected;
+		}
+
+			return array(
+				'primary'      => $primary,
+				'backup'       => $backup,
+				'fileNameRule' => $draft['fileNameRule'],
+			);
+	}
+
+	private function verification_config_from_draft( array $draft, $backup ) {
+		return array(
+			'service'   => $draft[ $backup ? 'backupService' : 'service' ],
+			'endpoint'  => $draft[ $backup ? 'backupEndpoint' : 'endpoint' ],
+			'bucket'    => $draft[ $backup ? 'backupBucket' : 'bucket' ],
+			'domain'    => $draft[ $backup ? 'backupDomain' : 'domain' ],
+			'accessKey' => $draft[ $backup ? 'backupAccessKey' : 'accessKey' ],
+			'secretKey' => $draft[ $backup ? 'backupSecretKey' : 'secretKey' ],
+		);
+	}
+
+	private function project_upload_result( $result, array $settings ) {
+		if (
+			! is_array( $result ) ||
+			! $this->has_exact_keys( $result, array( 'url', 'path', 'alt', 'title', 'backup' ) ) ||
+			! is_array( $result['backup'] ) ||
+			! is_string( $result['path'] ) ||
+			! ImageHostProviderSupport::is_valid_object_key( $result['path'] ) ||
+			! isset( $settings['primary']['domain'] ) ||
+			! is_string( $settings['primary']['domain'] ) ||
+			! $this->is_valid_public_result_url( $settings['primary']['domain'], false )
+		) {
 			return $this->invalid_runtime_result_error();
 		}
 
-		$url          = is_string( $result['url'] ) ? esc_url_raw( $result['url'], array( 'https' ) ) : '';
-		$fallback_url = is_string( $result['fallbackUrl'] ) && $this->is_valid_https_result_url( $result['fallbackUrl'], true )
-			? $result['fallbackUrl']
-			: null;
+		$url          = is_string( $result['url'] ) ? $this->validated_upload_url( $result['url'] ) : '';
+		$expected_url = ImageHostProviderSupport::public_url( $settings['primary']['domain'], $result['path'] );
 		$alt          = is_string( $result['alt'] ) ? sanitize_text_field( $result['alt'] ) : null;
 		$title        = is_string( $result['title'] ) ? sanitize_text_field( $result['title'] ) : null;
 		$backup       = $this->project_backup_result( $result['backup'] );
-		if ( '' === $url || null === $fallback_url || null === $alt || null === $title || is_wp_error( $backup ) ) {
+		if ( '' === $url || $expected_url !== $url || null === $alt || null === $title || is_wp_error( $backup ) ) {
 			return $this->invalid_runtime_result_error();
 		}
 
 		return rest_ensure_response(
 			array(
-				'url'         => $url,
-				'fallbackUrl' => $fallback_url,
-				'alt'         => $alt,
-				'title'       => $title,
-				'backup'      => $backup,
+				'url'    => $url,
+				'alt'    => $alt,
+				'title'  => $title,
+				'backup' => $backup,
 			)
 		);
 	}
 
+	private function validated_upload_url( $url ) {
+		if ( '' === $url || strlen( $url ) > 2048 ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( $url );
+		if (
+			! is_array( $parts ) ||
+			! in_array( strtolower( isset( $parts['scheme'] ) ? $parts['scheme'] : '' ), array( 'http', 'https' ), true ) ||
+			empty( $parts['host'] ) ||
+			isset( $parts['user'] ) ||
+			isset( $parts['pass'] ) ||
+			isset( $parts['query'] ) ||
+			isset( $parts['fragment'] )
+		) {
+			return '';
+		}
+
+		$sanitized = esc_url_raw( $url, array( 'http', 'https' ) );
+
+		return $sanitized === $url ? $url : '';
+	}
+
 	private function project_backup_result( array $backup ) {
 		$status = isset( $backup['status'] ) && is_string( $backup['status'] ) ? $backup['status'] : '';
-		if ( ! in_array( $status, array( 'disabled', 'uploaded', 'failed' ), true ) ) {
+		if ( ! in_array( $status, array( 'disabled', 'uploaded' ), true ) ) {
 			return $this->invalid_runtime_result_error();
 		}
 
-		$projected = array( 'status' => $status );
-		if ( 'failed' === $status ) {
-			if ( ! isset( $backup['code'] ) || 'easymde_image_hosting_backup_upload_failed' !== $backup['code'] ) {
-				return $this->invalid_runtime_result_error();
-			}
-
-			$projected['code'] = $backup['code'];
-		}
-
-		return $projected;
+		return array( 'status' => $status );
 	}
 
-	private function is_valid_https_result_url( $value, $allow_empty ) {
+	private function is_valid_public_result_url( $value, $allow_empty ) {
 		if ( ! is_string( $value ) || ( '' === $value && ! $allow_empty ) ) {
 			return false;
 		}
@@ -337,12 +573,14 @@ final class ImageHostingController {
 		$parts = wp_parse_url( $value );
 		return is_array( $parts ) &&
 			isset( $parts['scheme'], $parts['host'] ) &&
-			'https' === strtolower( (string) $parts['scheme'] ) &&
+			in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) &&
 			! isset( $parts['user'] ) &&
 			! isset( $parts['pass'] ) &&
+			! isset( $parts['port'] ) &&
 			! isset( $parts['query'] ) &&
 			! isset( $parts['fragment'] ) &&
-			esc_url_raw( $value, array( 'https' ) ) === $value;
+			( ! isset( $parts['path'] ) || '' === $parts['path'] || '/' === $parts['path'] ) &&
+			esc_url_raw( $value, array( 'http', 'https' ) ) === $value;
 	}
 
 	private function service_for_target( array $settings, $target ) {
@@ -353,8 +591,8 @@ final class ImageHostingController {
 			: '';
 	}
 
-	private function has_valid_nonce( WP_REST_Request $request, $action ) {
-		$nonce = $request->get_header( self::NONCE_HEADER );
+	private function has_valid_nonce( WP_REST_Request $request, $action, $header = self::NONCE_HEADER ) {
+		$nonce = $request->get_header( $header );
 
 		return is_string( $nonce ) && '' !== $nonce && wp_verify_nonce( $nonce, $action );
 	}
@@ -383,6 +621,14 @@ final class ImageHostingController {
 		);
 	}
 
+	private function draft_credentials_required_error() {
+		return new WP_Error(
+			'easymde_image_hosting_draft_credentials_required',
+			__( 'Enter both credentials for the changed image-hosting target before testing it.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
 	private function invalid_file_error() {
 		return new WP_Error(
 			'easymde_image_hosting_invalid_file',
@@ -391,11 +637,19 @@ final class ImageHostingController {
 		);
 	}
 
-	private function connection_failed_error() {
+	private function validation_upload_failed_error() {
 		return new WP_Error(
-			'easymde_image_hosting_connection_failed',
-			__( 'The image-hosting connection could not be verified.', 'easymde' ),
+			'easymde_image_hosting_validation_upload_failed',
+			__( 'The image-hosting validation image could not be uploaded.', 'easymde' ),
 			array( 'status' => 502 )
+		);
+	}
+
+	private function secret_unavailable_error() {
+		return new WP_Error(
+			'easymde_image_hosting_secret_unavailable',
+			__( 'The image-hosting configuration is unavailable.', 'easymde' ),
+			array( 'status' => 409 )
 		);
 	}
 

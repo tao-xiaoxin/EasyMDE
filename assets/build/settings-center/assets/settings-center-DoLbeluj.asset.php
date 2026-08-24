@@ -1,5 +1,5 @@
 <?php
 return array(
 	'dependencies' => array( 'wp-element' ),
-	'version'      => '317b39a9fd361ef2',
+	'version'      => '8c1474b6ccb441db',
 );

@@ -307,11 +307,13 @@ JS;
 			'schemaVersion'   => 2,
 			'closeUrl'        => admin_url( 'options-general.php' ),
 			'api'             => array(
-				'settingsUrl'               => rest_url( 'easymde/v1/settings' ),
-				'nonce'                     => wp_create_nonce( 'wp_rest' ),
-				'actionNonce'               => wp_create_nonce( 'easymde_update_settings' ),
-				'imageHostingConnectionUrl' => rest_url( 'easymde/v1/image-hosting/connection' ),
-				'imageHostingActionNonce'   => wp_create_nonce( 'easymde_test_image_hosting' ),
+				'settingsUrl'                         => rest_url( 'easymde/v1/settings' ),
+				'nonce'                               => wp_create_nonce( 'wp_rest' ),
+				'actionNonce'                         => wp_create_nonce( 'easymde_update_settings' ),
+				'imageHostingVerificationUrl'         => rest_url( 'easymde/v1/image-hosting/verification' ),
+				'imageHostingVerificationActionNonce' => wp_create_nonce( 'easymde_verify_image_hosting_upload' ),
+				'imageHostingSecretRevealUrl'         => rest_url( 'easymde/v1/image-hosting/secret' ),
+				'imageHostingSecretRevealActionNonce' => wp_create_nonce( 'easymde_reveal_image_hosting_secret' ),
 			),
 			'assets'          => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),

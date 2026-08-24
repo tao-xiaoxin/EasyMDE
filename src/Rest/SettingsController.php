@@ -127,7 +127,7 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'service', 'endpoint', 'region', 'bucket', 'domain', 'fallbackDomain', 'accessKey', 'secretKey', 'fileNameRule', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupRegion', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'backupSameObjectKey', 'backupFailureMode', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'retryCount', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
+			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
 			'markdown'  => array( 'wordWrap', 'lineNumbers', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
@@ -152,28 +152,23 @@ final class SettingsController {
 				'summaryMode'       => 16,
 			),
 			'images'   => array(
-				'service'           => 32,
-				'endpoint'          => 255,
-				'region'            => 63,
-				'bucket'            => 128,
-				'domain'            => 255,
-				'fallbackDomain'    => 255,
-				'accessKey'         => 255,
-				'secretKey'         => 255,
-				'fileNameRule'      => 160,
-				'backupService'     => 32,
-				'backupEndpoint'    => 255,
-				'backupRegion'      => 63,
-				'backupBucket'      => 128,
-				'backupDomain'      => 255,
-				'backupAccessKey'   => 255,
-				'backupSecretKey'   => 255,
-				'backupFailureMode' => 32,
-				'retryCount'        => 16,
-				'maxImageSize'      => 16,
-				'insertFormat'      => 16,
-				'altSource'         => 16,
-				'captionMode'       => 16,
+				'service'         => 32,
+				'endpoint'        => 255,
+				'bucket'          => 128,
+				'domain'          => 255,
+				'accessKey'       => 255,
+				'secretKey'       => 255,
+				'fileNameRule'    => 160,
+				'backupService'   => 32,
+				'backupEndpoint'  => 255,
+				'backupBucket'    => 128,
+				'backupDomain'    => 255,
+				'backupAccessKey' => 255,
+				'backupSecretKey' => 255,
+				'maxImageSize'    => 16,
+				'insertFormat'    => 16,
+				'altSource'       => 16,
+				'captionMode'     => 16,
 			),
 			'markdown' => array(
 				'editorTheme'     => 16,
@@ -187,7 +182,7 @@ final class SettingsController {
 		);
 		$boolean_fields = array(
 			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
-			'images'    => array( 'backupEnabled', 'backupSameObjectKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
+			'images'    => array( 'backupEnabled', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
 			'markdown'  => array( 'wordWrap', 'lineNumbers', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
@@ -204,6 +199,15 @@ final class SettingsController {
 				if ( ! is_bool( $value[ $section ][ $field ] ) ) {
 					return $this->invalid_payload_error();
 				}
+			}
+		}
+		foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
+			if (
+				! is_int( $value['images'][ $retry_field ] ) ||
+				$value['images'][ $retry_field ] < 0 ||
+				$value['images'][ $retry_field ] > 5
+			) {
+				return $this->invalid_payload_error();
 			}
 		}
 
@@ -244,14 +248,12 @@ final class SettingsController {
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),
 			'images'   => array(
-				'service'           => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
-				'backupService'     => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
-				'backupFailureMode' => array( 'return-primary-url' ),
-				'retryCount'        => array( 'none' ),
-				'maxImageSize'      => array( 'original', '1920', '2560', '3840' ),
-				'insertFormat'      => array( 'markdown', 'url' ),
-				'altSource'         => array( 'filename', 'empty' ),
-				'captionMode'       => array( 'none', 'filename' ),
+				'service'       => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'backupService' => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'maxImageSize'  => array( 'original', '1920', '2560', '3840' ),
+				'insertFormat'  => array( 'markdown', 'url' ),
+				'altSource'     => array( 'filename', 'empty' ),
+				'captionMode'   => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
 				'editorTheme'     => array( 'system', 'light', 'dark' ),
@@ -269,24 +271,14 @@ final class SettingsController {
 			}
 		}
 
-		foreach ( array( 'domain', 'fallbackDomain', 'backupDomain' ) as $field ) {
+		foreach ( array( 'domain', 'backupDomain' ) as $field ) {
 			if ( ! $this->is_valid_domain( $value['images'][ $field ] ) ) {
 				return $this->invalid_payload_error();
 			}
 		}
-		foreach ( array( 'endpoint', 'backupEndpoint' ) as $field ) {
-			if ( ! $this->is_valid_r2_endpoint( $value['images'][ $field ] ) ) {
-				return $this->invalid_payload_error();
-			}
-		}
-		foreach ( array( 'region', 'backupRegion' ) as $field ) {
-			if ( ! $this->is_valid_region( $value['images'][ $field ] ) ) {
-				return $this->invalid_payload_error();
-			}
-		}
 		if (
-			! $this->is_valid_provider_coordinates( $value['images']['service'], $value['images']['endpoint'], $value['images']['region'] ) ||
-			! $this->is_valid_provider_coordinates( $value['images']['backupService'], $value['images']['backupEndpoint'], $value['images']['backupRegion'] )
+			! $this->is_valid_provider_coordinates( $value['images']['service'], $value['images']['endpoint'] ) ||
+			! $this->is_valid_provider_coordinates( $value['images']['backupService'], $value['images']['backupEndpoint'] )
 		) {
 			return $this->invalid_payload_error();
 		}
@@ -326,32 +318,21 @@ final class SettingsController {
 			return false;
 		}
 
-		if ( 'https' !== strtolower( (string) $parts['scheme'] ) ) {
+		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
 			return false;
 		}
 
-		$url = esc_url_raw( $value, array( 'https' ) );
+		$url = esc_url_raw( $value, array( 'http', 'https' ) );
 
 		return is_string( $url ) && '' !== $url;
 	}
 
-	private function is_valid_r2_endpoint( $value ) {
-		return is_string( $value ) && ( '' === $value || ImageHostProviderSupport::validate_r2_endpoint( $value ) );
-	}
-
-	private function is_valid_region( $value ) {
-		return is_string( $value ) && ( '' === $value || 1 === preg_match( '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $value ) );
-	}
-
-	private function is_valid_provider_coordinates( $service, $endpoint, $region ) {
-		if ( 'cloudflare-r2' === $service ) {
-			return '' === $region;
-		}
+	private function is_valid_provider_coordinates( $service, $endpoint ) {
 		if ( 'qiniu-kodo' === $service ) {
-			return '' === $endpoint && '' === $region;
-		}
-		if ( in_array( $service, array( 'aliyun-oss', 'tencent-cos' ), true ) ) {
 			return '' === $endpoint;
+		}
+		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
+			return '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint );
 		}
 
 		return false;

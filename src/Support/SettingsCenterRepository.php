@@ -41,15 +41,11 @@ final class SettingsCenterRepository {
 		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
 		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
 
-		$settings                                  = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
-		$settings['images']['endpoint']            = $this->sanitize_endpoint( $settings['images']['endpoint'] );
-		$settings['images']['region']              = $this->sanitize_region( $settings['images']['region'] );
-		$settings['images']['domain']              = $this->sanitize_domain( $settings['images']['domain'] );
-		$settings['images']['fallbackDomain']      = $this->sanitize_domain( $settings['images']['fallbackDomain'] );
-		$settings['images']['backupEndpoint']      = $this->sanitize_endpoint( $settings['images']['backupEndpoint'] );
-		$settings['images']['backupRegion']        = $this->sanitize_region( $settings['images']['backupRegion'] );
-		$settings['images']['backupDomain']        = $this->sanitize_domain( $settings['images']['backupDomain'] );
-		$settings['images']['backupSameObjectKey'] = true;
+		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
+		$settings['images']['endpoint']       = $this->sanitize_endpoint( $settings['images']['endpoint'] );
+		$settings['images']['domain']         = $this->sanitize_domain( $settings['images']['domain'] );
+		$settings['images']['backupEndpoint'] = $this->sanitize_endpoint( $settings['images']['backupEndpoint'] );
+		$settings['images']['backupDomain']   = $this->sanitize_domain( $settings['images']['backupDomain'] );
 		if ( ! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ) {
 			$settings['images']['fileNameRule'] = $defaults['images']['fileNameRule'];
 		}
@@ -148,6 +144,48 @@ final class SettingsCenterRepository {
 		return $this->image_hosting_settings_from_stored( $this->options->get_editor_settings() );
 	}
 
+	/**
+	 * Return one current stored image-hosting credential for an authorized caller.
+	 *
+	 * This value must never be included in Bootstrap, ordinary settings responses,
+	 * exports, logs, diagnostics, or errors.
+	 *
+	 * @param string $target   Credential target.
+	 * @param string $field    Credential field.
+	 * @param int    $revision Expected settings revision.
+	 * @return string|WP_Error
+	 */
+	public function get_image_hosting_secret( $target, $field, $revision ) {
+		$field_map = array(
+			'primary' => array(
+				'accessKey' => 'accessKey',
+				'secretKey' => 'secretKey',
+			),
+			'backup'  => array(
+				'accessKey' => 'backupAccessKey',
+				'secretKey' => 'backupSecretKey',
+			),
+		);
+		$stored    = $this->options->get_editor_settings();
+
+		if (
+			! is_int( $revision ) ||
+			$revision !== $this->revision_from_stored( $stored ) ||
+			! isset( $field_map[ $target ][ $field ] ) ||
+			! isset( $stored['settings_center']['images'] ) ||
+			! is_array( $stored['settings_center']['images'] )
+		) {
+			return $this->secret_unavailable_error();
+		}
+
+		$stored_field = $field_map[ $target ][ $field ];
+		$value        = isset( $stored['settings_center']['images'][ $stored_field ] )
+			? $this->bounded_text( $stored['settings_center']['images'][ $stored_field ], 255 )
+			: '';
+
+		return '' !== $value ? $value : $this->secret_unavailable_error();
+	}
+
 	private function image_hosting_settings_from_stored( array $stored ) {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
@@ -155,20 +193,16 @@ final class SettingsCenterRepository {
 		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
 		$images   = $settings['images'];
 
-		$images['endpoint']            = $this->sanitize_endpoint( $images['endpoint'] );
-		$images['region']              = $this->sanitize_region( $images['region'] );
-		$images['bucket']              = $this->bounded_text( $images['bucket'], 128 );
-		$images['domain']              = $this->sanitize_domain( $images['domain'] );
-		$images['fallbackDomain']      = $this->sanitize_domain( $images['fallbackDomain'] );
-		$images['accessKey']           = $this->bounded_text( $images['accessKey'], 255 );
-		$images['secretKey']           = $this->bounded_text( $images['secretKey'], 255 );
-		$images['backupBucket']        = $this->bounded_text( $images['backupBucket'], 128 );
-		$images['backupEndpoint']      = $this->sanitize_endpoint( $images['backupEndpoint'] );
-		$images['backupRegion']        = $this->sanitize_region( $images['backupRegion'] );
-		$images['backupDomain']        = $this->sanitize_domain( $images['backupDomain'] );
-		$images['backupAccessKey']     = $this->bounded_text( $images['backupAccessKey'], 255 );
-		$images['backupSecretKey']     = $this->bounded_text( $images['backupSecretKey'], 255 );
-		$images['backupSameObjectKey'] = true;
+		$images['endpoint']        = $this->sanitize_endpoint( $images['endpoint'] );
+		$images['bucket']          = $this->bounded_text( $images['bucket'], 128 );
+		$images['domain']          = $this->sanitize_domain( $images['domain'] );
+		$images['accessKey']       = $this->bounded_text( $images['accessKey'], 255 );
+		$images['secretKey']       = $this->bounded_text( $images['secretKey'], 255 );
+		$images['backupBucket']    = $this->bounded_text( $images['backupBucket'], 128 );
+		$images['backupEndpoint']  = $this->sanitize_endpoint( $images['backupEndpoint'] );
+		$images['backupDomain']    = $this->sanitize_domain( $images['backupDomain'] );
+		$images['backupAccessKey'] = $this->bounded_text( $images['backupAccessKey'], 255 );
+		$images['backupSecretKey'] = $this->bounded_text( $images['backupSecretKey'], 255 );
 		if ( ! $this->is_valid_file_name_rule( $images['fileNameRule'] ) ) {
 			$images['fileNameRule'] = $this->get_defaults()['images']['fileNameRule'];
 		}
@@ -176,34 +210,30 @@ final class SettingsCenterRepository {
 		return array(
 			'revision'         => $this->revision_from_stored( $stored ),
 			'primary'          => array(
-				'service'   => $images['service'],
-				'endpoint'  => $images['endpoint'],
-				'region'    => $images['region'],
-				'bucket'    => $images['bucket'],
-				'domain'    => $images['domain'],
-				'accessKey' => $images['accessKey'],
-				'secretKey' => $images['secretKey'],
+				'retryCount' => $images['uploadRetryCount'],
+				'service'    => $images['service'],
+				'endpoint'   => $images['endpoint'],
+				'bucket'     => $images['bucket'],
+				'domain'     => $images['domain'],
+				'accessKey'  => $images['accessKey'],
+				'secretKey'  => $images['secretKey'],
 			),
 			'backup'           => array(
-				'enabled'       => $images['backupEnabled'],
-				'service'       => $images['backupService'],
-				'endpoint'      => $images['backupEndpoint'],
-				'region'        => $images['backupRegion'],
-				'bucket'        => $images['backupBucket'],
-				'domain'        => $images['backupDomain'],
-				'accessKey'     => $images['backupAccessKey'],
-				'secretKey'     => $images['backupSecretKey'],
-				'sameObjectKey' => $images['backupSameObjectKey'],
-				'failureMode'   => 'continue',
+				'enabled'    => $images['backupEnabled'],
+				'retryCount' => $images['uploadRetryCount'],
+				'service'    => $images['backupService'],
+				'endpoint'   => $images['backupEndpoint'],
+				'bucket'     => $images['backupBucket'],
+				'domain'     => $images['backupDomain'],
+				'accessKey'  => $images['backupAccessKey'],
+				'secretKey'  => $images['backupSecretKey'],
 			),
-			'fallbackDomain'   => $images['fallbackDomain'],
 			'fileNameRule'     => $images['fileNameRule'],
 			'behaviors'        => array(
 				'insertAfterUpload'    => $images['insertMarkdown'],
 				'autoCompress'         => $images['compressImages'],
 				'preserveOriginalName' => $images['preserveFileName'],
 				'copyUrl'              => $images['copyUrl'],
-				'retryCount'           => $images['retryCount'],
 				'maxImageSize'         => $images['maxImageSize'],
 				'uploadFormats'        => array_keys( array_filter( $images['uploadFormats'] ) ),
 				'insertFormat'         => $images['insertFormat'],
@@ -372,6 +402,14 @@ final class SettingsCenterRepository {
 		);
 	}
 
+	private function secret_unavailable_error() {
+		return new WP_Error(
+			'easymde_image_hosting_secret_unavailable',
+			__( 'The image-hosting configuration is unavailable.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
 
 	private function revision_from_stored( array $stored ) {
 		return isset( $stored['settings_center_revision'] ) && is_numeric( $stored['settings_center_revision'] )
@@ -412,28 +450,23 @@ final class SettingsCenterRepository {
 			'images'    => array(
 				'service'             => 'cloudflare-r2',
 				'endpoint'            => '',
-				'region'              => '',
 				'bucket'              => 'easymde-assets',
 				'domain'              => '',
-				'fallbackDomain'      => '',
 				'accessKey'           => '',
 				'secretKey'           => '',
 				'fileNameRule'        => '{date}/{uuid}.{ext}',
 				'backupEnabled'       => false,
 				'backupService'       => 'qiniu-kodo',
 				'backupEndpoint'      => '',
-				'backupRegion'        => '',
 				'backupBucket'        => 'easymde-backup',
 				'backupDomain'        => '',
 				'backupAccessKey'     => '',
 				'backupSecretKey'     => '',
-				'backupSameObjectKey' => true,
-				'backupFailureMode'   => 'return-primary-url',
+				'uploadRetryCount'    => 0,
 				'insertMarkdown'      => true,
 				'compressImages'      => true,
 				'preserveFileName'    => false,
 				'copyUrl'             => false,
-				'retryCount'          => 'none',
 				'maxImageSize'        => '2560',
 				'uploadFormats'       => array(
 					'jpg'  => true,
@@ -504,6 +537,24 @@ final class SettingsCenterRepository {
 
 	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
 		$defaults = $this->get_defaults();
+		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
+			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
+				if (
+					array_key_exists( $retry_field, $input['images'] ) &&
+					(
+						! is_int( $input['images'][ $retry_field ] ) ||
+						$input['images'][ $retry_field ] < 0 ||
+						$input['images'][ $retry_field ] > 5
+					)
+				) {
+					return new WP_Error(
+						'easymde_settings_invalid_payload',
+						__( 'The settings payload is invalid.', 'easymde' ),
+						array( 'status' => 400 )
+					);
+				}
+			}
+		}
 		$base     = $this->merge_settings( $defaults, $stored_settings );
 		$settings = $this->merge_settings( $base, $input );
 		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
@@ -514,14 +565,9 @@ final class SettingsCenterRepository {
 		}
 		$settings = $this->normalize_enum_settings( $settings );
 		if (
-			! $this->is_valid_endpoint( $settings['images']['endpoint'] ) ||
-			! $this->is_valid_endpoint( $settings['images']['backupEndpoint'] ) ||
-			! $this->is_valid_region( $settings['images']['region'] ) ||
-			! $this->is_valid_region( $settings['images']['backupRegion'] ) ||
-			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'], $settings['images']['region'] ) ||
-			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'], $settings['images']['backupRegion'] ) ||
-			! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ||
-			true !== $settings['images']['backupSameObjectKey']
+			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'] ) ||
+			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'] ) ||
+			! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] )
 		) {
 			return new WP_Error(
 				'easymde_settings_invalid_payload',
@@ -549,12 +595,12 @@ final class SettingsCenterRepository {
 						? (bool) $settings['images']['uploadFormats'][ $format ]
 						: (bool) $enabled;
 				}
-			} elseif ( in_array( $key, array( 'domain', 'fallbackDomain', 'backupDomain' ), true ) ) {
+			} elseif ( in_array( $key, array( 'domain', 'backupDomain' ), true ) ) {
 				$settings['images'][ $key ] = $this->sanitize_domain( $value );
 			} elseif ( 'endpoint' === $key || 'backupEndpoint' === $key ) {
 				$settings['images'][ $key ] = $this->sanitize_endpoint( $value );
-			} elseif ( 'region' === $key || 'backupRegion' === $key ) {
-				$settings['images'][ $key ] = $this->sanitize_region( $value );
+			} elseif ( 'uploadRetryCount' === $key ) {
+				$settings['images'][ $key ] = $value;
 			} elseif ( is_bool( $value ) ) {
 				$settings['images'][ $key ] = $value;
 			} else {
@@ -606,14 +652,12 @@ final class SettingsCenterRepository {
 				'summaryMode'       => 'auto-55',
 			),
 			'images'   => array(
-				'service'           => 'cloudflare-r2',
-				'backupService'     => 'qiniu-kodo',
-				'backupFailureMode' => 'return-primary-url',
-				'retryCount'        => 'none',
-				'maxImageSize'      => '2560',
-				'insertFormat'      => 'markdown',
-				'altSource'         => 'filename',
-				'captionMode'       => 'none',
+				'service'       => 'cloudflare-r2',
+				'backupService' => 'qiniu-kodo',
+				'maxImageSize'  => '2560',
+				'insertFormat'  => 'markdown',
+				'altSource'     => 'filename',
+				'captionMode'   => 'none',
 			),
 			'markdown' => array(
 				'editorTheme'     => 'system',
@@ -658,35 +702,19 @@ final class SettingsCenterRepository {
 				),
 			),
 			'images'   => array(
-				'service'           => array(
+				'service'       => array(
 					'cloudflare-r2' => 'cloudflare-r2',
 					'qiniu-kodo'    => 'qiniu-kodo',
 					'aliyun-oss'    => 'aliyun-oss',
 					'tencent-cos'   => 'tencent-cos',
 				),
-				'backupService'     => array(
+				'backupService' => array(
 					'qiniu-kodo'    => 'qiniu-kodo',
 					'cloudflare-r2' => 'cloudflare-r2',
 					'aliyun-oss'    => 'aliyun-oss',
 					'tencent-cos'   => 'tencent-cos',
 				),
-				'backupFailureMode' => array(
-					'return-primary-url'                   => 'return-primary-url',
-					'Return primary URL on backup failure' => 'return-primary-url',
-					'fail-upload'                          => 'return-primary-url',
-					'Fail entire upload'                   => 'return-primary-url',
-				),
-				'retryCount'        => array(
-					'none'              => 'none',
-					'Do not retry'      => 'none',
-					'once'              => 'none',
-					'Retry once'        => 'none',
-					'twice'             => 'none',
-					'Retry twice'       => 'none',
-					'three-times'       => 'none',
-					'Retry three times' => 'none',
-				),
-				'maxImageSize'      => array(
+				'maxImageSize'  => array(
 					'original'            => 'original',
 					'Original image size' => 'original',
 					'1920'                => '1920',
@@ -696,7 +724,7 @@ final class SettingsCenterRepository {
 					'3840'                => '3840',
 					'3840px'              => '3840',
 				),
-				'insertFormat'      => array(
+				'insertFormat'  => array(
 					'markdown'       => 'markdown',
 					'Markdown image' => 'markdown',
 					'html'           => 'markdown',
@@ -704,7 +732,7 @@ final class SettingsCenterRepository {
 					'url'            => 'url',
 					'URL only'       => 'url',
 				),
-				'altSource'         => array(
+				'altSource'     => array(
 					'filename'       => 'filename',
 					'Use file name'  => 'filename',
 					'empty'          => 'empty',
@@ -712,7 +740,7 @@ final class SettingsCenterRepository {
 					'upload'         => 'empty',
 					'Fill on upload' => 'empty',
 				),
-				'captionMode'       => array(
+				'captionMode'   => array(
 					'none'           => 'none',
 					'Do not insert'  => 'none',
 					'filename'       => 'filename',
@@ -792,10 +820,10 @@ final class SettingsCenterRepository {
 		if ( ! is_array( $parts ) || ! isset( $parts['scheme'], $parts['host'] ) || isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) || isset( $parts['query'] ) || isset( $parts['fragment'] ) || ( isset( $parts['path'] ) && '' !== $parts['path'] && '/' !== $parts['path'] ) ) {
 			return '';
 		}
-		if ( 'https' !== strtolower( (string) $parts['scheme'] ) ) {
+		if ( ! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
 			return '';
 		}
-		$url = esc_url_raw( $value, array( 'https' ) );
+		$url = esc_url_raw( $value, array( 'http', 'https' ) );
 
 		return is_string( $url ) ? $this->bounded_text( $url, 255 ) : '';
 	}
@@ -807,28 +835,15 @@ final class SettingsCenterRepository {
 	}
 
 	private function is_valid_endpoint( $value ) {
-		return is_string( $value ) && ( '' === $value || ImageHostProviderSupport::validate_r2_endpoint( $value ) );
+		return is_string( $value ) && ( '' === $value || ImageHostProviderSupport::validate_r2_endpoint( $value ) || ImageHostProviderSupport::validate_oss_endpoint( $value ) || ImageHostProviderSupport::validate_cos_endpoint( $value ) );
 	}
 
-	private function sanitize_region( $value ) {
-		$value = strtolower( $this->bounded_text( $value, 63 ) );
-
-		return $this->is_valid_region( $value ) ? $value : '';
-	}
-
-	private function is_valid_region( $value ) {
-		return is_string( $value ) && ( '' === $value || 1 === preg_match( '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D', $value ) );
-	}
-
-	private function is_valid_provider_coordinates( $service, $endpoint, $region ) {
-		if ( 'cloudflare-r2' === $service ) {
-			return '' === $region;
-		}
+	private function is_valid_provider_coordinates( $service, $endpoint ) {
 		if ( 'qiniu-kodo' === $service ) {
-			return '' === $endpoint && '' === $region;
-		}
-		if ( in_array( $service, array( 'aliyun-oss', 'tencent-cos' ), true ) ) {
 			return '' === $endpoint;
+		}
+		if ( in_array( $service, array( 'cloudflare-r2', 'aliyun-oss', 'tencent-cos' ), true ) ) {
+			return '' === $endpoint || ImageHostProviderSupport::validate_provider_endpoint( $service, $endpoint );
 		}
 
 		return false;
@@ -838,7 +853,6 @@ final class SettingsCenterRepository {
 		return array(
 			'service'  => $images[ $backup ? 'backupService' : 'service' ],
 			'endpoint' => $images[ $backup ? 'backupEndpoint' : 'endpoint' ],
-			'region'   => $images[ $backup ? 'backupRegion' : 'region' ],
 			'bucket'   => $images[ $backup ? 'backupBucket' : 'bucket' ],
 		);
 	}

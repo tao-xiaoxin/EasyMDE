@@ -36,11 +36,27 @@ function uploadFileName(file: File): string {
   };
   return `${file.name || 'pasted-image'}.${extensions[file.type.toLowerCase()] ?? 'png'}`;
 }
+function hasExplicitUrlPort(value: string): boolean {
+  const authority = value.slice(value.indexOf('://') + 3).split(/[/?#]/, 1)[0] ?? '';
+  if (authority.startsWith('[')) {
+    return authority.slice(authority.indexOf(']') + 1).startsWith(':');
+  }
+  return authority.includes(':');
+}
 function uploadedResult(value: unknown): ImageUploadResult {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
     throw new Error('image-upload-response-invalid');
   }
   const response = value as Record<string, unknown>;
+  const responseKeys = Object.keys(response);
+  if (
+    4 !== responseKeys.length ||
+    !['alt', 'backup', 'title', 'url'].every((key) =>
+      responseKeys.includes(key)
+    )
+  ) {
+    throw new Error('image-upload-response-invalid');
+  }
   if (
     'string' !== typeof response.url ||
     '' === response.url.trim() ||
@@ -58,53 +74,36 @@ function uploadedResult(value: unknown): ImageUploadResult {
   } catch {
     throw new Error('image-upload-response-invalid');
   }
-  if (!['http:', 'https:'].includes(url.protocol)) {
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    '' !== url.username ||
+    '' !== url.password ||
+    '' !== url.port ||
+    hasExplicitUrlPort(response.url) ||
+    '' !== url.search ||
+    '' !== url.hash
+  ) {
     throw new Error('image-upload-response-invalid');
   }
-  if ('string' !== typeof response.fallbackUrl) {
-    throw new Error('image-upload-response-invalid');
-  }
-  let fallbackUrl: string | undefined;
-  if (response.fallbackUrl !== '') {
-    try {
-      const parsedFallbackUrl = new URL(response.fallbackUrl);
-      if (
-        parsedFallbackUrl.protocol !== 'https:' ||
-        parsedFallbackUrl.username ||
-        parsedFallbackUrl.password ||
-        response.fallbackUrl.length > 2048
-      ) {
-        throw new Error('image-upload-response-invalid');
-      }
-      fallbackUrl = response.fallbackUrl;
-    } catch {
-      throw new Error('image-upload-response-invalid');
-    }
-  }
-  let warning: 'backup-upload-failed' | undefined;
   const backup = response.backup;
   if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
     throw new Error('image-upload-response-invalid');
   }
   const backupResult = backup as Record<string, unknown>;
+  const backupKeys = Object.keys(backupResult);
   if (
-    !['disabled', 'uploaded', 'failed'].includes(String(backupResult.status))
+    !['disabled', 'uploaded'].includes(String(backupResult.status))
   ) {
     throw new Error('image-upload-response-invalid');
   }
-  if ('failed' === backupResult.status) {
-    if ('easymde_image_hosting_backup_upload_failed' !== backupResult.code) {
-      throw new Error('image-upload-response-invalid');
-    }
-    warning = 'backup-upload-failed';
+  if (1 !== backupKeys.length || 'status' !== backupKeys[0]) {
+    throw new Error('image-upload-response-invalid');
   }
   return {
     alt: response.alt,
     status: 'uploaded',
     title: response.title,
-    url: response.url,
-    ...(fallbackUrl ? { fallbackUrl } : {}),
-    ...(warning ? { warning } : {})
+    url: response.url
   };
 }
 

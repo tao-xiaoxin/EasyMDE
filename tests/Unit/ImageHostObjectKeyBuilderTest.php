@@ -24,6 +24,23 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_md5_variable_uses_the_exact_uploaded_byte_sequence() {
+		$builder = new ObjectKeyBuilder();
+		$bytes   = 'The quick brown fox jumps over the lazy dog';
+
+		$key = $builder->build(
+			'{md5}.{ext}',
+			$bytes,
+			'image.png',
+			'image/png',
+			0,
+			new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) ),
+			'00000000-0000-4000-8000-000000000000'
+		);
+
+		$this->assertSame( '9e107d9d372bb6826bd81d3542a419d6.png', $key );
+	}
+
 	public function test_rejects_unknown_mime_empty_content_and_unsafe_templates() {
 		$builder = new ObjectKeyBuilder();
 		$now     = new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) );

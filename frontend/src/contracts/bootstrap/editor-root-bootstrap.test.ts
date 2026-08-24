@@ -78,7 +78,6 @@ function validBootstrap() {
       nonce: 'synthetic-nonce',
       postId: 7,
       strings: {
-        backupFailed: 'Primary uploaded; backup failed',
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
         dropTooLarge: 'Drop too large',

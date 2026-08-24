@@ -875,12 +875,12 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		.locator(".easymde-settings-center__secret-input")
 		.first();
 	const accessInput = accessKey.locator("input");
+	const revealButton = accessKey.locator("button");
 	await expect(accessInput).toHaveAttribute("type", "password");
+	await expect(revealButton).toHaveCount(0);
 	await accessInput.fill("synthetic-browser-only-key");
-	await accessKey.locator("button").click();
-	await expect(accessInput).toHaveAttribute("type", "text");
-	await accessKey.locator("button").click();
 	await expect(accessInput).toHaveAttribute("type", "password");
+	await expect(revealButton).toHaveCount(0);
 
 	const rule = primary.locator(".easymde-settings-center__file-name-input");
 	await primary

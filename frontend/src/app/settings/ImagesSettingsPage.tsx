@@ -23,6 +23,7 @@ import type {
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
 import {
+	CircleAlert,
 	CircleCheck,
 	CircleX,
 	Copy,
@@ -1451,11 +1452,19 @@ export function ImagesSettingsPage({
 									onChange={(value) => setValue("maxImageSizeMb", value)}
 								/>
 								{settings.maxImageSizeMb * 1024 * 1024 > uploadLimits.systemMaxBytes ? (
-									<small role="alert">
-										{strings.maximumImageSizeSystemLimitExceeded.replace(
-											"%s",
-											String(Math.floor(uploadLimits.systemMaxBytes / 1024 / 1024)),
-										)}
+									<small
+										className="easymde-settings-center__image-size-warning"
+										role="alert"
+									>
+										<CircleAlert size={15} strokeWidth={2} />
+										<span>
+											{strings.maximumImageSizeSystemLimitExceeded.replace(
+												"%s",
+												String(
+													Math.floor(uploadLimits.systemMaxBytes / 1024 / 1024),
+												),
+											)}
+										</span>
 									</small>
 								) : null}
 							</div>

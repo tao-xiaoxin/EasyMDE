@@ -1055,6 +1055,9 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 	const valueCell = input.locator("xpath=..");
 	const stepper = valueCell.locator("xpath=..");
 	const unit = valueCell.locator(":scope > span");
+	const systemLimitWarning = page.getByRole("alert").filter({
+		hasText: /系统当前允许上传|current system upload limit/u,
+	});
 	const decrement = page.getByRole("button", { name: `${label} - 1` });
 	const increment = page.getByRole("button", { name: `${label} + 1` });
 
@@ -1098,8 +1101,48 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 			),
 		).toBe(true);
 	};
+	const assertWarningGeometry = async () => {
+		await expect(systemLimitWarning.locator("svg circle")).toHaveCount(1);
+		await expect(systemLimitWarning.locator("svg line")).toHaveCount(2);
+		const geometry = await Promise.all([
+			systemLimitWarning.boundingBox(),
+			systemLimitWarning.locator("svg").boundingBox(),
+			systemLimitWarning.locator(":scope > span").boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-warning-geometry-missing");
+		}
+		const [warningBox, iconBox, textBox] = geometry;
+		expect(iconBox.x).toBeGreaterThanOrEqual(warningBox.x);
+		expect(iconBox.x + iconBox.width).toBeLessThan(textBox.x);
+		expect(Math.abs(iconBox.y - textBox.y)).toBeLessThanOrEqual(1.5);
+		expect(textBox.x + textBox.width).toBeLessThanOrEqual(
+			warningBox.x + warningBox.width + 0.5,
+		);
+		expect(
+			await systemLimitWarning.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
 
 	await assertGeometry(1152);
+	await assertWarningGeometry();
+	const warningStyles = await Promise.all([
+		systemLimitWarning.evaluate((element) => ({
+			color: getComputedStyle(element).color,
+			display: getComputedStyle(element).display,
+		})),
+		systemLimitWarning
+			.locator("svg")
+			.evaluate((element) => getComputedStyle(element).color),
+	]);
+	expect(warningStyles).toEqual([
+		{ color: "rgb(180, 35, 24)", display: "flex" },
+		"rgb(180, 35, 24)",
+	]);
 	const originalValue = Number(await input.inputValue());
 	if (originalValue < 10) {
 		await increment.click();
@@ -1112,6 +1155,7 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await assertGeometry(390);
+	await assertWarningGeometry();
 	const cdp = await page.context().newCDPSession(page);
 	const metrics = await cdp.send("Page.getLayoutMetrics");
 	expect(metrics.cssLayoutViewport.clientWidth).toBe(390);

@@ -403,7 +403,14 @@ describe("ImagesSettingsPage", () => {
 			/>,
 		);
 
-		expect(screen.getByText("maximumImageSizeSystemLimitExceeded")).not.toBeNull();
+		const warning = screen.getByRole("alert");
+		expect(warning.className).toBe(
+			"easymde-settings-center__image-size-warning",
+		);
+		expect(warning.querySelector("svg")).not.toBeNull();
+		expect(warning.querySelector("svg circle")).not.toBeNull();
+		expect(warning.querySelectorAll("svg line")).toHaveLength(2);
+		expect(warning.textContent).toBe("maximumImageSizeSystemLimitExceeded");
 	});
 
 	it("places image-title display in Upload behavior where filename preservation was and supports filename or empty", async () => {

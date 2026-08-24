@@ -983,7 +983,9 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
 	await expect(retryInput).toHaveAttribute("min", "0");
 	await expect(retryInput).toHaveAttribute("max", "5");
-	await expect(retryInput.locator("xpath=.." )).not.toContainText("MB");
+	await expect(
+		retryInput.locator("xpath=..").locator(":scope > span"),
+	).toHaveCount(0);
 	const geometry = await Promise.all([
 		decrement.boundingBox(),
 		retryInput.boundingBox(),
@@ -1028,6 +1030,88 @@ test("persists the bounded upload retry count across a settings-center refresh",
 		"data-save-status",
 		"saved",
 	);
+});
+
+test("keeps the maximum image size unit inside the horizontal stepper", async ({
+	page,
+}) => {
+	const browserFailures = [];
+	page.on("console", (message) => {
+		if (["error", "warning"].includes(message.type())) {
+			browserFailures.push(`${message.type()}: ${message.text()}`);
+		}
+	});
+	page.on("pageerror", (error) => browserFailures.push(`pageerror: ${error.message}`));
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+
+	const label = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.maximumImageSize,
+	);
+	const input = page.getByRole("spinbutton", { name: label });
+	const valueCell = input.locator("xpath=..");
+	const stepper = valueCell.locator("xpath=..");
+	const unit = valueCell.locator(":scope > span");
+	const decrement = page.getByRole("button", { name: `${label} - 1` });
+	const increment = page.getByRole("button", { name: `${label} + 1` });
+
+	const assertGeometry = async (viewportWidth) => {
+		await expect(stepper.locator(":scope > *")).toHaveCount(3);
+		await expect(unit).toHaveText("M");
+		const geometry = await Promise.all([
+			decrement.boundingBox(),
+			valueCell.boundingBox(),
+			unit.boundingBox(),
+			increment.boundingBox(),
+			stepper.boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-stepper-geometry-missing");
+		}
+		const [decrementBox, valueBox, unitBox, incrementBox, stepperBox] = geometry;
+		expect(decrementBox.x).toBeLessThan(valueBox.x);
+		expect(valueBox.x).toBeLessThan(incrementBox.x);
+		expect(unitBox.x + unitBox.width).toBeLessThanOrEqual(
+			valueBox.x + valueBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			stepperBox.x + stepperBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			viewportWidth,
+		);
+		expectNear(decrementBox.y, valueBox.y);
+		expectNear(valueBox.y, incrementBox.y);
+		expect(
+			await stepper.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
+
+	await assertGeometry(1152);
+	const originalValue = Number(await input.inputValue());
+	if (originalValue < 10) {
+		await increment.click();
+		await expect(input).toHaveValue(String(originalValue + 1));
+	} else {
+		await decrement.click();
+		await expect(input).toHaveValue(String(originalValue - 1));
+	}
+	await input.fill(String(originalValue));
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await assertGeometry(390);
+	const cdp = await page.context().newCDPSession(page);
+	const metrics = await cdp.send("Page.getLayoutMetrics");
+	expect(metrics.cssLayoutViewport.clientWidth).toBe(390);
+	await cdp.detach();
+	expect(browserFailures).toEqual([]);
 });
 
 test("matches the reference Settings Center header geometry", async ({

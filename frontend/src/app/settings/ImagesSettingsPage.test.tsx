@@ -369,7 +369,16 @@ describe("ImagesSettingsPage", () => {
 		expect(input.min).toBe("1");
 		expect(input.max).toBe("10");
 		expect(input.step).toBe("1");
-		expect(input.parentElement?.textContent).toContain("MB");
+		const valueCell = input.parentElement;
+		const stepper = valueCell?.parentElement;
+		expect(
+			valueCell?.classList.contains(
+				"easymde-settings-center__image-number-value",
+			),
+		).toBe(true);
+		expect(valueCell?.textContent).toBe("M");
+		expect(stepper?.children).toHaveLength(3);
+		expect(stepper?.lastElementChild?.tagName).toBe("BUTTON");
 		fireEvent.change(input, { target: { value: "7" } });
 		expect(onSettingsChange).toHaveBeenLastCalledWith(
 			expect.objectContaining({ maxImageSizeMb: 7 }),

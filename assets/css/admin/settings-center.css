@@ -1466,6 +1466,22 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	opacity: 1;
 }
 
+.easymde-settings-center__image-number-value {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	min-width: 0;
+	height: 37px;
+	align-items: center;
+	background: #fff;
+}
+
+.easymde-settings-center__image-number-value > span {
+	padding-right: 6px;
+	color: #56698e;
+	font-size: 13px;
+	font-weight: 600;
+}
+
 .easymde-settings-center .easymde-settings-center__image-number-input {
 	appearance: textfield;
 	width: 100%;

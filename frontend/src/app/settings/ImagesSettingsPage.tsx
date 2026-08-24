@@ -479,25 +479,27 @@ function ImageNumberInput({
 			>
 				<Minus size={16} />
 			</button>
-			<input
-				className="easymde-settings-center__image-number-input"
-				type="number"
-				min={min}
-				max={max}
-				step={1}
-				aria-label={label}
-				value={value}
-				onChange={(event) => {
-					const input = event.currentTarget;
-					const next = input.valueAsNumber;
-					if (Number.isInteger(next) && next >= min && next <= max) {
-						onChange(next);
-						return;
-					}
-					input.value = String(value);
-				}}
-			/>
-			{unit ? <span>{unit}</span> : null}
+			<span className="easymde-settings-center__image-number-value">
+				<input
+					className="easymde-settings-center__image-number-input"
+					type="number"
+					min={min}
+					max={max}
+					step={1}
+					aria-label={label}
+					value={value}
+					onChange={(event) => {
+						const input = event.currentTarget;
+						const next = input.valueAsNumber;
+						if (Number.isInteger(next) && next >= min && next <= max) {
+							onChange(next);
+							return;
+						}
+						input.value = String(value);
+					}}
+				/>
+				{unit ? <span aria-hidden="true">{unit}</span> : null}
+			</span>
 			<button
 				type="button"
 				aria-label={`${label} + 1`}
@@ -1444,7 +1446,7 @@ export function ImagesSettingsPage({
 									label={strings.maximumImageSize}
 									min={1}
 									max={10}
-									unit="MB"
+									unit="M"
 									value={settings.maxImageSizeMb}
 									onChange={(value) => setValue("maxImageSizeMb", value)}
 								/>

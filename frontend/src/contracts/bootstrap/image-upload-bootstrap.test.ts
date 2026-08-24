@@ -7,11 +7,8 @@ const validBootstrap = {
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   enabled: true,
   endpoint: '/wp-json/easymde/v1/image-hosting/upload',
-  insertAfterUpload: true,
   insertion: {
-    altSource: 'filename',
-    captionMode: 'none',
-    format: 'markdown'
+    titleDisplay: 'none'
   },
   maxBytes: 1024,
   nonce: 'synthetic-nonce',
@@ -53,7 +50,7 @@ describe('parseImageUploadBootstrap', () => {
     })).toThrow('image-upload-mime-types-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
-      insertion: { ...validBootstrap.insertion, format: 'html' }
+      insertion: { ...validBootstrap.insertion, titleDisplay: 'upload' }
     })).toThrow('image-upload-insertion-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
@@ -61,7 +58,7 @@ describe('parseImageUploadBootstrap', () => {
     })).toThrow('image-upload-action-nonce-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
-      insertAfterUpload: 'yes'
-    })).toThrow('image-upload-insert-after-upload-invalid');
+      insertAfterUpload: true
+    })).toThrow('image-upload-bootstrap-fields-invalid');
   });
 });

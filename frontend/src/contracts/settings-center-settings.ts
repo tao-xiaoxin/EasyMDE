@@ -38,16 +38,10 @@ export type ImageSettings = Readonly<{
 	backupDomain: string;
 	backupAccessKey: string;
 	backupSecretKey: string;
-	insertMarkdown: boolean;
 	compressImages: boolean;
-	preserveFileName: boolean;
-	copyUrl: boolean;
-	maxImageSize: string;
+	maxImageSizeMb: number;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
-	insertFormat: string;
-	altSource: string;
-	captionMode: string;
-	featuredPlaceholder: boolean;
+	titleDisplay: "filename" | "none";
 }>;
 
 export type MarkdownSettings = Readonly<{
@@ -60,10 +54,6 @@ export type MarkdownSettings = Readonly<{
 	codeLineNumbers: string;
 	htmlRendering: boolean;
 	pasteAsMarkdown: boolean;
-	lineEnding: string;
-	unorderedMarker: string;
-	orderedStart: string;
-	blockquoteStyle: string;
 }>;
 
 export type ShortcutId =

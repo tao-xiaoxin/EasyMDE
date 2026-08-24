@@ -61,8 +61,6 @@ function attachmentInsertion(value: unknown, strings: MediaPickerBootstrap): str
     defaultAlt: strings.defaultAlt,
     fileName: 'string' === typeof attachment.filename ? attachment.filename : '',
     insertion: strings.insertion,
-    uploadedAlt: 'string' === typeof attachment.alt ? attachment.alt : '',
-    uploadedTitle: 'string' === typeof attachment.title ? attachment.title : '',
     url: attachment.url,
   });
 }

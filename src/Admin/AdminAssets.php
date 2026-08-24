@@ -270,11 +270,8 @@ final class AdminAssets {
 				'allowedMimeTypes'  => $allowed_image_mime_types,
 				'enabled'           => $this->get_image_upload_config()['enabled'] && ! empty( $allowed_image_mime_types ),
 				'endpoint'          => esc_url_raw( rest_url( 'easymde/v1/image-hosting/upload' ) ),
-				'insertAfterUpload' => (bool) $settings['images']['insertMarkdown'],
 				'insertion'         => array(
-					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
-					'altSource'   => $settings['images']['altSource'],
-					'captionMode' => $settings['images']['captionMode'],
+					'titleDisplay' => $settings['images']['titleDisplay'],
 				),
 				'maxBytes'          => $this->get_image_upload_config()['maxBytes'],
 				'nonce'             => $nonce,
@@ -332,9 +329,7 @@ final class AdminAssets {
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
 				'insertMedia'    => $strings['insertMedia'],
 				'insertion'      => array(
-					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
-					'altSource'   => $settings['images']['altSource'],
-					'captionMode' => $settings['images']['captionMode'],
+					'titleDisplay' => $settings['images']['titleDisplay'],
 				),
 				'placeholderAlt' => $strings['mediaAltText'],
 			),
@@ -634,7 +629,7 @@ final class AdminAssets {
 	private function get_image_upload_config() {
 		return array(
 			'enabled'  => current_user_can( 'upload_files' ),
-			'maxBytes' => min( 10485760, (int) wp_max_upload_size() ),
+			'maxBytes' => $this->settings_center_repository->get_effective_image_upload_max_bytes(),
 		);
 	}
 

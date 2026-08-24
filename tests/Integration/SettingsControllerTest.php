@@ -47,9 +47,12 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			$this->assertArrayHasKey( $field, $data['settings']['images'] );
 		}
 		$this->assertSame( 0, $data['settings']['images']['uploadRetryCount'] );
-		foreach ( array( 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount' ) as $removed ) {
+		$this->assertSame( 5, $data['settings']['images']['maxImageSizeMb'] );
+		$this->assertSame( 'none', $data['settings']['images']['titleDisplay'] );
+		foreach ( array( 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ) as $removed ) {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['images'] );
 		}
+		$this->assertArrayHasKey( 'featuredImagePlaceholder', $data['settings']['general'] );
 		$this->assertSame(
 			array(
 				'wordWrap',
@@ -61,17 +64,13 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 				'codeLineNumbers',
 				'htmlRendering',
 				'pasteAsMarkdown',
-				'lineEnding',
-				'unorderedMarker',
-				'orderedStart',
-				'blockquoteStyle',
 			),
 			array_keys( $data['settings']['markdown'] )
 		);
     }
 
 	public function test_post_rejects_removed_markdown_fields_as_unknown_contract_keys() {
-		foreach ( array( 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax' ) as $removed_key ) {
+		foreach ( array( 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ) as $removed_key ) {
 			$settings = $this->current_settings();
 			$settings['markdown'][ $removed_key ] = 'toc' === $removed_key ? false : 'removed';
 
@@ -83,7 +82,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 	}
 
 	public function test_post_rejects_removed_image_host_fields_as_unknown_contract_keys() {
-		foreach ( array( 'destination', 'accountId', 'region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount' ) as $removed_key ) {
+		foreach ( array( 'destination', 'accountId', 'region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ) as $removed_key ) {
 			$settings = $this->current_settings();
 			$settings['images'][ $removed_key ] = 'removed';
 
@@ -161,6 +160,33 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 				$this->assertSame( 400, $response->get_status(), $field . ':' . gettype( $invalid ) );
 				$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $field . ':' . gettype( $invalid ) );
 			}
+		}
+	}
+
+	public function test_post_accepts_only_bounded_integer_image_sizes_and_title_display_modes() {
+		foreach ( array( 1, 5, 10 ) as $valid_size ) {
+			$settings = $this->current_settings();
+			$settings['images']['maxImageSizeMb'] = $valid_size;
+			$settings['images']['titleDisplay'] = 1 === $valid_size ? 'filename' : 'none';
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 200, $response->get_status(), (string) $valid_size );
+			$this->assertSame( $valid_size, $response->get_data()['settings']['images']['maxImageSizeMb'] );
+		}
+
+		foreach ( array( 0, 11, '5', 5.5 ) as $invalid_size ) {
+			$settings = $this->current_settings();
+			$settings['images']['maxImageSizeMb'] = $invalid_size;
+			$response = $this->post_json( array( 'settings' => $settings ) );
+			$this->assertSame( 400, $response->get_status(), gettype( $invalid_size ) );
+		}
+
+		foreach ( array( '', 'upload', 'Filename' ) as $invalid_display ) {
+			$settings = $this->current_settings();
+			$settings['images']['titleDisplay'] = $invalid_display;
+			$response = $this->post_json( array( 'settings' => $settings ) );
+			$this->assertSame( 400, $response->get_status(), $invalid_display );
 		}
 	}
 

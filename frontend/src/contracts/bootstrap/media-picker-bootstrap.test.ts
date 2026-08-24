@@ -8,13 +8,13 @@ describe('parseMediaPickerBootstrap', () => {
       parseMediaPickerBootstrap({
         defaultAlt: 'image',
         insertMedia: 'Insert Media',
-        insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+        insertion: { titleDisplay: 'none' },
         placeholderAlt: 'alt text',
       }),
     ).toEqual({
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text',
     });
   });
@@ -24,19 +24,19 @@ describe('parseMediaPickerBootstrap', () => {
       parseMediaPickerBootstrap({
         defaultAlt: 'image',
         insertMedia: 'Insert Media',
-        insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+        insertion: { titleDisplay: 'none' },
         placeholderAlt: 'alt text',
         [key]: '',
       }),
     ).toThrow('invalid-media-picker-string');
   });
 
-  it('rejects an unsupported insertion format', () => {
+  it('rejects an unsupported title display mode', () => {
     expect(() =>
       parseMediaPickerBootstrap({
         defaultAlt: 'image',
         insertMedia: 'Insert Media',
-        insertion: { altSource: 'filename', captionMode: 'none', format: 'html' },
+        insertion: { titleDisplay: 'upload' },
         placeholderAlt: 'alt text',
       }),
     ).toThrow('image-upload-insertion-invalid');

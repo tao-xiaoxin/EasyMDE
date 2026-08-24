@@ -24,7 +24,6 @@ type CreateImageUploadSessionOptions = Readonly<{
   document: ImageUploadDocumentPort;
   enabled: boolean;
   insertion: ImageUploadInsertion;
-  insertAfterUpload: boolean;
   maxBytes: number;
   nextOperationId: () => string;
   onDiagnostic: (code: string) => void;
@@ -125,7 +124,6 @@ export function createImageUploadSession({
   document,
   enabled,
   insertion,
-  insertAfterUpload,
   maxBytes,
   nextOperationId,
   onDiagnostic,
@@ -163,15 +161,13 @@ export function createImageUploadSession({
       return;
     }
 
-    let initial: ImageUploadDocumentSnapshot | null = null;
-    if (insertAfterUpload) {
-      try {
-        initial = documentSnapshot(document);
-      } catch {
-        onDiagnostic('image-upload-document-snapshot-invalid');
-        reportStatus(statusMessage(strings, source, 'Failed'), 'error');
-        return;
-      }
+    let initial: ImageUploadDocumentSnapshot;
+    try {
+      initial = documentSnapshot(document);
+    } catch {
+      onDiagnostic('image-upload-document-snapshot-invalid');
+      reportStatus(statusMessage(strings, source, 'Failed'), 'error');
+      return;
     }
 
     reportStatus(statusMessage(strings, source, 'Uploading'), 'info');
@@ -180,7 +176,7 @@ export function createImageUploadSession({
     try {
       const fileNameAlt = defaultImageAlt(file.name, strings.defaultAlt);
       const result = await upload.upload({
-        altText: 'filename' === insertion.altSource ? fileNameAlt : '',
+        altText: fileNameAlt,
         file,
         postId,
         signal: controller.signal,
@@ -193,22 +189,12 @@ export function createImageUploadSession({
         reportStatus(statusMessage(strings, source, 'Failed'), 'error');
         return;
       }
-      if (!insertAfterUpload) {
-        reportCompletion();
-        return;
-      }
-      if (!initial) {
-        throw new Error('image-upload-document-snapshot-missing');
-      }
-
       const current = documentSnapshot(document);
       const selection = rebaseSelection(initial, current.value);
       const inserted = imageInsertionText({
         defaultAlt: strings.defaultAlt,
         fileName: file.name,
         insertion,
-        uploadedAlt: result.alt,
-        uploadedTitle: result.title,
         url: result.url,
       });
       const cursor = selection.start + inserted.length;

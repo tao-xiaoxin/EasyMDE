@@ -361,8 +361,7 @@ function fixture(): EditorRootProps &
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
-      insertAfterUpload: true,
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       postId: 7,
       strings: {
@@ -420,7 +419,7 @@ function fixture(): EditorRootProps &
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',
@@ -4897,7 +4896,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        '![Selected image](https://example.test/selected.png)'
+        '![image](https://example.test/selected.png)'
       );
     });
     expect(props.executeExternalCommand).not.toHaveBeenCalled();
@@ -4947,7 +4946,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        'Choose **![Selected image](https://example.test/selected.png)** text'
+        'Choose **![image](https://example.test/selected.png)** text'
       );
     });
   });

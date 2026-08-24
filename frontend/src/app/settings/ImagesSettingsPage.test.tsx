@@ -93,6 +93,7 @@ function Harness({
 			settings={current}
 			settingsRevision={SETTINGS_CENTER_TEST_SETTINGS.revision}
 			strings={strings}
+			uploadLimits={{ systemMaxBytes: 8 * 1024 * 1024 }}
 			{...(secretRevealPort ? { secretRevealPort } : {})}
 			{...(runtimeCapabilities ? { runtimeCapabilities } : {})}
 		/>
@@ -136,28 +137,11 @@ describe("ImagesSettingsPage", () => {
 			screen.queryByRole("combobox", { name: "retryFailedUpload" }),
 		).toBeNull();
 		expect(
-			screen.getByRole("switch", { name: "copyImageUrl" }).matches(":disabled"),
-		).toBe(true);
-		expect(
-			screen
-				.getByRole("switch", { name: "insertMarkdownAfterUpload" })
-				.matches(":disabled"),
-		).toBe(true);
-		expect(
 			screen
 				.getByRole("switch", { name: "compressImages" })
 				.matches(":disabled"),
 		).toBe(true);
-		expect(
-			screen
-				.getByRole("switch", { name: "preserveOriginalFileName" })
-				.matches(":disabled"),
-		).toBe(true);
-		expect(
-			screen
-				.getByRole("combobox", { name: "maximumImageSize" })
-				.matches(":disabled"),
-		).toBe(true);
+		expect(screen.getByRole("spinbutton", { name: "maximumImageSize" })).not.toBeNull();
 		expect(
 			screen.queryByRole("switch", { name: "keepSameObjectPath" }),
 		).toBeNull();
@@ -339,14 +323,11 @@ describe("ImagesSettingsPage", () => {
 		expect(screen.getByText("cosBucketHint")).not.toBeNull();
 	});
 
-	it("enables only explicitly runtime-backed upload behaviors", () => {
+	it("keeps compression capability-gated and exposes the supported upload settings", () => {
 		render(
 			<Harness
 				runtimeCapabilities={{
 					compressImages: true,
-					insertAfterUpload: true,
-					preserveOriginalFileName: true,
-					maximumImageSize: true,
 				}}
 			/>,
 		);
@@ -356,21 +337,83 @@ describe("ImagesSettingsPage", () => {
 				.getByRole("switch", { name: "compressImages" })
 				.matches(":disabled"),
 		).toBe(false);
-		expect(
-			screen
-				.getByRole("switch", { name: "preserveOriginalFileName" })
-				.matches(":disabled"),
-		).toBe(false);
-		expect(
-			screen
-				.getByRole("combobox", { name: "maximumImageSize" })
-				.matches(":disabled"),
-		).toBe(false);
-		expect(
-			screen
-				.getByRole("switch", { name: "insertMarkdownAfterUpload" })
-				.matches(":disabled"),
-		).toBe(false);
+		expect(screen.getByRole("spinbutton", { name: "maximumImageSize" })).not.toBeNull();
+		expect(screen.getByRole("combobox", { name: "imageTitleDisplay" })).not.toBeNull();
+	});
+
+	it("removes redundant insertion, filename, clipboard, Alt, and featured-placeholder settings", () => {
+		render(<Harness />);
+
+		for (const label of [
+			"insertMarkdownAfterUpload",
+			"preserveOriginalFileName",
+			"copyImageUrl",
+			"defaultInsertFormat",
+			"altTextSource",
+			"imageFeaturedPlaceholder",
+		]) {
+			expect(screen.queryByLabelText(label)).toBeNull();
+			expect(screen.queryByText(label)).toBeNull();
+		}
+		expect(screen.queryByRole("heading", { name: "defaultInsertion" })).toBeNull();
+	});
+
+	it("updates the maximum supported image size in whole megabytes from 1 through 10", () => {
+		const onSettingsChange = vi.fn();
+		render(<Harness onSettingsChange={onSettingsChange} />);
+		const input = screen.getByRole<HTMLInputElement>("spinbutton", {
+			name: "maximumImageSize",
+		});
+
+		expect(input.value).toBe("5");
+		expect(input.min).toBe("1");
+		expect(input.max).toBe("10");
+		expect(input.step).toBe("1");
+		expect(input.parentElement?.textContent).toContain("MB");
+		fireEvent.change(input, { target: { value: "7" } });
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ maxImageSizeMb: 7 }),
+		);
+	});
+
+	it("warns when the configured image size exceeds the current system upload limit", () => {
+		render(
+			<ImagesSettingsPage
+				brandMarkUrl="/plugin/brand.png"
+				draft={{
+					domain: "",
+					backupDomain: "",
+					primaryCredentialsConfigured: false,
+					backupCredentialsConfigured: false,
+				}}
+				overlayRoot={null}
+				settings={settings({ maxImageSizeMb: 5 })}
+				settingsRevision={0}
+				strings={strings}
+				uploadLimits={{ systemMaxBytes: 2 * 1024 * 1024 }}
+			/>,
+		);
+
+		expect(screen.getByText("maximumImageSizeSystemLimitExceeded")).not.toBeNull();
+	});
+
+	it("places image-title display in Upload behavior where filename preservation was and supports filename or empty", async () => {
+		const user = userEvent.setup();
+		render(<Harness />);
+		const uploadBehavior = screen
+			.getByRole("heading", { name: "uploadBehavior" })
+			.closest("section");
+		const titleDisplay = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "imageTitleDisplay",
+		});
+
+		expect(uploadBehavior).not.toBeNull();
+		expect(within(uploadBehavior as HTMLElement).getByRole("combobox", {
+			name: "imageTitleDisplay",
+		})).toBe(titleDisplay);
+		await user.click(titleDisplay);
+		expect(screen.getByRole("option", { name: "useFileName" })).not.toBeNull();
+		expect(screen.getByRole("option", { name: "leaveEmpty" })).not.toBeNull();
 	});
 
 	it("renders a real filename example and restores the caret after inserting a token", async () => {

@@ -339,6 +339,9 @@ JS;
 			'defaultSettings' => $this->settings_center_repository->get_default_settings(),
 			'settings'        => $settings,
 			'strings'         => SettingsCenterStrings::get(),
+			'uploadLimits'    => array(
+				'systemMaxBytes' => (int) wp_max_upload_size(),
+			),
 		);
 	}
 

@@ -42,7 +42,6 @@ import {
 	SettingsToggle,
 } from "./SettingsControls";
 import {
-	DocumentIcon,
 	ImageLibraryIcon,
 	SlidersIcon,
 } from "./settings-center-icons";
@@ -59,9 +58,6 @@ export type ImageUploadVerificationStatus =
 
 export type ImageRuntimeCapabilities = Readonly<{
 	compressImages: boolean;
-	insertAfterUpload: boolean;
-	preserveOriginalFileName: boolean;
-	maximumImageSize: boolean;
 }>;
 
 type VerificationState = Readonly<{
@@ -417,43 +413,6 @@ function UploadVerificationFeedbackDialog({
 	);
 }
 
-const LEGACY_IMAGE_VALUE_ALIASES: Readonly<Record<string, string>> = {
-	"Cloudflare R2": "cloudflare-r2",
-	"Aliyun OSS": "aliyun-oss",
-	"Tencent Cloud COS": "tencent-cos",
-	"Qiniu Kodo": "qiniu-kodo",
-	"Return primary URL on backup failure": "return-primary-url",
-	"Fail entire upload": "fail-upload",
-	"Do not retry": "none",
-	"Retry once": "once",
-	"Retry twice": "twice",
-	"Retry three times": "three-times",
-	"Original image size": "original",
-	"1920px": "1920",
-	"2560px": "2560",
-	"3840px": "3840",
-	"Markdown image": "markdown",
-	"HTML image": "html",
-	"URL only": "url",
-	"Use file name": "filename",
-	"Leave empty": "empty",
-	"Fill on upload": "upload",
-	"Do not insert": "none",
-};
-
-function normalizeImageValue(
-	value: string,
-	options: ReadonlyArray<SelectOption>,
-	fallback: string,
-): string {
-	const legacyValue = LEGACY_IMAGE_VALUE_ALIASES[value] ?? value;
-	return (
-		options.find(
-			(option) => option.value === legacyValue || option.label === value,
-		)?.value ?? fallback
-	);
-}
-
 function CompactSelect({
 	label,
 	onChange,
@@ -497,11 +456,17 @@ function ImageTextInput({
 
 function ImageNumberInput({
 	label,
+	max,
+	min,
 	onChange,
+	unit,
 	value,
 }: {
 	label: string;
+	max: number;
+	min: number;
 	onChange: (value: number) => void;
+	unit?: string;
 	value: number;
 }) {
 	return (
@@ -509,7 +474,7 @@ function ImageNumberInput({
 			<button
 				type="button"
 				aria-label={`${label} - 1`}
-				disabled={value === 0}
+				disabled={value === min}
 				onClick={() => onChange(value - 1)}
 			>
 				<Minus size={16} />
@@ -517,25 +482,26 @@ function ImageNumberInput({
 			<input
 				className="easymde-settings-center__image-number-input"
 				type="number"
-				min={0}
-				max={5}
+				min={min}
+				max={max}
 				step={1}
 				aria-label={label}
 				value={value}
 				onChange={(event) => {
 					const input = event.currentTarget;
 					const next = input.valueAsNumber;
-					if (Number.isInteger(next) && next >= 0 && next <= 5) {
+					if (Number.isInteger(next) && next >= min && next <= max) {
 						onChange(next);
 						return;
 					}
 					input.value = String(value);
 				}}
 			/>
+			{unit ? <span>{unit}</span> : null}
 			<button
 				type="button"
 				aria-label={`${label} + 1`}
-				disabled={value === 5}
+				disabled={value === max}
 				onClick={() => onChange(value + 1)}
 			>
 				<Plus size={16} />
@@ -952,6 +918,7 @@ export function ImagesSettingsPage({
 	strings,
 	runtimeCapabilities,
 	secretRevealPort,
+	uploadLimits,
 }: {
 	brandMarkUrl: string;
 	verificationInvalidationTokens?: VerificationInvalidationTokens;
@@ -965,6 +932,7 @@ export function ImagesSettingsPage({
 	strings: SettingsCenterBootstrap["strings"];
 	runtimeCapabilities?: ImageRuntimeCapabilities;
 	secretRevealPort?: ImageHostingSecretRevealPort;
+	uploadLimits: SettingsCenterBootstrap["uploadLimits"];
 }) {
 	const imageHostOptions: ReadonlyArray<SelectOption> = [
 		{ value: "cloudflare-r2", label: strings.cloudflareR2 },
@@ -973,26 +941,9 @@ export function ImagesSettingsPage({
 		{ value: "tencent-cos", label: strings.tencentCloudCos },
 	];
 	const backupHostOptions = imageHostOptions;
-	const maxImageSizeOptions: ReadonlyArray<SelectOption> = [
-		{ value: "original", label: strings.originalImageSize },
-		{ value: "1920", label: strings.imageSize1920 },
-		{ value: "2560", label: strings.imageSize2560 },
-		{ value: "3840", label: strings.imageSize3840 },
-	];
-	const insertFormatOptions: ReadonlyArray<SelectOption> = [
-		{ value: "markdown", label: strings.markdownImage },
-		{ value: "html", label: strings.htmlImage, disabled: true },
-		{ value: "url", label: strings.urlOnly },
-	];
-	const altSourceOptions: ReadonlyArray<SelectOption> = [
+	const titleDisplayOptions: ReadonlyArray<SelectOption> = [
 		{ value: "filename", label: strings.useFileName },
-		{ value: "empty", label: strings.leaveEmpty },
-		{ value: "upload", label: strings.fillOnUpload, disabled: true },
-	];
-	const captionModeOptions: ReadonlyArray<SelectOption> = [
-		{ value: "none", label: strings.doNotInsert },
-		{ value: "filename", label: strings.useFileName },
-		{ value: "upload", label: strings.fillOnUpload, disabled: true },
+		{ value: "none", label: strings.leaveEmpty },
 	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
@@ -1011,16 +962,10 @@ export function ImagesSettingsPage({
 			backupDomain: draft.backupDomain,
 			backupAccessKey: "",
 			backupSecretKey: "",
-			insertMarkdown: true,
 			compressImages: true,
-			preserveFileName: false,
-			copyUrl: false,
-			maxImageSize: "2560",
+			maxImageSizeMb: 5,
 			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
-			insertFormat: "markdown",
-			altSource: "filename",
-			captionMode: "none",
-			featuredPlaceholder: true,
+			titleDisplay: "none",
 		}),
 	);
 	const [formatError, setFormatError] = useState(false);
@@ -1044,29 +989,7 @@ export function ImagesSettingsPage({
 	);
 	verificationInvalidationTokensRef.current = verificationInvalidationTokens;
 	const rawSettings = externalSettings ?? localSettings;
-	const settings: ImageSettingsDraft = {
-		...rawSettings,
-		maxImageSize: normalizeImageValue(
-			rawSettings.maxImageSize,
-			maxImageSizeOptions,
-			"2560",
-		),
-		insertFormat: normalizeImageValue(
-			rawSettings.insertFormat,
-			insertFormatOptions,
-			"markdown",
-		),
-		altSource: normalizeImageValue(
-			rawSettings.altSource,
-			altSourceOptions.filter((option) => !option.disabled),
-			"filename",
-		),
-		captionMode: normalizeImageValue(
-			rawSettings.captionMode,
-			captionModeOptions.filter((option) => !option.disabled),
-			"none",
-		),
-	};
+	const settings = rawSettings;
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
 	useEffect(
@@ -1336,6 +1259,8 @@ export function ImagesSettingsPage({
 							>
 								<ImageNumberInput
 									label={strings.uploadRetryCount}
+									min={0}
+									max={5}
 									value={settings.uploadRetryCount}
 									onChange={(value) => setValue("uploadRetryCount", value)}
 								/>
@@ -1476,25 +1401,6 @@ export function ImagesSettingsPage({
 							{strings.uploadBehavior}
 						</h2>
 						<fieldset
-							disabled={!runtimeCapabilities?.insertAfterUpload}
-							title={
-								runtimeCapabilities?.insertAfterUpload
-									? undefined
-									: strings.settingsUnavailableDescription
-							}
-							className="easymde-settings-center__unavailable-fields"
-						>
-							<ImageBehaviorRow label={strings.insertMarkdownAfterUpload}>
-								<SettingsToggle
-									label={strings.insertMarkdownAfterUpload}
-									checked={settings.insertMarkdown}
-									onChange={() =>
-										setValue("insertMarkdown", !settings.insertMarkdown)
-									}
-								/>
-							</ImageBehaviorRow>
-						</fieldset>
-						<fieldset
 							disabled={!runtimeCapabilities?.compressImages}
 							title={
 								runtimeCapabilities?.compressImages
@@ -1516,62 +1422,42 @@ export function ImagesSettingsPage({
 								/>
 							</ImageBehaviorRow>
 						</fieldset>
-						<fieldset
-							disabled={!runtimeCapabilities?.preserveOriginalFileName}
-							title={
-								runtimeCapabilities?.preserveOriginalFileName
-									? undefined
-									: strings.settingsUnavailableDescription
-							}
-							className="easymde-settings-center__unavailable-fields"
-						>
-							<ImageBehaviorRow
-								label={strings.preserveOriginalFileName}
-								description={strings.preserveOriginalFileNameDescription}
-							>
-								<SettingsToggle
-									label={strings.preserveOriginalFileName}
-									checked={settings.preserveFileName}
-									onChange={() =>
-										setValue("preserveFileName", !settings.preserveFileName)
+						<ImageBehaviorRow label={strings.imageTitleDisplay}>
+							<CompactSelect
+								label={strings.imageTitleDisplay}
+								value={settings.titleDisplay}
+								options={titleDisplayOptions}
+								onChange={(value) => {
+									if (value !== "filename" && value !== "none") {
+										throw new Error("settings-center-image-title-display-invalid");
 									}
-								/>
-							</ImageBehaviorRow>
-						</fieldset>
-						<fieldset
-							disabled
-							title={strings.settingsUnavailableDescription}
-							className="easymde-settings-center__unavailable-fields"
+									setValue("titleDisplay", value);
+								}}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow
+							label={strings.maximumImageSize}
+							description={strings.maximumImageSizeDescription}
 						>
-							<ImageBehaviorRow
-								label={strings.copyImageUrl}
-								description={strings.copyImageUrlDescription}
-							>
-								<SettingsToggle
-									label={strings.copyImageUrl}
-									checked={settings.copyUrl}
-									onChange={() => setValue("copyUrl", !settings.copyUrl)}
-								/>
-							</ImageBehaviorRow>
-						</fieldset>
-						<fieldset
-							disabled={!runtimeCapabilities?.maximumImageSize}
-							title={
-								runtimeCapabilities?.maximumImageSize
-									? undefined
-									: strings.settingsUnavailableDescription
-							}
-							className="easymde-settings-center__unavailable-fields"
-						>
-							<ImageBehaviorRow label={strings.maximumImageSize}>
-								<CompactSelect
+							<div>
+								<ImageNumberInput
 									label={strings.maximumImageSize}
-									value={settings.maxImageSize}
-									options={maxImageSizeOptions}
-									onChange={(value) => setValue("maxImageSize", value)}
+									min={1}
+									max={10}
+									unit="MB"
+									value={settings.maxImageSizeMb}
+									onChange={(value) => setValue("maxImageSizeMb", value)}
 								/>
-							</ImageBehaviorRow>
-						</fieldset>
+								{settings.maxImageSizeMb * 1024 * 1024 > uploadLimits.systemMaxBytes ? (
+									<small role="alert">
+										{strings.maximumImageSizeSystemLimitExceeded.replace(
+											"%s",
+											String(Math.floor(uploadLimits.systemMaxBytes / 1024 / 1024)),
+										)}
+									</small>
+								) : null}
+							</div>
+						</ImageBehaviorRow>
 						<SettingsRow
 							label={strings.allowedUploadFormats}
 							description={strings.allowedUploadFormatsDescription}
@@ -1598,66 +1484,6 @@ export function ImagesSettingsPage({
 						</SettingsRow>
 					</section>
 
-					<section className="easymde-settings-center__image-group is-default-insertion">
-						<h2>
-							<DocumentIcon size={25} />
-							{strings.defaultInsertion}
-						</h2>
-						<ImageBehaviorRow label={strings.defaultInsertFormat}>
-							<CompactSelect
-								label={strings.defaultInsertFormat}
-								value={settings.insertFormat}
-								options={insertFormatOptions}
-								onChange={(value) => setValue("insertFormat", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.altTextSource}>
-							<CompactSelect
-								label={strings.altTextSource}
-								value={settings.altSource}
-								options={altSourceOptions}
-								onChange={(value) => setValue("altSource", value)}
-							/>
-						</ImageBehaviorRow>
-						<ImageBehaviorRow label={strings.imageTitleField}>
-							<CompactSelect
-								label={strings.imageTitleField}
-								value={settings.captionMode}
-								options={captionModeOptions}
-								onChange={(value) => setValue("captionMode", value)}
-							/>
-						</ImageBehaviorRow>
-						<fieldset
-							disabled
-							title={strings.settingsUnavailableDescription}
-							className="easymde-settings-center__unavailable-fields"
-						>
-							<ImageBehaviorRow
-								label={strings.imageFeaturedPlaceholder}
-								description={strings.imageFeaturedPlaceholderDescription}
-							>
-								<SettingsToggle
-									label={strings.imageFeaturedPlaceholder}
-									checked={settings.featuredPlaceholder}
-									onChange={() =>
-										setValue(
-											"featuredPlaceholder",
-											!settings.featuredPlaceholder,
-										)
-									}
-								/>
-							</ImageBehaviorRow>
-						</fieldset>
-						<div className="easymde-settings-center__upload-summary">
-							<div>
-								<Info size={17} />
-								{strings.currentAllowedUploads.replace("%s", () =>
-									selectedFormats.join(strings.uploadFormatSeparator),
-								)}
-							</div>
-							<div>{strings.compressLargeImagesRecommendation}</div>
-						</div>
-					</section>
 				</div>
 			</div>
 			{feedbackPortal}

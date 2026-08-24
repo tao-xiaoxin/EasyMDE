@@ -72,8 +72,7 @@ function validBootstrap() {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
       endpoint: 'https://example.test/wp-json/easymde/v1/image-hosting/upload',
-      insertAfterUpload: true,
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       nonce: 'synthetic-nonce',
       postId: 7,
@@ -140,7 +139,7 @@ function validBootstrap() {
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'
     },
     preview: {

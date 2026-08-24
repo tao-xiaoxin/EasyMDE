@@ -108,7 +108,8 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
-        $this->assertSame('', $bootstrap['drafts']['images']['domain']);
+		$this->assertSame('', $bootstrap['drafts']['images']['domain']);
+		$this->assertSame(wp_max_upload_size(), $bootstrap['uploadLimits']['systemMaxBytes']);
 		$this->assertFalse( $bootstrap['drafts']['images']['primaryCredentialsConfigured'] );
 		$this->assertFalse( $bootstrap['drafts']['images']['backupCredentialsConfigured'] );
         $this->assertNotEmpty( $bootstrap['api']['actionNonce'] );
@@ -140,7 +141,8 @@ final class SettingsPageTest extends WP_UnitTestCase
             'shortcutsDescription', 'imagesDescription', 'markdownDescription', 'transferDescription',
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
-            'settingsUnsavedChanges', 'settingsUnavailable', 'currentAllowedUploads', 'insertFileNameVariable',
+			'settingsUnsavedChanges', 'settingsUnavailable', 'insertFileNameVariable',
+			'maximumImageSize', 'maximumImageSizeDescription', 'maximumImageSizeSystemLimitExceeded', 'imageTitleDisplay',
 			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
 			'uploadRetryCount', 'uploadRetryCountDescription',
 			'duplicateImageHostTitle', 'duplicateImageHostDescription',
@@ -195,7 +197,36 @@ final class SettingsPageTest extends WP_UnitTestCase
 				'smartListRecognitionDescription',
 				'defaultCategory',
 				'noAutomaticCategory',
-				'currentCategory',
+					'currentCategory',
+					'insertMarkdownAfterUpload',
+					'preserveOriginalFileName',
+					'preserveOriginalFileNameDescription',
+					'copyImageUrl',
+					'copyImageUrlDescription',
+					'insertFormat',
+					'altSource',
+					'featuredPlaceholder',
+					'defaultInsertion',
+					'defaultInsertFormat',
+					'markdownImage',
+					'htmlImage',
+					'urlOnly',
+					'altTextSource',
+					'fillOnUpload',
+					'imageTitleField',
+					'imageFeaturedPlaceholder',
+					'imageFeaturedPlaceholderDescription',
+					'originalImageSize',
+					'imageSize1920',
+					'imageSize2560',
+					'imageSize3840',
+					'currentAllowedUploads',
+					'compressLargeImagesRecommendation',
+					'otherSettings',
+					'defaultLineEnding',
+					'unorderedListMarker',
+					'orderedListStart',
+					'blockquoteIndentStyle',
 			)
 			as $removed_key
 		) {

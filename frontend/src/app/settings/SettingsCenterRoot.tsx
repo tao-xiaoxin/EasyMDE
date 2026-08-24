@@ -1083,12 +1083,10 @@ export function SettingsCenterRoot({
 										uploadVerificationPort={imageHostingVerificationPort}
 										settingsRevision={settings.revision}
 										secretRevealPort={imageHostingSecretRevealPort}
-										runtimeCapabilities={{
-											compressImages: true,
-											insertAfterUpload: true,
-											maximumImageSize: true,
-											preserveOriginalFileName: true,
-										}}
+									runtimeCapabilities={{
+										compressImages: true,
+									}}
+									uploadLimits={bootstrap.uploadLimits}
 										draft={imageDraft}
 										overlayRoot={overlayRoot}
 										settings={settings.images}

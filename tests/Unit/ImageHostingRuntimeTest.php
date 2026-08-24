@@ -458,19 +458,17 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_preserve_original_name_still_uses_the_validated_key_builder() {
+	public function test_file_name_rule_always_owns_the_object_key_and_title_uses_the_complete_original_file_name() {
 		$transport = new ImageHostingRuntimeFakeTransport( array( HttpResponse::success( 200, '' ) ) );
 		$settings  = $this->settings();
 		$settings['backup']['enabled'] = false;
-		$settings['behaviors']['preserveOriginalName'] = true;
-		$settings['behaviors']['altSource'] = 'empty';
-		$settings['behaviors']['captionMode'] = 'filename';
-		$file    = $this->file( 'Clean Name.png', 'image/png', 'source-image-bytes' );
+		$settings['behaviors']['titleDisplay'] = 'filename';
+		$file    = $this->file( 'clean-name.png', 'image/png', 'source-image-bytes' );
 		$result  = $this->runtime( $transport )->upload( $settings, $file );
 
-		$this->assertStringContainsString( '/20260713/clean-name.png', $transport->requests[0][1] );
-		$this->assertSame( '', $result['alt'] );
-		$this->assertSame( 'Clean Name', $result['title'] );
+		$this->assertStringContainsString( '/20260713/00000000-0000-4000-8000-000000000000.png', $transport->requests[0][1] );
+		$this->assertSame( 'clean name', $result['alt'] );
+		$this->assertSame( 'clean-name.png', $result['title'] );
 		$this->assertSame( array( 'status' => 'disabled' ), $result['backup'] );
 		$this->assertArrayNotHasKey( 'fallbackUrl', $result );
 	}
@@ -487,13 +485,12 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$settings = $this->settings();
 		$settings['backup']['enabled'] = false;
 		$settings['behaviors']['autoCompress'] = true;
-		$settings['behaviors']['maxImageSize'] = '1920';
 		$file = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
 
 		$result = $runtime->upload( $settings, $file );
 
 		$this->assertIsArray( $result );
-		$this->assertSame( array( array( 1920, 1920, false ) ), $editor->resize_calls );
+		$this->assertSame( array(), $editor->resize_calls );
 		$this->assertSame( array( 82 ), $editor->quality_calls );
 		$this->assertNotSame( '', $editor->saved_path );
 		$this->assertFileDoesNotExist( $editor->saved_path );
@@ -546,18 +543,29 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$this->assertCount( 0, $transport->requests );
 	}
 
-	public function test_upload_text_modes_stay_empty_without_server_received_values() {
+	public function test_title_display_none_keeps_the_title_empty_and_alt_uses_the_file_name() {
 		$transport = new ImageHostingRuntimeFakeTransport( array( HttpResponse::success( 200, '' ) ) );
 		$settings  = $this->settings();
 		$settings['backup']['enabled'] = false;
-		$settings['behaviors']['altSource'] = 'upload';
-		$settings['behaviors']['captionMode'] = 'upload';
 		$file = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
 
 		$result = $this->runtime( $transport )->upload( $settings, $file );
 
-		$this->assertSame( '', $result['alt'] );
+		$this->assertSame( 'image', $result['alt'] );
 		$this->assertSame( '', $result['title'] );
+	}
+
+	public function test_upload_rejects_unknown_title_display_modes_before_network_requests() {
+		$transport = new ImageHostingRuntimeFakeTransport( array() );
+		$settings = $this->settings();
+		$settings['behaviors']['titleDisplay'] = 'upload';
+		$file = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
+
+		$result = $this->runtime( $transport )->upload( $settings, $file );
+
+		$this->assertWPError( $result );
+		$this->assertSame( 'easymde_image_hosting_configuration_invalid', $result->get_error_code() );
+		$this->assertCount( 0, $transport->requests );
 	}
 
 	public function test_auto_compress_never_rewrites_gif_content() {
@@ -573,7 +581,6 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$settings = $this->settings();
 		$settings['backup']['enabled'] = false;
 		$settings['behaviors']['autoCompress'] = true;
-		$settings['behaviors']['maxImageSize'] = '1920';
 		$file = $this->file( 'animated.gif', 'image/gif', 'synthetic-gif-bytes' );
 
 		$result = $runtime->upload( $settings, $file );
@@ -620,11 +627,9 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 				),
 			'fileNameRule' => '{date}/{uuid}.{ext}',
 			'behaviors'    => array(
-				'autoCompress'         => false,
-				'preserveOriginalName' => false,
-				'maxImageSize'         => 'original',
-				'altSource'            => 'filename',
-				'captionMode'          => 'none',
+				'autoCompress'  => false,
+				'maxBytes'      => 5 * MB_IN_BYTES,
+				'titleDisplay'  => 'none',
 			),
 		);
 	}

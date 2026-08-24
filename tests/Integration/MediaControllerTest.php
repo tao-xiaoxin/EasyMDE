@@ -49,4 +49,35 @@ final class MediaControllerTest extends WP_UnitTestCase {
 			unlink( $jpg_path );
 		}
 	}
+
+	public function test_saved_image_size_limit_is_enforced_by_the_media_controller() {
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings = $repository->get_settings();
+		$settings['images']['maxImageSizeMb'] = 1;
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+		$path = wp_tempnam( 'oversized.png' );
+		file_put_contents( $path, base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true ) );
+		file_put_contents( $path, str_repeat( "\0", MB_IN_BYTES ), FILE_APPEND );
+		$request = new WP_REST_Request( 'POST', '/easymde/v1/media' );
+		$request->set_file_params(
+			array(
+				'file' => array(
+					'name'     => 'oversized.png',
+					'type'     => 'image/png',
+					'tmp_name' => $path,
+					'error'    => UPLOAD_ERR_OK,
+					'size'     => filesize( $path ),
+				),
+			)
+		);
+
+		try {
+			$result = ( new MediaController( new Capabilities(), $repository ) )->handle_upload_request( $request );
+			$this->assertWPError( $result );
+			$this->assertSame( 'easymde_media_file_too_large', $result->get_error_code() );
+			$this->assertSame( 413, $result->get_error_data()['status'] );
+		} finally {
+			unlink( $path );
+		}
+	}
 }

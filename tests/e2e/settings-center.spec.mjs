@@ -569,10 +569,21 @@ test("keeps only the remaining Markdown settings inside their responsive section
 	for (const name of [
 		/^(?:编辑器设置|Editor Settings)$/u,
 		/^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
-		/^(?:其他|Other)$/u,
 	]) {
 		await expect(markdownSection.getByRole("heading", { name })).toBeVisible();
 	}
+	await expect(
+		markdownSection.getByRole("heading", { name: /^(?:其他|Other)$/u }),
+	).toHaveCount(0);
+	const pasteConversion = markdownSection.getByRole("switch", {
+		name: /将粘贴内容转换为 Markdown|Convert Pasted Content to Markdown/u,
+	});
+	await expect(pasteConversion).toBeVisible();
+	await expect(
+		pasteConversion.locator("xpath=ancestor::section[1]").getByRole("heading", {
+			name: /^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
+		}),
+	).toBeVisible();
 
 	for (const width of [1152, 390]) {
 		await page.setViewportSize({ width, height: 753 });
@@ -776,7 +787,24 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		images.getByRole("switch", {
 			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
 		}),
+	).toHaveCount(0);
+	await expect(
+		images.getByRole("combobox", {
+			name: /图片标题展示|Image Title Display/u,
+		}),
 	).toBeEnabled();
+	for (const name of [
+		/Alt 文本来源|Alt Text Source/u,
+		/复制图片 URL 到剪贴板|Copy Image URL to Clipboard/u,
+		/默认插入格式|Default Insert Format/u,
+	]) {
+		await expect(images.getByLabel(name)).toHaveCount(0);
+	}
+	const maximumSize = images.getByRole("spinbutton", {
+		name: /最大支持图片大小|Maximum Supported Image Size/u,
+	});
+	await expect(maximumSize).toHaveAttribute("min", "1");
+	await expect(maximumSize).toHaveAttribute("max", "10");
 	await expect(
 		images.getByRole("combobox", {
 			name: /上传失败时重试|Retry Failed Upload/u,
@@ -928,7 +956,10 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	for (let index = 0; index < 3; index += 1) await formats.nth(index).uncheck();
 	await formats.nth(3).click();
 	await expect(formats.nth(3)).toBeChecked();
-	await expect(page.getByRole("alert")).toBeVisible();
+	const uploadFormatRequired = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
+	);
+	await expect(page.getByText(uploadFormatRequired)).toBeVisible();
 
 	await page.reload();
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -952,6 +983,7 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
 	await expect(retryInput).toHaveAttribute("min", "0");
 	await expect(retryInput).toHaveAttribute("max", "5");
+	await expect(retryInput.locator("xpath=.." )).not.toContainText("MB");
 	const geometry = await Promise.all([
 		decrement.boundingBox(),
 		retryInput.boundingBox(),

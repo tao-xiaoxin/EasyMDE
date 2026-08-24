@@ -21,8 +21,7 @@ final class ImageHostingController {
 	const UPLOAD_NONCE_ACTION        = 'easymde_upload_image_hosting';
 	const NONCE_HEADER               = 'X-EasyMDE-Image-Hosting-Nonce';
 	const SECRET_NONCE_HEADER        = 'X-EasyMDE-Image-Hosting-Secret-Nonce';
-	const MAX_IMAGE_BYTES            = 10485760;
-	const MAX_VERIFICATION_BODY      = 8192;
+	const MAX_VERIFICATION_BODY = 8192;
 
 	private $capabilities;
 	private $settings_provider;
@@ -289,7 +288,9 @@ final class ImageHostingController {
 
 		$actual_size   = filesize( $file['tmp_name'] );
 		$declared_size = is_int( $file['size'] ) ? $file['size'] : -1;
-		$maximum_size  = min( self::MAX_IMAGE_BYTES, (int) wp_max_upload_size() );
+		$maximum_size  = isset( $settings['behaviors']['maxBytes'] ) && is_int( $settings['behaviors']['maxBytes'] )
+			? $settings['behaviors']['maxBytes']
+			: 0;
 		if ( false === $actual_size || $actual_size <= 0 || $actual_size !== $declared_size ) {
 			return $this->invalid_file_error();
 		}
@@ -376,17 +377,20 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' );
+		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'backupEnabled', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ) as $field ) {
+		foreach ( array( 'backupEnabled', 'compressImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}
 		}
 		if ( ! is_int( $draft['uploadRetryCount'] ) || $draft['uploadRetryCount'] < 0 || $draft['uploadRetryCount'] > 5 ) {
+			return false;
+		}
+		if ( ! is_int( $draft['maxImageSizeMb'] ) || $draft['maxImageSizeMb'] < 1 || $draft['maxImageSizeMb'] > 10 ) {
 			return false;
 		}
 		$limits = array(
@@ -403,10 +407,7 @@ final class ImageHostingController {
 			'backupDomain'    => 255,
 			'backupAccessKey' => 255,
 			'backupSecretKey' => 255,
-			'maxImageSize'    => 16,
-			'insertFormat'    => 32,
-			'altSource'       => 32,
-			'captionMode'     => 32,
+			'titleDisplay'    => 16,
 		);
 		foreach ( $limits as $field => $limit ) {
 			if ( ! is_string( $draft[ $field ] ) || strlen( $draft[ $field ] ) > $limit || 1 === preg_match( '/[\x00-\x1F\x7F]/', $draft[ $field ] ) ) {
@@ -418,10 +419,7 @@ final class ImageHostingController {
 			! $this->is_valid_provider_coordinates( $draft['backupService'], $draft['backupEndpoint'] ) ||
 			! $this->is_valid_public_result_url( $draft['domain'], true ) ||
 			! $this->is_valid_public_result_url( $draft['backupDomain'], true ) ||
-			! in_array( $draft['maxImageSize'], array( 'original', '1920', '2560', '3840' ), true ) ||
-			! in_array( $draft['insertFormat'], array( 'markdown', 'url' ), true ) ||
-			! in_array( $draft['altSource'], array( 'filename', 'empty' ), true ) ||
-			! in_array( $draft['captionMode'], array( 'none', 'filename' ), true ) ||
+			! in_array( $draft['titleDisplay'], array( 'none', 'filename' ), true ) ||
 			! is_array( $draft['uploadFormats'] ) ||
 			! $this->has_exact_keys( $draft['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) )
 		) {

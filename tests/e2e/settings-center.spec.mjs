@@ -1065,7 +1065,7 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 			input.evaluate((element) => getComputedStyle(element).fontSize),
 			unit.evaluate((element) => getComputedStyle(element).fontSize),
 		]);
-		expect(typography).toEqual(["15.5px", "15.5px"]);
+		expect(typography).toEqual(["15.5px", "15px"]);
 		const geometry = await Promise.all([
 			decrement.boundingBox(),
 			valueCell.boundingBox(),

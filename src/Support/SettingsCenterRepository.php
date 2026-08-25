@@ -497,7 +497,6 @@ final class SettingsCenterRepository {
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
-				'lineNumbers'      => false,
 				'editorTheme'      => 'system',
 				'githubFlavor'     => true,
 				'smartPunctuation' => true,

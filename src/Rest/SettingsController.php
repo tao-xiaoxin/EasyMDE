@@ -128,7 +128,7 @@ final class SettingsController {
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
 			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
-			'markdown'  => array( 'wordWrap', 'lineNumbers', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown' ),
+			'markdown'  => array( 'wordWrap', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -176,7 +176,7 @@ final class SettingsController {
 		$boolean_fields = array(
 			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
 			'images'    => array( 'backupEnabled', 'compressImages' ),
-			'markdown'  => array( 'wordWrap', 'lineNumbers', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
+			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 

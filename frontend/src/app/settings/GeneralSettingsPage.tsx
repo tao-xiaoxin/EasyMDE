@@ -1,7 +1,10 @@
 import { createElement, useState } from "@wordpress/element";
 import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
-import type { GeneralSettings } from "../../contracts/settings-center-settings";
+import type {
+	GeneralSettings,
+	SummaryMode,
+} from "../../contracts/settings-center-settings";
 import {
 	matchesSettingsQuery,
 	SettingsRow,
@@ -278,27 +281,24 @@ export function GeneralSettingsPage({
 						}
 					/>
 				</SettingsRow>
-				<fieldset
-					disabled
-					className="easymde-settings-center__unavailable-fields"
+				<SettingsRow
+					label={s.summaryMode}
+					description={s.summaryModeDescription}
+					query={normalizedQuery}
 				>
-					<SettingsRow
+					<NativeSelect
 						label={s.summaryMode}
-						description={s.summaryModeDescription}
-						query={normalizedQuery}
-					>
-						<NativeSelect
-							label={s.summaryMode}
-							value={draft.summaryMode}
-							onChange={(value) => setValue("summaryMode", value)}
-							options={[
-								["auto-55", s.summary55],
-								["auto-100", s.summary100],
-								["manual", s.manualSummary],
-							]}
-						/>
-					</SettingsRow>
-				</fieldset>
+						value={draft.summaryMode}
+						onChange={(value) =>
+							setValue("summaryMode", value as SummaryMode)
+						}
+						options={[
+							["auto-55", s.summary55],
+							["auto-100", s.summary100],
+							["manual", s.manualSummary],
+						]}
+					/>
+				</SettingsRow>
 				<SettingsRow
 					label={s.featuredImagePlaceholder}
 					description={s.featuredImagePlaceholderDescription}

@@ -545,6 +545,13 @@ test("keeps only the remaining Markdown settings inside their responsive section
 		.click();
 	const markdownSection = page.locator('[data-settings-section="markdown"]');
 	await expect(markdownSection).toBeVisible();
+	const editorLineNumbers = /^(?:显示行号|Show Line Numbers)$/u;
+	await expect(
+		markdownSection.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(0);
+	await expect(
+		page.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(1);
 
 	const removedSettings = [
 		/^(?:实时预览|Live Preview)$/u,
@@ -1619,7 +1626,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(aboutNav).toHaveAttribute("aria-current", "page");
 	await expect(aboutNav).toBeInViewport();
 
-	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(1);
+	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(0);
 	await expect(
 		generalSection.getByRole("combobox", {
 			name: /界面语言|interface language/i,
@@ -1630,7 +1637,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 		generalSection.getByRole("combobox", {
 			name: /默认摘要同步方式|default summary sync method/i,
 		}),
-	).toBeDisabled();
+	).toBeEnabled();
 	await expect(
 		generalSection.getByRole("switch", {
 			name: /智能列表识别|smart list recognition/i,
@@ -1642,6 +1649,90 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 		}),
 	).toHaveCount(0);
 	await expect(saveButton).toBeDisabled();
+});
+
+test("persists the default summary sync method selected with the keyboard", async ({
+	page,
+}) => {
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const summaryMode = page.getByRole("combobox", {
+		name: /默认摘要同步方式|default summary sync method/i,
+	});
+	const saveButton = page.locator(
+		".easymde-settings-center__save-bar > button",
+	);
+	const saveStatus = page.locator("[data-save-status]");
+	let initialOptionName = "";
+
+	try {
+		await expect(summaryMode).toBeEnabled();
+		await summaryMode.focus();
+		await summaryMode.press("Enter");
+		const listbox = page.getByRole("listbox", {
+			name: /默认摘要同步方式|default summary sync method/i,
+		});
+		await expect(listbox).toBeVisible();
+		initialOptionName =
+			(await listbox.getByRole("option", { selected: true }).textContent())?.trim() ??
+			"";
+		if (!initialOptionName)
+			throw new Error("settings-center-summary-initial-option-missing");
+		const initialOptionIndex = await listbox
+			.getByRole("option")
+			.evaluateAll((options) =>
+				options.findIndex(
+					(option) => option.getAttribute("aria-selected") === "true",
+				),
+			);
+		if (initialOptionIndex === 1) {
+			await summaryMode.press("Home");
+			await summaryMode.press("Enter");
+			await expect(saveButton).toBeEnabled();
+			await saveButton.click();
+			await expect(saveStatus).toHaveAttribute(
+				"data-save-status",
+				/saved|idle/u,
+			);
+			await page.reload();
+			await expect(page.locator(".easymde-settings-center")).toBeVisible();
+			await summaryMode.focus();
+			await summaryMode.press("Enter");
+		}
+		await summaryMode.press("Home");
+		await summaryMode.press("ArrowDown");
+		await summaryMode.press("Enter");
+		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+	} finally {
+		if (initialOptionName) {
+			await summaryMode.click();
+			const initialOption = page
+				.getByRole("listbox", {
+					name: /默认摘要同步方式|default summary sync method/i,
+				})
+				.getByRole("option", { name: initialOptionName, exact: true });
+			if ((await initialOption.getAttribute("aria-selected")) !== "true") {
+				await initialOption.click();
+				await expect(saveButton).toBeEnabled();
+				await saveButton.click();
+				await expect(saveStatus).toHaveAttribute(
+					"data-save-status",
+					/saved|idle/u,
+				);
+			} else {
+				await summaryMode.press("Escape");
+			}
+		}
+	}
 });
 
 test("keeps reference Help geometry stable while compact content stays inside its owners", async ({

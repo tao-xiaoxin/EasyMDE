@@ -1,3 +1,5 @@
+export type SummaryMode = "auto-55" | "auto-100" | "manual";
+
 export type GeneralSettings = Readonly<{
 	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
 	interfaceLanguage: string;
@@ -11,7 +13,7 @@ export type GeneralSettings = Readonly<{
 	syncScroll: boolean;
 	publishVisibility: string;
 	openPreviewAfterPublish: boolean;
-	summaryMode: string;
+	summaryMode: SummaryMode;
 	featuredImagePlaceholder: boolean;
 }>;
 
@@ -46,7 +48,6 @@ export type ImageSettings = Readonly<{
 
 export type MarkdownSettings = Readonly<{
 	wordWrap: boolean;
-	lineNumbers: boolean;
 	editorTheme: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;

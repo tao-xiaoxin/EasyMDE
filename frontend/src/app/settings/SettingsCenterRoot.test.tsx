@@ -923,7 +923,7 @@ describe("SettingsCenterRoot Markdown section", () => {
 		}
 	});
 
-	it("enables word wrapping and keeps Markdown controls without runtime owners unavailable", () => {
+	it("enables word wrapping and keeps remaining Markdown controls without runtime owners unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const markdown = document.querySelector(
 			'[data-settings-section="markdown"]',
@@ -931,9 +931,6 @@ describe("SettingsCenterRoot Markdown section", () => {
 		if (!(markdown instanceof HTMLElement))
 			throw new Error("markdown-settings-section-missing");
 		const controls = within(markdown);
-		const lineNumbers = controls.getByRole("switch", {
-			name: "showLineNumbers",
-		});
 		const wordWrap = controls.getByRole("switch", { name: "wordWrap" });
 		const theme = controls.getByRole<HTMLSelectElement>("combobox", {
 			name: "editorTheme",
@@ -943,12 +940,9 @@ describe("SettingsCenterRoot Markdown section", () => {
 		fireEvent.click(wordWrap);
 		expect(wordWrap.getAttribute("aria-checked")).toBe("false");
 		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
-		expect(lineNumbers.matches(":disabled")).toBe(true);
 		expect(theme.matches(":disabled")).toBe(true);
 		expect(controls.queryByRole("textbox", { name: "unorderedListMarker" })).toBeNull();
-		expect(lineNumbers.getAttribute("aria-describedby")).toBe(
-			"easymde-markdown-unavailable",
-		);
+		expect(controls.queryByRole("switch", { name: "showLineNumbers" })).toBeNull();
 		expect(wordWrap.getAttribute("aria-describedby")).toBeNull();
 		expect(
 			document.getElementById("easymde-markdown-unavailable"),
@@ -1011,6 +1005,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			featuredPlaceholder: true,
 		});
 		Object.assign(legacySettings.markdown, {
+			lineNumbers: false,
 			lineEnding: "crlf",
 			unorderedMarker: "*",
 			orderedStart: "3",
@@ -1072,6 +1067,60 @@ describe("SettingsCenterRoot Transfer section", () => {
 		expect(body.settings.images.maxImageSizeMb).toBe(5);
 		expect(body.settings.images.titleDisplay).toBe("filename");
 		expect(body.settings.images).not.toHaveProperty("insertFormat");
+		expect(body.settings.markdown).not.toHaveProperty("lineNumbers");
+		fetch.mockRestore();
+	});
+
+	it("drops the removed line number field from schema 2 imports", async () => {
+		const user = userEvent.setup();
+		const legacySettings = structuredClone(
+			bootstrap().settings,
+		) as unknown as {
+			general: Record<string, unknown>;
+			markdown: Record<string, unknown>;
+		};
+		legacySettings.general.autoFocusEditor = true;
+		legacySettings.markdown.lineNumbers = false;
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const transferSection = container.querySelector(
+			'[data-settings-section="transfer"]',
+		);
+		if (!(transferSection instanceof HTMLElement))
+			throw new Error("settings-center-transfer-section-missing");
+		const transfer = within(transferSection);
+		const fileInput = transfer.getByLabelText<HTMLInputElement>(
+			"transferChooseConfigurationFile",
+		);
+
+		await user.upload(
+			fileInput,
+			new File(
+				[JSON.stringify({ schemaVersion: 2, settings: legacySettings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
+		);
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.markdown).not.toHaveProperty("lineNumbers");
 		fetch.mockRestore();
 	});
 
@@ -1119,7 +1168,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(2);
+			expect(exported.schemaVersion).toBe(3);
 			expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
@@ -1515,11 +1564,49 @@ describe("SettingsCenterRoot persistence", () => {
 			screen
 				.getByRole("combobox", { name: "summaryMode" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
 				.disabled,
 		).toBe(true);
+	});
+
+	it("saves the selected summary sync method through the Settings owner", async () => {
+		const user = userEvent.setup();
+		const requestBody = {
+			current: null as { settings: SettingsCenterSettings } | null,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
+			requestBody.current = JSON.parse(String(init?.body)) as {
+				settings: SettingsCenterSettings;
+			};
+			return {
+				ok: true,
+				json: async () => ({
+					settings: {
+						...bootstrap().settings,
+						revision: bootstrap().settings.revision + 1,
+						general: {
+							...bootstrap().settings.general,
+							summaryMode: "auto-100",
+						},
+					},
+					credentialStatus: {
+						primaryConfigured: false,
+						backupConfigured: false,
+					},
+				}),
+			} as Response;
+		});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		await user.click(screen.getByRole("combobox", { name: "summaryMode" }));
+		await user.click(screen.getByRole("option", { name: "summary100" }));
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		expect(requestBody.current?.settings.general.summaryMode).toBe("auto-100");
+		fetch.mockRestore();
 	});
 
 	it("changes an owner-backed dropdown and sends the selected value", async () => {

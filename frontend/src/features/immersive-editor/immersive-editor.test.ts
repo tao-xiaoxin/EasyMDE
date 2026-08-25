@@ -1,12 +1,277 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOutlineTree,
+  derivePublishExcerpt,
   extractOutline,
   getDocumentStats,
   tableMarkdown
 } from './immersive-editor';
 
 describe('immersive editor model', () => {
+  it('derives automatic publish excerpts by Unicode code point', () => {
+    const markdown = '摘😀'.repeat(60);
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(markdown).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(markdown).slice(0, 100).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'manual')).toBeNull();
+  });
+
+  it('removes Markdown images and keeps only visible link text before truncating', () => {
+    const markdown = [
+      '开头![图片说明](https://image.test/a.png)',
+      '[可见链接文字](https://example.test/path)',
+      '摘😀'.repeat(60)
+    ].join('');
+    const plainText = `开头可见链接文字${'摘😀'.repeat(60)}`;
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'manual')).toBeNull();
+  });
+
+  it('removes every non-visible link target and reference definition', () => {
+    const markdown = [
+      '前[visible][ref]后',
+      '',
+      '[ref]: https://definition.test "title"',
+      '<https://auto.test>',
+      'https://bare.test',
+      '![alt][image-ref]',
+      '',
+      '[image-ref]: https://image.test/a.png',
+      '尾'.repeat(80)
+    ].join('\n');
+    const plainText = [
+      '前visible后',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '尾'.repeat(80)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('retains URL-shaped text when it is the visible label of an ordinary link', () => {
+    const markdown = [
+      '[https://visible.test](https://destination.test/path)',
+      '[www.visible.test](https://destination.test/www)',
+      '[mail@example.test](mailto:hidden@example.test)',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = [
+      'https://visible.test',
+      'www.visible.test',
+      'mail@example.test',
+      '尾😀'.repeat(80)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('removes block and inline Markdown syntax before Unicode truncation', () => {
+    const markdown = [
+      '# 标题😀',
+      '',
+      '**加粗**、*斜体*、~~删除线~~、`inline()`',
+      '',
+      '```ts',
+      'const value = "代码块";',
+      '```',
+      '',
+      '- 列表项[链接文字](https://example.test/target)',
+      '> 引用![图片说明](https://image.test/ignored.png)',
+      '尾'.repeat(120)
+    ].join('\n');
+    const plainText = [
+      '标题😀',
+      '',
+      '加粗、斜体、删除线、inline()',
+      '',
+      '',
+      'const value = "代码块";',
+      '',
+      '',
+      '列表项链接文字',
+      '引用',
+      '尾'.repeat(120)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('removes non-text GFM, HTML, URL, and escape syntax before truncation', () => {
+    const markdown = [
+      '- [x] 已完成任务',
+      '| 列一 | 列二 |',
+      '| --- | :---: |',
+      '| 单元格 | [链接文字](https://example.test/table-target) |',
+      '---',
+      String.raw`转义 \*星号\*、\#井号、\[方括号]`,
+      '内联<strong>可见文字</strong>结束',
+      '<section>',
+      'HTML 块内容',
+      '</section>',
+      '',
+      '![整张图片排除](https://image.test/ignored.png)',
+      '<https://autolink.test/path>',
+      'https://bare-url.test/path',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = [
+      '已完成任务',
+      '列一 列二',
+      '',
+      '单元格 链接文字',
+      '',
+      '转义 *星号*、#井号、[方括号]',
+      '内联可见文字结束',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '尾😀'.repeat(80)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('removes HTML comments and processing instructions as non-visible nodes', () => {
+    const markdown = [
+      '开始<!-- 内联隐藏内容 -->中间<?inline hidden?>结束',
+      '',
+      '<!--',
+      '块级隐藏内容',
+      '-->',
+      '',
+      '<?target hidden?>',
+      '',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = `开始中间结束\n\n\n\n\n\n${'尾😀'.repeat(80)}`;
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('decodes prose entities and removes subscript and superscript marks outside code', () => {
+    const markdown = [
+      '普通 &amp; &#x1F600; ~下标~ ^上标^',
+      '`&amp; &#x1F600; ~inline~ ^inline^`',
+      '```txt',
+      '&amp; &#x1F600; ~fenced~ ^fenced^',
+      '```',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = [
+      '普通 & 😀 下标 上标',
+      '&amp; &#x1F600; ~inline~ ^inline^',
+      '',
+      '&amp; &#x1F600; ~fenced~ ^fenced^',
+      '',
+      '尾😀'.repeat(80)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('removes supported math delimiters while preserving TeX source as text', () => {
+    const markdown = [
+      '行内 $E=mc^2$ 与 \\(a_b+c^d\\)',
+      '',
+      '$$',
+      '\\frac{1}{2}',
+      '$$',
+      '',
+      '\\[\\sum_{i=1}^n i\\]',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = `行内 E=mc^2 与 a_b+c^d\n\n\n\\frac{1}{2}\n\n\n\\sum_{i=1}^n i\n${'尾😀'.repeat(80)}`;
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it('preserves dollar-delimited text inside inline and fenced code', () => {
+    const markdown = [
+      '`$inline_literal$`',
+      '```txt',
+      '$fenced_literal$',
+      '```',
+      '尾😀'.repeat(80)
+    ].join('\n');
+    const plainText = [
+      '$inline_literal$',
+      '',
+      '$fenced_literal$',
+      '',
+      '尾😀'.repeat(80)
+    ].join('\n');
+
+    expect(derivePublishExcerpt(markdown, 'auto-55')).toBe(
+      Array.from(plainText).slice(0, 55).join('')
+    );
+    expect(derivePublishExcerpt(markdown, 'auto-100')).toBe(
+      Array.from(plainText).slice(0, 100).join('')
+    );
+  });
+
+  it(
+    'handles a large structural edit set without spreading it as arguments',
+    () => {
+      const markdown = '[x](y)'.repeat(30_000);
+
+      expect(derivePublishExcerpt(markdown, 'auto-100')).toBe('x'.repeat(100));
+    },
+    10_000
+  );
+
   it('computes stable document statistics', () => {
     expect(
       getDocumentStats('one **two**\n中文\n```ts\nignored code\n```')

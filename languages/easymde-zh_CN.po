@@ -313,8 +313,8 @@ msgstr "建议使用横向图片"
 #. translators: %s: Effective maximum image upload size, for example "5 MB".
 #: src/Admin/AdminAssets.php:448
 #, php-format
-msgid "Supports JPG, PNG, and WebP, max %s"
-msgstr "支持 JPG、PNG、WebP 格式，最大 %s"
+msgid "Supports JPG, PNG, WebP, and GIF, max %s"
+msgstr "支持 JPG、PNG、WebP、GIF 格式，最大 %s"
 
 #: src/Admin/AdminAssets.php:451
 msgid "Nothing is written to WordPress before submission."

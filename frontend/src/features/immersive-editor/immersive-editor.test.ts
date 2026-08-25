@@ -262,6 +262,24 @@ describe('immersive editor model', () => {
     );
   });
 
+  it('keeps structural edits when a math candidate only partially overlaps them', () => {
+    expect(
+      derivePublishExcerpt(
+        '$[visible](https://example.test/$tail)',
+        'auto-55'
+      )
+    ).toBe('$visible');
+    expect(
+      derivePublishExcerpt(
+        '[visible](https://example.test/$hidden$)尾',
+        'auto-55'
+      )
+    ).toBe('visible尾');
+    expect(
+      derivePublishExcerpt('$[visible](hidden)$尾', 'auto-55')
+    ).toBe('[visible](hidden)尾');
+  });
+
   it(
     'handles a large structural edit set without spreading it as arguments',
     () => {

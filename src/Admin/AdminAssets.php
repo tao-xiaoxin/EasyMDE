@@ -445,7 +445,7 @@ final class AdminAssets {
 					'imageRecommendation'         => __( 'Landscape images are recommended', 'easymde' ),
 					'imageRequirements'           => sprintf(
 						/* translators: %s: Effective maximum image upload size, for example "5 MB". */
-						__( 'Supports JPG, PNG, and WebP, max %s', 'easymde' ),
+						__( 'Supports JPG, PNG, WebP, and GIF, max %s', 'easymde' ),
 						size_format( $image_upload_config['maxBytes'] )
 					),
 					'noWriteBeforeSubmit'         => __( 'Nothing is written to WordPress before submission.', 'easymde' ),

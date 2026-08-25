@@ -307,7 +307,7 @@ msgstr ""
 #. translators: %s: Effective maximum image upload size, for example "5 MB".
 #: src/Admin/AdminAssets.php:448
 #, php-format
-msgid "Supports JPG, PNG, and WebP, max %s"
+msgid "Supports JPG, PNG, WebP, and GIF, max %s"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:451

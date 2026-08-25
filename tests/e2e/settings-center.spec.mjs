@@ -1104,6 +1104,17 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 	});
 	const decrement = page.getByRole("button", { name: `${label} - 1` });
 	const increment = page.getByRole("button", { name: `${label} + 1` });
+	const originalValue = await input.inputValue();
+	const systemMaxBytes = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.uploadLimits.systemMaxBytes,
+	);
+	const bytesPerMegabyte = 1024 * 1024;
+	const maximumConfigurableSizeMb = Number(await input.getAttribute("max"));
+	expect(maximumConfigurableSizeMb).toBe(10);
+	expect(systemMaxBytes).toBeLessThan(
+		maximumConfigurableSizeMb * bytesPerMegabyte,
+	);
+	const warningValue = Math.floor(systemMaxBytes / bytesPerMegabyte) + 1;
 
 	const assertGeometry = async (viewportWidth) => {
 		await expect(stepper.locator(":scope > *")).toHaveCount(3);
@@ -1173,39 +1184,45 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 		).toBe(true);
 	};
 
-	await assertGeometry(1152);
-	await assertWarningGeometry();
-	const warningStyles = await Promise.all([
-		systemLimitWarning.evaluate((element) => ({
-			color: getComputedStyle(element).color,
-			display: getComputedStyle(element).display,
-		})),
-		systemLimitWarning
-			.locator("svg")
-			.evaluate((element) => getComputedStyle(element).color),
-	]);
-	expect(warningStyles).toEqual([
-		{ color: "rgb(180, 35, 24)", display: "flex" },
-		"rgb(180, 35, 24)",
-	]);
-	const originalValue = Number(await input.inputValue());
-	if (originalValue < 10) {
-		await increment.click();
-		await expect(input).toHaveValue(String(originalValue + 1));
-	} else {
-		await decrement.click();
-		await expect(input).toHaveValue(String(originalValue - 1));
-	}
-	await input.fill(String(originalValue));
+	await input.fill(String(warningValue));
+	try {
+		await expect(systemLimitWarning).toBeVisible();
+		await assertGeometry(1152);
+		await assertWarningGeometry();
+		const warningStyles = await Promise.all([
+			systemLimitWarning.evaluate((element) => ({
+				color: getComputedStyle(element).color,
+				display: getComputedStyle(element).display,
+			})),
+			systemLimitWarning
+				.locator("svg")
+				.evaluate((element) => getComputedStyle(element).color),
+		]);
+		expect(warningStyles).toEqual([
+			{ color: "rgb(180, 35, 24)", display: "flex" },
+			"rgb(180, 35, 24)",
+		]);
+		if (warningValue < maximumConfigurableSizeMb) {
+			await increment.click();
+			await expect(input).toHaveValue(String(warningValue + 1));
+		} else {
+			await decrement.click();
+			await expect(input).toHaveValue(String(warningValue - 1));
+		}
+		await input.fill(String(warningValue));
 
-	await page.setViewportSize({ width: 390, height: 844 });
-	await assertGeometry(390);
-	await assertWarningGeometry();
-	const cdp = await page.context().newCDPSession(page);
-	const metrics = await cdp.send("Page.getLayoutMetrics");
-	expect(metrics.cssLayoutViewport.clientWidth).toBe(390);
-	await cdp.detach();
-	expect(browserFailures).toEqual([]);
+		await page.setViewportSize({ width: 390, height: 844 });
+		await assertGeometry(390);
+		await assertWarningGeometry();
+		const cdp = await page.context().newCDPSession(page);
+		const metrics = await cdp.send("Page.getLayoutMetrics");
+		expect(metrics.cssLayoutViewport.clientWidth).toBe(390);
+		await cdp.detach();
+		expect(browserFailures).toEqual([]);
+	} finally {
+		await input.fill(originalValue);
+	}
+	await expect(input).toHaveValue(originalValue);
 });
 
 test("matches the reference Settings Center header geometry", async ({

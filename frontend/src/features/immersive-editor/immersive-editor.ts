@@ -339,6 +339,8 @@ function collectSummaryMathEdits(
     }
     let currentEditIndex = editIndex;
     let excludedByContainer = false;
+    let overlapsPartially = false;
+    const containedEdits: SourceEdit[] = [];
     while (true) {
       const edit = edits[currentEditIndex];
       if (!edit || edit.from >= range.to) break;
@@ -347,13 +349,15 @@ function collectSummaryMathEdits(
         break;
       }
       if (range.from <= edit.from && edit.to <= range.to) {
-        removedEdits.add(edit);
+        containedEdits.push(edit);
         currentEditIndex += 1;
         continue;
       }
-      throw new Error('immersive-summary-math-edit-overlap-invalid');
+      overlapsPartially = true;
+      break;
     }
-    if (excludedByContainer) continue;
+    if (excludedByContainer || overlapsPartially) continue;
+    for (const edit of containedEdits) removedEdits.add(edit);
     delimiterEdits.push(
       {
         from: range.from,

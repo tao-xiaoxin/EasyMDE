@@ -14,6 +14,8 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		syncScroll: true,
 		publishVisibility: "public",
 		openPreviewAfterPublish: true,
+		applyEditorThemeToFrontend: true,
+		showPublishedCodeCopyButton: true,
 		summaryMode: "auto-55",
 		featuredImagePlaceholder: true,
 	},

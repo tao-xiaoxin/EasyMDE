@@ -78,6 +78,25 @@ type MutableSettingsRecord = Record<string, unknown> & {
 };
 
 describe("parseSettingsCenterBootstrap", () => {
+	it("preserves the frontend theme application preference", () => {
+		expect(
+			parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).general
+				.applyEditorThemeToFrontend,
+		).toBe(true);
+	});
+
+	it("preserves the published code copy button preference", () => {
+		expect(
+			parseSettingsCenterSettings({
+				...SETTINGS_CENTER_TEST_SETTINGS,
+				general: {
+					...SETTINGS_CENTER_TEST_SETTINGS.general,
+					showPublishedCodeCopyButton: true,
+				},
+			}).general.showPublishedCodeCopyButton,
+		).toBe(true);
+	});
+
 	it.each([
 		[
 			"an extra field",

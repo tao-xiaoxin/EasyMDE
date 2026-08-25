@@ -80,6 +80,18 @@ final class SettingsCenterRepository {
 		return $this->revision_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
 	}
 
+	public function should_apply_editor_theme_to_frontend() {
+		$settings = $this->get_settings();
+
+		return $settings['general']['applyEditorThemeToFrontend'];
+	}
+
+	public function should_show_published_code_copy_button() {
+		$settings = $this->get_settings();
+
+		return $settings['general']['showPublishedCodeCopyButton'];
+	}
+
 	public function get_shortcut_config_for_script() {
 		$settings  = $this->get_settings();
 		$stored    = $this->options->get_editor_settings();
@@ -455,19 +467,21 @@ final class SettingsCenterRepository {
 
 		return array(
 			'general'   => array(
-				'interfaceLanguage'        => 'zh-CN',
-				'editingMode'              => 'live-preview',
-				'autoFocusEditor'          => true,
-				'showLineNumbers'          => true,
-				'syntaxHighlight'          => true,
-				'statusBarMode'            => 'words-reading-time',
-				'autoSave'                 => true,
-				'autoSaveInterval'         => '60',
-				'syncScroll'               => true,
-				'publishVisibility'        => 'public',
-				'openPreviewAfterPublish'  => true,
-				'summaryMode'              => 'auto-55',
-				'featuredImagePlaceholder' => true,
+				'interfaceLanguage'           => 'zh-CN',
+				'editingMode'                 => 'live-preview',
+				'autoFocusEditor'             => true,
+				'showLineNumbers'             => true,
+				'syntaxHighlight'             => true,
+				'statusBarMode'               => 'words-reading-time',
+				'autoSave'                    => true,
+				'autoSaveInterval'            => '60',
+				'syncScroll'                  => true,
+				'publishVisibility'           => 'public',
+				'openPreviewAfterPublish'     => true,
+				'applyEditorThemeToFrontend'  => true,
+				'showPublishedCodeCopyButton' => true,
+				'summaryMode'                 => 'auto-55',
+				'featuredImagePlaceholder'    => true,
 			),
 			'images'    => array(
 				'service'          => 'cloudflare-r2',
@@ -548,6 +562,13 @@ final class SettingsCenterRepository {
 
 	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
 		$defaults = $this->get_defaults();
+		if ( isset( $input['general'] ) && is_array( $input['general'] ) ) {
+			foreach ( array( 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ) as $boolean_field ) {
+				if ( array_key_exists( $boolean_field, $input['general'] ) && ! is_bool( $input['general'][ $boolean_field ] ) ) {
+					return $this->invalid_payload_error();
+				}
+			}
+		}
 		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
 			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
 				if (

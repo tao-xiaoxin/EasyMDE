@@ -53,6 +53,8 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['images'] );
 		}
 		$this->assertArrayHasKey( 'featuredImagePlaceholder', $data['settings']['general'] );
+		$this->assertTrue( $data['settings']['general']['applyEditorThemeToFrontend'] );
+		$this->assertTrue( $data['settings']['general']['showPublishedCodeCopyButton'] );
 		$this->assertSame(
 			array(
 				'wordWrap',
@@ -371,6 +373,18 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $response = $this->post_json( array( 'settings' => $invalid_type ) );
         $this->assertSame( 400, $response->get_status() );
         $this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+
+		$invalid_theme_linkage = $settings;
+		$invalid_theme_linkage['general']['applyEditorThemeToFrontend'] = 'true';
+		$response = $this->post_json( array( 'settings' => $invalid_theme_linkage ) );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+
+		$invalid_code_copy = $settings;
+		$invalid_code_copy['general']['showPublishedCodeCopyButton'] = 'true';
+		$response = $this->post_json( array( 'settings' => $invalid_code_copy ) );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
 
         $invalid_shortcut = $settings;
         $invalid_shortcut['shortcuts']['values']['bold']['windows'] = 'Alt+B';

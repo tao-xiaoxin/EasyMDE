@@ -73,7 +73,12 @@ Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled loc
 **Appearance**
 
 - Per-post article themes and code themes.
+- The Settings Center applies the editor's selected appearance to published
+  content by default. Disable this linkage to keep the selected appearance in
+  editor Preview while public content uses EasyMDE's neutral default appearance.
 - Fixed CSS-only Mac-style frame for rendered code blocks, loaded only when code content needs it.
+- Published code blocks show a copy button by default; the Settings Center can
+  disable that control without disabling code rendering or syntax highlighting.
 - Per-post article font stack selection.
 - Named per-user custom CSS styles, scoped and parsed before use.
 

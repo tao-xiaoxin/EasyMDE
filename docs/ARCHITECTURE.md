@@ -449,7 +449,7 @@ When restoring a revision that predates EasyMDE document state, the manager remo
 
 Article themes are EasyMDE-owned CSS files under `assets/themes/article/`. Highlight.js vendor styles remain under `assets/vendor/highlight/styles/`. EasyMDE-owned code themes, including `wechat-inspired`, `terminal-noir`, and the distinct `fullstack-blue` token palette, are stored under `assets/themes/code/`.
 
-Block-code presentation is independent from article-theme CSS. `assets/css/frontend/code-frame.css` owns the fixed cross-theme Mac frame. Code-theme assets own only block background, foreground, and Highlight.js token colors. Article-theme stylesheets retain inline code and non-code article presentation but contain no `pre`, Highlight.js token, frame, or legacy MDNice code-snippet selectors. Ordinary editor Preview, immersive Preview, revision Preview, REST-rendered content, frontend content, and WeChat export consume the same selected code-theme asset instead of defining surface-specific block-code rules.
+Block-code presentation is independent from article-theme CSS. `assets/css/frontend/code-frame.css` owns the fixed cross-theme Mac frame. Code-theme assets own only block background, foreground, and Highlight.js token colors. Article-theme stylesheets retain inline code and non-code article presentation but contain no `pre`, Highlight.js token, frame, or legacy MDNice code-snippet selectors. Ordinary editor Preview, immersive Preview, revision Preview, REST-rendered content, and WeChat export consume the selected code-theme asset instead of defining surface-specific block-code rules. Public frontend content also consumes the selected appearance while the default-enabled `applyEditorThemeToFrontend` setting is active. When that setting is disabled, the public renderer and asset owner use one neutral default article and code-theme state without custom CSS or font overrides; stored appearance metadata and every editor Preview surface remain unchanged.
 
 Each article-theme descriptor exposes a Registry-owned `defaultCodeTheme`. Themes with the same effective palette reuse the same registered code theme; `fullstack-blue` retains its genuinely distinct token palette without content-dependent JavaScript rewriting. When no valid persisted or browser-session code-theme choice exists, the current article association supplies the code theme. A valid explicit choice remains authoritative across later article-theme changes. `atom-one-dark` is only the compatibility fallback for a missing or invalid association, and opening the editor performs no hidden write.
 
@@ -462,13 +462,18 @@ easymde_article_themes
 easymde_code_themes
 ```
 
-Frontend EasyMDE posts enqueue:
+Frontend EasyMDE posts enqueue the selected appearance when
+`applyEditorThemeToFrontend` is enabled, or the neutral default appearance when
+it is disabled:
 
 - the EasyMDE base content stylesheet;
 - the selected article theme stylesheet;
 - code frame CSS only when regular code blocks need it;
 - the manifest-backed code-copy script and its scoped stylesheet only when
-  regular code blocks support copying;
+  regular code blocks support copying and the default-enabled
+  `showPublishedCodeCopyButton` setting remains enabled; disabling it omits the
+  control and dedicated assets while preserving the code frame, code content,
+  and syntax highlighting;
 - the selected code theme stylesheet and Highlight.js only when syntax highlighting is needed;
 - KaTeX, the on-demand Mermaid TypeScript bundle, and TOC assets only when the
   current Markdown needs them;

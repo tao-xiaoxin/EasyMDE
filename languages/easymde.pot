@@ -437,7 +437,7 @@ msgstr ""
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:482 src/Frontend/FrontendAssets.php:105
+#: src/Admin/AdminAssets.php:482 src/Frontend/FrontendAssets.php:109
 msgid "Copied"
 msgstr ""
 
@@ -1155,7 +1155,7 @@ msgstr ""
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:948 src/Frontend/FrontendAssets.php:103
+#: src/Admin/AdminAssets.php:948 src/Frontend/FrontendAssets.php:107
 msgid "Rendering failed."
 msgstr ""
 
@@ -1652,8 +1652,8 @@ msgid "Settings saved."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:113
-#: src/Support/SettingsCenterRepository.php:406
-#: src/Support/SettingsCenterRepository.php:414
+#: src/Support/SettingsCenterRepository.php:418
+#: src/Support/SettingsCenterRepository.php:426
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -2752,6 +2752,24 @@ msgstr ""
 msgid "Close Image Upload Feedback"
 msgstr ""
 
+#: src/Admin/SettingsCenterStrings.php:390
+msgid "Link Editor Theme to Published Content"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:391
+msgid ""
+"Apply the selected editor theme to published articles. Disable this to use "
+"the theme only in editor previews."
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:392
+msgid "Show Copy Button on Published Code Blocks"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:393
+msgid "Show a copy button on code blocks in published articles."
+msgstr ""
+
 #: src/Admin/SettingsPage.php:35 src/Admin/SettingsPage.php:45
 #: src/Admin/SettingsPage.php:128
 msgid "EasyMDE Settings Center"
@@ -2769,21 +2787,21 @@ msgstr ""
 msgid "The EasyMDE settings route is not supported."
 msgstr ""
 
-#: src/Frontend/FrontendAssets.php:104
+#: src/Frontend/FrontendAssets.php:108
 msgid "Copy code"
 msgstr ""
 
-#: src/Frontend/FrontendAssets.php:106
+#: src/Frontend/FrontendAssets.php:110
 msgid "Code copied"
 msgstr ""
 
-#: src/Frontend/FrontendAssets.php:107
+#: src/Frontend/FrontendAssets.php:111
 msgid "Unable to copy code. Try again."
 msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
 #: src/Rest/ImageHostingController.php:657
-#: src/Support/SettingsCenterRepository.php:661
+#: src/Support/SettingsCenterRepository.php:682
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
@@ -2810,7 +2828,7 @@ msgstr ""
 
 #: src/Rest/ImageHostingController.php:271
 #: src/Rest/ImageHostingController.php:649
-#: src/Support/SettingsCenterRepository.php:430
+#: src/Support/SettingsCenterRepository.php:442
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
@@ -2895,14 +2913,14 @@ msgid "The settings payload is too large."
 msgstr ""
 
 #: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:370
-#: src/Support/SettingsCenterRepository.php:291
-#: src/Support/SettingsCenterRepository.php:422
-#: src/Support/SettingsCenterRepository.php:563
-#: src/Support/SettingsCenterRepository.php:598
+#: src/Support/SettingsCenterRepository.php:303
+#: src/Support/SettingsCenterRepository.php:434
+#: src/Support/SettingsCenterRepository.php:584
+#: src/Support/SettingsCenterRepository.php:619
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:641
+#: src/Support/SettingsCenterRepository.php:662
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
@@ -3276,76 +3294,76 @@ msgstr ""
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:475
-#: src/Theme/ThemeStateRepository.php:522
-#: src/Theme/ThemeStateRepository.php:549
-#: src/Theme/ThemeStateRepository.php:571
+#: src/Theme/ThemeStateRepository.php:495
+#: src/Theme/ThemeStateRepository.php:542
+#: src/Theme/ThemeStateRepository.php:569
+#: src/Theme/ThemeStateRepository.php:591
 msgctxt "font selection option"
 msgid "None"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:480
+#: src/Theme/ThemeStateRepository.php:500
 msgid "Optima"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:485
+#: src/Theme/ThemeStateRepository.php:505
 msgid "Inter"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:490
+#: src/Theme/ThemeStateRepository.php:510
 msgid "Helvetica"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:495
+#: src/Theme/ThemeStateRepository.php:515
 msgid "Georgia"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:500
+#: src/Theme/ThemeStateRepository.php:520
 msgid "Times"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:505
+#: src/Theme/ThemeStateRepository.php:525
 msgid "Cochin"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:510
+#: src/Theme/ThemeStateRepository.php:530
 msgid "Helvetica Neue"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:517
+#: src/Theme/ThemeStateRepository.php:537
 msgid "Microsoft YaHei"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:529
+#: src/Theme/ThemeStateRepository.php:549
 msgid "PingFang SC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:534
+#: src/Theme/ThemeStateRepository.php:554
 msgid "PingFang SC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:539
+#: src/Theme/ThemeStateRepository.php:559
 msgid "PingFang TC Light"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:544
+#: src/Theme/ThemeStateRepository.php:564
 msgid "PingFang TC Regular"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:556
+#: src/Theme/ThemeStateRepository.php:576
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:561
+#: src/Theme/ThemeStateRepository.php:581
 msgid "serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:566
+#: src/Theme/ThemeStateRepository.php:586
 msgid "sans-serif"
 msgstr ""
 
-#: src/Theme/ThemeStateRepository.php:576
+#: src/Theme/ThemeStateRepository.php:596
 msgctxt "font selection option"
 msgid "Theme default"
 msgstr ""

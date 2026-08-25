@@ -13,6 +13,8 @@ export type GeneralSettings = Readonly<{
 	syncScroll: boolean;
 	publishVisibility: string;
 	openPreviewAfterPublish: boolean;
+	applyEditorThemeToFrontend: boolean;
+	showPublishedCodeCopyButton: boolean;
 	summaryMode: SummaryMode;
 	featuredImagePlaceholder: boolean;
 }>;

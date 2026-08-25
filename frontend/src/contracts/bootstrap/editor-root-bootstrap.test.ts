@@ -91,6 +91,8 @@ function validBootstrap() {
     settings: {
       general: {
         autoFocusEditor: true,
+        applyEditorThemeToFrontend: true,
+        showPublishedCodeCopyButton: true,
         autoSave: true,
         autoSaveInterval: '60',
         editingMode: 'live-preview',
@@ -461,6 +463,32 @@ describe('parseEditorRootBootstrap', () => {
           general: {
             ...validBootstrap().settings.general,
             autoSaveInterval: 'invalid'
+          }
+        }
+      },
+      'editor-root-settings-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        settings: {
+          ...validBootstrap().settings,
+          general: {
+            ...validBootstrap().settings.general,
+            showPublishedCodeCopyButton: 'yes'
+          }
+        }
+      },
+      'editor-root-settings-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        settings: {
+          ...validBootstrap().settings,
+          general: {
+            ...validBootstrap().settings.general,
+            applyEditorThemeToFrontend: 'yes'
           }
         }
       },

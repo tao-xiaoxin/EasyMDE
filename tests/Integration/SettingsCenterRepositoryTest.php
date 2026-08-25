@@ -213,9 +213,36 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$this->assertArrayNotHasKey($removed, $settings['images']);
 		}
 		$this->assertArrayHasKey('featuredImagePlaceholder', $settings['general']);
+		$this->assertTrue($settings['general']['applyEditorThemeToFrontend']);
 		foreach (array('lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['markdown']);
 		}
+	}
+
+	public function test_frontend_theme_linkage_defaults_on_and_exposes_a_narrow_runtime_query()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertTrue($repository->should_apply_editor_theme_to_frontend());
+
+		$settings = $repository->get_settings();
+		$settings['general']['applyEditorThemeToFrontend'] = false;
+		$this->assertIsArray($repository->update_settings($settings));
+
+		$this->assertFalse($repository->should_apply_editor_theme_to_frontend());
+	}
+
+	public function test_published_code_copy_button_defaults_on_and_exposes_a_narrow_runtime_query()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertTrue($repository->should_show_published_code_copy_button());
+
+		$settings = $repository->get_settings();
+		$settings['general']['showPublishedCodeCopyButton'] = false;
+		$this->assertIsArray($repository->update_settings($settings));
+
+		$this->assertFalse($repository->should_show_published_code_copy_button());
 	}
 
 	public function test_legacy_caption_mode_migrates_to_title_display_without_reintroducing_removed_fields()

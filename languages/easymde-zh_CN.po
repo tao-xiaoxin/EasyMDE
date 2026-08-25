@@ -1485,18 +1485,36 @@ msgid "Automatically open the article preview after publishing or updating"
 msgstr "发布或更新后自动打开文章预览"
 
 #: src/Admin/SettingsCenterStrings.php:67
+msgid "Link Editor Theme to Published Content"
+msgstr "编辑器主题联动"
+
+#: src/Admin/SettingsCenterStrings.php:68
+msgid ""
+"Apply the selected editor theme to published articles. Disable this to use "
+"the theme only in editor previews."
+msgstr "将编辑器中选择的主题应用到发布文章。关闭后，该主题仅用于编辑器预览。"
+
+#: src/Admin/SettingsCenterStrings.php:69
+msgid "Show Copy Button on Published Code Blocks"
+msgstr "发布文章代码块显示复制按钮"
+
+#: src/Admin/SettingsCenterStrings.php:70
+msgid "Show a copy button on code blocks in published articles."
+msgstr "在发布文章的代码块上显示复制按钮。"
+
+#: src/Admin/SettingsCenterStrings.php:71
 msgid "Default Summary Sync Method"
 msgstr "默认摘要同步方式"
 
-#: src/Admin/SettingsCenterStrings.php:68
+#: src/Admin/SettingsCenterStrings.php:72
 msgid "Automatically extract the summary from the beginning of the content"
 msgstr "自动从内容开头提取摘要"
 
-#: src/Admin/SettingsCenterStrings.php:69
+#: src/Admin/SettingsCenterStrings.php:73
 msgid "Featured Image Placeholder"
 msgstr "特色图片占位提示"
 
-#: src/Admin/SettingsCenterStrings.php:70
+#: src/Admin/SettingsCenterStrings.php:74
 msgid "Show a placeholder prompt when no featured image is set"
 msgstr "在没有特色图片时显示占位提示"
 

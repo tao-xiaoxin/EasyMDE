@@ -55,6 +55,10 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"defaultVisibility",
 	"openPreviewAfterPublish",
 	"openPreviewAfterPublishDescription",
+	"applyEditorThemeToFrontend",
+	"applyEditorThemeToFrontendDescription",
+	"showPublishedCodeCopyButton",
+	"showPublishedCodeCopyButtonDescription",
 	"summaryMode",
 	"summaryModeDescription",
 	"featuredImagePlaceholder",
@@ -653,6 +657,8 @@ export function parseSettingsCenterSettings(
 		"autoSave",
 		"syncScroll",
 		"openPreviewAfterPublish",
+		"applyEditorThemeToFrontend",
+		"showPublishedCodeCopyButton",
 		"featuredImagePlaceholder",
 	];
 	const general = parseSettingsStringFields(root, "general", generalStrings);

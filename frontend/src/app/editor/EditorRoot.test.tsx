@@ -512,6 +512,8 @@ function fixture(): EditorRootProps &
     settings: {
       general: {
         autoFocusEditor: true,
+        applyEditorThemeToFrontend: true,
+        showPublishedCodeCopyButton: true,
         autoSave: true,
         autoSaveInterval: '0.5',
         editingMode: 'live-preview',

@@ -441,6 +441,8 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'autoSave',
       'syncScroll',
       'openPreviewAfterPublish',
+      'applyEditorThemeToFrontend',
+      'showPublishedCodeCopyButton',
       'featuredImagePlaceholder'
     ] as const;
     const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -473,6 +475,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     settings = {
       general: {
         autoFocusEditor: general.autoFocusEditor as boolean,
+        applyEditorThemeToFrontend:
+          general.applyEditorThemeToFrontend as boolean,
+        showPublishedCodeCopyButton:
+          general.showPublishedCodeCopyButton as boolean,
         autoSave: general.autoSave as boolean,
         autoSaveInterval: general.autoSaveInterval as string,
         editingMode: general.editingMode as string,

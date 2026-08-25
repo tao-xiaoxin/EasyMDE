@@ -1022,9 +1022,12 @@ describe("SettingsCenterRoot Transfer section", () => {
 			},
 		};
 		const legacySettings = structuredClone(importedSettings) as unknown as {
+			general: Record<string, unknown>;
 			images: Record<string, unknown>;
 			markdown: Record<string, unknown>;
 		};
+		delete legacySettings.general.applyEditorThemeToFrontend;
+		delete legacySettings.general.showPublishedCodeCopyButton;
 		delete legacySettings.images.maxImageSizeMb;
 		delete legacySettings.images.titleDisplay;
 		Object.assign(legacySettings.images, {
@@ -1097,6 +1100,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 			settings: SettingsCenterSettings;
 		};
 		expect(body.settings.general.autoFocusEditor).toBe(true);
+		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
+		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
 		expect(body.settings.images.maxImageSizeMb).toBe(5);
 		expect(body.settings.images.titleDisplay).toBe("filename");
 		expect(body.settings.images).not.toHaveProperty("insertFormat");
@@ -1106,13 +1111,13 @@ describe("SettingsCenterRoot Transfer section", () => {
 
 	it("drops the removed line number field from schema 2 imports", async () => {
 		const user = userEvent.setup();
-		const legacySettings = structuredClone(
-			bootstrap().settings,
-		) as unknown as {
+		const legacySettings = structuredClone(bootstrap().settings) as unknown as {
 			general: Record<string, unknown>;
 			markdown: Record<string, unknown>;
 		};
 		legacySettings.general.autoFocusEditor = true;
+		delete legacySettings.general.applyEditorThemeToFrontend;
+		delete legacySettings.general.showPublishedCodeCopyButton;
 		legacySettings.markdown.lineNumbers = false;
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
@@ -1154,6 +1159,61 @@ describe("SettingsCenterRoot Transfer section", () => {
 			settings: SettingsCenterSettings;
 		};
 		expect(body.settings.markdown).not.toHaveProperty("lineNumbers");
+		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
+		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+		fetch.mockRestore();
+	});
+
+	it("imports schema 3 configurations with published appearance defaults", async () => {
+		const user = userEvent.setup();
+		const legacySettings = structuredClone(bootstrap().settings) as unknown as {
+			general: Record<string, unknown>;
+		};
+		legacySettings.general.autoFocusEditor = true;
+		delete legacySettings.general.applyEditorThemeToFrontend;
+		delete legacySettings.general.showPublishedCodeCopyButton;
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const transferSection = container.querySelector(
+			'[data-settings-section="transfer"]',
+		);
+		if (!(transferSection instanceof HTMLElement))
+			throw new Error("settings-center-transfer-section-missing");
+		const transfer = within(transferSection);
+		const fileInput = transfer.getByLabelText<HTMLInputElement>(
+			"transferChooseConfigurationFile",
+		);
+
+		await user.upload(
+			fileInput,
+			new File(
+				[JSON.stringify({ schemaVersion: 3, settings: legacySettings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
+		);
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.general.autoFocusEditor).toBe(true);
+		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
+		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
 		fetch.mockRestore();
 	});
 
@@ -1201,7 +1261,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(3);
+			expect(exported.schemaVersion).toBe(4);
 			expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");

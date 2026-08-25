@@ -619,6 +619,11 @@ export function ImmersiveEditor({
       if (success) setWechatCopied(true);
     });
   };
+  const openPublish = () => {
+    if (!onBeforeSourceMutation()) return;
+    setMarkdown(documentSession.document.getValue());
+    setPublishSnapshot(readPublishSnapshot());
+  };
 
   return (
     <section
@@ -671,7 +676,7 @@ export function ImmersiveEditor({
         strings={strings}
         title={title}
         onModeChange={changeMode}
-        onPublish={() => setPublishSnapshot(readPublishSnapshot())}
+        onPublish={openPublish}
         onTitleChange={changeTitle}
       />
       <ImmersiveToolbar

@@ -90,7 +90,10 @@ final class MediaController {
 			return $attachment_id;
 		}
 
-		$alt_text = $this->default_alt_text( $file['name'] );
+		$alt_text = sanitize_text_field( (string) $request->get_param( 'alt_text' ) );
+		if ( '' === $alt_text ) {
+			$alt_text = $this->default_alt_text( $file['name'] );
+		}
 
 		if ( '' !== $alt_text ) {
 			update_post_meta( $attachment_id, '_wp_attachment_image_alt', $alt_text );

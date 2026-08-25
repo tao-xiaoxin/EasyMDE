@@ -1235,7 +1235,13 @@ msgid ""
 "again."
 msgstr ""
 
-#: src/Admin/EditorMediaUploadPolicy.php:45
+#: src/Admin/EditorMediaUploadPolicy.php:43
+#: src/Rest/ImageHostingController.php:324 src/Rest/MediaController.php:75
+#: src/Rest/MediaController.php:155
+msgid "This image format is not allowed by the current EasyMDE settings."
+msgstr ""
+
+#: src/Admin/EditorMediaUploadPolicy.php:50
 #: src/Rest/ImageHostingController.php:300 src/Rest/MediaController.php:83
 msgid "The image is larger than the allowed upload size."
 msgstr ""
@@ -2814,11 +2820,6 @@ msgstr ""
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:324 src/Rest/MediaController.php:75
-#: src/Rest/MediaController.php:152
-msgid "This image format is not allowed by the current EasyMDE settings."
-msgstr ""
-
 #: src/Rest/ImageHostingController.php:609
 msgid "The image-hosting request could not be verified."
 msgstr ""
@@ -2857,11 +2858,11 @@ msgstr ""
 msgid "The image could not be uploaded."
 msgstr ""
 
-#: src/Rest/MediaController.php:103
+#: src/Rest/MediaController.php:106
 msgid "The uploaded image URL is unavailable."
 msgstr ""
 
-#: src/Rest/MediaController.php:142
+#: src/Rest/MediaController.php:145
 msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 

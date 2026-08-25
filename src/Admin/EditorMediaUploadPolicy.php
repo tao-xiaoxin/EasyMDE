@@ -39,6 +39,11 @@ final class EditorMediaUploadPolicy {
 		if ( 0 !== strpos( $type, 'image/' ) ) {
 			return $file;
 		}
+		if ( ! in_array( $type, $this->settings_repository->get_allowed_image_mime_types(), true ) ) {
+			$file['error'] = __( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' );
+
+			return $file;
+		}
 
 		$size = filesize( $tmp_name );
 		if ( false !== $size && $size > $this->settings_repository->get_effective_image_upload_max_bytes() ) {

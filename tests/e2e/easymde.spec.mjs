@@ -3917,7 +3917,8 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     const articleTemplate = await canonicalMarkdownForPage(page);
-    const autoMarkdown = `# 合成摘要开头\n\n[${linkText}](${linkUrl})![${imageAlt}](${imageUrl})**加粗正文**${'后续可见内容'.repeat(18)}\n\n${articleTemplate}`;
+    const summaryMarkdown = `# 合成摘要开头\n\n[${linkText}](${linkUrl})![${imageAlt}](${imageUrl})**加粗正文**${'后续可见内容'.repeat(18)}`;
+    const articleTemplateMarkdown = `${summaryMarkdown}\n\n${articleTemplate}`;
 
     const selectSummaryMode = async (targetIndex) => {
       await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
@@ -3992,7 +3993,7 @@ test.describe('EasyMDE editor workflows', () => {
       const expected55Excerpt = Array.from(visibleText).slice(0, 55).join('');
       const automatic55PostId = await publishExcerpt({
         title: `Synthetic automatic summary ${slug}`,
-        markdown: autoMarkdown,
+        markdown: articleTemplateMarkdown,
         expectedDraft: expected55Excerpt
       });
       const stored55Excerpt = normalizeMarkdown(postExcerpt(automatic55PostId));
@@ -4007,7 +4008,7 @@ test.describe('EasyMDE editor workflows', () => {
       const expected100Excerpt = Array.from(visibleText).slice(0, 100).join('');
       const automatic100PostId = await publishExcerpt({
         title: `Synthetic automatic 100 summary ${slug}`,
-        markdown: autoMarkdown,
+        markdown: summaryMarkdown,
         expectedDraft: expected100Excerpt
       });
       expect(normalizeMarkdown(postExcerpt(automatic100PostId))).toBe(expected100Excerpt);

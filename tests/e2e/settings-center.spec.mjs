@@ -1626,7 +1626,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(aboutNav).toHaveAttribute("aria-current", "page");
 	await expect(aboutNav).toBeInViewport();
 
-	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(1);
+	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(0);
 	await expect(
 		generalSection.getByRole("combobox", {
 			name: /界面语言|interface language/i,

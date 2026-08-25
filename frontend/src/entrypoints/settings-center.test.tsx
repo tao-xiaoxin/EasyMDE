@@ -125,17 +125,22 @@ describe("mountSettingsCenter", () => {
 		});
 
 		const teardown = mountSettingsCenter({}, { document, window });
+		const overlayRoot = document.querySelector<HTMLDivElement>(
+			"[data-settings-overlay-root]",
+		);
 
 		expect(parseSettingsCenterBootstrap).toHaveBeenCalledWith({});
 		expect(createRoot).toHaveBeenCalledWith(
 			document.querySelector("#easymde-settings-center-root"),
 		);
 		expect(render).toHaveBeenCalledOnce();
+		expect(overlayRoot).not.toBeNull();
 		expect(flushSync).toHaveBeenCalledOnce();
 		expect(calls).toEqual(["flush:start", "render", "flush:end"]);
 		teardown();
 		teardown();
 		expect(unmount).toHaveBeenCalledOnce();
+		expect(overlayRoot?.isConnected).toBe(false);
 	});
 
 	it("unmounts a created root when the synchronous commit fails", () => {
@@ -149,6 +154,7 @@ describe("mountSettingsCenter", () => {
 			"settings-center-render-failed",
 		);
 		expect(unmount).toHaveBeenCalledOnce();
+		expect(document.querySelector("[data-settings-overlay-root]")).toBeNull();
 	});
 
 	it("replaces the single server fallback when startup fails", () => {

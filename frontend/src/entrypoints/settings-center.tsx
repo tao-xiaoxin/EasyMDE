@@ -66,14 +66,20 @@ export function mountSettingsCenter(
 	assertEmptyRoot(container);
 
 	const root = createRoot(container);
+	const overlayRoot = runtime.document.createElement("div");
+	overlayRoot.dataset.settingsOverlayRoot = "";
 	let active = true;
 	try {
+		container.insertAdjacentElement("afterend", overlayRoot);
 		flushSync(() => {
-			root.render(<SettingsCenterRoot bootstrap={bootstrap} />);
+			root.render(
+				<SettingsCenterRoot bootstrap={bootstrap} overlayRoot={overlayRoot} />,
+			);
 		});
 	} catch (error) {
 		active = false;
 		root.unmount();
+		overlayRoot.remove();
 		throw error;
 	}
 
@@ -81,6 +87,7 @@ export function mountSettingsCenter(
 		if (!active) return;
 		active = false;
 		root.unmount();
+		overlayRoot.remove();
 	};
 }
 

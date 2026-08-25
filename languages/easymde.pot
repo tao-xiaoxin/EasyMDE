@@ -1262,12 +1262,10 @@ msgid "You are not allowed to create this EasyMDE post."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:36
-#: templates/admin/settings-center.php:32
 msgid "EasyMDE"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:46
-#: templates/admin/settings-center.php:35
 msgid "Settings Center"
 msgstr ""
 
@@ -3369,17 +3367,14 @@ msgstr ""
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr ""
 
-#: templates/admin/settings-center.php:13
+#: templates/admin/settings-center.php:12
 msgid ""
 "The EasyMDE settings center could not start. WordPress settings remain "
 "available."
 msgstr ""
 
-#: templates/admin/settings-center.php:22
-msgid "Loading EasyMDE Settings Center..."
-msgstr ""
-
-#: templates/admin/settings-center.php:47
+#: templates/admin/settings-center.php:20
+#: templates/admin/settings-center.php:28
 msgid "Return to WordPress settings"
 msgstr ""
 

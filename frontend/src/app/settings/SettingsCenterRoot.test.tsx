@@ -28,6 +28,7 @@ function bootstrap({
 	return {
 		schemaVersion: 2,
 		closeUrl: "/wp-admin/options-general.php",
+		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
 			actionNonce: "test-action-nonce",
@@ -780,8 +781,8 @@ describe("SettingsCenterRoot images section", () => {
 			screen.getByRole("heading", { name: "uploadBehavior" }),
 		).not.toBeNull();
 		expect(
-			screen.getByRole("heading", { name: "defaultInsertion" }),
-		).not.toBeNull();
+			screen.queryByRole("heading", { name: "defaultInsertion" }),
+		).toBeNull();
 	});
 
 	it("toggles the owner-backed backup image-host fields", async () => {
@@ -844,35 +845,16 @@ describe("SettingsCenterRoot images section", () => {
 		).toBe(false);
 	});
 
-	it("enables owner-backed insertion metadata while keeping raw HTML unavailable", async () => {
-		const user = userEvent.setup();
+	it("exposes only the owner-backed image title display setting", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const format = screen.getByRole<HTMLButtonElement>("combobox", {
-			name: "defaultInsertFormat",
-		});
-
-		expect(format.disabled).toBe(false);
-		await user.click(format);
 		expect(
-			screen
-				.getByRole("option", { name: "htmlImage" })
-				.getAttribute("aria-disabled"),
-		).toBe("true");
-		expect(
-			screen.getByRole<HTMLSelectElement>("combobox", {
-				name: "altTextSource",
+			screen.getByRole<HTMLButtonElement>("combobox", {
+				name: "imageTitleDisplay",
 			}).disabled,
 		).toBe(false);
-		expect(
-			screen.getByRole<HTMLSelectElement>("combobox", {
-				name: "imageTitleField",
-			}).disabled,
-		).toBe(false);
-		expect(
-			screen
-				.getByRole("switch", { name: "imageFeaturedPlaceholder" })
-				.matches(":disabled"),
-		).toBe(true);
+		expect(screen.queryByLabelText("defaultInsertFormat")).toBeNull();
+		expect(screen.queryByLabelText("altTextSource")).toBeNull();
+		expect(screen.queryByLabelText("imageFeaturedPlaceholder")).toBeNull();
 	});
 	it("retains stable IDs while enabling the supported image provider", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -914,8 +896,13 @@ describe("SettingsCenterRoot Markdown section", () => {
 			screen.queryByRole("heading", { name: "markdownExtensions" }),
 		).toBeNull();
 		expect(
-			screen.getByRole("heading", { name: "otherSettings" }),
-		).not.toBeNull();
+			screen.queryByRole("heading", { name: "otherSettings" }),
+		).toBeNull();
+		const parsing = screen
+			.getByRole("heading", { name: "markdownParsingRendering" })
+			.closest("section");
+		expect(parsing).not.toBeNull();
+		expect(within(parsing as HTMLElement).getByRole("switch", { name: "pasteAsMarkdown" })).not.toBeNull();
 	});
 
 	it("does not render settings for parser defaults or editor-owned presentation", () => {
@@ -951,9 +938,6 @@ describe("SettingsCenterRoot Markdown section", () => {
 		const theme = controls.getByRole<HTMLSelectElement>("combobox", {
 			name: "editorTheme",
 		});
-		const unorderedMarker = controls.getByRole<HTMLInputElement>("textbox", {
-			name: "unorderedListMarker",
-		});
 
 		expect(wordWrap.matches(":disabled")).toBe(false);
 		fireEvent.click(wordWrap);
@@ -961,7 +945,7 @@ describe("SettingsCenterRoot Markdown section", () => {
 		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
 		expect(lineNumbers.matches(":disabled")).toBe(true);
 		expect(theme.matches(":disabled")).toBe(true);
-		expect(unorderedMarker.matches(":disabled")).toBe(true);
+		expect(controls.queryByRole("textbox", { name: "unorderedListMarker" })).toBeNull();
 		expect(lineNumbers.getAttribute("aria-describedby")).toBe(
 			"easymde-markdown-unavailable",
 		);
@@ -1005,7 +989,33 @@ describe("SettingsCenterRoot Transfer section", () => {
 				...bootstrap().settings.general,
 				autoFocusEditor: true,
 			},
+			images: {
+				...bootstrap().settings.images,
+				titleDisplay: "filename",
+			},
 		};
+		const legacySettings = structuredClone(importedSettings) as unknown as {
+			images: Record<string, unknown>;
+			markdown: Record<string, unknown>;
+		};
+		delete legacySettings.images.maxImageSizeMb;
+		delete legacySettings.images.titleDisplay;
+		Object.assign(legacySettings.images, {
+			insertMarkdown: false,
+			preserveFileName: true,
+			copyUrl: true,
+			maxImageSize: "3840",
+			insertFormat: "url",
+			altSource: "empty",
+			captionMode: "filename",
+			featuredPlaceholder: true,
+		});
+		Object.assign(legacySettings.markdown, {
+			lineEnding: "crlf",
+			unorderedMarker: "*",
+			orderedStart: "3",
+			blockquoteStyle: "spaced",
+		});
 		const savedSettings = {
 			...importedSettings,
 			revision: importedSettings.revision + 1,
@@ -1041,7 +1051,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		await user.upload(
 			fileInput,
 			new File(
-				[JSON.stringify({ schemaVersion: 1, settings: importedSettings })],
+				[JSON.stringify({ schemaVersion: 1, settings: legacySettings })],
 				"settings.json",
 				{ type: "application/json" },
 			),
@@ -1059,6 +1069,9 @@ describe("SettingsCenterRoot Transfer section", () => {
 			settings: SettingsCenterSettings;
 		};
 		expect(body.settings.general.autoFocusEditor).toBe(true);
+		expect(body.settings.images.maxImageSizeMb).toBe(5);
+		expect(body.settings.images.titleDisplay).toBe("filename");
+		expect(body.settings.images).not.toHaveProperty("insertFormat");
 		fetch.mockRestore();
 	});
 
@@ -1106,7 +1119,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(1);
+			expect(exported.schemaVersion).toBe(2);
 			expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");

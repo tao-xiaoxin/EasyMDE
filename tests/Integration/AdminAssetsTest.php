@@ -69,19 +69,19 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertIsObject( $bootstrap['preview']['features'] );
 		$this->assertSame( $post_id, $bootstrap['imageUpload']['postId'] );
 		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
-		$this->assertTrue( $bootstrap['imageUpload']['insertAfterUpload'] );
+		$this->assertArrayNotHasKey( 'insertAfterUpload', $bootstrap['imageUpload'] );
 		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertSame(
 			array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' ),
 			$bootstrap['imageUpload']['allowedMimeTypes']
 		);
 		$this->assertSame(
-			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			array( 'titleDisplay' => 'none' ),
 			$bootstrap['imageUpload']['insertion']
 		);
 		$this->assertTrue( $bootstrap['settings']['markdown']['wordWrap'] );
 		$this->assertSame(
-			array( 'format' => 'markdown', 'altSource' => 'filename', 'captionMode' => 'none' ),
+			array( 'titleDisplay' => 'none' ),
 			$bootstrap['mediaPicker']['insertion']
 		);
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
@@ -115,6 +115,33 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_upload_bootstrap_uses_fixed_markdown_behavior_and_effective_size_limit() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings = $repository->get_settings();
+		$settings['images']['maxImageSizeMb'] = 8;
+		$settings['images']['titleDisplay'] = 'filename';
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+		$filter = static function () {
+			return 3 * MB_IN_BYTES;
+		};
+		add_filter( 'upload_size_limit', $filter );
+
+		try {
+			$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+		} finally {
+			remove_filter( 'upload_size_limit', $filter );
+		}
+
+		$this->assertArrayNotHasKey( 'insertAfterUpload', $bootstrap['imageUpload'] );
+		$this->assertSame( 3 * MB_IN_BYTES, $bootstrap['imageUpload']['maxBytes'] );
+		$this->assertSame( 'Supports JPG, PNG, and WebP, max 3 MB', $bootstrap['strings']['immersive']['imageRequirements'] );
+		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['imageUpload']['insertion'] );
+		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['mediaPicker']['insertion'] );
 	}
 
 	public function test_editor_root_bootstrap_intersects_image_formats_with_wordpress_policy() {

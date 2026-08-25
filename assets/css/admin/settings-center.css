@@ -1466,6 +1466,38 @@ body.toplevel_page_easymde #easymde-settings-center-root {
 	opacity: 1;
 }
 
+.easymde-settings-center__image-number-value {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	min-width: 0;
+	height: 37px;
+	align-items: center;
+	background: #fff;
+}
+
+.easymde-settings-center__image-number-value > span {
+	padding-right: 6px;
+	color: #56698e;
+	font-size: 15px;
+	font-weight: 600;
+}
+
+.easymde-settings-center__image-size-warning {
+	display: flex;
+	align-items: flex-start;
+	gap: 5px;
+	margin-top: 6px;
+	color: #b42318;
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 18px;
+}
+
+.easymde-settings-center__image-size-warning > svg {
+	flex: none;
+	margin-top: 1px;
+}
+
 .easymde-settings-center .easymde-settings-center__image-number-input {
 	appearance: textfield;
 	width: 100%;

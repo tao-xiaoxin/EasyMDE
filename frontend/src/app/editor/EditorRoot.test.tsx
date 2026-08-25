@@ -361,8 +361,7 @@ function fixture(): EditorRootProps &
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
-      insertAfterUpload: true,
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       postId: 7,
       strings: {
@@ -420,7 +419,7 @@ function fixture(): EditorRootProps &
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',
@@ -3003,15 +3002,23 @@ describe('EditorRoot', () => {
     expect(dialog.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('keeps the reference featured-image guidance independent from the direct-upload limit', async () => {
+  it('renders the effective image-upload guidance supplied by WordPress', async () => {
     const props = fixture();
-    const view = render(<EditorRoot {...props} />);
+    const view = render(
+      <EditorRoot
+        {...props}
+        immersiveStrings={{
+          ...props.immersiveStrings,
+          imageRequirements: '支持 JPG、PNG、WebP 格式，最大 3 MB'
+        }}
+      />
+    );
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     expect(
       within(view.getByRole('dialog', { name: '更新文章' })).getByText(
-        '支持 JPG、PNG、WebP 格式，最大 5MB'
+        '支持 JPG、PNG、WebP 格式，最大 3 MB'
       )
     ).not.toBeNull();
   });
@@ -5017,7 +5024,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        '![Selected image](https://example.test/selected.png)'
+        '![image](https://example.test/selected.png)'
       );
     });
     expect(props.executeExternalCommand).not.toHaveBeenCalled();
@@ -5067,7 +5074,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        'Choose **![Selected image](https://example.test/selected.png)** text'
+        'Choose **![image](https://example.test/selected.png)** text'
       );
     });
   });

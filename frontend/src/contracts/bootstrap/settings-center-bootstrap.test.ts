@@ -29,6 +29,9 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			headerIllustrationUrl: "/plugin/header.png",
 			searchEmptyIllustrationUrl: "/plugin/search-empty.png",
 		},
+		uploadLimits: {
+			systemMaxBytes: 8 * 1024 * 1024,
+		},
 		links: {
 			projectUrl: "https://github.com/tao-xiaoxin/EasyMDE",
 			documentationUrl: "https://github.com/tao-xiaoxin/EasyMDE#readme",
@@ -54,7 +57,8 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			searchPageDescription: 'Only settings matching "%s" are shown.',
 			searchResultCount: "%s items",
 			insertFileNameVariable: "Insert %s variable",
-			currentAllowedUploads: "Currently allowed uploads: %s.",
+			maximumImageSizeSystemLimitExceeded:
+				"The system currently allows up to %s MB.",
 			editPrompt: "Edit %s",
 			duplicatePrompt: "Duplicate %s",
 			deletePrompt: "Delete %s",
@@ -309,6 +313,14 @@ describe("parseSettingsCenterBootstrap", () => {
 		["backupFailureMode", "return-primary-url"],
 		["backupRetryCount", 1],
 		["retryCount", "none"],
+		["insertMarkdown", true],
+		["preserveFileName", true],
+		["copyUrl", true],
+		["maxImageSize", "2560"],
+		["insertFormat", "markdown"],
+		["altSource", "filename"],
+		["captionMode", "none"],
+		["featuredPlaceholder", true],
 	] as const)("physically rejects the removed image field %s", (key, value) => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
@@ -422,12 +434,27 @@ describe("parseSettingsCenterBootstrap", () => {
 			"codeLineNumbers",
 			"htmlRendering",
 			"pasteAsMarkdown",
-			"lineEnding",
-			"unorderedMarker",
-			"orderedStart",
-			"blockquoteStyle",
 		]);
 	});
+
+	it.each([
+		"lineEnding",
+		"unorderedMarker",
+		"orderedStart",
+		"blockquoteStyle",
+	])(
+		"rejects the removed Markdown field %s as an exact-shape violation",
+		(removedKey) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.markdown[removedKey] = "removed";
+
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-markdown-settings-invalid",
+			);
+		},
+	);
 
 	it.each([
 		"editorFontSize",
@@ -491,6 +518,32 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("wordpressMediaLibrary");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("remoteImageHost");
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("customUpload");
+		for (const removedKey of [
+			"insertMarkdownAfterUpload",
+			"preserveOriginalFileName",
+			"preserveOriginalFileNameDescription",
+			"copyImageUrl",
+			"copyImageUrlDescription",
+			"defaultInsertion",
+			"defaultInsertFormat",
+			"markdownImage",
+			"htmlImage",
+			"urlOnly",
+			"altTextSource",
+			"imageTitleField",
+			"imageFeaturedPlaceholder",
+			"imageFeaturedPlaceholderDescription",
+		]) {
+			expect(SETTINGS_CENTER_STRING_KEYS).not.toContain(removedKey);
+		}
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining([
+				"maximumImageSize",
+				"maximumImageSizeDescription",
+				"maximumImageSizeSystemLimitExceeded",
+				"imageTitleDisplay",
+			]),
+		);
 		for (const removedKey of [
 			"providerApiEndpoint",
 			"keepSameObjectPath",
@@ -589,7 +642,7 @@ describe("parseSettingsCenterBootstrap", () => {
 
 	it.each([
 		["insertFileNameVariable", "Insert variable"],
-		["currentAllowedUploads", "%s %s"],
+		["maximumImageSizeSystemLimitExceeded", "%s %s"],
 	] as const)("rejects an invalid Images template for %s", (key, template) => {
 		const value = bootstrap();
 		value.strings[key] = template;
@@ -628,7 +681,7 @@ describe("parseSettingsCenterBootstrap", () => {
 			backupCredentialsConfigured: false,
 		});
 	});
-	it.each(["maxImageSize"] as const)(
+	it.each(["maxImageSizeMb", "titleDisplay"] as const)(
 		"rejects a missing image field: %s",
 		(key) => {
 			const value = bootstrap();
@@ -648,9 +701,9 @@ describe("parseSettingsCenterBootstrap", () => {
 		},
 	);
 
-	it.each(["maxImageSize"] as const)(
-		"rejects a non-string image field: %s",
-		(key) => {
+	it.each([0, 11, 1.5, "5", null])(
+		"rejects an invalid maximum image size of %s MB",
+		(maxImageSizeMb) => {
 			const value = bootstrap();
 			value.settings = {
 				...value.settings,
@@ -660,13 +713,64 @@ describe("parseSettingsCenterBootstrap", () => {
 				string,
 				unknown
 			>;
-			images[key] = 2560;
+			images.maxImageSizeMb = maxImageSizeMb;
 
 			expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-				`settings-center-images-${key}-invalid`,
+				"settings-center-images-maxImageSizeMb-invalid",
 			);
 		},
 	);
+
+	it.each([1, 5, 10])(
+		"accepts a maximum image size of %s MB",
+		(maxImageSizeMb) => {
+			const value = bootstrap();
+			(value.settings as unknown as MutableSettingsRecord).images = {
+				...value.settings.images,
+				maxImageSizeMb,
+			};
+
+			expect(
+				parseSettingsCenterBootstrap(value).settings.images.maxImageSizeMb,
+			).toBe(maxImageSizeMb);
+		},
+	);
+
+	it.each(["filename", "none"] as const)(
+		"accepts the %s image title display mode",
+		(titleDisplay) => {
+			const value = bootstrap();
+			(value.settings as unknown as MutableSettingsRecord).images = {
+				...value.settings.images,
+				titleDisplay,
+			};
+
+			expect(
+				parseSettingsCenterBootstrap(value).settings.images.titleDisplay,
+			).toBe(titleDisplay);
+		},
+	);
+
+	it.each([0, -1, 1.5, "5242880", null])(
+		"rejects an invalid system upload limit of %s bytes",
+		(systemMaxBytes) => {
+			const value = bootstrap();
+			(value.uploadLimits as { systemMaxBytes: number }).systemMaxBytes = systemMaxBytes as number;
+
+			expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+				"settings-center-system-max-upload-bytes-invalid",
+			);
+		},
+	);
+
+	it("rejects a missing system upload limit", () => {
+		const value = bootstrap();
+		delete (value as { uploadLimits?: unknown }).uploadLimits;
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-system-max-upload-bytes-invalid",
+		);
+	});
 
 	it("rejects a missing ordered-list shortcut", () => {
 		const value = bootstrap();

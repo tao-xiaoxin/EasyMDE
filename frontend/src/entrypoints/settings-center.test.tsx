@@ -38,6 +38,7 @@ function bootstrap(): SettingsCenterBootstrap {
 	return {
 		schemaVersion: 2,
 		closeUrl: `${origin}/wp-admin/options-general.php`,
+		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
 			settingsUrl: `${origin}/wp-json/easymde/v1/settings`,
 			nonce: "test-nonce",

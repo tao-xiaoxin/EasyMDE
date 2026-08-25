@@ -204,6 +204,7 @@ final class AdminAssets {
 
 		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
 		$settings                 = $this->settings_center_repository->get_settings();
+		$image_upload_config      = $this->get_image_upload_config();
 		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types();
 		$code_themes              = array_map(
 			static function ( $theme ) {
@@ -267,20 +268,17 @@ final class AdminAssets {
 				),
 			),
 			'imageUpload'        => array(
-				'allowedMimeTypes'  => $allowed_image_mime_types,
-				'enabled'           => $this->get_image_upload_config()['enabled'] && ! empty( $allowed_image_mime_types ),
-				'endpoint'          => esc_url_raw( rest_url( 'easymde/v1/image-hosting/upload' ) ),
-				'insertAfterUpload' => (bool) $settings['images']['insertMarkdown'],
-				'insertion'         => array(
-					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
-					'altSource'   => $settings['images']['altSource'],
-					'captionMode' => $settings['images']['captionMode'],
+				'allowedMimeTypes' => $allowed_image_mime_types,
+				'enabled'          => $image_upload_config['enabled'] && ! empty( $allowed_image_mime_types ),
+				'endpoint'         => esc_url_raw( rest_url( 'easymde/v1/image-hosting/upload' ) ),
+				'insertion'        => array(
+					'titleDisplay' => $settings['images']['titleDisplay'],
 				),
-				'maxBytes'          => $this->get_image_upload_config()['maxBytes'],
-				'nonce'             => $nonce,
-				'actionNonce'       => wp_create_nonce( 'easymde_upload_image_hosting' ),
-				'postId'            => absint( $post_id ),
-				'strings'           => array(
+				'maxBytes'         => $image_upload_config['maxBytes'],
+				'nonce'            => $nonce,
+				'actionNonce'      => wp_create_nonce( 'easymde_upload_image_hosting' ),
+				'postId'           => absint( $post_id ),
+				'strings'          => array(
 					'defaultAlt'     => $strings['mediaDefaultAlt'],
 					'dropFailed'     => $strings['imageDropFailed'],
 					'dropTooLarge'   => $strings['imageDropTooLarge'],
@@ -332,9 +330,7 @@ final class AdminAssets {
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
 				'insertMedia'    => $strings['insertMedia'],
 				'insertion'      => array(
-					'format'      => 'url' === $settings['images']['insertFormat'] ? 'url' : 'markdown',
-					'altSource'   => $settings['images']['altSource'],
-					'captionMode' => $settings['images']['captionMode'],
+					'titleDisplay' => $settings['images']['titleDisplay'],
 				),
 				'placeholderAlt' => $strings['mediaAltText'],
 			),
@@ -447,8 +443,11 @@ final class AdminAssets {
 					'excerptPlaceholder'          => __( 'Write a short excerpt for search results, article lists, and sharing previews...', 'easymde' ),
 					'featuredImage'               => __( 'Featured image', 'easymde' ),
 					'imageRecommendation'         => __( 'Landscape images are recommended', 'easymde' ),
-					// TODO: Configure this limit with matching WordPress-side validation.
-					'imageRequirements'           => __( 'Supports JPG, PNG, and WebP, max 5MB', 'easymde' ),
+					'imageRequirements'           => sprintf(
+						/* translators: %s: Effective maximum image upload size, for example "5 MB". */
+						__( 'Supports JPG, PNG, and WebP, max %s', 'easymde' ),
+						size_format( $image_upload_config['maxBytes'] )
+					),
 					'noWriteBeforeSubmit'         => __( 'Nothing is written to WordPress before submission.', 'easymde' ),
 					'openAfterPublish'            => __( 'Open the article page after publishing', 'easymde' ),
 					'openAfterPublishDescription' => __( 'After submission, open the article page with the same article styling as the current Preview.', 'easymde' ),
@@ -634,7 +633,7 @@ final class AdminAssets {
 	private function get_image_upload_config() {
 		return array(
 			'enabled'  => current_user_can( 'upload_files' ),
-			'maxBytes' => min( 10485760, (int) wp_max_upload_size() ),
+			'maxBytes' => $this->settings_center_repository->get_effective_image_upload_max_bytes(),
 		);
 	}
 

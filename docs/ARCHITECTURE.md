@@ -545,7 +545,12 @@ The toolbar media command is a separate explicit entry point. It opens the
 WordPress-native media frame and inserts the selected attachment without
 changing the paste/drop upload owner. `/media` remains the protected WordPress
 media-library upload route, but it is not the editor's paste/drop default or
-fallback.
+fallback. `EditorMediaUploadPolicy` applies the same effective configured image
+size limit to WordPress-native uploads only when the request names an editable
+Post whose Post Type is supported by EasyMDE. It leaves uploads for unrelated
+Posts and administration surfaces unchanged. The Editor bootstrap uses that
+same effective limit for direct-upload validation and the featured-image
+guidance shown in the immersive Publish dialog.
 
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.

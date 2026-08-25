@@ -13,9 +13,7 @@ export type ImageUploadStrings = Readonly<{
 export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
 export type ImageUploadInsertion = Readonly<{
-  altSource: 'filename' | 'empty' | 'upload';
-  captionMode: 'none' | 'filename' | 'upload';
-  format: 'markdown' | 'url';
+  titleDisplay: 'filename' | 'none';
 }>;
 
 export type ImageUploadBootstrap = Readonly<{
@@ -23,7 +21,6 @@ export type ImageUploadBootstrap = Readonly<{
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   enabled: boolean;
   endpoint: string;
-  insertAfterUpload: boolean;
   insertion: ImageUploadInsertion;
   maxBytes: number;
   nonce: string;
@@ -57,9 +54,9 @@ export function parseImageUploadInsertion(value: unknown): ImageUploadInsertion 
   }
   const insertion = value as Record<string, unknown>;
   if (
-    !['filename', 'empty', 'upload'].includes(String(insertion.altSource)) ||
-    !['none', 'filename', 'upload'].includes(String(insertion.captionMode)) ||
-    !['markdown', 'url'].includes(String(insertion.format))
+    'string' !== typeof insertion.titleDisplay ||
+    !['filename', 'none'].includes(insertion.titleDisplay) ||
+    1 !== Object.keys(insertion).length
   ) {
     throw new Error('image-upload-insertion-invalid');
   }
@@ -89,7 +86,6 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     'allowedMimeTypes',
     'enabled',
     'endpoint',
-    'insertAfterUpload',
     'insertion',
     'maxBytes',
     'nonce',
@@ -110,9 +106,6 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     throw new Error('image-upload-strings-invalid');
   }
   const messages = strings as Record<string, unknown>;
-  if ('boolean' !== typeof bootstrap.insertAfterUpload) {
-    throw new Error('image-upload-insert-after-upload-invalid');
-  }
   const actionNonce = bootstrap.actionNonce;
   if ('string' !== typeof actionNonce || '' === actionNonce.trim()) {
     throw new Error('image-upload-action-nonce-invalid');
@@ -123,7 +116,6 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
-    insertAfterUpload: bootstrap.insertAfterUpload,
     insertion: parseImageUploadInsertion(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),

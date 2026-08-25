@@ -569,10 +569,21 @@ test("keeps only the remaining Markdown settings inside their responsive section
 	for (const name of [
 		/^(?:编辑器设置|Editor Settings)$/u,
 		/^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
-		/^(?:其他|Other)$/u,
 	]) {
 		await expect(markdownSection.getByRole("heading", { name })).toBeVisible();
 	}
+	await expect(
+		markdownSection.getByRole("heading", { name: /^(?:其他|Other)$/u }),
+	).toHaveCount(0);
+	const pasteConversion = markdownSection.getByRole("switch", {
+		name: /将粘贴内容转换为 Markdown|Convert Pasted Content to Markdown/u,
+	});
+	await expect(pasteConversion).toBeVisible();
+	await expect(
+		pasteConversion.locator("xpath=ancestor::section[1]").getByRole("heading", {
+			name: /^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
+		}),
+	).toBeVisible();
 
 	for (const width of [1152, 390]) {
 		await page.setViewportSize({ width, height: 753 });
@@ -667,23 +678,24 @@ test("keeps focus on an unavailable search result without implying availability"
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
-	const disabledControl = page
-		.locator(
-			'[data-settings-section="images"] [data-setting-label] button[role="switch"]:disabled',
-		)
-		.first();
+	const targetLabel = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.pasteAsMarkdown,
+	);
+	const disabledControl = page.getByRole("switch", {
+		name: targetLabel,
+		exact: true,
+	});
 	const targetRow = disabledControl.locator(
 		"xpath=ancestor::*[@data-setting-label][1]",
 	);
-	const targetLabel = await targetRow.getAttribute("data-setting-label");
-	if (!targetLabel)
-		throw new Error("settings-search-unavailable-label-missing");
+	await expect(targetRow).toHaveAttribute("data-setting-label", targetLabel);
 
 	await page.getByRole("searchbox").fill(targetLabel);
-	await page
+	const result = page
 		.locator(".easymde-settings-center__search-results button")
-		.filter({ hasText: targetLabel })
-		.click();
+		.filter({ hasText: targetLabel });
+	await expect(result).toHaveCount(1);
+	await result.click();
 
 	await expect(targetRow).toBeFocused();
 	await expect(targetRow).toHaveAttribute("tabindex", "-1");
@@ -776,7 +788,24 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		images.getByRole("switch", {
 			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
 		}),
+	).toHaveCount(0);
+	await expect(
+		images.getByRole("combobox", {
+			name: /图片标题展示|Image Title Display/u,
+		}),
 	).toBeEnabled();
+	for (const name of [
+		/Alt 文本来源|Alt Text Source/u,
+		/复制图片 URL 到剪贴板|Copy Image URL to Clipboard/u,
+		/默认插入格式|Default Insert Format/u,
+	]) {
+		await expect(images.getByLabel(name)).toHaveCount(0);
+	}
+	const maximumSize = images.getByRole("spinbutton", {
+		name: /最大支持图片大小|Maximum Supported Image Size/u,
+	});
+	await expect(maximumSize).toHaveAttribute("min", "1");
+	await expect(maximumSize).toHaveAttribute("max", "10");
 	await expect(
 		images.getByRole("combobox", {
 			name: /上传失败时重试|Retry Failed Upload/u,
@@ -928,7 +957,10 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	for (let index = 0; index < 3; index += 1) await formats.nth(index).uncheck();
 	await formats.nth(3).click();
 	await expect(formats.nth(3)).toBeChecked();
-	await expect(page.getByRole("alert")).toBeVisible();
+	const uploadFormatRequired = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
+	);
+	await expect(page.getByText(uploadFormatRequired)).toBeVisible();
 
 	await page.reload();
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -952,6 +984,9 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
 	await expect(retryInput).toHaveAttribute("min", "0");
 	await expect(retryInput).toHaveAttribute("max", "5");
+	await expect(
+		retryInput.locator("xpath=..").locator(":scope > span"),
+	).toHaveCount(0);
 	const geometry = await Promise.all([
 		decrement.boundingBox(),
 		retryInput.boundingBox(),
@@ -996,6 +1031,137 @@ test("persists the bounded upload retry count across a settings-center refresh",
 		"data-save-status",
 		"saved",
 	);
+});
+
+test("keeps the maximum image size unit inside the horizontal stepper", async ({
+	page,
+}) => {
+	const browserFailures = [];
+	page.on("console", (message) => {
+		if (["error", "warning"].includes(message.type())) {
+			browserFailures.push(`${message.type()}: ${message.text()}`);
+		}
+	});
+	page.on("pageerror", (error) => browserFailures.push(`pageerror: ${error.message}`));
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+
+	const label = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.maximumImageSize,
+	);
+	const input = page.getByRole("spinbutton", { name: label });
+	const valueCell = input.locator("xpath=..");
+	const stepper = valueCell.locator("xpath=..");
+	const unit = valueCell.locator(":scope > span");
+	const systemLimitWarning = page.getByRole("alert").filter({
+		hasText: /系统当前允许上传|current system upload limit/u,
+	});
+	const decrement = page.getByRole("button", { name: `${label} - 1` });
+	const increment = page.getByRole("button", { name: `${label} + 1` });
+
+	const assertGeometry = async (viewportWidth) => {
+		await expect(stepper.locator(":scope > *")).toHaveCount(3);
+		await expect(unit).toHaveText("M");
+		const typography = await Promise.all([
+			input.evaluate((element) => getComputedStyle(element).fontSize),
+			unit.evaluate((element) => getComputedStyle(element).fontSize),
+		]);
+		expect(typography).toEqual(["15.5px", "15px"]);
+		const geometry = await Promise.all([
+			decrement.boundingBox(),
+			valueCell.boundingBox(),
+			unit.boundingBox(),
+			increment.boundingBox(),
+			stepper.boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-stepper-geometry-missing");
+		}
+		const [decrementBox, valueBox, unitBox, incrementBox, stepperBox] = geometry;
+		expect(decrementBox.x).toBeLessThan(valueBox.x);
+		expect(valueBox.x).toBeLessThan(incrementBox.x);
+		expect(unitBox.x + unitBox.width).toBeLessThanOrEqual(
+			valueBox.x + valueBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			stepperBox.x + stepperBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			viewportWidth,
+		);
+		expectNear(decrementBox.y, valueBox.y);
+		expectNear(valueBox.y, incrementBox.y);
+		expect(
+			await stepper.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
+	const assertWarningGeometry = async () => {
+		await expect(systemLimitWarning.locator("svg circle")).toHaveCount(1);
+		await expect(systemLimitWarning.locator("svg line")).toHaveCount(2);
+		const geometry = await Promise.all([
+			systemLimitWarning.boundingBox(),
+			systemLimitWarning.locator("svg").boundingBox(),
+			systemLimitWarning.locator(":scope > span").boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-warning-geometry-missing");
+		}
+		const [warningBox, iconBox, textBox] = geometry;
+		expect(iconBox.x).toBeGreaterThanOrEqual(warningBox.x);
+		expect(iconBox.x + iconBox.width).toBeLessThan(textBox.x);
+		expect(Math.abs(iconBox.y - textBox.y)).toBeLessThanOrEqual(1.5);
+		expect(textBox.x + textBox.width).toBeLessThanOrEqual(
+			warningBox.x + warningBox.width + 0.5,
+		);
+		expect(
+			await systemLimitWarning.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
+
+	await assertGeometry(1152);
+	await assertWarningGeometry();
+	const warningStyles = await Promise.all([
+		systemLimitWarning.evaluate((element) => ({
+			color: getComputedStyle(element).color,
+			display: getComputedStyle(element).display,
+		})),
+		systemLimitWarning
+			.locator("svg")
+			.evaluate((element) => getComputedStyle(element).color),
+	]);
+	expect(warningStyles).toEqual([
+		{ color: "rgb(180, 35, 24)", display: "flex" },
+		"rgb(180, 35, 24)",
+	]);
+	const originalValue = Number(await input.inputValue());
+	if (originalValue < 10) {
+		await increment.click();
+		await expect(input).toHaveValue(String(originalValue + 1));
+	} else {
+		await decrement.click();
+		await expect(input).toHaveValue(String(originalValue - 1));
+	}
+	await input.fill(String(originalValue));
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await assertGeometry(390);
+	await assertWarningGeometry();
+	const cdp = await page.context().newCDPSession(page);
+	const metrics = await cdp.send("Page.getLayoutMetrics");
+	expect(metrics.cssLayoutViewport.clientWidth).toBe(390);
+	await cdp.detach();
+	expect(browserFailures).toEqual([]);
 });
 
 test("matches the reference Settings Center header geometry", async ({

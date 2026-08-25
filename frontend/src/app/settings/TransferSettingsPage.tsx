@@ -107,10 +107,49 @@ async function readImportedSettings(
 		throw new Error("settings-center-transfer-import-invalid");
 	}
 	const payload = parsed as Record<string, unknown>;
-	if (payload.schemaVersion !== 1) {
+	if (payload.schemaVersion !== 1 && payload.schemaVersion !== 2) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
-	return redactImageSecrets(parseSettingsCenterSettings(payload.settings));
+	let importedSettings = payload.settings;
+	if (payload.schemaVersion === 1) {
+		if (
+			!importedSettings ||
+			typeof importedSettings !== "object" ||
+			Array.isArray(importedSettings)
+		) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		const legacy = structuredClone(importedSettings) as Record<string, unknown>;
+		const images = legacy.images as Record<string, unknown> | undefined;
+		const markdown = legacy.markdown as Record<string, unknown> | undefined;
+		if (!images || !markdown) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		images.maxImageSizeMb = 5;
+		images.titleDisplay = images.captionMode === "filename" ? "filename" : "none";
+		for (const key of [
+			"insertMarkdown",
+			"preserveFileName",
+			"copyUrl",
+			"maxImageSize",
+			"insertFormat",
+			"altSource",
+			"captionMode",
+			"featuredPlaceholder",
+		]) {
+			delete images[key];
+		}
+		for (const key of [
+			"lineEnding",
+			"unorderedMarker",
+			"orderedStart",
+			"blockquoteStyle",
+		]) {
+			delete markdown[key];
+		}
+		importedSettings = legacy;
+	}
+	return redactImageSecrets(parseSettingsCenterSettings(importedSettings));
 }
 
 function TransferDialog({
@@ -339,7 +378,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 1, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 2, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

@@ -215,10 +215,19 @@ test("Settings Center preserves reference Help geometry until the mobile layout"
 	);
 });
 
-test("image upload retries use one horizontal stepper without native vertical controls", () => {
+test("image number inputs use one horizontal stepper without native vertical controls", () => {
 	const stepper = cssRuleBody(".easymde-settings-center__image-number-stepper");
 	const input = cssRuleBody(
 		".easymde-settings-center .easymde-settings-center__image-number-input",
+	);
+	const value = cssRuleBody(
+		".easymde-settings-center__image-number-value",
+	);
+	const unit = cssRuleBody(
+		".easymde-settings-center__image-number-value > span",
+	);
+	const warning = cssRuleBody(
+		".easymde-settings-center__image-size-warning",
 	);
 	const webkitSpinner = cssRuleBody(
 		".easymde-settings-center__image-number-input::-webkit-inner-spin-button",
@@ -232,6 +241,12 @@ test("image upload retries use one horizontal stepper without native vertical co
 	assert.match(stepper, /height:\s*39px;/);
 	assert.match(stepper, /max-width:\s*100%;/);
 	assert.match(stepper, /border:\s*1px solid #d4dce8;/);
+	assert.match(value, /display:\s*grid;/);
+	assert.match(value, /grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
+	assert.match(value, /min-width:\s*0;/);
+	assert.match(unit, /font-size:\s*15px;/);
+	assert.match(warning, /display:\s*flex;/);
+	assert.match(warning, /color:\s*#b42318;/);
 	assert.match(input, /appearance:\s*textfield;/);
 	assert.match(input, /min-width:\s*0;/);
 	assert.match(webkitSpinner, /appearance:\s*none;/);

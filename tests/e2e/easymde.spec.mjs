@@ -359,6 +359,32 @@ function setImageSizeSettingMb(value) {
   ]);
 }
 
+const summaryModes = new Set(['auto-55', 'auto-100', 'manual']);
+
+function summaryModeSetting() {
+  const value = runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo $settings["general"]["summaryMode"];'
+  ]);
+
+  if (!summaryModes.has(value)) {
+    throw new Error('summary-mode-setting-invalid');
+  }
+
+  return value;
+}
+
+function setSummaryModeSetting(value) {
+  if (!summaryModes.has(value)) {
+    throw new Error('summary-mode-setting-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["general"]["summaryMode"] = ${JSON.stringify(value)}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
 function attachmentIdsForPost(postId) {
   const output = runWp([
     'post',
@@ -1303,6 +1329,9 @@ test.describe('EasyMDE editor workflows', () => {
       runCleanupSteps([
         ...(Number.isSafeInteger(testInfo.easymdeOriginalImageSizeMb)
           ? [() => setImageSizeSettingMb(testInfo.easymdeOriginalImageSizeMb)]
+          : []),
+        ...(summaryModes.has(testInfo.easymdeOriginalSummaryMode)
+          ? [() => setSummaryModeSetting(testInfo.easymdeOriginalSummaryMode)]
           : []),
         ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
           runWp(['term', 'delete', 'category', String(termId)]);
@@ -3906,127 +3935,138 @@ test.describe('EasyMDE editor workflows', () => {
       .toContain(postId);
   });
 
-  test('syncs automatic and manual immersive excerpts through the native WordPress field', async ({ page }, testInfo) => {
-    const user = testInfo.easymdeUser;
-    const slug = testSlug(testInfo);
+  const selectSummaryMode = async (page, targetIndex) => {
+    await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+    await expect(page.locator('.easymde-settings-center')).toBeVisible();
+    const trigger = page.getByRole('combobox', {
+      name: /默认摘要同步方式|default summary sync method/i
+    });
+    await expect(trigger).toBeEnabled();
+    await trigger.focus();
+    await trigger.press('Enter');
+    const listbox = page.getByRole('listbox', {
+      name: /默认摘要同步方式|default summary sync method/i
+    });
+    const options = listbox.getByRole('option');
+    const selectedIndex = await options.evaluateAll((items) =>
+      items.findIndex((item) => 'true' === item.getAttribute('aria-selected'))
+    );
+    if (selectedIndex < 0) throw new Error('summary-mode-selected-option-missing');
+    if (selectedIndex === targetIndex) {
+      await trigger.press('Escape');
+      return;
+    }
+    await trigger.press('Home');
+    for (let index = 0; index < targetIndex; index += 1) {
+      await trigger.press('ArrowDown');
+    }
+    await trigger.press('Enter');
+    const saveButton = page.locator('.easymde-settings-center__save-bar > button');
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+    await expect(page.locator('[data-save-status]')).toHaveAttribute(
+      'data-save-status',
+      /saved|idle/u
+    );
+  };
+
+  const publishExcerpt = async (page, {
+    title,
+    markdown,
+    nativeExcerpt,
+    expectedDraft,
+    editedDraft
+  }) => {
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, markdown, Array.from(markdown).slice(-12).join(''));
+    if (undefined !== nativeExcerpt) {
+      await page.locator('#excerpt').evaluate((field, value) => {
+        if (!(field instanceof HTMLTextAreaElement)) {
+          throw new Error('native-excerpt-field-unavailable');
+        }
+        field.value = value;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }, nativeExcerpt);
+    }
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: labels.publish, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: labels.publish });
+    const excerpt = dialog.locator('.easymde-publish-field.is-excerpt textarea');
+    await expect(excerpt).toHaveValue(expectedDraft);
+    if (undefined !== editedDraft) await excerpt.fill(editedDraft);
+    const openAfterPublish = dialog.getByRole('switch', {
+      name: labels.openAfterPublish
+    });
+    if (await openAfterPublish.isChecked()) await openAfterPublish.click();
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await dialog.getByRole('button', { name: labels.publish, exact: true }).click();
+    await navigation;
+    return currentPostId(page);
+  };
+
+  test('syncs the automatic 55-character article-template excerpt through WordPress', async ({ page }, testInfo) => {
     const linkText = '合成链接文字';
     const imageAlt = '不应进入摘要的图片替代文字';
     const linkUrl = 'https://example.test/synthetic-summary-link';
     const imageUrl = 'https://example.test/synthetic-summary-image.png';
     const visibleText = `合成摘要开头\n\n${linkText}加粗正文${'后续可见内容'.repeat(18)}`;
-
-    await login(page, user);
-    const articleTemplate = await canonicalMarkdownForPage(page);
     const summaryMarkdown = `# 合成摘要开头\n\n[${linkText}](${linkUrl})![${imageAlt}](${imageUrl})**加粗正文**${'后续可见内容'.repeat(18)}`;
-    const articleTemplateMarkdown = `${summaryMarkdown}\n\n${articleTemplate}`;
 
-    const selectSummaryMode = async (targetIndex) => {
-      await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
-      await expect(page.locator('.easymde-settings-center')).toBeVisible();
-      const trigger = page.getByRole('combobox', {
-        name: /默认摘要同步方式|default summary sync method/i
-      });
-      await expect(trigger).toBeEnabled();
-      await trigger.focus();
-      await trigger.press('Enter');
-      const listbox = page.getByRole('listbox', {
-        name: /默认摘要同步方式|default summary sync method/i
-      });
-      const options = listbox.getByRole('option');
-      const selectedIndex = await options.evaluateAll((items) =>
-        items.findIndex((item) => 'true' === item.getAttribute('aria-selected'))
-      );
-      if (selectedIndex < 0) throw new Error('summary-mode-selected-option-missing');
-      if (selectedIndex === targetIndex) {
-        await trigger.press('Escape');
-        return selectedIndex;
-      }
-      await trigger.press('Home');
-      for (let index = 0; index < targetIndex; index += 1) {
-        await trigger.press('ArrowDown');
-      }
-      await trigger.press('Enter');
-      const saveButton = page.locator('.easymde-settings-center__save-bar > button');
-      await expect(saveButton).toBeEnabled();
-      await saveButton.click();
-      await expect(page.locator('[data-save-status]')).toHaveAttribute(
-        'data-save-status',
-        /saved|idle/u
-      );
-      return selectedIndex;
-    };
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 0);
+    const articleTemplate = await canonicalMarkdownForPage(page);
+    const expectedExcerpt = Array.from(visibleText).slice(0, 55).join('');
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic automatic summary ${testSlug(testInfo)}`,
+      markdown: `${summaryMarkdown}\n\n${articleTemplate}`,
+      expectedDraft: expectedExcerpt
+    });
+    const storedExcerpt = normalizeMarkdown(postExcerpt(postId));
+    expect(storedExcerpt).toBe(expectedExcerpt);
+    expect(storedExcerpt).toContain(linkText);
+    expect(storedExcerpt).not.toContain('**');
+    expect(storedExcerpt).not.toContain(imageAlt);
+    expect(storedExcerpt).not.toContain(linkUrl);
+    expect(storedExcerpt).not.toContain(imageUrl);
+  });
 
-    const publishExcerpt = async ({ title, markdown, nativeExcerpt, expectedDraft, editedDraft }) => {
-      await openEasyMdeNewPost(page);
-      await page.locator('#title').fill(title);
-      await fillMarkdownAndWaitForPreview(page, markdown, Array.from(markdown).slice(-12).join(''));
-      if (undefined !== nativeExcerpt) {
-        await page.locator('#excerpt').evaluate((field, value) => {
-          if (!(field instanceof HTMLTextAreaElement)) {
-            throw new Error('native-excerpt-field-unavailable');
-          }
-          field.value = value;
-          field.dispatchEvent(new Event('input', { bubbles: true }));
-        }, nativeExcerpt);
-      }
-      const labels = await page.evaluate(
-        () => window.EasyMDEEditorRootBootstrap.strings.immersive
-      );
-      await page.locator('.easymde-toolbar-immersive-toggle').click();
-      await page.getByRole('button', { name: labels.publish, exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: labels.publish });
-      const excerpt = dialog.locator('.easymde-publish-field.is-excerpt textarea');
-      await expect(excerpt).toHaveValue(expectedDraft);
-      if (undefined !== editedDraft) await excerpt.fill(editedDraft);
-      const openAfterPublish = dialog.getByRole('switch', {
-        name: labels.openAfterPublish
-      });
-      if (await openAfterPublish.isChecked()) await openAfterPublish.click();
-      const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-      await dialog.getByRole('button', { name: labels.publish, exact: true }).click();
-      await navigation;
-      return currentPostId(page);
-    };
+  test('syncs the automatic 100-character plain-text excerpt through WordPress', async ({ page }, testInfo) => {
+    const linkText = '合成链接文字';
+    const visibleText = `合成摘要开头\n\n${linkText}加粗正文${'后续可见内容'.repeat(18)}`;
+    const markdown = `# 合成摘要开头\n\n[${linkText}](https://example.test/synthetic-summary-link)![不应进入摘要的图片替代文字](https://example.test/synthetic-summary-image.png)**加粗正文**${'后续可见内容'.repeat(18)}`;
 
-    const initialSummaryMode = await selectSummaryMode(0);
-    try {
-      const expected55Excerpt = Array.from(visibleText).slice(0, 55).join('');
-      const automatic55PostId = await publishExcerpt({
-        title: `Synthetic automatic summary ${slug}`,
-        markdown: articleTemplateMarkdown,
-        expectedDraft: expected55Excerpt
-      });
-      const stored55Excerpt = normalizeMarkdown(postExcerpt(automatic55PostId));
-      expect(stored55Excerpt).toBe(expected55Excerpt);
-      expect(stored55Excerpt).toContain(linkText);
-      expect(stored55Excerpt).not.toContain('**');
-      expect(stored55Excerpt).not.toContain(imageAlt);
-      expect(stored55Excerpt).not.toContain(linkUrl);
-      expect(stored55Excerpt).not.toContain(imageUrl);
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 1);
+    const expectedExcerpt = Array.from(visibleText).slice(0, 100).join('');
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic automatic 100 summary ${testSlug(testInfo)}`,
+      markdown,
+      expectedDraft: expectedExcerpt
+    });
+    expect(normalizeMarkdown(postExcerpt(postId))).toBe(expectedExcerpt);
+  });
 
-      await selectSummaryMode(1);
-      const expected100Excerpt = Array.from(visibleText).slice(0, 100).join('');
-      const automatic100PostId = await publishExcerpt({
-        title: `Synthetic automatic 100 summary ${slug}`,
-        markdown: summaryMarkdown,
-        expectedDraft: expected100Excerpt
-      });
-      expect(normalizeMarkdown(postExcerpt(automatic100PostId))).toBe(expected100Excerpt);
+  test('preserves and submits the manual WordPress excerpt', async ({ page }, testInfo) => {
+    const nativeExcerpt = '合成原生摘要';
+    const editedExcerpt = '合成手工修改摘要';
 
-      await selectSummaryMode(2);
-      const nativeExcerpt = '合成原生摘要';
-      const editedExcerpt = '合成手工修改摘要';
-      const manualPostId = await publishExcerpt({
-        title: `Synthetic manual summary ${slug}`,
-        markdown: '手工模式正文不应替换原生摘要。',
-        nativeExcerpt,
-        expectedDraft: nativeExcerpt,
-        editedDraft: editedExcerpt
-      });
-      expect(postExcerpt(manualPostId)).toBe(editedExcerpt);
-    } finally {
-      await selectSummaryMode(initialSummaryMode);
-    }
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 2);
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic manual summary ${testSlug(testInfo)}`,
+      markdown: '手工模式正文不应替换原生摘要。',
+      nativeExcerpt,
+      expectedDraft: nativeExcerpt,
+      editedDraft: editedExcerpt
+    });
+    expect(postExcerpt(postId)).toBe(editedExcerpt);
   });
 
   test('links the configured image size to the article-template publish upload', async ({ page, context }, testInfo) => {

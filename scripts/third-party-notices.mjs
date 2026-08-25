@@ -35,6 +35,7 @@ export const bundledFrontendPackages = {
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
   diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',
+  entities: 'Complete HTML character-reference decoding for Markdown-derived publish excerpts.',
   'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
   mermaid: 'Mermaid diagram rendering runtime compiled into the on-demand frontend bundle.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',

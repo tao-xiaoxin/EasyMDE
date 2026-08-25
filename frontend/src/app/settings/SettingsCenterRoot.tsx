@@ -1,6 +1,7 @@
 import {
 	createElement,
 	createPortal,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -171,8 +172,10 @@ const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
 ].join(", ");
 export function SettingsCenterRoot({
 	bootstrap,
+	overlayRoot: providedOverlayRoot,
 }: {
 	bootstrap: SettingsCenterBootstrap;
+	overlayRoot?: HTMLDivElement;
 }) {
 	const [activeTab, setActiveTab] = useState<NavId>("general");
 	const [settings, setSettings] = useState<SettingsCenterSettings>(
@@ -194,7 +197,14 @@ export function SettingsCenterRoot({
 	const saveControllerRef = useRef<AbortController | null>(null);
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
-	const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null);
+	const ownedOverlayRoot = useMemo(() => {
+		if (providedOverlayRoot) return null;
+		const element = document.createElement("div");
+		element.dataset.settingsOverlayRoot = "";
+		return element;
+	}, [providedOverlayRoot]);
+	const overlayRoot = providedOverlayRoot ?? ownedOverlayRoot;
+	if (!overlayRoot) throw new Error("settings-center-overlay-root-missing");
 	const [duplicateSaveTrigger, setDuplicateSaveTrigger] =
 		useState<HTMLButtonElement | null>(null);
 	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
@@ -206,11 +216,20 @@ export function SettingsCenterRoot({
 	const saveBarRef = useRef<HTMLDivElement>(null);
 	const sectionRefs = useRef<Partial<Record<NavId, HTMLElement | null>>>({});
 	const searchIndexSignatureRef = useRef("");
+	const searchIndexDirtyRef = useRef(true);
 	const searchNavigationFrameRef = useRef<number | null>(null);
 	const searchNavigationWindowRef = useRef<Window | null>(null);
 	const scrollSpyFrameRef = useRef<number | null>(null);
 	const scrollSpyWindowRef = useRef<Window | null>(null);
 	const normalizedQueryRef = useRef("");
+
+	useEffect(() => {
+		if (!ownedOverlayRoot) return;
+		const owner = scrollContainerRef.current;
+		if (!owner) throw new Error("settings-center-overlay-owner-missing");
+		owner.append(ownedOverlayRoot);
+		return () => ownedOverlayRoot.remove();
+	}, [ownedOverlayRoot]);
 	const strings = bootstrap.strings;
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
@@ -332,114 +351,124 @@ export function SettingsCenterRoot({
 		sidebarHelpTriggerRef.current?.focus();
 	}, [sidebarHelpOpen]);
 
+	const rebuildSearchIndex = useCallback(() => {
+		const root = scrollContainerRef.current;
+		if (!root) throw new Error("settings-center-search-root-missing");
+		const indexedItems: SearchItem[] = [];
+		const readHeadingTitle = (heading: HTMLElement) =>
+			heading.dataset.settingsSearchTitle?.trim() ||
+			heading.textContent?.replace(/\s+/g, " ").trim() ||
+			"";
+
+		for (const section of root.querySelectorAll<HTMLElement>(
+			"[data-settings-section]",
+		)) {
+			const tabId = section.dataset.settingsSection as NavId | undefined;
+			const navItem = NAV_ITEMS.find((item) => item.id === tabId);
+			if (!tabId || !navItem) {
+				throw new Error(
+					`settings-center-search-section-${tabId ?? "missing"}-invalid`,
+				);
+			}
+			if (tabId === "about") continue;
+			const headings = Array.from(
+				section.querySelectorAll<HTMLElement>("h2, h3"),
+			);
+			headings.forEach((heading, headingIndex) => {
+				const label = readHeadingTitle(heading);
+				if (!label)
+					throw new Error(
+						`settings-center-search-heading-${tabId}-${headingIndex}-empty`,
+					);
+				const targetId =
+					heading.id || `settings-search-${tabId}-heading-${headingIndex}`;
+				heading.id = targetId;
+				const nextElement = heading.nextElementSibling;
+				const description =
+					nextElement?.tagName === "P"
+						? (nextElement.textContent?.replace(/\s+/g, " ").trim() ?? "")
+						: "";
+				indexedItems.push({
+					key: `${tabId}:group:${headingIndex}`,
+					kind: "group",
+					tabId,
+					tabLabel: strings[navItem.label],
+					groupTitle: label,
+					label,
+					description,
+					searchText: `${label} ${description}`.toLowerCase(),
+					targetId,
+				});
+			});
+
+			Array.from(
+				section.querySelectorAll<HTMLElement>("[data-setting-search]"),
+			).forEach((row, rowIndex) => {
+				const label = row.dataset.settingLabel?.trim();
+				if (!label)
+					throw new Error(
+						`settings-center-search-setting-${tabId}-${rowIndex}-label-missing`,
+					);
+				const targetId =
+					row.id || `settings-search-${tabId}-setting-${rowIndex}`;
+				row.id = targetId;
+				const groupContainer = row.closest<HTMLElement>("section") ?? section;
+				const precedingHeadings = Array.from(
+					groupContainer.querySelectorAll<HTMLElement>("h2, h3"),
+				).filter((heading) =>
+					Boolean(
+						heading.compareDocumentPosition(row) &
+							Node.DOCUMENT_POSITION_FOLLOWING,
+					),
+				);
+				const groupTitle =
+					row.dataset.settingGroup?.trim() ||
+					(precedingHeadings.length
+						? readHeadingTitle(
+								precedingHeadings[precedingHeadings.length - 1] as HTMLElement,
+							)
+						: "") ||
+					strings[navItem.label];
+				const description = row.dataset.settingDescription?.trim() ?? "";
+				indexedItems.push({
+					key: `${tabId}:setting:${rowIndex}`,
+					kind: "setting",
+					tabId,
+					tabLabel: strings[navItem.label],
+					groupTitle,
+					label,
+					description,
+					searchText:
+						`${row.dataset.settingSearch ?? ""} ${groupTitle}`.toLowerCase(),
+					targetId,
+				});
+			});
+		}
+
+		searchIndexDirtyRef.current = false;
+		const signature = JSON.stringify(indexedItems);
+		if (signature === searchIndexSignatureRef.current) return;
+		searchIndexSignatureRef.current = signature;
+		setSearchItems(indexedItems);
+	}, [strings]);
+
+	const ensureSearchIndex = useCallback(() => {
+		if (!searchIndexDirtyRef.current) return;
+		rebuildSearchIndex();
+	}, [rebuildSearchIndex]);
+
 	useEffect(() => {
 		const root = scrollContainerRef.current;
 		if (!root) throw new Error("settings-center-search-root-missing");
-		const rebuildSearchIndex = () => {
-			const indexedItems: SearchItem[] = [];
-			const readHeadingTitle = (heading: HTMLElement) =>
-				heading.dataset.settingsSearchTitle?.trim() ||
-				heading.textContent?.replace(/\s+/g, " ").trim() ||
-				"";
-
-			for (const section of root.querySelectorAll<HTMLElement>(
-				"[data-settings-section]",
-			)) {
-				const tabId = section.dataset.settingsSection as NavId | undefined;
-				const navItem = NAV_ITEMS.find((item) => item.id === tabId);
-				if (!tabId || !navItem) {
-					throw new Error(
-						`settings-center-search-section-${tabId ?? "missing"}-invalid`,
-					);
-				}
-				if (tabId === "about") continue;
-				const headings = Array.from(
-					section.querySelectorAll<HTMLElement>("h2, h3"),
-				);
-				headings.forEach((heading, headingIndex) => {
-					const label = readHeadingTitle(heading);
-					if (!label)
-						throw new Error(
-							`settings-center-search-heading-${tabId}-${headingIndex}-empty`,
-						);
-					const targetId =
-						heading.id || `settings-search-${tabId}-heading-${headingIndex}`;
-					heading.id = targetId;
-					const nextElement = heading.nextElementSibling;
-					const description =
-						nextElement?.tagName === "P"
-							? (nextElement.textContent?.replace(/\s+/g, " ").trim() ?? "")
-							: "";
-					indexedItems.push({
-						key: `${tabId}:group:${headingIndex}`,
-						kind: "group",
-						tabId,
-						tabLabel: strings[navItem.label],
-						groupTitle: label,
-						label,
-						description,
-						searchText: `${label} ${description}`.toLowerCase(),
-						targetId,
-					});
-				});
-
-				Array.from(
-					section.querySelectorAll<HTMLElement>("[data-setting-search]"),
-				).forEach((row, rowIndex) => {
-					const label = row.dataset.settingLabel?.trim();
-					if (!label)
-						throw new Error(
-							`settings-center-search-setting-${tabId}-${rowIndex}-label-missing`,
-						);
-					const targetId =
-						row.id || `settings-search-${tabId}-setting-${rowIndex}`;
-					row.id = targetId;
-					const groupContainer = row.closest<HTMLElement>("section") ?? section;
-					const precedingHeadings = Array.from(
-						groupContainer.querySelectorAll<HTMLElement>("h2, h3"),
-					).filter((heading) =>
-						Boolean(
-							heading.compareDocumentPosition(row) &
-								Node.DOCUMENT_POSITION_FOLLOWING,
-						),
-					);
-					const groupTitle =
-						row.dataset.settingGroup?.trim() ||
-						(precedingHeadings.length
-							? readHeadingTitle(
-									precedingHeadings[
-										precedingHeadings.length - 1
-									] as HTMLElement,
-								)
-							: "") ||
-						strings[navItem.label];
-					const description = row.dataset.settingDescription?.trim() ?? "";
-					indexedItems.push({
-						key: `${tabId}:setting:${rowIndex}`,
-						kind: "setting",
-						tabId,
-						tabLabel: strings[navItem.label],
-						groupTitle,
-						label,
-						description,
-						searchText:
-							`${row.dataset.settingSearch ?? ""} ${groupTitle}`.toLowerCase(),
-						targetId,
-					});
-				});
-			}
-
-			const signature = JSON.stringify(indexedItems);
-			if (signature === searchIndexSignatureRef.current) return;
-			searchIndexSignatureRef.current = signature;
-			setSearchItems(indexedItems);
-		};
 
 		const MutationObserverOwner =
 			root.ownerDocument.defaultView?.MutationObserver;
 		if (!MutationObserverOwner)
 			throw new Error("settings-center-search-observer-missing");
-		const observer = new MutationObserverOwner(rebuildSearchIndex);
+		const observer = new MutationObserverOwner(() => {
+			searchIndexDirtyRef.current = true;
+			if (normalizedQueryRef.current) rebuildSearchIndex();
+		});
 		observer.observe(root, {
 			subtree: true,
 			childList: true,
@@ -452,9 +481,8 @@ export function SettingsCenterRoot({
 				"data-setting-group",
 			],
 		});
-		rebuildSearchIndex();
 		return () => observer.disconnect();
-	}, [strings]);
+	}, [rebuildSearchIndex]);
 
 	useEffect(
 		() => () => {
@@ -889,7 +917,11 @@ export function SettingsCenterRoot({
 									value={query}
 									aria-label={strings.searchSettings}
 									placeholder={strings.searchSettingsPlaceholder}
-									onChange={(event) => setQuery(event.target.value)}
+									onFocus={ensureSearchIndex}
+									onChange={(event) => {
+										if (event.target.value.trim()) ensureSearchIndex();
+										setQuery(event.target.value);
+									}}
 								/>
 								{query ? (
 									<button
@@ -1083,12 +1115,10 @@ export function SettingsCenterRoot({
 										uploadVerificationPort={imageHostingVerificationPort}
 										settingsRevision={settings.revision}
 										secretRevealPort={imageHostingSecretRevealPort}
-										runtimeCapabilities={{
-											compressImages: true,
-											insertAfterUpload: true,
-											maximumImageSize: true,
-											preserveOriginalFileName: true,
-										}}
+									runtimeCapabilities={{
+										compressImages: true,
+									}}
+									uploadLimits={bootstrap.uploadLimits}
 										draft={imageDraft}
 										overlayRoot={overlayRoot}
 										settings={settings.images}
@@ -1151,7 +1181,6 @@ export function SettingsCenterRoot({
 					/>
 				</main>
 			</div>
-			<div ref={setOverlayRoot} data-settings-overlay-root="" />
 			{sidebarHelpOpen && overlayRoot
 				? createPortal(
 						<AboutDialog

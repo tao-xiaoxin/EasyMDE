@@ -25,10 +25,6 @@ test('shared frontend bootstrap leaves code-copy ownership to its TypeScript ent
 });
 
 test('frontend PHP owns code-copy assets behind an independent manifest-backed feature', () => {
-  assert.match(
-    frontendAssetsSource,
-    /\$features\['codeCopy'\]\s*=\s*\$this->feature_detector->has_copyable_code_block\( \$markdown \);/
-  );
   assert.doesNotMatch(
     frontendAssetsSource,
     /\$features\['codeCopy'\]\s*=\s*! empty\( \$features\['syntaxHighlight'\] \);/
@@ -59,10 +55,6 @@ test('frontend PHP owns code-copy assets behind an independent manifest-backed f
   assert.match(
     frontendAssetsSource,
     /frontend\/src\/entrypoints\/frontend-code-copy\.ts/
-  );
-  assert.match(
-    frontendAssetsSource,
-    /TODO: Replace this default-on product rule with the future configuration-backed code-copy switch\./
   );
 });
 

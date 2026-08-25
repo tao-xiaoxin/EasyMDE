@@ -7,6 +7,7 @@ use EasyMDE\Content\PostDocument;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\ManifestAssetResolver;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Theme\ThemeStateRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -18,15 +19,18 @@ final class FrontendAssets {
 	private $post_document;
 	private $theme_state_repository;
 	private $feature_detector;
+	private $settings_center_repository;
 
 	public function __construct(
 		PostDocument $post_document,
 		ThemeStateRepository $theme_state_repository,
-		?MarkdownFeatureDetector $feature_detector = null
+		?MarkdownFeatureDetector $feature_detector = null,
+		?SettingsCenterRepository $settings_center_repository = null
 	) {
-		$this->post_document          = $post_document;
-		$this->theme_state_repository = $theme_state_repository;
-		$this->feature_detector       = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
+		$this->post_document              = $post_document;
+		$this->theme_state_repository     = $theme_state_repository;
+		$this->feature_detector           = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
+		$this->settings_center_repository = $settings_center_repository;
 	}
 
 	public function register_hooks() {
@@ -45,7 +49,7 @@ final class FrontendAssets {
 
 		$post        = get_post( $post_id );
 		$markdown    = $this->post_document->get_markdown( $post );
-		$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
+		$theme_state = $this->get_frontend_theme_state( $post_id );
 		$features    = $this->get_feature_config( $markdown );
 
 		try {
@@ -111,7 +115,7 @@ final class FrontendAssets {
 	}
 
 	public function enqueue_render_assets( $post_id = 0, $markdown = '' ) {
-		$theme_state   = $this->theme_state_repository->get_theme_state( $post_id );
+		$theme_state   = $this->get_frontend_theme_state( $post_id );
 		$article_theme = $this->theme_state_repository->get_article_theme( $theme_state['markdownTheme'] );
 		$code_theme    = $this->theme_state_repository->get_code_theme( $theme_state['codeTheme'] );
 		$features      = $this->get_feature_config( $markdown );
@@ -315,6 +319,17 @@ final class FrontendAssets {
 		);
 	}
 
+	private function get_frontend_theme_state( $post_id ) {
+		if ( null === $this->settings_center_repository ) {
+			throw new \LogicException( 'frontend-theme-settings-unavailable' );
+		}
+
+		return $this->theme_state_repository->get_frontend_theme_state(
+			$post_id,
+			$this->settings_center_repository->should_apply_editor_theme_to_frontend()
+		);
+	}
+
 	public function get_editor_preview_assets() {
 		$enhancements    = $this->get_frontend_enhancement_asset(
 			'frontend/src/entrypoints/frontend-enhancements.ts',
@@ -365,10 +380,14 @@ final class FrontendAssets {
 	}
 
 	public function get_feature_config( $markdown = '' ) {
+		if ( null === $this->settings_center_repository ) {
+			throw new \LogicException( 'frontend-code-copy-settings-unavailable' );
+		}
+
 		$features = $this->feature_detector->detect( $markdown );
 
-		// TODO: Replace this default-on product rule with the future configuration-backed code-copy switch.
-		$features['codeCopy'] = $this->feature_detector->has_copyable_code_block( $markdown );
+		$features['codeCopy'] = $this->settings_center_repository->should_show_published_code_copy_button()
+			&& $this->feature_detector->has_copyable_code_block( $markdown );
 
 		return $features;
 	}

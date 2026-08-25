@@ -10,6 +10,50 @@ final class ThemeStateRepositoryTest extends WP_UnitTestCase
 {
     private const LEGACY_CODE_MAC_STYLE_META = '_easymde_code_mac_style';
 
+    public function test_frontend_theme_state_preserves_the_selected_article_theme_when_linkage_is_enabled()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github-dark');
+
+        $state = $this->theme_state_repository()->get_frontend_theme_state($post_id, true);
+
+        $this->assertSame('orange-heart', $state['markdownTheme']);
+        $this->assertSame('github-dark', $state['codeTheme']);
+        $this->assertTrue($state['codeThemeExplicit']);
+    }
+
+    public function test_frontend_theme_state_is_neutral_and_independent_of_article_and_user_state_when_linkage_is_disabled()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        wp_set_current_user($user_id);
+        update_user_meta($user_id, 'easymde_default_theme_state', array(
+            'markdownTheme' => 'orange-heart',
+            'codeTheme' => 'github-dark',
+            'customCssId' => 'user-style',
+            'customFont' => 'system-ui',
+            'windowsFont' => 'simhei',
+            'appleFont' => 'heiti-sc',
+            'serifFont' => 'no',
+        ));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'qingbi-liujin');
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_ID, 'article-style');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_CSS_SNAPSHOT, '.easymde-content { color: red; }');
+        update_post_meta($post_id, PostDocument::META_CUSTOM_FONT, 'system-ui');
+
+        $state = $this->theme_state_repository()->get_frontend_theme_state($post_id, false);
+
+        $this->assertSame('default', $state['markdownTheme']);
+        $this->assertSame('atom-one-dark', $state['codeTheme']);
+        $this->assertFalse($state['codeThemeExplicit']);
+        $this->assertSame('', $state['customCssId']);
+        $this->assertSame('', $state['customCss']);
+        $this->assertSame('', $state['scopedCustomCss']);
+        $this->assertSame('', $state['fontFamily']);
+    }
+
     public function test_article_association_supplies_code_theme_without_an_explicit_choice()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));

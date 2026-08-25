@@ -207,8 +207,134 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$this->assertArrayHasKey($field, $settings['images']);
 		}
 		$this->assertSame(0, $settings['images']['uploadRetryCount']);
-		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount') as $removed) {
+		$this->assertSame(5, $settings['images']['maxImageSizeMb']);
+		$this->assertSame('none', $settings['images']['titleDisplay']);
+		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['images']);
+		}
+		$this->assertArrayHasKey('featuredImagePlaceholder', $settings['general']);
+		$this->assertTrue($settings['general']['applyEditorThemeToFrontend']);
+		foreach (array('lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['markdown']);
+		}
+	}
+
+	public function test_frontend_theme_linkage_defaults_on_and_exposes_a_narrow_runtime_query()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertTrue($repository->should_apply_editor_theme_to_frontend());
+
+		$settings = $repository->get_settings();
+		$settings['general']['applyEditorThemeToFrontend'] = false;
+		$this->assertIsArray($repository->update_settings($settings));
+
+		$this->assertFalse($repository->should_apply_editor_theme_to_frontend());
+	}
+
+	public function test_published_code_copy_button_defaults_on_and_exposes_a_narrow_runtime_query()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertTrue($repository->should_show_published_code_copy_button());
+
+		$settings = $repository->get_settings();
+		$settings['general']['showPublishedCodeCopyButton'] = false;
+		$this->assertIsArray($repository->update_settings($settings));
+
+		$this->assertFalse($repository->should_show_published_code_copy_button());
+	}
+
+	public function test_legacy_caption_mode_migrates_to_title_display_without_reintroducing_removed_fields()
+	{
+		update_option(Options::EDITOR_SETTINGS, array('settings_center' => array(
+			'images' => array(
+				'captionMode' => 'filename',
+				'altSource' => 'empty',
+				'insertFormat' => 'url',
+				'insertMarkdown' => false,
+				'preserveFileName' => true,
+				'copyUrl' => true,
+				'maxImageSize' => '3840',
+				'featuredPlaceholder' => false,
+			),
+			'markdown' => array(
+				'lineEnding' => 'lf',
+				'unorderedMarker' => '*',
+				'orderedStart' => '2',
+				'blockquoteStyle' => 'compact',
+			),
+		)), false);
+
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+
+		$this->assertSame('filename', $settings['images']['titleDisplay']);
+		foreach (array('captionMode', 'altSource', 'insertFormat', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'featuredPlaceholder') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['images']);
+		}
+		foreach (array('lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
+			$this->assertArrayNotHasKey($removed, $settings['markdown']);
+		}
+
+		$this->assertIsArray($repository->update_settings($settings));
+		$stored_images = get_option(Options::EDITOR_SETTINGS)['settings_center']['images'];
+		$this->assertSame('filename', $stored_images['titleDisplay']);
+		foreach (array('captionMode', 'altSource', 'insertFormat', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'featuredPlaceholder') as $removed) {
+			$this->assertArrayNotHasKey($removed, $stored_images);
+		}
+		$stored_markdown = get_option(Options::EDITOR_SETTINGS)['settings_center']['markdown'];
+		foreach (array('lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
+			$this->assertArrayNotHasKey($removed, $stored_markdown);
+		}
+	}
+
+	public function test_image_size_and_title_settings_require_the_new_strict_contract()
+	{
+		foreach (array(0, 11, '5', 5.0) as $invalid_size) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['maxImageSizeMb'] = $invalid_size;
+
+			$result = $repository->update_settings($settings);
+
+			$this->assertWPError($result, gettype($invalid_size));
+			$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), gettype($invalid_size));
+			$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false), gettype($invalid_size));
+		}
+
+		foreach (array('file', '', 'Filename') as $invalid_display) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['titleDisplay'] = $invalid_display;
+
+			$result = $repository->update_settings($settings);
+
+			$this->assertWPError($result, $invalid_display);
+			$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), $invalid_display);
+			$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false), $invalid_display);
+		}
+	}
+
+	public function test_image_hosting_runtime_uses_the_effective_configured_upload_limit()
+	{
+		$filter = static function () {
+			return 3 * MB_IN_BYTES;
+		};
+		add_filter('upload_size_limit', $filter);
+
+		try {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['maxImageSizeMb'] = 8;
+			$settings['images']['titleDisplay'] = 'filename';
+			$this->assertIsArray($repository->update_settings($settings));
+
+			$runtime = $repository->get_image_hosting_settings();
+			$this->assertSame(3 * MB_IN_BYTES, $runtime['behaviors']['maxBytes']);
+			$this->assertSame('filename', $runtime['behaviors']['titleDisplay']);
+		} finally {
+			remove_filter('upload_size_limit', $filter);
 		}
 	}
 
@@ -534,16 +660,12 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame('system', $settings['markdown']['editorTheme']);
 
         $settings['images']['service'] = 'Cloudflare R2';
-		$settings['images']['insertFormat'] = 'html';
-		$settings['images']['altSource'] = 'Fill on upload';
-		$settings['images']['captionMode'] = 'Fill on upload';
+		$settings['images']['titleDisplay'] = 'filename';
         $settings['markdown']['editorTheme'] = 'Follow System';
         $saved = $repository->update_settings($settings);
 
         $this->assertSame('cloudflare-r2', $saved['images']['service']);
-		$this->assertSame('markdown', $saved['images']['insertFormat']);
-		$this->assertSame('empty', $saved['images']['altSource']);
-		$this->assertSame('none', $saved['images']['captionMode']);
+		$this->assertSame('filename', $saved['images']['titleDisplay']);
         $this->assertSame('system', $saved['markdown']['editorTheme']);
     }
 

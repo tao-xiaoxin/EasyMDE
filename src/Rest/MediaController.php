@@ -14,8 +14,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class MediaController {
 
-	const MAX_IMAGE_BYTES = 10485760;
-
 	private $capabilities;
 	private $settings_repository;
 
@@ -116,7 +114,7 @@ final class MediaController {
 				'url'      => $url,
 				'alt'      => $alt_text,
 				'filename' => $file['name'],
-				'title'    => get_the_title( $attachment_id ),
+				'title'    => $this->image_title( $file['name'] ),
 			)
 		);
 	}
@@ -130,7 +128,7 @@ final class MediaController {
 
 	private function is_too_large( array $file ) {
 		$size     = isset( $file['size'] ) ? absint( $file['size'] ) : 0;
-		$max_size = min( self::MAX_IMAGE_BYTES, (int) wp_max_upload_size() );
+		$max_size = $this->settings_repository->get_effective_image_upload_max_bytes();
 
 		return $size <= 0 || $size > $max_size;
 	}
@@ -167,5 +165,13 @@ final class MediaController {
 		$name = str_replace( array( '-', '_' ), ' ', $name );
 
 		return trim( sanitize_text_field( $name ) );
+	}
+
+	private function image_title( $file_name ) {
+		$settings = $this->settings_repository->get_settings();
+
+		return 'filename' === $settings['images']['titleDisplay']
+			? sanitize_text_field( sanitize_file_name( $file_name ) )
+			: '';
 	}
 }

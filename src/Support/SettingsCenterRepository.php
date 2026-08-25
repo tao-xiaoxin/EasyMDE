@@ -39,6 +39,7 @@ final class SettingsCenterRepository {
 			? $stored['settings_center']
 			: array();
 		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
+		$settings             = $this->migrate_legacy_image_settings( $settings );
 		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
 
 		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
@@ -77,6 +78,18 @@ final class SettingsCenterRepository {
 
 	public function get_revision( $refresh_cache = false ) {
 		return $this->revision_from_stored( $this->options->get_editor_settings( $refresh_cache ) );
+	}
+
+	public function should_apply_editor_theme_to_frontend() {
+		$settings = $this->get_settings();
+
+		return $settings['general']['applyEditorThemeToFrontend'];
+	}
+
+	public function should_show_published_code_copy_button() {
+		$settings = $this->get_settings();
+
+		return $settings['general']['showPublishedCodeCopyButton'];
 	}
 
 	public function get_shortcut_config_for_script() {
@@ -130,6 +143,12 @@ final class SettingsCenterRepository {
 		}
 
 		return $mime_types;
+	}
+
+	public function get_effective_image_upload_max_bytes() {
+		$settings = $this->get_settings();
+
+		return min( $settings['images']['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES );
 	}
 
 	/**
@@ -190,6 +209,7 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
+		$settings = $this->migrate_legacy_image_settings( $settings );
 		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
 		$images   = $settings['images'];
 
@@ -230,16 +250,10 @@ final class SettingsCenterRepository {
 			),
 			'fileNameRule'     => $images['fileNameRule'],
 			'behaviors'        => array(
-				'insertAfterUpload'    => $images['insertMarkdown'],
-				'autoCompress'         => $images['compressImages'],
-				'preserveOriginalName' => $images['preserveFileName'],
-				'copyUrl'              => $images['copyUrl'],
-				'maxImageSize'         => $images['maxImageSize'],
-				'uploadFormats'        => array_keys( array_filter( $images['uploadFormats'] ) ),
-				'insertFormat'         => $images['insertFormat'],
-				'altSource'            => $images['altSource'],
-				'captionMode'          => $images['captionMode'],
-				'featuredPlaceholder'  => $images['featuredPlaceholder'],
+				'autoCompress'  => $images['compressImages'],
+				'maxBytes'      => min( $images['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ),
+				'uploadFormats' => array_keys( array_filter( $images['uploadFormats'] ) ),
+				'titleDisplay'  => $images['titleDisplay'],
 			),
 			'credentialStatus' => array(
 				'primaryConfigured' => '' !== $images['accessKey'] && '' !== $images['secretKey'],
@@ -386,6 +400,18 @@ final class SettingsCenterRepository {
 		return $settings;
 	}
 
+	private function migrate_legacy_image_settings( array $settings ) {
+		if ( ! isset( $settings['images'] ) || ! is_array( $settings['images'] ) ) {
+			return $settings;
+		}
+
+		if ( ! array_key_exists( 'titleDisplay', $settings['images'] ) && isset( $settings['images']['captionMode'] ) ) {
+			$settings['images']['titleDisplay'] = 'filename' === $settings['images']['captionMode'] ? 'filename' : 'none';
+		}
+
+		return $settings;
+	}
+
 	private function conflict_error() {
 		return new WP_Error(
 			'easymde_settings_conflict',
@@ -399,6 +425,14 @@ final class SettingsCenterRepository {
 			'easymde_settings_persistence_failed',
 			__( 'Settings could not be saved. Try again.', 'easymde' ),
 			array( 'status' => 500 )
+		);
+	}
+
+	private function invalid_payload_error() {
+		return new WP_Error(
+			'easymde_settings_invalid_payload',
+			__( 'The settings payload is invalid.', 'easymde' ),
+			array( 'status' => 400 )
 		);
 	}
 
@@ -433,55 +467,50 @@ final class SettingsCenterRepository {
 
 		return array(
 			'general'   => array(
-				'interfaceLanguage'        => 'zh-CN',
-				'editingMode'              => 'live-preview',
-				'autoFocusEditor'          => true,
-				'showLineNumbers'          => true,
-				'syntaxHighlight'          => true,
-				'statusBarMode'            => 'words-reading-time',
-				'autoSave'                 => true,
-				'autoSaveInterval'         => '60',
-				'syncScroll'               => true,
-				'publishVisibility'        => 'public',
-				'openPreviewAfterPublish'  => true,
-				'summaryMode'              => 'auto-55',
-				'featuredImagePlaceholder' => true,
+				'interfaceLanguage'           => 'zh-CN',
+				'editingMode'                 => 'live-preview',
+				'autoFocusEditor'             => true,
+				'showLineNumbers'             => true,
+				'syntaxHighlight'             => true,
+				'statusBarMode'               => 'words-reading-time',
+				'autoSave'                    => true,
+				'autoSaveInterval'            => '60',
+				'syncScroll'                  => true,
+				'publishVisibility'           => 'public',
+				'openPreviewAfterPublish'     => true,
+				'applyEditorThemeToFrontend'  => true,
+				'showPublishedCodeCopyButton' => true,
+				'summaryMode'                 => 'auto-55',
+				'featuredImagePlaceholder'    => true,
 			),
 			'images'    => array(
-				'service'             => 'cloudflare-r2',
-				'endpoint'            => '',
-				'bucket'              => 'easymde-assets',
-				'domain'              => '',
-				'accessKey'           => '',
-				'secretKey'           => '',
-				'fileNameRule'        => '{date}/{uuid}.{ext}',
-				'backupEnabled'       => false,
-				'backupService'       => 'qiniu-kodo',
-				'backupEndpoint'      => '',
-				'backupBucket'        => 'easymde-backup',
-				'backupDomain'        => '',
-				'backupAccessKey'     => '',
-				'backupSecretKey'     => '',
-				'uploadRetryCount'    => 0,
-				'insertMarkdown'      => true,
-				'compressImages'      => true,
-				'preserveFileName'    => false,
-				'copyUrl'             => false,
-				'maxImageSize'        => '2560',
-				'uploadFormats'       => array(
+				'service'          => 'cloudflare-r2',
+				'endpoint'         => '',
+				'bucket'           => 'easymde-assets',
+				'domain'           => '',
+				'accessKey'        => '',
+				'secretKey'        => '',
+				'fileNameRule'     => '{date}/{uuid}.{ext}',
+				'backupEnabled'    => false,
+				'backupService'    => 'qiniu-kodo',
+				'backupEndpoint'   => '',
+				'backupBucket'     => 'easymde-backup',
+				'backupDomain'     => '',
+				'backupAccessKey'  => '',
+				'backupSecretKey'  => '',
+				'uploadRetryCount' => 0,
+				'compressImages'   => true,
+				'maxImageSizeMb'   => 5,
+				'uploadFormats'    => array(
 					'jpg'  => true,
 					'png'  => true,
 					'webp' => true,
 					'gif'  => true,
 				),
-				'insertFormat'        => 'markdown',
-				'altSource'           => 'filename',
-				'captionMode'         => 'none',
-				'featuredPlaceholder' => true,
+				'titleDisplay'     => 'none',
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
-				'lineNumbers'      => false,
 				'editorTheme'      => 'system',
 				'githubFlavor'     => true,
 				'smartPunctuation' => true,
@@ -489,10 +518,6 @@ final class SettingsCenterRepository {
 				'codeLineNumbers'  => 'show',
 				'htmlRendering'    => false,
 				'pasteAsMarkdown'  => true,
-				'lineEnding'       => 'system',
-				'unorderedMarker'  => '-',
-				'orderedStart'     => '1',
-				'blockquoteStyle'  => 'standard',
 			),
 			'shortcuts' => array(
 				'values'          => $shortcuts,
@@ -537,6 +562,13 @@ final class SettingsCenterRepository {
 
 	private function sanitize_settings( array $input, array $stored_settings = array(), $reset_secrets = false ) {
 		$defaults = $this->get_defaults();
+		if ( isset( $input['general'] ) && is_array( $input['general'] ) ) {
+			foreach ( array( 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ) as $boolean_field ) {
+				if ( array_key_exists( $boolean_field, $input['general'] ) && ! is_bool( $input['general'][ $boolean_field ] ) ) {
+					return $this->invalid_payload_error();
+				}
+			}
+		}
 		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
 			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
 				if (
@@ -554,9 +586,22 @@ final class SettingsCenterRepository {
 					);
 				}
 			}
+			if (
+				array_key_exists( 'maxImageSizeMb', $input['images'] ) &&
+				( ! is_int( $input['images']['maxImageSizeMb'] ) || $input['images']['maxImageSizeMb'] < 1 || $input['images']['maxImageSizeMb'] > 10 )
+			) {
+				return $this->invalid_payload_error();
+			}
+			if (
+				array_key_exists( 'titleDisplay', $input['images'] ) &&
+				! in_array( $input['images']['titleDisplay'], array( 'filename', 'none' ), true )
+			) {
+				return $this->invalid_payload_error();
+			}
 		}
-		$base     = $this->merge_settings( $defaults, $stored_settings );
-		$settings = $this->merge_settings( $base, $input );
+		$stored_settings = $this->migrate_legacy_image_settings( $stored_settings );
+		$base            = $this->merge_settings( $defaults, $stored_settings );
+		$settings        = $this->merge_settings( $base, $input );
 		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
 			$settings['images']['uploadFormats'] = array_merge(
 				$base['images']['uploadFormats'],
@@ -599,7 +644,7 @@ final class SettingsCenterRepository {
 				$settings['images'][ $key ] = $this->sanitize_domain( $value );
 			} elseif ( 'endpoint' === $key || 'backupEndpoint' === $key ) {
 				$settings['images'][ $key ] = $this->sanitize_endpoint( $value );
-			} elseif ( 'uploadRetryCount' === $key ) {
+			} elseif ( in_array( $key, array( 'uploadRetryCount', 'maxImageSizeMb' ), true ) ) {
 				$settings['images'][ $key ] = $value;
 			} elseif ( is_bool( $value ) ) {
 				$settings['images'][ $key ] = $value;
@@ -654,17 +699,12 @@ final class SettingsCenterRepository {
 			'images'   => array(
 				'service'       => 'cloudflare-r2',
 				'backupService' => 'qiniu-kodo',
-				'maxImageSize'  => '2560',
-				'insertFormat'  => 'markdown',
-				'altSource'     => 'filename',
-				'captionMode'   => 'none',
+				'titleDisplay'  => 'none',
 			),
 			'markdown' => array(
 				'editorTheme'     => 'system',
 				'tableAlignment'  => 'auto',
 				'codeLineNumbers' => 'show',
-				'lineEnding'      => 'system',
-				'blockquoteStyle' => 'standard',
 			),
 		);
 		$aliases  = array(
@@ -714,39 +754,11 @@ final class SettingsCenterRepository {
 					'aliyun-oss'    => 'aliyun-oss',
 					'tencent-cos'   => 'tencent-cos',
 				),
-				'maxImageSize'  => array(
-					'original'            => 'original',
-					'Original image size' => 'original',
-					'1920'                => '1920',
-					'1920px'              => '1920',
-					'2560'                => '2560',
-					'2560px'              => '2560',
-					'3840'                => '3840',
-					'3840px'              => '3840',
-				),
-				'insertFormat'  => array(
-					'markdown'       => 'markdown',
-					'Markdown image' => 'markdown',
-					'html'           => 'markdown',
-					'HTML image'     => 'markdown',
-					'url'            => 'url',
-					'URL only'       => 'url',
-				),
-				'altSource'     => array(
-					'filename'       => 'filename',
-					'Use file name'  => 'filename',
-					'empty'          => 'empty',
-					'Leave empty'    => 'empty',
-					'upload'         => 'empty',
-					'Fill on upload' => 'empty',
-				),
-				'captionMode'   => array(
-					'none'           => 'none',
-					'Do not insert'  => 'none',
-					'filename'       => 'filename',
-					'Use file name'  => 'filename',
-					'upload'         => 'none',
-					'Fill on upload' => 'none',
+				'titleDisplay'  => array(
+					'none'          => 'none',
+					'Do not insert' => 'none',
+					'filename'      => 'filename',
+					'Use file name' => 'filename',
 				),
 			),
 			'markdown' => array(
@@ -771,20 +783,6 @@ final class SettingsCenterRepository {
 					'Show' => 'show',
 					'hide' => 'hide',
 					'Hide' => 'hide',
-				),
-				'lineEnding'      => array(
-					'system'        => 'system',
-					'Follow System' => 'system',
-					'lf'            => 'lf',
-					'LF'            => 'lf',
-					'crlf'          => 'crlf',
-					'CRLF'          => 'crlf',
-				),
-				'blockquoteStyle' => array(
-					'standard' => 'standard',
-					'Standard' => 'standard',
-					'spaced'   => 'spaced',
-					'Spaced'   => 'spaced',
 				),
 			),
 		);

@@ -53,34 +53,40 @@ function cssRuleBody(selector) {
 	return match[1];
 }
 
-test("Settings Center owns an opaque viewport before React mounts", () => {
-	const startupVeil = cssRuleBody("body.toplevel_page_easymde::before");
-	const startupHost = cssRuleBody(
-		"body.toplevel_page_easymde #easymde-settings-center-root",
+test("Settings Center does not paint an opaque pre-mount viewport veil", () => {
+	assert.doesNotMatch(
+		settingsCss,
+		/body\.toplevel_page_easymde::before\s*\{/,
 	);
-
-	assert.match(startupVeil, /position:\s*fixed;/);
-	assert.match(startupVeil, /inset:\s*0;/);
-	assert.match(startupVeil, /z-index:\s*100000;/);
-	assert.match(startupVeil, /background:\s*#fdfefe;/);
-	assert.match(startupVeil, /content:\s*"";/);
-
-	assert.match(startupHost, /position:\s*fixed;/);
-	assert.match(startupHost, /inset:\s*0;/);
-	assert.match(startupHost, /z-index:\s*100001;/);
-	assert.match(startupHost, /overflow:\s*auto;/);
-	assert.match(startupHost, /background:\s*#fdfefe;/);
+	assert.doesNotMatch(
+		settingsCss,
+		/body\.toplevel_page_easymde #easymde-settings-center-root\s*\{/,
+	);
 });
 
-test("Settings Center pre-mount brand occupies the final sidebar geometry instead of the viewport center", () => {
-	const startup = cssRuleBody(".easymde-settings-center-startup");
-
-	assert.doesNotMatch(startup, /align-items:\s*center;/);
-	assert.doesNotMatch(startup, /justify-content:\s*center;/);
+test("Settings Center external overlays share the application box model", () => {
 	assert.match(
-		settingsTemplateSource,
-		/data-settings-center-startup[\s\S]*?easymde-settings-center__frame[\s\S]*?easymde-settings-center__sidebar[\s\S]*?easymde-settings-center__brand-wrap[\s\S]*?easymde-settings-center__brand/,
+		settingsCss,
+		/\[data-settings-overlay-root\],\s*\[data-settings-overlay-root\] \*\s*\{\s*box-sizing:\s*border-box;/s,
 	);
+	assert.match(
+		cssRuleBody("[data-settings-overlay-root]"),
+		/position:\s*relative;[\s\S]*z-index:\s*100001;/,
+	);
+});
+
+test("Settings Center server fallback does not duplicate a brand-only application shell", () => {
+	assert.doesNotMatch(
+		settingsTemplateSource,
+		/easymde-settings-center__frame|easymde-settings-center__sidebar|easymde-settings-center__brand-wrap|easymde-settings-center__brand/,
+	);
+	assert.doesNotMatch(settingsTemplateSource, /<noscript>/);
+	assert.equal(
+		(settingsTemplateSource.match(/data-settings-center-server-fallback/g) ?? [])
+			.length,
+		1,
+	);
+	assert.match(settingsTemplateSource, /settings_center_close_url/);
 });
 
 test("Settings Center frame does not add an outer border, radius, or shadow", () => {
@@ -215,10 +221,19 @@ test("Settings Center preserves reference Help geometry until the mobile layout"
 	);
 });
 
-test("image upload retries use one horizontal stepper without native vertical controls", () => {
+test("image number inputs use one horizontal stepper without native vertical controls", () => {
 	const stepper = cssRuleBody(".easymde-settings-center__image-number-stepper");
 	const input = cssRuleBody(
 		".easymde-settings-center .easymde-settings-center__image-number-input",
+	);
+	const value = cssRuleBody(
+		".easymde-settings-center__image-number-value",
+	);
+	const unit = cssRuleBody(
+		".easymde-settings-center__image-number-value > span",
+	);
+	const warning = cssRuleBody(
+		".easymde-settings-center__image-size-warning",
 	);
 	const webkitSpinner = cssRuleBody(
 		".easymde-settings-center__image-number-input::-webkit-inner-spin-button",
@@ -232,6 +247,12 @@ test("image upload retries use one horizontal stepper without native vertical co
 	assert.match(stepper, /height:\s*39px;/);
 	assert.match(stepper, /max-width:\s*100%;/);
 	assert.match(stepper, /border:\s*1px solid #d4dce8;/);
+	assert.match(value, /display:\s*grid;/);
+	assert.match(value, /grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
+	assert.match(value, /min-width:\s*0;/);
+	assert.match(unit, /font-size:\s*15px;/);
+	assert.match(warning, /display:\s*flex;/);
+	assert.match(warning, /color:\s*#b42318;/);
 	assert.match(input, /appearance:\s*textfield;/);
 	assert.match(input, /min-width:\s*0;/);
 	assert.match(webkitSpinner, /appearance:\s*none;/);

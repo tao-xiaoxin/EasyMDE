@@ -52,11 +52,8 @@ function setup(
   nextOperationId = operationIdSequence(),
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType> = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   insertion: ImageUploadInsertion = {
-    altSource: 'filename',
-    captionMode: 'none',
-    format: 'markdown',
+    titleDisplay: 'none',
   },
-  insertAfterUpload = true,
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -82,7 +79,6 @@ function setup(
     },
     enabled: true,
     insertion,
-    insertAfterUpload,
     maxBytes: 1024,
     nextOperationId,
     onDiagnostic: (code) => diagnostics.push(code),
@@ -122,46 +118,18 @@ describe('createImageUploadSession', () => {
     expect(session.statuses.at(-1)?.message).toBe(strings.dropFailed);
   });
 
-  it('uploads without reading or changing the document when insertion is disabled', async () => {
-    const session = setup(
-      Promise.resolve({
-        alt: '',
-        status: 'uploaded',
-        title: '',
-        url: 'https://example.test/image.png',
-      }),
-      operationIdSequence(),
-      ['image/png'],
-      { altSource: 'filename', captionMode: 'none', format: 'markdown' },
-      false,
-    );
-    session.setSnapshot({ selection: { direction: 'none', end: 0, start: 0 }, value: 'unchanged' });
-
-    session.target.dispatchEvent(transferEvent('paste', new File(['image'], 'image.png', { type: 'image/png' })));
-    await vi.waitFor(() => expect(session.statuses.at(-1)?.type).toBe('success'));
-
-    expect(session.getSnapshot().value).toBe('unchanged');
-    expect(session.focus).not.toHaveBeenCalled();
-  });
-  it('escapes a trailing backslash in uploaded Alt text as valid Markdown', async () => {
+  it('ignores uploaded Alt and title metadata when title display is disabled', async () => {
     const session = setup(
       Promise.resolve({
         alt: 'Media alt\\',
         status: 'uploaded',
-        title: '',
+        title: 'Uploaded title',
         url: 'https://example.test/image.png',
       }),
-      undefined,
-      undefined,
-      {
-        altSource: 'upload',
-        captionMode: 'none',
-        format: 'markdown',
-      },
     );
     session.target.dispatchEvent(transferEvent('paste', new File(['image'], 'image.png', { type: 'image/png' })));
     await vi.waitFor(() => {
-      expect(session.getSnapshot().value).toContain('![Media alt\\\\](https://example.test/image.png)');
+      expect(session.getSnapshot().value).toContain('![image](https://example.test/image.png)');
     });
     session.cleanup();
   });
@@ -373,11 +341,8 @@ describe('createImageUploadSession', () => {
         getSnapshot: () => snapshot,
       },
       enabled: true,
-      insertAfterUpload: true,
       insertion: {
-        altSource: 'filename',
-        captionMode: 'none',
-        format: 'markdown',
+        titleDisplay: 'none',
       },
       maxBytes: 1024,
       nextOperationId: operationIdSequence(),
@@ -421,7 +386,7 @@ describe('createImageUploadSession', () => {
     ]);
   });
 
-  it('applies the selected URL, Alt, and title insertion behavior', async () => {
+  it('always inserts Markdown with filename Alt and optionally displays the full filename as title', async () => {
     const titled = setup(
       Promise.resolve({
         alt: 'WordPress alt',
@@ -431,13 +396,15 @@ describe('createImageUploadSession', () => {
       }),
       operationIdSequence(),
       ['image/png'],
-      { altSource: 'empty', captionMode: 'upload', format: 'markdown' },
+      { titleDisplay: 'filename' },
     );
     titled.target.dispatchEvent(transferEvent('paste', new File(['image'], 'local-name.png', { type: 'image/png' })));
     await vi.waitFor(() => expect(titled.statuses).toHaveLength(2));
-    expect(titled.getSnapshot().value).toBe('Hello![](https://example.test/titled.png "WordPress title") world');
+    expect(titled.getSnapshot().value).toBe(
+      'Hello![local name](https://example.test/titled.png "local-name.png") world',
+    );
 
-    const urlOnly = setup(
+    const untitled = setup(
       Promise.resolve({
         alt: 'WordPress alt',
         status: 'uploaded',
@@ -446,10 +413,10 @@ describe('createImageUploadSession', () => {
       }),
       operationIdSequence(),
       ['image/png'],
-      { altSource: 'upload', captionMode: 'filename', format: 'url' },
+      { titleDisplay: 'none' },
     );
-    urlOnly.target.dispatchEvent(transferEvent('drop', new File(['image'], 'local-name.png', { type: 'image/png' })));
-    await vi.waitFor(() => expect(urlOnly.statuses).toHaveLength(2));
-    expect(urlOnly.getSnapshot().value).toBe('Hellohttps://example.test/plain.png world');
+    untitled.target.dispatchEvent(transferEvent('drop', new File(['image'], 'local-name.png', { type: 'image/png' })));
+    await vi.waitFor(() => expect(untitled.statuses).toHaveLength(2));
+    expect(untitled.getSnapshot().value).toBe('Hello![local name](https://example.test/plain.png) world');
   });
 });

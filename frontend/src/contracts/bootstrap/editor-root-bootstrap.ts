@@ -4,7 +4,11 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import type { NativePublishCategory } from '../ports/native-publish-port';
-import type { GeneralSettings, MarkdownSettings } from '../settings-center-settings';
+import type {
+  GeneralSettings,
+  MarkdownSettings,
+  SummaryMode
+} from '../settings-center-settings';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -437,6 +441,8 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'autoSave',
       'syncScroll',
       'openPreviewAfterPublish',
+      'applyEditorThemeToFrontend',
+      'showPublishedCodeCopyButton',
       'featuredImagePlaceholder'
     ] as const;
     const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -469,6 +475,10 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     settings = {
       general: {
         autoFocusEditor: general.autoFocusEditor as boolean,
+        applyEditorThemeToFrontend:
+          general.applyEditorThemeToFrontend as boolean,
+        showPublishedCodeCopyButton:
+          general.showPublishedCodeCopyButton as boolean,
         autoSave: general.autoSave as boolean,
         autoSaveInterval: general.autoSaveInterval as string,
         editingMode: general.editingMode as string,
@@ -478,7 +488,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         publishVisibility: general.publishVisibility as string,
         showLineNumbers: general.showLineNumbers as boolean,
         statusBarMode: general.statusBarMode as string,
-        summaryMode: general.summaryMode as string,
+        summaryMode: general.summaryMode as SummaryMode,
         syncScroll: general.syncScroll as boolean,
         syntaxHighlight: general.syntaxHighlight as boolean
       } satisfies GeneralSettings,

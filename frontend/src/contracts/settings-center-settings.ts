@@ -1,3 +1,5 @@
+export type SummaryMode = "auto-55" | "auto-100" | "manual";
+
 export type GeneralSettings = Readonly<{
 	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
 	interfaceLanguage: string;
@@ -11,7 +13,9 @@ export type GeneralSettings = Readonly<{
 	syncScroll: boolean;
 	publishVisibility: string;
 	openPreviewAfterPublish: boolean;
-	summaryMode: string;
+	applyEditorThemeToFrontend: boolean;
+	showPublishedCodeCopyButton: boolean;
+	summaryMode: SummaryMode;
 	featuredImagePlaceholder: boolean;
 }>;
 
@@ -38,21 +42,14 @@ export type ImageSettings = Readonly<{
 	backupDomain: string;
 	backupAccessKey: string;
 	backupSecretKey: string;
-	insertMarkdown: boolean;
 	compressImages: boolean;
-	preserveFileName: boolean;
-	copyUrl: boolean;
-	maxImageSize: string;
+	maxImageSizeMb: number;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
-	insertFormat: string;
-	altSource: string;
-	captionMode: string;
-	featuredPlaceholder: boolean;
+	titleDisplay: "filename" | "none";
 }>;
 
 export type MarkdownSettings = Readonly<{
 	wordWrap: boolean;
-	lineNumbers: boolean;
 	editorTheme: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;
@@ -60,10 +57,6 @@ export type MarkdownSettings = Readonly<{
 	codeLineNumbers: string;
 	htmlRendering: boolean;
 	pasteAsMarkdown: boolean;
-	lineEnding: string;
-	unorderedMarker: string;
-	orderedStart: string;
-	blockquoteStyle: string;
 }>;
 
 export type ShortcutId =

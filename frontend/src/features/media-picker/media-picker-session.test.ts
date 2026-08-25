@@ -44,15 +44,13 @@ const strings = {
   defaultAlt: 'image',
   insertMedia: 'Insert Media',
   insertion: {
-    altSource: 'filename' as const,
-    captionMode: 'none' as const,
-    format: 'markdown' as const,
+    titleDisplay: 'none' as const,
   },
   placeholderAlt: 'alt text',
 };
 
 describe('openMediaPickerSession', () => {
-  it('escapes a trailing backslash in media Alt text as valid Markdown', async () => {
+  it('ignores uploaded Alt metadata and derives Alt from the filename', async () => {
     const document = createDocumentPort();
     const frame = createFramePort();
     const result = openMediaPickerSession({
@@ -60,11 +58,7 @@ describe('openMediaPickerSession', () => {
       frame: frame.port,
       strings: {
         ...strings,
-        insertion: {
-          altSource: 'upload',
-          captionMode: 'none',
-          format: 'markdown',
-        },
+        insertion: { titleDisplay: 'none' },
       },
     });
     frame.select({
@@ -76,7 +70,7 @@ describe('openMediaPickerSession', () => {
     frame.close();
 
     await expect(result).resolves.toBe('inserted');
-    expect(document.getValue()).toBe('before ![Media alt\\\\](https://example.test/image.png) after');
+    expect(document.getValue()).toBe('before ![selected image](https://example.test/image.png) after');
   });
 
   it('replaces the captured selection once and restores focus when WordPress closes', async () => {
@@ -108,12 +102,12 @@ describe('openMediaPickerSession', () => {
     expect(document.focus).toHaveBeenCalledTimes(1);
   });
 
-  it('applies URL-only and uploaded metadata insertion preferences', async () => {
+  it('always inserts Markdown and controls only filename title display', async () => {
     for (const [insertion, expected] of [
-      [{ altSource: 'filename', captionMode: 'none', format: 'url' }, 'before https://example.test/image.png after'],
+      [{ titleDisplay: 'none' }, 'before ![selected image](https://example.test/image.png) after'],
       [
-        { altSource: 'upload', captionMode: 'upload', format: 'markdown' },
-        'before ![Media alt](https://example.test/image.png "Media title") after',
+        { titleDisplay: 'filename' },
+        'before ![selected image](https://example.test/image.png "selected-image.png") after',
       ],
     ] as const) {
       const document = createDocumentPort();
@@ -134,6 +128,25 @@ describe('openMediaPickerSession', () => {
       await expect(result).resolves.toBe('inserted');
       expect(document.getValue()).toBe(expected);
     }
+  });
+
+  it('leaves the title empty when the attachment has no filename', async () => {
+    const document = createDocumentPort();
+    const frame = createFramePort();
+    const result = openMediaPickerSession({
+      document: document.port,
+      frame: frame.port,
+      strings: { ...strings, insertion: { titleDisplay: 'filename' } },
+    });
+    frame.select({
+      alt: 'Uploaded alt',
+      title: 'Uploaded title',
+      url: 'https://example.test/image.png',
+    });
+    frame.close();
+
+    await expect(result).resolves.toBe('inserted');
+    expect(document.getValue()).toBe('before ![image](https://example.test/image.png) after');
   });
 
   it('leaves the document unchanged on cancel and restores focus', async () => {

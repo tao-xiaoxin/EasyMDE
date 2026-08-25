@@ -1,7 +1,10 @@
 import { createElement, useState } from "@wordpress/element";
 import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
-import type { GeneralSettings } from "../../contracts/settings-center-settings";
+import type {
+	GeneralSettings,
+	SummaryMode,
+} from "../../contracts/settings-center-settings";
 import {
 	matchesSettingsQuery,
 	SettingsRow,
@@ -31,6 +34,8 @@ const DEFAULT_DRAFT: Draft = {
 	syncScroll: true,
 	publishVisibility: "public",
 	openPreviewAfterPublish: true,
+	applyEditorThemeToFrontend: true,
+	showPublishedCodeCopyButton: true,
 	summaryMode: "auto-55",
 	featuredImagePlaceholder: true,
 };
@@ -75,6 +80,8 @@ export function matchesGeneralSettingsQuery(
 		[s.syncScroll, s.syncScrollDescription],
 		[s.defaultVisibility],
 		[s.openPreviewAfterPublish, s.openPreviewAfterPublishDescription],
+		[s.applyEditorThemeToFrontend, s.applyEditorThemeToFrontendDescription],
+		[s.showPublishedCodeCopyButton, s.showPublishedCodeCopyButtonDescription],
 		[s.summaryMode, s.summaryModeDescription],
 		[s.featuredImagePlaceholder, s.featuredImagePlaceholderDescription],
 	];
@@ -278,27 +285,56 @@ export function GeneralSettingsPage({
 						}
 					/>
 				</SettingsRow>
-				<fieldset
-					disabled
-					className="easymde-settings-center__unavailable-fields"
+				<SettingsRow
+					label={s.applyEditorThemeToFrontend}
+					description={s.applyEditorThemeToFrontendDescription}
+					query={normalizedQuery}
 				>
-					<SettingsRow
+					<SettingsToggle
+						label={s.applyEditorThemeToFrontend}
+						checked={draft.applyEditorThemeToFrontend}
+						onChange={() =>
+							setValue(
+								"applyEditorThemeToFrontend",
+								!draft.applyEditorThemeToFrontend,
+							)
+						}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.showPublishedCodeCopyButton}
+					description={s.showPublishedCodeCopyButtonDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.showPublishedCodeCopyButton}
+						checked={draft.showPublishedCodeCopyButton}
+						onChange={() =>
+							setValue(
+								"showPublishedCodeCopyButton",
+								!draft.showPublishedCodeCopyButton,
+							)
+						}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.summaryMode}
+					description={s.summaryModeDescription}
+					query={normalizedQuery}
+				>
+					<NativeSelect
 						label={s.summaryMode}
-						description={s.summaryModeDescription}
-						query={normalizedQuery}
-					>
-						<NativeSelect
-							label={s.summaryMode}
-							value={draft.summaryMode}
-							onChange={(value) => setValue("summaryMode", value)}
-							options={[
-								["auto-55", s.summary55],
-								["auto-100", s.summary100],
-								["manual", s.manualSummary],
-							]}
-						/>
-					</SettingsRow>
-				</fieldset>
+						value={draft.summaryMode}
+						onChange={(value) =>
+							setValue("summaryMode", value as SummaryMode)
+						}
+						options={[
+							["auto-55", s.summary55],
+							["auto-100", s.summary100],
+							["manual", s.manualSummary],
+						]}
+					/>
+				</SettingsRow>
 				<SettingsRow
 					label={s.featuredImagePlaceholder}
 					description={s.featuredImagePlaceholderDescription}

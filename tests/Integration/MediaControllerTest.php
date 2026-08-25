@@ -49,4 +49,112 @@ final class MediaControllerTest extends WP_UnitTestCase {
 			unlink( $jpg_path );
 		}
 	}
+
+	public function test_saved_image_size_limit_is_enforced_by_the_media_controller() {
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings = $repository->get_settings();
+		$settings['images']['maxImageSizeMb'] = 1;
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+		$path = wp_tempnam( 'oversized.png' );
+		file_put_contents( $path, base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true ) );
+		file_put_contents( $path, str_repeat( "\0", MB_IN_BYTES ), FILE_APPEND );
+		$request = new WP_REST_Request( 'POST', '/easymde/v1/media' );
+		$request->set_file_params(
+			array(
+				'file' => array(
+					'name'     => 'oversized.png',
+					'type'     => 'image/png',
+					'tmp_name' => $path,
+					'error'    => UPLOAD_ERR_OK,
+					'size'     => filesize( $path ),
+				),
+			)
+		);
+
+		try {
+			$result = ( new MediaController( new Capabilities(), $repository ) )->handle_upload_request( $request );
+			$this->assertWPError( $result );
+			$this->assertSame( 'easymde_media_file_too_large', $result->get_error_code() );
+			$this->assertSame( 413, $result->get_error_data()['status'] );
+		} finally {
+			unlink( $path );
+		}
+	}
+
+	public function test_declared_alt_text_is_sanitized_and_used_for_the_attachment_and_response() {
+		$path       = $this->png_file();
+		$request    = $this->upload_request( $path, "  <strong>Declared</strong> alt\ntext  " );
+		$attachment = 0;
+
+		try {
+			$response = ( new MediaController(
+				new Capabilities(),
+				new SettingsCenterRepository( new Options(), new ToolbarRegistry() )
+			) )->handle_upload_request( $request );
+			$this->assertNotWPError( $response );
+
+			$data       = $response->get_data();
+			$attachment = $data['id'];
+			$this->assertSame( 'Declared alt text', $data['alt'] );
+			$this->assertSame( 'Declared alt text', get_post_meta( $attachment, '_wp_attachment_image_alt', true ) );
+		} finally {
+			if ( $attachment ) {
+				wp_delete_attachment( $attachment, true );
+			}
+			if ( file_exists( $path ) ) {
+				unlink( $path );
+			}
+		}
+	}
+
+	public function test_empty_declared_alt_text_falls_back_to_the_filename() {
+		$path       = $this->png_file();
+		$request    = $this->upload_request( $path, " \n " );
+		$attachment = 0;
+
+		try {
+			$response = ( new MediaController(
+				new Capabilities(),
+				new SettingsCenterRepository( new Options(), new ToolbarRegistry() )
+			) )->handle_upload_request( $request );
+			$this->assertNotWPError( $response );
+
+			$data       = $response->get_data();
+			$attachment = $data['id'];
+			$this->assertSame( 'fallback image', $data['alt'] );
+			$this->assertSame( 'fallback image', get_post_meta( $attachment, '_wp_attachment_image_alt', true ) );
+		} finally {
+			if ( $attachment ) {
+				wp_delete_attachment( $attachment, true );
+			}
+			if ( file_exists( $path ) ) {
+				unlink( $path );
+			}
+		}
+	}
+
+	private function png_file() {
+		$path = wp_tempnam( 'fallback-image.png' );
+		file_put_contents( $path, base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true ) );
+
+		return $path;
+	}
+
+	private function upload_request( $path, $alt_text ) {
+		$request = new WP_REST_Request( 'POST', '/easymde/v1/media' );
+		$request->set_param( 'alt_text', $alt_text );
+		$request->set_file_params(
+			array(
+				'file' => array(
+					'name'     => 'fallback-image.png',
+					'type'     => 'image/png',
+					'tmp_name' => $path,
+					'error'    => UPLOAD_ERR_OK,
+					'size'     => filesize( $path ),
+				),
+			)
+		);
+
+		return $request;
+	}
 }

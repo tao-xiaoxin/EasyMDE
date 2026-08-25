@@ -335,6 +335,69 @@ function postCategoryNames(postId) {
   return runWp(['post', 'term', 'list', String(postId), 'category', '--field=name']);
 }
 
+function imageSizeSettingMb() {
+  const value = Number.parseInt(runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo (int) $settings["images"]["maxImageSizeMb"];'
+  ]), 10);
+
+  if (!Number.isSafeInteger(value) || value < 1 || value > 10) {
+    throw new Error('image-size-setting-invalid');
+  }
+
+  return value;
+}
+
+function setImageSizeSettingMb(value) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 10) {
+    throw new Error('image-size-setting-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["images"]["maxImageSizeMb"] = ${value}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
+const summaryModes = new Set(['auto-55', 'auto-100', 'manual']);
+
+function summaryModeSetting() {
+  const value = runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo $settings["general"]["summaryMode"];'
+  ]);
+
+  if (!summaryModes.has(value)) {
+    throw new Error('summary-mode-setting-invalid');
+  }
+
+  return value;
+}
+
+function setSummaryModeSetting(value) {
+  if (!summaryModes.has(value)) {
+    throw new Error('summary-mode-setting-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["general"]["summaryMode"] = ${JSON.stringify(value)}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
+function attachmentIdsForPost(postId) {
+  const output = runWp([
+    'post',
+    'list',
+    '--post_type=attachment',
+    `--post_parent=${postId}`,
+    '--post_status=inherit',
+    '--format=ids'
+  ]);
+
+  return output ? output.split(/\s+/) : [];
+}
+
 function postPermalink(postId) {
   return runWp(['eval', `echo get_permalink(${Number.parseInt(String(postId), 10)});`]);
 }
@@ -402,6 +465,12 @@ async function triggerNativeAutosave(page) {
     });
     runtime.triggerSave();
   }));
+}
+
+async function readyNativeDraftSave(page) {
+  const savePost = page.locator('#save-post');
+  await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
+  return savePost;
 }
 
 function canonicalMarkdownForSite(pluginAssetUrl) {
@@ -1258,6 +1327,12 @@ test.describe('EasyMDE editor workflows', () => {
     }
     try {
       runCleanupSteps([
+        ...(Number.isSafeInteger(testInfo.easymdeOriginalImageSizeMb)
+          ? [() => setImageSizeSettingMb(testInfo.easymdeOriginalImageSizeMb)]
+          : []),
+        ...(summaryModes.has(testInfo.easymdeOriginalSummaryMode)
+          ? [() => setSummaryModeSetting(testInfo.easymdeOriginalSummaryMode)]
+          : []),
         ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
           runWp(['term', 'delete', 'category', String(termId)]);
         }),
@@ -2092,8 +2167,9 @@ test.describe('EasyMDE editor workflows', () => {
     }), { timeout: localDraftDelayMs + 15_000 }).not.toBeNull();
 
     await page.locator('#title').fill(title);
+    const savePost = await readyNativeDraftSave(page);
     const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await navigation;
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
@@ -2145,7 +2221,7 @@ test.describe('EasyMDE editor workflows', () => {
       await page.keyboard.press('Enter');
       await expect(page.locator('#easymde-source')).toHaveValue(markdown);
 
-      const savePost = page.locator('#save-post');
+      const savePost = await readyNativeDraftSave(page);
       await savePost.focus();
       await expect(savePost).toBeFocused();
       const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
@@ -3226,8 +3302,9 @@ test.describe('EasyMDE editor workflows', () => {
       .click();
 
     const postId = await currentPostId(page);
-    const savedNavigation = page.waitForNavigation({ waitUntil: 'load' });
-    await page.locator('#save-post').click();
+    const savePost = await readyNativeDraftSave(page);
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
     await savedNavigation;
     expect(postMetaValue(postId, '_easymde_markdown_theme')).toBe('custom');
     expect(postMetaValue(postId, '_easymde_code_theme')).toBe(terminalNoir.id);
@@ -3858,6 +3935,231 @@ test.describe('EasyMDE editor workflows', () => {
       .toContain(postId);
   });
 
+  const selectSummaryMode = async (page, targetIndex) => {
+    await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+    await expect(page.locator('.easymde-settings-center')).toBeVisible();
+    const trigger = page.getByRole('combobox', {
+      name: /默认摘要同步方式|default summary sync method/i
+    });
+    await expect(trigger).toBeEnabled();
+    await trigger.focus();
+    await trigger.press('Enter');
+    const listbox = page.getByRole('listbox', {
+      name: /默认摘要同步方式|default summary sync method/i
+    });
+    const options = listbox.getByRole('option');
+    const selectedIndex = await options.evaluateAll((items) =>
+      items.findIndex((item) => 'true' === item.getAttribute('aria-selected'))
+    );
+    if (selectedIndex < 0) throw new Error('summary-mode-selected-option-missing');
+    if (selectedIndex === targetIndex) {
+      await trigger.press('Escape');
+      return;
+    }
+    await trigger.press('Home');
+    for (let index = 0; index < targetIndex; index += 1) {
+      await trigger.press('ArrowDown');
+    }
+    await trigger.press('Enter');
+    const saveButton = page.locator('.easymde-settings-center__save-bar > button');
+    await expect(saveButton).toBeEnabled();
+    await saveButton.click();
+    await expect(page.locator('[data-save-status]')).toHaveAttribute(
+      'data-save-status',
+      /saved|idle/u
+    );
+  };
+
+  const publishExcerpt = async (page, {
+    title,
+    markdown,
+    nativeExcerpt,
+    expectedDraft,
+    editedDraft
+  }) => {
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, markdown, Array.from(markdown).slice(-12).join(''));
+    if (undefined !== nativeExcerpt) {
+      await page.locator('#excerpt').evaluate((field, value) => {
+        if (!(field instanceof HTMLTextAreaElement)) {
+          throw new Error('native-excerpt-field-unavailable');
+        }
+        field.value = value;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      }, nativeExcerpt);
+    }
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: labels.publish, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: labels.publish });
+    const excerpt = dialog.locator('.easymde-publish-field.is-excerpt textarea');
+    await expect(excerpt).toHaveValue(expectedDraft);
+    if (undefined !== editedDraft) await excerpt.fill(editedDraft);
+    const openAfterPublish = dialog.getByRole('switch', {
+      name: labels.openAfterPublish
+    });
+    if (await openAfterPublish.isChecked()) await openAfterPublish.click();
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await dialog.getByRole('button', { name: labels.publish, exact: true }).click();
+    await navigation;
+    return currentPostId(page);
+  };
+
+  test('syncs the automatic 55-character article-template excerpt through WordPress', async ({ page }, testInfo) => {
+    const linkText = '合成链接文字';
+    const imageAlt = '不应进入摘要的图片替代文字';
+    const linkUrl = 'https://example.test/synthetic-summary-link';
+    const imageUrl = 'https://example.test/synthetic-summary-image.png';
+    const visibleText = `合成摘要开头\n\n${linkText}加粗正文${'后续可见内容'.repeat(18)}`;
+    const summaryMarkdown = `# 合成摘要开头\n\n[${linkText}](${linkUrl})![${imageAlt}](${imageUrl})**加粗正文**${'后续可见内容'.repeat(18)}`;
+
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 0);
+    const articleTemplate = await canonicalMarkdownForPage(page);
+    const expectedExcerpt = Array.from(visibleText).slice(0, 55).join('');
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic automatic summary ${testSlug(testInfo)}`,
+      markdown: `${summaryMarkdown}\n\n${articleTemplate}`,
+      expectedDraft: expectedExcerpt
+    });
+    const storedExcerpt = normalizeMarkdown(postExcerpt(postId));
+    expect(storedExcerpt).toBe(expectedExcerpt);
+    expect(storedExcerpt).toContain(linkText);
+    expect(storedExcerpt).not.toContain('**');
+    expect(storedExcerpt).not.toContain(imageAlt);
+    expect(storedExcerpt).not.toContain(linkUrl);
+    expect(storedExcerpt).not.toContain(imageUrl);
+  });
+
+  test('syncs the automatic 100-character plain-text excerpt through WordPress', async ({ page }, testInfo) => {
+    const linkText = '合成链接文字';
+    const visibleText = `合成摘要开头\n\n${linkText}加粗正文${'后续可见内容'.repeat(18)}`;
+    const markdown = `# 合成摘要开头\n\n[${linkText}](https://example.test/synthetic-summary-link)![不应进入摘要的图片替代文字](https://example.test/synthetic-summary-image.png)**加粗正文**${'后续可见内容'.repeat(18)}`;
+
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 1);
+    const expectedExcerpt = Array.from(visibleText).slice(0, 100).join('');
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic automatic 100 summary ${testSlug(testInfo)}`,
+      markdown,
+      expectedDraft: expectedExcerpt
+    });
+    expect(normalizeMarkdown(postExcerpt(postId))).toBe(expectedExcerpt);
+  });
+
+  test('preserves and submits the manual WordPress excerpt', async ({ page }, testInfo) => {
+    const nativeExcerpt = '合成原生摘要';
+    const editedExcerpt = '合成手工修改摘要';
+
+    testInfo.easymdeOriginalSummaryMode = summaryModeSetting();
+    await login(page, testInfo.easymdeUser);
+    await selectSummaryMode(page, 2);
+    const postId = await publishExcerpt(page, {
+      title: `Synthetic manual summary ${testSlug(testInfo)}`,
+      markdown: '手工模式正文不应替换原生摘要。',
+      nativeExcerpt,
+      expectedDraft: nativeExcerpt,
+      editedDraft: editedExcerpt
+    });
+    expect(postExcerpt(postId)).toBe(editedExcerpt);
+  });
+
+  test('links the configured image size to the article-template publish upload', async ({ page, context }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const browserFailures = [];
+    testInfo.easymdeOriginalImageSizeMb = imageSizeSettingMb();
+
+    page.on('pageerror', (error) => browserFailures.push(error.message));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await login(page, user);
+    await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+    await expect(page.locator('.easymde-settings-center')).toBeVisible();
+    await page.locator('button[data-nav-id="images"]').click();
+    const maximumSize = page.getByRole('spinbutton', {
+      name: /最大支持图片大小|Maximum Supported Image Size/u
+    });
+    await maximumSize.fill('1');
+    await page.getByRole('button', { name: /保存设置|Save Settings/u }).click();
+    await expect(page.locator('[data-save-status]')).toHaveAttribute('data-save-status', 'saved');
+
+    await openEasyMdeNewPost(page);
+    const postId = await currentPostId(page);
+    const attachmentsBefore = attachmentIdsForPost(postId);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+    const source = page.locator('#easymde-source');
+    await expect(source).toHaveValue(markdown);
+    const bootstrap = await page.evaluate(() => ({
+      imageRequirements: window.EasyMDEEditorRootBootstrap.strings.immersive.imageRequirements,
+      maxBytes: window.EasyMDEEditorRootBootstrap.imageUpload.maxBytes,
+      strings: window.EasyMDEEditorRootBootstrap.strings.immersive
+    }));
+    expect(bootstrap.maxBytes).toBe(1024 * 1024);
+    expect(bootstrap.imageRequirements).toMatch(/(?:最大|max)\s*1\s*MB/iu);
+
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: bootstrap.strings.publish, exact: true }).click();
+    const publishDialog = page.getByRole('dialog', {
+      name: bootstrap.strings.publish,
+      exact: true
+    });
+    await expect(publishDialog).toBeVisible();
+    await expect(publishDialog).toContainText(bootstrap.imageRequirements);
+
+    const cdp = await context.newCDPSession(page);
+    const publishMetrics = await cdp.send('Page.getLayoutMetrics');
+    expect(publishMetrics.cssVisualViewport.clientWidth).toBe(1440);
+    const publishBox = await publishDialog.boundingBox();
+    if (!publishBox) throw new Error('publish-dialog-geometry-unavailable');
+    expect(publishBox.x).toBeGreaterThanOrEqual(0);
+    expect(publishBox.x + publishBox.width).toBeLessThanOrEqual(1440);
+    expect(publishBox.y).toBeGreaterThanOrEqual(0);
+    expect(publishBox.y + publishBox.height).toBeLessThanOrEqual(900);
+
+    await publishDialog.locator('.easymde-publish-featured-empty').click();
+    const mediaModal = page.locator('.media-modal:visible');
+    await expect(mediaModal).toBeVisible();
+    await mediaModal.getByRole('tab', { name: /上传文件|Upload files/u }).click();
+    const oversizedPng = Buffer.concat([
+      Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+      Buffer.alloc(1024 * 1024)
+    ]);
+    const uploadResponse = page.waitForResponse((response) => (
+      'POST' === response.request().method()
+      && new URL(response.url()).pathname.endsWith('/wp-admin/async-upload.php')
+    ));
+    await page.locator('input[type="file"]').last().setInputFiles({
+      name: 'oversized-article-template.png',
+      mimeType: 'image/png',
+      buffer: oversizedPng
+    });
+    const response = await uploadResponse;
+    const payload = await response.json();
+    expect(payload.success).toBe(false);
+    expect(payload.data?.message).toMatch(/(?:图片.*允许.*上传大小|image.*allowed upload size)/iu);
+    await expect(mediaModal).toContainText(payload.data.message);
+
+    const mediaBox = await mediaModal.boundingBox();
+    if (!mediaBox) throw new Error('media-modal-geometry-unavailable');
+    expect(mediaBox.x).toBeGreaterThanOrEqual(0);
+    expect(mediaBox.x + mediaBox.width).toBeLessThanOrEqual(1440);
+    const screenshot = await cdp.send('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png'
+    });
+    expect(Buffer.from(screenshot.data, 'base64').byteLength).toBeGreaterThan(10_000);
+
+    expect(attachmentIdsForPost(postId)).toEqual(attachmentsBefore);
+    await expect(source).toHaveValue(markdown);
+    expect(browserFailures).toEqual([]);
+    await cdp.detach();
+  });
+
   test('projects only publish fields owned by the current WordPress Post Type', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = 'React Page publish ' + testSlug(testInfo);
@@ -3968,8 +4270,9 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, markdown, 'server state must remain unchanged');
+    const savePost = await readyNativeDraftSave(page);
     const saveNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await saveNavigation;
     const postId = await currentPostId(page);
     const before = postPersistenceSnapshot(postId);
@@ -4019,14 +4322,16 @@ test.describe('EasyMDE editor workflows', () => {
     await openEasyMdeNewPost(page);
     await page.locator('#title').fill(title);
     await fillMarkdownAndWaitForPreview(page, '# First revision', 'First revision');
+    let savePost = await readyNativeDraftSave(page);
     let navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').click();
+    await savePost.click();
     await navigation;
 
     await fillMarkdownAndWaitForPreview(page, '# Second revision', 'Second revision');
+    savePost = await readyNativeDraftSave(page);
     navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
-    await page.locator('#save-post').focus();
-    await page.locator('#save-post').press('Enter');
+    await savePost.focus();
+    await savePost.press('Enter');
     await navigation;
 
     const immersiveLabels = await page.evaluate(() => window.EasyMDEEditorRootBootstrap.strings.immersive);

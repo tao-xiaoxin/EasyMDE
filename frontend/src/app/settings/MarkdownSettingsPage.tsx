@@ -9,7 +9,7 @@ import {
 	SettingsToggle,
 	UnavailableSettingsNotice,
 } from "./SettingsControls";
-import { EditPencilIcon, GeneralIcon } from "./settings-center-icons";
+import { EditPencilIcon } from "./settings-center-icons";
 
 type MarkdownSettingsDraft = MarkdownSettings;
 
@@ -25,10 +25,6 @@ const LEGACY_MARKDOWN_VALUE_ALIASES: Readonly<Record<string, string>> = {
 	"Align center": "center",
 	Show: "show",
 	Hide: "hide",
-	LF: "lf",
-	CRLF: "crlf",
-	Standard: "standard",
-	Spaced: "spaced",
 };
 
 function normalizeMarkdownValue(
@@ -47,7 +43,6 @@ function normalizeMarkdownValue(
 function createDefaultSettings(): MarkdownSettingsDraft {
 	return {
 		wordWrap: true,
-		lineNumbers: false,
 		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
@@ -55,10 +50,6 @@ function createDefaultSettings(): MarkdownSettingsDraft {
 		codeLineNumbers: "show",
 		htmlRendering: false,
 		pasteAsMarkdown: true,
-		lineEnding: "system",
-		unorderedMarker: "-",
-		orderedStart: "1",
-		blockquoteStyle: "standard",
 	};
 }
 
@@ -135,15 +126,6 @@ export function MarkdownSettingsPage({
 		{ value: "show", label: strings.show },
 		{ value: "hide", label: strings.hide },
 	];
-	const lineEndingOptions: ReadonlyArray<SelectOption> = [
-		{ value: "system", label: strings.automaticFollowSystem },
-		{ value: "lf", label: "LF" },
-		{ value: "crlf", label: "CRLF" },
-	];
-	const blockquoteOptions: ReadonlyArray<SelectOption> = [
-		{ value: "standard", label: strings.standardBlockquote },
-		{ value: "spaced", label: strings.spacedBlockquote },
-	];
 	const [localSettings, setLocalSettings] = useState<MarkdownSettingsDraft>(
 		() => createDefaultSettings(),
 	);
@@ -164,16 +146,6 @@ export function MarkdownSettingsPage({
 			rawSettings.codeLineNumbers,
 			codeLineNumberOptions,
 			"show",
-		),
-		lineEnding: normalizeMarkdownValue(
-			rawSettings.lineEnding,
-			lineEndingOptions,
-			"system",
-		),
-		blockquoteStyle: normalizeMarkdownValue(
-			rawSettings.blockquoteStyle,
-			blockquoteOptions,
-			"standard",
 		),
 	};
 
@@ -199,28 +171,16 @@ export function MarkdownSettingsPage({
 						<EditPencilIcon size={25} />
 						{strings.markdownEditorSettings}
 					</h2>
-					{(
-						[
-							["wordWrap", strings.wordWrap, strings.wordWrapDescription],
-							[
-								"lineNumbers",
-								strings.showLineNumbers,
-								strings.markdownLineNumbersDescription,
-							],
-						] as const
-					).map(([key, label, description]) => (
-						<MarkdownRow key={key} label={label} description={description}>
-							<SettingsToggle
-								{...(key === "wordWrap"
-									? {}
-									: { ariaDescribedBy: "easymde-markdown-unavailable" })}
-								label={label}
-								checked={settings[key]}
-								disabled={key !== "wordWrap"}
-								onChange={() => setValue(key, !settings[key])}
-							/>
-						</MarkdownRow>
-					))}
+					<MarkdownRow
+						label={strings.wordWrap}
+						description={strings.wordWrapDescription}
+					>
+						<SettingsToggle
+							label={strings.wordWrap}
+							checked={settings.wordWrap}
+							onChange={() => setValue("wordWrap", !settings.wordWrap)}
+						/>
+					</MarkdownRow>
 					<MarkdownRow label={strings.editorTheme}>
 						<MarkdownSelect
 							ariaDescribedBy="easymde-markdown-unavailable"
@@ -301,13 +261,6 @@ export function MarkdownSettingsPage({
 							/>
 						</MarkdownRow>
 					))}
-				</section>
-
-				<section className="easymde-settings-center__markdown-group is-compact-heading">
-					<h2>
-						<GeneralIcon size={25} />
-						{strings.otherSettings}
-					</h2>
 					<MarkdownRow
 						label={strings.pasteAsMarkdown}
 						description={strings.pasteAsMarkdownDescription}
@@ -320,48 +273,6 @@ export function MarkdownSettingsPage({
 							onChange={() =>
 								setValue("pasteAsMarkdown", !settings.pasteAsMarkdown)
 							}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.defaultLineEnding}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.defaultLineEnding}
-							value={settings.lineEnding}
-							options={lineEndingOptions}
-							onChange={(value) => setValue("lineEnding", value)}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.unorderedListMarker}>
-						<input
-							className="easymde-settings-center__markdown-input"
-							aria-label={strings.unorderedListMarker}
-							aria-describedby="easymde-markdown-unavailable"
-							disabled
-							value={settings.unorderedMarker}
-							onChange={(event) =>
-								setValue("unorderedMarker", event.target.value)
-							}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.orderedListStart}>
-						<input
-							className="easymde-settings-center__markdown-input"
-							aria-label={strings.orderedListStart}
-							aria-describedby="easymde-markdown-unavailable"
-							disabled
-							value={settings.orderedStart}
-							onChange={(event) => setValue("orderedStart", event.target.value)}
-						/>
-					</MarkdownRow>
-					<MarkdownRow label={strings.blockquoteIndentStyle}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.blockquoteIndentStyle}
-							value={settings.blockquoteStyle}
-							options={blockquoteOptions}
-							onChange={(value) => setValue("blockquoteStyle", value)}
 						/>
 					</MarkdownRow>
 				</section>

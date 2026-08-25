@@ -27,23 +27,15 @@ export function imageInsertionText({
   defaultAlt,
   fileName,
   insertion,
-  uploadedAlt,
-  uploadedTitle,
   url,
 }: Readonly<{
   defaultAlt: string;
   fileName: string;
   insertion: ImageUploadInsertion;
-  uploadedAlt: string;
-  uploadedTitle: string;
   url: string;
 }>): string {
-  if ('url' === insertion.format) return url;
-
-  const fileNameAlt = defaultImageAlt(fileName, uploadedAlt || uploadedTitle || defaultAlt);
-  const alt = 'empty' === insertion.altSource ? '' : 'upload' === insertion.altSource ? uploadedAlt : fileNameAlt;
-  const title =
-    'filename' === insertion.captionMode ? fileNameAlt : 'upload' === insertion.captionMode ? uploadedTitle : '';
+  const alt = defaultImageAlt(fileName, defaultAlt);
+  const title = 'filename' === insertion.titleDisplay ? fileName : '';
   const escapedTitle = escapeTitle(title);
   const titleSuffix = escapedTitle ? ` "${escapedTitle}"` : '';
   return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')}${titleSuffix})`;

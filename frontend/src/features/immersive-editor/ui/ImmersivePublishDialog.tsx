@@ -1,5 +1,14 @@
 import { Fragment, createElement, useEffect, useRef, useState } from '@wordpress/element';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
+import type {
+  NativeFeaturedImage,
+  NativePublishCategory,
+  NativePublishDraft,
+  NativePublishSnapshot,
+  NativePublishVisibility
+} from '../../../contracts/ports/native-publish-port';
+import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 import {
   CalendarCheck,
   Check,
@@ -13,16 +22,10 @@ import {
   Trash2,
   X
 } from '../../../generated/lucide-icons';
-import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
-import type {
-  NativeFeaturedImage,
-  NativePublishCategory,
-  NativePublishDraft,
-  NativePublishSnapshot,
-  NativePublishVisibility
-} from '../../../contracts/ports/native-publish-port';
+import { derivePublishExcerpt } from '../immersive-editor';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
-import type { GeneralSettings } from '../../../contracts/settings-center-settings';
+
+const PUBLISH_EXCERPT_LIMIT = 160;
 
 function format(template: string, value: string | number): string {
   return template.replace('%s', String(value)).replace('%d', String(value));
@@ -32,13 +35,21 @@ function normalizeTag(value: string): string {
   return value.replace(/\s+/gu, ' ').trim();
 }
 
+function excerptCodePoints(value: string): ReadonlyArray<string> {
+  return Array.from(value);
+}
+
 function cloneDraft(
   snapshot: NativePublishSnapshot,
-  defaults: GeneralSettings
+  defaults: GeneralSettings,
+  markdown: string
 ): NativePublishDraft {
+  const generatedExcerpt = snapshot.availableFields.excerpt
+    ? derivePublishExcerpt(markdown, defaults.summaryMode)
+    : null;
   return {
     categoryIds: [...snapshot.categoryIds],
-    excerpt: snapshot.excerpt,
+    excerpt: generatedExcerpt ?? snapshot.excerpt,
     featuredImage: snapshot.featuredImage ? { ...snapshot.featuredImage } : null,
     openPreview: defaults.openPreviewAfterPublish,
     password: snapshot.password,
@@ -331,6 +342,7 @@ function PublishButtonSparkles() {
 export function ImmersivePublishDialog({
   defaults,
   environment,
+  markdown,
   onClose,
   onConfirm,
   onSelectFeaturedImage,
@@ -339,13 +351,16 @@ export function ImmersivePublishDialog({
 }: Readonly<{
   defaults: GeneralSettings;
   environment: ImmersiveEnvironmentPort;
+  markdown: string;
   onClose: () => void;
   onConfirm: (draft: NativePublishDraft, original: NativePublishSnapshot) => boolean;
   onSelectFeaturedImage: () => Promise<NativeFeaturedImage | null>;
   snapshot: NativePublishSnapshot;
   strings: ImmersiveStrings;
 }>) {
-  const [draft, setDraft] = useState(() => cloneDraft(snapshot, defaults));
+  const [draft, setDraft] = useState(() =>
+    cloneDraft(snapshot, defaults, markdown)
+  );
   const [tagInput, setTagInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitFailed, setSubmitFailed] = useState(false);
@@ -489,8 +504,8 @@ export function ImmersivePublishDialog({
             </section> : null}
 
             {snapshot.availableFields.excerpt ? <section className="easymde-publish-field is-excerpt">
-              <div className="easymde-publish-field-heading"><h3><FileText size={15} strokeWidth={2.2} />{strings.excerpt}</h3><span>{draft.excerpt.length} / 160</span></div>
-              <textarea value={draft.excerpt} disabled={submitting} maxLength={160} placeholder={strings.excerptPlaceholder} onChange={(event) => update({ excerpt: event.currentTarget.value })} />
+              <div className="easymde-publish-field-heading"><h3><FileText size={15} strokeWidth={2.2} />{strings.excerpt}</h3><span>{excerptCodePoints(draft.excerpt).length} / {PUBLISH_EXCERPT_LIMIT}</span></div>
+              <textarea value={draft.excerpt} disabled={submitting} placeholder={strings.excerptPlaceholder} onChange={(event) => update({ excerpt: excerptCodePoints(event.currentTarget.value).slice(0, PUBLISH_EXCERPT_LIMIT).join('') })} />
             </section> : null}
 
             {snapshot.availableFields.categories ? <section className="easymde-publish-field is-categories">

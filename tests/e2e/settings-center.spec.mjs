@@ -18,12 +18,6 @@ function expectNear(actual, expected, tolerance = 0.5) {
 	expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
 }
 
-function expectBoundingBoxesNear(actual, expected, tolerance = 0.5) {
-	for (const property of ["x", "y", "width", "height"]) {
-		expectNear(actual[property], expected[property], tolerance);
-	}
-}
-
 async function login(page) {
 	await page.goto("/wp-login.php");
 	if ((await page.locator("#loginform").count()) === 0) {
@@ -297,11 +291,71 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	await expect(trigger).toContainText(/实时预览|Live Preview/u);
 });
 
-test("covers the WordPress Admin shell before the Settings Center bundle mounts", async ({
+test("does not paint a blank EasyMDE shell before the Settings Center bundle mounts", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
+	await page.addInitScript(() => {
+		window.__easymdeFirstVisibleStates = [];
+		const isVisible = (element) =>
+			element instanceof HTMLElement &&
+			element.getClientRects().length > 0 &&
+			getComputedStyle(element).display !== "none" &&
+			getComputedStyle(element).visibility !== "hidden";
+		const sample = () => {
+			const application = document.querySelector(".easymde-settings-center");
+			const fallback = document.querySelector(
+				"[data-settings-center-server-fallback]",
+			);
+			const startup = document.querySelector("[data-settings-center-startup]");
+			if (
+				!isVisible(application) &&
+				!isVisible(fallback) &&
+				!isVisible(startup)
+			) {
+				return;
+			}
+			window.__easymdeFirstVisibleStates.push({
+				hasCompleteApplication:
+					isVisible(application) &&
+					Boolean(
+						document.querySelector(".easymde-settings-center__sidebar nav"),
+					) &&
+					Boolean(
+						document.querySelector(
+							".easymde-settings-center__sticky-header h1",
+						),
+					) &&
+					Boolean(document.querySelector('input[type="search"]')),
+				hasVisibleFallback: isVisible(fallback),
+				hasVisibleStartup: isVisible(startup),
+				hasBrandOnlyShell: Boolean(
+					document.querySelector(
+						"[data-settings-center-startup] .easymde-settings-center__brand",
+					),
+				),
+			});
+		};
+		let sampleScheduled = false;
+		const schedulePaintSample = () => {
+			if (sampleScheduled) return;
+			sampleScheduled = true;
+			requestAnimationFrame(() => {
+				sampleScheduled = false;
+				sample();
+			});
+		};
+		new MutationObserver(schedulePaintSample).observe(document, {
+			childList: true,
+			subtree: true,
+		});
+	});
+	const settingsBundle = (url) =>
+		url.pathname.includes(
+			"/assets/build/settings-center/assets/settings-center-",
+		) && url.pathname.endsWith(".js");
+
 	let releaseBundle = () => undefined;
 	const bundleGate = new Promise((resolve) => {
 		releaseBundle = resolve;
@@ -310,11 +364,6 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 	const bundleIntercepted = new Promise((resolve) => {
 		reportBundleIntercepted = resolve;
 	});
-	const settingsBundle = (url) =>
-		url.pathname.includes(
-			"/assets/build/settings-center/assets/settings-center-",
-		) && url.pathname.endsWith(".js");
-
 	await page.route(settingsBundle, async (route) => {
 		reportBundleIntercepted();
 		const response = await route.fetch();
@@ -323,59 +372,37 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 	});
 
 	let navigation;
-	let startupFrame;
 	try {
 		navigation = page.goto(
 			"/wp-admin/admin.php?page=easymde&route=/general_setting",
 		);
 		await bundleIntercepted;
-
-		const startupHost = page.locator("#easymde-settings-center-root");
-		await expect(startupHost).toBeAttached();
-		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		await expect(
-			startupHost.locator("[data-settings-center-startup]"),
-		).toBeVisible();
-		startupFrame = await page.evaluate(async () => {
-			await new Promise((resolve) =>
-				requestAnimationFrame(() => requestAnimationFrame(resolve)),
-			);
+		const preMount = await page.evaluate(() => {
+			const body = document.body;
 			const host = document.querySelector("#easymde-settings-center-root");
-			if (!(host instanceof HTMLElement))
-				throw new Error("settings-center-startup-host-missing");
-			const brand = host.querySelector(".easymde-settings-center__brand");
-			if (!(brand instanceof HTMLElement))
-				throw new Error("settings-center-startup-brand-missing");
-			const hostBox = host.getBoundingClientRect();
-			const brandBox = brand.getBoundingClientRect();
-			const hostStyle = getComputedStyle(host);
-			const points = [
-				[8, 8],
-				[80, 200],
-				[window.innerWidth / 2, window.innerHeight / 2],
-			];
+			const startup = document.querySelector("[data-settings-center-startup]");
+			const fallback = document.querySelector(
+				"[data-settings-center-server-fallback]",
+			);
+			const bodyVeil = body ? getComputedStyle(body, "::before") : null;
 			return {
-				background: hostStyle.backgroundColor,
-				position: hostStyle.position,
-				coversViewport:
-					hostBox.left <= 0 &&
-					hostBox.top <= 0 &&
-					hostBox.right >= window.innerWidth &&
-					hostBox.bottom >= window.innerHeight,
-				pointsOwnedByHost: points.every(([x, y]) => {
-					const target = document.elementFromPoint(x, y);
-					return target === host || Boolean(target && host.contains(target));
-				}),
-				brandBox: {
-					x: brandBox.x,
-					y: brandBox.y,
-					width: brandBox.width,
-					height: brandBox.height,
-				},
-				brandAvoidsViewportCenter:
-					brandBox.right < window.innerWidth / 2 &&
-					brandBox.bottom < window.innerHeight / 2,
+				hasBody: Boolean(body),
+				hasHost: Boolean(host),
+				hasStartup: Boolean(startup),
+				hasFallback: Boolean(fallback),
+				hasOpaquePseudoVeil:
+					bodyVeil !== null &&
+					bodyVeil.content !== "none" &&
+					bodyVeil.display !== "none" &&
+					bodyVeil.backgroundColor !== "rgba(0, 0, 0, 0)",
 			};
+		});
+		expect(preMount).toEqual({
+			hasBody: false,
+			hasHost: false,
+			hasStartup: false,
+			hasFallback: false,
+			hasOpaquePseudoVeil: false,
 		});
 	} finally {
 		releaseBundle();
@@ -383,20 +410,28 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 		await page.unroute(settingsBundle);
 	}
 
-	expect(startupFrame).toMatchObject({
-		background: "rgb(253, 254, 254)",
-		position: "fixed",
-		coversViewport: true,
-		pointsOwnedByHost: true,
-		brandAvoidsViewportCenter: true,
+	const firstVisibleStates = await page.evaluate(
+		() => window.__easymdeFirstVisibleStates,
+	);
+	expect(firstVisibleStates.length).toBeGreaterThan(0);
+	expect(firstVisibleStates[0]).toEqual({
+		hasCompleteApplication: true,
+		hasVisibleFallback: false,
+		hasVisibleStartup: false,
+		hasBrandOnlyShell: false,
 	});
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
-	const mountedBrandBox = await page
-		.locator(".easymde-settings-center__brand")
-		.boundingBox();
-	expect(mountedBrandBox).not.toBeNull();
-	expectBoundingBoxesNear(startupFrame.brandBox, mountedBrandBox);
+	await expect(
+		page.locator("[data-settings-center-server-fallback]"),
+	).toHaveCount(0);
+	await expect(
+		page.locator(".easymde-settings-center__sidebar nav"),
+	).toBeVisible();
+	await expect(
+		page.locator(".easymde-settings-center__sticky-header h1"),
+	).toBeVisible();
+	await expect(page.getByRole("searchbox")).toBeVisible();
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({
@@ -412,14 +447,13 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 	try {
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		const startup = page.locator("[data-settings-center-startup]");
-		await expect(startup).toBeVisible();
-		await expect(startup).toContainText(/EasyMDE/u);
-		const status = startup.locator("[data-settings-center-startup-status]");
-		await expect(status).toHaveAttribute("role", "alert");
-		await expect(status).toHaveAttribute("aria-busy", "false");
-		await expect(status).toContainText(/could not start|无法启动/iu);
-		const exit = startup.locator("a");
+		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		const fallback = page.locator("[data-settings-center-server-fallback]");
+		await expect(fallback).toBeVisible();
+		await expect(fallback).toHaveAttribute("role", "alert");
+		await expect(fallback).toContainText(/could not start|无法启动/iu);
+		await expect(fallback).not.toContainText(/Loading|正在加载/iu);
+		const exit = fallback.locator("a");
 		await expect(exit).toBeVisible();
 		await exit.click();
 		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
@@ -451,13 +485,12 @@ test("keeps a neutral exit surface when Content Security Policy blocks scripts",
 	try {
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		const startup = page.locator("[data-settings-center-startup]");
-		await expect(startup).toBeVisible();
-		const status = startup.locator("[data-settings-center-startup-status]");
-		await expect(status).toHaveAttribute("aria-busy", "false");
-		await expect(status).not.toHaveAttribute("role", "status");
-		await expect(status).not.toContainText(/Loading|正在加载/iu);
-		const exit = startup.locator("a");
+		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		const fallback = page.locator("[data-settings-center-server-fallback]");
+		await expect(fallback).toBeVisible();
+		await expect(fallback).toHaveAttribute("role", "alert");
+		await expect(fallback).not.toContainText(/Loading|正在加载/iu);
+		const exit = fallback.locator("a");
 		await expect(exit).toBeVisible();
 		await exit.click();
 		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
@@ -545,6 +578,13 @@ test("keeps only the remaining Markdown settings inside their responsive section
 		.click();
 	const markdownSection = page.locator('[data-settings-section="markdown"]');
 	await expect(markdownSection).toBeVisible();
+	const editorLineNumbers = /^(?:显示行号|Show Line Numbers)$/u;
+	await expect(
+		markdownSection.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(0);
+	await expect(
+		page.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(1);
 
 	const removedSettings = [
 		/^(?:实时预览|Live Preview)$/u,
@@ -569,10 +609,21 @@ test("keeps only the remaining Markdown settings inside their responsive section
 	for (const name of [
 		/^(?:编辑器设置|Editor Settings)$/u,
 		/^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
-		/^(?:其他|Other)$/u,
 	]) {
 		await expect(markdownSection.getByRole("heading", { name })).toBeVisible();
 	}
+	await expect(
+		markdownSection.getByRole("heading", { name: /^(?:其他|Other)$/u }),
+	).toHaveCount(0);
+	const pasteConversion = markdownSection.getByRole("switch", {
+		name: /将粘贴内容转换为 Markdown|Convert Pasted Content to Markdown/u,
+	});
+	await expect(pasteConversion).toBeVisible();
+	await expect(
+		pasteConversion.locator("xpath=ancestor::section[1]").getByRole("heading", {
+			name: /^(?:Markdown 解析与渲染|Markdown Parsing and Rendering)$/u,
+		}),
+	).toBeVisible();
 
 	for (const width of [1152, 390]) {
 		await page.setViewportSize({ width, height: 753 });
@@ -667,23 +718,24 @@ test("keeps focus on an unavailable search result without implying availability"
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 
-	const disabledControl = page
-		.locator(
-			'[data-settings-section="images"] [data-setting-label] button[role="switch"]:disabled',
-		)
-		.first();
+	const targetLabel = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.pasteAsMarkdown,
+	);
+	const disabledControl = page.getByRole("switch", {
+		name: targetLabel,
+		exact: true,
+	});
 	const targetRow = disabledControl.locator(
 		"xpath=ancestor::*[@data-setting-label][1]",
 	);
-	const targetLabel = await targetRow.getAttribute("data-setting-label");
-	if (!targetLabel)
-		throw new Error("settings-search-unavailable-label-missing");
+	await expect(targetRow).toHaveAttribute("data-setting-label", targetLabel);
 
 	await page.getByRole("searchbox").fill(targetLabel);
-	await page
+	const result = page
 		.locator(".easymde-settings-center__search-results button")
-		.filter({ hasText: targetLabel })
-		.click();
+		.filter({ hasText: targetLabel });
+	await expect(result).toHaveCount(1);
+	await result.click();
 
 	await expect(targetRow).toBeFocused();
 	await expect(targetRow).toHaveAttribute("tabindex", "-1");
@@ -776,7 +828,24 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		images.getByRole("switch", {
 			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
 		}),
+	).toHaveCount(0);
+	await expect(
+		images.getByRole("combobox", {
+			name: /图片标题展示|Image Title Display/u,
+		}),
 	).toBeEnabled();
+	for (const name of [
+		/Alt 文本来源|Alt Text Source/u,
+		/复制图片 URL 到剪贴板|Copy Image URL to Clipboard/u,
+		/默认插入格式|Default Insert Format/u,
+	]) {
+		await expect(images.getByLabel(name)).toHaveCount(0);
+	}
+	const maximumSize = images.getByRole("spinbutton", {
+		name: /最大支持图片大小|Maximum Supported Image Size/u,
+	});
+	await expect(maximumSize).toHaveAttribute("min", "1");
+	await expect(maximumSize).toHaveAttribute("max", "10");
 	await expect(
 		images.getByRole("combobox", {
 			name: /上传失败时重试|Retry Failed Upload/u,
@@ -824,6 +893,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	await expect(footerClose).toHaveText(verificationStrings.close);
 	await expect(footerClose).toBeFocused();
 	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(successDialog).toHaveCSS("box-sizing", "border-box");
 	const dialogGeometry = await successDialog.boundingBox();
 	expect(dialogGeometry).not.toBeNull();
 	expect(dialogGeometry.x).toBeGreaterThanOrEqual(12);
@@ -928,7 +998,10 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	for (let index = 0; index < 3; index += 1) await formats.nth(index).uncheck();
 	await formats.nth(3).click();
 	await expect(formats.nth(3)).toBeChecked();
-	await expect(page.getByRole("alert")).toBeVisible();
+	const uploadFormatRequired = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
+	);
+	await expect(page.getByText(uploadFormatRequired)).toBeVisible();
 
 	await page.reload();
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -952,6 +1025,9 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
 	await expect(retryInput).toHaveAttribute("min", "0");
 	await expect(retryInput).toHaveAttribute("max", "5");
+	await expect(
+		retryInput.locator("xpath=..").locator(":scope > span"),
+	).toHaveCount(0);
 	const geometry = await Promise.all([
 		decrement.boundingBox(),
 		retryInput.boundingBox(),
@@ -996,6 +1072,157 @@ test("persists the bounded upload retry count across a settings-center refresh",
 		"data-save-status",
 		"saved",
 	);
+});
+
+test("keeps the maximum image size unit inside the horizontal stepper", async ({
+	page,
+}) => {
+	const browserFailures = [];
+	page.on("console", (message) => {
+		if (["error", "warning"].includes(message.type())) {
+			browserFailures.push(`${message.type()}: ${message.text()}`);
+		}
+	});
+	page.on("pageerror", (error) =>
+		browserFailures.push(`pageerror: ${error.message}`),
+	);
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+
+	const label = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings.maximumImageSize,
+	);
+	const input = page.getByRole("spinbutton", { name: label });
+	const valueCell = input.locator("xpath=..");
+	const stepper = valueCell.locator("xpath=..");
+	const unit = valueCell.locator(":scope > span");
+	const systemLimitWarning = page.getByRole("alert").filter({
+		hasText: /系统当前允许上传|current system upload limit/u,
+	});
+	const decrement = page.getByRole("button", { name: `${label} - 1` });
+	const increment = page.getByRole("button", { name: `${label} + 1` });
+	const originalValue = await input.inputValue();
+	const systemMaxBytes = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.uploadLimits.systemMaxBytes,
+	);
+	const bytesPerMegabyte = 1024 * 1024;
+	const maximumConfigurableSizeMb = Number(await input.getAttribute("max"));
+	expect(maximumConfigurableSizeMb).toBe(10);
+	expect(systemMaxBytes).toBeLessThan(
+		maximumConfigurableSizeMb * bytesPerMegabyte,
+	);
+	const warningValue = Math.floor(systemMaxBytes / bytesPerMegabyte) + 1;
+
+	const assertGeometry = async (viewportWidth) => {
+		await expect(stepper.locator(":scope > *")).toHaveCount(3);
+		await expect(unit).toHaveText("M");
+		const typography = await Promise.all([
+			input.evaluate((element) => getComputedStyle(element).fontSize),
+			unit.evaluate((element) => getComputedStyle(element).fontSize),
+		]);
+		expect(typography).toEqual(["15.5px", "15px"]);
+		const geometry = await Promise.all([
+			decrement.boundingBox(),
+			valueCell.boundingBox(),
+			unit.boundingBox(),
+			increment.boundingBox(),
+			stepper.boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-stepper-geometry-missing");
+		}
+		const [decrementBox, valueBox, unitBox, incrementBox, stepperBox] =
+			geometry;
+		expect(decrementBox.x).toBeLessThan(valueBox.x);
+		expect(valueBox.x).toBeLessThan(incrementBox.x);
+		expect(unitBox.x + unitBox.width).toBeLessThanOrEqual(
+			valueBox.x + valueBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			stepperBox.x + stepperBox.width,
+		);
+		expect(incrementBox.x + incrementBox.width).toBeLessThanOrEqual(
+			viewportWidth,
+		);
+		expectNear(decrementBox.y, valueBox.y);
+		expectNear(valueBox.y, incrementBox.y);
+		expect(
+			await stepper.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
+	const assertWarningGeometry = async () => {
+		await expect(systemLimitWarning.locator("svg circle")).toHaveCount(1);
+		await expect(systemLimitWarning.locator("svg line")).toHaveCount(2);
+		const geometry = await Promise.all([
+			systemLimitWarning.boundingBox(),
+			systemLimitWarning.locator("svg").boundingBox(),
+			systemLimitWarning.locator(":scope > span").boundingBox(),
+		]);
+		if (geometry.some((box) => !box)) {
+			throw new Error("maximum-image-size-warning-geometry-missing");
+		}
+		const [warningBox, iconBox, textBox] = geometry;
+		expect(iconBox.x).toBeGreaterThanOrEqual(warningBox.x);
+		expect(iconBox.x + iconBox.width).toBeLessThan(textBox.x);
+		expect(Math.abs(iconBox.y - textBox.y)).toBeLessThanOrEqual(1.5);
+		expect(textBox.x + textBox.width).toBeLessThanOrEqual(
+			warningBox.x + warningBox.width + 0.5,
+		);
+		expect(
+			await systemLimitWarning.evaluate(
+				(element) =>
+					element.scrollWidth <= element.clientWidth &&
+					element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+	};
+
+	await input.fill(String(warningValue));
+	try {
+		await expect(systemLimitWarning).toBeVisible();
+		await assertGeometry(1152);
+		await assertWarningGeometry();
+		const warningStyles = await Promise.all([
+			systemLimitWarning.evaluate((element) => ({
+				color: getComputedStyle(element).color,
+				display: getComputedStyle(element).display,
+			})),
+			systemLimitWarning
+				.locator("svg")
+				.evaluate((element) => getComputedStyle(element).color),
+		]);
+		expect(warningStyles).toEqual([
+			{ color: "rgb(180, 35, 24)", display: "flex" },
+			"rgb(180, 35, 24)",
+		]);
+		if (warningValue < maximumConfigurableSizeMb) {
+			await increment.click();
+			await expect(input).toHaveValue(String(warningValue + 1));
+		} else {
+			await decrement.click();
+			await expect(input).toHaveValue(String(warningValue - 1));
+		}
+		await input.fill(String(warningValue));
+
+		await page.setViewportSize({ width: 390, height: 844 });
+		await assertGeometry(390);
+		await assertWarningGeometry();
+		const cdp = await page.context().newCDPSession(page);
+		const metrics = await cdp.send("Page.getLayoutMetrics");
+		expect(metrics.cssLayoutViewport.clientWidth).toBe(390);
+		await cdp.detach();
+		expect(browserFailures).toEqual([]);
+	} finally {
+		await input.fill(originalValue);
+	}
+	await expect(input).toHaveValue(originalValue);
 });
 
 test("matches the reference Settings Center header geometry", async ({
@@ -1453,7 +1680,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 	await expect(aboutNav).toHaveAttribute("aria-current", "page");
 	await expect(aboutNav).toBeInViewport();
 
-	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(1);
+	await expect(generalSection.locator("fieldset[disabled]")).toHaveCount(0);
 	await expect(
 		generalSection.getByRole("combobox", {
 			name: /界面语言|interface language/i,
@@ -1464,7 +1691,7 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 		generalSection.getByRole("combobox", {
 			name: /默认摘要同步方式|default summary sync method/i,
 		}),
-	).toBeDisabled();
+	).toBeEnabled();
 	await expect(
 		generalSection.getByRole("switch", {
 			name: /智能列表识别|smart list recognition/i,
@@ -1476,6 +1703,90 @@ test("adapts the Settings Center to a narrow viewport and unavailable settings r
 		}),
 	).toHaveCount(0);
 	await expect(saveButton).toBeDisabled();
+});
+
+test("persists the default summary sync method selected with the keyboard", async ({
+	page,
+}) => {
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+
+	const summaryMode = page.getByRole("combobox", {
+		name: /默认摘要同步方式|default summary sync method/i,
+	});
+	const saveButton = page.locator(
+		".easymde-settings-center__save-bar > button",
+	);
+	const saveStatus = page.locator("[data-save-status]");
+	let initialOptionName = "";
+
+	try {
+		await expect(summaryMode).toBeEnabled();
+		await summaryMode.focus();
+		await summaryMode.press("Enter");
+		const listbox = page.getByRole("listbox", {
+			name: /默认摘要同步方式|default summary sync method/i,
+		});
+		await expect(listbox).toBeVisible();
+		initialOptionName =
+			(await listbox.getByRole("option", { selected: true }).textContent())?.trim() ??
+			"";
+		if (!initialOptionName)
+			throw new Error("settings-center-summary-initial-option-missing");
+		const initialOptionIndex = await listbox
+			.getByRole("option")
+			.evaluateAll((options) =>
+				options.findIndex(
+					(option) => option.getAttribute("aria-selected") === "true",
+				),
+			);
+		if (initialOptionIndex === 1) {
+			await summaryMode.press("Home");
+			await summaryMode.press("Enter");
+			await expect(saveButton).toBeEnabled();
+			await saveButton.click();
+			await expect(saveStatus).toHaveAttribute(
+				"data-save-status",
+				/saved|idle/u,
+			);
+			await page.reload();
+			await expect(page.locator(".easymde-settings-center")).toBeVisible();
+			await summaryMode.focus();
+			await summaryMode.press("Enter");
+		}
+		await summaryMode.press("Home");
+		await summaryMode.press("ArrowDown");
+		await summaryMode.press("Enter");
+		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+	} finally {
+		if (initialOptionName) {
+			await summaryMode.click();
+			const initialOption = page
+				.getByRole("listbox", {
+					name: /默认摘要同步方式|default summary sync method/i,
+				})
+				.getByRole("option", { name: initialOptionName, exact: true });
+			if ((await initialOption.getAttribute("aria-selected")) !== "true") {
+				await initialOption.click();
+				await expect(saveButton).toBeEnabled();
+				await saveButton.click();
+				await expect(saveStatus).toHaveAttribute(
+					"data-save-status",
+					/saved|idle/u,
+				);
+			} else {
+				await summaryMode.press("Escape");
+			}
+		}
+	}
 });
 
 test("keeps reference Help geometry stable while compact content stays inside its owners", async ({

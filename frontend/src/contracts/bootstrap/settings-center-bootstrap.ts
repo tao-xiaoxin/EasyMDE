@@ -55,6 +55,10 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"defaultVisibility",
 	"openPreviewAfterPublish",
 	"openPreviewAfterPublishDescription",
+	"applyEditorThemeToFrontend",
+	"applyEditorThemeToFrontendDescription",
+	"showPublishedCodeCopyButton",
+	"showPublishedCodeCopyButtonDescription",
 	"summaryMode",
 	"summaryModeDescription",
 	"featuredImagePlaceholder",
@@ -196,18 +200,12 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"showBackupSecretKey",
 	"hideBackupSecretKey",
 	"uploadBehavior",
-	"insertMarkdownAfterUpload",
 	"compressImages",
 	"compressImagesDescription",
-	"preserveOriginalFileName",
-	"preserveOriginalFileNameDescription",
-	"copyImageUrl",
-	"copyImageUrlDescription",
 	"maximumImageSize",
-	"originalImageSize",
-	"imageSize1920",
-	"imageSize2560",
-	"imageSize3840",
+	"maximumImageSizeDescription",
+	"maximumImageSizeSystemLimitExceeded",
+	"imageTitleDisplay",
 	"allowedUploadFormats",
 	"allowedUploadFormatsDescription",
 	"uploadFormatRequired",
@@ -220,25 +218,11 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"allowUploadWebp",
 	"allowUploadGif",
 	"uploadFormatSeparator",
-	"defaultInsertion",
-	"defaultInsertFormat",
-	"markdownImage",
-	"htmlImage",
-	"urlOnly",
-	"altTextSource",
 	"useFileName",
 	"leaveEmpty",
-	"fillOnUpload",
-	"imageTitleField",
-	"doNotInsert",
-	"currentAllowedUploads",
-	"imageFeaturedPlaceholder",
-	"imageFeaturedPlaceholderDescription",
-	"compressLargeImagesRecommendation",
 	"markdownEditorSettings",
 	"wordWrap",
 	"wordWrapDescription",
-	"markdownLineNumbersDescription",
 	"editorTheme",
 	"automaticFollowSystem",
 	"light",
@@ -257,15 +241,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"hide",
 	"htmlRendering",
 	"htmlRenderingDescription",
-	"otherSettings",
 	"pasteAsMarkdown",
 	"pasteAsMarkdownDescription",
-	"defaultLineEnding",
-	"unorderedListMarker",
-	"orderedListStart",
-	"blockquoteIndentStyle",
-	"standardBlockquote",
-	"spacedBlockquote",
 	"transferExportConfiguration",
 	"transferExportConfigurationDescription",
 	"transferFileName",
@@ -387,6 +364,7 @@ export type SettingsCenterStringKey =
 export type SettingsCenterBootstrap = Readonly<{
 	schemaVersion: 2;
 	closeUrl: string;
+	uploadLimits: Readonly<{ systemMaxBytes: number }>;
 	api: SettingsCenterApi;
 	assets: Readonly<{
 		brandMarkUrl: string;
@@ -679,6 +657,8 @@ export function parseSettingsCenterSettings(
 		"autoSave",
 		"syncScroll",
 		"openPreviewAfterPublish",
+		"applyEditorThemeToFrontend",
+		"showPublishedCodeCopyButton",
 		"featuredImagePlaceholder",
 	];
 	const general = parseSettingsStringFields(root, "general", generalStrings);
@@ -711,21 +691,21 @@ export function parseSettingsCenterSettings(
 		backupDomain: 255,
 		backupAccessKey: 255,
 		backupSecretKey: 255,
-		maxImageSize: 16,
-		insertFormat: 16,
-		altSource: 16,
-		captionMode: 16,
+		titleDisplay: 16,
 	};
 	const imageBooleans = [
 		"backupEnabled",
-		"insertMarkdown",
 		"compressImages",
-		"preserveFileName",
-		"copyUrl",
-		"featuredPlaceholder",
 	];
 	const images = parseSettingsStringFields(root, "images", imageStrings);
 	parseSettingsBooleanFields(images, "images", imageBooleans);
+	if (
+		!Number.isInteger(images.maxImageSizeMb) ||
+		(images.maxImageSizeMb as number) < 1 ||
+		(images.maxImageSizeMb as number) > 10
+	) {
+		throw new Error("settings-center-images-maxImageSizeMb-invalid");
+	}
 	if (
 		!Number.isInteger(images.uploadRetryCount) ||
 		(images.uploadRetryCount as number) < 0 ||
@@ -738,6 +718,7 @@ export function parseSettingsCenterSettings(
 		[
 			...Object.keys(imageStrings),
 			...imageBooleans,
+			"maxImageSizeMb",
 			"uploadRetryCount",
 			"uploadFormats",
 		],
@@ -747,10 +728,7 @@ export function parseSettingsCenterSettings(
 	assertEnumFields(images, "images", {
 		service: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
 		backupService: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
-		maxImageSize: ["original", "1920", "2560", "3840"],
-		insertFormat: ["markdown", "url"],
-		altSource: ["filename", "empty"],
-		captionMode: ["none", "filename"],
+		titleDisplay: ["none", "filename"],
 	});
 	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");
 	assertSettingsDomain(
@@ -785,14 +763,9 @@ export function parseSettingsCenterSettings(
 		editorTheme: 16,
 		tableAlignment: 16,
 		codeLineNumbers: 16,
-		lineEnding: 16,
-		unorderedMarker: 120,
-		orderedStart: 120,
-		blockquoteStyle: 16,
 	};
 	const markdownBooleans = [
 		"wordWrap",
-		"lineNumbers",
 		"githubFlavor",
 		"smartPunctuation",
 		"htmlRendering",
@@ -809,8 +782,6 @@ export function parseSettingsCenterSettings(
 		editorTheme: ["system", "light", "dark"],
 		tableAlignment: ["auto", "left", "center"],
 		codeLineNumbers: ["show", "hide"],
-		lineEnding: ["system", "lf", "crlf"],
-		blockquoteStyle: ["standard", "spaced"],
 	});
 
 	const shortcuts = parseObject(
@@ -920,7 +891,7 @@ export function parseSettingsCenterBootstrap(
 		"searchPageDescription",
 		"searchResultCount",
 		"insertFileNameVariable",
-		"currentAllowedUploads",
+		"maximumImageSizeSystemLimitExceeded",
 		"transferFileSelectedNotice",
 		"transferChecksSummary",
 		"transferChecksPassed",
@@ -933,6 +904,26 @@ export function parseSettingsCenterBootstrap(
 	return {
 		schemaVersion: 2,
 		closeUrl: parseString(root.closeUrl, "settings-center-close-url-invalid"),
+		uploadLimits: {
+			systemMaxBytes: (() => {
+				const uploadLimits = parseObject(
+					root.uploadLimits,
+					"settings-center-system-max-upload-bytes-invalid",
+				);
+				assertExactKeys(
+					uploadLimits,
+					["systemMaxBytes"],
+					"settings-center-upload-limits-invalid",
+				);
+				if (
+					!Number.isInteger(uploadLimits.systemMaxBytes) ||
+					(uploadLimits.systemMaxBytes as number) < 1
+				) {
+					throw new Error("settings-center-system-max-upload-bytes-invalid");
+				}
+				return uploadLimits.systemMaxBytes as number;
+			})(),
+		},
 		api: {
 			actionNonce: parseString(
 				api.actionNonce,

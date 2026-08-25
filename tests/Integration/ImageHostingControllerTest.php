@@ -20,6 +20,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		remove_action( 'rest_api_init', array( $this->plugin, 'register_rest_routes' ) );
 
 		$this->settings_provider = new class() {
+			public $max_bytes = 5242880;
+
 			public function get_image_hosting_settings() {
 				return array(
 					'revision'    => 7,
@@ -44,6 +46,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 					),
 						'behaviors'   => array(
 							'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
+							'maxBytes'      => $this->max_bytes,
+							'titleDisplay'  => 'filename',
 						),
 						'fileNameRule' => '{date}/{uuid}.{ext}',
 				);
@@ -447,6 +451,24 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_upload_rejects_files_above_the_effective_configured_limit_before_runtime_upload() {
+		$this->settings_provider->max_bytes = 1024;
+		$file = $this->png_file();
+		file_put_contents( $file['tmp_name'], str_repeat( "\0", 1025 ), FILE_APPEND );
+		clearstatcache( true, $file['tmp_name'] );
+		$file['size'] = filesize( $file['tmp_name'] );
+
+		$response = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 413, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_file_too_large', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->upload_calls );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
 	public function test_runtime_failures_are_redacted_and_never_retried() {
 		$this->runtime->upload_result = new WP_Error(
 			'provider_raw_failure',
@@ -644,16 +666,10 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 				'backupDomain'        => 'https://backup.example.test',
 				'backupAccessKey'     => '',
 				'backupSecretKey'     => '',
-				'insertMarkdown'      => true,
-				'compressImages'      => true,
-				'preserveFileName'    => false,
-				'copyUrl'             => false,
-				'maxImageSize'        => '2560',
-				'uploadFormats'       => array( 'jpg' => true, 'png' => true, 'webp' => true, 'gif' => true ),
-				'insertFormat'        => 'markdown',
-				'altSource'           => 'filename',
-				'captionMode'         => 'none',
-				'featuredPlaceholder' => true,
+					'compressImages'      => true,
+					'maxImageSizeMb'      => 5,
+					'uploadFormats'       => array( 'jpg' => true, 'png' => true, 'webp' => true, 'gif' => true ),
+					'titleDisplay'        => 'none',
 			),
 		);
 	}

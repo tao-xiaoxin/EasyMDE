@@ -49,6 +49,7 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | @marijn/find-cluster-break | 1.0.3 | https://registry.npmjs.org/@marijn/find-cluster-break/-/find-cluster-break-1.0.3.tgz | MIT | Unicode grapheme boundary handling used by CodeMirror state. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | crelt | 1.0.7 | https://registry.npmjs.org/crelt/-/crelt-1.0.7.tgz | MIT | DOM element construction used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | diff | 5.2.2 | https://registry.npmjs.org/diff/-/diff-5.2.2.tgz | BSD-3-Clause | Character-level change mapping used to preserve canonical Markdown during visual editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| entities | 8.0.0 | https://registry.npmjs.org/entities/-/entities-8.0.0.tgz | BSD-2-Clause | Complete HTML character-reference decoding for Markdown-derived publish excerpts. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | lucide-react | 0.487.0 | https://registry.npmjs.org/lucide-react/-/lucide-react-0.487.0.tgz | ISC | Locked build-time icon nodes used by the ordinary and immersive editor interfaces. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | mermaid | 10.9.6 | https://registry.npmjs.org/mermaid/-/mermaid-10.9.6.tgz | MIT | Mermaid diagram rendering runtime compiled into the on-demand frontend bundle. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | style-mod | 4.1.3 | https://registry.npmjs.org/style-mod/-/style-mod-4.1.3.tgz | MIT | Scoped runtime style modules used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
@@ -374,6 +375,22 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+### entities
+
+```text
+Copyright (c) Felix Böhm
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ### lucide-react

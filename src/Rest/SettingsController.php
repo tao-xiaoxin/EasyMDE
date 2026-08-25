@@ -126,9 +126,9 @@ final class SettingsController {
 
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
-			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'maxImageSize', 'uploadFormats', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ),
-			'markdown'  => array( 'wordWrap', 'lineNumbers', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ),
+			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode', 'featuredImagePlaceholder' ),
+			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
+			'markdown'  => array( 'wordWrap', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -165,25 +165,18 @@ final class SettingsController {
 				'backupDomain'    => 255,
 				'backupAccessKey' => 255,
 				'backupSecretKey' => 255,
-				'maxImageSize'    => 16,
-				'insertFormat'    => 16,
-				'altSource'       => 16,
-				'captionMode'     => 16,
+				'titleDisplay'    => 16,
 			),
 			'markdown' => array(
 				'editorTheme'     => 16,
 				'tableAlignment'  => 16,
 				'codeLineNumbers' => 16,
-				'lineEnding'      => 16,
-				'unorderedMarker' => 120,
-				'orderedStart'    => 120,
-				'blockquoteStyle' => 16,
 			),
 		);
 		$boolean_fields = array(
-			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'featuredImagePlaceholder' ),
-			'images'    => array( 'backupEnabled', 'insertMarkdown', 'compressImages', 'preserveFileName', 'copyUrl', 'featuredPlaceholder' ),
-			'markdown'  => array( 'wordWrap', 'lineNumbers', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
+			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'featuredImagePlaceholder' ),
+			'images'    => array( 'backupEnabled', 'compressImages' ),
+			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -209,6 +202,9 @@ final class SettingsController {
 			) {
 				return $this->invalid_payload_error();
 			}
+		}
+		if ( ! is_int( $value['images']['maxImageSizeMb'] ) || $value['images']['maxImageSizeMb'] < 1 || $value['images']['maxImageSizeMb'] > 10 ) {
+			return $this->invalid_payload_error();
 		}
 
 		if ( ! is_array( $value['images']['uploadFormats'] ) || ! $this->has_exact_keys( $value['images']['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) ) ) {
@@ -250,17 +246,12 @@ final class SettingsController {
 			'images'   => array(
 				'service'       => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
 				'backupService' => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
-				'maxImageSize'  => array( 'original', '1920', '2560', '3840' ),
-				'insertFormat'  => array( 'markdown', 'url' ),
-				'altSource'     => array( 'filename', 'empty' ),
-				'captionMode'   => array( 'none', 'filename' ),
+				'titleDisplay'  => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
 				'editorTheme'     => array( 'system', 'light', 'dark' ),
 				'tableAlignment'  => array( 'auto', 'left', 'center' ),
 				'codeLineNumbers' => array( 'show', 'hide' ),
-				'lineEnding'      => array( 'system', 'lf', 'crlf' ),
-				'blockquoteStyle' => array( 'standard', 'spaced' ),
 			),
 		);
 		foreach ( $enums as $section => $fields ) {

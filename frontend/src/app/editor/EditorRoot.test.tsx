@@ -361,8 +361,7 @@ function fixture(): EditorRootProps &
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       enabled: true,
-      insertAfterUpload: true,
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       postId: 7,
       strings: {
@@ -420,7 +419,7 @@ function fixture(): EditorRootProps &
     mediaPicker: {
       defaultAlt: 'image',
       insertMedia: 'Insert Media',
-      insertion: { altSource: 'filename', captionMode: 'none', format: 'markdown' },
+      insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'
     },
     mediaPickerFailureMessage: 'The media library could not be opened.',
@@ -513,6 +512,8 @@ function fixture(): EditorRootProps &
     settings: {
       general: {
         autoFocusEditor: true,
+        applyEditorThemeToFrontend: true,
+        showPublishedCodeCopyButton: true,
         autoSave: true,
         autoSaveInterval: '0.5',
         editingMode: 'live-preview',
@@ -2821,6 +2822,213 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('synchronizes pending visual input before deriving the publish excerpt', async () => {
+    const props = fixture();
+    const original = 'Original excerpt';
+    const edited = 'Latest visual excerpt';
+    props.submissionField.value = original;
+    props.submissionField.defaultValue = original;
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: `<p>${original}</p>` as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    fireEvent.compositionStart(visualEditor);
+    visualEditor.innerHTML = `<p>${edited}</p>`;
+    fireEvent.input(visualEditor, { isComposing: true });
+    expect(props.submissionField.value).toBe(original);
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    expect(
+      (within(dialog).getByPlaceholderText('撰写摘要...') as HTMLTextAreaElement)
+        .value
+    ).toBe(edited);
+    expect(props.submissionField.value).toBe(edited);
+  });
+
+  it('does not open publish when pending visual input cannot synchronize', async () => {
+    const source = [
+      'Editable paragraph',
+      '',
+      '$$',
+      'x^2',
+      '$$'
+    ].join('\n');
+    const props = fixture();
+    props.submissionField.value = source;
+    props.submissionField.defaultValue = source;
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: { math: true },
+      html: [
+        '<p>Editable paragraph</p>',
+        '<div class="easymde-math easymde-math-block">$$x^2$$</div>'
+      ].join('') as SafePreviewHtml
+    });
+    vi.mocked(props.enhancementPort.enhance).mockImplementation(
+      async (surface) => {
+        const math = surface.querySelector<HTMLElement>('.easymde-math');
+        if (math) {
+          math.innerHTML = '<span class="katex">rendered math</span>';
+          math.dataset.easymdeRendered = '1';
+        }
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.querySelector('.easymde-math')?.remove();
+    const publishSnapshotReads = vi.mocked(props.nativePublishPort.read).mock
+      .calls.length;
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
+    expect(props.nativePublishPort.read).toHaveBeenCalledTimes(
+      publishSnapshotReads
+    );
+    expect(props.publishPost).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'visual-editor-read-only-region-mutated'
+    );
+  });
+
+  it.each([
+    ['auto-55', 55],
+    ['auto-100', 100]
+  ] as const)(
+    'derives the %s publish excerpt from the current Markdown without writing before confirmation',
+    async (summaryMode, characterLimit) => {
+      const props = fixture();
+      const markdown = '摘😀'.repeat(60);
+      const expected = Array.from(markdown).slice(0, characterLimit).join('');
+      props.submissionField.value = markdown;
+      props.submissionField.defaultValue = markdown;
+      vi.mocked(props.nativePublishPort.read).mockReturnValue({
+        ...props.nativePublishPort.read(),
+        excerpt: 'WordPress 原生摘要'
+      });
+      const view = render(
+        <EditorRoot
+          {...props}
+          settings={{
+            general: { ...props.settings.general, summaryMode },
+            markdown: props.settings.markdown
+          }}
+        />
+      );
+
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+      const dialog = view.getByRole('dialog', { name: '更新文章' });
+      expect(
+        (within(dialog).getByPlaceholderText('撰写摘要...') as HTMLTextAreaElement)
+          .value
+      ).toBe(expected);
+      expect(within(dialog).getByText(`${characterLimit} / 160`)).not.toBeNull();
+      expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+      expect(props.publishPost).not.toHaveBeenCalled();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+      expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+        expect.objectContaining({ excerpt: expected })
+      );
+    }
+  );
+
+  it('keeps the native WordPress excerpt in manual mode and discards a cancelled dialog draft', async () => {
+    const props = fixture();
+    props.submissionField.value = '当前 Markdown 正文与原生摘要不同';
+    props.submissionField.defaultValue = props.submissionField.value;
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      ...props.nativePublishPort.read(),
+      excerpt: 'WordPress 原生摘要'
+    });
+    const view = render(
+      <EditorRoot
+        {...props}
+        settings={{
+          general: { ...props.settings.general, summaryMode: 'manual' },
+          markdown: props.settings.markdown
+        }}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    let dialog = view.getByRole('dialog', { name: '更新文章' });
+    const firstDraft = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+
+    expect(firstDraft.value).toBe('WordPress 原生摘要');
+    fireEvent.change(firstDraft, { target: { value: '取消的手工摘要' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+    expect(props.publishPost).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    dialog = view.getByRole('dialog', { name: '更新文章' });
+    const confirmedDraft = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+    expect(confirmedDraft.value).toBe('WordPress 原生摘要');
+    fireEvent.change(confirmedDraft, { target: { value: '确认的手工摘要' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ excerpt: '确认的手工摘要' })
+    );
+  });
+
+  it('limits manual publish excerpts to 160 Unicode code points before submission', async () => {
+    const props = fixture();
+    const entered = '摘😀'.repeat(100);
+    const expected = Array.from(entered).slice(0, 160).join('');
+    const view = render(
+      <EditorRoot
+        {...props}
+        settings={{
+          general: { ...props.settings.general, summaryMode: 'manual' },
+          markdown: props.settings.markdown
+        }}
+      />
+    );
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    const excerpt = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(excerpt, { target: { value: entered } });
+    expect(excerpt.value).toBe(expected);
+    expect(Array.from(excerpt.value)).toHaveLength(160);
+    expect(within(dialog).getByText('160 / 160')).not.toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ excerpt: expected })
+    );
+  });
+
   it('restores the legacy protected-post password field contract', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -2883,15 +3091,23 @@ describe('EditorRoot', () => {
     expect(dialog.getAttribute('aria-busy')).toBe('true');
   });
 
-  it('keeps the reference featured-image guidance independent from the direct-upload limit', async () => {
+  it('renders the effective image-upload guidance supplied by WordPress', async () => {
     const props = fixture();
-    const view = render(<EditorRoot {...props} />);
+    const view = render(
+      <EditorRoot
+        {...props}
+        immersiveStrings={{
+          ...props.immersiveStrings,
+          imageRequirements: '支持 JPG、PNG、WebP 格式，最大 3 MB'
+        }}
+      />
+    );
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '更新文章' }));
 
     expect(
       within(view.getByRole('dialog', { name: '更新文章' })).getByText(
-        '支持 JPG、PNG、WebP 格式，最大 5MB'
+        '支持 JPG、PNG、WebP 格式，最大 3 MB'
       )
     ).not.toBeNull();
   });
@@ -4897,7 +5113,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        '![Selected image](https://example.test/selected.png)'
+        '![image](https://example.test/selected.png)'
       );
     });
     expect(props.executeExternalCommand).not.toHaveBeenCalled();
@@ -4947,7 +5163,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       expect(props.submissionField.value).toBe(
-        'Choose **![Selected image](https://example.test/selected.png)** text'
+        'Choose **![image](https://example.test/selected.png)** text'
       );
     });
   });

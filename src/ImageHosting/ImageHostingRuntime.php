@@ -125,9 +125,7 @@ final class ImageHostingRuntime {
 		}
 
 		try {
-			$rule = ! empty( $settings['behaviors']['preserveOriginalName'] )
-				? '{date}/{name}.{ext}'
-				: $settings['fileNameRule'];
+			$rule = $settings['fileNameRule'];
 			$key  = $this->build_object_key(
 				$rule,
 				$prepared['bytes'],
@@ -170,8 +168,8 @@ final class ImageHostingRuntime {
 			return array(
 				'url'    => ImageHostProviderSupport::public_url( $settings['primary']['domain'], $key ),
 				'path'   => $key,
-				'alt'    => $this->derived_text( $settings['behaviors']['altSource'], $file['name'] ),
-				'title'  => $this->derived_text( $settings['behaviors']['captionMode'], $file['name'] ),
+				'alt'    => $this->filename_alt_text( $file['name'] ),
+				'title'  => $this->image_title( $settings['behaviors']['titleDisplay'], $file['name'] ),
 				'backup' => $backup,
 			);
 		} catch ( ImageHostException $exception ) {
@@ -295,12 +293,12 @@ final class ImageHostingRuntime {
 
 		$mime_type     = $file['type'];
 		$auto_compress = ! empty( $behaviors['autoCompress'] );
-		$maximum_size  = isset( $behaviors['maxImageSize'] ) ? (string) $behaviors['maxImageSize'] : 'original';
-		if ( ! in_array( $maximum_size, array( 'original', '1920', '2560', '3840' ), true ) ) {
+		$maximum_bytes = isset( $behaviors['maxBytes'] ) && is_int( $behaviors['maxBytes'] ) ? $behaviors['maxBytes'] : 0;
+		if ( $maximum_bytes <= 0 || strlen( $bytes ) > $maximum_bytes ) {
 			return $this->configuration_error();
 		}
 
-		if ( 'image/gif' === $mime_type || ( ! $auto_compress && 'original' === $maximum_size ) ) {
+		if ( 'image/gif' === $mime_type || ! $auto_compress ) {
 			return array(
 				'bytes'     => $bytes,
 				'mime_type' => $mime_type,
@@ -313,37 +311,9 @@ final class ImageHostingRuntime {
 			return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
 		}
 
-		$changed = false;
-		if ( 'original' !== $maximum_size ) {
-			$size = $editor->get_size();
-			if ( ! is_array( $size ) || ! isset( $size['width'], $size['height'] ) ) {
-				return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
-			}
-
-			$maximum = (int) $maximum_size;
-			if ( (int) $size['width'] > $maximum || (int) $size['height'] > $maximum ) {
-				$resized = $editor->resize( $maximum, $maximum, false );
-				if ( is_wp_error( $resized ) ) {
-					return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
-				}
-				$changed = true;
-			}
-		}
-
-		if ( $auto_compress ) {
-			$quality = $editor->set_quality( self::IMAGE_QUALITY );
-			if ( is_wp_error( $quality ) ) {
-				return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
-			}
-			$changed = true;
-		}
-
-		if ( ! $changed ) {
-			return array(
-				'bytes'     => $bytes,
-				'mime_type' => $mime_type,
-				'cleanup'   => array(),
-			);
+		$quality = $editor->set_quality( self::IMAGE_QUALITY );
+		if ( is_wp_error( $quality ) ) {
+			return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
 		}
 
 		if ( ! function_exists( 'wp_tempnam' ) ) {
@@ -385,7 +355,7 @@ final class ImageHostingRuntime {
 		if (
 			false === $prepared_bytes ||
 			'' === $prepared_bytes ||
-			strlen( $prepared_bytes ) > ImageHostProviderSupport::MAX_IMAGE_BYTES
+			strlen( $prepared_bytes ) > $maximum_bytes
 		) {
 			$this->remove_owned_files( $cleanup );
 			return $this->operation_error( 'easymde_image_hosting_image_processing_failed' );
@@ -431,15 +401,17 @@ final class ImageHostingRuntime {
 			: $temporary_path . '.' . $extension;
 	}
 
-	private function derived_text( $mode, $file_name ) {
-		if ( 'filename' !== $mode ) {
-			return '';
-		}
-
+	private function filename_alt_text( $file_name ) {
 		$name = pathinfo( sanitize_file_name( $file_name ), PATHINFO_FILENAME );
 		$name = str_replace( array( '-', '_' ), ' ', $name );
 
 		return trim( sanitize_text_field( $name ) );
+	}
+
+	private function image_title( $mode, $file_name ) {
+		return 'filename' === $mode
+			? sanitize_text_field( sanitize_file_name( $file_name ) )
+			: '';
 	}
 
 	private function is_valid_upload_configuration( array $settings ) {
@@ -462,13 +434,12 @@ final class ImageHostingRuntime {
 			return false;
 		}
 
-		return isset(
-			$settings['behaviors']['autoCompress'],
-			$settings['behaviors']['preserveOriginalName'],
-			$settings['behaviors']['maxImageSize'],
-			$settings['behaviors']['altSource'],
-			$settings['behaviors']['captionMode']
-		);
+		return isset( $settings['behaviors']['autoCompress'], $settings['behaviors']['maxBytes'], $settings['behaviors']['titleDisplay'] ) &&
+			is_bool( $settings['behaviors']['autoCompress'] ) &&
+			is_int( $settings['behaviors']['maxBytes'] ) &&
+			$settings['behaviors']['maxBytes'] > 0 &&
+			$settings['behaviors']['maxBytes'] <= ImageHostProviderSupport::MAX_IMAGE_BYTES &&
+			in_array( $settings['behaviors']['titleDisplay'], array( 'filename', 'none' ), true );
 	}
 
 	private function is_valid_public_domain( $value ) {

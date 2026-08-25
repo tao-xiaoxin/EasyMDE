@@ -202,14 +202,15 @@ final class SettingsPage {
 			Asset::url( $asset['path'] ),
 			$asset['dependencies'],
 			$asset['version'],
-			true
+			false
 		);
 		wp_add_inline_script(
 			$asset['handle'],
+			'document.documentElement.classList.add("easymde-settings-center-js");' . "\n" .
 			'window.EasyMDESettingsCenterBootstrap = ' . wp_json_encode(
 				$this->get_settings_center_bootstrap(),
 				JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-			) . ';' . "\n" . $this->get_settings_center_startup_loading_script(),
+			) . ';',
 			'before'
 		);
 		wp_add_inline_script(
@@ -224,8 +225,7 @@ final class SettingsPage {
 			return;
 		}
 
-		$settings_center_brand_mark_url = Asset::url( 'assets/images/settings-center/brand-icon-clean.png' );
-		$settings_center_close_url      = admin_url( 'options-general.php' );
+		$settings_center_close_url = admin_url( 'options-general.php' );
 
 		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
 	}
@@ -264,36 +264,8 @@ final class SettingsPage {
 		return;
 	}
 
-	var root = document.getElementById('easymde-settings-center-root');
-	var status = root && root.querySelector('[data-settings-center-startup-status]');
-	if (!root || !status) {
-		console.error('[EasyMDE] settings-center-startup-fallback-unavailable');
-		return;
-	}
-
-	status.setAttribute('role', 'alert');
-	status.setAttribute('aria-live', 'assertive');
-	status.setAttribute('aria-busy', 'false');
-	status.textContent = root.getAttribute('data-failure-message') || '';
+	document.documentElement.classList.remove('easymde-settings-center-js');
 	console.error('[EasyMDE] settings-center-bundle-unavailable');
-}());
-JS;
-	}
-
-	private function get_settings_center_startup_loading_script() {
-		return <<<'JS'
-(function () {
-	var root = document.getElementById('easymde-settings-center-root');
-	var status = root && root.querySelector('[data-settings-center-startup-status]');
-	if (!root || !status) {
-		console.error('[EasyMDE] settings-center-loading-surface-unavailable');
-		return;
-	}
-
-	status.setAttribute('role', 'status');
-	status.setAttribute('aria-live', 'polite');
-	status.setAttribute('aria-busy', 'true');
-	status.textContent = root.getAttribute('data-loading-message') || '';
 }());
 JS;
 	}
@@ -339,6 +311,9 @@ JS;
 			'defaultSettings' => $this->settings_center_repository->get_default_settings(),
 			'settings'        => $settings,
 			'strings'         => SettingsCenterStrings::get(),
+			'uploadLimits'    => array(
+				'systemMaxBytes' => (int) wp_max_upload_size(),
+			),
 		);
 	}
 

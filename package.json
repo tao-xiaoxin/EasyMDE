@@ -41,6 +41,7 @@
     "@highlightjs/cdn-assets": "^11.11.1",
     "@lezer/highlight": "1.2.3",
     "diff": "5.2.2",
+    "entities": "8.0.0",
     "katex": "^0.16.22",
     "mermaid": "10.9.6",
     "turndown": "7.2.4",

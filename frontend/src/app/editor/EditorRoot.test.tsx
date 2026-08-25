@@ -2820,6 +2820,126 @@ describe('EditorRoot', () => {
     );
   });
 
+  it.each([
+    ['auto-55', 55],
+    ['auto-100', 100]
+  ] as const)(
+    'derives the %s publish excerpt from the current Markdown without writing before confirmation',
+    async (summaryMode, characterLimit) => {
+      const props = fixture();
+      const markdown = '摘😀'.repeat(60);
+      const expected = Array.from(markdown).slice(0, characterLimit).join('');
+      props.submissionField.value = markdown;
+      props.submissionField.defaultValue = markdown;
+      vi.mocked(props.nativePublishPort.read).mockReturnValue({
+        ...props.nativePublishPort.read(),
+        excerpt: 'WordPress 原生摘要'
+      });
+      const view = render(
+        <EditorRoot
+          {...props}
+          settings={{
+            general: { ...props.settings.general, summaryMode },
+            markdown: props.settings.markdown
+          }}
+        />
+      );
+
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+      const dialog = view.getByRole('dialog', { name: '更新文章' });
+      expect(
+        (within(dialog).getByPlaceholderText('撰写摘要...') as HTMLTextAreaElement)
+          .value
+      ).toBe(expected);
+      expect(within(dialog).getByText(`${characterLimit} / 160`)).not.toBeNull();
+      expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+      expect(props.publishPost).not.toHaveBeenCalled();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+      expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+        expect.objectContaining({ excerpt: expected })
+      );
+    }
+  );
+
+  it('keeps the native WordPress excerpt in manual mode and discards a cancelled dialog draft', async () => {
+    const props = fixture();
+    props.submissionField.value = '当前 Markdown 正文与原生摘要不同';
+    props.submissionField.defaultValue = props.submissionField.value;
+    vi.mocked(props.nativePublishPort.read).mockReturnValue({
+      ...props.nativePublishPort.read(),
+      excerpt: 'WordPress 原生摘要'
+    });
+    const view = render(
+      <EditorRoot
+        {...props}
+        settings={{
+          general: { ...props.settings.general, summaryMode: 'manual' },
+          markdown: props.settings.markdown
+        }}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    let dialog = view.getByRole('dialog', { name: '更新文章' });
+    const firstDraft = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+
+    expect(firstDraft.value).toBe('WordPress 原生摘要');
+    fireEvent.change(firstDraft, { target: { value: '取消的手工摘要' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    expect(props.nativePublishPort.apply).not.toHaveBeenCalled();
+    expect(props.publishPost).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    dialog = view.getByRole('dialog', { name: '更新文章' });
+    const confirmedDraft = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+    expect(confirmedDraft.value).toBe('WordPress 原生摘要');
+    fireEvent.change(confirmedDraft, { target: { value: '确认的手工摘要' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+
+    expect(props.nativePublishPort.apply).toHaveBeenCalledOnce();
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ excerpt: '确认的手工摘要' })
+    );
+  });
+
+  it('limits manual publish excerpts to 160 Unicode code points before submission', async () => {
+    const props = fixture();
+    const entered = '摘😀'.repeat(100);
+    const expected = Array.from(entered).slice(0, 160).join('');
+    const view = render(
+      <EditorRoot
+        {...props}
+        settings={{
+          general: { ...props.settings.general, summaryMode: 'manual' },
+          markdown: props.settings.markdown
+        }}
+      />
+    );
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    const excerpt = within(dialog).getByPlaceholderText(
+      '撰写摘要...'
+    ) as HTMLTextAreaElement;
+
+    fireEvent.change(excerpt, { target: { value: entered } });
+    expect(excerpt.value).toBe(expected);
+    expect(Array.from(excerpt.value)).toHaveLength(160);
+    expect(within(dialog).getByText('160 / 160')).not.toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '更新文章' }));
+    expect(props.nativePublishPort.apply).toHaveBeenCalledWith(
+      expect.objectContaining({ excerpt: expected })
+    );
+  });
+
   it('restores the legacy protected-post password field contract', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);

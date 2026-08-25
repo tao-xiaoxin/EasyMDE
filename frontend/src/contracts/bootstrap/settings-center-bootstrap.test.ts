@@ -412,6 +412,8 @@ describe("parseSettingsCenterBootstrap", () => {
 				"definitionListsDescription",
 				"imageSizeSyntax",
 				"imageSizeSyntaxDescription",
+				"markdownLineNumbersDescription",
+				"lineNumbers",
 			]),
 		);
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
@@ -426,7 +428,6 @@ describe("parseSettingsCenterBootstrap", () => {
 			),
 		).toEqual([
 			"wordWrap",
-			"lineNumbers",
 			"editorTheme",
 			"githubFlavor",
 			"smartPunctuation",

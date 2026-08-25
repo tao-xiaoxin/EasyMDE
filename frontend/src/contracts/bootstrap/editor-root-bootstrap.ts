@@ -4,7 +4,11 @@ import {
   type SafePreviewHtml
 } from '../ports/preview-request';
 import type { NativePublishCategory } from '../ports/native-publish-port';
-import type { GeneralSettings, MarkdownSettings } from '../settings-center-settings';
+import type {
+  GeneralSettings,
+  MarkdownSettings,
+  SummaryMode
+} from '../settings-center-settings';
 import {
   parseAppearanceBootstrap,
   type AppearanceBootstrap
@@ -478,7 +482,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         publishVisibility: general.publishVisibility as string,
         showLineNumbers: general.showLineNumbers as boolean,
         statusBarMode: general.statusBarMode as string,
-        summaryMode: general.summaryMode as string,
+        summaryMode: general.summaryMode as SummaryMode,
         syncScroll: general.syncScroll as boolean,
         syntaxHighlight: general.syntaxHighlight as boolean
       } satisfies GeneralSettings,

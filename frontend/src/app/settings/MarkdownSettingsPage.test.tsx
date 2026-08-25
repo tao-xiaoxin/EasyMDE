@@ -43,4 +43,12 @@ describe("MarkdownSettingsPage", () => {
 			expect(screen.queryByText(label)).toBeNull();
 		}
 	});
+
+	it("does not duplicate the editor-owned line number setting", () => {
+		render(
+			<MarkdownSettingsPage settings={SETTINGS_CENTER_TEST_SETTINGS.markdown} strings={strings} />,
+		);
+
+		expect(screen.queryByRole("switch", { name: "showLineNumbers" })).toBeNull();
+	});
 });

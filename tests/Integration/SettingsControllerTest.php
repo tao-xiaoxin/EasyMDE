@@ -56,7 +56,6 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame(
 			array(
 				'wordWrap',
-				'lineNumbers',
 				'editorTheme',
 				'githubFlavor',
 				'smartPunctuation',

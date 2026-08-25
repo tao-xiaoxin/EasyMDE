@@ -41,7 +41,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	},
 	markdown: {
 		wordWrap: true,
-		lineNumbers: false,
 		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,

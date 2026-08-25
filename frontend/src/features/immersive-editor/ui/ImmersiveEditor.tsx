@@ -649,6 +649,7 @@ export function ImmersiveEditor({
         <ImmersivePublishDialog
           defaults={generalSettings}
           environment={environment}
+          markdown={markdown}
           snapshot={publishSnapshot}
           strings={strings}
           onClose={() => setPublishSnapshot(null)}

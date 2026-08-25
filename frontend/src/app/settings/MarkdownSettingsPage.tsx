@@ -43,7 +43,6 @@ function normalizeMarkdownValue(
 function createDefaultSettings(): MarkdownSettingsDraft {
 	return {
 		wordWrap: true,
-		lineNumbers: false,
 		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
@@ -172,28 +171,16 @@ export function MarkdownSettingsPage({
 						<EditPencilIcon size={25} />
 						{strings.markdownEditorSettings}
 					</h2>
-					{(
-						[
-							["wordWrap", strings.wordWrap, strings.wordWrapDescription],
-							[
-								"lineNumbers",
-								strings.showLineNumbers,
-								strings.markdownLineNumbersDescription,
-							],
-						] as const
-					).map(([key, label, description]) => (
-						<MarkdownRow key={key} label={label} description={description}>
-							<SettingsToggle
-								{...(key === "wordWrap"
-									? {}
-									: { ariaDescribedBy: "easymde-markdown-unavailable" })}
-								label={label}
-								checked={settings[key]}
-								disabled={key !== "wordWrap"}
-								onChange={() => setValue(key, !settings[key])}
-							/>
-						</MarkdownRow>
-					))}
+					<MarkdownRow
+						label={strings.wordWrap}
+						description={strings.wordWrapDescription}
+					>
+						<SettingsToggle
+							label={strings.wordWrap}
+							checked={settings.wordWrap}
+							onChange={() => setValue("wordWrap", !settings.wordWrap)}
+						/>
+					</MarkdownRow>
 					<MarkdownRow label={strings.editorTheme}>
 						<MarkdownSelect
 							ariaDescribedBy="easymde-markdown-unavailable"

@@ -53,34 +53,40 @@ function cssRuleBody(selector) {
 	return match[1];
 }
 
-test("Settings Center owns an opaque viewport before React mounts", () => {
-	const startupVeil = cssRuleBody("body.toplevel_page_easymde::before");
-	const startupHost = cssRuleBody(
-		"body.toplevel_page_easymde #easymde-settings-center-root",
+test("Settings Center does not paint an opaque pre-mount viewport veil", () => {
+	assert.doesNotMatch(
+		settingsCss,
+		/body\.toplevel_page_easymde::before\s*\{/,
 	);
-
-	assert.match(startupVeil, /position:\s*fixed;/);
-	assert.match(startupVeil, /inset:\s*0;/);
-	assert.match(startupVeil, /z-index:\s*100000;/);
-	assert.match(startupVeil, /background:\s*#fdfefe;/);
-	assert.match(startupVeil, /content:\s*"";/);
-
-	assert.match(startupHost, /position:\s*fixed;/);
-	assert.match(startupHost, /inset:\s*0;/);
-	assert.match(startupHost, /z-index:\s*100001;/);
-	assert.match(startupHost, /overflow:\s*auto;/);
-	assert.match(startupHost, /background:\s*#fdfefe;/);
+	assert.doesNotMatch(
+		settingsCss,
+		/body\.toplevel_page_easymde #easymde-settings-center-root\s*\{/,
+	);
 });
 
-test("Settings Center pre-mount brand occupies the final sidebar geometry instead of the viewport center", () => {
-	const startup = cssRuleBody(".easymde-settings-center-startup");
-
-	assert.doesNotMatch(startup, /align-items:\s*center;/);
-	assert.doesNotMatch(startup, /justify-content:\s*center;/);
+test("Settings Center external overlays share the application box model", () => {
 	assert.match(
-		settingsTemplateSource,
-		/data-settings-center-startup[\s\S]*?easymde-settings-center__frame[\s\S]*?easymde-settings-center__sidebar[\s\S]*?easymde-settings-center__brand-wrap[\s\S]*?easymde-settings-center__brand/,
+		settingsCss,
+		/\[data-settings-overlay-root\],\s*\[data-settings-overlay-root\] \*\s*\{\s*box-sizing:\s*border-box;/s,
 	);
+	assert.match(
+		cssRuleBody("[data-settings-overlay-root]"),
+		/position:\s*relative;[\s\S]*z-index:\s*100001;/,
+	);
+});
+
+test("Settings Center server fallback does not duplicate a brand-only application shell", () => {
+	assert.doesNotMatch(
+		settingsTemplateSource,
+		/easymde-settings-center__frame|easymde-settings-center__sidebar|easymde-settings-center__brand-wrap|easymde-settings-center__brand/,
+	);
+	assert.doesNotMatch(settingsTemplateSource, /<noscript>/);
+	assert.equal(
+		(settingsTemplateSource.match(/data-settings-center-server-fallback/g) ?? [])
+			.length,
+		1,
+	);
+	assert.match(settingsTemplateSource, /settings_center_close_url/);
 });
 
 test("Settings Center frame does not add an outer border, radius, or shadow", () => {

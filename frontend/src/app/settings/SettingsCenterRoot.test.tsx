@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "@wordpress/element";
+import { Profiler } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -101,6 +102,38 @@ afterEach(() => {
 	});
 });
 describe("SettingsCenterRoot global search", () => {
+	it("commits the complete production root once during initial mount", () => {
+		const commitPhases: string[] = [];
+		const overlayRoot = document.createElement("div");
+
+		render(
+			<Profiler
+				id="settings-center"
+				onRender={(_id, phase) => commitPhases.push(phase)}
+			>
+				<SettingsCenterRoot bootstrap={bootstrap()} overlayRoot={overlayRoot} />
+			</Profiler>,
+		);
+
+		expect(commitPhases).toEqual(["mount"]);
+	});
+
+	it("builds the complete search index only when search is first used", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const search = screen.getByRole("searchbox", { name: "searchSettings" });
+
+		expect(container.querySelector('[id^="settings-search-"]')).toBeNull();
+		await user.click(search);
+		expect(container.querySelector('[id^="settings-search-"]')).not.toBeNull();
+		await user.type(search, "tableAlignment");
+		expect(
+			await screen.findByRole("button", { name: "tableAlignment" }),
+		).not.toBeNull();
+	});
+
 	it("renders only the six implemented navigation items and sections", () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,

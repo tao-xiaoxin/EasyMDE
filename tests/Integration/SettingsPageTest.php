@@ -58,13 +58,20 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
         $this->assertStringContainsString('data-failure-message=', $output);
-        $this->assertStringContainsString('data-settings-center-startup', $output);
-        $this->assertStringContainsString('easymde-settings-center__frame', $output);
-        $this->assertStringContainsString('easymde-settings-center__sidebar', $output);
-        $this->assertStringContainsString('easymde-settings-center__brand-wrap', $output);
-        $this->assertStringContainsString('easymde-settings-center__brand', $output);
-        $this->assertStringContainsString('data-loading-message=', $output);
-        $this->assertStringContainsString('Loading EasyMDE Settings Center', $output);
+        $this->assertStringNotContainsString('easymde-settings-center__frame', $output);
+        $this->assertStringNotContainsString('easymde-settings-center__sidebar', $output);
+        $this->assertStringNotContainsString('easymde-settings-center__brand-wrap', $output);
+        $this->assertStringNotContainsString('easymde-settings-center__brand', $output);
+        $this->assertStringNotContainsString('<noscript>', $output);
+        $this->assertSame(1, substr_count($output, 'data-settings-center-server-fallback'));
+        $this->assertSame(1, substr_count($output, 'role="alert"'));
+        $this->assertSame(
+            2,
+            substr_count(
+                $output,
+                esc_html__('The EasyMDE settings center could not start. WordPress settings remain available.', 'easymde')
+            )
+        );
         $this->assertStringContainsString(esc_url(admin_url('options-general.php')), $output);
         $this->assertStringNotContainsString('options.php', $output);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));

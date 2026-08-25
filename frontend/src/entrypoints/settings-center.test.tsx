@@ -1,4 +1,4 @@
-import { createRoot } from "@wordpress/element";
+import { createRoot, flushSync } from "@wordpress/element";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,6 +13,7 @@ import {
 import {
 	mountSettingsCenter,
 	showSettingsCenterStartupFailure,
+	startSettingsCenter,
 } from "./settings-center";
 
 vi.hoisted(() => {
@@ -22,6 +23,7 @@ vi.hoisted(() => {
 vi.mock("@wordpress/element", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@wordpress/element")>()),
 	createRoot: vi.fn(),
+	flushSync: vi.fn((callback: () => void) => callback()),
 }));
 vi.mock(
 	"../contracts/bootstrap/settings-center-bootstrap",
@@ -85,10 +87,42 @@ describe("mountSettingsCenter", () => {
 		vi.mocked(parseSettingsCenterBootstrap).mockReturnValue(bootstrap());
 	});
 
-	it("mounts one independent root and returns idempotent teardown", () => {
+	it("waits for a head-parsed root and mounts it exactly once", async () => {
+		document.body.innerHTML = "";
 		const render = vi.fn();
 		const unmount = vi.fn();
 		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+
+		const teardown = startSettingsCenter({}, { document, window });
+
+		expect(createRoot).not.toHaveBeenCalled();
+		const container = document.createElement("div");
+		container.id = "easymde-settings-center-root";
+		document.body.append(container);
+		await Promise.resolve();
+
+		expect(createRoot).toHaveBeenCalledOnce();
+		expect(flushSync).toHaveBeenCalledOnce();
+		document.body.append(document.createElement("div"));
+		await Promise.resolve();
+		expect(createRoot).toHaveBeenCalledOnce();
+
+		teardown();
+		teardown();
+		expect(unmount).toHaveBeenCalledOnce();
+	});
+
+	it("mounts one independent root and returns idempotent teardown", () => {
+		const calls: string[] = [];
+		const render = vi.fn(() => calls.push("render"));
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+		vi.mocked(flushSync).mockImplementation((callback) => {
+			calls.push("flush:start");
+			const result = callback();
+			calls.push("flush:end");
+			return result;
+		});
 
 		const teardown = mountSettingsCenter({}, { document, window });
 
@@ -97,30 +131,60 @@ describe("mountSettingsCenter", () => {
 			document.querySelector("#easymde-settings-center-root"),
 		);
 		expect(render).toHaveBeenCalledOnce();
+		expect(flushSync).toHaveBeenCalledOnce();
+		expect(calls).toEqual(["flush:start", "render", "flush:end"]);
 		teardown();
 		teardown();
 		expect(unmount).toHaveBeenCalledOnce();
 	});
 
-	it("accepts the server-rendered startup surface for React to replace", () => {
-		const render = vi.fn();
-		vi.mocked(createRoot).mockReturnValue({
-			render,
-			unmount: vi.fn(),
-		} as never);
+	it("unmounts a created root when the synchronous commit fails", () => {
+		const render = vi.fn(() => {
+			throw new Error("settings-center-render-failed");
+		});
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+
+		expect(() => mountSettingsCenter({}, { document, window })).toThrow(
+			"settings-center-render-failed",
+		);
+		expect(unmount).toHaveBeenCalledOnce();
+	});
+
+	it("replaces the single server fallback when startup fails", () => {
+		const fallback = document.createElement("div");
+		fallback.setAttribute("data-settings-center-server-fallback", "");
+		document.body.prepend(fallback);
+		const render = vi.fn(() => {
+			throw new Error("settings-center-render-failed");
+		});
+		const unmount = vi.fn();
+		vi.mocked(createRoot).mockReturnValue({ render, unmount } as never);
+
+		startSettingsCenter({}, { document, window });
+
+		expect(unmount).toHaveBeenCalledOnce();
+		expect(
+			document.querySelector("[data-settings-center-server-fallback]"),
+		).toBeNull();
+		expect(document.querySelector('[role="alert"]')).not.toBeNull();
+	});
+
+	it("accepts only an empty server root", () => {
 		const container = document.querySelector<HTMLElement>(
 			"#easymde-settings-center-root",
 		);
 		if (!container) throw new Error("settings-center-root-missing");
 		container.innerHTML = `
-      <div data-settings-center-startup>
-        <strong>EasyMDE Settings Center</strong>
-        <a href="/wp-admin/options-general.php">Return to WordPress settings</a>
-      </div>
+			<div data-settings-center-startup>
+				<strong>EasyMDE Settings Center</strong>
+			</div>
     `;
 
-		expect(() => mountSettingsCenter({}, { document, window })).not.toThrow();
-		expect(render).toHaveBeenCalledOnce();
+		expect(() => mountSettingsCenter({}, { document, window })).toThrow(
+			"settings-center-root-not-empty",
+		);
+		expect(createRoot).not.toHaveBeenCalled();
 	});
 
 	it("rejects unexpected pre-existing root content", () => {
@@ -182,12 +246,18 @@ describe("mountSettingsCenter", () => {
 				root,
 				"The EasyMDE settings center could not start. WordPress settings remain available.",
 				"settings-center-startup-failed",
+				`${window.location.origin}/wp-admin/options-general.php`,
 			);
 
 			expect(root.textContent).toContain(
 				"The EasyMDE settings center could not start. WordPress settings remain available.",
 			);
 			expect(root.querySelector('[role="alert"]')).not.toBeNull();
+			const exit = root.querySelector<HTMLAnchorElement>("a");
+			expect(exit).not.toBeNull();
+			expect(exit?.href).toBe(
+				`${window.location.origin}/wp-admin/options-general.php`,
+			);
 			expect(consoleError).toHaveBeenCalledWith(
 				"[EasyMDE] settings-center-startup-failed",
 			);

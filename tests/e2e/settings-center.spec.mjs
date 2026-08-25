@@ -18,12 +18,6 @@ function expectNear(actual, expected, tolerance = 0.5) {
 	expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
 }
 
-function expectBoundingBoxesNear(actual, expected, tolerance = 0.5) {
-	for (const property of ["x", "y", "width", "height"]) {
-		expectNear(actual[property], expected[property], tolerance);
-	}
-}
-
 async function login(page) {
 	await page.goto("/wp-login.php");
 	if ((await page.locator("#loginform").count()) === 0) {
@@ -297,11 +291,71 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	await expect(trigger).toContainText(/实时预览|Live Preview/u);
 });
 
-test("covers the WordPress Admin shell before the Settings Center bundle mounts", async ({
+test("does not paint a blank EasyMDE shell before the Settings Center bundle mounts", async ({
 	page,
 }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
+	await page.addInitScript(() => {
+		window.__easymdeFirstVisibleStates = [];
+		const isVisible = (element) =>
+			element instanceof HTMLElement &&
+			element.getClientRects().length > 0 &&
+			getComputedStyle(element).display !== "none" &&
+			getComputedStyle(element).visibility !== "hidden";
+		const sample = () => {
+			const application = document.querySelector(".easymde-settings-center");
+			const fallback = document.querySelector(
+				"[data-settings-center-server-fallback]",
+			);
+			const startup = document.querySelector("[data-settings-center-startup]");
+			if (
+				!isVisible(application) &&
+				!isVisible(fallback) &&
+				!isVisible(startup)
+			) {
+				return;
+			}
+			window.__easymdeFirstVisibleStates.push({
+				hasCompleteApplication:
+					isVisible(application) &&
+					Boolean(
+						document.querySelector(".easymde-settings-center__sidebar nav"),
+					) &&
+					Boolean(
+						document.querySelector(
+							".easymde-settings-center__sticky-header h1",
+						),
+					) &&
+					Boolean(document.querySelector('input[type="search"]')),
+				hasVisibleFallback: isVisible(fallback),
+				hasVisibleStartup: isVisible(startup),
+				hasBrandOnlyShell: Boolean(
+					document.querySelector(
+						"[data-settings-center-startup] .easymde-settings-center__brand",
+					),
+				),
+			});
+		};
+		let sampleScheduled = false;
+		const schedulePaintSample = () => {
+			if (sampleScheduled) return;
+			sampleScheduled = true;
+			requestAnimationFrame(() => {
+				sampleScheduled = false;
+				sample();
+			});
+		};
+		new MutationObserver(schedulePaintSample).observe(document, {
+			childList: true,
+			subtree: true,
+		});
+	});
+	const settingsBundle = (url) =>
+		url.pathname.includes(
+			"/assets/build/settings-center/assets/settings-center-",
+		) && url.pathname.endsWith(".js");
+
 	let releaseBundle = () => undefined;
 	const bundleGate = new Promise((resolve) => {
 		releaseBundle = resolve;
@@ -310,11 +364,6 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 	const bundleIntercepted = new Promise((resolve) => {
 		reportBundleIntercepted = resolve;
 	});
-	const settingsBundle = (url) =>
-		url.pathname.includes(
-			"/assets/build/settings-center/assets/settings-center-",
-		) && url.pathname.endsWith(".js");
-
 	await page.route(settingsBundle, async (route) => {
 		reportBundleIntercepted();
 		const response = await route.fetch();
@@ -323,59 +372,37 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 	});
 
 	let navigation;
-	let startupFrame;
 	try {
 		navigation = page.goto(
 			"/wp-admin/admin.php?page=easymde&route=/general_setting",
 		);
 		await bundleIntercepted;
-
-		const startupHost = page.locator("#easymde-settings-center-root");
-		await expect(startupHost).toBeAttached();
-		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		await expect(
-			startupHost.locator("[data-settings-center-startup]"),
-		).toBeVisible();
-		startupFrame = await page.evaluate(async () => {
-			await new Promise((resolve) =>
-				requestAnimationFrame(() => requestAnimationFrame(resolve)),
-			);
+		const preMount = await page.evaluate(() => {
+			const body = document.body;
 			const host = document.querySelector("#easymde-settings-center-root");
-			if (!(host instanceof HTMLElement))
-				throw new Error("settings-center-startup-host-missing");
-			const brand = host.querySelector(".easymde-settings-center__brand");
-			if (!(brand instanceof HTMLElement))
-				throw new Error("settings-center-startup-brand-missing");
-			const hostBox = host.getBoundingClientRect();
-			const brandBox = brand.getBoundingClientRect();
-			const hostStyle = getComputedStyle(host);
-			const points = [
-				[8, 8],
-				[80, 200],
-				[window.innerWidth / 2, window.innerHeight / 2],
-			];
+			const startup = document.querySelector("[data-settings-center-startup]");
+			const fallback = document.querySelector(
+				"[data-settings-center-server-fallback]",
+			);
+			const bodyVeil = body ? getComputedStyle(body, "::before") : null;
 			return {
-				background: hostStyle.backgroundColor,
-				position: hostStyle.position,
-				coversViewport:
-					hostBox.left <= 0 &&
-					hostBox.top <= 0 &&
-					hostBox.right >= window.innerWidth &&
-					hostBox.bottom >= window.innerHeight,
-				pointsOwnedByHost: points.every(([x, y]) => {
-					const target = document.elementFromPoint(x, y);
-					return target === host || Boolean(target && host.contains(target));
-				}),
-				brandBox: {
-					x: brandBox.x,
-					y: brandBox.y,
-					width: brandBox.width,
-					height: brandBox.height,
-				},
-				brandAvoidsViewportCenter:
-					brandBox.right < window.innerWidth / 2 &&
-					brandBox.bottom < window.innerHeight / 2,
+				hasBody: Boolean(body),
+				hasHost: Boolean(host),
+				hasStartup: Boolean(startup),
+				hasFallback: Boolean(fallback),
+				hasOpaquePseudoVeil:
+					bodyVeil !== null &&
+					bodyVeil.content !== "none" &&
+					bodyVeil.display !== "none" &&
+					bodyVeil.backgroundColor !== "rgba(0, 0, 0, 0)",
 			};
+		});
+		expect(preMount).toEqual({
+			hasBody: false,
+			hasHost: false,
+			hasStartup: false,
+			hasFallback: false,
+			hasOpaquePseudoVeil: false,
 		});
 	} finally {
 		releaseBundle();
@@ -383,20 +410,28 @@ test("covers the WordPress Admin shell before the Settings Center bundle mounts"
 		await page.unroute(settingsBundle);
 	}
 
-	expect(startupFrame).toMatchObject({
-		background: "rgb(253, 254, 254)",
-		position: "fixed",
-		coversViewport: true,
-		pointsOwnedByHost: true,
-		brandAvoidsViewportCenter: true,
+	const firstVisibleStates = await page.evaluate(
+		() => window.__easymdeFirstVisibleStates,
+	);
+	expect(firstVisibleStates.length).toBeGreaterThan(0);
+	expect(firstVisibleStates[0]).toEqual({
+		hasCompleteApplication: true,
+		hasVisibleFallback: false,
+		hasVisibleStartup: false,
+		hasBrandOnlyShell: false,
 	});
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
 	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
-	const mountedBrandBox = await page
-		.locator(".easymde-settings-center__brand")
-		.boundingBox();
-	expect(mountedBrandBox).not.toBeNull();
-	expectBoundingBoxesNear(startupFrame.brandBox, mountedBrandBox);
+	await expect(
+		page.locator("[data-settings-center-server-fallback]"),
+	).toHaveCount(0);
+	await expect(
+		page.locator(".easymde-settings-center__sidebar nav"),
+	).toBeVisible();
+	await expect(
+		page.locator(".easymde-settings-center__sticky-header h1"),
+	).toBeVisible();
+	await expect(page.getByRole("searchbox")).toBeVisible();
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({
@@ -412,14 +447,13 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 	try {
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		const startup = page.locator("[data-settings-center-startup]");
-		await expect(startup).toBeVisible();
-		await expect(startup).toContainText(/EasyMDE/u);
-		const status = startup.locator("[data-settings-center-startup-status]");
-		await expect(status).toHaveAttribute("role", "alert");
-		await expect(status).toHaveAttribute("aria-busy", "false");
-		await expect(status).toContainText(/could not start|无法启动/iu);
-		const exit = startup.locator("a");
+		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		const fallback = page.locator("[data-settings-center-server-fallback]");
+		await expect(fallback).toBeVisible();
+		await expect(fallback).toHaveAttribute("role", "alert");
+		await expect(fallback).toContainText(/could not start|无法启动/iu);
+		await expect(fallback).not.toContainText(/Loading|正在加载/iu);
+		const exit = fallback.locator("a");
 		await expect(exit).toBeVisible();
 		await exit.click();
 		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
@@ -451,13 +485,12 @@ test("keeps a neutral exit surface when Content Security Policy blocks scripts",
 	try {
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
-		const startup = page.locator("[data-settings-center-startup]");
-		await expect(startup).toBeVisible();
-		const status = startup.locator("[data-settings-center-startup-status]");
-		await expect(status).toHaveAttribute("aria-busy", "false");
-		await expect(status).not.toHaveAttribute("role", "status");
-		await expect(status).not.toContainText(/Loading|正在加载/iu);
-		const exit = startup.locator("a");
+		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		const fallback = page.locator("[data-settings-center-server-fallback]");
+		await expect(fallback).toBeVisible();
+		await expect(fallback).toHaveAttribute("role", "alert");
+		await expect(fallback).not.toContainText(/Loading|正在加载/iu);
+		const exit = fallback.locator("a");
 		await expect(exit).toBeVisible();
 		await exit.click();
 		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
@@ -1042,7 +1075,9 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 			browserFailures.push(`${message.type()}: ${message.text()}`);
 		}
 	});
-	page.on("pageerror", (error) => browserFailures.push(`pageerror: ${error.message}`));
+	page.on("pageerror", (error) =>
+		browserFailures.push(`pageerror: ${error.message}`),
+	);
 	await page.setViewportSize({ width: 1152, height: 753 });
 	await login(page);
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
@@ -1080,7 +1115,8 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 		if (geometry.some((box) => !box)) {
 			throw new Error("maximum-image-size-stepper-geometry-missing");
 		}
-		const [decrementBox, valueBox, unitBox, incrementBox, stepperBox] = geometry;
+		const [decrementBox, valueBox, unitBox, incrementBox, stepperBox] =
+			geometry;
 		expect(decrementBox.x).toBeLessThan(valueBox.x);
 		expect(valueBox.x).toBeLessThan(incrementBox.x);
 		expect(unitBox.x + unitBox.width).toBeLessThanOrEqual(

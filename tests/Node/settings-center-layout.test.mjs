@@ -64,6 +64,17 @@ test("Settings Center does not paint an opaque pre-mount viewport veil", () => {
 	);
 });
 
+test("Settings Center external overlays share the application box model", () => {
+	assert.match(
+		settingsCss,
+		/\[data-settings-overlay-root\],\s*\[data-settings-overlay-root\] \*\s*\{\s*box-sizing:\s*border-box;/s,
+	);
+	assert.match(
+		cssRuleBody("[data-settings-overlay-root]"),
+		/position:\s*relative;[\s\S]*z-index:\s*100001;/,
+	);
+});
+
 test("Settings Center server fallback does not duplicate a brand-only application shell", () => {
 	assert.doesNotMatch(
 		settingsTemplateSource,

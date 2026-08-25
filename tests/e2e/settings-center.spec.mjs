@@ -893,6 +893,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	await expect(footerClose).toHaveText(verificationStrings.close);
 	await expect(footerClose).toBeFocused();
 	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(successDialog).toHaveCSS("box-sizing", "border-box");
 	const dialogGeometry = await successDialog.boundingBox();
 	expect(dialogGeometry).not.toBeNull();
 	expect(dialogGeometry.x).toBeGreaterThanOrEqual(12);

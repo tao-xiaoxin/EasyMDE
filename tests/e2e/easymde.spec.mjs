@@ -3858,6 +3858,128 @@ test.describe('EasyMDE editor workflows', () => {
       .toContain(postId);
   });
 
+  test('syncs automatic and manual immersive excerpts through the native WordPress field', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const slug = testSlug(testInfo);
+    const linkText = '合成链接文字';
+    const imageAlt = '不应进入摘要的图片替代文字';
+    const linkUrl = 'https://example.test/synthetic-summary-link';
+    const imageUrl = 'https://example.test/synthetic-summary-image.png';
+    const visibleText = `合成摘要开头\n\n${linkText}加粗正文${'后续可见内容'.repeat(18)}`;
+
+    await login(page, user);
+    const articleTemplate = await canonicalMarkdownForPage(page);
+    const autoMarkdown = `# 合成摘要开头\n\n[${linkText}](${linkUrl})![${imageAlt}](${imageUrl})**加粗正文**${'后续可见内容'.repeat(18)}\n\n${articleTemplate}`;
+
+    const selectSummaryMode = async (targetIndex) => {
+      await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+      await expect(page.locator('.easymde-settings-center')).toBeVisible();
+      const trigger = page.getByRole('combobox', {
+        name: /默认摘要同步方式|default summary sync method/i
+      });
+      await expect(trigger).toBeEnabled();
+      await trigger.focus();
+      await trigger.press('Enter');
+      const listbox = page.getByRole('listbox', {
+        name: /默认摘要同步方式|default summary sync method/i
+      });
+      const options = listbox.getByRole('option');
+      const selectedIndex = await options.evaluateAll((items) =>
+        items.findIndex((item) => 'true' === item.getAttribute('aria-selected'))
+      );
+      if (selectedIndex < 0) throw new Error('summary-mode-selected-option-missing');
+      if (selectedIndex === targetIndex) {
+        await trigger.press('Escape');
+        return selectedIndex;
+      }
+      await trigger.press('Home');
+      for (let index = 0; index < targetIndex; index += 1) {
+        await trigger.press('ArrowDown');
+      }
+      await trigger.press('Enter');
+      const saveButton = page.locator('.easymde-settings-center__save-bar > button');
+      await expect(saveButton).toBeEnabled();
+      await saveButton.click();
+      await expect(page.locator('[data-save-status]')).toHaveAttribute(
+        'data-save-status',
+        /saved|idle/u
+      );
+      return selectedIndex;
+    };
+
+    const publishExcerpt = async ({ title, markdown, nativeExcerpt, expectedDraft, editedDraft }) => {
+      await openEasyMdeNewPost(page);
+      await page.locator('#title').fill(title);
+      await fillMarkdownAndWaitForPreview(page, markdown, Array.from(markdown).slice(-12).join(''));
+      if (undefined !== nativeExcerpt) {
+        await page.locator('#excerpt').evaluate((field, value) => {
+          if (!(field instanceof HTMLTextAreaElement)) {
+            throw new Error('native-excerpt-field-unavailable');
+          }
+          field.value = value;
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        }, nativeExcerpt);
+      }
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.locator('.easymde-toolbar-immersive-toggle').click();
+      await page.getByRole('button', { name: labels.publish, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: labels.publish });
+      const excerpt = dialog.locator('.easymde-publish-field.is-excerpt textarea');
+      await expect(excerpt).toHaveValue(expectedDraft);
+      if (undefined !== editedDraft) await excerpt.fill(editedDraft);
+      const openAfterPublish = dialog.getByRole('switch', {
+        name: labels.openAfterPublish
+      });
+      if (await openAfterPublish.isChecked()) await openAfterPublish.click();
+      const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+      await dialog.getByRole('button', { name: labels.publish, exact: true }).click();
+      await navigation;
+      return currentPostId(page);
+    };
+
+    const initialSummaryMode = await selectSummaryMode(0);
+    try {
+      const expected55Excerpt = Array.from(visibleText).slice(0, 55).join('');
+      const automatic55PostId = await publishExcerpt({
+        title: `Synthetic automatic summary ${slug}`,
+        markdown: autoMarkdown,
+        expectedDraft: expected55Excerpt
+      });
+      const stored55Excerpt = normalizeMarkdown(postExcerpt(automatic55PostId));
+      expect(stored55Excerpt).toBe(expected55Excerpt);
+      expect(stored55Excerpt).toContain(linkText);
+      expect(stored55Excerpt).not.toContain('**');
+      expect(stored55Excerpt).not.toContain(imageAlt);
+      expect(stored55Excerpt).not.toContain(linkUrl);
+      expect(stored55Excerpt).not.toContain(imageUrl);
+
+      await selectSummaryMode(1);
+      const expected100Excerpt = Array.from(visibleText).slice(0, 100).join('');
+      const automatic100PostId = await publishExcerpt({
+        title: `Synthetic automatic 100 summary ${slug}`,
+        markdown: autoMarkdown,
+        expectedDraft: expected100Excerpt
+      });
+      expect(normalizeMarkdown(postExcerpt(automatic100PostId))).toBe(expected100Excerpt);
+
+      await selectSummaryMode(2);
+      const nativeExcerpt = '合成原生摘要';
+      const editedExcerpt = '合成手工修改摘要';
+      const manualPostId = await publishExcerpt({
+        title: `Synthetic manual summary ${slug}`,
+        markdown: '手工模式正文不应替换原生摘要。',
+        nativeExcerpt,
+        expectedDraft: nativeExcerpt,
+        editedDraft: editedExcerpt
+      });
+      expect(postExcerpt(manualPostId)).toBe(editedExcerpt);
+    } finally {
+      await selectSummaryMode(initialSummaryMode);
+    }
+  });
+
   test('projects only publish fields owned by the current WordPress Post Type', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const title = 'React Page publish ' + testSlug(testInfo);

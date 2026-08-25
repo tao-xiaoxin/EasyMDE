@@ -1502,11 +1502,49 @@ describe("SettingsCenterRoot persistence", () => {
 			screen
 				.getByRole("combobox", { name: "summaryMode" })
 				.matches(":disabled"),
-		).toBe(true);
+		).toBe(false);
 		expect(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" })
 				.disabled,
 		).toBe(true);
+	});
+
+	it("saves the selected summary sync method through the Settings owner", async () => {
+		const user = userEvent.setup();
+		const requestBody = {
+			current: null as { settings: SettingsCenterSettings } | null,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
+			requestBody.current = JSON.parse(String(init?.body)) as {
+				settings: SettingsCenterSettings;
+			};
+			return {
+				ok: true,
+				json: async () => ({
+					settings: {
+						...bootstrap().settings,
+						revision: bootstrap().settings.revision + 1,
+						general: {
+							...bootstrap().settings.general,
+							summaryMode: "auto-100",
+						},
+					},
+					credentialStatus: {
+						primaryConfigured: false,
+						backupConfigured: false,
+					},
+				}),
+			} as Response;
+		});
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+
+		await user.click(screen.getByRole("combobox", { name: "summaryMode" }));
+		await user.click(screen.getByRole("option", { name: "summary100" }));
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+
+		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		expect(requestBody.current?.settings.general.summaryMode).toBe("auto-100");
+		fetch.mockRestore();
 	});
 
 	it("changes an owner-backed dropdown and sends the selected value", async () => {

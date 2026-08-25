@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createElement } from "@wordpress/element";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
 	SETTINGS_CENTER_STRING_KEYS,
@@ -14,6 +15,34 @@ const strings = Object.fromEntries(
 ) as unknown as SettingsCenterBootstrap["strings"];
 
 describe("GeneralSettingsPage", () => {
+	it("offers every summary sync method and reports the selected setting", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<GeneralSettingsPage
+				onChange={onChange}
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+		const select = screen.getByRole<HTMLButtonElement>("combobox", {
+			name: "summaryMode",
+		});
+
+		expect(select.matches(":disabled")).toBe(false);
+		await user.click(select);
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["summary55", "summary100", "manualSummary"]);
+		await user.click(screen.getByRole("option", { name: "manualSummary" }));
+		expect(onChange).toHaveBeenLastCalledWith({
+			...SETTINGS_CENTER_TEST_SETTINGS.general,
+			summaryMode: "manual",
+		});
+	});
+
 	it("places status-bar display immediately after the default editing mode", () => {
 		render(
 			<GeneralSettingsPage

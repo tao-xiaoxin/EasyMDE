@@ -545,6 +545,13 @@ test("keeps only the remaining Markdown settings inside their responsive section
 		.click();
 	const markdownSection = page.locator('[data-settings-section="markdown"]');
 	await expect(markdownSection).toBeVisible();
+	const editorLineNumbers = /^(?:显示行号|Show Line Numbers)$/u;
+	await expect(
+		markdownSection.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(0);
+	await expect(
+		page.getByRole("switch", { name: editorLineNumbers }),
+	).toHaveCount(1);
 
 	const removedSettings = [
 		/^(?:实时预览|Live Preview)$/u,

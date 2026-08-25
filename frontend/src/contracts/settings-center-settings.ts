@@ -48,7 +48,6 @@ export type ImageSettings = Readonly<{
 
 export type MarkdownSettings = Readonly<{
 	wordWrap: boolean;
-	lineNumbers: boolean;
 	editorTheme: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;

@@ -219,7 +219,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"markdownEditorSettings",
 	"wordWrap",
 	"wordWrapDescription",
-	"markdownLineNumbersDescription",
 	"editorTheme",
 	"automaticFollowSystem",
 	"light",
@@ -761,7 +760,6 @@ export function parseSettingsCenterSettings(
 	};
 	const markdownBooleans = [
 		"wordWrap",
-		"lineNumbers",
 		"githubFlavor",
 		"smartPunctuation",
 		"htmlRendering",

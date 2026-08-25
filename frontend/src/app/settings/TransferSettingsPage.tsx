@@ -110,12 +110,13 @@ async function readImportedSettings(
 	if (
 		payload.schemaVersion !== 1 &&
 		payload.schemaVersion !== 2 &&
-		payload.schemaVersion !== 3
+		payload.schemaVersion !== 3 &&
+		payload.schemaVersion !== 4
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
 	let importedSettings = payload.settings;
-	if (payload.schemaVersion < 3) {
+	if (payload.schemaVersion < 4) {
 		if (
 			!importedSettings ||
 			typeof importedSettings !== "object" ||
@@ -124,38 +125,50 @@ async function readImportedSettings(
 			throw new Error("settings-center-transfer-import-invalid");
 		}
 		const legacy = structuredClone(importedSettings) as Record<string, unknown>;
-		const markdown = legacy.markdown as Record<string, unknown> | undefined;
-		if (!markdown || Array.isArray(markdown)) {
+		const general = legacy.general as Record<string, unknown> | undefined;
+		if (!general || Array.isArray(general)) {
 			throw new Error("settings-center-transfer-import-invalid");
 		}
-		delete markdown.lineNumbers;
-		if (payload.schemaVersion === 1) {
-			const images = legacy.images as Record<string, unknown> | undefined;
-			if (!images || Array.isArray(images)) {
+		if (!("applyEditorThemeToFrontend" in general)) {
+			general.applyEditorThemeToFrontend = true;
+		}
+		if (!("showPublishedCodeCopyButton" in general)) {
+			general.showPublishedCodeCopyButton = true;
+		}
+		if (payload.schemaVersion < 3) {
+			const markdown = legacy.markdown as Record<string, unknown> | undefined;
+			if (!markdown || Array.isArray(markdown)) {
 				throw new Error("settings-center-transfer-import-invalid");
 			}
-			images.maxImageSizeMb = 5;
-			images.titleDisplay =
-				images.captionMode === "filename" ? "filename" : "none";
-			for (const key of [
-				"insertMarkdown",
-				"preserveFileName",
-				"copyUrl",
-				"maxImageSize",
-				"insertFormat",
-				"altSource",
-				"captionMode",
-				"featuredPlaceholder",
-			]) {
-				delete images[key];
-			}
-			for (const key of [
-				"lineEnding",
-				"unorderedMarker",
-				"orderedStart",
-				"blockquoteStyle",
-			]) {
-				delete markdown[key];
+			delete markdown.lineNumbers;
+			if (payload.schemaVersion === 1) {
+				const images = legacy.images as Record<string, unknown> | undefined;
+				if (!images || Array.isArray(images)) {
+					throw new Error("settings-center-transfer-import-invalid");
+				}
+				images.maxImageSizeMb = 5;
+				images.titleDisplay =
+					images.captionMode === "filename" ? "filename" : "none";
+				for (const key of [
+					"insertMarkdown",
+					"preserveFileName",
+					"copyUrl",
+					"maxImageSize",
+					"insertFormat",
+					"altSource",
+					"captionMode",
+					"featuredPlaceholder",
+				]) {
+					delete images[key];
+				}
+				for (const key of [
+					"lineEnding",
+					"unorderedMarker",
+					"orderedStart",
+					"blockquoteStyle",
+				]) {
+					delete markdown[key];
+				}
 			}
 		}
 		importedSettings = legacy;
@@ -389,7 +402,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 3, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 4, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

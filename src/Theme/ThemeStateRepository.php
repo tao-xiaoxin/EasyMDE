@@ -178,6 +178,26 @@ final class ThemeStateRepository {
 		);
 	}
 
+	public function get_frontend_theme_state( $post_id, $apply_editor_theme_to_frontend = true ) {
+		if ( $apply_editor_theme_to_frontend ) {
+			return $this->get_theme_state( $post_id );
+		}
+
+		return array(
+			'markdownTheme'     => 'default',
+			'codeTheme'         => $this->get_associated_code_theme( 'default' ),
+			'codeThemeExplicit' => false,
+			'customCssId'       => '',
+			'customCss'         => '',
+			'scopedCustomCss'   => '',
+			'customFont'        => '',
+			'windowsFont'       => '',
+			'appleFont'         => '',
+			'serifFont'         => '',
+			'fontFamily'        => '',
+		);
+	}
+
 	public function sanitize_markdown_theme_id( $id ) {
 		return $this->article_themes->sanitize_id( $id );
 	}

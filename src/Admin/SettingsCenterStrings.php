@@ -387,6 +387,10 @@ final class SettingsCenterStrings {
 			'closeAboutFeedback'                           => __( 'Close About Feedback', 'easymde' ),
 			'uploadFormatRequired'                         => __( 'Keep at least one image upload format enabled.', 'easymde' ),
 			'closeImageFeedback'                           => __( 'Close Image Upload Feedback', 'easymde' ),
+			'applyEditorThemeToFrontend'                   => __( 'Link Editor Theme to Published Content', 'easymde' ),
+			'applyEditorThemeToFrontendDescription'        => __( 'Apply the selected editor theme to published articles. Disable this to use the theme only in editor previews.', 'easymde' ),
+			'showPublishedCodeCopyButton'                  => __( 'Show Copy Button on Published Code Blocks', 'easymde' ),
+			'showPublishedCodeCopyButtonDescription'       => __( 'Show a copy button on code blocks in published articles.', 'easymde' ),
 		);
 	}
 }

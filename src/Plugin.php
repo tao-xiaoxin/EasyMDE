@@ -100,7 +100,7 @@ final class Plugin {
 
 		$settings_center_repository = new SettingsCenterRepository( $options, $this->toolbar_registry );
 		$settings_page              = new SettingsPage( $settings_center_repository );
-		$frontend_assets            = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector );
+		$frontend_assets            = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector, $settings_center_repository );
 		$image_hosting_runtime      = new ImageHostingRuntime( new WordPressHttpTransport() );
 
 		$modules = array(
@@ -111,7 +111,7 @@ final class Plugin {
 			new EditorMediaUploadPolicy( $post_document, $settings_center_repository ),
 			new EditorSaveHandler( $post_document, $theme_state_repository ),
 			$frontend_assets,
-			new ContentFilter( $post_document, $theme_state_repository ),
+			new ContentFilter( $post_document, $theme_state_repository, $settings_center_repository ),
 			new RevisionManager( $post_document, $theme_state_repository ),
 		);
 

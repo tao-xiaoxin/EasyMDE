@@ -4,6 +4,7 @@ namespace EasyMDE\Frontend;
 
 use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\PostDocument;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Theme\ThemeStateRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -14,10 +15,16 @@ final class ContentFilter {
 
 	private $post_document;
 	private $theme_state_repository;
+	private $settings_center_repository;
 
-	public function __construct( PostDocument $post_document, ThemeStateRepository $theme_state_repository ) {
-		$this->post_document          = $post_document;
-		$this->theme_state_repository = $theme_state_repository;
+	public function __construct(
+		PostDocument $post_document,
+		ThemeStateRepository $theme_state_repository,
+		SettingsCenterRepository $settings_center_repository
+	) {
+		$this->post_document              = $post_document;
+		$this->theme_state_repository     = $theme_state_repository;
+		$this->settings_center_repository = $settings_center_repository;
 	}
 
 	public function register_hooks() {
@@ -36,7 +43,10 @@ final class ContentFilter {
 
 		$post        = get_post( $post_id );
 		$markdown    = $this->post_document->get_markdown( $post );
-		$theme_state = $this->theme_state_repository->get_theme_state( $post_id );
+		$theme_state = $this->theme_state_repository->get_frontend_theme_state(
+			$post_id,
+			$this->settings_center_repository->should_apply_editor_theme_to_frontend()
+		);
 		$style       = $this->theme_state_repository->get_rendered_content_style( $theme_state );
 
 		try {

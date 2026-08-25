@@ -34,6 +34,8 @@ const DEFAULT_DRAFT: Draft = {
 	syncScroll: true,
 	publishVisibility: "public",
 	openPreviewAfterPublish: true,
+	applyEditorThemeToFrontend: true,
+	showPublishedCodeCopyButton: true,
 	summaryMode: "auto-55",
 	featuredImagePlaceholder: true,
 };
@@ -78,6 +80,8 @@ export function matchesGeneralSettingsQuery(
 		[s.syncScroll, s.syncScrollDescription],
 		[s.defaultVisibility],
 		[s.openPreviewAfterPublish, s.openPreviewAfterPublishDescription],
+		[s.applyEditorThemeToFrontend, s.applyEditorThemeToFrontendDescription],
+		[s.showPublishedCodeCopyButton, s.showPublishedCodeCopyButtonDescription],
 		[s.summaryMode, s.summaryModeDescription],
 		[s.featuredImagePlaceholder, s.featuredImagePlaceholderDescription],
 	];
@@ -277,6 +281,38 @@ export function GeneralSettingsPage({
 							setValue(
 								"openPreviewAfterPublish",
 								!draft.openPreviewAfterPublish,
+							)
+						}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.applyEditorThemeToFrontend}
+					description={s.applyEditorThemeToFrontendDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.applyEditorThemeToFrontend}
+						checked={draft.applyEditorThemeToFrontend}
+						onChange={() =>
+							setValue(
+								"applyEditorThemeToFrontend",
+								!draft.applyEditorThemeToFrontend,
+							)
+						}
+					/>
+				</SettingsRow>
+				<SettingsRow
+					label={s.showPublishedCodeCopyButton}
+					description={s.showPublishedCodeCopyButtonDescription}
+					query={normalizedQuery}
+				>
+					<SettingsToggle
+						label={s.showPublishedCodeCopyButton}
+						checked={draft.showPublishedCodeCopyButton}
+						onChange={() =>
+							setValue(
+								"showPublishedCodeCopyButton",
+								!draft.showPublishedCodeCopyButton,
 							)
 						}
 					/>

@@ -5,6 +5,9 @@ use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
+use EasyMDE\Support\Options;
+use EasyMDE\Support\SettingsCenterRepository;
+use EasyMDE\Support\ToolbarRegistry;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
 use EasyMDE\Theme\CustomCssPolicy;
@@ -34,12 +37,78 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             'easymde-highlight',
             'easymde-katex',
             'easymde-mermaid',
+            'easymde-frontend',
         ) as $handle) {
             wp_dequeue_script($handle);
             wp_deregister_script($handle);
         }
 
         parent::tear_down();
+    }
+
+    public function test_disabled_frontend_theme_linkage_uses_neutral_public_assets_without_changing_editor_preview_assets()
+    {
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'qingbi-liujin');
+        update_post_meta($post_id, PostDocument::META_CODE_THEME, 'github-dark');
+
+        $settings = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $draft = $settings->get_settings();
+        $draft['general']['applyEditorThemeToFrontend'] = false;
+        $this->assertIsArray($settings->update_settings($draft));
+
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $settings
+        );
+
+        $assets->enqueue_render_assets($post_id, "```php\necho 'public';\n```");
+
+        $this->assertStringEndsWith(
+            'assets/themes/article/default.css',
+            wp_styles()->registered['easymde-article-theme']->src
+        );
+        $this->assertStringEndsWith(
+            'assets/vendor/highlight/styles/atom-one-dark.min.css',
+            wp_styles()->registered['easymde-highlight-theme']->src
+        );
+
+        wp_dequeue_style('easymde-article-theme');
+        wp_deregister_style('easymde-article-theme');
+        $assets->enqueue_editor_base_assets($post_id);
+
+        $this->assertStringEndsWith(
+            'assets/themes/article/qingbi-liujin.css',
+            wp_styles()->registered['easymde-article-theme']->src
+        );
+    }
+
+    public function test_public_asset_loading_fails_when_the_theme_setting_owner_is_not_injected()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('frontend-theme-settings-unavailable');
+
+        $assets->enqueue_render_assets(0, 'Public content');
+    }
+
+    public function test_feature_detection_fails_when_the_code_copy_setting_owner_is_not_injected()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('frontend-code-copy-settings-unavailable');
+
+        $assets->get_feature_config('Public content');
     }
 
     public function test_typora_derived_themes_enqueue_registered_article_stylesheet()
@@ -58,7 +127,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
             $assets = new FrontendAssets(
                 new PostDocument(),
-                new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+                new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+                null,
+                $this->settings_center_repository()
             );
             $assets->enqueue_render_assets($post_id, '');
 
@@ -77,7 +148,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
 
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
         $assets->enqueue_render_assets($post_id, '# Legacy theme fallback');
 
@@ -93,7 +166,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     {
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
 
         $features = $assets->get_feature_config("Paragraph\n\n    echo 'hello';\n");
@@ -109,7 +184,8 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
             new MarkdownFeatureDetector(static function () {
                 return false;
-            })
+            }),
+            $this->settings_center_repository()
         );
 
         $features = $assets->get_feature_config("```php\necho 'hello';\n```");
@@ -143,7 +219,7 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     public function test_code_frame_assets_follow_regular_code_features_not_legacy_meta()
     {
         $repository = new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy());
-        $assets = new FrontendAssets(new PostDocument(), $repository);
+        $assets = new FrontendAssets(new PostDocument(), $repository, null, $this->settings_center_repository());
 
         foreach (array('0', '1') as $legacy_value) {
             $post_id = self::factory()->post->create(array('post_type' => 'post'));
@@ -164,7 +240,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     {
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
 
         $assets->enqueue_render_assets(0, 'Plain paragraph');
@@ -181,7 +259,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     {
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
 
         $assets->enqueue_render_assets(0, 'Plain paragraph');
@@ -208,6 +288,65 @@ final class FrontendAssetsTest extends WP_UnitTestCase
             '/^[a-f0-9]{16}$/',
             (string) wp_scripts()->registered['easymde-code-copy']->ver
         );
+    }
+
+    public function test_disabled_published_code_copy_keeps_code_rendering_without_loading_copy_assets()
+    {
+        $settings = $this->settings_center_repository();
+        $draft = $settings->get_settings();
+        $draft['general']['showPublishedCodeCopyButton'] = false;
+        $this->assertIsArray($settings->update_settings($draft));
+
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $settings
+        );
+
+        $features = $assets->enqueue_render_assets(0, "```php\necho 'render-only';\n```");
+
+        $this->assertTrue($features['codeBlocks']);
+        $this->assertTrue($features['syntaxHighlight']);
+        $this->assertFalse($features['codeCopy']);
+        $this->assertTrue(wp_style_is('easymde-code-frame', 'enqueued'));
+        $this->assertTrue(wp_style_is('easymde-highlight-theme', 'enqueued'));
+        $this->assertTrue(wp_script_is('easymde-highlight', 'enqueued'));
+        $this->assertFalse(wp_style_is('easymde-code-copy', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
+    }
+
+    public function test_disabled_published_code_copy_is_not_a_frontend_bootstrap_dependency()
+    {
+        $post_id = self::factory()->post->create(array(
+            'post_type' => 'post',
+            'post_status' => 'publish',
+        ));
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, "```php\necho 'render-only';\n```");
+
+        $settings = $this->settings_center_repository();
+        $draft = $settings->get_settings();
+        $draft['general']['showPublishedCodeCopyButton'] = false;
+        $this->assertIsArray($settings->update_settings($draft));
+
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $settings
+        );
+
+        $this->go_to(get_permalink($post_id));
+        $assets->enqueue_frontend_assets();
+
+        $this->assertTrue(wp_script_is('easymde-frontend', 'enqueued'));
+        $this->assertSame(
+            array('easymde-enhancements'),
+            wp_scripts()->registered['easymde-frontend']->deps
+        );
+        $this->assertFalse(wp_style_is('easymde-code-copy', 'enqueued'));
+        $this->assertFalse(wp_script_is('easymde-code-copy', 'enqueued'));
     }
 
     public function test_code_copy_asset_loading_fails_when_the_production_manifest_is_missing()
@@ -321,7 +460,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $post_id = self::factory()->post->create(array('post_type' => 'post'));
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
 
         $assets->enqueue_editor_base_assets($post_id);
@@ -340,7 +481,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     {
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
         $markdown = "```php\necho 'hello';\n```\n\nInline \$a+b\$.\n\n```mermaid\ngraph TD; A-->B;\n```";
 
@@ -395,7 +538,9 @@ final class FrontendAssetsTest extends WP_UnitTestCase
     {
         $assets = new FrontendAssets(
             new PostDocument(),
-            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+            null,
+            $this->settings_center_repository()
         );
 
         $plain = $assets->get_feature_config('Plain paragraph');
@@ -446,6 +591,11 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         mkdir($temporary_file);
 
         return $temporary_file;
+    }
+
+    private function settings_center_repository()
+    {
+        return new SettingsCenterRepository(new Options(), new ToolbarRegistry());
     }
 
     private function create_frontend_enhancement_build_directory()

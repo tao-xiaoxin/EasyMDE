@@ -2822,6 +2822,93 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('synchronizes pending visual input before deriving the publish excerpt', async () => {
+    const props = fixture();
+    const original = 'Original excerpt';
+    const edited = 'Latest visual excerpt';
+    props.submissionField.value = original;
+    props.submissionField.defaultValue = original;
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: `<p>${original}</p>` as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    fireEvent.compositionStart(visualEditor);
+    visualEditor.innerHTML = `<p>${edited}</p>`;
+    fireEvent.input(visualEditor, { isComposing: true });
+    expect(props.submissionField.value).toBe(original);
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    const dialog = view.getByRole('dialog', { name: '更新文章' });
+    expect(
+      (within(dialog).getByPlaceholderText('撰写摘要...') as HTMLTextAreaElement)
+        .value
+    ).toBe(edited);
+    expect(props.submissionField.value).toBe(edited);
+  });
+
+  it('does not open publish when pending visual input cannot synchronize', async () => {
+    const source = [
+      'Editable paragraph',
+      '',
+      '$$',
+      'x^2',
+      '$$'
+    ].join('\n');
+    const props = fixture();
+    props.submissionField.value = source;
+    props.submissionField.defaultValue = source;
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: { math: true },
+      html: [
+        '<p>Editable paragraph</p>',
+        '<div class="easymde-math easymde-math-block">$$x^2$$</div>'
+      ].join('') as SafePreviewHtml
+    });
+    vi.mocked(props.enhancementPort.enhance).mockImplementation(
+      async (surface) => {
+        const math = surface.querySelector<HTMLElement>('.easymde-math');
+        if (math) {
+          math.innerHTML = '<span class="katex">rendered math</span>';
+          math.dataset.easymdeRendered = '1';
+        }
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    visualEditor.querySelector('.easymde-math')?.remove();
+    const publishSnapshotReads = vi.mocked(props.nativePublishPort.read).mock
+      .calls.length;
+
+    fireEvent.click(view.getByRole('button', { name: '更新文章' }));
+
+    expect(view.queryByRole('dialog', { name: '更新文章' })).toBeNull();
+    expect(props.nativePublishPort.read).toHaveBeenCalledTimes(
+      publishSnapshotReads
+    );
+    expect(props.publishPost).not.toHaveBeenCalled();
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'visual-editor-read-only-region-mutated'
+    );
+  });
+
   it.each([
     ['auto-55', 55],
     ['auto-100', 100]

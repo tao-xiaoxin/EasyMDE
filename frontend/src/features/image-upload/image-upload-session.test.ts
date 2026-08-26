@@ -11,6 +11,7 @@ const strings = {
   dropUploaded: 'Drop uploaded',
   dropUploading: 'Drop uploading',
   pasteFailed: 'Paste failed',
+  pasteUploadDisabled: 'Paste upload disabled',
   pasteTooLarge: 'Paste too large',
   pasteUploaded: 'Paste uploaded',
   pasteUploading: 'Paste uploading',
@@ -54,6 +55,7 @@ function setup(
   insertion: ImageUploadInsertion = {
     titleDisplay: 'none',
   },
+  autoUploadPastedImages = true,
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -70,6 +72,7 @@ function setup(
   const upload = vi.fn((_request: ImageUploadRequest) => uploadResult);
   const cleanup = createImageUploadSession({
     allowedMimeTypes,
+    autoUploadPastedImages,
     document: {
       applyTextChange: (value) => {
         snapshot = value;
@@ -103,6 +106,50 @@ function setup(
 }
 
 describe('createImageUploadSession', () => {
+  it('blocks pasted image data without uploading while preserving drop upload', async () => {
+    const session = setup(
+      Promise.resolve({
+        alt: 'image',
+        status: 'uploaded',
+        title: '',
+        url: 'https://example.test/image.png',
+      }),
+      operationIdSequence(),
+      ['image/png'],
+      { titleDisplay: 'none' },
+      false,
+    );
+    const file = new File(['image'], 'image.png', { type: 'image/png' });
+    const textPaste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(textPaste, 'clipboardData', {
+      value: { files: [], items: [] },
+    });
+
+    session.target.dispatchEvent(textPaste);
+
+    expect(textPaste.defaultPrevented).toBe(false);
+    const paste = transferEvent('paste', file);
+
+    session.target.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(session.upload).not.toHaveBeenCalled();
+    expect(session.getSnapshot().value).toBe('Hello world');
+    expect(session.statuses).toEqual([
+      {
+        message: 'Paste upload disabled',
+        operationId: 'image-upload-1',
+        type: 'info',
+      },
+    ]);
+
+    const drop = transferEvent('drop', file);
+    session.target.dispatchEvent(drop);
+    await vi.waitFor(() => expect(session.upload).toHaveBeenCalledOnce());
+    expect(drop.defaultPrevented).toBe(true);
+    expect(session.getSnapshot().value).toBe('Hello![image](https://example.test/image.png) world');
+  });
+
   it('does not insert Markdown when the server reports an exhausted backup failure', async () => {
     const session = setup(
       Promise.resolve({
@@ -333,6 +380,7 @@ describe('createImageUploadSession', () => {
     const target = document.createElement('div');
     createImageUploadSession({
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      autoUploadPastedImages: true,
       document: {
         applyTextChange: (value) => {
           snapshot = value;

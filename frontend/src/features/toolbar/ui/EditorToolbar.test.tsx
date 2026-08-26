@@ -7,7 +7,6 @@ import type { ToolbarBootstrap } from '../../../contracts/bootstrap/toolbar-boot
 import { EditorToolbar } from './EditorToolbar';
 
 const bootstrap: ToolbarBootstrap = {
-  showShortcutHints: true,
   commands: [
     { id: 'bold', label: '粗体', icon: 'editor-bold', surface: 'main', action: 'wrap', group: 'format' },
     { id: 'paragraph', label: '段落', icon: 'heading', surface: 'heading-menu', action: 'paragraph', group: 'heading' },
@@ -21,7 +20,7 @@ const bootstrap: ToolbarBootstrap = {
     paragraph: { win: 'Ctrl+0', mac: 'Cmd+0' },
     heading1: { win: 'Ctrl+1', mac: 'Cmd+1' },
     quote: { win: 'Ctrl+Shift+Q', mac: 'Cmd+Option+Q' },
-    inlinecode: { win: 'Ctrl+`', mac: 'Cmd+`' },
+    inlinecode: { win: 'Ctrl+Backquote', mac: 'Cmd+Backquote' },
     codefence: { win: 'Ctrl+Shift+K', mac: 'Cmd+Option+C' }
   },
   headingLabelFormat: '标题 %s',
@@ -49,6 +48,7 @@ describe('EditorToolbar', () => {
       '代码块'
     ]);
     expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
+    expect(screen.getByRole('button', { name: '行内代码' }).title).toBe('行内代码 (Ctrl+`)');
     expect(screen.getByRole('button', { name: '粗体' }).querySelector('.easymde-toolbar-icon-bold')).not.toBeNull();
     expect(screen.getByRole('button', { name: '引用' }).querySelector('.easymde-toolbar-icon-quote')).not.toBeNull();
     expect(screen.getByRole('button', { name: '代码块' }).querySelector('.easymde-toolbar-icon-codefence')).not.toBeNull();
@@ -102,9 +102,10 @@ describe('EditorToolbar', () => {
     expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
   });
 
-  it('hides shortcut hints while preserving accessible command labels', () => {
-    render(<EditorToolbar bootstrap={{ ...bootstrap, showShortcutHints: false }} platform="win" executeCommand={vi.fn()} />);
-    expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体');
+  it('always shows non-empty shortcut hints while preserving accessible command labels', () => {
+    render(<EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={vi.fn()} />);
+    expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
+    expect(screen.getByRole('button', { name: '粗体' }).getAttribute('aria-label')).toBe('粗体');
   });
 
   it('renders a compact ordinary heading menu without the paragraph command', async () => {

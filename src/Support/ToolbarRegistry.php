@@ -133,7 +133,7 @@ final class ToolbarRegistry {
 				'prefix'             => '~~',
 				'suffix'             => '~~',
 				'defaultShortcutWin' => 'Alt+Shift+5',
-				'defaultShortcutMac' => 'Ctrl+Shift+`',
+				'defaultShortcutMac' => 'Ctrl+Shift+Backquote',
 			)
 		);
 
@@ -199,7 +199,7 @@ final class ToolbarRegistry {
 				'action'             => 'unorderedList',
 				'group'              => 'block',
 				'linePrefix'         => '- ',
-				'defaultShortcutWin' => 'Ctrl+Shift+]',
+				'defaultShortcutWin' => 'Ctrl+Shift+BracketRight',
 				'defaultShortcutMac' => 'Cmd+Option+U',
 			)
 		);
@@ -213,7 +213,7 @@ final class ToolbarRegistry {
 				'action'             => 'orderedList',
 				'group'              => 'block',
 				'linePrefix'         => '1. ',
-				'defaultShortcutWin' => 'Ctrl+Shift+[',
+				'defaultShortcutWin' => 'Ctrl+Shift+BracketLeft',
 				'defaultShortcutMac' => 'Cmd+Option+O',
 			)
 		);
@@ -228,8 +228,8 @@ final class ToolbarRegistry {
 				'group'              => 'insert',
 				'prefix'             => '`',
 				'suffix'             => '`',
-				'defaultShortcutWin' => 'Ctrl+Shift+`',
-				'defaultShortcutMac' => 'Cmd+Shift+`',
+				'defaultShortcutWin' => 'Ctrl+Shift+Backquote',
+				'defaultShortcutMac' => 'Cmd+Shift+Backquote',
 			)
 		);
 

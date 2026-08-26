@@ -15,7 +15,10 @@ import type { SettingsCenterSettings } from "../../contracts/settings-center-set
 import { ChevronRight, X } from "../../generated/lucide-icons";
 import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
 import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
-import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
+import {
+	createWordPressSettingsPort,
+	SettingsShortcutConflictError,
+} from "../../integrations/wordpress/settings/create-wordpress-settings-port";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
 import {
@@ -24,7 +27,12 @@ import {
 	ImagesSettingsPage,
 } from "./ImagesSettingsPage";
 import { MarkdownSettingsPage } from "./MarkdownSettingsPage";
-import { ShortcutsSettingsPage } from "./ShortcutsSettingsPage";
+import {
+	findShortcutConflicts,
+	ShortcutConflictDialog,
+	type ShortcutConflict,
+	ShortcutsSettingsPage,
+} from "./ShortcutsSettingsPage";
 import {
 	AboutIcon,
 	GeneralIcon,
@@ -207,6 +215,11 @@ export function SettingsCenterRoot({
 	if (!overlayRoot) throw new Error("settings-center-overlay-root-missing");
 	const [duplicateSaveTrigger, setDuplicateSaveTrigger] =
 		useState<HTMLButtonElement | null>(null);
+	const [shortcutConflictDialog, setShortcutConflictDialog] =
+		useState<Readonly<{
+			conflicts: ReadonlyArray<ShortcutConflict>;
+			returnFocus: HTMLButtonElement;
+		}> | null>(null);
 	const [sidebarHelpOpen, setSidebarHelpOpen] = useState(false);
 	const sidebarHelpTriggerRef = useRef<HTMLButtonElement>(null);
 	const sidebarHelpWasOpenRef = useRef(false);
@@ -231,6 +244,15 @@ export function SettingsCenterRoot({
 		return () => ownedOverlayRoot.remove();
 	}, [ownedOverlayRoot]);
 	const strings = bootstrap.strings;
+	const shortcutConflicts = useMemo(
+		() =>
+			findShortcutConflicts(
+				settings.shortcuts.values,
+				bootstrap.reservedShortcuts,
+				strings,
+			),
+		[bootstrap.reservedShortcuts, settings.shortcuts.values, strings],
+	);
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
 	const brandSuffix = strings.brandName.slice(-brandSuffixLength);
@@ -707,6 +729,13 @@ export function SettingsCenterRoot({
 	};
 	const saveSettings = async (trigger: HTMLButtonElement) => {
 		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
+		if (shortcutConflicts.length > 0) {
+			setShortcutConflictDialog({
+				conflicts: shortcutConflicts,
+				returnFocus: trigger,
+			});
+			return;
+		}
 		if (hasDuplicateImageHostConfiguration(settings.images)) {
 			if (!overlayRoot) {
 				throw new Error("settings-center-duplicate-dialog-root-missing");
@@ -765,6 +794,15 @@ export function SettingsCenterRoot({
 			setSaveStatus(currentSettingsUnchanged ? "saved" : "idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
+				if (error instanceof SettingsShortcutConflictError) {
+					setShortcutConflictDialog({
+						conflicts: [error.conflict],
+						returnFocus: trigger,
+					});
+					setSaveError("rejected");
+					setSaveStatus("error");
+					return;
+				}
 				const code =
 					error instanceof Error
 						? error.message
@@ -1091,6 +1129,7 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<ShortcutsSettingsPage
+										conflicts={shortcutConflicts}
 										defaultValues={bootstrap.defaultSettings.shortcuts.values}
 										settings={settings.shortcuts}
 										onChange={(value) =>
@@ -1115,10 +1154,10 @@ export function SettingsCenterRoot({
 										uploadVerificationPort={imageHostingVerificationPort}
 										settingsRevision={settings.revision}
 										secretRevealPort={imageHostingSecretRevealPort}
-									runtimeCapabilities={{
-										compressImages: true,
-									}}
-									uploadLimits={bootstrap.uploadLimits}
+										runtimeCapabilities={{
+											compressImages: true,
+										}}
+										uploadLimits={bootstrap.uploadLimits}
 										draft={imageDraft}
 										overlayRoot={overlayRoot}
 										settings={settings.images}
@@ -1198,6 +1237,17 @@ export function SettingsCenterRoot({
 							returnFocus={duplicateSaveTrigger}
 							strings={strings}
 							onClose={() => setDuplicateSaveTrigger(null)}
+						/>,
+						overlayRoot,
+					)
+				: null}
+			{shortcutConflictDialog && overlayRoot
+				? createPortal(
+						<ShortcutConflictDialog
+							conflicts={shortcutConflictDialog.conflicts}
+							returnFocus={shortcutConflictDialog.returnFocus}
+							strings={strings}
+							onClose={() => setShortcutConflictDialog(null)}
 						/>,
 						overlayRoot,
 					)

@@ -22,7 +22,30 @@ Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source i
 
 ## Toolbar And Shortcuts
 
-The compact toolbar includes common Markdown actions for formatting, headings, quotes, lists, code, links, images, and Copy to WeChat. Keyboard shortcuts are Typora-inspired by default. Administrators can change Windows/Linux and macOS shortcut bindings from **Settings > EasyMDE**.
+The compact toolbar includes common Markdown actions for formatting, headings,
+quotes, lists, code, links, images, and Copy to WeChat. The Settings Center
+provides 19 bindings that match Typora's official common shortcut table for
+Save, Bold, Italic, Strikethrough,
+Paragraph, H1 through H6, Quote, Unordered List, Ordered List, Inline Code,
+Code Block, Math Block, Link, and Image. Windows/Linux and macOS bindings are
+configured separately. The source table is Typora's
+[Shortcut Keys documentation](https://support.typora.io/Shortcut-Keys/).
+
+Select a shortcut control and press the intended key combination; the control
+records the real keyboard event and does not accept typed shortcut text. Clear
+disables that one binding, while **Restore Default Shortcuts** restores all 19
+defaults. Non-empty bindings always appear in toolbar and action hints.
+Conflicting bindings on the same platform are highlighted immediately. Saving
+while conflicts remain opens the **Shortcut conflict** dialog and does not
+submit the settings. Return to the highlighted controls and assign distinct
+combinations. WordPress validates the same invariant when it receives the
+request.
+
+Typora is a native desktop application, while EasyMDE runs inside the browser.
+Chrome and other browsers may reserve exact Typora combinations such as
+Ctrl/Cmd+1 through 6, Ctrl/Cmd+K, or Ctrl+Shift+I before a page receives the
+keyboard event. EasyMDE still displays and restores the exact Typora defaults;
+when a browser reserves one, record a different combination for that command.
 
 ## Media Insertion
 
@@ -31,13 +54,15 @@ selecting one image, EasyMDE inserts Markdown image syntax using the attachment
 URL and available alt/title text. This WordPress-native picker is an explicit
 toolbar entry point; it does not own image paste or drag-and-drop uploads.
 
-When the current user can upload media, pasting a local clipboard image or
-dropping a local image file into the Markdown source uploads that image and
+**Automatically upload pasted images** is enabled by default in **EasyMDE >
+Image Hosting > Upload Behavior**. When enabled, pasting a local JPEG, PNG,
+GIF, or WebP image file into either the ordinary Markdown source or immersive
+editor uploads it through the protected same-origin Image Hosting path and
 inserts the configured Markdown or URL form only after the upload succeeds.
-EasyMDE accepts local JPEG, PNG, GIF, and WebP images. Paste and drag-and-drop
-use the protected same-origin Image Hosting upload path configured by the site
-administrator; there is no destination selector or WordPress media-library
-fallback for these actions.
+When disabled, image-file paste does not call the upload endpoint and does not
+insert a Base64 replacement. Ordinary text or HTML paste, the toolbar media
+picker, and drag-and-drop upload are unaffected. There is no destination
+selector or WordPress media-library fallback for pasted or dropped files.
 
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
 Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates
@@ -63,8 +88,8 @@ whole article upload fails: EasyMDE inserts no URL and opens an accessible
 error message asking the author to retry manually. Repeated requests may
 overwrite the same stored object and may incur provider request charges; an
 object may remain after failure because cross-provider rollback is unavailable.
-Without a valid saved primary configuration, paste and drag-and-drop fail
-explicitly. Provider credentials
+Without a valid saved primary configuration, drag-and-drop and enabled
+automatic image paste fail explicitly. Provider credentials
 remain on the WordPress server during ordinary settings reads. The settings
 page shows whether credentials are configured; entering a new key replaces it
 on save, while an empty field keeps the stored value. An administrator can use

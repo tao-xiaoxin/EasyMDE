@@ -5,6 +5,7 @@ import { parseImageUploadBootstrap } from './image-upload-bootstrap';
 const validBootstrap = {
   actionNonce: 'synthetic-action-nonce',
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  autoUploadPastedImages: true,
   enabled: true,
   endpoint: '/wp-json/easymde/v1/image-hosting/upload',
   insertion: {
@@ -20,6 +21,7 @@ const validBootstrap = {
     dropUploaded: 'Drop uploaded',
     dropUploading: 'Drop uploading',
     pasteFailed: 'Paste failed',
+    pasteUploadDisabled: 'Paste upload disabled',
     pasteTooLarge: 'Paste too large',
     pasteUploaded: 'Paste uploaded',
     pasteUploading: 'Paste uploading'
@@ -79,5 +81,9 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       insertAfterUpload: true
     })).toThrow('image-upload-bootstrap-fields-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      autoUploadPastedImages: 'true'
+    })).toThrow('image-upload-auto-paste-invalid');
   });
 });

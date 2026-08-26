@@ -101,6 +101,23 @@ function Harness({
 }
 
 describe("ImagesSettingsPage", () => {
+	it("updates automatic pasted-image uploading independently of upload capabilities", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		render(<Harness onSettingsChange={onSettingsChange} />);
+		const toggle = screen.getByRole("switch", {
+			name: "autoUploadPastedImages",
+		});
+
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(toggle.matches(":disabled")).toBe(false);
+		await user.click(toggle);
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ autoUploadPastedImages: false }),
+		);
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+	});
+
 	it("does not render an upload destination control that is absent from the reference UI", () => {
 		render(<Harness />);
 
@@ -141,7 +158,9 @@ describe("ImagesSettingsPage", () => {
 				.getByRole("switch", { name: "compressImages" })
 				.matches(":disabled"),
 		).toBe(true);
-		expect(screen.getByRole("spinbutton", { name: "maximumImageSize" })).not.toBeNull();
+		expect(
+			screen.getByRole("spinbutton", { name: "maximumImageSize" }),
+		).not.toBeNull();
 		expect(
 			screen.queryByRole("switch", { name: "keepSameObjectPath" }),
 		).toBeNull();
@@ -337,8 +356,12 @@ describe("ImagesSettingsPage", () => {
 				.getByRole("switch", { name: "compressImages" })
 				.matches(":disabled"),
 		).toBe(false);
-		expect(screen.getByRole("spinbutton", { name: "maximumImageSize" })).not.toBeNull();
-		expect(screen.getByRole("combobox", { name: "imageTitleDisplay" })).not.toBeNull();
+		expect(
+			screen.getByRole("spinbutton", { name: "maximumImageSize" }),
+		).not.toBeNull();
+		expect(
+			screen.getByRole("combobox", { name: "imageTitleDisplay" }),
+		).not.toBeNull();
 	});
 
 	it("removes redundant insertion, filename, clipboard, Alt, and featured-placeholder settings", () => {
@@ -355,7 +378,9 @@ describe("ImagesSettingsPage", () => {
 			expect(screen.queryByLabelText(label)).toBeNull();
 			expect(screen.queryByText(label)).toBeNull();
 		}
-		expect(screen.queryByRole("heading", { name: "defaultInsertion" })).toBeNull();
+		expect(
+			screen.queryByRole("heading", { name: "defaultInsertion" }),
+		).toBeNull();
 	});
 
 	it("updates the maximum supported image size in whole megabytes from 1 through 10", () => {
@@ -424,9 +449,11 @@ describe("ImagesSettingsPage", () => {
 		});
 
 		expect(uploadBehavior).not.toBeNull();
-		expect(within(uploadBehavior as HTMLElement).getByRole("combobox", {
-			name: "imageTitleDisplay",
-		})).toBe(titleDisplay);
+		expect(
+			within(uploadBehavior as HTMLElement).getByRole("combobox", {
+				name: "imageTitleDisplay",
+			}),
+		).toBe(titleDisplay);
 		await user.click(titleDisplay);
 		expect(screen.getByRole("option", { name: "useFileName" })).not.toBeNull();
 		expect(screen.getByRole("option", { name: "leaveEmpty" })).not.toBeNull();

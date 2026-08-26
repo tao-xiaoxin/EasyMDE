@@ -138,8 +138,22 @@ registered heading-menu command surface except the Paragraph action, including
 the built-in H1 through H6 commands and extension commands in registry order.
 The trigger uses a compact inset H glyph, and built-in levels use outlined
 H1-through-H6 badges with visibly descending type scale and weight. Every
-visible command retains its configured shortcut. The immersive heading menu keeps its
-existing Paragraph-command exclusion and presentation.
+visible command retains its configured shortcut. The site-wide shortcut
+settings own 19 mappings aligned with Typora's official common shortcut table:
+Save, Bold, Italic, Strikethrough,
+Paragraph, H1 through H6, Quote, Unordered List, Ordered List, Inline Code,
+Code Block, Math Block, Link, and Image. Settings capture real keyboard events
+rather than free-form text; clearing one binding disables it and restoring
+defaults resets all 19. Non-empty bindings are always shown as command hints.
+Same-platform collisions with another configurable or registered command are
+an invariant violation: the settings page marks every conflicting field,
+blocks the request, and opens the shortcut-conflict dialog; the server and
+editor runtime reject conflicts again rather than selecting a winner. The
+immersive heading menu keeps its existing Paragraph-command exclusion and
+presentation. The Registry keeps the native Typora defaults even when a browser
+reserves a combination before page dispatch; the settings owner lets users
+record a browser-deliverable replacement without creating a second default
+table.
 
 The Preview session debounces Reads, aborts superseded requests, rejects stale
 revisions and Markdown signatures, and renders branded server-sanitized HTML
@@ -359,10 +373,9 @@ the protected `easymde/v1/settings` route. Only General settings with an
 implemented editor owner are enabled; unsupported fields stay explicitly
 disabled instead of reporting a persistence success that has no runtime
 consumer. The removed Settings API page and `settings.css` owner are not
-registered or enqueued. Existing `easymde_editor_settings` values remain
-compatible: `SettingsCenterRepository` imports historical toolbar shortcut
-values, preserves their Windows/macOS mappings, and writes the canonical
-settings document through its revisioned compare-and-swap path. The old
+registered or enqueued. `SettingsCenterRepository` accepts and writes only the
+current exact settings document through its revisioned compare-and-swap path;
+the shortcut contract has no historical-field import or migration path. The old
 `options-general.php?page=easymde` URL remains WordPress's native General
 Settings screen without EasyMDE injection, and
 `admin.php?page=easymde/settings/general` is no longer an active screen. The
@@ -534,14 +547,19 @@ Current routes:
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including toolbar shortcut mappings. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged legacy shortcut submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings and the pasted-image automatic-upload preference. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
 
-Preview Markdown payloads are capped at 1 MiB. EasyMDE paste and drop uploads
-accept local JPEG, PNG, GIF, and WebP files only and follow one browser path:
-the editor sends each file to the protected same-origin
-`/image-hosting/upload` proxy. The Image Hosting settings are the provider
-configuration owner; there is no persisted or client-side destination switch
-and no fallback to `/media`. PHP validates the current
+Preview Markdown payloads are capped at 1 MiB. The Image Hosting setting
+`autoUploadPastedImages` defaults to enabled and controls image-file paste in
+both the ordinary source editor and immersive editor. When enabled, a pasted
+local JPEG, PNG, GIF, or WebP follows the existing protected same-origin
+`/image-hosting/upload` path and inserts Markdown only after the upload
+succeeds. When disabled, image paste performs no upload and inserts no Base64
+replacement; ordinary text/HTML paste, the toolbar media command, and
+drag-and-drop remain under their existing owners. Supported drop uploads use
+the same protected proxy independently of this preference. The Image Hosting
+settings are the provider configuration owner; there is no persisted or
+client-side destination switch and no fallback to `/media`. PHP validates the current
 capability, action Nonce, real MIME, extension, byte size, configured format,
 and optional post authority before it reads server-only credentials or
 contacts a provider.

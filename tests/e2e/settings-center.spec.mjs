@@ -1080,6 +1080,13 @@ test("keeps the maximum image size unit inside the horizontal stepper", async ({
 	const browserFailures = [];
 	page.on("console", (message) => {
 		if (["error", "warning"].includes(message.type())) {
+			const sourceUrl = message.location().url;
+			if (
+				sourceUrl &&
+				new URL(sourceUrl, page.url()).origin !== new URL(page.url()).origin
+			) {
+				return;
+			}
 			browserFailures.push(`${message.type()}: ${message.text()}`);
 		}
 	});
@@ -1373,27 +1380,31 @@ test("keeps the settings save action clickable after scrolling", async ({
 	await login(page);
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="shortcuts"]').click();
 
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
 	const scrollContainer = page.locator(".easymde-settings-center");
 	const saveBar = page.locator(".easymde-settings-center__save-bar");
-	const shortcutInput = page
-		.locator(
-			'[data-settings-section="shortcuts"] .easymde-settings-center__shortcut-row',
-		)
-		.first()
-		.locator("input")
-		.first();
 	const saveButton = page.locator(
 		".easymde-settings-center__save-bar > button",
 	);
 	const saveStatus = page.locator("[data-save-status]");
-	const initialValue = await shortcutInput.inputValue();
-	const changedValue = "Ctrl+Alt+Shift+E";
-
-	await expect(shortcutInput).toBeEnabled();
+	const recorder = page
+		.locator(
+			`[data-settings-section="shortcuts"] [data-setting-label="${strings.italic}"]`,
+		)
+		.locator(".easymde-settings-center__shortcut-recorder")
+		.first();
+	const resetButton = page.getByRole("button", {
+		name: strings.restoreDefaultShortcuts,
+		exact: true,
+	});
 
 	try {
-		await shortcutInput.fill(changedValue);
+		await recorder.click();
+		await page.keyboard.press("Control+Alt+Shift+E");
 		await expect(saveBar).toHaveCSS("display", "flex");
 		await scrollContainer.evaluate((element) => {
 			element.scrollTop = 58;
@@ -1416,34 +1427,310 @@ test("keeps the settings save action clickable after scrolling", async ({
 				}),
 			)
 			.toBe(true);
-
 		await saveButton.click();
 		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
 		await expect(saveButton).toBeDisabled();
-
-		await page.reload();
-		await expect(page.locator(".easymde-settings-center")).toBeVisible();
-		await expect(
-			page
-				.locator(
-					'[data-settings-section="shortcuts"] .easymde-settings-center__shortcut-row',
-				)
-				.first()
-				.locator("input")
-				.first(),
-		).toHaveValue(changedValue);
 	} finally {
-		const currentValue = await shortcutInput.inputValue();
-		if (currentValue !== initialValue) {
-			await shortcutInput.fill(initialValue);
-			await expect(saveButton).toBeEnabled();
+		await resetButton.click();
+		if (await saveButton.isEnabled()) {
 			await saveButton.click();
 			await expect(saveStatus).toHaveAttribute(
 				"data-save-status",
 				/saved|idle/u,
 			);
-			await expect(saveButton).toBeDisabled();
 		}
+	}
+});
+
+test("records, persists, and executes a customized shortcut through real keyboard events", async ({
+	page,
+}) => {
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="shortcuts"]').click();
+
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const saveButton = page.locator(
+		".easymde-settings-center__save-bar > button",
+	);
+	const saveStatus = page.locator("[data-save-status]");
+	const resetButton = page.getByRole("button", {
+		name: strings.restoreDefaultShortcuts,
+		exact: true,
+	});
+	const headingThreeRow = () =>
+		page.locator(
+			`[data-settings-section="shortcuts"] [data-setting-label="${strings.headingThree}"]`,
+		);
+	const windowsRecorder = () =>
+		headingThreeRow()
+			.locator(".easymde-settings-center__shortcut-recorder")
+			.first();
+	const macRecorder = () =>
+		headingThreeRow()
+			.locator(".easymde-settings-center__shortcut-recorder")
+			.nth(1);
+	const isMac = await page.evaluate(() => navigator.platform.startsWith("Mac"));
+	const recorder = isMac ? macRecorder : windowsRecorder;
+	const recordedShortcut = isMac
+		? { press: "Meta+Alt+9", labels: ["Cmd", "Option", "9"] }
+		: { press: "Control+Alt+9", labels: ["Ctrl", "Alt", "9"] };
+	const save = async () => {
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
+		await expect(saveButton).toBeDisabled();
+	};
+	try {
+		await resetButton.click();
+		if (await saveButton.isEnabled()) await save();
+		await expect(windowsRecorder().locator("kbd")).toHaveText(["Ctrl", "3"]);
+		await expect(macRecorder().locator("kbd")).toHaveText(["Cmd", "3"]);
+
+		await recorder().click();
+		await expect(recorder()).toHaveAttribute("data-recording", "true");
+		await page.keyboard.press(recordedShortcut.press);
+		await expect(recorder()).not.toHaveAttribute("data-recording", "true");
+		await expect(recorder().locator("kbd")).toHaveText(recordedShortcut.labels);
+		await expect(headingThreeRow().locator("input")).toHaveCount(0);
+		await save();
+
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await expect(recorder().locator("kbd")).toHaveText(recordedShortcut.labels);
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const source = page.locator("#easymde-source");
+		const sourceEditor = page.locator(".easymde-source-react .cm-content");
+		await sourceEditor.fill("Alpha");
+		await sourceEditor.focus();
+		await page.keyboard.press(recordedShortcut.press);
+		await expect(source).toHaveValue("### Alpha");
+		await expect(sourceEditor.locator(".cm-line")).toHaveText("### Alpha");
+	} finally {
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="shortcuts"]').click();
+		await resetButton.click();
+		if (await saveButton.isEnabled()) await save();
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="shortcuts"]').click();
+		await expect(windowsRecorder().locator("kbd")).toHaveText(["Ctrl", "3"]);
+		await expect(macRecorder().locator("kbd")).toHaveText(["Cmd", "3"]);
+	}
+});
+
+test("blocks a same-platform shortcut conflict without sending or persisting it", async ({
+	page,
+}) => {
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="shortcuts"]').click();
+
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const shortcutSection = page.locator('[data-settings-section="shortcuts"]');
+	const row = (label) =>
+		shortcutSection.locator(`[data-setting-label="${label}"]`);
+	const windowsRecorder = (label) =>
+		row(label).locator(".easymde-settings-center__shortcut-recorder").first();
+	const saveButton = page.getByRole("button", {
+		name: strings.saveSettings,
+		exact: true,
+	});
+	const settingsPosts = [];
+	page.on("request", (request) => {
+		if (
+			request.method() === "POST" &&
+			new URL(request.url()).pathname.endsWith("/easymde/v1/settings")
+		) {
+			settingsPosts.push(request.url());
+		}
+	});
+
+	await windowsRecorder(strings.bold).click();
+	await page.keyboard.press("Control+S");
+	await expect(windowsRecorder(strings.bold)).toHaveAttribute(
+		"aria-invalid",
+		"true",
+	);
+	await expect(windowsRecorder(strings.saveArticle)).toHaveAttribute(
+		"aria-invalid",
+		"true",
+	);
+	await saveButton.click();
+	const dialog = page.getByRole("alertdialog", {
+		name: strings.shortcutConflictTitle,
+		exact: true,
+	});
+	await expect(dialog).toBeVisible();
+	expect(settingsPosts).toHaveLength(0);
+	await dialog
+		.getByRole("button", {
+			name: strings.returnToShortcutSettings,
+			exact: true,
+		})
+		.click();
+	await expect(saveButton).toBeFocused();
+
+	await page.reload();
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await expect(windowsRecorder(strings.bold).locator("kbd")).toHaveText([
+		"Ctrl",
+		"B",
+	]);
+});
+
+test("persists the pasted-image upload switch and restores its prior value", async ({
+	page,
+}) => {
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator('button[data-nav-id="images"]').click();
+
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const saveButton = page.locator(
+		".easymde-settings-center__save-bar > button",
+	);
+	const saveStatus = page.locator("[data-save-status]");
+	const pastedImageUpload = () =>
+		page.getByRole("switch", {
+			name: strings.autoUploadPastedImages,
+			exact: true,
+		});
+	const initialValue = await pastedImageUpload().getAttribute("aria-checked");
+	if (initialValue !== "true" && initialValue !== "false") {
+		throw new Error("settings-center-pasted-image-upload-state-missing");
+	}
+	const changedValue = initialValue === "true" ? "false" : "true";
+	const dispatchPastedImage = async (sourceEditor) => {
+		await sourceEditor.evaluate((element) => {
+			const bytes = Uint8Array.from(
+				atob(
+					"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+				),
+				(character) => character.charCodeAt(0),
+			);
+			const file = new File([bytes], "paste.png", { type: "image/png" });
+			const event = new Event("paste", { bubbles: true, cancelable: true });
+			Object.defineProperty(event, "clipboardData", {
+				value: {
+					files: [file],
+					items: [
+						{
+							getAsFile: () => file,
+							kind: "file",
+							type: "image/png",
+						},
+					],
+				},
+			});
+			element.dispatchEvent(event);
+		});
+	};
+	const save = async () => {
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
+		await expect(saveButton).toBeDisabled();
+	};
+
+	try {
+		await pastedImageUpload().click();
+		await expect(pastedImageUpload()).toHaveAttribute(
+			"aria-checked",
+			changedValue,
+		);
+		await save();
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		await expect(pastedImageUpload()).toHaveAttribute(
+			"aria-checked",
+			changedValue,
+		);
+
+		if (changedValue !== "false") {
+			await pastedImageUpload().click();
+			await save();
+		}
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const source = page.locator("#easymde-source");
+		const sourceEditor = page.locator(".easymde-source-react .cm-content");
+		const pasteUploadDisabled = await page.evaluate(
+			() =>
+				window.EasyMDEEditorRootBootstrap.imageUpload.strings
+					.pasteUploadDisabled,
+		);
+		const uploadRequests = [];
+		page.on("request", (request) => {
+			if (
+				request.method() === "POST" &&
+				new URL(request.url()).pathname.endsWith(
+					"/easymde/v1/image-hosting/upload",
+				)
+			) {
+				uploadRequests.push(request.url());
+			}
+		});
+		await sourceEditor.fill("Paste guard");
+		await dispatchPastedImage(sourceEditor);
+		await expect(
+			page.getByRole("status").filter({ hasText: pasteUploadDisabled }),
+		).toBeVisible();
+		await expect(source).toHaveValue("Paste guard");
+		expect(uploadRequests).toHaveLength(0);
+
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		await pastedImageUpload().click();
+		await expect(pastedImageUpload()).toHaveAttribute("aria-checked", "true");
+		await save();
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const enabledSource = page.locator("#easymde-source");
+		const enabledSourceEditor = page.locator(
+			".easymde-source-react .cm-content",
+		);
+		const pasteFailed = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.pasteFailed,
+		);
+		await enabledSourceEditor.fill("Paste enabled guard");
+		await dispatchPastedImage(enabledSourceEditor);
+		await expect.poll(() => uploadRequests.length).toBe(1);
+		await expect(
+			page.getByRole("alert").filter({ hasText: pasteFailed }),
+		).toBeVisible();
+		await expect(enabledSource).toHaveValue("Paste enabled guard");
+	} finally {
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		if (
+			(await pastedImageUpload().getAttribute("aria-checked")) !== initialValue
+		) {
+			await pastedImageUpload().click();
+			await save();
+		}
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		await expect(pastedImageUpload()).toHaveAttribute(
+			"aria-checked",
+			initialValue,
+		);
 	}
 });
 
@@ -1730,8 +2017,9 @@ test("persists the default summary sync method selected with the keyboard", asyn
 		});
 		await expect(listbox).toBeVisible();
 		initialOptionName =
-			(await listbox.getByRole("option", { selected: true }).textContent())?.trim() ??
-			"";
+			(
+				await listbox.getByRole("option", { selected: true }).textContent()
+			)?.trim() ?? "";
 		if (!initialOptionName)
 			throw new Error("settings-center-summary-initial-option-missing");
 		const initialOptionIndex = await listbox
@@ -1758,14 +2046,18 @@ test("persists the default summary sync method selected with the keyboard", asyn
 		await summaryMode.press("Home");
 		await summaryMode.press("ArrowDown");
 		await summaryMode.press("Enter");
-		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+		await expect(summaryMode).toContainText(
+			/前 100 个字符|first 100 characters/i,
+		);
 
 		await expect(saveButton).toBeEnabled();
 		await saveButton.click();
 		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
 		await page.reload();
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
-		await expect(summaryMode).toContainText(/前 100 个字符|first 100 characters/i);
+		await expect(summaryMode).toContainText(
+			/前 100 个字符|first 100 characters/i,
+		);
 	} finally {
 		if (initialOptionName) {
 			await summaryMode.click();

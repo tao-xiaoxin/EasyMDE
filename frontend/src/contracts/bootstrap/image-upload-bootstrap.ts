@@ -5,6 +5,7 @@ export type ImageUploadStrings = Readonly<{
   dropUploaded: string;
   dropUploading: string;
   pasteFailed: string;
+  pasteUploadDisabled: string;
   pasteTooLarge: string;
   pasteUploaded: string;
   pasteUploading: string;
@@ -19,6 +20,7 @@ export type ImageUploadInsertion = Readonly<{
 export type ImageUploadBootstrap = Readonly<{
   actionNonce: string;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
+  autoUploadPastedImages: boolean;
   enabled: boolean;
   endpoint: string;
   insertion: ImageUploadInsertion;
@@ -84,6 +86,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   const expectedKeys = [
     'actionNonce',
     'allowedMimeTypes',
+    'autoUploadPastedImages',
     'enabled',
     'endpoint',
     'insertion',
@@ -110,10 +113,14 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   if ('string' !== typeof actionNonce || '' === actionNonce.trim()) {
     throw new Error('image-upload-action-nonce-invalid');
   }
+  if ('boolean' !== typeof bootstrap.autoUploadPastedImages) {
+    throw new Error('image-upload-auto-paste-invalid');
+  }
 
   return {
     actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
+    autoUploadPastedImages: bootstrap.autoUploadPastedImages,
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
     insertion: parseImageUploadInsertion(bootstrap.insertion),
@@ -127,6 +134,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
       dropUploaded: stringValue(messages.dropUploaded, 'image-upload-string-invalid'),
       dropUploading: stringValue(messages.dropUploading, 'image-upload-string-invalid'),
       pasteFailed: stringValue(messages.pasteFailed, 'image-upload-string-invalid'),
+      pasteUploadDisabled: stringValue(messages.pasteUploadDisabled, 'image-upload-string-invalid'),
       pasteTooLarge: stringValue(messages.pasteTooLarge, 'image-upload-string-invalid'),
       pasteUploaded: stringValue(messages.pasteUploaded, 'image-upload-string-invalid'),
       pasteUploading: stringValue(messages.pasteUploading, 'image-upload-string-invalid'),

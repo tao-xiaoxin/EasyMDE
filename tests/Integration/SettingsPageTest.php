@@ -149,7 +149,14 @@ final class SettingsPageTest extends WP_UnitTestCase
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
             'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
 			'settingsUnsavedChanges', 'settingsUnavailable', 'insertFileNameVariable',
+			'codeAndFormula', 'strikethrough', 'paragraph',
+			'headingThree', 'headingFour', 'headingFive', 'headingSix',
+			'inlineCode', 'codeFence', 'mathBlock', 'recordShortcut',
+			'shortcutRecording', 'clearShortcut', 'shortcutDisabled', 'shortcutInvalid',
+			'shortcutConflictInline', 'shortcutConflictTitle', 'shortcutConflictDescription',
+			'returnToShortcutSettings',
 			'maximumImageSize', 'maximumImageSizeDescription', 'maximumImageSizeSystemLimitExceeded', 'imageTitleDisplay',
+			'autoUploadPastedImages', 'autoUploadPastedImagesDescription',
 			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
 			'uploadRetryCount', 'uploadRetryCountDescription',
 			'duplicateImageHostTitle', 'duplicateImageHostDescription',
@@ -172,6 +179,26 @@ final class SettingsPageTest extends WP_UnitTestCase
             $this->assertIsString( $bootstrap['strings'][ $key ] );
             $this->assertNotSame( '', $bootstrap['strings'][ $key ] );
         }
+		$this->assertSame( 1, substr_count( $bootstrap['strings']['recordShortcut'], '%s' ) );
+		$this->assertSame( 1, substr_count( $bootstrap['strings']['clearShortcut'], '%s' ) );
+		$this->assertSame( 1, substr_count( $bootstrap['strings']['shortcutConflictInline'], '%s' ) );
+		foreach (
+			array(
+				'shortcutBehavior',
+				'showShortcutHints',
+				'showShortcutHintsDescription',
+				'detectShortcutConflicts',
+				'detectShortcutConflictsDescription',
+				'customShortcutSuggestions',
+				'customShortcutSuggestionsDescription',
+				'showHints',
+				'detectConflicts',
+				'showSuggestions',
+			)
+			as $removed_shortcut_string
+		) {
+			$this->assertArrayNotHasKey( $removed_shortcut_string, $bootstrap['strings'] );
+		}
         $this->assertArrayNotHasKey('uploadDestination', $bootstrap['strings']);
         $this->assertArrayNotHasKey('wordpressMediaLibrary', $bootstrap['strings']);
         $this->assertArrayNotHasKey('remoteImageHost', $bootstrap['strings']);
@@ -267,6 +294,42 @@ final class SettingsPageTest extends WP_UnitTestCase
 		}
 		$this->assertArrayHasKey('livePreview', $bootstrap['strings']);
 		$this->assertArrayHasKey('math', $bootstrap['strings']);
+    }
+
+    public function test_settings_center_bootstrap_lists_reserved_registry_shortcuts()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'Ctrl+Alt+E',
+                'defaultShortcutMac' => 'Cmd+Option+E',
+            )
+        );
+        $page = new SettingsPage(new SettingsCenterRepository(new Options(), $registry));
+        $method = new ReflectionMethod(SettingsPage::class, 'get_settings_center_bootstrap');
+        $method->setAccessible(true);
+
+        $bootstrap = $method->invoke($page);
+
+        $this->assertSame(
+            array(
+                array(
+                    'id'      => 'copywechat',
+                    'label'   => 'Copy to WeChat',
+                    'windows' => 'Ctrl+Shift+W',
+                    'mac'     => 'Cmd+Ctrl+W',
+                ),
+                array(
+                    'id'      => 'synthetic-export',
+                    'label'   => 'Synthetic export',
+                    'windows' => 'Ctrl+Alt+E',
+                    'mac'     => 'Cmd+Option+E',
+                ),
+            ),
+            $bootstrap['reservedShortcuts']
+        );
     }
 
     public function test_settings_center_bootstrap_projects_one_authoritative_option_snapshot()

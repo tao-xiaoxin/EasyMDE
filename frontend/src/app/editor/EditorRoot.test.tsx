@@ -360,6 +360,7 @@ function fixture(): EditorRootProps &
     },
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      autoUploadPastedImages: true,
       enabled: true,
       insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
@@ -371,6 +372,7 @@ function fixture(): EditorRootProps &
         dropUploaded: 'Drop uploaded',
         dropUploading: 'Drop uploading',
         pasteFailed: 'Paste failed',
+        pasteUploadDisabled: 'Paste upload disabled',
         pasteTooLarge: 'Paste too large',
         pasteUploaded: 'Paste uploaded',
         pasteUploading: 'Paste uploading'
@@ -719,6 +721,35 @@ describe('EditorRoot', () => {
     expect(immersiveEntry.firstElementChild?.className).toBe(
       'dashicons dashicons-fullscreen-alt'
     );
+  });
+
+  it('formats canonical punctuation tokens in export command titles', async () => {
+    const props = fixture();
+    const toolbar = {
+      ...props.toolbar,
+      commands: [
+        ...props.toolbar.commands,
+        {
+          action: 'extensionExport',
+          group: 'export',
+          icon: 'admin-generic',
+          id: 'extension-export',
+          label: 'Extension export',
+          surface: 'main'
+        }
+      ],
+      shortcuts: {
+        ...props.toolbar.shortcuts,
+        'extension-export': {
+          mac: 'Cmd+Backquote',
+          win: 'Ctrl+Backquote'
+        }
+      }
+    };
+    const view = render(<EditorRoot {...props} toolbar={toolbar} />);
+
+    const button = await view.findByRole('button', { name: 'Extension export' });
+    expect(button.title).toBe('Extension export (Ctrl+`)');
   });
 
   it('recomposes the existing source and preview owners in immersive mode', async () => {
@@ -5218,6 +5249,44 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks automatic image paste while preserving drag-and-drop upload', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      imageUpload: {
+        ...baseProps.imageUpload,
+        autoUploadPastedImages: false
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+    const file = new File(['image'], 'screen-shot.png', {
+      type: 'image/png'
+    });
+    const paste = imageTransferEvent('paste', file);
+
+    source?.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(props.imageUploadPort.upload).not.toHaveBeenCalled();
+    expect(props.submissionField.value).toBe('selected');
+    await waitFor(() => {
+      expect(view.getByText('Paste upload disabled')).not.toBeNull();
+    });
+
+    const drop = imageTransferEvent('drop', file);
+    source?.dispatchEvent(drop);
+
+    expect(drop.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.imageUploadPort.upload).toHaveBeenCalledOnce();
+      expect(props.submissionField.value).toBe(
+        '![screen shot](https://example.test/upload.png)'
+      );
+    });
   });
 
   it('shows a dismissible error alert without inserting Markdown when backup retries are exhausted', async () => {

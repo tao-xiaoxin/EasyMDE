@@ -3,6 +3,29 @@ import type {
 	SettingsCenterApi,
 	SettingsCenterSettings,
 } from "../../../contracts/settings-center-settings";
+import { canonicalizeKeyboardShortcut } from "../../../shared/keyboard/keyboard-shortcut";
+
+export type SettingsShortcutConflict = Readonly<{
+	platform: "windows" | "mac";
+	shortcut: string;
+	bindings: ReadonlyArray<
+		Readonly<{
+			id: string;
+			label: string;
+			editable: boolean;
+		}>
+	>;
+}>;
+
+export class SettingsShortcutConflictError extends Error {
+	readonly conflict: SettingsShortcutConflict;
+
+	constructor(conflict: SettingsShortcutConflict) {
+		super("easymde_settings_shortcut_conflict");
+		this.name = "SettingsShortcutConflictError";
+		this.conflict = conflict;
+	}
+}
 
 export type SettingsCenterSettingsPort = Readonly<{
 	get(signal: AbortSignal): Promise<SettingsCenterSettingsResult>;
@@ -48,6 +71,83 @@ function parseResponseSettings(
 	}
 }
 
+async function readRestErrorPayload(
+	response: Response,
+	signal: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+	let payload: unknown;
+	try {
+		payload = await response.json();
+	} catch (error) {
+		if (signal.aborted || isAbortError(error)) throw error;
+		return null;
+	}
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+		return null;
+	}
+	return payload as Record<string, unknown>;
+}
+
+function parseShortcutConflict(
+	value: unknown,
+): SettingsShortcutConflict | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const detail = value as Record<string, unknown>;
+	if (
+		("windows" !== detail.platform && "mac" !== detail.platform) ||
+		typeof detail.shortcut !== "string" ||
+		!Array.isArray(detail.bindings) ||
+		detail.bindings.length < 2
+	) {
+		return null;
+	}
+	const keyboardPlatform = "mac" === detail.platform ? "mac" : "win";
+	if (
+		!detail.shortcut ||
+		canonicalizeKeyboardShortcut(detail.shortcut, keyboardPlatform) !==
+			detail.shortcut
+	) {
+		return null;
+	}
+	const bindings: Array<{
+		id: string;
+		label: string;
+		editable: boolean;
+	}> = [];
+	const bindingIds = new Set<string>();
+	for (const bindingValue of detail.bindings) {
+		if (
+			!bindingValue ||
+			typeof bindingValue !== "object" ||
+			Array.isArray(bindingValue)
+		) {
+			return null;
+		}
+		const binding = bindingValue as Record<string, unknown>;
+		if (
+			typeof binding.id !== "string" ||
+			!binding.id ||
+			bindingIds.has(binding.id) ||
+			typeof binding.label !== "string" ||
+			!binding.label ||
+			typeof binding.editable !== "boolean"
+		) {
+			return null;
+		}
+		bindingIds.add(binding.id);
+		bindings.push({
+			id: binding.id,
+			label: binding.label,
+			editable: binding.editable,
+		});
+	}
+	return {
+		platform: detail.platform,
+		shortcut: detail.shortcut,
+		bindings,
+	};
+}
+
 async function requestSettings(
 	endpoint: URL,
 	actionNonce: string,
@@ -75,8 +175,18 @@ async function requestSettings(
 	}
 
 	if (!response.ok) {
-		if ("save" === errorPrefix && response.status === 409) {
-			throw new Error("settings-center-save-conflict");
+		if ("save" === errorPrefix) {
+			const errorPayload = await readRestErrorPayload(response, signal);
+			if (errorPayload?.code === "easymde_settings_shortcut_conflict") {
+				const conflict = parseShortcutConflict(errorPayload.data);
+				if (!conflict) {
+					throw new Error("settings-center-save-response-invalid");
+				}
+				throw new SettingsShortcutConflictError(conflict);
+			}
+			if (response.status === 409) {
+				throw new Error("settings-center-save-conflict");
+			}
 		}
 		throw new Error(`settings-center-${errorPrefix}-rejected`);
 	}

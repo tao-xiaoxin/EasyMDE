@@ -70,6 +70,7 @@ function validBootstrap() {
     imageUpload: {
       actionNonce: 'synthetic-action-nonce',
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      autoUploadPastedImages: true,
       enabled: true,
       endpoint: 'https://example.test/wp-json/easymde/v1/image-hosting/upload',
       insertion: { titleDisplay: 'none' },
@@ -83,6 +84,7 @@ function validBootstrap() {
         dropUploaded: 'Drop uploaded',
         dropUploading: 'Drop uploading',
         pasteFailed: 'Paste failed',
+        pasteUploadDisabled: 'Paste upload disabled',
         pasteTooLarge: 'Paste too large',
         pasteUploaded: 'Paste uploaded',
         pasteUploading: 'Paste uploading'
@@ -277,7 +279,6 @@ function validBootstrap() {
           surface: 'main'
         }
       ],
-      showShortcutHints: true,
       shortcuts: { bold: { mac: 'Cmd+B', win: 'Ctrl+B' } },
       strings: {
         headingLabelFormat: 'Heading %s',

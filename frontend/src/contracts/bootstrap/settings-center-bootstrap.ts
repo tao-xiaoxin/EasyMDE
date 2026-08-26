@@ -2,6 +2,7 @@ import type {
 	SettingsCenterApi,
 	SettingsCenterSettings,
 } from "../settings-center-settings";
+import { SHORTCUT_IDS } from "../settings-center-settings";
 
 export const SETTINGS_CENTER_STRING_KEYS = [
 	"brandName",
@@ -81,7 +82,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"manualSummary",
 	"commonShortcuts",
 	"headingAndFormatting",
-	"shortcutBehavior",
+	"codeAndFormula",
 	"restoreDefaultShortcuts",
 	"shortcutFunction",
 	"windowsLinux",
@@ -89,19 +90,31 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"saveArticle",
 	"bold",
 	"italic",
+	"strikethrough",
+	"paragraph",
 	"insertLink",
 	"insertImage",
 	"headingOne",
 	"headingTwo",
+	"headingThree",
+	"headingFour",
+	"headingFive",
+	"headingSix",
 	"quote",
 	"unorderedList",
 	"orderedList",
-	"showShortcutHints",
-	"showShortcutHintsDescription",
-	"detectShortcutConflicts",
-	"detectShortcutConflictsDescription",
-	"customShortcutSuggestions",
-	"customShortcutSuggestionsDescription",
+	"inlineCode",
+	"codeFence",
+	"mathBlock",
+	"recordShortcut",
+	"shortcutRecording",
+	"clearShortcut",
+	"shortcutDisabled",
+	"shortcutInvalid",
+	"shortcutConflictInline",
+	"shortcutConflictTitle",
+	"shortcutConflictDescription",
+	"returnToShortcutSettings",
 	"saveSettings",
 	"savingSettings",
 	"settingsSaved",
@@ -202,6 +215,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"uploadBehavior",
 	"compressImages",
 	"compressImagesDescription",
+	"autoUploadPastedImages",
+	"autoUploadPastedImagesDescription",
 	"maximumImageSize",
 	"maximumImageSizeDescription",
 	"maximumImageSizeSystemLimitExceeded",
@@ -389,6 +404,14 @@ export type SettingsCenterBootstrap = Readonly<{
 	}>;
 	settings: SettingsCenterSettings;
 	defaultSettings: SettingsCenterSettings;
+	reservedShortcuts: ReadonlyArray<
+		Readonly<{
+			id: string;
+			label: string;
+			windows: string;
+			mac: string;
+		}>
+	>;
 	strings: Readonly<Record<SettingsCenterStringKey, string>>;
 }>;
 
@@ -442,7 +465,8 @@ function assertEnumFields(
 }
 
 function hasExplicitUrlPort(value: string): boolean {
-	const authority = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+	const authority =
+		value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
 	if (authority.startsWith("[")) {
 		return authority.slice(authority.indexOf("]") + 1).startsWith(":");
 	}
@@ -696,6 +720,7 @@ export function parseSettingsCenterSettings(
 	const imageBooleans = [
 		"backupEnabled",
 		"compressImages",
+		"autoUploadPastedImages",
 	];
 	const images = parseSettingsStringFields(root, "images", imageStrings);
 	parseSettingsBooleanFields(images, "images", imageBooleans);
@@ -790,31 +815,14 @@ export function parseSettingsCenterSettings(
 	);
 	assertExactKeys(
 		shortcuts,
-		["values", "showHints", "detectConflicts", "showSuggestions"],
+		["values"],
 		"settings-center-shortcuts-settings-invalid",
 	);
-	parseSettingsBooleanFields(shortcuts, "shortcuts", [
-		"showHints",
-		"detectConflicts",
-		"showSuggestions",
-	]);
 	const shortcutValues = parseObject(
 		shortcuts.values,
 		"settings-center-shortcut-values-invalid",
 	);
-	const shortcutIds = [
-		"save",
-		"bold",
-		"italic",
-		"link",
-		"image",
-		"heading-one",
-		"heading-two",
-		"quote",
-		"unordered-list",
-		"ordered-list",
-	];
-	for (const id of shortcutIds) {
+	for (const id of SHORTCUT_IDS) {
 		const shortcut = parseObject(
 			shortcutValues[id],
 			`settings-center-shortcut-${id}-invalid`,
@@ -835,7 +843,7 @@ export function parseSettingsCenterSettings(
 	}
 	assertExactKeys(
 		shortcutValues,
-		shortcutIds,
+		SHORTCUT_IDS,
 		"settings-center-shortcut-values-invalid",
 	);
 
@@ -879,6 +887,45 @@ export function parseSettingsCenterBootstrap(
 		"settings-center-strings-invalid",
 	);
 	const strings = {} as Record<SettingsCenterStringKey, string>;
+	if (!Array.isArray(root.reservedShortcuts)) {
+		throw new Error("settings-center-reserved-shortcuts-invalid");
+	}
+	const reservedShortcutIds = new Set<string>();
+	const reservedShortcuts = root.reservedShortcuts.map((value, index) => {
+		const shortcut = parseObject(
+			value,
+			`settings-center-reserved-shortcut-${index}-invalid`,
+		);
+		assertExactKeys(
+			shortcut,
+			["id", "label", "windows", "mac"],
+			`settings-center-reserved-shortcut-${index}-invalid`,
+		);
+		for (const key of ["id", "label", "windows", "mac"] as const) {
+			if (
+				typeof shortcut[key] !== "string" ||
+				utf8ByteLength(shortcut[key] as string) > 128 ||
+				((key === "id" || key === "label") && !(shortcut[key] as string).trim())
+			) {
+				throw new Error(`settings-center-reserved-shortcut-${index}-invalid`);
+			}
+		}
+		const id = shortcut.id as string;
+		if (
+			SHORTCUT_IDS.includes(id as (typeof SHORTCUT_IDS)[number]) ||
+			reservedShortcutIds.has(id) ||
+			(!(shortcut.windows as string).trim() && !(shortcut.mac as string).trim())
+		) {
+			throw new Error(`settings-center-reserved-shortcut-${index}-invalid`);
+		}
+		reservedShortcutIds.add(id);
+		return shortcut as {
+			id: string;
+			label: string;
+			windows: string;
+			mac: string;
+		};
+	});
 
 	for (const key of SETTINGS_CENTER_STRING_KEYS) {
 		strings[key] = parseString(
@@ -896,6 +943,9 @@ export function parseSettingsCenterBootstrap(
 		"transferChecksSummary",
 		"transferChecksPassed",
 		"lastVerified",
+		"recordShortcut",
+		"clearShortcut",
+		"shortcutConflictInline",
 	] as const) {
 		if ((strings[key].match(/%s/g) ?? []).length !== 1) {
 			throw new Error(`settings-center-${key}-template-invalid`);
@@ -1007,6 +1057,7 @@ export function parseSettingsCenterBootstrap(
 		},
 		settings: parseSettingsCenterSettings(root.settings),
 		defaultSettings: parseSettingsCenterSettings(root.defaultSettings),
+		reservedShortcuts,
 		strings,
 	};
 }

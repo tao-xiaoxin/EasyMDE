@@ -34,13 +34,11 @@ final class SettingsCenterRepository {
 	}
 
 	private function settings_from_stored( array $stored ) {
-		$defaults             = $this->get_defaults();
-		$settings             = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+		$defaults = $this->get_defaults();
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
-		$legacy_shortcut_mode = empty( $settings ) && isset( $stored['shortcuts'] ) && is_array( $stored['shortcuts'] );
-		$settings             = $this->migrate_legacy_image_settings( $settings );
-		$settings             = $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
+		$settings = $this->migrate_legacy_image_settings( $settings );
 
 		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
 		$settings['images']['endpoint']       = $this->sanitize_endpoint( $settings['images']['endpoint'] );
@@ -49,15 +47,6 @@ final class SettingsCenterRepository {
 		$settings['images']['backupDomain']   = $this->sanitize_domain( $settings['images']['backupDomain'] );
 		if ( ! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ) {
 			$settings['images']['fileNameRule'] = $defaults['images']['fileNameRule'];
-		}
-		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
-			foreach ( array( 'windows', 'mac' ) as $platform ) {
-				$normalized = $this->normalize_shortcut( $shortcut[ $platform ], 'mac' === $platform );
-				if ( false === $normalized || ( $legacy_shortcut_mode && '' === $normalized ) ) {
-					$normalized = $defaults['shortcuts']['values'][ $center_id ][ $platform ];
-				}
-				$settings['shortcuts']['values'][ $center_id ][ $platform ] = $normalized;
-			}
 		}
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
 			$settings['images'][ $secret_key ] = '';
@@ -94,7 +83,6 @@ final class SettingsCenterRepository {
 
 	public function get_shortcut_config_for_script() {
 		$settings  = $this->get_settings();
-		$stored    = $this->options->get_editor_settings();
 		$registry  = $this->toolbar_registry->get_command_registry();
 		$shortcuts = array();
 
@@ -108,21 +96,35 @@ final class SettingsCenterRepository {
 				continue;
 			}
 
-			if ( isset( $stored['shortcuts'][ $command_id ] ) && is_array( $stored['shortcuts'][ $command_id ] ) ) {
-				$shortcuts[ $command_id ] = array(
-					'win' => isset( $stored['shortcuts'][ $command_id ]['win'] ) ? (string) $stored['shortcuts'][ $command_id ]['win'] : '',
-					'mac' => isset( $stored['shortcuts'][ $command_id ]['mac'] ) ? (string) $stored['shortcuts'][ $command_id ]['mac'] : '',
-				);
-				continue;
-			}
-
 			$shortcuts[ $command_id ] = array(
-				'win' => isset( $command['defaultShortcutWin'] ) ? (string) $command['defaultShortcutWin'] : '',
-				'mac' => isset( $command['defaultShortcutMac'] ) ? (string) $command['defaultShortcutMac'] : '',
+				'win' => $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false ),
+				'mac' => $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true ),
 			);
 		}
 
 		return $shortcuts;
+	}
+
+	public function get_reserved_shortcuts_for_script() {
+		$reserved = array();
+
+		foreach ( $this->toolbar_registry->get_commands_for_script() as $command ) {
+			$command_id = isset( $command['id'] ) ? (string) $command['id'] : '';
+			$windows    = $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false );
+			$mac        = $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true );
+			if ( $this->center_shortcut_id( $command_id ) || ( '' === $windows && '' === $mac ) ) {
+				continue;
+			}
+
+			$reserved[] = array(
+				'id'      => $command_id,
+				'label'   => isset( $command['label'] ) ? (string) $command['label'] : $command_id,
+				'windows' => $windows,
+				'mac'     => $mac,
+			);
+		}
+
+		return $reserved;
 	}
 
 	public function get_allowed_image_mime_types() {
@@ -325,21 +327,7 @@ final class SettingsCenterRepository {
 		$next['settings_center']          = $settings;
 		$next['version']                  = $this->options->editor_settings_version();
 		$next['settings_center_revision'] = $current_revision + 1;
-		$next['shortcuts']                = isset( $next['shortcuts'] ) && is_array( $next['shortcuts'] )
-			? $next['shortcuts']
-			: array();
-
-		foreach ( $settings['shortcuts']['values'] as $center_id => $shortcut ) {
-			$command_id = $this->shortcut_command_id( $center_id );
-			if ( ! $command_id ) {
-				continue;
-			}
-
-			$next['shortcuts'][ $command_id ] = array(
-				'win' => $shortcut['windows'],
-				'mac' => $shortcut['mac'],
-			);
-		}
+		unset( $next['shortcuts'] );
 
 		if ( ! $this->options->compare_and_swap_editor_settings( $expected, $next ) ) {
 			return $this->options->last_compare_and_swap_was_conflict()
@@ -363,39 +351,6 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
-
-		return $this->merge_legacy_shortcuts_into_settings( $settings, $stored );
-	}
-
-	private function merge_legacy_shortcuts_into_settings( array $settings, array $stored ) {
-		if ( ! isset( $stored['shortcuts'] ) || ! is_array( $stored['shortcuts'] ) ) {
-			return $settings;
-		}
-
-		if ( ! isset( $settings['shortcuts'] ) || ! is_array( $settings['shortcuts'] ) ) {
-			$settings['shortcuts'] = array();
-		}
-		if ( ! isset( $settings['shortcuts']['values'] ) || ! is_array( $settings['shortcuts']['values'] ) ) {
-			$settings['shortcuts']['values'] = array();
-		}
-
-		foreach ( $stored['shortcuts'] as $command_id => $values ) {
-			$center_id = $this->center_shortcut_id( $command_id );
-			if ( ! $center_id || ! is_array( $values ) ) {
-				continue;
-			}
-			if ( ! isset( $settings['shortcuts']['values'][ $center_id ] ) || ! is_array( $settings['shortcuts']['values'][ $center_id ] ) ) {
-				$settings['shortcuts']['values'][ $center_id ] = array();
-			}
-			foreach ( array(
-				'win' => 'windows',
-				'mac' => 'mac',
-			) as $legacy_platform => $platform ) {
-				if ( ! array_key_exists( $platform, $settings['shortcuts']['values'][ $center_id ] ) && array_key_exists( $legacy_platform, $values ) ) {
-					$settings['shortcuts']['values'][ $center_id ][ $platform ] = (string) $values[ $legacy_platform ];
-				}
-			}
-		}
 
 		return $settings;
 	}
@@ -460,8 +415,8 @@ final class SettingsCenterRepository {
 			}
 
 			$shortcuts[ $center_id ] = array(
-				'windows' => isset( $command['defaultShortcutWin'] ) ? (string) $command['defaultShortcutWin'] : '',
-				'mac'     => isset( $command['defaultShortcutMac'] ) ? (string) $command['defaultShortcutMac'] : '',
+				'windows' => $this->validated_registry_shortcut( $command, 'defaultShortcutWin', false ),
+				'mac'     => $this->validated_registry_shortcut( $command, 'defaultShortcutMac', true ),
 			);
 		}
 
@@ -484,30 +439,31 @@ final class SettingsCenterRepository {
 				'featuredImagePlaceholder'    => true,
 			),
 			'images'    => array(
-				'service'          => 'cloudflare-r2',
-				'endpoint'         => '',
-				'bucket'           => 'easymde-assets',
-				'domain'           => '',
-				'accessKey'        => '',
-				'secretKey'        => '',
-				'fileNameRule'     => '{date}/{uuid}.{ext}',
-				'backupEnabled'    => false,
-				'backupService'    => 'qiniu-kodo',
-				'backupEndpoint'   => '',
-				'backupBucket'     => 'easymde-backup',
-				'backupDomain'     => '',
-				'backupAccessKey'  => '',
-				'backupSecretKey'  => '',
-				'uploadRetryCount' => 0,
-				'compressImages'   => true,
-				'maxImageSizeMb'   => 5,
-				'uploadFormats'    => array(
+				'service'                => 'cloudflare-r2',
+				'endpoint'               => '',
+				'bucket'                 => 'easymde-assets',
+				'domain'                 => '',
+				'accessKey'              => '',
+				'secretKey'              => '',
+				'fileNameRule'           => '{date}/{uuid}.{ext}',
+				'backupEnabled'          => false,
+				'backupService'          => 'qiniu-kodo',
+				'backupEndpoint'         => '',
+				'backupBucket'           => 'easymde-backup',
+				'backupDomain'           => '',
+				'backupAccessKey'        => '',
+				'backupSecretKey'        => '',
+				'uploadRetryCount'       => 0,
+				'compressImages'         => true,
+				'autoUploadPastedImages' => true,
+				'maxImageSizeMb'         => 5,
+				'uploadFormats'          => array(
 					'jpg'  => true,
 					'png'  => true,
 					'webp' => true,
 					'gif'  => true,
 				),
-				'titleDisplay'     => 'none',
+				'titleDisplay'           => 'none',
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
@@ -520,10 +476,7 @@ final class SettingsCenterRepository {
 				'pasteAsMarkdown'  => true,
 			),
 			'shortcuts' => array(
-				'values'          => $shortcuts,
-				'showHints'       => true,
-				'detectConflicts' => true,
-				'showSuggestions' => true,
+				'values' => $shortcuts,
 			),
 		);
 	}
@@ -666,9 +619,19 @@ final class SettingsCenterRepository {
 				$settings['shortcuts']['values'][ $shortcut_id ][ $platform ] = $normalized;
 			}
 		}
-		$settings['shortcuts']['showHints']       = (bool) $settings['shortcuts']['showHints'];
-		$settings['shortcuts']['detectConflicts'] = (bool) $settings['shortcuts']['detectConflicts'];
-		$settings['shortcuts']['showSuggestions'] = (bool) $settings['shortcuts']['showSuggestions'];
+		$shortcut_conflict = $this->find_shortcut_conflict( $settings['shortcuts']['values'] );
+		if ( $shortcut_conflict ) {
+			return new WP_Error(
+				'easymde_settings_shortcut_conflict',
+				__( 'One or more shortcut values conflict.', 'easymde' ),
+				array(
+					'status'   => 409,
+					'platform' => $shortcut_conflict['platform'],
+					'shortcut' => $shortcut_conflict['shortcut'],
+					'bindings' => $shortcut_conflict['bindings'],
+				)
+			);
+		}
 
 		if (
 			! empty( $settings['images']['backupEnabled'] ) &&
@@ -877,120 +840,167 @@ final class SettingsCenterRepository {
 	}
 
 	private function normalize_shortcut( $value, $is_mac ) {
-		$value = trim( (string) $value );
+		if ( ! is_string( $value ) ) {
+			return false;
+		}
 		if ( '' === $value ) {
 			return '';
 		}
-		$parts = preg_split( '/\s*\+\s*/', $value );
-		if ( ! is_array( $parts ) || count( $parts ) < 2 || count( $parts ) > 4 ) {
+		$parts = explode( '+', $value );
+		if ( count( $parts ) < 2 || count( $parts ) > 5 ) {
 			return false;
 		}
-		$modifiers = array();
-		$key       = '';
-		foreach ( $parts as $part ) {
-			$part  = trim( (string) $part );
-			$lower = strtolower( $part );
-			if ( in_array( $lower, array( 'mod', 'ctrl', 'control', 'cmd', 'command', 'alt', 'option', 'shift', 'meta' ), true ) ) {
-				if ( in_array( $lower, array( 'mod', 'cmd', 'command', 'meta' ), true ) ) {
-					$canonical = $is_mac ? 'Cmd' : ( 'mod' === $lower ? 'Ctrl' : 'Meta' );
-				} elseif ( in_array( $lower, array( 'alt', 'option' ), true ) ) {
-					$canonical = $is_mac ? 'Option' : 'Alt';
-				} elseif ( 'shift' === $lower ) {
-					$canonical = 'Shift';
-				} else {
-					$canonical = 'Ctrl';
+		$key = array_pop( $parts );
+		if ( ! $this->is_canonical_shortcut_key( $key ) ) {
+			return false;
+		}
+
+		$order      = $is_mac ? array( 'Cmd', 'Ctrl', 'Option', 'Shift' ) : array( 'Ctrl', 'Alt', 'Shift', 'Meta' );
+		$last_index = -1;
+		$has_owner  = false;
+		foreach ( $parts as $modifier ) {
+			$index = array_search( $modifier, $order, true );
+			if ( false === $index || $index <= $last_index ) {
+				return false;
+			}
+			$last_index = $index;
+			$has_owner  = $has_owner || 'Shift' !== $modifier;
+		}
+
+		return $has_owner ? $value : false;
+	}
+
+	private function is_canonical_shortcut_key( $value ) {
+		$named_keys = array(
+			'Space',
+			'Enter',
+			'Backspace',
+			'Delete',
+			'Insert',
+			'Home',
+			'End',
+			'PageUp',
+			'PageDown',
+			'ArrowUp',
+			'ArrowDown',
+			'ArrowLeft',
+			'ArrowRight',
+			'Backquote',
+			'Minus',
+			'Equal',
+			'BracketLeft',
+			'BracketRight',
+			'Backslash',
+			'Semicolon',
+			'Quote',
+			'Comma',
+			'Period',
+			'Slash',
+		);
+
+		return 1 === preg_match( '/^[A-Z0-9]$/D', $value )
+			|| 1 === preg_match( '/^F(?:[1-9]|1[0-2])$/D', $value )
+			|| in_array( $value, $named_keys, true );
+	}
+
+	private function validated_registry_shortcut( array $command, $field, $is_mac ) {
+		$value = array_key_exists( $field, $command ) ? $command[ $field ] : '';
+		if ( false === $this->normalize_shortcut( $value, $is_mac ) ) {
+			throw new \RuntimeException( 'easymde-toolbar-shortcut-invalid' );
+		}
+
+		return $value;
+	}
+
+	private function find_shortcut_conflict( array $shortcut_values ) {
+		$owners = array(
+			'windows' => array(),
+			'mac'     => array(),
+		);
+
+		foreach ( $this->get_reserved_shortcuts_for_script() as $reserved ) {
+			foreach ( array( 'windows', 'mac' ) as $platform ) {
+				$shortcut = $reserved[ $platform ];
+				if ( '' === $shortcut ) {
+					continue;
 				}
-				if ( in_array( $canonical, $modifiers, true ) ) {
-					return false;
+				$binding = array(
+					'id'       => $reserved['id'],
+					'label'    => $reserved['label'],
+					'editable' => false,
+				);
+				if ( isset( $owners[ $platform ][ $shortcut ] ) ) {
+					return array(
+						'platform' => $platform,
+						'shortcut' => $shortcut,
+						'bindings' => array( $owners[ $platform ][ $shortcut ], $binding ),
+					);
 				}
-				$modifiers[] = $canonical;
+				$owners[ $platform ][ $shortcut ] = $binding;
+			}
+		}
+
+		$editable_labels = $this->get_editable_shortcut_labels_for_script();
+		foreach ( $shortcut_values as $shortcut_id => $shortcut ) {
+			foreach ( array( 'windows', 'mac' ) as $platform ) {
+				$value = $shortcut[ $platform ];
+				if ( '' === $value ) {
+					continue;
+				}
+				$binding = array(
+					'id'       => $shortcut_id,
+					'label'    => isset( $editable_labels[ $shortcut_id ] ) ? $editable_labels[ $shortcut_id ] : $shortcut_id,
+					'editable' => true,
+				);
+				if ( isset( $owners[ $platform ][ $value ] ) ) {
+					return array(
+						'platform' => $platform,
+						'shortcut' => $value,
+						'bindings' => array( $owners[ $platform ][ $value ], $binding ),
+					);
+				}
+				$owners[ $platform ][ $value ] = $binding;
+			}
+		}
+
+		return false;
+	}
+
+	private function get_editable_shortcut_labels_for_script() {
+		$labels = array();
+		foreach ( $this->toolbar_registry->get_commands_for_script() as $command ) {
+			$command_id = isset( $command['id'] ) ? (string) $command['id'] : '';
+			$center_id  = $this->center_shortcut_id( $command_id );
+			if ( ! $center_id ) {
 				continue;
 			}
-			if ( '' !== $key ) {
-				return false;
-			}
-			$key = $this->normalize_shortcut_key( $part );
-			if ( false === $key ) {
-				return false;
-			}
+			$labels[ $center_id ] = isset( $command['label'] ) ? (string) $command['label'] : $center_id;
 		}
-		if ( '' === $key || ( $is_mac && ! in_array( 'Cmd', $modifiers, true ) ) || ( ! $is_mac && ! in_array( 'Ctrl', $modifiers, true ) ) ) {
-			return false;
-		}
-		$order                = $is_mac ? array( 'Cmd', 'Ctrl', 'Option', 'Shift' ) : array( 'Ctrl', 'Alt', 'Shift', 'Meta' );
-		$normalized_modifiers = array();
-		foreach ( $order as $modifier ) {
-			if ( in_array( $modifier, $modifiers, true ) ) {
-				$normalized_modifiers[] = $modifier;
-			}
-		}
-		return implode( '+', array_merge( $normalized_modifiers, array( $key ) ) );
+
+		return $labels;
 	}
-
-	private function normalize_shortcut_key( $value ) {
-		$value   = trim( (string) $value );
-		$special = array(
-			'space'      => 'Space',
-			'enter'      => 'Enter',
-			'return'     => 'Enter',
-			'escape'     => 'Escape',
-			'esc'        => 'Escape',
-			'tab'        => 'Tab',
-			'backspace'  => 'Backspace',
-			'delete'     => 'Delete',
-			'insert'     => 'Insert',
-			'home'       => 'Home',
-			'end'        => 'End',
-			'pageup'     => 'PageUp',
-			'pagedown'   => 'PageDown',
-			'arrowup'    => 'ArrowUp',
-			'arrowdown'  => 'ArrowDown',
-			'arrowleft'  => 'ArrowLeft',
-			'arrowright' => 'ArrowRight',
-		);
-		$lower   = strtolower( $value );
-		if ( isset( $special[ $lower ] ) ) {
-			return $special[ $lower ];
-		}
-		if ( preg_match( '/^F(?:[1-9]|1[0-2])$/i', $value ) ) {
-			return strtoupper( $value );
-		}
-		return preg_match( '/^[A-Za-z0-9`\[\]\\;\'\/,\.\-=]+$/', $value ) ? strtoupper( $value ) : false;
-	}
-
-
 	private function center_shortcut_id( $command_id ) {
 		$map = array(
 			'savepost'      => 'save',
 			'bold'          => 'bold',
 			'italic'        => 'italic',
+			'strike'        => 'strikethrough',
+			'paragraph'     => 'paragraph',
 			'link'          => 'link',
 			'image'         => 'image',
 			'heading1'      => 'heading-one',
 			'heading2'      => 'heading-two',
+			'heading3'      => 'heading-three',
+			'heading4'      => 'heading-four',
+			'heading5'      => 'heading-five',
+			'heading6'      => 'heading-six',
 			'quote'         => 'quote',
 			'unorderedlist' => 'unordered-list',
 			'orderedlist'   => 'ordered-list',
+			'inlinecode'    => 'inline-code',
+			'codefence'     => 'code-fence',
+			'mathblock'     => 'math-block',
 		);
 		return isset( $map[ $command_id ] ) ? $map[ $command_id ] : false;
-	}
-
-	private function shortcut_command_id( $center_id ) {
-		$map        = array(
-			'save'           => 'savepost',
-			'bold'           => 'bold',
-			'italic'         => 'italic',
-			'link'           => 'link',
-			'image'          => 'image',
-			'heading-one'    => 'heading1',
-			'heading-two'    => 'heading2',
-			'quote'          => 'quote',
-			'unordered-list' => 'unorderedlist',
-			'ordered-list'   => 'orderedlist',
-		);
-		$command_id = isset( $map[ $center_id ] ) ? $map[ $center_id ] : '';
-		return '' !== $command_id && isset( $this->toolbar_registry->get_command_registry()[ $command_id ] )
-			? $command_id
-			: false;
 	}
 }

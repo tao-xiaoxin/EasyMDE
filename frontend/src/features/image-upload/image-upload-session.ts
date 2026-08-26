@@ -21,6 +21,7 @@ export type ImageUploadStatus = Readonly<{
 
 type CreateImageUploadSessionOptions = Readonly<{
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
+  autoUploadPastedImages: boolean;
   document: ImageUploadDocumentPort;
   enabled: boolean;
   insertion: ImageUploadInsertion;
@@ -121,6 +122,7 @@ function statusMessage(strings: ImageUploadStrings, source: ImageUploadSource, s
 
 export function createImageUploadSession({
   allowedMimeTypes,
+  autoUploadPastedImages,
   document,
   enabled,
   insertion,
@@ -215,13 +217,24 @@ export function createImageUploadSession({
   };
 
   const onPaste = (event: ClipboardEvent) => {
-    if (!enabled) {
+    const file = firstImageFile(event.clipboardData);
+    if (!file) {
       return;
     }
-    const file = firstImageFile(event.clipboardData);
-    if (file) {
-      void handleFile(event, file, 'paste');
+    if (!enabled) {
+      event.preventDefault();
+      return;
     }
+    if (!autoUploadPastedImages) {
+      event.preventDefault();
+      onStatus({
+        message: strings.pasteUploadDisabled,
+        operationId: nextOperationId(),
+        type: 'info',
+      });
+      return;
+    }
+    void handleFile(event, file, 'paste');
   };
   const onDragOver = (event: DragEvent) => {
     if (!enabled || !hasImageFile(event.dataTransfer)) {

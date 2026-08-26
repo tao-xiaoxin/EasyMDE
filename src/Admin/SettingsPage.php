@@ -276,9 +276,9 @@ JS;
 		$credential_status = $settings_response['credentialStatus'];
 
 		return array(
-			'schemaVersion'   => 2,
-			'closeUrl'        => admin_url( 'options-general.php' ),
-			'api'             => array(
+			'schemaVersion'     => 2,
+			'closeUrl'          => admin_url( 'options-general.php' ),
+			'api'               => array(
 				'settingsUrl'                         => rest_url( 'easymde/v1/settings' ),
 				'nonce'                               => wp_create_nonce( 'wp_rest' ),
 				'actionNonce'                         => wp_create_nonce( 'easymde_update_settings' ),
@@ -287,12 +287,12 @@ JS;
 				'imageHostingSecretRevealUrl'         => rest_url( 'easymde/v1/image-hosting/secret' ),
 				'imageHostingSecretRevealActionNonce' => wp_create_nonce( 'easymde_reveal_image_hosting_secret' ),
 			),
-			'assets'          => array(
+			'assets'            => array(
 				'brandMarkUrl'               => Asset::url( 'assets/images/settings-center/brand-icon-clean.png' ),
 				'headerIllustrationUrl'      => Asset::url( 'assets/images/settings-center/header-illustration.png' ),
 				'searchEmptyIllustrationUrl' => Asset::url( 'assets/images/settings-center/search-empty-illustration.png' ),
 			),
-			'links'           => array(
+			'links'             => array(
 				'projectUrl'       => 'https://github.com/tao-xiaoxin/EasyMDE',
 				'documentationUrl' => 'https://github.com/tao-xiaoxin/EasyMDE#readme',
 				'releasesUrl'      => 'https://github.com/tao-xiaoxin/EasyMDE/releases',
@@ -300,7 +300,7 @@ JS;
 				'securityUrl'      => 'https://github.com/tao-xiaoxin/EasyMDE/security/policy',
 				'licenseUrl'       => 'https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE',
 			),
-			'drafts'          => array(
+			'drafts'            => array(
 				'images' => array(
 					'domain'                       => $settings['images']['domain'],
 					'backupDomain'                 => $settings['images']['backupDomain'],
@@ -308,10 +308,11 @@ JS;
 					'backupCredentialsConfigured'  => $credential_status['backupConfigured'],
 				),
 			),
-			'defaultSettings' => $this->settings_center_repository->get_default_settings(),
-			'settings'        => $settings,
-			'strings'         => SettingsCenterStrings::get(),
-			'uploadLimits'    => array(
+			'reservedShortcuts' => $this->settings_center_repository->get_reserved_shortcuts_for_script(),
+			'defaultSettings'   => $this->settings_center_repository->get_default_settings(),
+			'settings'          => $settings,
+			'strings'           => SettingsCenterStrings::get(),
+			'uploadLimits'      => array(
 				'systemMaxBytes' => (int) wp_max_upload_size(),
 			),
 		);

@@ -182,27 +182,25 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {
 		update_option(
 			Options::EDITOR_SETTINGS,
-			array(
-				'shortcuts' => array(
-					'bold' => array(
-						'win' => 'Ctrl+Shift+B',
-						'mac' => 'Cmd+Shift+B',
-					),
-				),
-			),
+			array(),
 			false
 		);
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
-		$settings['shortcuts']['showHints']                  = false;
+		$settings['images']['autoUploadPastedImages']         = false;
 		$this->assertNotWPError( $repository->update_settings( $settings ) );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
-		$this->assertFalse( $bootstrap['toolbar']['showShortcutHints'] );
-		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
+		$this->assertArrayNotHasKey( 'showShortcutHints', $bootstrap['toolbar'] );
+		$this->assertFalse( $bootstrap['imageUpload']['autoUploadPastedImages'] );
+		$this->assertSame(
+			'Pasted image upload is disabled. Use Insert Image to upload a file.',
+			$bootstrap['imageUpload']['strings']['pasteUploadDisabled']
+		);
+		$this->assertArrayNotHasKey( 'shortcuts', get_option( Options::EDITOR_SETTINGS ) );
 	}
 
 	public function test_editor_status_uses_the_last_editor_and_localized_modified_time() {

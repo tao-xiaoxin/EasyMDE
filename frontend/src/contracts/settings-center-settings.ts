@@ -43,6 +43,7 @@ export type ImageSettings = Readonly<{
 	backupAccessKey: string;
 	backupSecretKey: string;
 	compressImages: boolean;
+	autoUploadPastedImages: boolean;
 	maxImageSizeMb: number;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
 	titleDisplay: "filename" | "none";
@@ -59,26 +60,35 @@ export type MarkdownSettings = Readonly<{
 	pasteAsMarkdown: boolean;
 }>;
 
-export type ShortcutId =
-	| "save"
-	| "bold"
-	| "italic"
-	| "link"
-	| "image"
-	| "heading-one"
-	| "heading-two"
-	| "quote"
-	| "unordered-list"
-	| "ordered-list";
+export const SHORTCUT_IDS = [
+	"save",
+	"bold",
+	"italic",
+	"strikethrough",
+	"paragraph",
+	"link",
+	"image",
+	"heading-one",
+	"heading-two",
+	"heading-three",
+	"heading-four",
+	"heading-five",
+	"heading-six",
+	"quote",
+	"unordered-list",
+	"ordered-list",
+	"inline-code",
+	"code-fence",
+	"math-block",
+] as const;
+
+export type ShortcutId = (typeof SHORTCUT_IDS)[number];
 
 export type ShortcutValue = Readonly<{ windows: string; mac: string }>;
 export type ShortcutValues = Readonly<Record<ShortcutId, ShortcutValue>>;
 
 export type ShortcutsSettings = Readonly<{
 	values: ShortcutValues;
-	showHints: boolean;
-	detectConflicts: boolean;
-	showSuggestions: boolean;
 }>;
 
 export type SettingsCenterSettings = Readonly<{

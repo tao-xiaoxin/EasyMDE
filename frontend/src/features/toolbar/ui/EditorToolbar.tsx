@@ -26,6 +26,7 @@ import type {
   ToolbarBootstrap,
   ToolbarCommand
 } from '../../../contracts/bootstrap/toolbar-bootstrap';
+import { formatKeyboardShortcut } from '../../../shared/keyboard/keyboard-shortcut';
 
 export type ToolbarPlatform = 'mac' | 'win';
 
@@ -478,9 +479,9 @@ export function EditorToolbar({
   });
   const shortcuts: Record<string, string> = {};
   for (const command of bootstrap.commands) {
-    shortcuts[command.id] = false !== bootstrap.showShortcutHints
-      ? bootstrap.shortcuts[command.id]?.[platform] ?? ''
-      : '';
+    shortcuts[command.id] = formatKeyboardShortcut(
+      bootstrap.shortcuts[command.id]?.[platform] ?? ''
+    );
   }
 
   const commandsFor = (surface: string, group: string) =>

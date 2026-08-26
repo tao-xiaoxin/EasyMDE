@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SETTINGS_CENTER_TEST_SETTINGS } from "../../../test/settings-center-settings-fixture";
-import { createWordPressSettingsPort } from "./create-wordpress-settings-port";
+import {
+	createWordPressSettingsPort,
+	SettingsShortcutConflictError,
+} from "./create-wordpress-settings-port";
 
 const CREDENTIAL_STATUS = {
 	primaryConfigured: true,
@@ -203,6 +206,119 @@ describe("createWordPressSettingsPort", () => {
 		await expect(
 			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
 		).rejects.toThrow("settings-center-save-rejected");
+	});
+
+	it("preserves validated shortcut conflict details returned by WordPress", async () => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: false,
+						status: 409,
+						json: async () => ({
+							code: "easymde_settings_shortcut_conflict",
+							data: {
+								bindings: [
+									{ editable: true, id: "bold", label: "Bold" },
+									{ editable: false, id: "extension", label: "Extension" },
+								],
+								platform: "windows",
+								shortcut: "Ctrl+B",
+							},
+						}),
+					}) as Response,
+			),
+		);
+
+		const error = await port
+			.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal)
+			.catch((reason: unknown) => reason);
+
+		expect(error).toBeInstanceOf(SettingsShortcutConflictError);
+		expect(error).toMatchObject({
+			conflict: {
+				bindings: [
+					{ editable: true, id: "bold", label: "Bold" },
+					{ editable: false, id: "extension", label: "Extension" },
+				],
+				platform: "windows",
+				shortcut: "Ctrl+B",
+			},
+			message: "easymde_settings_shortcut_conflict",
+		});
+	});
+
+	it.each([
+		["missing details", undefined],
+		[
+			"invalid platform",
+			{
+				bindings: [
+					{ editable: true, id: "bold", label: "Bold" },
+					{ editable: true, id: "italic", label: "Italic" },
+				],
+				platform: "linux",
+				shortcut: "Ctrl+B",
+			},
+		],
+		[
+			"non-canonical shortcut",
+			{
+				bindings: [
+					{ editable: true, id: "bold", label: "Bold" },
+					{ editable: true, id: "italic", label: "Italic" },
+				],
+				platform: "windows",
+				shortcut: "Shift+Ctrl+B",
+			},
+		],
+		[
+			"fewer than two bindings",
+			{
+				bindings: [{ editable: true, id: "bold", label: "Bold" }],
+				platform: "windows",
+				shortcut: "Ctrl+B",
+			},
+		],
+		[
+			"malformed binding",
+			{
+				bindings: [
+					{ editable: true, id: "bold", label: "Bold" },
+					{ editable: "false", id: "extension", label: "Extension" },
+				],
+				platform: "windows",
+				shortcut: "Ctrl+B",
+			},
+		],
+	])("rejects shortcut conflict responses with %s", async (_name, data) => {
+		const port = createWordPressSettingsPort(
+			{
+				settingsUrl: "/wp-json/easymde/v1/settings",
+				actionNonce: "test-action-nonce",
+				nonce: "test-nonce",
+			},
+			vi.fn(
+				async () =>
+					({
+						ok: false,
+						status: 409,
+						json: async () => ({
+							code: "easymde_settings_shortcut_conflict",
+							...(undefined === data ? {} : { data }),
+						}),
+					}) as Response,
+			),
+		);
+
+		await expect(
+			port.save(SETTINGS_CENTER_TEST_SETTINGS, new AbortController().signal),
+		).rejects.toThrow("settings-center-save-response-invalid");
 	});
 
 	it("returns a distinct conflict when the server rejects a stale revision", async () => {

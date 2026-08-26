@@ -66,6 +66,7 @@ import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
 import { buildFontStack } from '../../domain/font-stack';
+import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
 import {
   AppearanceControls,
   type AppearanceNotification,
@@ -194,7 +195,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedMimeTypes' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   isNewPost: boolean;
@@ -293,7 +294,9 @@ function RootExportCommands({
   return (
     <Fragment>
       {commands.map((command) => {
-        const shortcut = toolbar.shortcuts[command.id]?.[platform] ?? '';
+        const shortcut = formatKeyboardShortcut(
+          toolbar.shortcuts[command.id]?.[platform] ?? ''
+        );
         const title = shortcut
           ? `${command.label} (${shortcut})`
           : command.label;
@@ -1632,6 +1635,7 @@ export function EditorRoot(props: EditorRootProps) {
       : null;
     return createImageUploadSession({
       allowedMimeTypes: props.imageUpload.allowedMimeTypes,
+      autoUploadPastedImages: props.imageUpload.autoUploadPastedImages,
       document: visualRuntime
         ? {
             applyTextChange: (change) => {
@@ -2148,6 +2152,7 @@ export function EditorRoot(props: EditorRootProps) {
               <ImmersiveVisualEditor
                 documentSession={documentSession}
                 imageUploadEnabled={props.imageUpload.enabled}
+                imagePasteUploadEnabled={props.imageUpload.autoUploadPastedImages}
                 onCanonicalDocumentChange={
                   handleVisualCanonicalDocumentChange
                 }

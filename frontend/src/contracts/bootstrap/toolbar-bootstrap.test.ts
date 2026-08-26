@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { ToolbarBootstrapError, parseToolbarBootstrap } from './toolbar-bootstrap';
 
 const validBootstrap = {
-  showShortcutHints: true,
   commands: [
     {
       id: 'bold',
@@ -51,7 +50,6 @@ describe('parseToolbarBootstrap', () => {
     expect(parsed.headingsLabel).toBe('标题');
     expect(parsed.linkText).toBe('链接文本');
     expect(parsed.undoLabel).toBe('撤销');
-    expect(parsed.showShortcutHints).toBe(true);
   });
 
   it('rejects duplicate command identities at the external boundary', () => {
@@ -76,7 +74,6 @@ describe('parseToolbarBootstrap', () => {
     ['invalid-bootstrap', null],
     ['invalid-commands', { ...validBootstrap, commands: {} }],
     ['invalid-shortcuts', { ...validBootstrap, shortcuts: [] }],
-    ['invalid-shortcut-hints', { ...validBootstrap, showShortcutHints: 'yes' }],
     ['invalid-strings', { ...validBootstrap, strings: [] }],
     [
       'invalid-command-shortcut',

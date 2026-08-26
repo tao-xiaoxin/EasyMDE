@@ -127,9 +127,9 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode', 'featuredImagePlaceholder' ),
-			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
+			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
 			'markdown'  => array( 'wordWrap', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown' ),
-			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
+			'shortcuts' => array( 'values' ),
 		);
 
 		if ( ! $this->has_exact_keys( $value, $shapes['settings'] ) || ! is_int( $value['revision'] ) || $value['revision'] < 0 ) {
@@ -174,10 +174,9 @@ final class SettingsController {
 			),
 		);
 		$boolean_fields = array(
-			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'featuredImagePlaceholder' ),
-			'images'    => array( 'backupEnabled', 'compressImages' ),
-			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
-			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
+			'general'  => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'featuredImagePlaceholder' ),
+			'images'   => array( 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ),
+			'markdown' => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
 		);
 
 		foreach ( $string_fields as $section => $fields ) {
@@ -219,7 +218,7 @@ final class SettingsController {
 			return $this->invalid_payload_error();
 		}
 
-		$shortcut_ids = array( 'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote', 'unordered-list', 'ordered-list' );
+		$shortcut_ids = array( 'save', 'bold', 'italic', 'strikethrough', 'paragraph', 'heading-one', 'heading-two', 'heading-three', 'heading-four', 'heading-five', 'heading-six', 'quote', 'unordered-list', 'ordered-list', 'inline-code', 'code-fence', 'math-block', 'link', 'image' );
 		if ( ! is_array( $value['shortcuts']['values'] ) || ! $this->has_exact_keys( $value['shortcuts']['values'], $shortcut_ids ) ) {
 			return $this->invalid_payload_error();
 		}

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type {
 	GeneralSettings,
+	StatusBarMode,
 	SummaryMode,
 } from "../../contracts/settings-center-settings";
 import {
@@ -25,10 +26,9 @@ type Strings = SettingsCenterBootstrap["strings"];
 const DEFAULT_DRAFT: Draft = {
 	interfaceLanguage: "zh-CN",
 	editingMode: "live-preview",
-	autoFocusEditor: true,
 	showLineNumbers: true,
 	syntaxHighlight: true,
-	statusBarMode: "words-reading-time",
+	statusBarMode: "detailed",
 	autoSave: true,
 	autoSaveInterval: "60",
 	syncScroll: true,
@@ -37,7 +37,6 @@ const DEFAULT_DRAFT: Draft = {
 	applyEditorThemeToFrontend: true,
 	showPublishedCodeCopyButton: true,
 	summaryMode: "auto-55",
-	featuredImagePlaceholder: true,
 };
 
 function NativeSelect({
@@ -71,7 +70,6 @@ export function matchesGeneralSettingsQuery(
 	const normalizedQuery = query.trim().toLowerCase();
 	const searchFields: ReadonlyArray<ReadonlyArray<string | undefined>> = [
 		[s.defaultEditingMode],
-		[s.autoFocusEditor, s.autoFocusEditorDescription],
 		[s.showLineNumbers, s.showLineNumbersDescription],
 		[s.syntaxHighlight, s.syntaxHighlightDescription],
 		[s.statusBarDisplay],
@@ -80,10 +78,8 @@ export function matchesGeneralSettingsQuery(
 		[s.syncScroll, s.syncScrollDescription],
 		[s.defaultVisibility],
 		[s.openPreviewAfterPublish, s.openPreviewAfterPublishDescription],
-		[s.applyEditorThemeToFrontend, s.applyEditorThemeToFrontendDescription],
 		[s.showPublishedCodeCopyButton, s.showPublishedCodeCopyButtonDescription],
 		[s.summaryMode, s.summaryModeDescription],
-		[s.featuredImagePlaceholder, s.featuredImagePlaceholderDescription],
 	];
 
 	return searchFields.some((field) =>
@@ -177,23 +173,14 @@ export function GeneralSettingsPage({
 					<NativeSelect
 						label={s.statusBarDisplay}
 						value={draft.statusBarMode}
-						onChange={(value) => setValue("statusBarMode", value)}
+						onChange={(value) =>
+							setValue("statusBarMode", value as StatusBarMode)
+						}
 						options={[
-							["words-reading-time", s.wordsAndReadingTime],
-							["words", s.wordsOnly],
+							["detailed", s.detailedStatusBar],
+							["compact", s.compactStatusBar],
 							["hidden", s.hiddenStatusBar],
 						]}
-					/>
-				</SettingsRow>
-				<SettingsRow
-					label={s.autoFocusEditor}
-					description={s.autoFocusEditorDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.autoFocusEditor}
-						checked={draft.autoFocusEditor}
-						onChange={() => setValue("autoFocusEditor", !draft.autoFocusEditor)}
 					/>
 				</SettingsRow>
 				<SettingsRow
@@ -286,22 +273,6 @@ export function GeneralSettingsPage({
 					/>
 				</SettingsRow>
 				<SettingsRow
-					label={s.applyEditorThemeToFrontend}
-					description={s.applyEditorThemeToFrontendDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.applyEditorThemeToFrontend}
-						checked={draft.applyEditorThemeToFrontend}
-						onChange={() =>
-							setValue(
-								"applyEditorThemeToFrontend",
-								!draft.applyEditorThemeToFrontend,
-							)
-						}
-					/>
-				</SettingsRow>
-				<SettingsRow
 					label={s.showPublishedCodeCopyButton}
 					description={s.showPublishedCodeCopyButtonDescription}
 					query={normalizedQuery}
@@ -333,22 +304,6 @@ export function GeneralSettingsPage({
 							["auto-100", s.summary100],
 							["manual", s.manualSummary],
 						]}
-					/>
-				</SettingsRow>
-				<SettingsRow
-					label={s.featuredImagePlaceholder}
-					description={s.featuredImagePlaceholderDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.featuredImagePlaceholder}
-						checked={draft.featuredImagePlaceholder}
-						onChange={() =>
-							setValue(
-								"featuredImagePlaceholder",
-								!draft.featuredImagePlaceholder,
-							)
-						}
 					/>
 				</SettingsRow>
 			</SettingsSection>

@@ -447,7 +447,8 @@ approved Cupid Busy theme image is delayed. This E2E does not emulate legacy
 or failure Clipboard branches or paste into a real WeChat editor; the
 authorized browser procedure below supplies that evidence. It also verifies that the
 immersive surface reuses the single React document and Preview owners, keeps
-AI controls absent, exposes only the five real non-AI Settings preferences,
+AI controls absent, exposes only the three browser-owned Settings preferences,
+and leaves status display and synchronized scrolling under their global Settings Center owners,
 loads no Legacy Focus assets, and remains zero-write until the user invokes a
 legitimate WordPress mutation.
 

@@ -264,12 +264,6 @@ export function AboutSettingsPage({
 		},
 		{
 			icon: Shield,
-			label: strings.aboutSecurityPolicy,
-			meta: "SECURITY.md",
-			href: links.securityUrl,
-		},
-		{
-			icon: Shield,
 			label: strings.aboutOpenSourceLicense,
 			meta: "Apache-2.0",
 			href: links.licenseUrl,

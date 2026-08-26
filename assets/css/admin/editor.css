@@ -1770,9 +1770,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-publish-featured-empty { display: flex; box-sizing: border-box; width: 100%; flex-direction: column; align-items: center; padding: 18px 15px 15px; border: 1.5px dashed #c9d7f6; border-radius: 14px; background: #fbfdff; color: #0f172a; font-weight: 500; line-height: 22.5px; text-align: center; cursor: pointer; transition: transform 120ms; }
 .easymde-publish-featured-empty:hover { transform: translateY(-1px); }
 .easymde-publish-featured-empty strong { margin: 0 0 3.75px; font-size: 16px; font-weight: 700; line-height: 24px; }
-.easymde-publish-featured-empty > span:not(.easymde-publish-featured-placeholder) { margin-bottom: 3.75px; color: #64748b; font-size: 13px; font-weight: 500; line-height: 19.5px; }
+.easymde-publish-featured-empty > span { margin-bottom: 3.75px; color: #64748b; font-size: 13px; font-weight: 500; line-height: 19.5px; }
 .easymde-publish-featured-empty small { color: #64748b; font-size: 12.5px; font-weight: 500; line-height: 18.75px; }
-.easymde-publish-featured-placeholder { display: block; width: 200px; height: 133px; margin-bottom: 5.625px; flex: 0 0 auto; }
 .easymde-publish-featured-selected { overflow: hidden; border: 1px solid #e6e9ef; border-radius: 14px; background: #fff; }
 .easymde-publish-featured-selected > div { aspect-ratio: 16 / 9; overflow: hidden; background: #f1f5f9; }
 .easymde-publish-featured-selected img { width: 100%; height: 100%; object-fit: cover; }

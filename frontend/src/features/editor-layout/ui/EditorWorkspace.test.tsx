@@ -40,6 +40,7 @@ describe('EditorWorkspace', () => {
     const view = render(
       <EditorWorkspace
         direction="ltr"
+        statusBarMode="detailed"
         ordinaryStatus={{
           document,
           lastEdited: 'Last edited by Editor on July 27, 2026 at 10:00',
@@ -70,6 +71,45 @@ describe('EditorWorkspace', () => {
       for (const listener of listeners) listener();
     });
     expect(view.getByText('Character count: 3')).toBeTruthy();
+  });
+
+  it('shows only the character count in compact status mode', () => {
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        statusBarMode="compact"
+        ordinaryStatus={{
+          document: { getValue: () => 'Hello', subscribe: () => () => undefined },
+          lastEdited: 'Last edited yesterday',
+          locale: 'en_US',
+          wordCountTemplate: 'Character count: %s'
+        }}
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+
+    expect(view.getByText('Character count: 5')).toBeTruthy();
+    expect(view.queryByText('Last edited yesterday')).toBeNull();
+  });
+
+  it('removes the ordinary footer in hidden status mode', () => {
+    const view = render(
+      <EditorWorkspace
+        direction="ltr"
+        statusBarMode="hidden"
+        ordinaryStatus={{
+          document: { getValue: () => 'Hello', subscribe: () => () => undefined },
+          lastEdited: 'Last edited yesterday',
+          locale: 'en_US',
+          wordCountTemplate: 'Character count: %s'
+        }}
+        source={<section>Source</section>}
+        preview={<section>Preview</section>}
+      />
+    );
+
+    expect(view.container.querySelector('.easymde-editor-status-bar')).toBeNull();
   });
 
   it('does not add the ordinary status owner to the immersive resizable workspace', () => {

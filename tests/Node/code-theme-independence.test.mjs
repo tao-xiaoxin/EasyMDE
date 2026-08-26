@@ -1315,7 +1315,11 @@ test('production highlighting has no article-specific token rewriting', () => {
   );
 
   assert.doesNotMatch(enhancementSource, /fullstack-blue|normalizeFullstackBlueHighlight|easymde-mdnice-/);
-  assert.match(enhancementSource, /pre > code:not\(\.language-mermaid\)/);
+  assert.match(
+    enhancementSource,
+    /'language-mermaid' === className\.toLowerCase\(\)/
+  );
+  assert.match(enhancementSource, /!isMermaidCode\(element\)/);
   assert.match(enhancementSource, /highlightElement\(element\)/);
   assert.match(enhancementSource, /--easymde-code-frame-background/);
   assert.match(enhancementSource, /dataset\.easymdeHighlighted = '1'/);

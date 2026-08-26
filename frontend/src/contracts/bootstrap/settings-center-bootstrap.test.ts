@@ -37,7 +37,6 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			documentationUrl: "https://github.com/tao-xiaoxin/EasyMDE#readme",
 			releasesUrl: "https://github.com/tao-xiaoxin/EasyMDE/releases",
 			issuesUrl: "https://github.com/tao-xiaoxin/EasyMDE/issues",
-			securityUrl: "https://github.com/tao-xiaoxin/EasyMDE/security/policy",
 			licenseUrl: "https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE",
 		},
 		drafts: {
@@ -96,6 +95,36 @@ describe("parseSettingsCenterBootstrap", () => {
 			}).general.showPublishedCodeCopyButton,
 		).toBe(true);
 	});
+
+	it.each(["detailed", "compact", "hidden"])(
+		"accepts the canonical status-bar mode %s",
+		(statusBarMode) => {
+			expect(
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}).general.statusBarMode,
+			).toBe(statusBarMode);
+		},
+	);
+
+	it.each(["words-reading-time", "words"])(
+		"rejects the retired status-bar mode %s",
+		(statusBarMode) => {
+			expect(() =>
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}),
+			).toThrow("settings-center-general-statusBarMode-invalid");
+		},
+	);
 
 	it.each([
 		[
@@ -312,6 +341,7 @@ describe("parseSettingsCenterBootstrap", () => {
 
 	it("physically rejects the removed General settings fields", () => {
 		for (const key of [
+			"autoFocusEditor",
 			"cleanPastedContent",
 			"smartListRecognition",
 			"defaultCategory",
@@ -396,9 +426,24 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("uses semantic string keys for canonical status-bar modes", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining(["detailedStatusBar", "compactStatusBar"]),
+		);
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining(["wordsAndReadingTime", "wordsOnly"]),
+		);
+	});
+
 	it("does not expose removed Markdown settings strings", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
 			expect.arrayContaining([
+				"editorTheme",
+				"automaticFollowSystem",
+				"light",
+				"dark",
+				"htmlRendering",
+				"htmlRenderingDescription",
 				"editorFontSize",
 				"editorFont",
 				"systemDefault",
@@ -438,6 +483,13 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
 			expect.arrayContaining(["livePreview", "general", "about"]),
 		);
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining([
+				"featuredImagePlaceholder",
+				"featuredImagePlaceholderDescription",
+				"aboutSecurityPolicy",
+			]),
+		);
 	});
 
 	it("parses the Markdown settings contract without removed presentation fields", () => {
@@ -447,15 +499,42 @@ describe("parseSettingsCenterBootstrap", () => {
 			),
 		).toEqual([
 			"wordWrap",
-			"editorTheme",
 			"githubFlavor",
 			"smartPunctuation",
 			"tableAlignment",
 			"codeLineNumbers",
-			"htmlRendering",
 			"pasteAsMarkdown",
 		]);
 	});
+
+	it("rejects the retired editor theme field in the exact Markdown contract", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.markdown.editorTheme = "system";
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-markdown-settings-invalid",
+		);
+	});
+
+	it.each([
+		["general", "autoFocusEditor", true],
+		["general", "featuredImagePlaceholder", true],
+		["markdown", "htmlRendering", false],
+	] as const)(
+		"rejects the retired %s.%s field in the exact settings contract",
+		(section, field, value) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings[section][field] = value;
+
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				`settings-center-${section}-settings-invalid`,
+			);
+		},
+	);
 
 	it.each([
 		"lineEnding",

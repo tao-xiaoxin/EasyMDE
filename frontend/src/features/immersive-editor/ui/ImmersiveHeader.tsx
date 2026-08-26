@@ -8,6 +8,7 @@ import {
 } from '../../../generated/lucide-icons';
 import type { DocumentStats, ImmersiveViewMode } from '../immersive-editor';
 import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
+import type { StatusBarMode } from '../../../contracts/settings-center-settings';
 import type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 function PublishArticleIcon() {
@@ -49,7 +50,7 @@ export function ImmersiveHeader({
   i18n,
   mode,
   publishLabel,
-  showStats,
+  statusBarMode,
   stats,
   strings,
   title,
@@ -61,7 +62,7 @@ export function ImmersiveHeader({
   i18n: ImmersiveI18nPort;
   mode: ImmersiveViewMode;
   publishLabel: string;
-  showStats: boolean;
+  statusBarMode: StatusBarMode;
   stats: DocumentStats;
   strings: ImmersiveStrings;
   title: string;
@@ -106,11 +107,15 @@ export function ImmersiveHeader({
         <Check size={13} strokeWidth={2.5} />
         <span>{dirty ? strings.unsaved : strings.saved}</span>
       </span>
-      {showStats ? (
+      {'hidden' !== statusBarMode ? (
         <span className="easymde-immersive-stats">
-          <span>{i18n.words(stats.words)}</span>
+          {'detailed' === statusBarMode ? (
+            <span>{i18n.words(stats.words)}</span>
+          ) : null}
           <span>{i18n.characters(stats.characters)}</span>
-          <span>{i18n.readingTime(stats.minutes)}</span>
+          {'detailed' === statusBarMode ? (
+            <span>{i18n.readingTime(stats.minutes)}</span>
+          ) : null}
         </span>
       ) : null}
       <span className="easymde-immersive-header-spacer is-primary" />

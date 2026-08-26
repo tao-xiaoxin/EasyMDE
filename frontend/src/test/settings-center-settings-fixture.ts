@@ -5,10 +5,9 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	general: {
 		interfaceLanguage: "en-US",
 		editingMode: "live-preview",
-		autoFocusEditor: false,
 		showLineNumbers: true,
 		syntaxHighlight: true,
-		statusBarMode: "words-reading-time",
+		statusBarMode: "detailed",
 		autoSave: true,
 		autoSaveInterval: "60",
 		syncScroll: true,
@@ -17,7 +16,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		applyEditorThemeToFrontend: true,
 		showPublishedCodeCopyButton: true,
 		summaryMode: "auto-55",
-		featuredImagePlaceholder: true,
 	},
 	images: {
 		service: "cloudflare-r2",
@@ -43,12 +41,10 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	},
 	markdown: {
 		wordWrap: true,
-		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
-		tableAlignment: "auto",
+		tableAlignment: "center",
 		codeLineNumbers: "show",
-		htmlRendering: false,
 		pasteAsMarkdown: true,
 	},
 	shortcuts: {
@@ -72,8 +68,4 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 export const SETTINGS_CENTER_DEFAULT_SETTINGS: SettingsCenterSettings = {
 	...SETTINGS_CENTER_TEST_SETTINGS,
 	revision: 0,
-	general: {
-		...SETTINGS_CENTER_TEST_SETTINGS.general,
-		autoFocusEditor: true,
-	},
 };

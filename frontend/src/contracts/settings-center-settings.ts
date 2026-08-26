@@ -1,13 +1,13 @@
 export type SummaryMode = "auto-55" | "auto-100" | "manual";
+export type StatusBarMode = "detailed" | "compact" | "hidden";
 
 export type GeneralSettings = Readonly<{
 	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
 	interfaceLanguage: string;
 	editingMode: string;
-	autoFocusEditor: boolean;
 	showLineNumbers: boolean;
 	syntaxHighlight: boolean;
-	statusBarMode: string;
+	statusBarMode: StatusBarMode;
 	autoSave: boolean;
 	autoSaveInterval: string;
 	syncScroll: boolean;
@@ -16,7 +16,6 @@ export type GeneralSettings = Readonly<{
 	applyEditorThemeToFrontend: boolean;
 	showPublishedCodeCopyButton: boolean;
 	summaryMode: SummaryMode;
-	featuredImagePlaceholder: boolean;
 }>;
 
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
@@ -50,12 +49,10 @@ export type ImageSettings = Readonly<{
 
 export type MarkdownSettings = Readonly<{
 	wordWrap: boolean;
-	editorTheme: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;
 	tableAlignment: string;
 	codeLineNumbers: string;
-	htmlRendering: boolean;
 	pasteAsMarkdown: boolean;
 }>;
 

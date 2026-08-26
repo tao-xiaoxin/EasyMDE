@@ -259,8 +259,6 @@ function fixture(): EditorRootProps &
       splitMode: '分屏模式',
       splitPreview: '分屏预览',
       splitPreviewDescription: '默认显示实时预览区域',
-      syncScroll: '同步滚动',
-      syncScrollDescription: '编辑区和预览区联动',
       table: '表格',
       tableColumns: '列数',
       tableRows: '行数',
@@ -308,9 +306,7 @@ function fixture(): EditorRootProps &
       unsaved: '未保存',
       viewModes: '视图模式',
       wechat: '复制到公众号',
-      wechatCopied: '已复制',
-      wordCount: '字数统计',
-      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长'
+      wechatCopied: '已复制'
     },
     immersiveEnvironment: {
       activeElement: () =>
@@ -511,18 +507,16 @@ function fixture(): EditorRootProps &
     sessionPort,
     settings: {
       general: {
-        autoFocusEditor: true,
         applyEditorThemeToFrontend: true,
         showPublishedCodeCopyButton: true,
         autoSave: true,
         autoSaveInterval: '0.5',
         editingMode: 'live-preview',
-        featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        statusBarMode: 'words-reading-time',
+        statusBarMode: 'detailed',
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
@@ -608,7 +602,7 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
-  it('focuses new posts only when the administrator enables editor autofocus', async () => {
+  it('focuses new editable posts by default without stealing focus for existing posts', async () => {
     const existingProps = fixture();
     const sentinel = document.createElement('button');
     sentinel.type = 'button';
@@ -628,6 +622,24 @@ describe('EditorRoot', () => {
       expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
     );
     newView.unmount();
+
+    const previewFixture = fixture();
+    const previewProps = {
+      ...previewFixture,
+      isNewPost: true,
+      settings: {
+        ...previewFixture.settings,
+        general: {
+          ...previewFixture.settings.general,
+          editingMode: 'preview'
+        }
+      }
+    };
+    sentinel.focus();
+    const previewView = render(<EditorRoot {...previewProps} />);
+
+    expect(document.activeElement).toBe(sentinel);
+    previewView.unmount();
     sentinel.remove();
   });
 
@@ -3079,6 +3091,16 @@ describe('EditorRoot', () => {
     expect(
       dialog.querySelectorAll('.easymde-publish-button-sparkles svg')
     ).toHaveLength(2);
+    expect(
+      dialog.querySelector('.easymde-publish-featured-placeholder')
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole('button', { name: /选择特色图片/u })
+    ).not.toBeNull();
+    expect(within(dialog).getByText('建议使用横向图片')).not.toBeNull();
+    expect(
+      within(dialog).getByText('支持 JPG、PNG、WebP 格式，最大 5MB')
+    ).not.toBeNull();
     const progress = dialog.querySelector('.easymde-publish-progress');
     expect(progress?.getAttribute('aria-live')).toBe('polite');
     expect(progress?.textContent).toBe('');
@@ -3139,7 +3161,6 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} settings={{
       general: {
         ...props.settings.general,
-        featuredImagePlaceholder: false,
         openPreviewAfterPublish: false,
         publishVisibility: 'private'
       },
@@ -3800,7 +3821,7 @@ describe('EditorRoot', () => {
     ).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
-    for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
+    for (const name of ['文章大纲', '分屏预览', '自动保存']) {
       expect(
         view.getByRole('checkbox', { name }).getAttribute('aria-checked')
       ).toBe('true');
@@ -4179,14 +4200,13 @@ describe('EditorRoot', () => {
     fireEvent.mouseUp(document);
   });
 
-  it('applies immersive settings to the real outline, statistics, draft and scroll owners', async () => {
+  it('applies immersive settings to the real outline, draft and scroll owners', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
     fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '字数统计' }));
     fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
     expect(
       view.container
@@ -4200,15 +4220,54 @@ describe('EditorRoot', () => {
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
     fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '同步滚动' }));
 
     expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
-    expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-stats')).not.toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
-    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(4);
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(4);
   });
+
+  it.each([
+    {
+      characters: true,
+      minutes: true,
+      mode: 'detailed',
+      words: true
+    },
+    {
+      characters: true,
+      minutes: false,
+      mode: 'compact',
+      words: false
+    },
+    {
+      characters: false,
+      minutes: false,
+      mode: 'hidden',
+      words: false
+    }
+  ] as const)(
+    'links immersive statistics to the $mode global status mode',
+    async ({ characters, minutes, mode, words }) => {
+      const baseProps = fixture();
+      const props = {
+        ...baseProps,
+        settings: {
+          general: { ...baseProps.settings.general, statusBarMode: mode },
+          markdown: baseProps.settings.markdown
+        }
+      };
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+      expect(null !== view.queryByText('8 字符')).toBe(characters);
+      expect(null !== view.queryByText('1 词')).toBe(words);
+      expect(null !== view.queryByText('约 1 分钟')).toBe(minutes);
+    }
+  );
 
   it('keeps disabled server settings authoritative over immersive preferences', async () => {
     const baseProps = fixture();
@@ -4216,9 +4275,7 @@ describe('EditorRoot', () => {
       preferences: {
         autoSave: true,
         outline: true,
-        splitPreview: true,
-        syncScroll: true,
-        wordCount: true
+        splitPreview: true
       },
       status: 'loaded'
     });
@@ -4239,11 +4296,9 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
     const autoSave = view.getByRole('checkbox', { name: '自动保存' });
-    const syncScroll = view.getByRole('checkbox', { name: '同步滚动' });
     expect(autoSave.getAttribute('aria-checked')).toBe('false');
-    expect(syncScroll.getAttribute('aria-checked')).toBe('false');
     expect((autoSave as HTMLButtonElement).disabled).toBe(true);
-    expect((syncScroll as HTMLButtonElement).disabled).toBe(true);
+    expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
     expect(baseProps.immersivePreferencesPort.write).not.toHaveBeenCalled();
 
@@ -4251,25 +4306,21 @@ describe('EditorRoot', () => {
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledWith(
       expect.objectContaining({
         autoSave: true,
-        outline: false,
-        syncScroll: true
+        outline: false
       })
     );
 
     fireEvent.click(autoSave);
-    fireEvent.click(syncScroll);
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
   });
 
-  it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
+  it('applies restored immersive preferences to drafts without overriding global scroll sync', async () => {
     const props = fixture();
     vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
         autoSave: false,
         outline: true,
-        splitPreview: true,
-        syncScroll: false,
-        wordCount: true
+        splitPreview: true
       },
       status: 'loaded'
     });
@@ -4282,17 +4333,13 @@ describe('EditorRoot', () => {
         .getByRole('checkbox', { name: '自动保存' })
         .getAttribute('aria-checked')
     ).toBe('false');
-    expect(
-      view
-        .getByRole('checkbox', { name: '同步滚动' })
-        .getAttribute('aria-checked')
-    ).toBe('false');
+    expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(
       view.container
         .querySelector('.easymde-editor')
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
-    expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalled();
 
     fireEvent.click(view.getByRole('button', { name: 'Bold' }));
     await act(
@@ -4327,9 +4374,7 @@ describe('EditorRoot', () => {
     savedPreferences = {
       autoSave: false,
       outline: false,
-      splitPreview: false,
-      syncScroll: false,
-      wordCount: false
+      splitPreview: false
     };
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(

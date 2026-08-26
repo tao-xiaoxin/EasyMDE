@@ -111,12 +111,16 @@ async function readImportedSettings(
 		payload.schemaVersion !== 1 &&
 		payload.schemaVersion !== 2 &&
 		payload.schemaVersion !== 3 &&
-		payload.schemaVersion !== 4
+		payload.schemaVersion !== 4 &&
+		payload.schemaVersion !== 5 &&
+		payload.schemaVersion !== 6 &&
+		payload.schemaVersion !== 7 &&
+		payload.schemaVersion !== 8
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
 	let importedSettings = payload.settings;
-	if (payload.schemaVersion < 4) {
+	if (payload.schemaVersion < 8) {
 		if (
 			!importedSettings ||
 			typeof importedSettings !== "object" ||
@@ -125,49 +129,60 @@ async function readImportedSettings(
 			throw new Error("settings-center-transfer-import-invalid");
 		}
 		const legacy = structuredClone(importedSettings) as Record<string, unknown>;
+		const markdown = legacy.markdown as Record<string, unknown> | undefined;
+		if (!markdown || Array.isArray(markdown)) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		delete markdown.editorTheme;
+		delete markdown.htmlRendering;
 		const general = legacy.general as Record<string, unknown> | undefined;
 		if (!general || Array.isArray(general)) {
 			throw new Error("settings-center-transfer-import-invalid");
 		}
-		if (!("applyEditorThemeToFrontend" in general)) {
-			general.applyEditorThemeToFrontend = true;
+		delete general.featuredImagePlaceholder;
+		delete general.autoFocusEditor;
+		if (general.statusBarMode === "words-reading-time") {
+			general.statusBarMode = "detailed";
+		} else if (general.statusBarMode === "words") {
+			general.statusBarMode = "compact";
 		}
-		if (!("showPublishedCodeCopyButton" in general)) {
-			general.showPublishedCodeCopyButton = true;
-		}
-		if (payload.schemaVersion < 3) {
-			const markdown = legacy.markdown as Record<string, unknown> | undefined;
-			if (!markdown || Array.isArray(markdown)) {
-				throw new Error("settings-center-transfer-import-invalid");
+		if (payload.schemaVersion < 4) {
+			if (!("applyEditorThemeToFrontend" in general)) {
+				general.applyEditorThemeToFrontend = true;
 			}
-			delete markdown.lineNumbers;
-			if (payload.schemaVersion === 1) {
-				const images = legacy.images as Record<string, unknown> | undefined;
-				if (!images || Array.isArray(images)) {
-					throw new Error("settings-center-transfer-import-invalid");
-				}
-				images.maxImageSizeMb = 5;
-				images.titleDisplay =
-					images.captionMode === "filename" ? "filename" : "none";
-				for (const key of [
-					"insertMarkdown",
-					"preserveFileName",
-					"copyUrl",
-					"maxImageSize",
-					"insertFormat",
-					"altSource",
-					"captionMode",
-					"featuredPlaceholder",
-				]) {
-					delete images[key];
-				}
-				for (const key of [
-					"lineEnding",
-					"unorderedMarker",
-					"orderedStart",
-					"blockquoteStyle",
-				]) {
-					delete markdown[key];
+			if (!("showPublishedCodeCopyButton" in general)) {
+				general.showPublishedCodeCopyButton = true;
+			}
+			if (payload.schemaVersion < 3) {
+				delete markdown.lineNumbers;
+				if (payload.schemaVersion === 1) {
+					const images = legacy.images as Record<string, unknown> | undefined;
+					if (!images || Array.isArray(images)) {
+						throw new Error("settings-center-transfer-import-invalid");
+					}
+					images.maxImageSizeMb = 5;
+					images.titleDisplay =
+						images.captionMode === "filename" ? "filename" : "none";
+					for (const key of [
+						"insertMarkdown",
+						"preserveFileName",
+						"copyUrl",
+						"maxImageSize",
+						"insertFormat",
+						"altSource",
+						"captionMode",
+						"featuredPlaceholder",
+					]) {
+						delete images[key];
+					}
+					for (const key of [
+						"lineEnding",
+						"unorderedMarker",
+						"orderedStart",
+						"blockquoteStyle",
+					]) {
+						delete markdown[key];
+					}
 				}
 			}
 		}
@@ -402,7 +417,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 4, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 8, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

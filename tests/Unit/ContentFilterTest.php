@@ -12,6 +12,29 @@ use EasyMDE\Theme\ThemeStateRepository;
 
 final class ContentFilterTest extends WP_UnitTestCase
 {
+	public function test_default_markdown_presentation_settings_are_exposed_on_the_published_root()
+	{
+		$html = $this->render_published_markdown_with_settings();
+
+		$this->assertStringContainsString('easymde-table-align-center', $html);
+		$this->assertStringContainsString('easymde-code-line-numbers', $html);
+	}
+
+	public function test_saved_markdown_presentation_settings_change_only_the_published_root_classes()
+	{
+		$html = $this->render_published_markdown_with_settings(
+			array(
+				'tableAlignment' => 'auto',
+				'codeLineNumbers' => 'hide',
+			)
+		);
+
+		$this->assertStringContainsString('easymde-table-align-auto', $html);
+		$this->assertStringNotContainsString('easymde-table-align-center', $html);
+		$this->assertStringNotContainsString('easymde-code-line-numbers', $html);
+		$this->assertStringContainsString('<pre><code class="language-php">', $html);
+	}
+
     public function test_disabled_frontend_theme_linkage_renders_the_default_markup_profile_and_classes()
     {
         $post_id = self::factory()->post->create(array('post_type' => 'post'));
@@ -40,4 +63,27 @@ final class ContentFilterTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('<section class="h1">', $html);
         $this->assertStringNotContainsString(' style=', $html);
     }
+
+	private function render_published_markdown_with_settings( array $markdown_settings = array() )
+	{
+		$post_id = self::factory()->post->create(array('post_type' => 'post'));
+		update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+		update_post_meta($post_id, PostDocument::META_MARKDOWN, "| A | B |\n| - | - |\n| 1 | 2 |\n\n```php\necho 'test';\n```");
+
+		$settings = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		if ( ! empty( $markdown_settings ) ) {
+			$draft = $settings->get_settings();
+			$draft['markdown'] = array_merge($draft['markdown'], $markdown_settings);
+			$this->assertIsArray($settings->update_settings($draft));
+		}
+
+		$this->go_to(get_permalink($post_id));
+		$filter = new ContentFilter(
+			new PostDocument(),
+			new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy()),
+			$settings
+		);
+
+		return $filter->render_markdown_content('Stored compatibility output');
+	}
 }

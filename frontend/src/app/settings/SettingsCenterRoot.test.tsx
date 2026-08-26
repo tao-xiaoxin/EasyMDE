@@ -51,7 +51,6 @@ function bootstrap({
 			documentationUrl: "https://github.com/tao-xiaoxin/EasyMDE#readme",
 			releasesUrl: "https://github.com/tao-xiaoxin/EasyMDE/releases",
 			issuesUrl: "https://github.com/tao-xiaoxin/EasyMDE/issues",
-			securityUrl: "https://github.com/tao-xiaoxin/EasyMDE/security/policy",
 			licenseUrl: "https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE",
 		},
 		drafts: {
@@ -344,7 +343,7 @@ describe("SettingsCenterRoot global search", () => {
 			value: () => ({ bottom: 1120, top: 1100 }),
 		});
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(screen.getByRole("button", { name: "markdown" }));
 
 		expect(scrollTo).toHaveBeenCalledWith({ top: 807, behavior: "auto" });
@@ -894,14 +893,10 @@ describe("SettingsCenterRoot images section", () => {
 		const service = screen.getByRole<HTMLButtonElement>("combobox", {
 			name: "selectImageHostService",
 		});
-		const theme = screen.getByRole<HTMLButtonElement>("combobox", {
-			name: "editorTheme",
-		});
 
 		expect(service.textContent).toContain("cloudflareR2");
-		expect(theme.textContent).toContain("automaticFollowSystem");
 		expect(service.matches(":disabled")).toBe(false);
-		expect(theme.matches(":disabled")).toBe(true);
+		expect(screen.queryByRole("combobox", { name: "editorTheme" })).toBeNull();
 	});
 });
 
@@ -965,15 +960,15 @@ describe("SettingsCenterRoot Markdown section", () => {
 			throw new Error("markdown-settings-section-missing");
 		const controls = within(markdown);
 		const wordWrap = controls.getByRole("switch", { name: "wordWrap" });
-		const theme = controls.getByRole<HTMLSelectElement>("combobox", {
-			name: "editorTheme",
+		const themeRendering = controls.getByRole("switch", {
+			name: "applyEditorThemeToFrontend",
 		});
 
 		expect(wordWrap.matches(":disabled")).toBe(false);
 		fireEvent.click(wordWrap);
 		expect(wordWrap.getAttribute("aria-checked")).toBe("false");
 		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
-		expect(theme.matches(":disabled")).toBe(true);
+		expect(themeRendering.matches(":disabled")).toBe(false);
 		expect(controls.queryByRole("textbox", { name: "unorderedListMarker" })).toBeNull();
 		expect(controls.queryByRole("switch", { name: "showLineNumbers" })).toBeNull();
 		expect(wordWrap.getAttribute("aria-describedby")).toBeNull();
@@ -1012,10 +1007,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const user = userEvent.setup();
 		const importedSettings: SettingsCenterSettings = {
 			...bootstrap().settings,
-			general: {
-				...bootstrap().settings.general,
-				autoFocusEditor: true,
-			},
+			general: bootstrap().settings.general,
 			images: {
 				...bootstrap().settings.images,
 				titleDisplay: "filename",
@@ -1026,6 +1018,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			images: Record<string, unknown>;
 			markdown: Record<string, unknown>;
 		};
+		legacySettings.general.autoFocusEditor = true;
 		delete legacySettings.general.applyEditorThemeToFrontend;
 		delete legacySettings.general.showPublishedCodeCopyButton;
 		delete legacySettings.images.maxImageSizeMb;
@@ -1041,12 +1034,16 @@ describe("SettingsCenterRoot Transfer section", () => {
 			featuredPlaceholder: true,
 		});
 		Object.assign(legacySettings.markdown, {
+			editorTheme: "system",
+			htmlRendering: false,
 			lineNumbers: false,
 			lineEnding: "crlf",
 			unorderedMarker: "*",
 			orderedStart: "3",
 			blockquoteStyle: "spaced",
 		});
+		legacySettings.general.featuredImagePlaceholder = true;
+		legacySettings.general.statusBarMode = "words-reading-time";
 		const savedSettings = {
 			...importedSettings,
 			revision: importedSettings.revision + 1,
@@ -1099,13 +1096,19 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
 			settings: SettingsCenterSettings;
 		};
-		expect(body.settings.general.autoFocusEditor).toBe(true);
+		expect(body.settings.general).not.toHaveProperty("autoFocusEditor");
 		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+		expect(body.settings.general.statusBarMode).toBe("detailed");
 		expect(body.settings.images.maxImageSizeMb).toBe(5);
 		expect(body.settings.images.titleDisplay).toBe("filename");
 		expect(body.settings.images).not.toHaveProperty("insertFormat");
 		expect(body.settings.markdown).not.toHaveProperty("lineNumbers");
+		expect(body.settings.markdown).not.toHaveProperty("editorTheme");
+		expect(body.settings.markdown).not.toHaveProperty("htmlRendering");
+		expect(body.settings.general).not.toHaveProperty(
+			"featuredImagePlaceholder",
+		);
 		fetch.mockRestore();
 	});
 
@@ -1119,6 +1122,10 @@ describe("SettingsCenterRoot Transfer section", () => {
 		delete legacySettings.general.applyEditorThemeToFrontend;
 		delete legacySettings.general.showPublishedCodeCopyButton;
 		legacySettings.markdown.lineNumbers = false;
+		legacySettings.markdown.editorTheme = "system";
+		legacySettings.markdown.htmlRendering = false;
+		legacySettings.general.featuredImagePlaceholder = true;
+		legacySettings.general.statusBarMode = "words";
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -1159,29 +1166,104 @@ describe("SettingsCenterRoot Transfer section", () => {
 			settings: SettingsCenterSettings;
 		};
 		expect(body.settings.markdown).not.toHaveProperty("lineNumbers");
+		expect(body.settings.markdown).not.toHaveProperty("editorTheme");
+		expect(body.settings.markdown).not.toHaveProperty("htmlRendering");
+		expect(body.settings.general).not.toHaveProperty(
+			"featuredImagePlaceholder",
+		);
 		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+		expect(body.settings.general.statusBarMode).toBe("compact");
 		fetch.mockRestore();
 	});
 
-	it("imports schema 3 configurations with published appearance defaults", async () => {
+	it.each([3, 4, 5, 6, 7])(
+		"imports schema %s configurations while removing the retired editor theme",
+		async (schemaVersion) => {
+			const user = userEvent.setup();
+			const legacySettings = structuredClone(
+				bootstrap().settings,
+			) as unknown as {
+				general: Record<string, unknown>;
+				markdown: Record<string, unknown>;
+			};
+			legacySettings.general.autoFocusEditor = true;
+			legacySettings.general.statusBarMode = "words";
+			legacySettings.markdown.editorTheme = "system";
+			legacySettings.markdown.htmlRendering = false;
+			legacySettings.general.featuredImagePlaceholder = true;
+			if (schemaVersion === 3) {
+				delete legacySettings.general.applyEditorThemeToFrontend;
+				delete legacySettings.general.showPublishedCodeCopyButton;
+			}
+			const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					settings: bootstrap().settings,
+					credentialStatus: {
+						primaryConfigured: false,
+						backupConfigured: false,
+					},
+				}),
+			} as Response);
+			const { container } = render(
+				<SettingsCenterRoot bootstrap={bootstrap()} />,
+			);
+			const transferSection = container.querySelector(
+				'[data-settings-section="transfer"]',
+			);
+			if (!(transferSection instanceof HTMLElement))
+				throw new Error("settings-center-transfer-section-missing");
+			const transfer = within(transferSection);
+			const fileInput = transfer.getByLabelText<HTMLInputElement>(
+				"transferChooseConfigurationFile",
+			);
+
+			await user.upload(
+				fileInput,
+				new File(
+					[JSON.stringify({ schemaVersion, settings: legacySettings })],
+					"settings.json",
+					{ type: "application/json" },
+				),
+			);
+			await user.click(
+				transfer.getByRole("button", { name: "transferConfirmImport" }),
+			);
+			await user.click(screen.getByRole("button", { name: "saveSettings" }));
+			await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+			const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+				settings: SettingsCenterSettings;
+			};
+			expect(body.settings.general).not.toHaveProperty("autoFocusEditor");
+			expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
+			expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+			expect(body.settings.general.statusBarMode).toBe("compact");
+			expect(body.settings.markdown).not.toHaveProperty("editorTheme");
+			expect(body.settings.markdown).not.toHaveProperty("htmlRendering");
+			expect(body.settings.general).not.toHaveProperty(
+				"featuredImagePlaceholder",
+			);
+			fetch.mockRestore();
+		},
+	);
+
+	it("rejects a schema 8 payload with retired fields and status modes", async () => {
 		const user = userEvent.setup();
-		const legacySettings = structuredClone(bootstrap().settings) as unknown as {
-			general: Record<string, unknown>;
+		const settings = structuredClone(bootstrap().settings) as unknown as {
+			markdown: Record<string, unknown>;
 		};
-		legacySettings.general.autoFocusEditor = true;
-		delete legacySettings.general.applyEditorThemeToFrontend;
-		delete legacySettings.general.showPublishedCodeCopyButton;
-		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
-			ok: true,
-			json: async () => ({
-				settings: bootstrap().settings,
-				credentialStatus: {
-					primaryConfigured: false,
-					backupConfigured: false,
-				},
-			}),
-		} as Response);
+		settings.markdown.editorTheme = "system";
+		settings.markdown.htmlRendering = false;
+		const general = (
+			settings as unknown as {
+				general: Record<string, unknown>;
+			}
+		).general;
+		general.featuredImagePlaceholder = true;
+		general.autoFocusEditor = true;
+		general.statusBarMode = "words-reading-time";
+		const fetch = vi.spyOn(window, "fetch");
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -1191,14 +1273,13 @@ describe("SettingsCenterRoot Transfer section", () => {
 		if (!(transferSection instanceof HTMLElement))
 			throw new Error("settings-center-transfer-section-missing");
 		const transfer = within(transferSection);
-		const fileInput = transfer.getByLabelText<HTMLInputElement>(
-			"transferChooseConfigurationFile",
-		);
 
 		await user.upload(
-			fileInput,
+			transfer.getByLabelText<HTMLInputElement>(
+				"transferChooseConfigurationFile",
+			),
 			new File(
-				[JSON.stringify({ schemaVersion: 3, settings: legacySettings })],
+				[JSON.stringify({ schemaVersion: 8, settings })],
 				"settings.json",
 				{ type: "application/json" },
 			),
@@ -1206,14 +1287,9 @@ describe("SettingsCenterRoot Transfer section", () => {
 		await user.click(
 			transfer.getByRole("button", { name: "transferConfirmImport" }),
 		);
-		await user.click(screen.getByRole("button", { name: "saveSettings" }));
-		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
-		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
-			settings: SettingsCenterSettings;
-		};
-		expect(body.settings.general.autoFocusEditor).toBe(true);
-		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
-		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+
+		expect(screen.getByText("transferImportInvalid")).not.toBeNull();
+		expect(fetch).not.toHaveBeenCalled();
 		fetch.mockRestore();
 	});
 
@@ -1261,8 +1337,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(4);
-			expect(exported.settings.general.autoFocusEditor).toBe(false);
+			expect(exported.schemaVersion).toBe(8);
+			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
 			expect(exported.settings.images.backupAccessKey).toBe("");
@@ -1530,10 +1606,8 @@ describe("SettingsCenterRoot About section", () => {
 				.getAttribute("href"),
 		).toBe("https://github.com/tao-xiaoxin/EasyMDE/issues");
 		expect(
-			screen
-				.getByRole("link", { name: /aboutSecurityPolicy/ })
-				.getAttribute("href"),
-		).toBe("https://github.com/tao-xiaoxin/EasyMDE/security/policy");
+			screen.queryByRole("link", { name: /aboutSecurityPolicy/ }),
+		).toBeNull();
 	});
 
 	it("opens truthful Help and Changelog dialogs and restores trigger focus", async () => {
@@ -1620,7 +1694,7 @@ describe("SettingsCenterRoot persistence", () => {
 			throw new Error("settings-center-overlay-missing");
 		}
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const trigger = screen.getByRole("button", { name: "saveSettings" });
 		await user.click(trigger);
 		const dialog = within(overlayRoot).getByRole("alertdialog", {
@@ -1638,10 +1712,8 @@ describe("SettingsCenterRoot persistence", () => {
 	it("enables owner-backed controls while keeping unsupported fields unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		expect(
-			screen
-				.getByRole("switch", { name: "autoFocusEditor" })
-				.matches(":disabled"),
-		).toBe(false);
+			screen.queryByRole("switch", { name: "autoFocusEditor" }),
+		).toBeNull();
 		expect(
 			screen.queryByRole("combobox", { name: "interfaceLanguage" }),
 		).toBeNull();
@@ -1767,7 +1839,7 @@ describe("SettingsCenterRoot persistence", () => {
 		} as Response);
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
 			name: "saveSettings",
 		});
@@ -2204,7 +2276,7 @@ describe("SettingsCenterRoot persistence", () => {
 		try {
 			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-			await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+			await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 			await user.click(
 				screen.getByRole<HTMLButtonElement>("button", {
 					name: "saveSettings",
@@ -2231,7 +2303,7 @@ describe("SettingsCenterRoot persistence", () => {
 		const user = userEvent.setup();
 		const latestSettings = {
 			...bootstrap().settings,
-			general: { ...bootstrap().settings.general, autoFocusEditor: true },
+			general: { ...bootstrap().settings.general, showLineNumbers: true },
 		};
 		const fetch = vi
 			.spyOn(window, "fetch")
@@ -2256,7 +2328,7 @@ describe("SettingsCenterRoot persistence", () => {
 			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }),
 		);
@@ -2271,8 +2343,8 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(reload);
 		await waitFor(() =>
 			expect(
-				screen
-					.getByRole("switch", { name: "autoFocusEditor" })
+					screen
+						.getByRole("switch", { name: "showLineNumbers" })
 					.getAttribute("aria-checked"),
 			).toBe("true"),
 		);
@@ -2340,7 +2412,7 @@ describe("SettingsCenterRoot persistence", () => {
 			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 		await waitFor(() =>
 			expect(screen.getByText("settingsConflict")).not.toBeNull(),
@@ -2362,7 +2434,7 @@ describe("SettingsCenterRoot persistence", () => {
 			.mockRejectedValue(new Error("settings-save-failed"));
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
 			name: "saveSettings",
 		});

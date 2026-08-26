@@ -572,12 +572,93 @@ test("keeps only the remaining Markdown settings inside their responsive section
 	await login(page);
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	const generalSection = page.locator('[data-settings-section="general"]');
+	const themeRenderingName = /^(?:编辑器主题渲染|Editor Theme Rendering)$/u;
+	const codeCopyName = /^(?:代码块复制|Code Block Copy)$/u;
+	await expect(
+		generalSection.getByRole("switch", { name: themeRenderingName }),
+	).toHaveCount(0);
+	await expect(
+		generalSection.getByRole("switch", { name: codeCopyName }),
+	).toHaveCount(1);
+	await expect(
+		generalSection.getByRole("switch", {
+			name: /^(?:特色图片占位提示|Featured Image Placeholder)$/u,
+		}),
+	).toHaveCount(0);
 
 	await page
 		.getByRole("button", { name: /^(?:Markdown 设置|Markdown Settings)$/u })
 		.click();
 	const markdownSection = page.locator('[data-settings-section="markdown"]');
 	await expect(markdownSection).toBeVisible();
+	const themeRendering = markdownSection.getByRole("switch", {
+		name: themeRenderingName,
+	});
+	await expect(themeRendering).toHaveCount(1);
+	await expect(
+		markdownSection.getByRole("combobox", {
+			name: /^(?:编辑器主题|Editor Theme)$/u,
+		}),
+	).toHaveCount(0);
+	await expect(
+		markdownSection.getByRole("switch", {
+			name: /^(?:HTML 渲染|HTML Rendering)$/u,
+		}),
+	).toHaveCount(0);
+	await expect(
+		markdownSection.getByRole("combobox", {
+			name: /^(?:表格对齐|Table Alignment)$/u,
+		}),
+	).toBeEnabled();
+	await expect(
+		markdownSection.getByRole("combobox", {
+			name: /^(?:代码块行号|Code Block Line Numbers)$/u,
+		}),
+	).toBeEnabled();
+	const initialThemeRendering =
+		await themeRendering.getAttribute("aria-checked");
+	if (initialThemeRendering !== "true" && initialThemeRendering !== "false") {
+		throw new Error("settings-theme-rendering-state-invalid");
+	}
+	const changedThemeRendering =
+		initialThemeRendering === "true" ? "false" : "true";
+	const saveButton = page.getByRole("button", {
+		name: /保存设置|Save Settings/u,
+	});
+	const saveStatus = page.locator("[data-save-status]");
+	try {
+		await themeRendering.click();
+		await expect(themeRendering).toHaveAttribute(
+			"aria-checked",
+			changedThemeRendering,
+		);
+		await expect(saveButton).toBeEnabled();
+		await saveButton.click();
+		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page
+			.getByRole("button", { name: /^(?:Markdown 设置|Markdown Settings)$/u })
+			.click();
+		await expect(themeRendering).toHaveAttribute(
+			"aria-checked",
+			changedThemeRendering,
+		);
+	} finally {
+		if (
+			(await themeRendering.getAttribute("aria-checked")) !==
+			initialThemeRendering
+		) {
+			await themeRendering.click();
+			await expect(saveButton).toBeEnabled();
+			await saveButton.click();
+			await expect(saveStatus).toHaveAttribute(
+				"data-save-status",
+				/saved|idle/u,
+			);
+		}
+	}
 	const editorLineNumbers = /^(?:显示行号|Show Line Numbers)$/u;
 	await expect(
 		markdownSection.getByRole("switch", { name: editorLineNumbers }),
@@ -658,6 +739,15 @@ test("keeps only the remaining Markdown settings inside their responsive section
 		expect(overflow.left).toBeLessThanOrEqual(1);
 		expect(overflow.right).toBeLessThanOrEqual(1);
 	}
+	await page.setViewportSize({ width: 1152, height: 753 });
+	await page.locator('button[data-nav-id="about"]').click();
+	const aboutSection = page.locator('[data-settings-section="about"]');
+	await expect(aboutSection).toBeVisible();
+	await expect(
+		aboutSection.getByRole("link", {
+			name: /^(?:安全策略|Security Policy)/u,
+		}),
+	).toHaveCount(0);
 });
 
 test("opens a search result at the reference offset and focuses its control", async ({

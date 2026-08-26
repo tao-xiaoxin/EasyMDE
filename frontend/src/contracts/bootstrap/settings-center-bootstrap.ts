@@ -40,8 +40,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"editorBehavior",
 	"documentDefaults",
 	"defaultEditingMode",
-	"autoFocusEditor",
-	"autoFocusEditorDescription",
 	"showLineNumbers",
 	"showLineNumbersDescription",
 	"syntaxHighlight",
@@ -61,13 +59,11 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"showPublishedCodeCopyButtonDescription",
 	"summaryMode",
 	"summaryModeDescription",
-	"featuredImagePlaceholder",
-	"featuredImagePlaceholderDescription",
 	"livePreview",
 	"sourceEditing",
 	"previewOnly",
-	"wordsAndReadingTime",
-	"wordsOnly",
+	"detailedStatusBar",
+	"compactStatusBar",
 	"hiddenStatusBar",
 	"seconds30",
 	"seconds60",
@@ -223,10 +219,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"markdownEditorSettings",
 	"wordWrap",
 	"wordWrapDescription",
-	"editorTheme",
-	"automaticFollowSystem",
-	"light",
-	"dark",
 	"markdownParsingRendering",
 	"githubFlavor",
 	"githubFlavorDescription",
@@ -239,8 +231,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"codeBlockLineNumbers",
 	"show",
 	"hide",
-	"htmlRendering",
-	"htmlRenderingDescription",
 	"pasteAsMarkdown",
 	"pasteAsMarkdownDescription",
 	"transferExportConfiguration",
@@ -325,7 +315,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"aboutChangelog",
 	"aboutIssueFeedback",
 	"aboutGithubRepository",
-	"aboutSecurityPolicy",
 	"aboutOpenSourceLicense",
 	"aboutSupportNote",
 	"aboutPluginIntroduction",
@@ -376,7 +365,6 @@ export type SettingsCenterBootstrap = Readonly<{
 		documentationUrl: string;
 		releasesUrl: string;
 		issuesUrl: string;
-		securityUrl: string;
 		licenseUrl: string;
 	}>;
 	drafts: Readonly<{
@@ -651,7 +639,6 @@ export function parseSettingsCenterSettings(
 		summaryMode: 16,
 	};
 	const generalBooleans = [
-		"autoFocusEditor",
 		"showLineNumbers",
 		"syntaxHighlight",
 		"autoSave",
@@ -659,7 +646,6 @@ export function parseSettingsCenterSettings(
 		"openPreviewAfterPublish",
 		"applyEditorThemeToFrontend",
 		"showPublishedCodeCopyButton",
-		"featuredImagePlaceholder",
 	];
 	const general = parseSettingsStringFields(root, "general", generalStrings);
 	parseSettingsBooleanFields(general, "general", generalBooleans);
@@ -671,7 +657,7 @@ export function parseSettingsCenterSettings(
 	assertEnumFields(general, "general", {
 		interfaceLanguage: ["zh-CN", "zh-TW", "en-US"],
 		editingMode: ["live-preview", "source", "preview"],
-		statusBarMode: ["words-reading-time", "words", "hidden"],
+		statusBarMode: ["detailed", "compact", "hidden"],
 		autoSaveInterval: ["30", "60", "120", "300"],
 		publishVisibility: ["public", "private", "password"],
 		summaryMode: ["auto-55", "auto-100", "manual"],
@@ -760,7 +746,6 @@ export function parseSettingsCenterSettings(
 	}
 
 	const markdownStrings = {
-		editorTheme: 16,
 		tableAlignment: 16,
 		codeLineNumbers: 16,
 	};
@@ -768,7 +753,6 @@ export function parseSettingsCenterSettings(
 		"wordWrap",
 		"githubFlavor",
 		"smartPunctuation",
-		"htmlRendering",
 		"pasteAsMarkdown",
 	];
 	const markdown = parseSettingsStringFields(root, "markdown", markdownStrings);
@@ -779,7 +763,6 @@ export function parseSettingsCenterSettings(
 		"settings-center-markdown-settings-invalid",
 	);
 	assertEnumFields(markdown, "markdown", {
-		editorTheme: ["system", "light", "dark"],
 		tableAlignment: ["auto", "left", "center"],
 		codeLineNumbers: ["show", "hide"],
 	});
@@ -981,10 +964,6 @@ export function parseSettingsCenterBootstrap(
 			issuesUrl: parseProjectUrl(
 				links.issuesUrl,
 				"settings-center-issues-url-invalid",
-			),
-			securityUrl: parseProjectUrl(
-				links.securityUrl,
-				"settings-center-security-url-invalid",
 			),
 			licenseUrl: parseProjectUrl(
 				links.licenseUrl,

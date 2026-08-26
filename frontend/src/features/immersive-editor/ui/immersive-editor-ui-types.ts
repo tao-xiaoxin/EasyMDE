@@ -51,8 +51,6 @@ export type ImmersiveStrings = Readonly<{
   splitMode: string;
   splitPreview: string;
   splitPreviewDescription: string;
-  syncScroll: string;
-  syncScrollDescription: string;
   table: string;
   tableColumns: string;
   tableRows: string;
@@ -63,8 +61,6 @@ export type ImmersiveStrings = Readonly<{
   viewModes: string;
   wechat: string;
   wechatCopied: string;
-  wordCount: string;
-  wordCountDescription: string;
   addTags: string;
   categories: string;
   categoriesDescription: string;
@@ -109,6 +105,4 @@ export type ImmersiveSettings = Readonly<{
   autoSave: boolean;
   outline: boolean;
   splitPreview: boolean;
-  syncScroll: boolean;
-  wordCount: boolean;
 }>;

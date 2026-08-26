@@ -126,9 +126,9 @@ final class SettingsController {
 
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
-			'general'   => array( 'interfaceLanguage', 'editingMode', 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode', 'featuredImagePlaceholder' ),
+			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
 			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
-			'markdown'  => array( 'wordWrap', 'editorTheme', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'htmlRendering', 'pasteAsMarkdown' ),
+			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -168,15 +168,14 @@ final class SettingsController {
 				'titleDisplay'    => 16,
 			),
 			'markdown' => array(
-				'editorTheme'     => 16,
 				'tableAlignment'  => 16,
 				'codeLineNumbers' => 16,
 			),
 		);
 		$boolean_fields = array(
-			'general'   => array( 'autoFocusEditor', 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'featuredImagePlaceholder' ),
+			'general'   => array( 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
 			'images'    => array( 'backupEnabled', 'compressImages' ),
-			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'htmlRendering', 'pasteAsMarkdown' ),
+			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
 		);
 
@@ -238,7 +237,7 @@ final class SettingsController {
 			'general'  => array(
 				'interfaceLanguage' => array( 'zh-CN', 'zh-TW', 'en-US' ),
 				'editingMode'       => array( 'live-preview', 'source', 'preview' ),
-				'statusBarMode'     => array( 'words-reading-time', 'words', 'hidden' ),
+				'statusBarMode'     => array( 'detailed', 'compact', 'hidden' ),
 				'autoSaveInterval'  => array( '30', '60', '120', '300' ),
 				'publishVisibility' => array( 'public', 'private', 'password' ),
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
@@ -249,7 +248,6 @@ final class SettingsController {
 				'titleDisplay'  => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
-				'editorTheme'     => array( 'system', 'light', 'dark' ),
 				'tableAlignment'  => array( 'auto', 'left', 'center' ),
 				'codeLineNumbers' => array( 'show', 'hide' ),
 			),

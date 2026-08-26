@@ -244,7 +244,7 @@ pre, pre > code.hljs {
 .hljs-string, .hljs-number, .hljs-attr, .hljs-attribute, .hljs-literal, .hljs-regexp {
   color: ${variables.codeStringColor};
 }
-.hljs-comment, .hljs-quote, .code-line-number { color: ${variables.codeCommentColor}; }`;
+.hljs-comment, .hljs-quote { color: ${variables.codeCommentColor}; }`;
 
   return [
     appendCustomCss(articleCss, articleCustomCss),
@@ -317,7 +317,6 @@ function PreviewContent({
       <pre>
         <code className="code-block hljs">
           <span className="code-preview-line">
-            <span className="code-line-number">1</span>
             <span>
               <span className="hljs-keyword">const</span> message ={' '}
               <span className="hljs-string">&quot;Hello, EasyMDE!&quot;</span>
@@ -325,14 +324,12 @@ function PreviewContent({
             </span>
           </span>
           <span className="code-preview-line">
-            <span className="code-line-number">2</span>
             <span className="hljs-comment">
               {'// '}
               {strings.previewCodeComment}
             </span>
           </span>
           <span className="code-preview-line">
-            <span className="code-line-number">3</span>
             <span>
               <span className="hljs-title function_">renderTheme</span>(message);
             </span>

@@ -15,28 +15,36 @@ const strings = Object.fromEntries(
 ) as unknown as SettingsCenterBootstrap["strings"];
 
 describe("GeneralSettingsPage", () => {
-	it("shows the frontend theme preference enabled by default and reports changes", async () => {
-		const user = userEvent.setup();
-		const onChange = vi.fn();
+	it("does not duplicate the theme rendering preference moved to Markdown settings", () => {
 		render(
 			<GeneralSettingsPage
-				onChange={onChange}
 				query=""
 				searchEmptyIllustrationUrl="/plugin/search-empty.png"
 				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
 				strings={strings}
 			/>,
 		);
-		const toggle = screen.getByRole("switch", {
-			name: "applyEditorThemeToFrontend",
-		});
 
-		expect(toggle.getAttribute("aria-checked")).toBe("true");
-		await user.click(toggle);
-		expect(onChange).toHaveBeenLastCalledWith({
-			...SETTINGS_CENTER_TEST_SETTINGS.general,
-			applyEditorThemeToFrontend: false,
-		});
+		expect(
+			screen.queryByRole("switch", {
+				name: "applyEditorThemeToFrontend",
+			}),
+		).toBeNull();
+	});
+
+	it("does not expose editor auto-focus because new articles focus by default", () => {
+		render(
+			<GeneralSettingsPage
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("switch", { name: "autoFocusEditor" }),
+		).toBeNull();
 	});
 
 	it("shows the published code copy button enabled by default and reports changes", async () => {
@@ -119,6 +127,30 @@ describe("GeneralSettingsPage", () => {
 		]);
 	});
 
+	it("saves the compact status-bar option with its canonical value", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<GeneralSettingsPage
+				onChange={onChange}
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: "statusBarDisplay" }),
+		);
+		await user.click(screen.getByRole("option", { name: "compactStatusBar" }));
+
+		expect(onChange).toHaveBeenLastCalledWith({
+			...SETTINGS_CENTER_TEST_SETTINGS.general,
+			statusBarMode: "compact",
+		});
+	});
+
 	it("does not expose editor capabilities or WordPress category ownership as settings", () => {
 		render(
 			<GeneralSettingsPage
@@ -137,6 +169,9 @@ describe("GeneralSettingsPage", () => {
 		).toBeNull();
 		expect(
 			screen.queryByRole("combobox", { name: "defaultCategory" }),
+		).toBeNull();
+		expect(
+			screen.queryByRole("switch", { name: "featuredImagePlaceholder" }),
 		).toBeNull();
 	});
 });

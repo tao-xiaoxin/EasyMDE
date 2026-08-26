@@ -92,6 +92,18 @@ final class SettingsCenterRepository {
 		return $settings['general']['showPublishedCodeCopyButton'];
 	}
 
+	public function get_published_table_alignment() {
+		$settings = $this->get_settings();
+
+		return $settings['markdown']['tableAlignment'];
+	}
+
+	public function should_show_published_code_line_numbers() {
+		$settings = $this->get_settings();
+
+		return 'show' === $settings['markdown']['codeLineNumbers'];
+	}
+
 	public function get_shortcut_config_for_script() {
 		$settings  = $this->get_settings();
 		$stored    = $this->options->get_editor_settings();
@@ -469,10 +481,9 @@ final class SettingsCenterRepository {
 			'general'   => array(
 				'interfaceLanguage'           => 'zh-CN',
 				'editingMode'                 => 'live-preview',
-				'autoFocusEditor'             => true,
 				'showLineNumbers'             => true,
 				'syntaxHighlight'             => true,
-				'statusBarMode'               => 'words-reading-time',
+				'statusBarMode'               => 'detailed',
 				'autoSave'                    => true,
 				'autoSaveInterval'            => '60',
 				'syncScroll'                  => true,
@@ -481,7 +492,6 @@ final class SettingsCenterRepository {
 				'applyEditorThemeToFrontend'  => true,
 				'showPublishedCodeCopyButton' => true,
 				'summaryMode'                 => 'auto-55',
-				'featuredImagePlaceholder'    => true,
 			),
 			'images'    => array(
 				'service'          => 'cloudflare-r2',
@@ -511,12 +521,10 @@ final class SettingsCenterRepository {
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
-				'editorTheme'      => 'system',
 				'githubFlavor'     => true,
 				'smartPunctuation' => true,
-				'tableAlignment'   => 'auto',
+				'tableAlignment'   => 'center',
 				'codeLineNumbers'  => 'show',
-				'htmlRendering'    => false,
 				'pasteAsMarkdown'  => true,
 			),
 			'shortcuts' => array(
@@ -691,7 +699,7 @@ final class SettingsCenterRepository {
 			'general'  => array(
 				'interfaceLanguage' => 'zh-CN',
 				'editingMode'       => 'live-preview',
-				'statusBarMode'     => 'words-reading-time',
+				'statusBarMode'     => 'detailed',
 				'autoSaveInterval'  => '60',
 				'publishVisibility' => 'public',
 				'summaryMode'       => 'auto-55',
@@ -702,8 +710,7 @@ final class SettingsCenterRepository {
 				'titleDisplay'  => 'none',
 			),
 			'markdown' => array(
-				'editorTheme'     => 'system',
-				'tableAlignment'  => 'auto',
+				'tableAlignment'  => 'center',
 				'codeLineNumbers' => 'show',
 			),
 		);
@@ -720,8 +727,10 @@ final class SettingsCenterRepository {
 					'preview'      => 'preview',
 				),
 				'statusBarMode'     => array(
-					'words-reading-time' => 'words-reading-time',
-					'words'              => 'words',
+					'detailed'           => 'detailed',
+					'compact'            => 'compact',
+					'words-reading-time' => 'detailed',
+					'words'              => 'compact',
 					'hidden'             => 'hidden',
 				),
 				'autoSaveInterval'  => array(
@@ -762,14 +771,6 @@ final class SettingsCenterRepository {
 				),
 			),
 			'markdown' => array(
-				'editorTheme'     => array(
-					'system'        => 'system',
-					'Follow System' => 'system',
-					'light'         => 'light',
-					'Light'         => 'light',
-					'dark'          => 'dark',
-					'Dark'          => 'dark',
-				),
 				'tableAlignment'  => array(
 					'auto'                  => 'auto',
 					'Auto align by content' => 'auto',

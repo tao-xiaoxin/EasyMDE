@@ -11,16 +11,21 @@ type Options = Readonly<{
   userId: number;
 }>;
 
-const isPreferences = (value: unknown): value is ImmersivePreferences => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+const normalizePreferences = (value: unknown): ImmersivePreferences | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  return [
-    'autoSave',
-    'outline',
-    'splitPreview',
-    'syncScroll',
-    'wordCount'
-  ].every((key) => typeof candidate[key] === 'boolean');
+  if (
+    'boolean' !== typeof candidate.autoSave ||
+    'boolean' !== typeof candidate.outline ||
+    'boolean' !== typeof candidate.splitPreview
+  ) {
+    return null;
+  }
+  return {
+    autoSave: candidate.autoSave,
+    outline: candidate.outline,
+    splitPreview: candidate.splitPreview
+  };
 };
 
 export function createBrowserImmersivePreferencesPort({
@@ -37,10 +42,11 @@ export function createBrowserImmersivePreferencesPort({
         const value = storage.getItem(key);
         if (null === value) return { status: 'missing' };
         const parsed: unknown = JSON.parse(value);
-        if (!isPreferences(parsed)) {
+        const preferences = normalizePreferences(parsed);
+        if (!preferences) {
           return { code: 'immersive-preferences-invalid', status: 'failed' };
         }
-        return { preferences: parsed, status: 'loaded' };
+        return { preferences, status: 'loaded' };
       } catch {
         return { code: 'immersive-preferences-read-failed', status: 'failed' };
       }

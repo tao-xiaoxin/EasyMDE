@@ -39,7 +39,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( '', $data['settings']['images']['accessKey'] );
         $this->assertSame( '', $data['settings']['images']['secretKey'] );
-		foreach ( array( 'cleanPastedContent', 'smartListRecognition', 'defaultCategory' ) as $removed ) {
+		foreach ( array( 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder' ) as $removed ) {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['general'] );
 		}
 		$this->assertArrayNotHasKey( 'accountId', $data['settings']['images'] );
@@ -52,18 +52,15 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		foreach ( array( 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ) as $removed ) {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['images'] );
 		}
-		$this->assertArrayHasKey( 'featuredImagePlaceholder', $data['settings']['general'] );
 		$this->assertTrue( $data['settings']['general']['applyEditorThemeToFrontend'] );
 		$this->assertTrue( $data['settings']['general']['showPublishedCodeCopyButton'] );
 		$this->assertSame(
 			array(
 				'wordWrap',
-				'editorTheme',
 				'githubFlavor',
 				'smartPunctuation',
 				'tableAlignment',
 				'codeLineNumbers',
-				'htmlRendering',
 				'pasteAsMarkdown',
 			),
 			array_keys( $data['settings']['markdown'] )
@@ -71,9 +68,21 @@ final class SettingsControllerTest extends WP_UnitTestCase {
     }
 
 	public function test_post_rejects_removed_markdown_fields_as_unknown_contract_keys() {
-		foreach ( array( 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ) as $removed_key ) {
+		foreach ( array( 'editorTheme', 'htmlRendering', 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ) as $removed_key ) {
 			$settings = $this->current_settings();
 			$settings['markdown'][ $removed_key ] = 'toc' === $removed_key ? false : 'removed';
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $removed_key );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $removed_key );
+		}
+	}
+
+	public function test_post_rejects_removed_general_fields_as_unknown_contract_keys() {
+		foreach ( array( 'featuredImagePlaceholder', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory' ) as $removed_key ) {
+			$settings = $this->current_settings();
+			$settings['general'][ $removed_key ] = false;
 
 			$response = $this->post_json( array( 'settings' => $settings ) );
 

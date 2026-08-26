@@ -1484,9 +1484,9 @@ msgstr "发布后打开预览"
 msgid "Automatically open the article preview after publishing or updating"
 msgstr "发布或更新后自动打开文章预览"
 
-#: src/Admin/SettingsCenterStrings.php:67
-msgid "Link Editor Theme to Published Content"
-msgstr "编辑器主题联动"
+#: src/Admin/SettingsCenterStrings.php:386
+msgid "Editor Theme Rendering"
+msgstr "编辑器主题渲染"
 
 #: src/Admin/SettingsCenterStrings.php:68
 msgid ""
@@ -1494,9 +1494,9 @@ msgid ""
 "the theme only in editor previews."
 msgstr "将编辑器中选择的主题应用到发布文章。关闭后，该主题仅用于编辑器预览。"
 
-#: src/Admin/SettingsCenterStrings.php:69
-msgid "Show Copy Button on Published Code Blocks"
-msgstr "发布文章代码块显示复制按钮"
+#: src/Admin/SettingsCenterStrings.php:388
+msgid "Code Block Copy"
+msgstr "代码块复制"
 
 #: src/Admin/SettingsCenterStrings.php:70
 msgid "Show a copy button on code blocks in published articles."
@@ -1509,14 +1509,6 @@ msgstr "默认摘要同步方式"
 #: src/Admin/SettingsCenterStrings.php:72
 msgid "Automatically extract the summary from the beginning of the content"
 msgstr "自动从内容开头提取摘要"
-
-#: src/Admin/SettingsCenterStrings.php:73
-msgid "Featured Image Placeholder"
-msgstr "特色图片占位提示"
-
-#: src/Admin/SettingsCenterStrings.php:74
-msgid "Show a placeholder prompt when no featured image is set"
-msgstr "在没有特色图片时显示占位提示"
 
 #: src/Admin/SettingsCenterStrings.php:71
 msgid "Live Preview (WYSIWYG)"
@@ -2185,22 +2177,6 @@ msgstr "在编辑器中换行，而不是水平滚动。"
 msgid "Show line numbers on the left side of the editor."
 msgstr "在编辑器左侧显示行号。"
 
-#: src/Admin/SettingsCenterStrings.php:234
-msgid "Editor Theme"
-msgstr "编辑器主题"
-
-#: src/Admin/SettingsCenterStrings.php:235
-msgid "Automatic (Follow System)"
-msgstr "自动（跟随系统）"
-
-#: src/Admin/SettingsCenterStrings.php:236
-msgid "Light"
-msgstr "浅色"
-
-#: src/Admin/SettingsCenterStrings.php:237
-msgid "Dark"
-msgstr "深色"
-
 #: src/Admin/SettingsCenterStrings.php:238
 msgid "Markdown Parsing and Rendering"
 msgstr "Markdown 解析与渲染"
@@ -2248,14 +2224,6 @@ msgstr "显示"
 #: src/Admin/SettingsCenterStrings.php:249
 msgid "Hide"
 msgstr "隐藏"
-
-#: src/Admin/SettingsCenterStrings.php:250
-msgid "HTML Rendering"
-msgstr "HTML 渲染"
-
-#: src/Admin/SettingsCenterStrings.php:251
-msgid "Allow HTML rendering (security risk; enable with caution)."
-msgstr "允许 HTML 渲染（存在安全风险，请谨慎启用）。"
 
 #: src/Admin/SettingsCenterStrings.php:252
 msgid "Convert Pasted Content to Markdown"
@@ -2661,10 +2629,6 @@ msgstr "问题反馈"
 #: src/Admin/SettingsCenterStrings.php:356
 msgid "GitHub Repository"
 msgstr "GitHub 仓库"
-
-#: src/Admin/SettingsCenterStrings.php:357
-msgid "Security Policy"
-msgstr "安全策略"
 
 #: src/Admin/SettingsCenterStrings.php:358
 msgid "Open Source License"

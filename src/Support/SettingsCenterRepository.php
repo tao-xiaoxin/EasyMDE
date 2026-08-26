@@ -92,6 +92,18 @@ final class SettingsCenterRepository {
 		return $settings['general']['showPublishedCodeCopyButton'];
 	}
 
+	public function get_published_table_alignment() {
+		$settings = $this->get_settings();
+
+		return $settings['markdown']['tableAlignment'];
+	}
+
+	public function should_show_published_code_line_numbers() {
+		$settings = $this->get_settings();
+
+		return 'show' === $settings['markdown']['codeLineNumbers'];
+	}
+
 	public function get_shortcut_config_for_script() {
 		$settings  = $this->get_settings();
 		$stored    = $this->options->get_editor_settings();
@@ -481,7 +493,6 @@ final class SettingsCenterRepository {
 				'applyEditorThemeToFrontend'  => true,
 				'showPublishedCodeCopyButton' => true,
 				'summaryMode'                 => 'auto-55',
-				'featuredImagePlaceholder'    => true,
 			),
 			'images'    => array(
 				'service'          => 'cloudflare-r2',
@@ -511,12 +522,10 @@ final class SettingsCenterRepository {
 			),
 			'markdown'  => array(
 				'wordWrap'         => true,
-				'editorTheme'      => 'system',
 				'githubFlavor'     => true,
 				'smartPunctuation' => true,
-				'tableAlignment'   => 'auto',
+				'tableAlignment'   => 'center',
 				'codeLineNumbers'  => 'show',
-				'htmlRendering'    => false,
 				'pasteAsMarkdown'  => true,
 			),
 			'shortcuts' => array(
@@ -702,8 +711,7 @@ final class SettingsCenterRepository {
 				'titleDisplay'  => 'none',
 			),
 			'markdown' => array(
-				'editorTheme'     => 'system',
-				'tableAlignment'  => 'auto',
+				'tableAlignment'  => 'center',
 				'codeLineNumbers' => 'show',
 			),
 		);
@@ -762,14 +770,6 @@ final class SettingsCenterRepository {
 				),
 			),
 			'markdown' => array(
-				'editorTheme'     => array(
-					'system'        => 'system',
-					'Follow System' => 'system',
-					'light'         => 'light',
-					'Light'         => 'light',
-					'dark'          => 'dark',
-					'Dark'          => 'dark',
-				),
 				'tableAlignment'  => array(
 					'auto'                  => 'auto',
 					'Auto align by content' => 'auto',

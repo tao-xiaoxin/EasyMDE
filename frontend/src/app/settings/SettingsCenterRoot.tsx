@@ -1135,6 +1135,15 @@ export function SettingsCenterRoot({
 									className="easymde-settings-center__settings-section"
 								>
 									<MarkdownSettingsPage
+										applyEditorThemeToFrontend={
+											settings.general.applyEditorThemeToFrontend
+										}
+										onApplyEditorThemeToFrontendChange={(value) =>
+											updateSettingsSection("general", {
+												...settings.general,
+												applyEditorThemeToFrontend: value,
+											})
+										}
 										settings={settings.markdown}
 										onChange={(value) =>
 											updateSettingsSection("markdown", value)

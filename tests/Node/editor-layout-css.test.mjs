@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 const frontendCss = readFileSync(new URL('../../assets/css/frontend/base.css', import.meta.url), 'utf8');
+const codeFrameCss = readFileSync(new URL('../../assets/css/frontend/code-frame.css', import.meta.url), 'utf8');
 const frontendAssetsPhp = readFileSync(new URL('../../src/Frontend/FrontendAssets.php', import.meta.url), 'utf8');
 
 function escapeRegExp(value) {
@@ -898,6 +899,31 @@ test('all preview table surfaces use one shared horizontal scroll owner', () => 
     css,
     /@media \(max-width:\s*760px\)[\s\S]*?\.easymde-editor \.easymde-rendered-content\[class\*="easymde-markdown-theme-phycat-"\]:not\(\.easymde-custom-css-active\) blockquote blockquote\s*\{[^}]*max-width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*12px;/s
   );
+});
+
+test('shared frontend settings own table alignment and code line-number geometry', () => {
+  const cells = cssRule(frontendCss, '.easymde-rendered-content th,\n.easymde-rendered-content td');
+  const left = cssRule(
+    frontendCss,
+    '.easymde-rendered-content.easymde-table-align-left :is(th, td)'
+  );
+  const center = cssRule(
+    frontendCss,
+    '.easymde-rendered-content.easymde-table-align-center :is(th, td)'
+  );
+  const gutter = cssRule(
+    codeFrameCss,
+    '.easymde-rendered-content.easymde-code-mac pre > .easymde-code-line-number-gutter'
+  );
+
+  assert.doesNotMatch(cells, /text-align\s*:/, 'auto mode must preserve GFM cell alignment');
+  assertDeclaration(left, 'text-align', 'left !important');
+  assertDeclaration(center, 'text-align', 'center !important');
+  assertDeclaration(gutter, 'color', 'var(--easymde-code-line-number-color, #94a3b8)');
+  assertDeclaration(gutter, 'opacity', '0.72');
+  assertDeclaration(gutter, 'pointer-events', 'none');
+  assertDeclaration(gutter, 'user-select', 'none');
+  assert.doesNotMatch(codeFrameCss, /easymde-code-theme-/);
 });
 
 test('immersive outline and editor panes use the reference 16px card radius', () => {

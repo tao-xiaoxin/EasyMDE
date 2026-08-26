@@ -199,7 +199,7 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 	{
 		$settings = (new SettingsCenterRepository(new Options(), new ToolbarRegistry()))->get_settings();
 
-		foreach (array('cleanPastedContent', 'smartListRecognition', 'defaultCategory') as $removed) {
+		foreach (array('cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['general']);
 		}
 		$this->assertArrayNotHasKey('accountId', $settings['images']);
@@ -212,11 +212,51 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['images']);
 		}
-		$this->assertArrayHasKey('featuredImagePlaceholder', $settings['general']);
 		$this->assertTrue($settings['general']['applyEditorThemeToFrontend']);
-		foreach (array('lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
+		$this->assertTrue($settings['general']['showPublishedCodeCopyButton']);
+		foreach (array('editorTheme', 'htmlRendering', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['markdown']);
 		}
+	}
+
+	public function test_published_markdown_presentation_accessors_use_strict_defaults()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('center', $repository->get_published_table_alignment());
+		$this->assertTrue($repository->should_show_published_code_line_numbers());
+	}
+
+	public function test_published_markdown_presentation_accessors_follow_saved_settings()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['markdown']['tableAlignment'] = 'left';
+		$settings['markdown']['codeLineNumbers'] = 'hide';
+
+		$this->assertIsArray($repository->update_settings($settings));
+		$this->assertSame('left', $repository->get_published_table_alignment());
+		$this->assertFalse($repository->should_show_published_code_line_numbers());
+	}
+
+	public function test_published_markdown_presentation_accessors_normalize_invalid_stored_values()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'markdown' => array(
+						'tableAlignment' => 'diagonal',
+						'codeLineNumbers' => 'sometimes',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('center', $repository->get_published_table_alignment());
+		$this->assertTrue($repository->should_show_published_code_line_numbers());
 	}
 
 	public function test_frontend_theme_linkage_defaults_on_and_exposes_a_narrow_runtime_query()
@@ -456,12 +496,16 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $legacy = array(
             'version' => '0.1.8',
             'settings_center' => array(
+				'general' => array('featuredImagePlaceholder' => false),
                 'images' => array(
                     'service' => 'Cloudflare R2',
                     'accessKey' => 'synthetic-access-key',
                     'secretKey' => 'synthetic-secret-key',
                 ),
-                'markdown' => array('editorTheme' => 'Follow System'),
+				'markdown' => array(
+					'editorTheme' => 'Follow System',
+					'htmlRendering' => true,
+				),
             ),
         );
         update_option(Options::EDITOR_SETTINGS, $legacy, false);
@@ -470,7 +514,9 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $settings = $repository->get_settings();
 
         $this->assertSame('cloudflare-r2', $settings['images']['service']);
-        $this->assertSame('system', $settings['markdown']['editorTheme']);
+		$this->assertArrayNotHasKey('editorTheme', $settings['markdown']);
+		$this->assertArrayNotHasKey('htmlRendering', $settings['markdown']);
+		$this->assertArrayNotHasKey('featuredImagePlaceholder', $settings['general']);
         $this->assertSame('', $settings['images']['accessKey']);
         $this->assertSame('', $settings['images']['secretKey']);
         $this->assertSame(0, $settings['revision']);
@@ -485,6 +531,8 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
 		foreach (
 			array(
+				'editorTheme',
+				'htmlRendering',
 				'editorFontSize',
 				'editorFont',
 				'codeTheme',
@@ -656,17 +704,15 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $settings = $repository->get_settings();
 
-        $this->assertSame('cloudflare-r2', $settings['images']['service']);
-        $this->assertSame('system', $settings['markdown']['editorTheme']);
+		$this->assertSame('cloudflare-r2', $settings['images']['service']);
 
-        $settings['images']['service'] = 'Cloudflare R2';
+		$settings['images']['service'] = 'Cloudflare R2';
 		$settings['images']['titleDisplay'] = 'filename';
-        $settings['markdown']['editorTheme'] = 'Follow System';
-        $saved = $repository->update_settings($settings);
+		$saved = $repository->update_settings($settings);
 
-        $this->assertSame('cloudflare-r2', $saved['images']['service']);
+		$this->assertSame('cloudflare-r2', $saved['images']['service']);
 		$this->assertSame('filename', $saved['images']['titleDisplay']);
-        $this->assertSame('system', $saved['markdown']['editorTheme']);
+		$this->assertArrayNotHasKey('editorTheme', $saved['markdown']);
     }
 
 

@@ -113,12 +113,13 @@ async function readImportedSettings(
 		payload.schemaVersion !== 3 &&
 		payload.schemaVersion !== 4 &&
 		payload.schemaVersion !== 5 &&
-		payload.schemaVersion !== 6
+		payload.schemaVersion !== 6 &&
+		payload.schemaVersion !== 7
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
 	let importedSettings = payload.settings;
-	if (payload.schemaVersion < 6) {
+	if (payload.schemaVersion < 7) {
 		if (
 			!importedSettings ||
 			typeof importedSettings !== "object" ||
@@ -138,6 +139,11 @@ async function readImportedSettings(
 			throw new Error("settings-center-transfer-import-invalid");
 		}
 		delete general.featuredImagePlaceholder;
+		if (general.statusBarMode === "words-reading-time") {
+			general.statusBarMode = "detailed";
+		} else if (general.statusBarMode === "words") {
+			general.statusBarMode = "compact";
+		}
 		if (payload.schemaVersion < 4) {
 			if (!("applyEditorThemeToFrontend" in general)) {
 				general.applyEditorThemeToFrontend = true;
@@ -409,7 +415,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 6, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 7, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

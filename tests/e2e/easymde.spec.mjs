@@ -385,6 +385,36 @@ function setSummaryModeSetting(value) {
   ]);
 }
 
+const statusBarModes = new Set(['detailed', 'compact', 'hidden']);
+
+function editorDisplaySettings() {
+  const value = JSON.parse(runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo wp_json_encode( array( "statusBarMode" => $settings["general"]["statusBarMode"], "syncScroll" => $settings["general"]["syncScroll"] ) );'
+  ]));
+
+  if (
+    !value
+    || !statusBarModes.has(value.statusBarMode)
+    || 'boolean' !== typeof value.syncScroll
+  ) {
+    throw new Error('editor-display-settings-invalid');
+  }
+
+  return value;
+}
+
+function setEditorDisplaySettings({ statusBarMode, syncScroll }) {
+  if (!statusBarModes.has(statusBarMode) || 'boolean' !== typeof syncScroll) {
+    throw new Error('editor-display-settings-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["general"]["statusBarMode"] = ${JSON.stringify(statusBarMode)}; $settings["general"]["syncScroll"] = ${syncScroll ? 'true' : 'false'}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
 function markdownPresentationSettings() {
   const value = JSON.parse(runWp([
     'eval',
@@ -1364,6 +1394,11 @@ test.describe('EasyMDE editor workflows', () => {
         ...(summaryModes.has(testInfo.easymdeOriginalSummaryMode)
           ? [() => setSummaryModeSetting(testInfo.easymdeOriginalSummaryMode)]
           : []),
+        ...(testInfo.easymdeOriginalEditorDisplaySettings
+          ? [() => setEditorDisplaySettings(
+            testInfo.easymdeOriginalEditorDisplaySettings
+          )]
+          : []),
         ...(testInfo.easymdeOriginalMarkdownPresentationSettings
           ? [() => setMarkdownPresentationSettings(
             testInfo.easymdeOriginalMarkdownPresentationSettings
@@ -1497,7 +1532,13 @@ test.describe('EasyMDE editor workflows', () => {
       name: immersiveLabels.editorSettings
     });
     await expect(settingsDialog).toBeVisible();
-    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(5);
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
+    ).toHaveCount(0);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: /同步滚动|Synchronized scrolling/iu })
+    ).toHaveCount(0);
     await expect(settingsDialog.getByText(/AI/u)).toHaveCount(0);
     const splitPreviewSetting = settingsDialog.getByRole('checkbox', {
       name: immersiveLabels.splitPreview
@@ -1803,6 +1844,119 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('##### Heading parity');
     await expect(sourceEditor).toHaveText('##### Heading parity');
     await expect(sourceEditor).toBeFocused();
+  });
+
+  test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    testInfo.easymdeOriginalEditorDisplaySettings = editorDisplaySettings();
+    setEditorDisplaySettings({ statusBarMode: 'detailed', syncScroll: true });
+
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+    await expect(page.locator('.easymde-editor-status-bar')).toBeVisible();
+    await expect(page.locator('.easymde-editor-last-edited')).toBeVisible();
+
+    let immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-stats > span')).toHaveCount(3);
+    await page.getByRole('button', { name: immersiveLabels.exit }).click();
+
+    const setSettingsInBrowser = async ({ statusLabel, syncScroll }) => {
+      await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+      await expect(page.locator('.easymde-settings-center')).toBeVisible();
+      const strings = await page.evaluate(
+        () => window.EasyMDESettingsCenterBootstrap.strings
+      );
+      const statusSelect = page.getByRole('combobox', {
+        name: strings.statusBarDisplay
+      });
+      await selectOrdinaryOption(page, statusSelect, statusLabel(strings));
+      const syncScrollSwitch = page.getByRole('switch', {
+        name: strings.syncScroll
+      });
+      if ((await syncScrollSwitch.isChecked()) !== syncScroll) {
+        await syncScrollSwitch.click();
+      }
+      await page.getByRole('button', { name: strings.saveSettings }).click();
+      await expect(page.locator('[data-save-status]')).toHaveAttribute(
+        'data-save-status',
+        'saved'
+      );
+    };
+
+    await setSettingsInBrowser({
+      statusLabel: (strings) => strings.compactStatusBar,
+      syncScroll: false
+    });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+    expect(await page.evaluate(() => window.EasyMDEEditorRootBootstrap.settings.general))
+      .toMatchObject({ statusBarMode: 'compact', syncScroll: false });
+    await expect(page.locator('.easymde-editor-status-bar')).toBeVisible();
+    await expect(page.locator('.easymde-editor-last-edited')).toHaveCount(0);
+
+    immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-stats > span')).toHaveCount(1);
+    await page.getByRole('button', { name: immersiveLabels.editorSettings }).click();
+    const settingsDialog = page.getByRole('dialog', {
+      name: immersiveLabels.editorSettings
+    });
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
+    ).toHaveCount(0);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: /同步滚动|Synchronized scrolling/iu })
+    ).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 1,
+      mobile: true
+    });
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    expect(await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    )).toBeLessThanOrEqual(1);
+    await testInfo.attach('compact-status-mobile', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png'
+    });
+    await cdp.send('Emulation.clearDeviceMetricsOverride');
+
+    await setSettingsInBrowser({
+      statusLabel: (strings) => strings.hiddenStatusBar,
+      syncScroll: false
+    });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+    await expect(page.locator('.easymde-editor-status-bar')).toHaveCount(0);
+    immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.locator('.easymde-immersive-stats')).toHaveCount(0);
+    expect(browserFailures).toEqual([]);
   });
 
   test('executes every ordinary Markdown toolbar command through its React control', async ({ page }, testInfo) => {

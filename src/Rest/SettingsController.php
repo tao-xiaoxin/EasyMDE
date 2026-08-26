@@ -237,7 +237,7 @@ final class SettingsController {
 			'general'  => array(
 				'interfaceLanguage' => array( 'zh-CN', 'zh-TW', 'en-US' ),
 				'editingMode'       => array( 'live-preview', 'source', 'preview' ),
-				'statusBarMode'     => array( 'words-reading-time', 'words', 'hidden' ),
+				'statusBarMode'     => array( 'detailed', 'compact', 'hidden' ),
 				'autoSaveInterval'  => array( '30', '60', '120', '300' ),
 				'publishVisibility' => array( 'public', 'private', 'password' ),
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),

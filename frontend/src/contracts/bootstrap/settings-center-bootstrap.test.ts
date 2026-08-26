@@ -96,6 +96,36 @@ describe("parseSettingsCenterBootstrap", () => {
 		).toBe(true);
 	});
 
+	it.each(["detailed", "compact", "hidden"])(
+		"accepts the canonical status-bar mode %s",
+		(statusBarMode) => {
+			expect(
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}).general.statusBarMode,
+			).toBe(statusBarMode);
+		},
+	);
+
+	it.each(["words-reading-time", "words"])(
+		"rejects the retired status-bar mode %s",
+		(statusBarMode) => {
+			expect(() =>
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}),
+			).toThrow("settings-center-general-statusBarMode-invalid");
+		},
+	);
+
 	it.each([
 		[
 			"an extra field",
@@ -392,6 +422,15 @@ describe("parseSettingsCenterBootstrap", () => {
 				"noAutomaticCategory",
 				"currentCategory",
 			]),
+		);
+	});
+
+	it("uses semantic string keys for canonical status-bar modes", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining(["detailedStatusBar", "compactStatusBar"]),
+		);
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining(["wordsAndReadingTime", "wordsOnly"]),
 		);
 	});
 

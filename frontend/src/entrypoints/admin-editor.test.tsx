@@ -135,8 +135,6 @@ const bootstrap = {
     splitMode: 'Split mode',
     splitPreview: 'Split preview',
     splitPreviewDescription: 'Show live preview by default',
-    syncScroll: 'Synchronized scrolling',
-    syncScrollDescription: 'Keep the editor and preview in sync',
     table: 'Table',
     tableColumns: 'Columns',
     tableRows: 'Rows',
@@ -180,9 +178,7 @@ const bootstrap = {
     unsaved: 'Unsaved',
     viewModes: 'View modes',
     wechat: 'Copy to WeChat',
-    wechatCopied: 'Copied',
-    wordCount: 'Word count',
-    wordCountDescription: 'Show words, characters, and reading time beside the title'
+    wechatCopied: 'Copied'
   },
   labels: {
     mediaPickerFailure: 'Media failed',

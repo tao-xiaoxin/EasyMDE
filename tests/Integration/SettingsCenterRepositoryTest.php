@@ -227,6 +227,33 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertTrue($repository->should_show_published_code_line_numbers());
 	}
 
+	public function test_status_bar_mode_defaults_to_detailed_and_normalizes_legacy_values_without_writing()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('detailed', $repository->get_settings()['general']['statusBarMode']);
+
+		foreach (
+			array(
+				'words-reading-time' => 'detailed',
+				'words' => 'compact',
+			)
+			as $stored_mode => $expected_mode
+		) {
+			$stored = array(
+				'settings_center' => array(
+					'general' => array(
+						'statusBarMode' => $stored_mode,
+					),
+				),
+			);
+			update_option(Options::EDITOR_SETTINGS, $stored, false);
+
+			$this->assertSame($expected_mode, $repository->get_settings(true)['general']['statusBarMode']);
+			$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+		}
+	}
+
 	public function test_published_markdown_presentation_accessors_follow_saved_settings()
 	{
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());

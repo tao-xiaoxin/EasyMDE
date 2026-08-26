@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { SettingsCenterBootstrap } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type {
 	GeneralSettings,
+	StatusBarMode,
 	SummaryMode,
 } from "../../contracts/settings-center-settings";
 import {
@@ -28,7 +29,7 @@ const DEFAULT_DRAFT: Draft = {
 	autoFocusEditor: true,
 	showLineNumbers: true,
 	syntaxHighlight: true,
-	statusBarMode: "words-reading-time",
+	statusBarMode: "detailed",
 	autoSave: true,
 	autoSaveInterval: "60",
 	syncScroll: true,
@@ -174,10 +175,12 @@ export function GeneralSettingsPage({
 					<NativeSelect
 						label={s.statusBarDisplay}
 						value={draft.statusBarMode}
-						onChange={(value) => setValue("statusBarMode", value)}
+						onChange={(value) =>
+							setValue("statusBarMode", value as StatusBarMode)
+						}
 						options={[
-							["words-reading-time", s.wordsAndReadingTime],
-							["words", s.wordsOnly],
+							["detailed", s.detailedStatusBar],
+							["compact", s.compactStatusBar],
 							["hidden", s.hiddenStatusBar],
 						]}
 					/>

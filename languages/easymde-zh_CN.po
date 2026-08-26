@@ -37,14 +37,14 @@ msgstr "自动保存已开启"
 msgid "Article outline"
 msgstr "文章大纲"
 
-#: src/Admin/AdminAssets.php:379 src/Admin/AdminAssets.php:858
+#: src/Admin/AdminAssets.php:379 src/Admin/AdminAssets.php:854
 #: src/Admin/SettingsCenterStrings.php:23
 msgid "Cancel"
 msgstr "取消"
 
-#: src/Admin/AdminAssets.php:380 src/Admin/AdminAssets.php:824
-#: src/Admin/SettingsCenterStrings.php:282
-#: src/Admin/SettingsCenterStrings.php:371
+#: src/Admin/AdminAssets.php:380 src/Admin/AdminAssets.php:820
+#: src/Admin/SettingsCenterStrings.php:273
+#: src/Admin/SettingsCenterStrings.php:360
 msgid "Close"
 msgstr "关闭"
 
@@ -128,8 +128,8 @@ msgstr "手动保存"
 msgid "More actions"
 msgstr "更多操作"
 
-#: src/Admin/AdminAssets.php:401 src/Admin/AdminAssets.php:488
-#: src/Admin/SettingsCenterStrings.php:362
+#: src/Admin/AdminAssets.php:401 src/Admin/AdminAssets.php:484
+#: src/Admin/SettingsCenterStrings.php:351
 msgid "Markdown"
 msgstr "Markdown"
 
@@ -145,7 +145,7 @@ msgstr "大纲"
 msgid "Show heading navigation on the left"
 msgstr "左侧显示标题层级导航"
 
-#: src/Admin/AdminAssets.php:405 src/Admin/AdminAssets.php:487
+#: src/Admin/AdminAssets.php:405 src/Admin/AdminAssets.php:483
 msgid "Preview"
 msgstr "预览"
 
@@ -235,1013 +235,1003 @@ msgid "Show live preview by default"
 msgstr "默认显示实时预览区域"
 
 #: src/Admin/AdminAssets.php:427
-msgid "Synchronized scrolling"
-msgstr "同步滚动"
-
-#: src/Admin/AdminAssets.php:428
-msgid "Keep the editor and preview in sync"
-msgstr "编辑区和预览区联动"
-
-#: src/Admin/AdminAssets.php:429
 msgid "Table"
 msgstr "表格"
 
-#: src/Admin/AdminAssets.php:430
+#: src/Admin/AdminAssets.php:428
 msgid "Columns"
 msgstr "列数"
 
-#: src/Admin/AdminAssets.php:431
+#: src/Admin/AdminAssets.php:429
 msgid "Rows"
 msgstr "行数"
 
-#: src/Admin/AdminAssets.php:432
+#: src/Admin/AdminAssets.php:430
 msgid "Theme"
 msgstr "主题"
 
-#: src/Admin/AdminAssets.php:433
+#: src/Admin/AdminAssets.php:431
 msgid "Theme settings"
 msgstr "主题设置"
 
-#: src/Admin/AdminAssets.php:434
+#: src/Admin/AdminAssets.php:432
 msgid "Add tags"
 msgstr "添加标签"
 
-#: src/Admin/AdminAssets.php:435
+#: src/Admin/AdminAssets.php:433
 msgid "Categories"
 msgstr "分类目录"
 
-#: src/Admin/AdminAssets.php:436
+#: src/Admin/AdminAssets.php:434
 msgid "Choose the sections this article belongs to."
 msgstr "选择文章归属的栏目。"
 
 #. translators: %s: Number of selected categories.
-#: src/Admin/AdminAssets.php:438
+#: src/Admin/AdminAssets.php:436
 #, php-format
 msgid "Selected: %s"
 msgstr "已选 %s 项"
 
-#: src/Admin/AdminAssets.php:439
+#: src/Admin/AdminAssets.php:437
 msgid "Close publish dialog"
 msgstr "关闭发布弹窗"
 
-#: src/Admin/AdminAssets.php:440
+#: src/Admin/AdminAssets.php:438
 msgid "Collapse"
 msgstr "收起"
 
-#: src/Admin/AdminAssets.php:441
+#: src/Admin/AdminAssets.php:439
 msgid "Continue adding..."
 msgstr "继续添加..."
 
-#: src/Admin/AdminAssets.php:442
+#: src/Admin/AdminAssets.php:440
 msgid "Excerpt"
 msgstr "摘要"
 
-#: src/Admin/AdminAssets.php:443
+#: src/Admin/AdminAssets.php:441
 msgid ""
 "Write a short excerpt for search results, article lists, and sharing "
 "previews..."
 msgstr "为搜索结果、文章列表和分享预览写一段简短摘要..."
 
-#: src/Admin/AdminAssets.php:444
+#: src/Admin/AdminAssets.php:442
 msgid "Featured image"
 msgstr "特色图片"
 
-#: src/Admin/AdminAssets.php:445
+#: src/Admin/AdminAssets.php:443
 msgid "Landscape images are recommended"
 msgstr "建议使用横向图片"
 
 #. translators: %s: Effective maximum image upload size, for example "5 MB".
-#: src/Admin/AdminAssets.php:448
+#: src/Admin/AdminAssets.php:446
 #, php-format
 msgid "Supports JPG, PNG, WebP, and GIF, max %s"
 msgstr "支持 JPG、PNG、WebP、GIF 格式，最大 %s"
 
-#: src/Admin/AdminAssets.php:451
+#: src/Admin/AdminAssets.php:449
 msgid "Nothing is written to WordPress before submission."
 msgstr "提交前不会写入 WordPress。"
 
-#: src/Admin/AdminAssets.php:452
+#: src/Admin/AdminAssets.php:450
 msgid "Open the article page after publishing"
 msgstr "发布后打开文章页面"
 
-#: src/Admin/AdminAssets.php:453
+#: src/Admin/AdminAssets.php:451
 msgid ""
 "After submission, open the article page with the same article styling as the "
 "current Preview."
 msgstr "提交完成后跳转到文章页面，正文样式与当前预览一致。"
 
-#: src/Admin/AdminAssets.php:454
+#: src/Admin/AdminAssets.php:452
 msgid "Open the article page after updating"
 msgstr "更新后打开文章页面"
 
-#: src/Admin/AdminAssets.php:455
+#: src/Admin/AdminAssets.php:453
 msgid "Password"
 msgstr "密码"
 
-#: src/Admin/AdminAssets.php:456
+#: src/Admin/AdminAssets.php:454
 msgid "Enter access password"
 msgstr "输入访问密码"
 
-#: src/Admin/AdminAssets.php:457
+#: src/Admin/AdminAssets.php:455
 msgid "Enter an access password before submitting."
 msgstr "请输入访问密码后再提交。"
 
-#: src/Admin/AdminAssets.php:458
+#: src/Admin/AdminAssets.php:456
 msgid "Ready to publish"
 msgstr "准备发布"
 
-#: src/Admin/AdminAssets.php:459 src/Admin/SettingsCenterStrings.php:82
+#: src/Admin/AdminAssets.php:457 src/Admin/SettingsCenterStrings.php:80
 msgid "Private"
 msgstr "私密"
 
-#: src/Admin/AdminAssets.php:460
+#: src/Admin/AdminAssets.php:458
 msgid "Only site administrators and editors can view this article."
 msgstr "仅站点管理员和编辑可查看此文章。"
 
-#: src/Admin/AdminAssets.php:461 src/Admin/SettingsCenterStrings.php:81
+#: src/Admin/AdminAssets.php:459 src/Admin/SettingsCenterStrings.php:79
 msgid "Public"
 msgstr "公开"
 
-#: src/Admin/AdminAssets.php:462
+#: src/Admin/AdminAssets.php:460
 msgid ""
 "Confirm the article details to publish it to the current WordPress site."
 msgstr "确认文章信息后，将发布到当前 WordPress 站点。"
 
-#: src/Admin/AdminAssets.php:463
+#: src/Admin/AdminAssets.php:461
 msgid ""
 "WordPress did not accept the publish request. Check the page state and try "
 "again."
 msgstr "WordPress 未接受发布请求，请检查页面状态后重试。"
 
-#: src/Admin/AdminAssets.php:464
+#: src/Admin/AdminAssets.php:462
 msgid "Loading preview..."
 msgstr "加载预览中..."
 
-#: src/Admin/AdminAssets.php:465
+#: src/Admin/AdminAssets.php:463
 msgid "Publish options"
 msgstr "发布选项"
 
-#: src/Admin/AdminAssets.php:466
+#: src/Admin/AdminAssets.php:464
 msgid "Remove"
 msgstr "移除"
 
 #. translators: %s: Tag name.
-#: src/Admin/AdminAssets.php:468
+#: src/Admin/AdminAssets.php:466
 #, php-format
 msgid "Remove tag: %s"
 msgstr "移除标签 %s"
 
-#: src/Admin/AdminAssets.php:469
+#: src/Admin/AdminAssets.php:467
 msgid "Replace"
 msgstr "替换"
 
-#: src/Admin/AdminAssets.php:470
+#: src/Admin/AdminAssets.php:468
 msgid "Select featured image"
 msgstr "选择特色图片"
 
-#: src/Admin/AdminAssets.php:471
+#: src/Admin/AdminAssets.php:469
 msgid "Stick to the top of the blog"
 msgstr "置于首页顶端"
 
-#: src/Admin/AdminAssets.php:472
+#: src/Admin/AdminAssets.php:470
 msgid "Tags"
 msgstr "标签"
 
-#: src/Admin/AdminAssets.php:473
+#: src/Admin/AdminAssets.php:471
 msgid "Press Enter or comma to add a tag."
 msgstr "输入后按 Enter 或逗号添加。"
 
-#: src/Admin/AdminAssets.php:474
+#: src/Admin/AdminAssets.php:472
 msgid "Update article"
 msgstr "更新文章"
 
-#: src/Admin/AdminAssets.php:475
+#: src/Admin/AdminAssets.php:473
 msgid "Confirm these changes to update the current WordPress article."
 msgstr "确认本次修改后，将更新当前 WordPress 文章。"
 
-#: src/Admin/AdminAssets.php:476
+#: src/Admin/AdminAssets.php:474
 msgid "Update existing article"
 msgstr "更新已有文章"
 
-#: src/Admin/AdminAssets.php:477
+#: src/Admin/AdminAssets.php:475
 msgid "Visibility"
 msgstr "可见性"
 
-#: src/Admin/AdminAssets.php:478
+#: src/Admin/AdminAssets.php:476
 msgid "Article title"
 msgstr "文章标题"
 
-#: src/Admin/AdminAssets.php:479
+#: src/Admin/AdminAssets.php:477
 msgid "Unsaved"
 msgstr "未保存"
 
-#: src/Admin/AdminAssets.php:480
+#: src/Admin/AdminAssets.php:478
 msgid "View modes"
 msgstr "视图模式"
 
-#: src/Admin/AdminAssets.php:481 src/Support/ToolbarRegistry.php:291
+#: src/Admin/AdminAssets.php:479 src/Support/ToolbarRegistry.php:291
 msgid "Copy to WeChat"
 msgstr "复制到公众号"
 
-#: src/Admin/AdminAssets.php:482 src/Frontend/FrontendAssets.php:105
+#: src/Admin/AdminAssets.php:480 src/Frontend/FrontendAssets.php:109
 msgid "Copied"
 msgstr "已复制"
 
-#: src/Admin/AdminAssets.php:483
-msgid "Word count"
-msgstr "字数统计"
-
-#: src/Admin/AdminAssets.php:484
-msgid "Show words, characters, and reading time beside the title"
-msgstr "在文章标题旁显示词数、字符数与阅读时长"
-
-#: src/Admin/AdminAssets.php:596
+#: src/Admin/AdminAssets.php:592
 msgid "Not saved yet."
 msgstr "尚未保存。"
 
 #. translators: 1: display name of the last editor, 2: localized post modified date and time.
-#: src/Admin/AdminAssets.php:620
+#: src/Admin/AdminAssets.php:616
 #, php-format
 msgid "Last edited by %1$s on %2$s"
 msgstr "最后由 %1$s 编辑于 %2$s"
 
 #. translators: %s: localized post modified date and time.
-#: src/Admin/AdminAssets.php:628
+#: src/Admin/AdminAssets.php:624
 #, php-format
 msgid "Last edited on %s"
 msgstr "最后编辑于 %s"
 
-#: src/Admin/AdminAssets.php:652
+#: src/Admin/AdminAssets.php:648
 msgid "Primary color"
 msgstr "主色调"
 
-#: src/Admin/AdminAssets.php:653
+#: src/Admin/AdminAssets.php:649
 msgid "H1, list markers, and task checkmarks"
 msgstr "H1、列表标记、任务勾选"
 
-#: src/Admin/AdminAssets.php:658
+#: src/Admin/AdminAssets.php:654
 msgid "Heading color"
 msgstr "标题色"
 
-#: src/Admin/AdminAssets.php:659
+#: src/Admin/AdminAssets.php:655
 msgid "H2-H6, bold text, and definition terms"
 msgstr "H2–H6、粗体、定义项"
 
-#: src/Admin/AdminAssets.php:664
+#: src/Admin/AdminAssets.php:660
 msgid "Text color"
 msgstr "正文色"
 
-#: src/Admin/AdminAssets.php:665
+#: src/Admin/AdminAssets.php:661
 msgid "Paragraphs, lists, and table body"
 msgstr "段落、列表、表格正文"
 
-#: src/Admin/AdminAssets.php:670
+#: src/Admin/AdminAssets.php:666
 msgid "Muted color"
 msgstr "辅助色"
 
-#: src/Admin/AdminAssets.php:671
+#: src/Admin/AdminAssets.php:667
 msgid "Strikethrough, footnotes, and image captions"
 msgstr "删除线、脚注、图片说明"
 
-#: src/Admin/AdminAssets.php:676
+#: src/Admin/AdminAssets.php:672
 msgid "Link color"
 msgstr "链接色"
 
-#: src/Admin/AdminAssets.php:677
+#: src/Admin/AdminAssets.php:673
 msgid "Body links and footnote links"
 msgstr "正文链接与脚注链接"
 
-#: src/Admin/AdminAssets.php:682
+#: src/Admin/AdminAssets.php:678
 msgid "Background color"
 msgstr "内容背景"
 
-#: src/Admin/AdminAssets.php:683
+#: src/Admin/AdminAssets.php:679
 msgid "Article and content block base background"
 msgstr "文章与内容块基础背景"
 
-#: src/Admin/AdminAssets.php:688
+#: src/Admin/AdminAssets.php:684
 msgid "Border color"
 msgstr "边框色"
 
-#: src/Admin/AdminAssets.php:689
+#: src/Admin/AdminAssets.php:685
 msgid "Dividers, tables, and control borders"
 msgstr "分隔线、表格与控件边框"
 
-#: src/Admin/AdminAssets.php:694
+#: src/Admin/AdminAssets.php:690
 msgid "Highlight background"
 msgstr "高亮背景"
 
-#: src/Admin/AdminAssets.php:695
+#: src/Admin/AdminAssets.php:691
 msgid "Marked text and emphasized content"
 msgstr "标记文本与重点内容"
 
-#: src/Admin/AdminAssets.php:700
+#: src/Admin/AdminAssets.php:696
 msgid "Selection background"
 msgstr "选区背景"
 
-#: src/Admin/AdminAssets.php:701
+#: src/Admin/AdminAssets.php:697
 msgid "Selected article text"
 msgstr "文章文字选中状态"
 
-#: src/Admin/AdminAssets.php:706
+#: src/Admin/AdminAssets.php:702
 msgid "Quote accent"
 msgstr "引用强调色"
 
-#: src/Admin/AdminAssets.php:707
+#: src/Admin/AdminAssets.php:703
 msgid "Blockquote left border"
 msgstr "引用块左侧边线"
 
-#: src/Admin/AdminAssets.php:712
+#: src/Admin/AdminAssets.php:708
 msgid "Quote background"
 msgstr "引用背景"
 
-#: src/Admin/AdminAssets.php:713
+#: src/Admin/AdminAssets.php:709
 msgid "Blockquote content background"
 msgstr "引用块内容底色"
 
-#: src/Admin/AdminAssets.php:718
+#: src/Admin/AdminAssets.php:714
 msgid "Table header background"
 msgstr "表头背景"
 
-#: src/Admin/AdminAssets.php:719
+#: src/Admin/AdminAssets.php:715
 msgid "Table heading row background"
 msgstr "表格标题行底色"
 
-#: src/Admin/AdminAssets.php:724
+#: src/Admin/AdminAssets.php:720
 msgid "Table zebra stripes"
 msgstr "表格斑马纹"
 
-#: src/Admin/AdminAssets.php:725
+#: src/Admin/AdminAssets.php:721
 msgid "Even content row background"
 msgstr "偶数内容行底色"
 
-#: src/Admin/AdminAssets.php:730
+#: src/Admin/AdminAssets.php:726
 msgid "Inline code color"
 msgstr "行内代码色"
 
-#: src/Admin/AdminAssets.php:731
+#: src/Admin/AdminAssets.php:727
 msgid "Inline code and keyboard shortcut text"
 msgstr "行内代码与快捷键文字"
 
-#: src/Admin/AdminAssets.php:736
+#: src/Admin/AdminAssets.php:732
 msgid "Inline code background"
 msgstr "行内代码背景"
 
-#: src/Admin/AdminAssets.php:737
+#: src/Admin/AdminAssets.php:733
 msgid "Inline code and keyboard shortcut background"
 msgstr "行内代码与快捷键底色"
 
-#: src/Admin/AdminAssets.php:742
+#: src/Admin/AdminAssets.php:738
 msgid "Code text color"
 msgstr "代码正文色"
 
-#: src/Admin/AdminAssets.php:743
+#: src/Admin/AdminAssets.php:739
 msgid "Plain code and punctuation"
 msgstr "普通代码与标点"
 
-#: src/Admin/AdminAssets.php:748
+#: src/Admin/AdminAssets.php:744
 msgid "Code block background"
 msgstr "代码块背景"
 
-#: src/Admin/AdminAssets.php:749
+#: src/Admin/AdminAssets.php:745
 msgid "Code block and line number area"
 msgstr "代码块与行号区域"
 
-#: src/Admin/AdminAssets.php:754
+#: src/Admin/AdminAssets.php:750
 msgid "Keyword color"
 msgstr "关键字色"
 
-#: src/Admin/AdminAssets.php:755
+#: src/Admin/AdminAssets.php:751
 msgid "Keywords, functions, and booleans"
 msgstr "关键字、函数与布尔值"
 
-#: src/Admin/AdminAssets.php:760
+#: src/Admin/AdminAssets.php:756
 msgid "String color"
 msgstr "字符串色"
 
-#: src/Admin/AdminAssets.php:761
+#: src/Admin/AdminAssets.php:757
 msgid "Strings, property values, and numbers"
 msgstr "字符串、属性值与数字"
 
-#: src/Admin/AdminAssets.php:766
+#: src/Admin/AdminAssets.php:762
 msgid "Comment color"
 msgstr "注释色"
 
-#: src/Admin/AdminAssets.php:767
+#: src/Admin/AdminAssets.php:763
 msgid "Comments, line numbers, and auxiliary markers"
 msgstr "注释、行号与辅助标记"
 
-#: src/Admin/AdminAssets.php:772
+#: src/Admin/AdminAssets.php:768
 msgid "Information accent"
 msgstr "信息强调色"
 
-#: src/Admin/AdminAssets.php:773
+#: src/Admin/AdminAssets.php:769
 msgid "NOTE and information callout border"
 msgstr "NOTE 与信息提示边线"
 
-#: src/Admin/AdminAssets.php:778
+#: src/Admin/AdminAssets.php:774
 msgid "Information background"
 msgstr "信息背景"
 
-#: src/Admin/AdminAssets.php:779
+#: src/Admin/AdminAssets.php:775
 msgid "NOTE and information callout background"
 msgstr "NOTE 与信息提示底色"
 
-#: src/Admin/AdminAssets.php:784
+#: src/Admin/AdminAssets.php:780
 msgid "Success accent"
 msgstr "成功强调色"
 
-#: src/Admin/AdminAssets.php:785
+#: src/Admin/AdminAssets.php:781
 msgid "TIP, success, and completed states"
 msgstr "TIP、成功与完成状态"
 
-#: src/Admin/AdminAssets.php:790
+#: src/Admin/AdminAssets.php:786
 msgid "Success background"
 msgstr "成功背景"
 
-#: src/Admin/AdminAssets.php:791
+#: src/Admin/AdminAssets.php:787
 msgid "TIP and success callout background"
 msgstr "TIP 与成功提示底色"
 
-#: src/Admin/AdminAssets.php:796
+#: src/Admin/AdminAssets.php:792
 msgid "Warning accent"
 msgstr "警告强调色"
 
-#: src/Admin/AdminAssets.php:797
+#: src/Admin/AdminAssets.php:793
 msgid "WARNING callout border"
 msgstr "WARNING 警告边线"
 
-#: src/Admin/AdminAssets.php:802
+#: src/Admin/AdminAssets.php:798
 msgid "Warning background"
 msgstr "警告背景"
 
-#: src/Admin/AdminAssets.php:803
+#: src/Admin/AdminAssets.php:799
 msgid "WARNING callout background"
 msgstr "WARNING 警告底色"
 
-#: src/Admin/AdminAssets.php:808
+#: src/Admin/AdminAssets.php:804
 msgid "Danger accent"
 msgstr "危险强调色"
 
-#: src/Admin/AdminAssets.php:809
+#: src/Admin/AdminAssets.php:805
 msgid "CAUTION and error callout border"
 msgstr "CAUTION 与错误边线"
 
-#: src/Admin/AdminAssets.php:814
+#: src/Admin/AdminAssets.php:810
 msgid "Danger background"
 msgstr "危险背景"
 
-#: src/Admin/AdminAssets.php:815
+#: src/Admin/AdminAssets.php:811
 msgid "CAUTION and error callout background"
 msgstr "CAUTION 与错误底色"
 
-#: src/Admin/AdminAssets.php:822
+#: src/Admin/AdminAssets.php:818
 msgid "Create a personal article and code theme with live preview."
 msgstr "通过自定义 CSS 变量，打造属于你的专属主题效果"
 
-#: src/Admin/AdminAssets.php:823
+#: src/Admin/AdminAssets.php:819
 msgid "Close custom CSS theme"
 msgstr "关闭自定义 CSS 主题"
 
-#: src/Admin/AdminAssets.php:825
+#: src/Admin/AdminAssets.php:821
 msgid "Article theme name"
 msgstr "文章主题"
 
-#: src/Admin/AdminAssets.php:826
+#: src/Admin/AdminAssets.php:822
 msgid "Code theme name"
 msgstr "代码主题"
 
-#: src/Admin/AdminAssets.php:827
+#: src/Admin/AdminAssets.php:823
 msgid "Enter article theme name"
 msgstr "输入文章主题名称"
 
-#: src/Admin/AdminAssets.php:828
+#: src/Admin/AdminAssets.php:824
 msgid "Enter code theme name"
 msgstr "输入代码主题名称"
 
-#: src/Admin/AdminAssets.php:829
+#: src/Admin/AdminAssets.php:825
 msgid "Changes have not been applied"
 msgstr "未保存的修改"
 
-#: src/Admin/AdminAssets.php:830
+#: src/Admin/AdminAssets.php:826
 msgid "Enter a valid six-digit hex color"
 msgstr "请输入有效的六位十六进制颜色"
 
-#: src/Admin/AdminAssets.php:831
+#: src/Admin/AdminAssets.php:827
 msgid "Enter both theme names"
 msgstr "请输入两个主题名称"
 
-#: src/Admin/AdminAssets.php:832
+#: src/Admin/AdminAssets.php:828
 msgid "Modified style preview"
 msgstr "修改后的样式预览"
 
-#: src/Admin/AdminAssets.php:833
+#: src/Admin/AdminAssets.php:829
 msgid "Live"
 msgstr "实时预览"
 
-#: src/Admin/AdminAssets.php:834
+#: src/Admin/AdminAssets.php:830
 msgid "The preview updates with the selected colors."
 msgstr "此处将实时应用右侧变量的配色效果"
 
-#: src/Admin/AdminAssets.php:835
+#: src/Admin/AdminAssets.php:831
 msgid "Fix invalid CSS to update the live preview."
 msgstr "请修复无效 CSS 以更新实时预览。"
 
-#: src/Admin/AdminAssets.php:836
+#: src/Admin/AdminAssets.php:832
 msgid "Live preview is temporarily unavailable."
 msgstr "实时预览暂时不可用。"
 
-#: src/Admin/AdminAssets.php:837
+#: src/Admin/AdminAssets.php:833
 msgid "Theme variables"
 msgstr "主题变量"
 
-#: src/Admin/AdminAssets.php:838
+#: src/Admin/AdminAssets.php:834
 msgid "Theme variable categories"
 msgstr "主题变量类别"
 
 #. translators: %s: Custom CSS theme variable category label.
-#: src/Admin/AdminAssets.php:840
+#: src/Admin/AdminAssets.php:836
 #, php-format
 msgid "%s theme variables"
 msgstr "%s主题变量"
 
-#: src/Admin/AdminAssets.php:841 src/Admin/AdminAssets.php:855
+#: src/Admin/AdminAssets.php:837 src/Admin/AdminAssets.php:851
 msgid "Custom CSS code"
 msgstr "自定义 CSS 代码"
 
-#: src/Admin/AdminAssets.php:842
+#: src/Admin/AdminAssets.php:838
 msgid "Reset"
 msgstr "重置"
 
-#: src/Admin/AdminAssets.php:843
+#: src/Admin/AdminAssets.php:839
 msgid "Expand code editor"
 msgstr "展开代码编辑器"
 
-#: src/Admin/AdminAssets.php:844
+#: src/Admin/AdminAssets.php:840
 msgid "Shrink code editor"
 msgstr "收起代码编辑器"
 
-#: src/Admin/AdminAssets.php:845
+#: src/Admin/AdminAssets.php:841
 msgid "Back to variables"
 msgstr "返回变量"
 
-#: src/Admin/AdminAssets.php:846
+#: src/Admin/AdminAssets.php:842
 msgid "CSS target"
 msgstr "自定义 CSS 保存目标"
 
-#: src/Admin/AdminAssets.php:847
+#: src/Admin/AdminAssets.php:843
 msgid "Article CSS"
 msgstr "文章 CSS"
 
-#: src/Admin/AdminAssets.php:848
+#: src/Admin/AdminAssets.php:844
 msgid "Code CSS"
 msgstr "代码 CSS"
 
-#: src/Admin/AdminAssets.php:849
+#: src/Admin/AdminAssets.php:845
 msgid "These rules are applied to article content."
 msgstr "这些规则会应用到文章内容。"
 
-#: src/Admin/AdminAssets.php:850
+#: src/Admin/AdminAssets.php:846
 msgid "These rules are applied to code content."
 msgstr "这些规则会应用到代码内容。"
 
-#: src/Admin/AdminAssets.php:851
+#: src/Admin/AdminAssets.php:847
 msgid "Foundation"
 msgstr "基础"
 
-#: src/Admin/AdminAssets.php:852
+#: src/Admin/AdminAssets.php:848
 msgid "Blocks"
 msgstr "内容块"
 
-#: src/Admin/AdminAssets.php:853
+#: src/Admin/AdminAssets.php:849
 msgid "Code"
 msgstr "代码"
 
-#: src/Admin/AdminAssets.php:854
+#: src/Admin/AdminAssets.php:850
 msgid "Alerts"
 msgstr "提示"
 
-#: src/Admin/AdminAssets.php:856
+#: src/Admin/AdminAssets.php:852
 msgid "Add detailed CSS rules"
 msgstr "你可以手动输入 CSS 规则来自定义主题样式"
 
-#: src/Admin/AdminAssets.php:857
+#: src/Admin/AdminAssets.php:853
 msgid "Back to theme variables"
 msgstr "返回主题变量"
 
-#: src/Admin/AdminAssets.php:859
+#: src/Admin/AdminAssets.php:855
 msgid "Reset all"
 msgstr "重置"
 
-#: src/Admin/AdminAssets.php:860
+#: src/Admin/AdminAssets.php:856
 msgid "Apply theme"
 msgstr "应用主题"
 
-#: src/Admin/AdminAssets.php:861
+#: src/Admin/AdminAssets.php:857
 msgid "EasyMDE Blue"
 msgstr "EasyMDE 蓝调"
 
-#: src/Admin/AdminAssets.php:862
+#: src/Admin/AdminAssets.php:858
 msgid "EasyMDE Blue Code"
 msgstr "EasyMDE 蓝调代码"
 
 #. translators: %s: Custom CSS color variable label.
-#: src/Admin/AdminAssets.php:864
+#: src/Admin/AdminAssets.php:860
 #, php-format
 msgid "%s color picker"
 msgstr "%s拾色器"
 
-#: src/Admin/AdminAssets.php:865
+#: src/Admin/AdminAssets.php:861
 msgid "Current theme variables"
 msgstr "当前主题变量"
 
-#: src/Admin/AdminAssets.php:866
+#: src/Admin/AdminAssets.php:862
 msgid "Add custom rules below"
 msgstr "在下方添加自定义规则"
 
-#: src/Admin/AdminAssets.php:867
+#: src/Admin/AdminAssets.php:863
 msgid "Heading 1 preview sample"
 msgstr "一级标题 Heading 1"
 
-#: src/Admin/AdminAssets.php:868
+#: src/Admin/AdminAssets.php:864
 msgid "Heading 2 preview sample"
 msgstr "二级标题 Heading 2"
 
-#: src/Admin/AdminAssets.php:869
+#: src/Admin/AdminAssets.php:865
 msgid ""
 "This body text demonstrates the current theme typography, spacing, and "
 "layout."
 msgstr "这是正文文本示例，展示当前主题的文字效果、间距和排版样式。"
 
-#: src/Admin/AdminAssets.php:870
+#: src/Admin/AdminAssets.php:866
 msgid "Theme preview with"
 msgstr "这里包含"
 
-#: src/Admin/AdminAssets.php:871
+#: src/Admin/AdminAssets.php:867
 msgid "bold text"
 msgstr "粗体文本"
 
-#: src/Admin/AdminAssets.php:872
+#: src/Admin/AdminAssets.php:868
 msgid "italic text"
 msgstr "斜体文本"
 
-#: src/Admin/AdminAssets.php:873
+#: src/Admin/AdminAssets.php:869
 msgid "deleted text"
 msgstr "删除线"
 
-#: src/Admin/AdminAssets.php:874
+#: src/Admin/AdminAssets.php:870
 msgid "highlight"
 msgstr "高亮文本"
 
-#: src/Admin/AdminAssets.php:875
+#: src/Admin/AdminAssets.php:871
 msgid "inline code"
 msgstr "inline code"
 
-#: src/Admin/AdminAssets.php:876
+#: src/Admin/AdminAssets.php:872
 msgid "Theme preview"
 msgstr "主题预览"
 
-#: src/Admin/AdminAssets.php:877
+#: src/Admin/AdminAssets.php:873
 msgid "Blockquote and callout styling preview."
 msgstr "这是引用文本示例，展示引用块与提示内容的样式表现。"
 
-#: src/Admin/AdminAssets.php:878
+#: src/Admin/AdminAssets.php:874
 msgid "Unordered list item"
 msgstr "无序列表项"
 
-#: src/Admin/AdminAssets.php:879
+#: src/Admin/AdminAssets.php:875
 msgid "Completed task"
 msgstr "已完成任务"
 
-#: src/Admin/AdminAssets.php:880
+#: src/Admin/AdminAssets.php:876
 msgid "Ordered list item"
 msgstr "有序列表项"
 
-#: src/Admin/AdminAssets.php:881
+#: src/Admin/AdminAssets.php:877
 msgid "Second step"
 msgstr "第二个步骤"
 
-#: src/Admin/AdminAssets.php:882
+#: src/Admin/AdminAssets.php:878
 msgid "Header"
 msgstr "表头"
 
-#: src/Admin/AdminAssets.php:883
+#: src/Admin/AdminAssets.php:879
 msgid "Content"
 msgstr "内容"
 
-#: src/Admin/AdminAssets.php:884
+#: src/Admin/AdminAssets.php:880
 msgid "Link color preview"
 msgstr "这是链接示例，展示链接的颜色效果"
 
-#: src/Admin/AdminAssets.php:885
+#: src/Admin/AdminAssets.php:881
 msgid "NOTE"
 msgstr "NOTE"
 
-#: src/Admin/AdminAssets.php:886
+#: src/Admin/AdminAssets.php:882
 msgid "TIP"
 msgstr "TIP"
 
-#: src/Admin/AdminAssets.php:887
+#: src/Admin/AdminAssets.php:883
 msgid "WARNING"
 msgstr "WARNING"
 
-#: src/Admin/AdminAssets.php:888
+#: src/Admin/AdminAssets.php:884
 msgid "CAUTION"
 msgstr "CAUTION"
 
-#: src/Admin/AdminAssets.php:889
+#: src/Admin/AdminAssets.php:885
 msgid "Information"
 msgstr "信息提示"
 
-#: src/Admin/AdminAssets.php:890
+#: src/Admin/AdminAssets.php:886
 msgid "Success"
 msgstr "成功提示"
 
-#: src/Admin/AdminAssets.php:891
+#: src/Admin/AdminAssets.php:887
 msgid "Warning"
 msgstr "警告提示"
 
-#: src/Admin/AdminAssets.php:892
+#: src/Admin/AdminAssets.php:888
 msgid "Danger"
 msgstr "危险提示"
 
-#: src/Admin/AdminAssets.php:893
+#: src/Admin/AdminAssets.php:889
 msgid "Additional details"
 msgstr "折叠内容与补充说明"
 
-#: src/Admin/AdminAssets.php:894
+#: src/Admin/AdminAssets.php:890
 msgid "Longer supporting content can be previewed here."
 msgstr "可用于展示较长的补充信息。"
 
-#: src/Admin/AdminAssets.php:895
+#: src/Admin/AdminAssets.php:891
 msgid "Definition list"
 msgstr "定义列表"
 
-#: src/Admin/AdminAssets.php:896
+#: src/Admin/AdminAssets.php:892
 msgid "Used to explain terms or add structured details."
 msgstr "用于解释术语或补充结构化说明。"
 
-#: src/Admin/AdminAssets.php:897
+#: src/Admin/AdminAssets.php:893
 msgid "Tertiary heading and supporting content"
 msgstr "三级标题与补充内容"
 
-#: src/Admin/AdminAssets.php:898
+#: src/Admin/AdminAssets.php:894
 msgid ""
 "Images, mathematical formulas, and footnotes use the body text system. "
 "Example footnote"
 msgstr "图片说明、数学公式与脚注沿用正文体系。示例脚注"
 
-#: src/Admin/AdminAssets.php:899
+#: src/Admin/AdminAssets.php:895
 msgid "[1] Footnote and supporting text color sample."
 msgstr "[1] 这是脚注与辅助文字颜色示例。"
 
 #. translators: Separator between inline Custom CSS preview examples.
-#: src/Admin/AdminAssets.php:901
+#: src/Admin/AdminAssets.php:897
 msgctxt "inline Custom CSS preview separator"
 msgid ", "
 msgstr "、"
 
 #. translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:903
+#: src/Admin/AdminAssets.php:899
 msgctxt "inline Custom CSS preview conjunction"
 msgid "and "
 msgstr "和"
 
 #. translators: Sentence-ending punctuation in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:905
+#: src/Admin/AdminAssets.php:901
 msgctxt "inline Custom CSS preview sentence end"
 msgid "."
 msgstr "。"
 
-#: src/Admin/AdminAssets.php:911
+#: src/Admin/AdminAssets.php:907
 msgid "Markdown source"
 msgstr "Markdown 源文"
 
-#: src/Admin/AdminAssets.php:912
+#: src/Admin/AdminAssets.php:908
 msgid "Start writing Markdown to preview the article."
 msgstr "开始编写 Markdown 后将在此处预览文章。"
 
-#: src/Admin/AdminAssets.php:913
+#: src/Admin/AdminAssets.php:909
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr "预览失败。可以继续编写，保存不受影响。"
 
-#: src/Admin/AdminAssets.php:914
+#: src/Admin/AdminAssets.php:910
 msgid "Insert Media"
 msgstr "插入媒体"
 
-#: src/Admin/AdminAssets.php:915
+#: src/Admin/AdminAssets.php:911
 msgid "Markdown toolbar"
 msgstr "Markdown 工具栏"
 
-#: src/Admin/AdminAssets.php:916
+#: src/Admin/AdminAssets.php:912
 msgid "Undo"
 msgstr "撤销"
 
-#: src/Admin/AdminAssets.php:917
+#: src/Admin/AdminAssets.php:913
 msgid "Appearance"
 msgstr "外观"
 
-#: src/Admin/AdminAssets.php:918
+#: src/Admin/AdminAssets.php:914
 msgid "Font"
 msgstr "字体"
 
-#: src/Admin/AdminAssets.php:919
+#: src/Admin/AdminAssets.php:915
 msgid "Headings"
 msgstr "标题"
 
 #. translators: %s: Heading level from 1 through 6.
-#: src/Admin/AdminAssets.php:921
+#: src/Admin/AdminAssets.php:917
 #, php-format
 msgid "Heading %s"
 msgstr "标题 %s"
 
-#: src/Admin/AdminAssets.php:922
+#: src/Admin/AdminAssets.php:918
 msgid "Heading level"
 msgstr "标题级别"
 
-#: src/Admin/AdminAssets.php:923
+#: src/Admin/AdminAssets.php:919
 msgid "Article theme"
 msgstr "文章主题"
 
-#: src/Admin/AdminAssets.php:924
+#: src/Admin/AdminAssets.php:920
 msgid "Code theme"
 msgstr "代码主题"
 
-#: src/Admin/AdminAssets.php:925
+#: src/Admin/AdminAssets.php:921
 msgid "Custom CSS"
 msgstr "自定义 CSS"
 
-#: src/Admin/AdminAssets.php:926
+#: src/Admin/AdminAssets.php:922
 msgid "Custom CSS theme"
 msgstr "自定义 CSS 主题"
 
-#: src/Admin/AdminAssets.php:927
+#: src/Admin/AdminAssets.php:923
 msgid "Named custom CSS"
 msgstr "命名自定义 CSS"
 
-#: src/Admin/AdminAssets.php:928
+#: src/Admin/AdminAssets.php:924
 msgid "CSS name"
 msgstr "CSS 名称"
 
-#: src/Admin/AdminAssets.php:929
+#: src/Admin/AdminAssets.php:925
 msgid "Save CSS"
 msgstr "保存 CSS"
 
-#: src/Admin/AdminAssets.php:930
+#: src/Admin/AdminAssets.php:926
 msgid "Saved CSS."
 msgstr "CSS 已保存。"
 
-#: src/Admin/AdminAssets.php:931
+#: src/Admin/AdminAssets.php:927
 msgid "CSS save failed."
 msgstr "CSS 保存失败。"
 
-#: src/Admin/AdminAssets.php:932
+#: src/Admin/AdminAssets.php:928
 msgid "Theme could not be applied. The saved theme is still available."
 msgstr "主题无法应用，但已保存的主题仍然可用。"
 
-#: src/Admin/AdminAssets.php:933
+#: src/Admin/AdminAssets.php:929
 msgid "Custom font"
 msgstr "自定义字体"
 
-#: src/Admin/AdminAssets.php:934
+#: src/Admin/AdminAssets.php:930
 msgid "Windows font"
 msgstr "Windows 字体"
 
-#: src/Admin/AdminAssets.php:935
+#: src/Admin/AdminAssets.php:931
 msgid "Apple font"
 msgstr "苹果字体"
 
-#: src/Admin/AdminAssets.php:936
+#: src/Admin/AdminAssets.php:932
 msgid "Serif font"
 msgstr "衬线字体"
 
-#: src/Admin/AdminAssets.php:937
+#: src/Admin/AdminAssets.php:933
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr "字体会在当前系统支持时按自定义、Windows、苹果和衬线后备的顺序应用。"
 
-#: src/Admin/AdminAssets.php:938
+#: src/Admin/AdminAssets.php:934
 msgid "Local draft saved"
 msgstr "本地草稿已保存"
 
-#: src/Admin/AdminAssets.php:939
+#: src/Admin/AdminAssets.php:935
 msgid "A newer local draft is available."
 msgstr "检测到更新的本地草稿。"
 
-#: src/Admin/AdminAssets.php:940
+#: src/Admin/AdminAssets.php:936
 msgid "Restore draft"
 msgstr "恢复草稿"
 
-#: src/Admin/AdminAssets.php:941
+#: src/Admin/AdminAssets.php:937
 msgid "Discard draft"
 msgstr "丢弃草稿"
 
-#: src/Admin/AdminAssets.php:942
+#: src/Admin/AdminAssets.php:938
 msgid "Draft restored."
 msgstr "草稿已恢复。"
 
-#: src/Admin/AdminAssets.php:943
+#: src/Admin/AdminAssets.php:939
 msgid "Draft discarded."
 msgstr "草稿已丢弃。"
 
-#: src/Admin/AdminAssets.php:944
+#: src/Admin/AdminAssets.php:940
 msgid "Local draft could not be read."
 msgstr "无法读取本地草稿。"
 
-#: src/Admin/AdminAssets.php:945
+#: src/Admin/AdminAssets.php:941
 msgid "Local draft could not be saved."
 msgstr "无法保存本地草稿。"
 
-#: src/Admin/AdminAssets.php:946
+#: src/Admin/AdminAssets.php:942
 msgid "Local draft could not be discarded."
 msgstr "无法丢弃本地草稿。"
 
-#: src/Admin/AdminAssets.php:947
+#: src/Admin/AdminAssets.php:943
 msgid "A different local draft was saved in another tab."
 msgstr "另一个标签页保存了不同的本地草稿。"
 
-#: src/Admin/AdminAssets.php:948 src/Frontend/FrontendAssets.php:103
+#: src/Admin/AdminAssets.php:944 src/Frontend/FrontendAssets.php:107
 msgid "Rendering failed."
 msgstr "渲染失败。"
 
-#: src/Admin/AdminAssets.php:949
+#: src/Admin/AdminAssets.php:945
 msgid "Copied preview for WeChat."
 msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 
-#: src/Admin/AdminAssets.php:950
+#: src/Admin/AdminAssets.php:946
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
-#: src/Admin/AdminAssets.php:951
+#: src/Admin/AdminAssets.php:947
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"
 
-#: src/Admin/AdminAssets.php:952
+#: src/Admin/AdminAssets.php:948
 msgid "Uploading pasted image..."
 msgstr "正在上传粘贴的图片..."
 
-#: src/Admin/AdminAssets.php:953
+#: src/Admin/AdminAssets.php:949
 msgid "Pasted image uploaded."
 msgstr "粘贴图片已上传。"
 
-#: src/Admin/AdminAssets.php:954
+#: src/Admin/AdminAssets.php:950
 msgid ""
 "Pasted image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr "粘贴图片上传在配置的重试次数耗尽后失败。请重新上传图片。"
 
-#: src/Admin/AdminAssets.php:955
+#: src/Admin/AdminAssets.php:951
 msgid "Pasted image is too large for this site."
 msgstr "粘贴的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:956
+#: src/Admin/AdminAssets.php:952
 msgid "Uploading dropped image..."
 msgstr "正在上传拖放的图片..."
 
-#: src/Admin/AdminAssets.php:957
+#: src/Admin/AdminAssets.php:953
 msgid "Dropped image uploaded."
 msgstr "拖放图片已上传。"
 
-#: src/Admin/AdminAssets.php:958
+#: src/Admin/AdminAssets.php:954
 msgid ""
 "Dropped image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr "拖放图片上传在配置的重试次数耗尽后失败。请重新上传图片。"
 
-#: src/Admin/AdminAssets.php:959
+#: src/Admin/AdminAssets.php:955
 msgid "Dropped image is too large for this site."
 msgstr "拖放的图片超过了本站允许的大小。"
 
-#: src/Admin/AdminAssets.php:960
+#: src/Admin/AdminAssets.php:956
 msgid "alt text"
 msgstr "替代文本"
 
-#: src/Admin/AdminAssets.php:961
+#: src/Admin/AdminAssets.php:957
 msgid "image"
 msgstr "图片"
 
-#: src/Admin/AdminAssets.php:962
+#: src/Admin/AdminAssets.php:958
 msgid "The WordPress media library could not be opened."
 msgstr "无法打开 WordPress 媒体库。"
 
-#: src/Admin/AdminAssets.php:963
+#: src/Admin/AdminAssets.php:959
 msgid "link text"
 msgstr "链接文本"
 
 #. translators: %s: Locale-formatted Markdown character count.
-#: src/Admin/AdminAssets.php:965
+#: src/Admin/AdminAssets.php:961
 #, php-format
 msgid "Character count: %s"
 msgstr "字符统计：%s"
 
-#: src/Admin/AdminAssets.php:966 src/Rest/CustomCssController.php:154
+#: src/Admin/AdminAssets.php:962 src/Rest/CustomCssController.php:154
 msgid ""
 "A theme with this name already exists. Please choose another name and try "
 "again."
 msgstr "主题名称已经存在，请更换后重试。"
 
-#: src/Admin/EditorMediaUploadPolicy.php:45
+#: src/Admin/EditorMediaUploadPolicy.php:43
+#: src/Rest/ImageHostingController.php:324 src/Rest/MediaController.php:75
+#: src/Rest/MediaController.php:155
+msgid "This image format is not allowed by the current EasyMDE settings."
+msgstr "当前 EasyMDE 设置不允许上传这种图片格式。"
+
+#: src/Admin/EditorMediaUploadPolicy.php:50
 #: src/Rest/ImageHostingController.php:300 src/Rest/MediaController.php:83
 msgid "The image is larger than the allowed upload size."
 msgstr "图片超过了允许的上传大小。"
@@ -1272,12 +1262,10 @@ msgid "You are not allowed to create this EasyMDE post."
 msgstr "你无权创建此 EasyMDE 文章。"
 
 #: src/Admin/SettingsCenterStrings.php:13 src/Admin/SettingsPage.php:36
-#: templates/admin/settings-center.php:32
 msgid "EasyMDE"
 msgstr "EasyMDE"
 
 #: src/Admin/SettingsCenterStrings.php:14 src/Admin/SettingsPage.php:46
-#: templates/admin/settings-center.php:35
 msgid "Settings Center"
 msgstr "配置中心"
 
@@ -1484,279 +1472,261 @@ msgstr "发布后打开预览"
 msgid "Automatically open the article preview after publishing or updating"
 msgstr "发布或更新后自动打开文章预览"
 
-#: src/Admin/SettingsCenterStrings.php:386
-msgid "Editor Theme Rendering"
-msgstr "编辑器主题渲染"
-
-#: src/Admin/SettingsCenterStrings.php:68
-msgid ""
-"Apply the selected editor theme to published articles. Disable this to use "
-"the theme only in editor previews."
-msgstr "将编辑器中选择的主题应用到发布文章。关闭后，该主题仅用于编辑器预览。"
-
-#: src/Admin/SettingsCenterStrings.php:388
-msgid "Code Block Copy"
-msgstr "代码块复制"
-
-#: src/Admin/SettingsCenterStrings.php:70
-msgid "Show a copy button on code blocks in published articles."
-msgstr "在发布文章的代码块上显示复制按钮。"
-
-#: src/Admin/SettingsCenterStrings.php:71
+#: src/Admin/SettingsCenterStrings.php:67
 msgid "Default Summary Sync Method"
 msgstr "默认摘要同步方式"
 
-#: src/Admin/SettingsCenterStrings.php:72
+#: src/Admin/SettingsCenterStrings.php:68
 msgid "Automatically extract the summary from the beginning of the content"
 msgstr "自动从内容开头提取摘要"
 
-#: src/Admin/SettingsCenterStrings.php:71
+#: src/Admin/SettingsCenterStrings.php:69
 msgid "Live Preview (WYSIWYG)"
 msgstr "实时预览（所见即所得）"
 
-#: src/Admin/SettingsCenterStrings.php:72
+#: src/Admin/SettingsCenterStrings.php:70
 msgid "Source Editing"
 msgstr "源码编辑"
 
-#: src/Admin/SettingsCenterStrings.php:73
+#: src/Admin/SettingsCenterStrings.php:71
 msgid "Preview Only"
 msgstr "仅预览"
 
+#: src/Admin/SettingsCenterStrings.php:72
+msgid "Detailed Status Bar"
+msgstr "详细状态栏"
+
+#: src/Admin/SettingsCenterStrings.php:73
+msgid "Compact Status Bar"
+msgstr "简洁状态栏"
+
 #: src/Admin/SettingsCenterStrings.php:74
-msgid "Show Word Count and Reading Time"
-msgstr "显示字数和阅读时间"
-
-#: src/Admin/SettingsCenterStrings.php:75
-msgid "Show Word Count Only"
-msgstr "仅显示字数"
-
-#: src/Admin/SettingsCenterStrings.php:76
 msgid "Hide Status Bar"
 msgstr "隐藏状态栏"
 
-#: src/Admin/SettingsCenterStrings.php:77
+#: src/Admin/SettingsCenterStrings.php:75
 msgid "30 seconds"
 msgstr "30 秒"
 
-#: src/Admin/SettingsCenterStrings.php:78
+#: src/Admin/SettingsCenterStrings.php:76
 msgid "60 seconds"
 msgstr "60 秒"
 
-#: src/Admin/SettingsCenterStrings.php:79
+#: src/Admin/SettingsCenterStrings.php:77
 msgid "2 minutes"
 msgstr "2 分钟"
 
-#: src/Admin/SettingsCenterStrings.php:80
+#: src/Admin/SettingsCenterStrings.php:78
 msgid "5 minutes"
 msgstr "5 分钟"
 
-#: src/Admin/SettingsCenterStrings.php:83
+#: src/Admin/SettingsCenterStrings.php:81
 msgid "Password Protected"
 msgstr "密码保护"
 
-#: src/Admin/SettingsCenterStrings.php:84
+#: src/Admin/SettingsCenterStrings.php:82
 msgid "Automatically Extract (First 55 Characters)"
 msgstr "自动提取（前 55 字）"
 
-#: src/Admin/SettingsCenterStrings.php:85
+#: src/Admin/SettingsCenterStrings.php:83
 msgid "Automatically Extract (First 100 Characters)"
 msgstr "自动提取（前 100 个字符）"
 
-#: src/Admin/SettingsCenterStrings.php:86
+#: src/Admin/SettingsCenterStrings.php:84
 msgid "Enter Manually"
 msgstr "手动输入"
 
-#: src/Admin/SettingsCenterStrings.php:87
+#: src/Admin/SettingsCenterStrings.php:85
 msgid "Common Shortcuts"
 msgstr "常用快捷键"
 
-#: src/Admin/SettingsCenterStrings.php:88
+#: src/Admin/SettingsCenterStrings.php:86
 msgid "Headings and Formatting"
 msgstr "标题与格式"
 
-#: src/Admin/SettingsCenterStrings.php:89
+#: src/Admin/SettingsCenterStrings.php:87
 msgid "Shortcut Behavior"
 msgstr "快捷键行为"
 
-#: src/Admin/SettingsCenterStrings.php:90
+#: src/Admin/SettingsCenterStrings.php:88
 msgid "Restore Default Shortcuts"
 msgstr "恢复默认快捷键"
 
-#: src/Admin/SettingsCenterStrings.php:91
+#: src/Admin/SettingsCenterStrings.php:89
 msgid "Function"
 msgstr "功能"
 
-#: src/Admin/SettingsCenterStrings.php:92
+#: src/Admin/SettingsCenterStrings.php:90
 msgid "Windows / Linux"
 msgstr "Windows / Linux"
 
-#: src/Admin/SettingsCenterStrings.php:93
+#: src/Admin/SettingsCenterStrings.php:91
 msgid "macOS"
 msgstr "macOS"
 
-#: src/Admin/SettingsCenterStrings.php:94
+#: src/Admin/SettingsCenterStrings.php:92
 msgid "Save Article"
 msgstr "保存文章"
 
-#: src/Admin/SettingsCenterStrings.php:95 src/Support/ToolbarRegistry.php:98
+#: src/Admin/SettingsCenterStrings.php:93 src/Support/ToolbarRegistry.php:98
 msgid "Bold"
 msgstr "加粗"
 
-#: src/Admin/SettingsCenterStrings.php:96 src/Support/ToolbarRegistry.php:113
+#: src/Admin/SettingsCenterStrings.php:94 src/Support/ToolbarRegistry.php:113
 msgid "Italic"
 msgstr "斜体"
 
-#: src/Admin/SettingsCenterStrings.php:97
-#: src/Admin/SettingsCenterStrings.php:332
+#: src/Admin/SettingsCenterStrings.php:95
+#: src/Admin/SettingsCenterStrings.php:322
 msgid "Insert Link"
 msgstr "插入链接"
 
-#: src/Admin/SettingsCenterStrings.php:98
-#: src/Admin/SettingsCenterStrings.php:333
+#: src/Admin/SettingsCenterStrings.php:96
+#: src/Admin/SettingsCenterStrings.php:323
 msgid "Insert Image"
 msgstr "插入图片"
 
-#: src/Admin/SettingsCenterStrings.php:99 src/Support/ToolbarRegistry.php:154
+#: src/Admin/SettingsCenterStrings.php:97 src/Support/ToolbarRegistry.php:154
 msgid "Heading 1"
 msgstr "一级标题"
 
-#: src/Admin/SettingsCenterStrings.php:100 src/Support/ToolbarRegistry.php:155
+#: src/Admin/SettingsCenterStrings.php:98 src/Support/ToolbarRegistry.php:155
 msgid "Heading 2"
 msgstr "二级标题"
 
-#: src/Admin/SettingsCenterStrings.php:101 src/Support/ToolbarRegistry.php:182
+#: src/Admin/SettingsCenterStrings.php:99 src/Support/ToolbarRegistry.php:182
 msgid "Quote"
 msgstr "引用"
 
-#: src/Admin/SettingsCenterStrings.php:102
+#: src/Admin/SettingsCenterStrings.php:100
 msgid "Unordered List"
 msgstr "无序列表"
 
-#: src/Admin/SettingsCenterStrings.php:103
+#: src/Admin/SettingsCenterStrings.php:101
 msgid "Ordered List"
 msgstr "有序列表"
 
-#: src/Admin/SettingsCenterStrings.php:104
-#: src/Admin/SettingsCenterStrings.php:328
+#: src/Admin/SettingsCenterStrings.php:102
+#: src/Admin/SettingsCenterStrings.php:318
 msgid "Show Shortcut Hints"
 msgstr "显示快捷键提示"
 
-#: src/Admin/SettingsCenterStrings.php:105
+#: src/Admin/SettingsCenterStrings.php:103
 msgid "Show shortcut hints in the toolbar and action menus."
 msgstr "在工具栏和操作菜单中显示快捷键提示。"
 
-#: src/Admin/SettingsCenterStrings.php:106
+#: src/Admin/SettingsCenterStrings.php:104
 msgid "Detect and Warn About Conflicts"
 msgstr "检测并提示冲突"
 
-#: src/Admin/SettingsCenterStrings.php:107
+#: src/Admin/SettingsCenterStrings.php:105
 msgid "Automatically warn and highlight when shortcut conflicts are detected."
 msgstr "检测到快捷键冲突时自动提示并高亮。"
 
-#: src/Admin/SettingsCenterStrings.php:108
+#: src/Admin/SettingsCenterStrings.php:106
 msgid "Custom Shortcut Suggestions"
 msgstr "自定义快捷键建议"
 
-#: src/Admin/SettingsCenterStrings.php:109
+#: src/Admin/SettingsCenterStrings.php:107
 msgid "Clearing an input and saving restores that item's default shortcut."
 msgstr "清空输入并保存后，将恢复该项目的默认快捷键。"
 
-#: src/Admin/SettingsCenterStrings.php:110
+#: src/Admin/SettingsCenterStrings.php:108
 msgid "Save Settings"
 msgstr "保存设置"
 
-#: src/Admin/SettingsCenterStrings.php:111
+#: src/Admin/SettingsCenterStrings.php:109
 msgid "Saving…"
 msgstr "正在保存……"
 
-#: src/Admin/SettingsCenterStrings.php:112
+#: src/Admin/SettingsCenterStrings.php:110
 msgid "Settings saved."
 msgstr "设置已保存。"
 
-#: src/Admin/SettingsCenterStrings.php:113
-#: src/Support/SettingsCenterRepository.php:406
-#: src/Support/SettingsCenterRepository.php:414
+#: src/Admin/SettingsCenterStrings.php:111
+#: src/Support/SettingsCenterRepository.php:430
+#: src/Support/SettingsCenterRepository.php:438
 msgid "Settings could not be saved. Try again."
 msgstr "设置无法保存，请重试。"
 
-#: src/Admin/SettingsCenterStrings.php:114
+#: src/Admin/SettingsCenterStrings.php:112
 msgid ""
 "Settings could not be saved because the network request failed. Try again."
 msgstr "网络请求失败，设置无法保存。请重试。"
 
-#: src/Admin/SettingsCenterStrings.php:115
+#: src/Admin/SettingsCenterStrings.php:113
 msgid "Settings could not be saved because WordPress rejected the request."
 msgstr "WordPress 拒绝了请求，设置无法保存。"
 
-#: src/Admin/SettingsCenterStrings.php:116
+#: src/Admin/SettingsCenterStrings.php:114
 msgid "Settings could not be saved because the returned data was invalid."
 msgstr "返回的数据无效，设置无法保存。"
 
-#: src/Admin/SettingsCenterStrings.php:117
+#: src/Admin/SettingsCenterStrings.php:115
 msgid "Settings changed elsewhere. Reload the latest settings before saving."
 msgstr "设置已在其他位置更改。请在保存前重新加载最新设置。"
 
-#: src/Admin/SettingsCenterStrings.php:118
+#: src/Admin/SettingsCenterStrings.php:116
 msgid "Reload Settings"
 msgstr "重新加载设置"
 
-#: src/Admin/SettingsCenterStrings.php:119
+#: src/Admin/SettingsCenterStrings.php:117
 msgid "Unavailable"
 msgstr "不可用"
 
-#: src/Admin/SettingsCenterStrings.php:120
+#: src/Admin/SettingsCenterStrings.php:118
 msgid ""
 "This setting is not connected to a WordPress runtime owner yet and cannot be "
 "changed."
 msgstr "此设置尚未连接到 WordPress 运行时所有者，因此无法更改。"
 
-#: src/Admin/SettingsCenterStrings.php:121
+#: src/Admin/SettingsCenterStrings.php:119
 msgid "Unsaved changes"
 msgstr "未保存的更改"
 
-#: src/Admin/SettingsCenterStrings.php:122
-#: src/Admin/SettingsCenterStrings.php:321
+#: src/Admin/SettingsCenterStrings.php:120
+#: src/Admin/SettingsCenterStrings.php:312
 msgid "Image Host Service"
 msgstr "图床服务"
 
-#: src/Admin/SettingsCenterStrings.php:123
+#: src/Admin/SettingsCenterStrings.php:121
 msgid "Select Image Host Service"
 msgstr "选择图床服务"
 
-#: src/Admin/SettingsCenterStrings.php:124
+#: src/Admin/SettingsCenterStrings.php:122
 msgid "Cloudflare R2"
 msgstr "Cloudflare R2"
 
-#: src/Admin/SettingsCenterStrings.php:125
+#: src/Admin/SettingsCenterStrings.php:123
 msgid "Alibaba Cloud OSS"
 msgstr "阿里云 OSS"
 
-#: src/Admin/SettingsCenterStrings.php:126
+#: src/Admin/SettingsCenterStrings.php:124
 msgid "Tencent Cloud COS"
 msgstr "腾讯云 COS"
 
-#: src/Admin/SettingsCenterStrings.php:127
+#: src/Admin/SettingsCenterStrings.php:125
 msgid "Storage Bucket"
 msgstr "存储 Bucket"
 
-#: src/Admin/SettingsCenterStrings.php:128
+#: src/Admin/SettingsCenterStrings.php:126
 msgid "Custom Endpoint"
 msgstr "自定义 Endpoint"
 
-#: src/Admin/SettingsCenterStrings.php:129
-#: src/Admin/SettingsCenterStrings.php:322
+#: src/Admin/SettingsCenterStrings.php:127
+#: src/Admin/SettingsCenterStrings.php:313
 msgid "Viewing Image Domain"
 msgstr "查看图片域名"
 
-#: src/Admin/SettingsCenterStrings.php:130
+#: src/Admin/SettingsCenterStrings.php:128
 msgid "Use this domain to generate the image URL returned after upload."
 msgstr "上传成功后，使用此域名生成返回的图片链接。"
 
-#: src/Admin/SettingsCenterStrings.php:131
+#: src/Admin/SettingsCenterStrings.php:129
 msgid "Upload Failure Retry Count"
 msgstr "上传失败重试次数"
 
-#: src/Admin/SettingsCenterStrings.php:132
+#: src/Admin/SettingsCenterStrings.php:130
 msgid ""
 "Use the same number of additional attempts after the first failure for the "
 "primary and enabled backup image hosts (0–5)."
@@ -1764,259 +1734,259 @@ msgstr ""
 "主图床与已启用的备份图床共用相同的失败重试次数，均为首次失败后的额外尝试（0–"
 "5 次）。"
 
-#: src/Admin/SettingsCenterStrings.php:133
+#: src/Admin/SettingsCenterStrings.php:131
 msgid ""
 "For Tencent Cloud COS, enter the complete bucket name in BucketName-APPID "
 "format."
 msgstr "腾讯云 COS 请填写完整的存储桶名称，格式为 BucketName-APPID。"
 
-#: src/Admin/SettingsCenterStrings.php:134
+#: src/Admin/SettingsCenterStrings.php:132
 msgid "Access Key"
 msgstr "Access Key"
 
-#: src/Admin/SettingsCenterStrings.php:135
+#: src/Admin/SettingsCenterStrings.php:133
 msgid "Secret Key"
 msgstr "Secret Key"
 
-#: src/Admin/SettingsCenterStrings.php:136
+#: src/Admin/SettingsCenterStrings.php:134
 msgid "Show Secret"
 msgstr "显示密钥"
 
-#: src/Admin/SettingsCenterStrings.php:137
+#: src/Admin/SettingsCenterStrings.php:135
 msgid "Hide Secret"
 msgstr "隐藏密钥"
 
-#: src/Admin/SettingsCenterStrings.php:138
+#: src/Admin/SettingsCenterStrings.php:136
 msgid "Revealing…"
 msgstr "正在显示……"
 
-#: src/Admin/SettingsCenterStrings.php:139
+#: src/Admin/SettingsCenterStrings.php:137
 msgid "The saved credential could not be revealed."
 msgstr "无法显示已保存的凭据。"
 
-#: src/Admin/SettingsCenterStrings.php:140
+#: src/Admin/SettingsCenterStrings.php:138
 msgid "Primary credentials configured"
 msgstr "主图床凭据已配置"
 
-#: src/Admin/SettingsCenterStrings.php:141
+#: src/Admin/SettingsCenterStrings.php:139
 msgid "Backup credentials configured"
 msgstr "备份图床凭据已配置"
 
-#: src/Admin/SettingsCenterStrings.php:142
+#: src/Admin/SettingsCenterStrings.php:140
 msgid "Upload Verification Status"
 msgstr "上传验证状态"
 
-#: src/Admin/SettingsCenterStrings.php:143
+#: src/Admin/SettingsCenterStrings.php:141
 msgid "Backup Upload Verification Status"
 msgstr "备份上传验证状态"
 
-#: src/Admin/SettingsCenterStrings.php:144
+#: src/Admin/SettingsCenterStrings.php:142
 msgid "Not Verified"
 msgstr "尚未验证"
 
-#: src/Admin/SettingsCenterStrings.php:145
+#: src/Admin/SettingsCenterStrings.php:143
 msgid "Verifying Upload…"
 msgstr "正在验证上传……"
 
-#: src/Admin/SettingsCenterStrings.php:146
+#: src/Admin/SettingsCenterStrings.php:144
 msgid "Upload Verified"
 msgstr "上传验证成功"
 
-#: src/Admin/SettingsCenterStrings.php:147
+#: src/Admin/SettingsCenterStrings.php:145
 msgid "Settings Changed; Verify Again"
 msgstr "设置已更改，请重新验证"
 
 #. translators: %s: localized date and time of the most recent upload verification.
-#: src/Admin/SettingsCenterStrings.php:149
+#: src/Admin/SettingsCenterStrings.php:147
 #, php-format
 msgid "Last verified: %s"
 msgstr "上次验证：%s"
 
-#: src/Admin/SettingsCenterStrings.php:150
+#: src/Admin/SettingsCenterStrings.php:148
 msgid "Verify Upload"
 msgstr "验证上传"
 
-#: src/Admin/SettingsCenterStrings.php:151
+#: src/Admin/SettingsCenterStrings.php:149
 msgid "Verify Backup Upload"
 msgstr "验证备份上传"
 
-#: src/Admin/SettingsCenterStrings.php:152
+#: src/Admin/SettingsCenterStrings.php:150
 msgid "Upload Verification Succeeded"
 msgstr "上传验证成功"
 
-#: src/Admin/SettingsCenterStrings.php:153
+#: src/Admin/SettingsCenterStrings.php:151
 msgid "Upload Verification Failed"
 msgstr "上传验证失败"
 
-#: src/Admin/SettingsCenterStrings.php:154
+#: src/Admin/SettingsCenterStrings.php:152
 msgid ""
 "The test image was uploaded successfully. The URL below is the address "
 "inserted into articles."
 msgstr "测试图片已成功上传。下方链接是插入文章时使用的地址。"
 
-#: src/Admin/SettingsCenterStrings.php:155
+#: src/Admin/SettingsCenterStrings.php:153
 msgid "No article image URL was created."
 msgstr "未生成文章图片链接。"
 
-#: src/Admin/SettingsCenterStrings.php:156
+#: src/Admin/SettingsCenterStrings.php:154
 msgid "Check the image host configuration, then verify the upload again."
 msgstr "请检查图床配置，然后重新验证上传。"
 
-#: src/Admin/SettingsCenterStrings.php:157
+#: src/Admin/SettingsCenterStrings.php:155
 msgid ""
 "This HTTP image URL may be blocked when an article is viewed over HTTPS."
 msgstr "文章通过 HTTPS 访问时，此 HTTP 图片链接可能会被浏览器拦截。"
 
-#: src/Admin/SettingsCenterStrings.php:158
+#: src/Admin/SettingsCenterStrings.php:156
 msgid "Uploaded Object Path"
 msgstr "已上传对象路径"
 
-#: src/Admin/SettingsCenterStrings.php:159
+#: src/Admin/SettingsCenterStrings.php:157
 msgid "Uploaded Image URL"
 msgstr "已上传图片链接"
 
-#: src/Admin/SettingsCenterStrings.php:160
+#: src/Admin/SettingsCenterStrings.php:158
 msgid "Complete the required image host settings before verifying an upload."
 msgstr "请先完整填写必需的图床设置，再验证上传。"
 
-#: src/Admin/SettingsCenterStrings.php:161
+#: src/Admin/SettingsCenterStrings.php:159
 msgid "The image host rejected the configured credentials."
 msgstr "图床拒绝了已配置的凭据。"
 
-#: src/Admin/SettingsCenterStrings.php:162
+#: src/Admin/SettingsCenterStrings.php:160
 msgid "The configured credentials do not allow access to this storage space."
 msgstr "已配置的凭据无权访问此存储空间。"
 
-#: src/Admin/SettingsCenterStrings.php:163
+#: src/Admin/SettingsCenterStrings.php:161
 msgid ""
 "Could not reach the image host. Check the network connection and try again."
 msgstr "无法连接图床，请检查网络连接后重试。"
 
-#: src/Admin/SettingsCenterStrings.php:164
+#: src/Admin/SettingsCenterStrings.php:162
 msgid "The image host did not respond in time. Try again."
 msgstr "图床未及时响应，请重试。"
 
-#: src/Admin/SettingsCenterStrings.php:165
+#: src/Admin/SettingsCenterStrings.php:163
 msgid "The image host reported a service error. Try again later."
 msgstr "图床服务发生错误，请稍后重试。"
 
-#: src/Admin/SettingsCenterStrings.php:166
+#: src/Admin/SettingsCenterStrings.php:164
 msgid "The image host returned an invalid response."
 msgstr "图床返回了无效响应。"
 
-#: src/Admin/SettingsCenterStrings.php:167
+#: src/Admin/SettingsCenterStrings.php:165
 msgid "Primary and Backup Image Hosts Match"
 msgstr "主备图床目标重复"
 
-#: src/Admin/SettingsCenterStrings.php:168
+#: src/Admin/SettingsCenterStrings.php:166
 msgid ""
 "Change the backup service, bucket, or endpoint so it does not duplicate the "
 "primary upload target."
 msgstr "请修改备份图床的服务、存储桶或端点，避免与主图床使用相同的上传目标。"
 
-#: src/Admin/SettingsCenterStrings.php:169
+#: src/Admin/SettingsCenterStrings.php:167
 msgid "File Name Rule"
 msgstr "文件名规则"
 
-#: src/Admin/SettingsCenterStrings.php:170
+#: src/Admin/SettingsCenterStrings.php:168
 msgid "Choose a template or combine variables to customize the storage path."
 msgstr "选择模板或组合变量，自定义存储路径。"
 
-#: src/Admin/SettingsCenterStrings.php:171
+#: src/Admin/SettingsCenterStrings.php:169
 msgid "Common Naming Templates"
 msgstr "常用命名模板"
 
-#: src/Admin/SettingsCenterStrings.php:172
+#: src/Admin/SettingsCenterStrings.php:170
 msgid "Select one to fill the rule automatically"
 msgstr "选择一项以自动填充规则"
 
-#: src/Admin/SettingsCenterStrings.php:173
+#: src/Admin/SettingsCenterStrings.php:171
 msgid "Date Archive"
 msgstr "按日期归档"
 
-#: src/Admin/SettingsCenterStrings.php:174
+#: src/Admin/SettingsCenterStrings.php:172
 msgid "MD5 Content Hash"
 msgstr "MD5 内容哈希"
 
-#: src/Admin/SettingsCenterStrings.php:175
+#: src/Admin/SettingsCenterStrings.php:173
 msgid "Year and Month Directory"
 msgstr "年/月目录"
 
-#: src/Admin/SettingsCenterStrings.php:176
+#: src/Admin/SettingsCenterStrings.php:174
 msgid "Keep Original Name"
 msgstr "保留原始名称"
 
-#: src/Admin/SettingsCenterStrings.php:177
+#: src/Admin/SettingsCenterStrings.php:175
 msgid "Article Directory"
 msgstr "文章目录"
 
-#: src/Admin/SettingsCenterStrings.php:178
+#: src/Admin/SettingsCenterStrings.php:176
 msgid "Time-based Name"
 msgstr "按时间命名"
 
-#: src/Admin/SettingsCenterStrings.php:179
+#: src/Admin/SettingsCenterStrings.php:177
 msgid "Available Variables"
 msgstr "可用变量"
 
-#: src/Admin/SettingsCenterStrings.php:180
+#: src/Admin/SettingsCenterStrings.php:178
 msgid "Year"
 msgstr "年"
 
-#: src/Admin/SettingsCenterStrings.php:181
+#: src/Admin/SettingsCenterStrings.php:179
 msgid "Month"
 msgstr "月"
 
-#: src/Admin/SettingsCenterStrings.php:182
+#: src/Admin/SettingsCenterStrings.php:180
 msgid "Day"
 msgstr "日"
 
-#: src/Admin/SettingsCenterStrings.php:183
+#: src/Admin/SettingsCenterStrings.php:181
 msgid "Full Date"
 msgstr "完整日期"
 
-#: src/Admin/SettingsCenterStrings.php:184
+#: src/Admin/SettingsCenterStrings.php:182
 msgid "Upload Time"
 msgstr "上传时间"
 
-#: src/Admin/SettingsCenterStrings.php:185
+#: src/Admin/SettingsCenterStrings.php:183
 msgid "Post ID"
 msgstr "文章 ID"
 
-#: src/Admin/SettingsCenterStrings.php:186
+#: src/Admin/SettingsCenterStrings.php:184
 msgid "File MD5"
 msgstr "文件 MD5"
 
-#: src/Admin/SettingsCenterStrings.php:187
+#: src/Admin/SettingsCenterStrings.php:185
 msgid "Unique Identifier"
 msgstr "唯一标识符"
 
-#: src/Admin/SettingsCenterStrings.php:188
+#: src/Admin/SettingsCenterStrings.php:186
 msgid "Original File Name"
 msgstr "原始文件名"
 
-#: src/Admin/SettingsCenterStrings.php:189
+#: src/Admin/SettingsCenterStrings.php:187
 msgid "File Extension"
 msgstr "文件扩展名"
 
 #. translators: %s: file-name rule variable label.
-#: src/Admin/SettingsCenterStrings.php:191
+#: src/Admin/SettingsCenterStrings.php:189
 #, php-format
 msgid "Insert %s variable"
 msgstr "插入 %s 变量"
 
-#: src/Admin/SettingsCenterStrings.php:192
+#: src/Admin/SettingsCenterStrings.php:190
 msgid "Example Preview"
 msgstr "示例预览"
 
-#: src/Admin/SettingsCenterStrings.php:193
+#: src/Admin/SettingsCenterStrings.php:191
 msgid "Enter a file name rule"
 msgstr "输入文件名规则"
 
-#: src/Admin/SettingsCenterStrings.php:194
+#: src/Admin/SettingsCenterStrings.php:192
 msgid "Backup Image Host"
 msgstr "备份图床"
 
-#: src/Admin/SettingsCenterStrings.php:195
+#: src/Admin/SettingsCenterStrings.php:193
 msgid ""
 "After the primary image host succeeds, write the same object to backup "
 "storage. The upload succeeds only when every enabled destination succeeds."
@@ -2024,345 +1994,341 @@ msgstr ""
 "主图床写入成功后，将同一对象写入备份存储。仅当所有已启用的目标均写入成功时，"
 "整次上传才算成功。"
 
-#: src/Admin/SettingsCenterStrings.php:196
-#: src/Admin/SettingsCenterStrings.php:324
+#: src/Admin/SettingsCenterStrings.php:194
+#: src/Admin/SettingsCenterStrings.php:315
 msgid "Enable Backup Image Host"
 msgstr "启用备份图床"
 
-#: src/Admin/SettingsCenterStrings.php:197
+#: src/Admin/SettingsCenterStrings.php:195
 msgid ""
 "Write the same file content and object path to a second storage service."
 msgstr "将相同文件内容和对象路径写入第二个存储服务。"
 
-#: src/Admin/SettingsCenterStrings.php:198
-#: src/Admin/SettingsCenterStrings.php:323
+#: src/Admin/SettingsCenterStrings.php:196
+#: src/Admin/SettingsCenterStrings.php:314
 msgid "Backup Image Host Service"
 msgstr "备份图床服务"
 
-#: src/Admin/SettingsCenterStrings.php:199
+#: src/Admin/SettingsCenterStrings.php:197
 msgid "Qiniu Kodo"
 msgstr "七牛云 Kodo"
 
-#: src/Admin/SettingsCenterStrings.php:200
+#: src/Admin/SettingsCenterStrings.php:198
 msgid "Backup Storage Bucket"
 msgstr "备份存储 Bucket"
 
-#: src/Admin/SettingsCenterStrings.php:201
+#: src/Admin/SettingsCenterStrings.php:199
 msgid "Backup Custom Domain Endpoint"
 msgstr "备份自定义域名 Endpoint"
 
-#: src/Admin/SettingsCenterStrings.php:202
+#: src/Admin/SettingsCenterStrings.php:200
 msgid "Backup Access Key"
 msgstr "备份 Access Key"
 
-#: src/Admin/SettingsCenterStrings.php:203
+#: src/Admin/SettingsCenterStrings.php:201
 msgid "Backup Secret Key"
 msgstr "备份 Secret Key"
 
-#: src/Admin/SettingsCenterStrings.php:204
+#: src/Admin/SettingsCenterStrings.php:202
 msgid "Show Backup Access Key"
 msgstr "显示备份 Access Key"
 
-#: src/Admin/SettingsCenterStrings.php:205
+#: src/Admin/SettingsCenterStrings.php:203
 msgid "Hide Backup Access Key"
 msgstr "隐藏备份 Access Key"
 
-#: src/Admin/SettingsCenterStrings.php:206
+#: src/Admin/SettingsCenterStrings.php:204
 msgid "Show Backup Secret Key"
 msgstr "显示备份 Secret Key"
 
-#: src/Admin/SettingsCenterStrings.php:207
+#: src/Admin/SettingsCenterStrings.php:205
 msgid "Hide Backup Secret Key"
 msgstr "隐藏备份 Secret Key"
 
-#: src/Admin/SettingsCenterStrings.php:208
+#: src/Admin/SettingsCenterStrings.php:206
 msgid "Upload Behavior"
 msgstr "上传行为"
 
-#: src/Admin/SettingsCenterStrings.php:209
+#: src/Admin/SettingsCenterStrings.php:207
 msgid "Compress Images Automatically"
 msgstr "自动压缩图片"
 
-#: src/Admin/SettingsCenterStrings.php:210
+#: src/Admin/SettingsCenterStrings.php:208
 msgid "Compress images before upload to save storage space."
 msgstr "上传前自动压缩图片以节省存储空间。"
 
-#: src/Admin/SettingsCenterStrings.php:211
+#: src/Admin/SettingsCenterStrings.php:209
 msgid "Maximum Supported Image Size (MB)"
 msgstr "最大支持图片大小（MB）"
 
-#: src/Admin/SettingsCenterStrings.php:212
+#: src/Admin/SettingsCenterStrings.php:210
 msgid "Set the maximum image upload size from 1 MB to 10 MB."
 msgstr "设置可上传图片的最大大小，范围为 1 MB 至 10 MB。"
 
 #. translators: %s: current system upload limit in megabytes.
-#: src/Admin/SettingsCenterStrings.php:214
+#: src/Admin/SettingsCenterStrings.php:212
 #, php-format
 msgid ""
 "This value exceeds the current system upload limit of %s MB. Increase the "
 "system limit or choose a smaller value."
 msgstr "该值超过系统当前允许上传的 %s MB 上限。请提高系统限制或选择更小的值。"
 
-#: src/Admin/SettingsCenterStrings.php:215
+#: src/Admin/SettingsCenterStrings.php:213
 msgid "Image Title Display"
 msgstr "图片标题展示"
 
-#: src/Admin/SettingsCenterStrings.php:216
+#: src/Admin/SettingsCenterStrings.php:214
 msgid "Allowed Upload Formats"
 msgstr "允许上传格式"
 
-#: src/Admin/SettingsCenterStrings.php:217
+#: src/Admin/SettingsCenterStrings.php:215
 msgid "Select the image file formats that the editor may choose and upload."
 msgstr "选择编辑器可以选择并上传的图片格式。"
 
-#: src/Admin/SettingsCenterStrings.php:218
+#: src/Admin/SettingsCenterStrings.php:216
 msgid "JPG / JPEG / JFIF"
 msgstr "JPG / JPEG / JFIF"
 
-#: src/Admin/SettingsCenterStrings.php:219
+#: src/Admin/SettingsCenterStrings.php:217
 msgid "PNG"
 msgstr "PNG"
 
-#: src/Admin/SettingsCenterStrings.php:220
+#: src/Admin/SettingsCenterStrings.php:218
 msgid "WebP"
 msgstr "WebP"
 
-#: src/Admin/SettingsCenterStrings.php:221
+#: src/Admin/SettingsCenterStrings.php:219
 msgid "GIF"
 msgstr "GIF"
 
-#: src/Admin/SettingsCenterStrings.php:222
+#: src/Admin/SettingsCenterStrings.php:220
 msgid "Allow Uploading JPG / JPEG / JFIF Format"
 msgstr "允许上传 JPG / JPEG / JFIF 格式"
 
-#: src/Admin/SettingsCenterStrings.php:223
+#: src/Admin/SettingsCenterStrings.php:221
 msgid "Allow Uploading PNG Format"
 msgstr "允许上传 PNG 格式"
 
-#: src/Admin/SettingsCenterStrings.php:224
+#: src/Admin/SettingsCenterStrings.php:222
 msgid "Allow Uploading WebP Format"
 msgstr "允许上传 WebP 格式"
 
-#: src/Admin/SettingsCenterStrings.php:225
+#: src/Admin/SettingsCenterStrings.php:223
 msgid "Allow Uploading GIF Format"
 msgstr "允许上传 GIF 格式"
 
 #. translators: Separator between image upload format labels.
-#: src/Admin/SettingsCenterStrings.php:227
+#: src/Admin/SettingsCenterStrings.php:225
 msgctxt "image upload format list separator"
 msgid ","
 msgstr "、"
 
-#: src/Admin/SettingsCenterStrings.php:228
+#: src/Admin/SettingsCenterStrings.php:226
 msgid "Use File Name"
 msgstr "使用文件名"
 
-#: src/Admin/SettingsCenterStrings.php:229
+#: src/Admin/SettingsCenterStrings.php:227
 msgid "Leave Empty"
 msgstr "留空"
 
-#: src/Admin/SettingsCenterStrings.php:230
+#: src/Admin/SettingsCenterStrings.php:228
 msgid "Editor Settings"
 msgstr "编辑器设置"
 
-#: src/Admin/SettingsCenterStrings.php:231
+#: src/Admin/SettingsCenterStrings.php:229
 msgid "Word Wrap"
 msgstr "自动换行"
 
-#: src/Admin/SettingsCenterStrings.php:232
+#: src/Admin/SettingsCenterStrings.php:230
 msgid "Wrap lines in the editor instead of scrolling horizontally."
 msgstr "在编辑器中换行，而不是水平滚动。"
 
-#: src/Admin/SettingsCenterStrings.php:233
-msgid "Show line numbers on the left side of the editor."
-msgstr "在编辑器左侧显示行号。"
-
-#: src/Admin/SettingsCenterStrings.php:238
+#: src/Admin/SettingsCenterStrings.php:231
 msgid "Markdown Parsing and Rendering"
 msgstr "Markdown 解析与渲染"
 
-#: src/Admin/SettingsCenterStrings.php:239
+#: src/Admin/SettingsCenterStrings.php:232
 msgid "GitHub Flavored Markdown"
 msgstr "GitHub 风格 Markdown"
 
-#: src/Admin/SettingsCenterStrings.php:240
+#: src/Admin/SettingsCenterStrings.php:233
 msgid "Use GitHub-flavored Markdown parsing."
 msgstr "使用 GitHub 风格的 Markdown 解析。"
 
-#: src/Admin/SettingsCenterStrings.php:241
+#: src/Admin/SettingsCenterStrings.php:234
 msgid "Smart Punctuation"
 msgstr "智能标点"
 
-#: src/Admin/SettingsCenterStrings.php:242
+#: src/Admin/SettingsCenterStrings.php:235
 msgid "Convert straight quotes and hyphens to smart punctuation."
 msgstr "将直引号和连字符转换为智能标点。"
 
-#: src/Admin/SettingsCenterStrings.php:243
+#: src/Admin/SettingsCenterStrings.php:236
 msgid "Table Alignment"
 msgstr "表格对齐"
 
-#: src/Admin/SettingsCenterStrings.php:244
+#: src/Admin/SettingsCenterStrings.php:237
 msgid "Automatically Align by Content"
 msgstr "按内容自动对齐"
 
-#: src/Admin/SettingsCenterStrings.php:245
+#: src/Admin/SettingsCenterStrings.php:238
 msgid "Align All Left"
 msgstr "全部左对齐"
 
-#: src/Admin/SettingsCenterStrings.php:246
+#: src/Admin/SettingsCenterStrings.php:239
 msgid "Align All Center"
 msgstr "全部居中对齐"
 
-#: src/Admin/SettingsCenterStrings.php:247
+#: src/Admin/SettingsCenterStrings.php:240
 msgid "Code Block Line Numbers"
 msgstr "代码块行号"
 
-#: src/Admin/SettingsCenterStrings.php:248
+#: src/Admin/SettingsCenterStrings.php:241
 msgid "Show"
 msgstr "显示"
 
-#: src/Admin/SettingsCenterStrings.php:249
+#: src/Admin/SettingsCenterStrings.php:242
 msgid "Hide"
 msgstr "隐藏"
 
-#: src/Admin/SettingsCenterStrings.php:252
+#: src/Admin/SettingsCenterStrings.php:243
 msgid "Convert Pasted Content to Markdown"
 msgstr "将粘贴内容转换为 Markdown"
 
-#: src/Admin/SettingsCenterStrings.php:253
+#: src/Admin/SettingsCenterStrings.php:244
 msgid "Convert pasted content to Markdown whenever possible."
 msgstr "尽可能将粘贴的内容转换为 Markdown。"
 
-#: src/Admin/SettingsCenterStrings.php:254
+#: src/Admin/SettingsCenterStrings.php:245
 msgid "Export Configuration File"
 msgstr "导出配置文件"
 
-#: src/Admin/SettingsCenterStrings.php:255
+#: src/Admin/SettingsCenterStrings.php:246
 msgid ""
 "Export all current settings as a JSON configuration file for backup or "
 "migration to another site."
 msgstr "将当前所有设置导出为 JSON 配置文件，用于备份或迁移到其他站点。"
 
-#: src/Admin/SettingsCenterStrings.php:256
+#: src/Admin/SettingsCenterStrings.php:247
 msgid "File Name"
 msgstr "文件名"
 
-#: src/Admin/SettingsCenterStrings.php:257
+#: src/Admin/SettingsCenterStrings.php:248
 msgid "Export File Name"
 msgstr "导出文件名"
 
-#: src/Admin/SettingsCenterStrings.php:258
+#: src/Admin/SettingsCenterStrings.php:249
 msgid "Import Configuration File"
 msgstr "导入配置文件"
 
-#: src/Admin/SettingsCenterStrings.php:259
+#: src/Admin/SettingsCenterStrings.php:250
 msgid ""
 "Import settings from a local JSON configuration file and overwrite the "
 "current configuration after confirmation."
 msgstr "从本地 JSON 配置文件导入设置，并在确认后覆盖当前配置。"
 
-#: src/Admin/SettingsCenterStrings.php:260
+#: src/Admin/SettingsCenterStrings.php:251
 msgid "Choose Configuration File"
 msgstr "选择导入配置文件"
 
-#: src/Admin/SettingsCenterStrings.php:261
+#: src/Admin/SettingsCenterStrings.php:252
 msgid "Confirm Import"
 msgstr "确认导入"
 
-#: src/Admin/SettingsCenterStrings.php:262
+#: src/Admin/SettingsCenterStrings.php:253
 msgid "Import Instructions"
 msgstr "导入说明"
 
-#: src/Admin/SettingsCenterStrings.php:263
+#: src/Admin/SettingsCenterStrings.php:254
 msgid ""
 "Importing will overwrite the current configuration. Back up important "
 "settings first."
 msgstr "导入将覆盖当前配置，请先备份重要设置。"
 
-#: src/Admin/SettingsCenterStrings.php:264
+#: src/Admin/SettingsCenterStrings.php:255
 msgid ""
 "Configuration files are valid only in the same or a compatible EasyMDE "
 "version."
 msgstr "配置文件仅适用于相同或兼容的 EasyMDE 版本。"
 
-#: src/Admin/SettingsCenterStrings.php:265
+#: src/Admin/SettingsCenterStrings.php:256
 msgid ""
 "Import handles plugin configuration only and does not affect articles or "
 "media data."
 msgstr "导入仅处理插件配置，不会影响文章或媒体数据。"
 
-#: src/Admin/SettingsCenterStrings.php:266
+#: src/Admin/SettingsCenterStrings.php:257
 msgid "Configuration Management"
 msgstr "配置管理"
 
-#: src/Admin/SettingsCenterStrings.php:267
+#: src/Admin/SettingsCenterStrings.php:258
 msgid "Manage and maintain plugin configuration operations."
 msgstr "管理和维护插件配置操作。"
 
-#: src/Admin/SettingsCenterStrings.php:268
+#: src/Admin/SettingsCenterStrings.php:259
 msgid "Reset Current Configuration"
 msgstr "重置当前配置"
 
-#: src/Admin/SettingsCenterStrings.php:269
+#: src/Admin/SettingsCenterStrings.php:260
 msgid "Restore all settings to their defaults."
 msgstr "将所有设置恢复为默认值。"
 
-#: src/Admin/SettingsCenterStrings.php:270
+#: src/Admin/SettingsCenterStrings.php:261
 msgid "Clear Local Cache"
 msgstr "清除本地缓存"
 
-#: src/Admin/SettingsCenterStrings.php:271
+#: src/Admin/SettingsCenterStrings.php:262
 msgid "Clear cached data without affecting configuration."
 msgstr "清除缓存数据，不影响配置。"
 
-#: src/Admin/SettingsCenterStrings.php:272
+#: src/Admin/SettingsCenterStrings.php:263
 msgid "Open Configuration Directory"
 msgstr "打开配置目录"
 
-#: src/Admin/SettingsCenterStrings.php:273
+#: src/Admin/SettingsCenterStrings.php:264
 msgid "View and copy the configuration directory path."
 msgstr "查看并复制配置目录路径。"
 
-#: src/Admin/SettingsCenterStrings.php:274
+#: src/Admin/SettingsCenterStrings.php:265
 msgid "View Configuration Status"
 msgstr "查看配置状态"
 
-#: src/Admin/SettingsCenterStrings.php:275
+#: src/Admin/SettingsCenterStrings.php:266
 msgid "Check whether the current configuration is valid."
 msgstr "检查当前配置是否有效。"
 
-#: src/Admin/SettingsCenterStrings.php:276
+#: src/Admin/SettingsCenterStrings.php:267
 msgid "Close Operation Dialog"
 msgstr "关闭操作对话框"
 
-#: src/Admin/SettingsCenterStrings.php:277
+#: src/Admin/SettingsCenterStrings.php:268
 msgid "Configuration Directory"
 msgstr "配置目录"
 
-#: src/Admin/SettingsCenterStrings.php:278
+#: src/Admin/SettingsCenterStrings.php:269
 msgid "Configuration Status Check"
 msgstr "配置状态检查"
 
-#: src/Admin/SettingsCenterStrings.php:279
+#: src/Admin/SettingsCenterStrings.php:270
 msgid "This operation changes local state on the current device."
 msgstr "此操作会更改当前设备上的本地状态。"
 
-#: src/Admin/SettingsCenterStrings.php:280
+#: src/Admin/SettingsCenterStrings.php:271
 msgid "View where EasyMDE configuration is stored on the current device."
 msgstr "查看 EasyMDE 配置在当前设备上的存储位置。"
 
-#: src/Admin/SettingsCenterStrings.php:281
+#: src/Admin/SettingsCenterStrings.php:272
 msgid "Check whether required configuration is complete and usable."
 msgstr "检查所需配置是否完整且可用。"
 
-#: src/Admin/SettingsCenterStrings.php:283
+#: src/Admin/SettingsCenterStrings.php:274
 msgid ""
 "Resetting restores General, Shortcuts, Images, Markdown, and notification "
 "settings to their defaults. Export a backup first."
 msgstr ""
 "重置会将常规、快捷键、图片、Markdown 和通知设置恢复为默认值。请先导出备份。"
 
-#: src/Admin/SettingsCenterStrings.php:284
+#: src/Admin/SettingsCenterStrings.php:275
 msgid ""
 "This operation clears browser cache only. It does not delete articles, "
 "media, or current configuration. Some temporary state may require reloading."
@@ -2370,25 +2336,25 @@ msgstr ""
 "此操作仅清除浏览器缓存，不会删除文章、媒体或当前配置。某些临时状态可能需要重"
 "新加载。"
 
-#: src/Admin/SettingsCenterStrings.php:285
+#: src/Admin/SettingsCenterStrings.php:276
 msgid "Confirm Reset"
 msgstr "确认重置"
 
-#: src/Admin/SettingsCenterStrings.php:286
+#: src/Admin/SettingsCenterStrings.php:277
 msgid "Confirm Clear"
 msgstr "确认清除"
 
 #. translators: %s: selected configuration file name.
-#: src/Admin/SettingsCenterStrings.php:288
+#: src/Admin/SettingsCenterStrings.php:279
 #, php-format
 msgid "Selected %s. Confirm to overwrite the current configuration."
 msgstr "已选择 %s。请确认以覆盖当前配置。"
 
-#: src/Admin/SettingsCenterStrings.php:289
+#: src/Admin/SettingsCenterStrings.php:280
 msgid "Close Configuration Feedback"
 msgstr "关闭配置反馈"
 
-#: src/Admin/SettingsCenterStrings.php:290
+#: src/Admin/SettingsCenterStrings.php:281
 msgid ""
 "A WordPress administration page cannot open a server file directory "
 "directly. Copy the non-sensitive storage owner below to identify where this "
@@ -2397,253 +2363,249 @@ msgstr ""
 "WordPress 管理页面无法直接打开服务器文件目录。请复制下方不含敏感信息的存储所"
 "有者，以确定此配置的归属位置。"
 
-#: src/Admin/SettingsCenterStrings.php:291
+#: src/Admin/SettingsCenterStrings.php:282
 msgid "WordPress database / EasyMDE options"
 msgstr "WordPress 数据库 / EasyMDE 选项"
 
-#: src/Admin/SettingsCenterStrings.php:292
+#: src/Admin/SettingsCenterStrings.php:283
 msgid "Copy Location"
 msgstr "复制位置"
 
-#: src/Admin/SettingsCenterStrings.php:293
+#: src/Admin/SettingsCenterStrings.php:284
 msgid "The configuration storage location was copied."
 msgstr "配置存储位置已复制。"
 
-#: src/Admin/SettingsCenterStrings.php:294
+#: src/Admin/SettingsCenterStrings.php:285
 msgid ""
 "The configuration storage location could not be copied. Check browser "
 "clipboard permission."
 msgstr "无法复制配置存储位置，请检查浏览器剪贴板权限。"
 
 #. translators: %s: number of configuration checks.
-#: src/Admin/SettingsCenterStrings.php:296
+#: src/Admin/SettingsCenterStrings.php:287
 #, php-format
 msgid "%s key configuration items checked"
 msgstr "已检查 %s 项关键配置"
 
 #. translators: %s: number of configuration checks that passed.
-#: src/Admin/SettingsCenterStrings.php:298
+#: src/Admin/SettingsCenterStrings.php:289
 #, php-format
 msgid "%s items passed"
 msgstr "%s 项通过"
 
-#: src/Admin/SettingsCenterStrings.php:299
+#: src/Admin/SettingsCenterStrings.php:290
 msgid "Settings Bootstrap"
 msgstr "设置引导数据"
 
-#: src/Admin/SettingsCenterStrings.php:300
+#: src/Admin/SettingsCenterStrings.php:291
 msgid "The validated WordPress settings bootstrap is available."
 msgstr "经过验证的 WordPress 设置引导数据可用。"
 
-#: src/Admin/SettingsCenterStrings.php:301
+#: src/Admin/SettingsCenterStrings.php:292
 msgid "Runtime Assets"
 msgstr "运行时资源"
 
-#: src/Admin/SettingsCenterStrings.php:302
+#: src/Admin/SettingsCenterStrings.php:293
 msgid "Brand, header, and empty-state assets have registered URLs."
 msgstr "品牌、页头和空状态资源已注册 URL。"
 
-#: src/Admin/SettingsCenterStrings.php:303
+#: src/Admin/SettingsCenterStrings.php:294
 msgid "Image Settings Draft"
 msgstr "图片设置草稿"
 
-#: src/Admin/SettingsCenterStrings.php:304
+#: src/Admin/SettingsCenterStrings.php:295
 msgid "The current image-host draft has a configured domain."
 msgstr "当前图床草稿已配置域名。"
 
-#: src/Admin/SettingsCenterStrings.php:305
+#: src/Admin/SettingsCenterStrings.php:296
 msgid "The current image-host draft has no configured domain."
 msgstr "当前图床草稿未配置域名。"
 
-#: src/Admin/SettingsCenterStrings.php:306
+#: src/Admin/SettingsCenterStrings.php:297
 msgid "WordPress Settings Endpoint"
 msgstr "WordPress 设置端点"
 
-#: src/Admin/SettingsCenterStrings.php:307
+#: src/Admin/SettingsCenterStrings.php:298
 msgid "The WordPress settings endpoint is configured for this page."
 msgstr "此页面已配置 WordPress 设置端点。"
 
-#: src/Admin/SettingsCenterStrings.php:308
+#: src/Admin/SettingsCenterStrings.php:299
 msgid "The configuration file was downloaded."
 msgstr "配置文件已下载。"
 
-#: src/Admin/SettingsCenterStrings.php:309
+#: src/Admin/SettingsCenterStrings.php:300
 msgid "The configuration file could not be downloaded."
 msgstr "无法下载配置文件。"
 
-#: src/Admin/SettingsCenterStrings.php:310
+#: src/Admin/SettingsCenterStrings.php:301
 msgid "The export file name is invalid."
 msgstr "导出文件名无效。"
 
-#: src/Admin/SettingsCenterStrings.php:311
+#: src/Admin/SettingsCenterStrings.php:302
 msgid "The selected configuration file is invalid or incompatible."
 msgstr "所选配置文件无效或不兼容。"
 
-#: src/Admin/SettingsCenterStrings.php:312
+#: src/Admin/SettingsCenterStrings.php:303
 msgid "The configuration was imported into the unsaved draft."
 msgstr "配置已导入未保存的草稿。"
 
-#: src/Admin/SettingsCenterStrings.php:313
+#: src/Admin/SettingsCenterStrings.php:304
 msgid "The settings draft was reset to the default configuration."
 msgstr "设置草稿已重置为默认配置。"
 
-#: src/Admin/SettingsCenterStrings.php:314
+#: src/Admin/SettingsCenterStrings.php:305
 msgid "EasyMDE local browser cache was cleared."
 msgstr "EasyMDE 本地浏览器缓存已清除。"
 
-#: src/Admin/SettingsCenterStrings.php:315
+#: src/Admin/SettingsCenterStrings.php:306
 msgid "EasyMDE local browser cache could not be cleared."
 msgstr "无法清除 EasyMDE 本地浏览器缓存。"
 
-#: src/Admin/SettingsCenterStrings.php:316
+#: src/Admin/SettingsCenterStrings.php:307
 msgid "This browser operation is unavailable."
 msgstr "此浏览器操作不可用。"
 
-#: src/Admin/SettingsCenterStrings.php:317
+#: src/Admin/SettingsCenterStrings.php:308
 msgid ""
 "Only settings connected to a WordPress runtime owner can be imported or "
 "reset."
 msgstr "只能导入或重置已连接到 WordPress 运行时所有者的设置。"
 
-#: src/Admin/SettingsCenterStrings.php:318
+#: src/Admin/SettingsCenterStrings.php:309
 msgid "Editing Mode"
 msgstr "编辑模式"
 
-#: src/Admin/SettingsCenterStrings.php:319
+#: src/Admin/SettingsCenterStrings.php:310
 msgid "Status Bar Mode"
 msgstr "状态栏模式"
 
-#: src/Admin/SettingsCenterStrings.php:320
+#: src/Admin/SettingsCenterStrings.php:311
 msgid "Publish Visibility"
 msgstr "发布可见性"
 
-#: src/Admin/SettingsCenterStrings.php:325
+#: src/Admin/SettingsCenterStrings.php:316
 msgid "Code Line Numbers"
 msgstr "代码块行号"
 
-#: src/Admin/SettingsCenterStrings.php:326
-msgid "Line Numbers"
-msgstr "显示行号"
-
-#: src/Admin/SettingsCenterStrings.php:327
+#: src/Admin/SettingsCenterStrings.php:317
 msgid "Math"
 msgstr "数学公式"
 
-#: src/Admin/SettingsCenterStrings.php:329
+#: src/Admin/SettingsCenterStrings.php:319
 msgid "Detect Shortcut Conflicts"
 msgstr "检测快捷键冲突"
 
-#: src/Admin/SettingsCenterStrings.php:330
+#: src/Admin/SettingsCenterStrings.php:320
 msgid "Show Shortcut Suggestions"
 msgstr "显示快捷键建议"
 
-#: src/Admin/SettingsCenterStrings.php:331
+#: src/Admin/SettingsCenterStrings.php:321
 msgid "Save"
 msgstr "保存"
 
-#: src/Admin/SettingsCenterStrings.php:334
+#: src/Admin/SettingsCenterStrings.php:324
 msgid "Version Information"
 msgstr "版本信息"
 
-#: src/Admin/SettingsCenterStrings.php:335
-#: src/Admin/SettingsCenterStrings.php:379
+#: src/Admin/SettingsCenterStrings.php:325
+#: src/Admin/SettingsCenterStrings.php:368
 msgid "Current Version"
 msgstr "当前版本"
 
-#: src/Admin/SettingsCenterStrings.php:337
+#: src/Admin/SettingsCenterStrings.php:327
 msgid "Check for Updates"
 msgstr "检查更新"
 
-#: src/Admin/SettingsCenterStrings.php:338
+#: src/Admin/SettingsCenterStrings.php:328
 msgid "Rendering Engine"
 msgstr "渲染引擎"
 
-#: src/Admin/SettingsCenterStrings.php:339
+#: src/Admin/SettingsCenterStrings.php:329
 msgid "league/commonmark 2.8.2"
 msgstr "league/commonmark 2.8.2"
 
-#: src/Admin/SettingsCenterStrings.php:340
+#: src/Admin/SettingsCenterStrings.php:330
 msgid "Compatible Version"
 msgstr "兼容版本"
 
-#: src/Admin/SettingsCenterStrings.php:341
+#: src/Admin/SettingsCenterStrings.php:331
 msgid "WordPress 6.7+"
 msgstr "WordPress 6.7+"
 
-#: src/Admin/SettingsCenterStrings.php:342
+#: src/Admin/SettingsCenterStrings.php:332
 msgid "PHP Requirement"
 msgstr "PHP 要求"
 
-#: src/Admin/SettingsCenterStrings.php:343
+#: src/Admin/SettingsCenterStrings.php:333
 msgid "7.4+"
 msgstr "7.4+"
 
-#: src/Admin/SettingsCenterStrings.php:344
+#: src/Admin/SettingsCenterStrings.php:334
 msgid "Configuration Status"
 msgstr "配置状态"
 
-#: src/Admin/SettingsCenterStrings.php:345
+#: src/Admin/SettingsCenterStrings.php:335
 msgid "Normal"
 msgstr "正常"
 
-#: src/Admin/SettingsCenterStrings.php:346
+#: src/Admin/SettingsCenterStrings.php:336
 msgid "Core Capabilities"
 msgstr "核心能力"
 
-#: src/Admin/SettingsCenterStrings.php:347
+#: src/Admin/SettingsCenterStrings.php:337
 msgid "Markdown Editing and Live Preview"
 msgstr "Markdown 编辑和实时预览"
 
-#: src/Admin/SettingsCenterStrings.php:348
+#: src/Admin/SettingsCenterStrings.php:338
 msgid "Code Highlighting and Syntax Support"
 msgstr "代码高亮和语法支持"
 
-#: src/Admin/SettingsCenterStrings.php:349
+#: src/Admin/SettingsCenterStrings.php:339
 msgid "Image Upload and Link Insertion"
 msgstr "图片上传和链接插入"
 
-#: src/Admin/SettingsCenterStrings.php:350
+#: src/Admin/SettingsCenterStrings.php:340
 msgid "Shortcuts and Workflow Optimization"
 msgstr "快捷键和工作流优化"
 
-#: src/Admin/SettingsCenterStrings.php:351
+#: src/Admin/SettingsCenterStrings.php:341
 msgid "Configuration Import, Export, and Migration"
 msgstr "配置导入、导出和迁移"
 
-#: src/Admin/SettingsCenterStrings.php:352
+#: src/Admin/SettingsCenterStrings.php:342
 msgid "Resources and Support"
 msgstr "资源和支持"
 
-#: src/Admin/SettingsCenterStrings.php:353
+#: src/Admin/SettingsCenterStrings.php:343
 msgid "Official Documentation"
 msgstr "官方文档"
 
-#: src/Admin/SettingsCenterStrings.php:354
+#: src/Admin/SettingsCenterStrings.php:344
 msgid "Changelog"
 msgstr "更新日志"
 
-#: src/Admin/SettingsCenterStrings.php:355
+#: src/Admin/SettingsCenterStrings.php:345
 msgid "Issue Feedback"
 msgstr "问题反馈"
 
-#: src/Admin/SettingsCenterStrings.php:356
+#: src/Admin/SettingsCenterStrings.php:346
 msgid "GitHub Repository"
 msgstr "GitHub 仓库"
 
-#: src/Admin/SettingsCenterStrings.php:358
+#: src/Admin/SettingsCenterStrings.php:347
 msgid "Open Source License"
 msgstr "开源许可证"
 
-#: src/Admin/SettingsCenterStrings.php:359
+#: src/Admin/SettingsCenterStrings.php:348
 msgid ""
 "Feedback is welcome. Help EasyMDE continue improving the writing experience."
 msgstr "欢迎反馈，帮助 EasyMDE 持续改善写作体验。"
 
-#: src/Admin/SettingsCenterStrings.php:360
+#: src/Admin/SettingsCenterStrings.php:349
 msgid "Plugin Introduction"
 msgstr "插件介绍"
 
-#: src/Admin/SettingsCenterStrings.php:361
+#: src/Admin/SettingsCenterStrings.php:350
 msgid ""
 "EasyMDE is a Markdown editor plugin built for WordPress. It provides "
 "Markdown source editing, split-pane live Preview, local runtime assets, and "
@@ -2653,118 +2615,136 @@ msgstr ""
 "辑、分栏实时预览、本地运行时资源，以及 WordPress 原生媒体、修订版本、权限、保"
 "存和发布功能。"
 
-#: src/Admin/SettingsCenterStrings.php:363
+#: src/Admin/SettingsCenterStrings.php:352
 msgid "Live Preview"
 msgstr "实时预览"
 
-#: src/Admin/SettingsCenterStrings.php:364
+#: src/Admin/SettingsCenterStrings.php:353
 msgid "WordPress Media"
 msgstr "WordPress 媒体"
 
-#: src/Admin/SettingsCenterStrings.php:365
+#: src/Admin/SettingsCenterStrings.php:354
 msgid "Local Assets"
 msgstr "本地资源"
 
-#: src/Admin/SettingsCenterStrings.php:366
+#: src/Admin/SettingsCenterStrings.php:355
 msgid "Shortcuts"
 msgstr "快捷键"
 
-#: src/Admin/SettingsCenterStrings.php:367
+#: src/Admin/SettingsCenterStrings.php:356
 msgid "Usage Help"
 msgstr "使用帮助"
 
-#: src/Admin/SettingsCenterStrings.php:368
+#: src/Admin/SettingsCenterStrings.php:357
 msgid "Find documentation about configuration, editing, and migration."
 msgstr "查找有关配置、编辑和迁移的文档。"
 
-#: src/Admin/SettingsCenterStrings.php:369
+#: src/Admin/SettingsCenterStrings.php:358
 msgid "Review the main changes in recent EasyMDE versions."
 msgstr "查看近期 EasyMDE 版本的主要变更。"
 
-#: src/Admin/SettingsCenterStrings.php:370
+#: src/Admin/SettingsCenterStrings.php:359
 msgid "Close About Dialog"
 msgstr "关闭关于对话框"
 
-#: src/Admin/SettingsCenterStrings.php:372
+#: src/Admin/SettingsCenterStrings.php:361
 msgid "Open Full Documentation"
 msgstr "打开完整文档"
 
-#: src/Admin/SettingsCenterStrings.php:373
+#: src/Admin/SettingsCenterStrings.php:362
 msgid "Quick Start"
 msgstr "快速开始"
 
-#: src/Admin/SettingsCenterStrings.php:374
+#: src/Admin/SettingsCenterStrings.php:363
 msgid ""
 "Configure the editor, appearance, image behavior, and writing preferences."
 msgstr "配置编辑器、外观、图片行为和写作偏好。"
 
-#: src/Admin/SettingsCenterStrings.php:375
+#: src/Admin/SettingsCenterStrings.php:364
 msgid "Editor Workflow"
 msgstr "编辑器工作流"
 
-#: src/Admin/SettingsCenterStrings.php:376
+#: src/Admin/SettingsCenterStrings.php:365
 msgid "Use Markdown editing, split Preview, and WordPress-native publishing."
 msgstr "使用 Markdown 编辑、分栏预览和 WordPress 原生发布。"
 
-#: src/Admin/SettingsCenterStrings.php:377
+#: src/Admin/SettingsCenterStrings.php:366
 msgid "Configuration Migration"
 msgstr "配置迁移"
 
-#: src/Admin/SettingsCenterStrings.php:378
+#: src/Admin/SettingsCenterStrings.php:367
 msgid "Export a JSON backup and import it into a compatible EasyMDE version."
 msgstr "导出 JSON 备份，并将其导入兼容的 EasyMDE 版本。"
 
-#: src/Admin/SettingsCenterStrings.php:380
+#: src/Admin/SettingsCenterStrings.php:369
 msgid "2026-07-16"
 msgstr "2026-07-16"
 
-#: src/Admin/SettingsCenterStrings.php:381
+#: src/Admin/SettingsCenterStrings.php:370
 msgid ""
 "Deliver the ordinary editor through React 18, strict TypeScript, and Vite."
 msgstr "通过 React 18、严格 TypeScript 和 Vite 提供普通编辑器。"
 
-#: src/Admin/SettingsCenterStrings.php:382
+#: src/Admin/SettingsCenterStrings.php:371
 msgid ""
 "Preserve source and Preview, themes, media, drafts, clipboard, and WeChat "
 "export."
 msgstr "保留源码和预览、主题、媒体、草稿、剪贴板及微信导出功能。"
 
-#: src/Admin/SettingsCenterStrings.php:383
+#: src/Admin/SettingsCenterStrings.php:372
 msgid ""
 "Keep publishing, taxonomies, featured media, and revisions WordPress-native."
 msgstr "让发布、分类法、特色媒体和修订版本保持 WordPress 原生。"
 
-#: src/Admin/SettingsCenterStrings.php:384
+#: src/Admin/SettingsCenterStrings.php:373
 msgid "0.1.7"
 msgstr "0.1.7"
 
-#: src/Admin/SettingsCenterStrings.php:385
+#: src/Admin/SettingsCenterStrings.php:374
 msgid "2026-07-04"
 msgstr "2026-07-04"
 
-#: src/Admin/SettingsCenterStrings.php:386
+#: src/Admin/SettingsCenterStrings.php:375
 msgid "Add a compact icon toolbar and appearance popover."
 msgstr "添加紧凑图标工具栏和外观弹出层。"
 
-#: src/Admin/SettingsCenterStrings.php:387
+#: src/Admin/SettingsCenterStrings.php:376
 msgid "Add Typora-inspired shortcuts and rich-text WeChat export."
 msgstr "添加 Typora 风格快捷键和富文本微信导出。"
 
-#: src/Admin/SettingsCenterStrings.php:388
+#: src/Admin/SettingsCenterStrings.php:377
 msgid "This About action is not connected to WordPress yet."
 msgstr "此关于操作尚未连接到 WordPress。"
 
-#: src/Admin/SettingsCenterStrings.php:389
+#: src/Admin/SettingsCenterStrings.php:378
 msgid "Close About Feedback"
 msgstr "关闭关于反馈"
 
-#: src/Admin/SettingsCenterStrings.php:390
+#: src/Admin/SettingsCenterStrings.php:379
 msgid "Keep at least one image upload format enabled."
 msgstr "至少需要保留一种允许上传的图片格式。"
 
-#: src/Admin/SettingsCenterStrings.php:391
+#: src/Admin/SettingsCenterStrings.php:380
 msgid "Close Image Upload Feedback"
 msgstr "关闭图片上传提示"
+
+#: src/Admin/SettingsCenterStrings.php:381
+msgid "Editor Theme Rendering"
+msgstr "编辑器主题渲染"
+
+#: src/Admin/SettingsCenterStrings.php:382
+msgid ""
+"Apply the selected editor theme to published articles. Disable this to use "
+"the theme only in editor previews."
+msgstr "将编辑器中选择的主题应用到发布文章。关闭后，该主题仅用于编辑器预览。"
+
+#: src/Admin/SettingsCenterStrings.php:383
+msgid "Code Block Copy"
+msgstr "代码块复制"
+
+#: src/Admin/SettingsCenterStrings.php:384
+msgid "Show a copy button on code blocks in published articles."
+msgstr "在发布文章的代码块上显示复制按钮。"
 
 #: src/Admin/SettingsPage.php:35 src/Admin/SettingsPage.php:45
 #: src/Admin/SettingsPage.php:128
@@ -2783,21 +2763,21 @@ msgstr "更新"
 msgid "The EasyMDE settings route is not supported."
 msgstr "不支持此 EasyMDE 设置路由。"
 
-#: src/Frontend/FrontendAssets.php:104
+#: src/Frontend/FrontendAssets.php:108
 msgid "Copy code"
 msgstr "复制代码"
 
-#: src/Frontend/FrontendAssets.php:106
+#: src/Frontend/FrontendAssets.php:110
 msgid "Code copied"
 msgstr "代码已复制"
 
-#: src/Frontend/FrontendAssets.php:107
+#: src/Frontend/FrontendAssets.php:111
 msgid "Unable to copy code. Try again."
 msgstr "无法复制代码，请重试。"
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
 #: src/Rest/ImageHostingController.php:657
-#: src/Support/SettingsCenterRepository.php:662
+#: src/Support/SettingsCenterRepository.php:691
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr "主图床和备份图床必须使用不同的存储目标。"
@@ -2824,14 +2804,9 @@ msgstr "所选图床服务尚未配置。"
 
 #: src/Rest/ImageHostingController.php:271
 #: src/Rest/ImageHostingController.php:649
-#: src/Support/SettingsCenterRepository.php:430
+#: src/Support/SettingsCenterRepository.php:454
 msgid "The image-hosting configuration is unavailable."
 msgstr "图床配置不可用。"
-
-#: src/Rest/ImageHostingController.php:324 src/Rest/MediaController.php:75
-#: src/Rest/MediaController.php:152
-msgid "This image format is not allowed by the current EasyMDE settings."
-msgstr "当前 EasyMDE 设置不允许上传这种图片格式。"
 
 #: src/Rest/ImageHostingController.php:609
 msgid "The image-hosting request could not be verified."
@@ -2871,11 +2846,11 @@ msgstr "未提供要上传的图片文件。"
 msgid "The image could not be uploaded."
 msgstr "无法上传图片。"
 
-#: src/Rest/MediaController.php:103
+#: src/Rest/MediaController.php:106
 msgid "The uploaded image URL is unavailable."
 msgstr "上传后的图片 URL 不可用。"
 
-#: src/Rest/MediaController.php:142
+#: src/Rest/MediaController.php:145
 msgid "The image could not be saved to the WordPress media library."
 msgstr "无法将图片保存到 WordPress 媒体库。"
 
@@ -2908,15 +2883,15 @@ msgstr "无法验证设置请求。"
 msgid "The settings payload is too large."
 msgstr "设置负载过大。"
 
-#: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:370
-#: src/Support/SettingsCenterRepository.php:291
-#: src/Support/SettingsCenterRepository.php:422
-#: src/Support/SettingsCenterRepository.php:564
-#: src/Support/SettingsCenterRepository.php:599
+#: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:368
+#: src/Support/SettingsCenterRepository.php:315
+#: src/Support/SettingsCenterRepository.php:446
+#: src/Support/SettingsCenterRepository.php:593
+#: src/Support/SettingsCenterRepository.php:628
 msgid "The settings payload is invalid."
 msgstr "The settings payload is invalid."
 
-#: src/Support/SettingsCenterRepository.php:642
+#: src/Support/SettingsCenterRepository.php:671
 msgid "One or more shortcut values are invalid."
 msgstr "One or more shortcut values are invalid."
 
@@ -3290,76 +3265,76 @@ msgstr "无法安全解析自定义 CSS：%s"
 msgid "Custom CSS contains a blocked feature: %s"
 msgstr "自定义 CSS 包含被阻止的特性：%s"
 
-#: src/Theme/ThemeStateRepository.php:475
-#: src/Theme/ThemeStateRepository.php:522
-#: src/Theme/ThemeStateRepository.php:549
-#: src/Theme/ThemeStateRepository.php:571
+#: src/Theme/ThemeStateRepository.php:495
+#: src/Theme/ThemeStateRepository.php:542
+#: src/Theme/ThemeStateRepository.php:569
+#: src/Theme/ThemeStateRepository.php:591
 msgctxt "font selection option"
 msgid "None"
 msgstr "无"
 
-#: src/Theme/ThemeStateRepository.php:480
+#: src/Theme/ThemeStateRepository.php:500
 msgid "Optima"
 msgstr "Optima"
 
-#: src/Theme/ThemeStateRepository.php:485
+#: src/Theme/ThemeStateRepository.php:505
 msgid "Inter"
 msgstr "Inter"
 
-#: src/Theme/ThemeStateRepository.php:490
+#: src/Theme/ThemeStateRepository.php:510
 msgid "Helvetica"
 msgstr "Helvetica"
 
-#: src/Theme/ThemeStateRepository.php:495
+#: src/Theme/ThemeStateRepository.php:515
 msgid "Georgia"
 msgstr "Georgia"
 
-#: src/Theme/ThemeStateRepository.php:500
+#: src/Theme/ThemeStateRepository.php:520
 msgid "Times"
 msgstr "Times"
 
-#: src/Theme/ThemeStateRepository.php:505
+#: src/Theme/ThemeStateRepository.php:525
 msgid "Cochin"
 msgstr "Cochin"
 
-#: src/Theme/ThemeStateRepository.php:510
+#: src/Theme/ThemeStateRepository.php:530
 msgid "Helvetica Neue"
 msgstr "Helvetica Neue"
 
-#: src/Theme/ThemeStateRepository.php:517
+#: src/Theme/ThemeStateRepository.php:537
 msgid "Microsoft YaHei"
 msgstr "微软雅黑"
 
-#: src/Theme/ThemeStateRepository.php:529
+#: src/Theme/ThemeStateRepository.php:549
 msgid "PingFang SC Light"
 msgstr "苹方简体细体"
 
-#: src/Theme/ThemeStateRepository.php:534
+#: src/Theme/ThemeStateRepository.php:554
 msgid "PingFang SC Regular"
 msgstr "苹方简体常规体"
 
-#: src/Theme/ThemeStateRepository.php:539
+#: src/Theme/ThemeStateRepository.php:559
 msgid "PingFang TC Light"
 msgstr "苹方繁体细体"
 
-#: src/Theme/ThemeStateRepository.php:544
+#: src/Theme/ThemeStateRepository.php:564
 msgid "PingFang TC Regular"
 msgstr "苹方繁体常规体"
 
-#: src/Theme/ThemeStateRepository.php:556
+#: src/Theme/ThemeStateRepository.php:576
 msgctxt "serif font fallback option"
 msgid "Yes"
 msgstr "是"
 
-#: src/Theme/ThemeStateRepository.php:561
+#: src/Theme/ThemeStateRepository.php:581
 msgid "serif"
 msgstr "衬线"
 
-#: src/Theme/ThemeStateRepository.php:566
+#: src/Theme/ThemeStateRepository.php:586
 msgid "sans-serif"
 msgstr "无衬线"
 
-#: src/Theme/ThemeStateRepository.php:576
+#: src/Theme/ThemeStateRepository.php:596
 msgctxt "font selection option"
 msgid "Theme default"
 msgstr "主题默认"
@@ -3373,17 +3348,14 @@ msgstr "EasyMDE 编辑器无法启动。WordPress 原生字段仍然可用。"
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr "EasyMDE 需要 JavaScript 才能在此页面编辑 Markdown。"
 
-#: templates/admin/settings-center.php:13
+#: templates/admin/settings-center.php:12
 msgid ""
 "The EasyMDE settings center could not start. WordPress settings remain "
 "available."
 msgstr "EasyMDE 设置中心无法启动。WordPress 设置仍然可用。"
 
-#: templates/admin/settings-center.php:22
-msgid "Loading EasyMDE Settings Center..."
-msgstr "正在加载 EasyMDE 设置中心..."
-
-#: templates/admin/settings-center.php:47
+#: templates/admin/settings-center.php:20
+#: templates/admin/settings-center.php:28
 msgid "Return to WordPress settings"
 msgstr "返回 WordPress 设置"
 
@@ -3414,6 +3386,21 @@ msgstr[0] "%s 个修订版本"
 msgid "%s word"
 msgid_plural "%s words"
 msgstr[0] "%s 个词"
+
+#~ msgid "Synchronized scrolling"
+#~ msgstr "同步滚动"
+
+#~ msgid "Keep the editor and preview in sync"
+#~ msgstr "编辑区和预览区联动"
+
+#~ msgid "Show line numbers on the left side of the editor."
+#~ msgstr "在编辑器左侧显示行号。"
+
+#~ msgid "Line Numbers"
+#~ msgstr "显示行号"
+
+#~ msgid "Loading EasyMDE Settings Center..."
+#~ msgstr "正在加载 EasyMDE 设置中心..."
 
 #~ msgid "Insert Markdown Link After Upload"
 #~ msgstr "上传后插入 Markdown 链接"

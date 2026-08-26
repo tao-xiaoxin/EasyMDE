@@ -100,7 +100,7 @@ function validBootstrap() {
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        statusBarMode: 'words-reading-time',
+        statusBarMode: 'detailed',
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
@@ -205,8 +205,6 @@ function validBootstrap() {
         splitMode: 'Split mode',
         splitPreview: 'Split preview',
         splitPreviewDescription: 'Show live preview by default',
-        syncScroll: 'Synchronized scrolling',
-        syncScrollDescription: 'Keep the editor and preview in sync',
         table: 'Table',
         tableColumns: 'Columns',
         tableRows: 'Rows',
@@ -254,9 +252,7 @@ function validBootstrap() {
         unsaved: 'Unsaved',
         viewModes: 'View modes',
         wechat: 'Copy to WeChat',
-        wechatCopied: 'Copied',
-        wordCount: 'Word count',
-        wordCountDescription: 'Show words, characters, and reading time beside the title'
+        wechatCopied: 'Copied'
       },
       mediaPickerFailure: 'The media library could not open.',
       preview: 'Preview',

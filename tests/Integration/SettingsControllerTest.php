@@ -159,6 +159,28 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
 
+	public function test_status_bar_mode_rest_contract_accepts_only_canonical_values() {
+		foreach ( array( 'detailed', 'compact', 'hidden' ) as $mode ) {
+			$settings = $this->current_settings();
+			$settings['general']['statusBarMode'] = $mode;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 200, $response->get_status(), $mode );
+			$this->assertSame( $mode, $response->get_data()['settings']['general']['statusBarMode'], $mode );
+		}
+
+		foreach ( array( 'words-reading-time', 'words' ) as $legacy_mode ) {
+			$settings = $this->current_settings();
+			$settings['general']['statusBarMode'] = $legacy_mode;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $legacy_mode );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $legacy_mode );
+		}
+	}
+
 	public function test_post_rejects_invalid_upload_retry_counts() {
 		foreach ( array( 'uploadRetryCount' ) as $field ) {
 			foreach ( array( -1, 6, '2', 2.5 ) as $invalid ) {

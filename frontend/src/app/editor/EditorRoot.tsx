@@ -147,8 +147,7 @@ function constrainImmersivePreferences(
 ) {
   return {
     ...preferences,
-    autoSave: settings.autoSave && preferences.autoSave,
-    syncScroll: settings.syncScroll && preferences.syncScroll
+    autoSave: settings.autoSave && preferences.autoSave
   };
 }
 
@@ -163,10 +162,7 @@ function preserveDisabledImmersivePreferences(
     ...constrained,
     autoSave: settings.autoSave
       ? constrained.autoSave
-      : current.preferences.autoSave,
-    syncScroll: settings.syncScroll
-      ? constrained.syncScroll
-      : current.preferences.syncScroll
+      : current.preferences.autoSave
   };
 }
 
@@ -542,8 +538,7 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [
       props.immersivePreferencesPort,
-      props.settings.general.autoSave,
-      props.settings.general.syncScroll
+      props.settings.general.autoSave
     ]
   );
   const [immersivePreferences, setImmersivePreferences] =
@@ -628,20 +623,11 @@ export function EditorRoot(props: EditorRootProps) {
   useEffect(() => {
     localDraftsEnabledRef.current = localDraftsEnabled;
   }, [localDraftsEnabled]);
-  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(() =>
-    'loaded' === immersivePreferences.status
-      ? immersivePreferences.preferences.syncScroll
-      : props.settings.general.syncScroll
-  );
+  const scrollSyncEnabled = props.settings.general.syncScroll;
   const setLocalDraftsEnabledFromImmersive = useCallback(
     (enabled: boolean) =>
       setLocalDraftsEnabled(props.settings.general.autoSave && enabled),
     [props.settings.general.autoSave]
-  );
-  const setScrollSyncEnabledFromImmersive = useCallback(
-    (enabled: boolean) =>
-      setScrollSyncEnabled(props.settings.general.syncScroll && enabled),
-    [props.settings.general.syncScroll]
   );
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
@@ -1436,7 +1422,6 @@ export function EditorRoot(props: EditorRootProps) {
     if ('loaded' === preferences.status) {
       setImmersiveMode(preferences.preferences.splitPreview ? 'split' : 'source');
       setLocalDraftsEnabled(preferences.preferences.autoSave);
-      setScrollSyncEnabled(preferences.preferences.syncScroll);
     } else if ('missing' === preferences.status) {
       setImmersiveMode('split');
     }
@@ -1824,12 +1809,9 @@ export function EditorRoot(props: EditorRootProps) {
           onConfirmPublish={publish}
           onSelectFeaturedImage={selectFeaturedImage}
           readPublishSnapshot={props.nativePublishPort.read}
-          onScrollSyncEnabledChange={setScrollSyncEnabledFromImmersive}
           onViewModeChange={changeImmersiveMode}
           revisionPort={revisionPort}
           restoreRevision={restoreRevision}
-          scrollSyncEnabled={scrollSyncEnabled}
-          syncScrollAllowed={props.settings.general.syncScroll}
           styleControls={
               <Fragment>
                 <AppearanceControls

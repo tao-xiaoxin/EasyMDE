@@ -484,7 +484,7 @@ final class SettingsCenterRepository {
 				'autoFocusEditor'             => true,
 				'showLineNumbers'             => true,
 				'syntaxHighlight'             => true,
-				'statusBarMode'               => 'words-reading-time',
+				'statusBarMode'               => 'detailed',
 				'autoSave'                    => true,
 				'autoSaveInterval'            => '60',
 				'syncScroll'                  => true,
@@ -700,7 +700,7 @@ final class SettingsCenterRepository {
 			'general'  => array(
 				'interfaceLanguage' => 'zh-CN',
 				'editingMode'       => 'live-preview',
-				'statusBarMode'     => 'words-reading-time',
+				'statusBarMode'     => 'detailed',
 				'autoSaveInterval'  => '60',
 				'publishVisibility' => 'public',
 				'summaryMode'       => 'auto-55',
@@ -728,8 +728,10 @@ final class SettingsCenterRepository {
 					'preview'      => 'preview',
 				),
 				'statusBarMode'     => array(
-					'words-reading-time' => 'words-reading-time',
-					'words'              => 'words',
+					'detailed'           => 'detailed',
+					'compact'            => 'compact',
+					'words-reading-time' => 'detailed',
+					'words'              => 'compact',
 					'hidden'             => 'hidden',
 				),
 				'autoSaveInterval'  => array(

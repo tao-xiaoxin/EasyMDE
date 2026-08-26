@@ -8,7 +8,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		autoFocusEditor: false,
 		showLineNumbers: true,
 		syntaxHighlight: true,
-		statusBarMode: "words-reading-time",
+		statusBarMode: "detailed",
 		autoSave: true,
 		autoSaveInterval: "60",
 		syncScroll: true,

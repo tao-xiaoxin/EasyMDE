@@ -87,6 +87,12 @@ function featureEnabled(config: FrontendEnhancementConfig, key: string): boolean
   return !features || property(features, key) !== false;
 }
 
+function isMermaidCode(element: Element): boolean {
+  return [...element.classList].some(
+    (className) => 'language-mermaid' === className.toLowerCase()
+  );
+}
+
 function stringValue(
   config: FrontendEnhancementConfig,
   key: string,
@@ -136,7 +142,7 @@ export function syncCodeFrameBackgrounds(
     if (!(element instanceof HTMLElement) || !element.parentElement) {
       throw new Error('easymde-code-frame-parent-missing');
     }
-    if (element.classList.contains('language-mermaid')) {
+    if (isMermaidCode(element)) {
       element.parentElement.setAttribute('data-easymde-mermaid-fallback', '1');
     }
     element.parentElement.style.setProperty(
@@ -146,18 +152,70 @@ export function syncCodeFrameBackgrounds(
   });
 }
 
+function syncCodeLineNumberGutters(
+  root: ParentNode,
+  windowRef: FrontendEnhancementWindow
+): void {
+  root.querySelectorAll('pre > code').forEach((element) => {
+    if (!(element instanceof HTMLElement) || !element.parentElement) {
+      throw new Error('easymde-code-line-number-parent-missing');
+    }
+
+    const pre = element.parentElement;
+    const existingGutters = [...pre.children].filter((child) =>
+      child.classList.contains('easymde-code-line-number-gutter')
+    );
+    const enabled = !isMermaidCode(element)
+      && Boolean(element.closest('.easymde-code-line-numbers'));
+
+    if (!enabled) {
+      existingGutters.forEach((gutter) => {
+        gutter.remove();
+      });
+      pre.classList.remove('easymde-code-with-line-numbers');
+      pre.style.removeProperty('--easymde-code-line-number-gutter-width');
+      pre.style.removeProperty('--easymde-code-line-number-color');
+      return;
+    }
+
+    const codeText = element.textContent || '';
+    const lineCount = Math.max(
+      1,
+      codeText.split('\n').length - (codeText.endsWith('\n') ? 1 : 0)
+    );
+    const gutter = existingGutters.shift() ?? element.ownerDocument.createElement('span');
+    const lines = element.ownerDocument.createDocumentFragment();
+    existingGutters.forEach((duplicate) => {
+      duplicate.remove();
+    });
+    gutter.className = 'easymde-code-line-number-gutter';
+    gutter.setAttribute('aria-hidden', 'true');
+    for (let index = 0; index < lineCount; index += 1) {
+      lines.append(element.ownerDocument.createElement('span'));
+    }
+    gutter.replaceChildren(lines);
+    pre.classList.add('easymde-code-with-line-numbers');
+    pre.style.setProperty(
+      '--easymde-code-line-number-gutter-width',
+      `${Math.max(2, String(lineCount).length)}ch`
+    );
+    pre.style.setProperty(
+      '--easymde-code-line-number-color',
+      windowRef.getComputedStyle(element).color
+    );
+    pre.insertBefore(gutter, element);
+  });
+}
+
 function highlightCode(
   root: ParentNode,
   config: FrontendEnhancementConfig,
   windowRef: FrontendEnhancementWindow
 ): void {
   const syntaxHighlight = featureEnabled(config, 'syntaxHighlight');
-  const codeBlocks = [
-    ...root.querySelectorAll('pre > code:not(.language-mermaid)'),
-    ...(!featureEnabled(config, 'mermaid')
-      ? root.querySelectorAll('pre > code.language-mermaid')
-      : [])
-  ];
+  const codeBlocks = [...root.querySelectorAll('pre > code')].filter(
+    (element) => !isMermaidCode(element) || !featureEnabled(config, 'mermaid')
+  );
 
   codeBlocks.forEach((element) => {
     if (!(element instanceof HTMLElement)) {
@@ -166,7 +224,7 @@ function highlightCode(
 
     element.classList.add('hljs');
     if (
-      element.classList.contains('language-mermaid')
+      isMermaidCode(element)
       || !syntaxHighlight
       || !windowRef.hljs
       || element.dataset.easymdeHighlighted
@@ -175,6 +233,7 @@ function highlightCode(
     windowRef.hljs.highlightElement(element);
     element.dataset.easymdeHighlighted = '1';
   });
+  syncCodeLineNumberGutters(root, windowRef);
   syncCodeFrameBackgrounds(root, windowRef);
 }
 
@@ -183,7 +242,8 @@ function markMermaidAssetFailure(root: ParentNode, config: FrontendEnhancementCo
     ?? property(property(config, 'features'), 'mermaidAssetError');
   if ('string' !== typeof error || !error) return;
 
-  root.querySelectorAll('pre > code.language-mermaid').forEach((element) => {
+  root.querySelectorAll('pre > code').forEach((element) => {
+    if (!isMermaidCode(element)) return;
     if (!(element instanceof HTMLElement) || !element.parentElement) {
       throw new Error('easymde-mermaid-parent-missing');
     }
@@ -250,7 +310,8 @@ export function renderMermaidContent(
     return Promise.resolve();
   }
 
-  root.querySelectorAll('pre > code.language-mermaid:not([data-easymde-rendered])').forEach((element) => {
+  root.querySelectorAll('pre > code:not([data-easymde-rendered])').forEach((element) => {
+    if (!isMermaidCode(element)) return;
     if (!(element instanceof HTMLElement) || !element.parentElement) {
       throw new Error('easymde-mermaid-parent-missing');
     }

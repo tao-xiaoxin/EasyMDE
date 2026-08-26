@@ -385,6 +385,37 @@ function setSummaryModeSetting(value) {
   ]);
 }
 
+function markdownPresentationSettings() {
+  const value = JSON.parse(runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo wp_json_encode( array( "tableAlignment" => $settings["markdown"]["tableAlignment"], "codeLineNumbers" => $settings["markdown"]["codeLineNumbers"] ) );'
+  ]));
+
+  if (
+    !value
+    || !['auto', 'left', 'center'].includes(value.tableAlignment)
+    || !['show', 'hide'].includes(value.codeLineNumbers)
+  ) {
+    throw new Error('markdown-presentation-settings-invalid');
+  }
+
+  return value;
+}
+
+function setMarkdownPresentationSettings({ tableAlignment, codeLineNumbers }) {
+  if (
+    !['auto', 'left', 'center'].includes(tableAlignment)
+    || !['show', 'hide'].includes(codeLineNumbers)
+  ) {
+    throw new Error('markdown-presentation-settings-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["markdown"]["tableAlignment"] = ${JSON.stringify(tableAlignment)}; $settings["markdown"]["codeLineNumbers"] = ${JSON.stringify(codeLineNumbers)}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
 function attachmentIdsForPost(postId) {
   const output = runWp([
     'post',
@@ -1332,6 +1363,11 @@ test.describe('EasyMDE editor workflows', () => {
           : []),
         ...(summaryModes.has(testInfo.easymdeOriginalSummaryMode)
           ? [() => setSummaryModeSetting(testInfo.easymdeOriginalSummaryMode)]
+          : []),
+        ...(testInfo.easymdeOriginalMarkdownPresentationSettings
+          ? [() => setMarkdownPresentationSettings(
+            testInfo.easymdeOriginalMarkdownPresentationSettings
+          )]
           : []),
         ...(testInfo.easymdeTermIds ?? []).map((termId) => () => {
           runWp(['term', 'delete', 'category', String(termId)]);
@@ -4110,6 +4146,9 @@ test.describe('EasyMDE editor workflows', () => {
     });
     await expect(publishDialog).toBeVisible();
     await expect(publishDialog).toContainText(bootstrap.imageRequirements);
+    await expect(
+      publishDialog.locator('.easymde-publish-featured-placeholder')
+    ).toHaveCount(0);
 
     const cdp = await context.newCDPSession(page);
     const publishMetrics = await cdp.send('Page.getLayoutMetrics');
@@ -4156,6 +4195,166 @@ test.describe('EasyMDE editor workflows', () => {
 
     expect(attachmentIdsForPost(postId)).toEqual(attachmentsBefore);
     await expect(source).toHaveValue(markdown);
+    expect(browserFailures).toEqual([]);
+    await cdp.detach();
+  });
+
+  test('links table alignment and code line numbers to a published article template', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    const skippedViewTransitions = [];
+    testInfo.easymdeOriginalMarkdownPresentationSettings =
+      markdownPresentationSettings();
+    setMarkdownPresentationSettings({
+      tableAlignment: 'left',
+      codeLineNumbers: 'hide'
+    });
+    page.on('pageerror', (error) => {
+      if (
+        error.name === 'AbortError'
+        && error.message === 'Transition was skipped'
+        && !error.stack
+      ) {
+        skippedViewTransitions.push(error.message);
+        return;
+      }
+      browserFailures.push(error.message);
+    });
+
+    const selectMarkdownPresentation = async ({ alignment, lineNumbers }) => {
+      await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
+      await expect(page.locator('.easymde-settings-center')).toBeVisible();
+      await page
+        .getByRole('button', { name: /^(?:Markdown 设置|Markdown Settings)$/u })
+        .click();
+      const markdownSection = page.locator('[data-settings-section="markdown"]');
+      const choose = async (name, option) => {
+        const trigger = markdownSection.getByRole('combobox', { name });
+        await expect(trigger).toBeEnabled();
+        await trigger.click();
+        const target = page.getByRole('option', { name: option, exact: true });
+        const changed = 'true' !== await target.getAttribute('aria-selected');
+        await target.click();
+        return changed;
+      };
+      const alignmentChanged = await choose(
+        /^(?:表格对齐|Table Alignment)$/u,
+        alignment
+      );
+      const lineNumbersChanged = await choose(
+        /^(?:代码块行号|Code Block Line Numbers)$/u,
+        lineNumbers
+      );
+      const saveButton = page.getByRole('button', {
+        name: /保存设置|Save Settings/u
+      });
+      if (alignmentChanged || lineNumbersChanged) {
+        await expect(saveButton).toBeEnabled();
+        await saveButton.click();
+        await expect(page.locator('[data-save-status]')).toHaveAttribute(
+          'data-save-status',
+          /saved|idle/u
+        );
+      }
+    };
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await login(page, testInfo.easymdeUser);
+    await selectMarkdownPresentation({
+      alignment: /^(?:全部居中对齐|Align All Center)$/u,
+      lineNumbers: /^(?:显示|Show)$/u
+    });
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    const title = `Published formatting ${testSlug(testInfo)}`;
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      'Markdown 全量能力测试文档'
+    );
+    const postId = await currentPostId(page);
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await page.getByRole('button', { name: labels.publish, exact: true }).click();
+    const publishDialog = page.getByRole('dialog', {
+      name: labels.publish,
+      exact: true
+    });
+    const openAfterPublish = publishDialog.getByRole('switch', {
+      name: labels.openAfterPublish
+    });
+    if (!await openAfterPublish.isChecked()) await openAfterPublish.click();
+    const publishNavigation = page.waitForNavigation({
+      waitUntil: 'load',
+      timeout: 15_000
+    });
+    await publishDialog
+      .getByRole('button', { name: labels.publish, exact: true })
+      .click();
+    await publishNavigation;
+    expect(page.url()).toBe(postPermalink(postId));
+
+    const article = page.locator('.easymde-rendered-content').first();
+    const firstCode = article.locator('pre > code:not(.language-mermaid)').first();
+    await expect(article).toHaveClass(/easymde-table-align-center/u);
+    await expect(article).toHaveClass(/easymde-code-line-numbers/u);
+    await expect(firstCode).toBeVisible();
+    const originalCodeText = await firstCode.textContent() ?? '';
+    const expectedLineCount = Math.max(
+      1,
+      originalCodeText.split('\n').length - (originalCodeText.endsWith('\n') ? 1 : 0)
+    );
+    await expect(
+      firstCode.locator('xpath=../span[contains(@class,"easymde-code-line-number-gutter")]/span')
+    ).toHaveCount(expectedLineCount);
+    expect(await firstCode.locator('xpath=..').textContent()).toBe(originalCodeText);
+    await expect.poll(() => article.locator('th, td').first().evaluate(
+      (cell) => getComputedStyle(cell).textAlign
+    )).toBe('center');
+    const cdp = await context.newCDPSession(page);
+    for (const viewport of [
+      { width: 1440, height: 900 },
+      { width: 390, height: 844 }
+    ]) {
+      await page.setViewportSize(viewport);
+      const metrics = await cdp.send('Page.getLayoutMetrics');
+      expect(metrics.cssVisualViewport.clientWidth).toBe(viewport.width);
+      expect(await article.evaluate((root) => {
+        const rootBounds = root.getBoundingClientRect();
+        const ownedSurfaces = [
+          ...root.querySelectorAll('table, pre, .easymde-code-line-number-gutter')
+        ];
+
+        return {
+          rootWithinViewport:
+            rootBounds.left >= -1 && rootBounds.right <= innerWidth + 1,
+          ownedSurfacesWithinRoot: ownedSurfaces.every((surface) => {
+            const bounds = surface.getBoundingClientRect();
+            return bounds.left >= rootBounds.left - 1
+              && bounds.right <= rootBounds.right + 1;
+          })
+        };
+      })).toEqual({
+        rootWithinViewport: true,
+        ownedSurfacesWithinRoot: true
+      });
+    }
+
+    setMarkdownPresentationSettings({
+      tableAlignment: 'left',
+      codeLineNumbers: 'hide'
+    });
+    await page.goto(postPermalink(postId));
+    await expect(article).toHaveClass(/easymde-table-align-left/u);
+    await expect(article).not.toHaveClass(/easymde-code-line-numbers/u);
+    await expect(article.locator('.easymde-code-line-number-gutter')).toHaveCount(0);
+    expect(await firstCode.textContent()).toBe(originalCodeText);
+    await expect.poll(() => article.locator('th, td').first().evaluate(
+      (cell) => getComputedStyle(cell).textAlign
+    )).toBe('left');
+    expect(skippedViewTransitions.length).toBeLessThanOrEqual(1);
     expect(browserFailures).toEqual([]);
     await cdp.detach();
   });

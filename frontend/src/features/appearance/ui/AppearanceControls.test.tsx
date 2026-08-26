@@ -426,10 +426,11 @@ describe('AppearanceControls', () => {
 
   it('renders the complete reference Custom CSS dialog preview fixture', async () => {
     const user = userEvent.setup();
+    const port = createPort();
     const { container } = render(
       <AppearanceControls
         bootstrap={bootstrap}
-        port={createPort()}
+        port={port}
         onFailure={vi.fn()}
         onReady={vi.fn()}
         messageAlertTimer={messageAlertTimer}
@@ -471,7 +472,14 @@ describe('AppearanceControls', () => {
     expect(previewCode?.querySelector('.hljs-title.function_')?.textContent).toBe(
       'renderTheme'
     );
+    expect(previewCode?.querySelector('.code-line-number')).toBeNull();
     expect(previewCode?.querySelector('[class^="token-"]')).toBeNull();
+    await waitFor(() => {
+      expect(port.previewCustomCss).toHaveBeenCalled();
+    });
+    expect(vi.mocked(port.previewCustomCss).mock.calls.at(-1)?.[0]).not.toContain(
+      '.code-line-number'
+    );
     expect(preview?.querySelector('a')?.textContent).toContain('Link preview');
     expect(preview?.querySelector('dl')?.textContent).toContain(
       'Definition list'

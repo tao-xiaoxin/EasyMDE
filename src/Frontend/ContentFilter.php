@@ -48,6 +48,13 @@ final class ContentFilter {
 			$this->settings_center_repository->should_apply_editor_theme_to_frontend()
 		);
 		$style       = $this->theme_state_repository->get_rendered_content_style( $theme_state );
+		$classes     = array(
+			$this->theme_state_repository->get_rendered_content_classes( $theme_state ),
+			'easymde-table-align-' . $this->settings_center_repository->get_published_table_alignment(),
+		);
+		if ( $this->settings_center_repository->should_show_published_code_line_numbers() ) {
+			$classes[] = 'easymde-code-line-numbers';
+		}
 
 		try {
 			$html = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
@@ -59,7 +66,7 @@ final class ContentFilter {
 
 		return sprintf(
 			'<div class="%s"%s>%s</div>',
-			esc_attr( $this->theme_state_repository->get_rendered_content_classes( $theme_state ) ),
+			esc_attr( implode( ' ', $classes ) ),
 			'' !== $style ? ' style="' . esc_attr( $style ) . '"' : '',
 			$html
 		);

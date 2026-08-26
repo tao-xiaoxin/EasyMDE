@@ -37,7 +37,8 @@ describe('frontend enhancement runtime', () => {
       highlightElement: (code) => highlighted.push(code)
     };
     vi.spyOn(window, 'getComputedStyle').mockReturnValue({
-      backgroundColor: 'rgb(12, 34, 56)'
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
     } as CSSStyleDeclaration);
 
     await enhanceFrontendContent(root, { features: { syntaxHighlight: true } }, windowRef);
@@ -48,6 +49,68 @@ describe('frontend enhancement runtime', () => {
     expect(highlighted).toEqual([code]);
     expect(code?.parentElement?.style.getPropertyValue('--easymde-code-frame-background'))
       .toBe('rgb(12, 34, 56)');
+  });
+
+  it('adds one decorative line-number gutter after highlighting without changing code text', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-code-line-numbers';
+    root.innerHTML = '<pre><code class="language-javascript">const one = 1;\nconst two = 2;\nreturn one + two;\n</code></pre>';
+    const windowRef = runtime();
+    const highlightElement = vi.fn((code: HTMLElement) => {
+      code.innerHTML = '<span class="hljs-keyword">const</span> one = 1;\nconst two = 2;\nreturn one + two;\n';
+    });
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(root, { features: { syntaxHighlight: true } }, windowRef);
+    await enhanceFrontendContent(root, { features: { syntaxHighlight: true } }, windowRef);
+
+    const pre = root.querySelector('pre');
+    const code = root.querySelector('code');
+    const gutters = root.querySelectorAll('.easymde-code-line-number-gutter');
+    expect(highlightElement).toHaveBeenCalledTimes(1);
+    expect(gutters).toHaveLength(1);
+    expect(gutters[0]?.getAttribute('aria-hidden')).toBe('true');
+    expect(gutters[0]?.querySelectorAll('span')).toHaveLength(3);
+    expect(gutters[0]?.textContent).toBe('');
+    expect(pre?.style.getPropertyValue('--easymde-code-line-number-color'))
+      .toBe('rgb(171, 178, 191)');
+    expect(code?.textContent).toBe('const one = 1;\nconst two = 2;\nreturn one + two;\n');
+    expect(pre?.textContent).toBe(code?.textContent);
+  });
+
+  it('does not add line numbers outside the enabled root or to mixed-case Mermaid code', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-code-line-numbers';
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const numbered = true;</code></pre>',
+      '<pre><code class="language-Mermaid">graph TD; A--&gt;B;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    windowRef.hljs = { highlightElement: vi.fn() };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { mermaid: true, syntaxHighlight: true } },
+      windowRef
+    );
+
+    expect(root.querySelectorAll('.easymde-code-line-number-gutter')).toHaveLength(1);
+    expect(
+      root.querySelector('.language-javascript')?.parentElement?.classList
+        .contains('easymde-code-with-line-numbers')
+    ).toBe(true);
+    expect(
+      root.querySelector('.language-Mermaid')?.parentElement?.classList
+        .contains('easymde-code-with-line-numbers')
+    ).toBe(false);
   });
 
   it('keeps Mermaid fences readable as code when the optional renderer is unavailable', async () => {

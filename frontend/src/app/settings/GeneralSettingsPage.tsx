@@ -37,7 +37,6 @@ const DEFAULT_DRAFT: Draft = {
 	applyEditorThemeToFrontend: true,
 	showPublishedCodeCopyButton: true,
 	summaryMode: "auto-55",
-	featuredImagePlaceholder: true,
 };
 
 function NativeSelect({
@@ -80,10 +79,8 @@ export function matchesGeneralSettingsQuery(
 		[s.syncScroll, s.syncScrollDescription],
 		[s.defaultVisibility],
 		[s.openPreviewAfterPublish, s.openPreviewAfterPublishDescription],
-		[s.applyEditorThemeToFrontend, s.applyEditorThemeToFrontendDescription],
 		[s.showPublishedCodeCopyButton, s.showPublishedCodeCopyButtonDescription],
 		[s.summaryMode, s.summaryModeDescription],
-		[s.featuredImagePlaceholder, s.featuredImagePlaceholderDescription],
 	];
 
 	return searchFields.some((field) =>
@@ -286,22 +283,6 @@ export function GeneralSettingsPage({
 					/>
 				</SettingsRow>
 				<SettingsRow
-					label={s.applyEditorThemeToFrontend}
-					description={s.applyEditorThemeToFrontendDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.applyEditorThemeToFrontend}
-						checked={draft.applyEditorThemeToFrontend}
-						onChange={() =>
-							setValue(
-								"applyEditorThemeToFrontend",
-								!draft.applyEditorThemeToFrontend,
-							)
-						}
-					/>
-				</SettingsRow>
-				<SettingsRow
 					label={s.showPublishedCodeCopyButton}
 					description={s.showPublishedCodeCopyButtonDescription}
 					query={normalizedQuery}
@@ -333,22 +314,6 @@ export function GeneralSettingsPage({
 							["auto-100", s.summary100],
 							["manual", s.manualSummary],
 						]}
-					/>
-				</SettingsRow>
-				<SettingsRow
-					label={s.featuredImagePlaceholder}
-					description={s.featuredImagePlaceholderDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.featuredImagePlaceholder}
-						checked={draft.featuredImagePlaceholder}
-						onChange={() =>
-							setValue(
-								"featuredImagePlaceholder",
-								!draft.featuredImagePlaceholder,
-							)
-						}
 					/>
 				</SettingsRow>
 			</SettingsSection>

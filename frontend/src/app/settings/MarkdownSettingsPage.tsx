@@ -17,9 +17,6 @@ type Strings = SettingsCenterBootstrap["strings"];
 type SelectOption = Readonly<{ value: string; label: string }>;
 
 const LEGACY_MARKDOWN_VALUE_ALIASES: Readonly<Record<string, string>> = {
-	"Follow System": "system",
-	Light: "light",
-	Dark: "dark",
 	"Auto align by content": "auto",
 	"Align left": "left",
 	"Align center": "center",
@@ -43,12 +40,10 @@ function normalizeMarkdownValue(
 function createDefaultSettings(): MarkdownSettingsDraft {
 	return {
 		wordWrap: true,
-		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
-		tableAlignment: "auto",
+		tableAlignment: "center",
 		codeLineNumbers: "show",
-		htmlRendering: false,
 		pasteAsMarkdown: true,
 	};
 }
@@ -104,19 +99,18 @@ function MarkdownRow({
 }
 
 export function MarkdownSettingsPage({
+	applyEditorThemeToFrontend,
 	onChange,
+	onApplyEditorThemeToFrontendChange,
 	settings: externalSettings,
 	strings,
 }: {
+	applyEditorThemeToFrontend: boolean;
 	onChange?: (settings: MarkdownSettingsDraft) => void;
+	onApplyEditorThemeToFrontendChange: (enabled: boolean) => void;
 	settings?: MarkdownSettingsDraft;
 	strings: Strings;
 }) {
-	const editorThemeOptions: ReadonlyArray<SelectOption> = [
-		{ value: "system", label: strings.automaticFollowSystem },
-		{ value: "light", label: strings.light },
-		{ value: "dark", label: strings.dark },
-	];
 	const tableAlignmentOptions: ReadonlyArray<SelectOption> = [
 		{ value: "auto", label: strings.autoAlignByContent },
 		{ value: "left", label: strings.alignLeft },
@@ -132,15 +126,10 @@ export function MarkdownSettingsPage({
 	const rawSettings = externalSettings ?? localSettings;
 	const settings: MarkdownSettingsDraft = {
 		...rawSettings,
-		editorTheme: normalizeMarkdownValue(
-			rawSettings.editorTheme,
-			editorThemeOptions,
-			"system",
-		),
 		tableAlignment: normalizeMarkdownValue(
 			rawSettings.tableAlignment,
 			tableAlignmentOptions,
-			"auto",
+			"center",
 		),
 		codeLineNumbers: normalizeMarkdownValue(
 			rawSettings.codeLineNumbers,
@@ -181,14 +170,16 @@ export function MarkdownSettingsPage({
 							onChange={() => setValue("wordWrap", !settings.wordWrap)}
 						/>
 					</MarkdownRow>
-					<MarkdownRow label={strings.editorTheme}>
-						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
-							label={strings.editorTheme}
-							value={settings.editorTheme}
-							options={editorThemeOptions}
-							onChange={(value) => setValue("editorTheme", value)}
+					<MarkdownRow
+						label={strings.applyEditorThemeToFrontend}
+						description={strings.applyEditorThemeToFrontendDescription}
+					>
+						<SettingsToggle
+							label={strings.applyEditorThemeToFrontend}
+							checked={applyEditorThemeToFrontend}
+							onChange={() =>
+								onApplyEditorThemeToFrontendChange(!applyEditorThemeToFrontend)
+							}
 						/>
 					</MarkdownRow>
 				</section>
@@ -224,8 +215,6 @@ export function MarkdownSettingsPage({
 					))}
 					<MarkdownRow label={strings.tableAlignment}>
 						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
 							label={strings.tableAlignment}
 							value={settings.tableAlignment}
 							options={tableAlignmentOptions}
@@ -234,33 +223,12 @@ export function MarkdownSettingsPage({
 					</MarkdownRow>
 					<MarkdownRow label={strings.codeBlockLineNumbers}>
 						<MarkdownSelect
-							ariaDescribedBy="easymde-markdown-unavailable"
-							disabled
 							label={strings.codeBlockLineNumbers}
 							value={settings.codeLineNumbers}
 							options={codeLineNumberOptions}
 							onChange={(value) => setValue("codeLineNumbers", value)}
 						/>
 					</MarkdownRow>
-					{(
-						[
-							[
-								"htmlRendering",
-								strings.htmlRendering,
-								strings.htmlRenderingDescription,
-							],
-						] as const
-					).map(([key, label, description]) => (
-						<MarkdownRow key={key} label={label} description={description}>
-							<SettingsToggle
-								ariaDescribedBy="easymde-markdown-unavailable"
-								label={label}
-								checked={settings[key]}
-								disabled
-								onChange={() => setValue(key, !settings[key])}
-							/>
-						</MarkdownRow>
-					))}
 					<MarkdownRow
 						label={strings.pasteAsMarkdown}
 						description={strings.pasteAsMarkdownDescription}

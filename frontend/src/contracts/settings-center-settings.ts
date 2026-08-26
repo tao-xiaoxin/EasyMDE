@@ -16,7 +16,6 @@ export type GeneralSettings = Readonly<{
 	applyEditorThemeToFrontend: boolean;
 	showPublishedCodeCopyButton: boolean;
 	summaryMode: SummaryMode;
-	featuredImagePlaceholder: boolean;
 }>;
 
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
@@ -51,12 +50,10 @@ export type ImageSettings = Readonly<{
 
 export type MarkdownSettings = Readonly<{
 	wordWrap: boolean;
-	editorTheme: string;
 	githubFlavor: boolean;
 	smartPunctuation: boolean;
 	tableAlignment: string;
 	codeLineNumbers: string;
-	htmlRendering: boolean;
 	pasteAsMarkdown: boolean;
 }>;
 

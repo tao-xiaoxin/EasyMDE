@@ -442,8 +442,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'syncScroll',
       'openPreviewAfterPublish',
       'applyEditorThemeToFrontend',
-      'showPublishedCodeCopyButton',
-      'featuredImagePlaceholder'
+      'showPublishedCodeCopyButton'
     ] as const;
     const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
       autoSaveInterval: new Set(['30', '60', '120', '300']),
@@ -456,7 +455,8 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     const removedGeneralFields = [
       'cleanPastedContent',
       'smartListRecognition',
-      'defaultCategory'
+      'defaultCategory',
+      'featuredImagePlaceholder'
     ] as const;
     if (
       removedGeneralFields.some((key) =>
@@ -482,7 +482,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         autoSave: general.autoSave as boolean,
         autoSaveInterval: general.autoSaveInterval as string,
         editingMode: general.editingMode as string,
-        featuredImagePlaceholder: general.featuredImagePlaceholder as boolean,
         interfaceLanguage: general.interfaceLanguage as string,
         openPreviewAfterPublish: general.openPreviewAfterPublish as boolean,
         publishVisibility: general.publishVisibility as string,

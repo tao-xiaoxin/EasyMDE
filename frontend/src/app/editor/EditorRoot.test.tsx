@@ -519,7 +519,6 @@ function fixture(): EditorRootProps &
         autoSave: true,
         autoSaveInterval: '0.5',
         editingMode: 'live-preview',
-        featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
@@ -3110,6 +3109,16 @@ describe('EditorRoot', () => {
     expect(
       dialog.querySelectorAll('.easymde-publish-button-sparkles svg')
     ).toHaveLength(2);
+    expect(
+      dialog.querySelector('.easymde-publish-featured-placeholder')
+    ).toBeNull();
+    expect(
+      within(dialog).getByRole('button', { name: /选择特色图片/u })
+    ).not.toBeNull();
+    expect(within(dialog).getByText('建议使用横向图片')).not.toBeNull();
+    expect(
+      within(dialog).getByText('支持 JPG、PNG、WebP 格式，最大 5MB')
+    ).not.toBeNull();
     const progress = dialog.querySelector('.easymde-publish-progress');
     expect(progress?.getAttribute('aria-live')).toBe('polite');
     expect(progress?.textContent).toBe('');
@@ -3170,7 +3179,6 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} settings={{
       general: {
         ...props.settings.general,
-        featuredImagePlaceholder: false,
         openPreviewAfterPublish: false,
         publishVisibility: 'private'
       },

@@ -37,7 +37,6 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			documentationUrl: "https://github.com/tao-xiaoxin/EasyMDE#readme",
 			releasesUrl: "https://github.com/tao-xiaoxin/EasyMDE/releases",
 			issuesUrl: "https://github.com/tao-xiaoxin/EasyMDE/issues",
-			securityUrl: "https://github.com/tao-xiaoxin/EasyMDE/security/policy",
 			licenseUrl: "https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE",
 		},
 		drafts: {
@@ -408,6 +407,12 @@ describe("parseSettingsCenterBootstrap", () => {
 	it("does not expose removed Markdown settings strings", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
 			expect.arrayContaining([
+				"editorTheme",
+				"automaticFollowSystem",
+				"light",
+				"dark",
+				"htmlRendering",
+				"htmlRenderingDescription",
 				"editorFontSize",
 				"editorFont",
 				"systemDefault",
@@ -447,6 +452,13 @@ describe("parseSettingsCenterBootstrap", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
 			expect.arrayContaining(["livePreview", "general", "about"]),
 		);
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining([
+				"featuredImagePlaceholder",
+				"featuredImagePlaceholderDescription",
+				"aboutSecurityPolicy",
+			]),
+		);
 	});
 
 	it("parses the Markdown settings contract without removed presentation fields", () => {
@@ -456,17 +468,48 @@ describe("parseSettingsCenterBootstrap", () => {
 			),
 		).toEqual([
 			"wordWrap",
-			"editorTheme",
 			"githubFlavor",
 			"smartPunctuation",
 			"tableAlignment",
 			"codeLineNumbers",
-			"htmlRendering",
 			"pasteAsMarkdown",
 		]);
 	});
 
-	it.each(["lineEnding", "unorderedMarker", "orderedStart", "blockquoteStyle"])(
+	it("rejects the retired editor theme field in the exact Markdown contract", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.markdown.editorTheme = "system";
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-markdown-settings-invalid",
+		);
+	});
+
+	it.each([
+		["general", "featuredImagePlaceholder", true],
+		["markdown", "htmlRendering", false],
+	] as const)(
+		"rejects the retired %s.%s field in the exact settings contract",
+		(section, field, value) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings[section][field] = value;
+
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				`settings-center-${section}-settings-invalid`,
+			);
+		},
+	);
+
+	it.each([
+		"lineEnding",
+		"unorderedMarker",
+		"orderedStart",
+		"blockquoteStyle",
+	])(
 		"rejects the removed Markdown field %s as an exact-shape violation",
 		(removedKey) => {
 			const settings = structuredClone(

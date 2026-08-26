@@ -17,7 +17,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		applyEditorThemeToFrontend: true,
 		showPublishedCodeCopyButton: true,
 		summaryMode: "auto-55",
-		featuredImagePlaceholder: true,
 	},
 	images: {
 		service: "cloudflare-r2",
@@ -44,12 +43,10 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	},
 	markdown: {
 		wordWrap: true,
-		editorTheme: "system",
 		githubFlavor: true,
 		smartPunctuation: true,
-		tableAlignment: "auto",
+		tableAlignment: "center",
 		codeLineNumbers: "show",
-		htmlRendering: false,
 		pasteAsMarkdown: true,
 	},
 	shortcuts: {

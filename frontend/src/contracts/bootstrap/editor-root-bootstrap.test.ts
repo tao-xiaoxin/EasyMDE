@@ -98,7 +98,6 @@ function validBootstrap() {
         autoSave: true,
         autoSaveInterval: '60',
         editingMode: 'live-preview',
-        featuredImagePlaceholder: true,
         interfaceLanguage: 'en-US',
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
@@ -317,7 +316,8 @@ describe('parseEditorRootBootstrap', () => {
   it.each([
     'cleanPastedContent',
     'smartListRecognition',
-    'defaultCategory'
+    'defaultCategory',
+    'featuredImagePlaceholder'
   ] as const)('rejects the removed General setting %s', (key) => {
     const value = validBootstrap();
     (value.settings.general as Record<string, unknown>)[key] =

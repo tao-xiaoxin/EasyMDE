@@ -27,6 +27,11 @@ import type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 const PUBLISH_EXCERPT_LIMIT = 160;
 
+type PublishDefaults = Pick<
+  GeneralSettings,
+  'openPreviewAfterPublish' | 'publishVisibility' | 'summaryMode'
+>;
+
 function format(template: string, value: string | number): string {
   return template.replace('%s', String(value)).replace('%d', String(value));
 }
@@ -41,7 +46,7 @@ function excerptCodePoints(value: string): ReadonlyArray<string> {
 
 function cloneDraft(
   snapshot: NativePublishSnapshot,
-  defaults: GeneralSettings,
+  defaults: PublishDefaults,
   markdown: string
 ): NativePublishDraft {
   const generatedExcerpt = snapshot.availableFields.excerpt
@@ -234,63 +239,6 @@ function CategoryTree({
   );
 }
 
-function FeaturedPlaceholder() {
-  return (
-    <svg
-      className="easymde-publish-featured-placeholder"
-      width="200"
-      height="133"
-      viewBox="0 0 240 160"
-      fill="none"
-      aria-hidden="true"
-    >
-      <defs>
-        <clipPath id="easymde-featured-image-front-clip">
-          <rect x="62" y="30" width="112" height="104" rx="12" />
-        </clipPath>
-        <linearGradient id="easymde-featured-mountain-far" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#d5e3fc" />
-          <stop offset="100%" stopColor="#a9c5f6" />
-        </linearGradient>
-        <linearGradient id="easymde-featured-mountain-near" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#a8c4f5" />
-          <stop offset="100%" stopColor="#739eeb" />
-        </linearGradient>
-        <radialGradient id="easymde-featured-sun" cx="35%" cy="30%" r="72%">
-          <stop offset="0%" stopColor="#cfe0ff" />
-          <stop offset="100%" stopColor="#7ea9f2" />
-        </radialGradient>
-        <linearGradient id="easymde-featured-cloud-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="100%" stopColor="#f4f7ff" />
-        </linearGradient>
-        <filter id="easymde-featured-frame-shadow" x="-30%" y="-30%" width="170%" height="190%">
-          <feDropShadow dx="0" dy="5" stdDeviation="4" floodColor="#2563eb" floodOpacity="0.18" />
-        </filter>
-      </defs>
-      <path d="M27 72 C27 82 20 89 10 89 C20 89 27 96 27 106 C27 96 34 89 44 89 C34 89 27 82 27 72 Z" fill="#22df67" transform="translate(27 89) scale(.6) translate(-27 -89)" />
-      <circle cx="20" cy="134" r="3.2" fill="#86aef3" />
-      <path d="M201 24 C201 34 194 41 184 41 C194 41 201 48 201 58 C201 48 208 41 218 41 C208 41 201 34 201 24 Z" fill="#f5b33f" transform="translate(201 41) scale(.6) translate(-201 -41)" />
-      <circle cx="226" cy="83" r="5" stroke="#a9c2ee" strokeWidth="1.7" />
-      <rect x="60" y="38" width="108" height="98" rx="11" fill="#ffffff" fillOpacity="0.62" stroke="#b8ccf4" strokeWidth="1.5" transform="rotate(-8 114 87)" />
-      <rect x="75" y="23" width="108" height="100" rx="11" fill="#f8fbff" stroke="#a9c2f1" strokeWidth="1.5" transform="rotate(6 129 73)" />
-      <g transform="rotate(12 118 82)" filter="url(#easymde-featured-frame-shadow)">
-        <rect x="62" y="30" width="112" height="104" rx="12" fill="white" stroke="#2f6bef" strokeWidth="2" />
-        <g clipPath="url(#easymde-featured-image-front-clip)">
-          <circle cx="91" cy="57" r="9" fill="url(#easymde-featured-sun)" />
-          <path d="M64 134 L105 76 L140 134 Z" fill="url(#easymde-featured-mountain-far)" />
-          <path d="M92 134 L139 91 L174 134 Z" fill="url(#easymde-featured-mountain-near)" />
-        </g>
-      </g>
-      <g transform="translate(142, 98) scale(4)" filter="url(#easymde-featured-frame-shadow)">
-        <path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.773 16 11.569 14.502 13 12.687 13H3.781C1.708 13 0 11.366 0 9.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383z" fill="url(#easymde-featured-cloud-fill)" stroke="#2f6bef" strokeWidth="0.7" strokeLinejoin="round" />
-        <path d="M8 11 V5.2" stroke="#2f6bef" strokeWidth="0.85" strokeLinecap="round" />
-        <path d="M5.6 7.6 L8 5.2 L10.4 7.6" stroke="#2f6bef" strokeWidth="0.85" strokeLinecap="round" strokeLinejoin="round" />
-      </g>
-    </svg>
-  );
-}
-
 function PublishHeaderDecoration() {
   return (
     <span className="easymde-publish-header-decoration">
@@ -349,7 +297,7 @@ export function ImmersivePublishDialog({
   snapshot,
   strings
 }: Readonly<{
-  defaults: GeneralSettings;
+  defaults: PublishDefaults;
   environment: ImmersiveEnvironmentPort;
   markdown: string;
   onClose: () => void;
@@ -538,7 +486,6 @@ export function ImmersivePublishDialog({
               </div>
             ) : (
               <button type="button" className="easymde-publish-featured-empty" disabled={submitting || mediaPending} onClick={selectFeaturedImage}>
-                {defaults.featuredImagePlaceholder ? <FeaturedPlaceholder /> : null}
                 <strong>{strings.selectFeaturedImage}</strong>
                 <span>{strings.imageRecommendation}</span>
                 <small>{strings.imageRequirements}</small>

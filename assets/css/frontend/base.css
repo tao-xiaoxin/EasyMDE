@@ -124,3 +124,13 @@
   padding: 8px 10px;
   border: 1px solid #dcdcde;
 }
+
+/* Auto mode intentionally leaves text-align unset so CommonMark's GFM
+ * alignment and the content's natural default remain authoritative. */
+.easymde-rendered-content.easymde-table-align-left :is(th, td) {
+  text-align: left !important;
+}
+
+.easymde-rendered-content.easymde-table-align-center :is(th, td) {
+  text-align: center !important;
+}

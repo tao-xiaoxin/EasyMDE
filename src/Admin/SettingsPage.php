@@ -297,7 +297,6 @@ JS;
 				'documentationUrl' => 'https://github.com/tao-xiaoxin/EasyMDE#readme',
 				'releasesUrl'      => 'https://github.com/tao-xiaoxin/EasyMDE/releases',
 				'issuesUrl'        => 'https://github.com/tao-xiaoxin/EasyMDE/issues',
-				'securityUrl'      => 'https://github.com/tao-xiaoxin/EasyMDE/security/policy',
 				'licenseUrl'       => 'https://github.com/tao-xiaoxin/EasyMDE/blob/main/LICENSE',
 			),
 			'drafts'            => array(

@@ -179,7 +179,9 @@ type HeadingMenuProps = Readonly<{
   variant: 'default' | 'immersive';
 }>;
 
-type ImmersiveMenuPosition = Readonly<{
+type HeadingMenuPosition = Readonly<{
+  arrowViewportLeft: number;
+  arrowViewportTop: number;
   left: number;
   top: number;
 }>;
@@ -197,24 +199,51 @@ function HeadingMenu({
   variant
 }: HeadingMenuProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const initialFocus = useRef<'first' | 'last' | 'preserve'>('preserve');
-  const [immersivePosition, setImmersivePosition] =
-    useState<ImmersiveMenuPosition | null>(null);
+  const [menuPosition, setMenuPosition] = useState<HeadingMenuPosition | null>(null);
 
-  const positionImmersiveMenu = () => {
-    if ('immersive' !== variant) {
-      return;
-    }
+  const positionHeadingMenu = () => {
     const trigger = triggerRef.current;
     if (!trigger) {
-      throw new Error('immersive-heading-trigger-unavailable');
+      throw new Error('heading-menu-trigger-unavailable');
+    }
+    const menu = menuRef.current;
+    if (!menu) {
+      throw new Error('heading-menu-unavailable');
+    }
+    const windowRef = trigger.ownerDocument.defaultView;
+    if (!windowRef) {
+      throw new Error('heading-menu-window-unavailable');
     }
     const rect = trigger.getBoundingClientRect();
-    setImmersivePosition({
-      left: rect.left,
-      top: rect.bottom + 6
-    });
+    const gutter = 12;
+    const maximumLeft = Math.max(
+      gutter,
+      windowRef.innerWidth - menu.getBoundingClientRect().width - gutter
+    );
+    const top = rect.bottom + ('immersive' === variant ? 6 : 8);
+    const nextPosition = {
+      arrowViewportLeft: Math.max(
+        gutter,
+        Math.min(
+          rect.left + rect.width / 2 - 7,
+          windowRef.innerWidth - gutter - 14
+        )
+      ),
+      arrowViewportTop: top - 8,
+      left: Math.max(gutter, Math.min(rect.left, maximumLeft)),
+      top
+    };
+    setMenuPosition((current) =>
+      current?.arrowViewportLeft === nextPosition.arrowViewportLeft &&
+      current.arrowViewportTop === nextPosition.arrowViewportTop &&
+      current.left === nextPosition.left &&
+      current.top === nextPosition.top
+        ? current
+        : nextPosition
+    );
   };
 
   useLayoutEffect(() => {
@@ -227,16 +256,16 @@ function HeadingMenu({
   }, [commands.length, isOpen]);
 
   useLayoutEffect(() => {
-    if (!isOpen || 'immersive' !== variant) {
+    if (!isOpen) {
       return undefined;
     }
 
-    positionImmersiveMenu();
+    positionHeadingMenu();
     const windowRef = triggerRef.current?.ownerDocument.defaultView;
     if (!windowRef) {
-      throw new Error('immersive-heading-window-unavailable');
+      throw new Error('heading-menu-window-unavailable');
     }
-    const updatePosition = () => positionImmersiveMenu();
+    const updatePosition = () => positionHeadingMenu();
     windowRef.addEventListener('resize', updatePosition);
     windowRef.addEventListener('scroll', updatePosition, true);
     return () => {
@@ -324,7 +353,7 @@ function HeadingMenu({
           event.stopPropagation();
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
-            positionImmersiveMenu();
+            positionHeadingMenu();
             onOpen(triggerRef.current ?? undefined);
             initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
@@ -336,7 +365,7 @@ function HeadingMenu({
           }
 
           event.preventDefault();
-          positionImmersiveMenu();
+          positionHeadingMenu();
           onOpen(triggerRef.current ?? undefined);
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
@@ -360,16 +389,20 @@ function HeadingMenu({
         )}
       </button>
       <div
-        className={`easymde-toolbar-popover${'immersive' === variant ? ' is-immersive-heading-menu' : ''}`}
+        ref={menuRef}
+        className={`easymde-toolbar-popover ${'immersive' === variant ? 'is-immersive-heading-menu' : 'is-ordinary-heading-menu'}`}
         role="menu"
         aria-label={label}
         hidden={!isOpen}
         style={
-          'immersive' === variant && immersivePosition
-            ? {
-                left: `${immersivePosition.left}px`,
-                top: `${immersivePosition.top}px`
-              }
+          menuPosition
+            ? ({
+                '--easymde-heading-arrow-viewport-left': `${menuPosition.arrowViewportLeft}px`,
+                '--easymde-heading-arrow-viewport-top': `${menuPosition.arrowViewportTop}px`,
+                left: `${menuPosition.left}px`,
+                position: 'fixed',
+                top: `${menuPosition.top}px`
+              } as React.CSSProperties)
             : undefined
         }
         onClick={(event) => event.stopPropagation()}
@@ -413,7 +446,11 @@ function HeadingMenu({
                     ? headingLabelFormat.replace('%s', String(command.level))
                     : command.label}
                 </span>
-                <span aria-hidden="true" />
+                {shortcuts[command.id] ? (
+                  <span className="easymde-popover-item-shortcut">
+                    {shortcuts[command.id]}
+                  </span>
+                ) : null}
               </Fragment>
             ) : (
               <Fragment>
@@ -446,9 +483,11 @@ function HeadingMenu({
                   </span>
                 )}
                 <span className="easymde-popover-item-label">{command.label}</span>
-                <span className="easymde-popover-item-shortcut">
-                  {shortcuts[command.id]}
-                </span>
+                {shortcuts[command.id] ? (
+                  <span className="easymde-popover-item-shortcut">
+                    {shortcuts[command.id]}
+                  </span>
+                ) : null}
               </Fragment>
             )}
           </button>

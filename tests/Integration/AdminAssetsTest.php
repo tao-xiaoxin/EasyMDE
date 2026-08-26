@@ -188,12 +188,16 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
+		$settings['shortcuts']['values']['heading-one']['windows'] = 'Ctrl+Alt+1';
+		$settings['shortcuts']['values']['heading-two']['windows'] = '';
 		$settings['images']['autoUploadPastedImages']         = false;
 		$this->assertNotWPError( $repository->update_settings( $settings ) );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
+		$this->assertSame( 'Ctrl+Alt+1', $bootstrap['toolbar']['shortcuts']['heading1']['win'] );
+		$this->assertSame( '', $bootstrap['toolbar']['shortcuts']['heading2']['win'] );
 		$this->assertArrayNotHasKey( 'showShortcutHints', $bootstrap['toolbar'] );
 		$this->assertFalse( $bootstrap['imageUpload']['autoUploadPastedImages'] );
 		$this->assertSame(

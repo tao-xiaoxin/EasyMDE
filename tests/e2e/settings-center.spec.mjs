@@ -1568,11 +1568,41 @@ test("records, persists, and executes a customized shortcut through real keyboar
 	const recordedShortcut = isMac
 		? { press: "Meta+Alt+9", labels: ["Cmd", "Option", "9"] }
 		: { press: "Control+Alt+9", labels: ["Ctrl", "Alt", "9"] };
+	const displayedShortcut = recordedShortcut.labels.join("+");
+	const defaultDisplayedShortcut = isMac ? "Cmd+3" : "Ctrl+3";
+	const clearButton = () =>
+		headingThreeRow()
+			.locator(".easymde-settings-center__shortcut-clear")
+			.nth(isMac ? 1 : 0);
 	const save = async () => {
 		await expect(saveButton).toBeEnabled();
 		await saveButton.click();
 		await expect(saveStatus).toHaveAttribute("data-save-status", /saved|idle/u);
 		await expect(saveButton).toBeDisabled();
+	};
+	const expectShortcutFits = async (menu, shortcut) => {
+		const geometry = await menu.evaluate((element, shortcutSelector) => {
+			const shortcutElement = element.querySelector(shortcutSelector);
+			if (!(shortcutElement instanceof HTMLElement)) return null;
+			const menuBounds = element.getBoundingClientRect();
+			const shortcutBounds = shortcutElement.getBoundingClientRect();
+			return {
+				menuLeft: menuBounds.left,
+				menuRight: menuBounds.right,
+				shortcutLeft: shortcutBounds.left,
+				shortcutRight: shortcutBounds.right,
+				viewportWidth: window.innerWidth,
+			};
+		}, shortcut);
+		if (!geometry) {
+			throw new Error("The shortcut geometry could not be measured.");
+		}
+		expect(geometry.menuLeft).toBeGreaterThanOrEqual(12);
+		expect(geometry.menuRight).toBeLessThanOrEqual(
+			geometry.viewportWidth - 12,
+		);
+		expect(geometry.shortcutLeft).toBeGreaterThanOrEqual(geometry.menuLeft);
+		expect(geometry.shortcutRight).toBeLessThanOrEqual(geometry.menuRight);
 	};
 	try {
 		await resetButton.click();
@@ -1592,15 +1622,117 @@ test("records, persists, and executes a customized shortcut through real keyboar
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
 		await expect(recorder().locator("kbd")).toHaveText(recordedShortcut.labels);
 
+		await page.setViewportSize({ width: 480, height: 720 });
 		await page.goto("/wp-admin/post-new.php");
 		await expect(page.locator("#easymde-editor")).toBeVisible();
 		const source = page.locator("#easymde-source");
 		const sourceEditor = page.locator(".easymde-source-react .cm-content");
+		const headingLabel = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings,
+		);
+		const headingTrigger = page.getByRole("button", {
+			name: headingLabel,
+			exact: true,
+		});
+		const headingMenu = page.getByRole("menu", {
+			name: headingLabel,
+			exact: true,
+			includeHidden: true,
+		});
+		const headingThreeItem = headingMenu.locator(
+			'[data-easymde-command="heading3"]',
+		);
+		await expect(headingTrigger).toHaveAttribute("title", headingLabel);
+		await headingTrigger.click();
+		await expect(headingMenu).toBeVisible();
+		await expect(
+			headingThreeItem.locator(".easymde-popover-item-shortcut"),
+		).toHaveText(displayedShortcut);
+		await expectShortcutFits(
+			headingMenu,
+			'[data-easymde-command="heading3"] .easymde-popover-item-shortcut',
+		);
+		await page.keyboard.press("Escape");
+
 		await sourceEditor.fill("Alpha");
 		await sourceEditor.focus();
 		await page.keyboard.press(recordedShortcut.press);
 		await expect(source).toHaveValue("### Alpha");
 		await expect(sourceEditor.locator(".cm-line")).toHaveText("### Alpha");
+
+		await page.locator(".easymde-toolbar-immersive-toggle").click();
+		const immersiveHeadingTrigger = page.locator(
+			".easymde-immersive-formatting .easymde-toolbar-popover-headings > button",
+		);
+		const immersiveHeadingMenu = page.locator(".is-immersive-heading-menu");
+		const immersiveHeadingThreeItem = immersiveHeadingMenu.locator(
+			'[data-easymde-command="heading3"]',
+		);
+		await expect(immersiveHeadingTrigger).toHaveAttribute("title", headingLabel);
+		await immersiveHeadingTrigger.click();
+		await expect(immersiveHeadingMenu).toBeVisible();
+		await expect(
+			immersiveHeadingThreeItem.locator(".easymde-popover-item-shortcut"),
+		).toHaveText(displayedShortcut);
+		await expectShortcutFits(
+			immersiveHeadingMenu,
+			'[data-easymde-command="heading3"] .easymde-popover-item-shortcut',
+		);
+
+		await page.setViewportSize({ width: 1280, height: 720 });
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="shortcuts"]').click();
+		await clearButton().click();
+		await expect(recorder().locator("kbd")).toHaveCount(0);
+		await save();
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const clearedSource = page.locator("#easymde-source");
+		const clearedSourceEditor = page.locator(
+			".easymde-source-react .cm-content",
+		);
+		const clearedHeadingTrigger = page.getByRole("button", {
+			name: headingLabel,
+			exact: true,
+		});
+		const clearedHeadingMenu = page.getByRole("menu", {
+			name: headingLabel,
+			exact: true,
+			includeHidden: true,
+		});
+		await clearedHeadingTrigger.click();
+		await expect(clearedHeadingMenu).toBeVisible();
+		await expect(
+			clearedHeadingMenu
+				.locator('[data-easymde-command="heading3"]')
+				.locator(".easymde-popover-item-shortcut"),
+		).toHaveCount(0);
+		await page.keyboard.press("Escape");
+		await clearedSourceEditor.fill("Beta");
+		await clearedSourceEditor.focus();
+		await page.keyboard.press(recordedShortcut.press);
+		await expect(clearedSource).toHaveValue("Beta");
+
+		await page.locator(".easymde-toolbar-immersive-toggle").click();
+		const clearedImmersiveHeadingTrigger = page.locator(
+			".easymde-immersive-formatting .easymde-toolbar-popover-headings > button",
+		);
+		const clearedImmersiveHeadingMenu = page.locator(
+			".is-immersive-heading-menu",
+		);
+		await expect(clearedImmersiveHeadingTrigger).toHaveAttribute(
+			"title",
+			headingLabel,
+		);
+		await clearedImmersiveHeadingTrigger.click();
+		await expect(clearedImmersiveHeadingMenu).toBeVisible();
+		await expect(
+			clearedImmersiveHeadingMenu
+				.locator('[data-easymde-command="heading3"]')
+				.locator(".easymde-popover-item-shortcut"),
+		).toHaveCount(0);
 	} finally {
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -1612,6 +1744,42 @@ test("records, persists, and executes a customized shortcut through real keyboar
 		await page.locator('button[data-nav-id="shortcuts"]').click();
 		await expect(windowsRecorder().locator("kbd")).toHaveText(["Ctrl", "3"]);
 		await expect(macRecorder().locator("kbd")).toHaveText(["Cmd", "3"]);
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const headingLabel = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings,
+		);
+		const headingTrigger = page.getByRole("button", {
+			name: headingLabel,
+			exact: true,
+		});
+		const headingMenu = page.getByRole("menu", {
+			name: headingLabel,
+			exact: true,
+			includeHidden: true,
+		});
+		await headingTrigger.click();
+		await expect(headingMenu).toBeVisible();
+		await expect(
+			headingMenu
+				.locator('[data-easymde-command="heading3"]')
+				.locator(".easymde-popover-item-shortcut"),
+		).toHaveText(defaultDisplayedShortcut);
+		await page.keyboard.press("Escape");
+
+		await page.locator(".easymde-toolbar-immersive-toggle").click();
+		const immersiveHeadingTrigger = page.locator(
+			".easymde-immersive-formatting .easymde-toolbar-popover-headings > button",
+		);
+		const immersiveHeadingMenu = page.locator(".is-immersive-heading-menu");
+		await immersiveHeadingTrigger.click();
+		await expect(immersiveHeadingMenu).toBeVisible();
+		await expect(
+			immersiveHeadingMenu
+				.locator('[data-easymde-command="heading3"]')
+				.locator(".easymde-popover-item-shortcut"),
+		).toHaveText(defaultDisplayedShortcut);
 	}
 });
 

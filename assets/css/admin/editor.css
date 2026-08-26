@@ -269,10 +269,12 @@ body:has(.easymde-editor.is-immersive) .wrap {
     right: auto;
     left: auto;
     box-sizing: border-box;
-    width: 176px;
-    min-width: 176px;
+    width: max-content;
+    min-width: min(176px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
     padding: 6px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: hidden;
     border-color: #e7ebf3;
     border-radius: 5.625px;
     box-shadow: 0 8px 22px rgba(38, 52, 85, .1);
@@ -282,7 +284,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-heading-menu-title { box-sizing: border-box; height: 25.125px; padding: 3.75px 9.375px 5.625px; color: #94a3b8; font-size: 11px; font-weight: 500; line-height: 15.75px; }
 .easymde-toolbar-popover-headings .easymde-popover-item.is-immersive-heading-item {
     display: grid;
-    grid-template-columns: 42px minmax(0, 1fr) 16px;
+    grid-template-columns: 42px minmax(0, 1fr) max-content;
     width: 100%;
     height: 37.5px;
     min-height: 37.5px;
@@ -290,6 +292,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
     padding: 0 5.625px;
     border-radius: 4px;
     color: #3e4658;
+}
+.easymde-toolbar-popover-headings .easymde-popover-item.is-immersive-heading-item .easymde-popover-item-shortcut {
+    justify-self: end;
+    margin-inline-start: 12px;
+    white-space: nowrap;
 }
 .easymde-toolbar-popover-headings .easymde-popover-item.is-immersive-heading-item:hover,
 .easymde-toolbar-popover-headings .easymde-popover-item.is-immersive-heading-item:focus { background: #f7f8fc; color: #3e4658; }

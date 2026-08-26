@@ -319,23 +319,32 @@
     box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
 }
 
-.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover {
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover.is-ordinary-heading-menu {
+    position: fixed;
+    top: auto;
+    right: auto;
+    left: auto;
     box-sizing: border-box;
     inset-inline-end: auto;
-    inset-inline-start: 0;
-    width: 208px;
-    min-width: 208px;
-    max-width: calc(100vw - 48px);
+    inset-inline-start: auto;
+    width: max-content;
+    min-width: min(208px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
     padding: 7px;
+    overflow-x: auto;
+    overflow-y: hidden;
     border-radius: 12px;
     box-shadow: 0 12px 26px rgba(15, 23, 42, 0.16);
 }
 
-.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover::before {
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-toolbar-popover.is-ordinary-heading-menu::before {
     content: "";
-    position: absolute;
-    top: -8px;
-    inset-inline-start: 20px;
+    position: fixed;
+    top: var(--easymde-heading-arrow-viewport-top);
+    right: auto;
+    left: var(--easymde-heading-arrow-viewport-left);
+    inset-inline-end: auto;
+    inset-inline-start: auto;
     width: 14px;
     height: 14px;
     border-top: 1px solid #d0d7de;
@@ -346,12 +355,21 @@
 
 .easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item {
     display: grid;
-    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-columns: 30px minmax(max-content, 1fr) max-content;
     justify-content: stretch;
     gap: 8px;
     min-height: 32px;
     padding: 0 9px;
     border-radius: 8px;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item-label {
+    min-width: max-content;
+}
+
+.easymde-editor:not(.is-immersive) .easymde-toolbar-popover-headings .easymde-popover-item-shortcut {
+    min-width: max-content;
+    justify-self: end;
 }
 
 .easymde-editor:not(.is-immersive) .easymde-heading-menu-badge {

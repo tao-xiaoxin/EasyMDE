@@ -102,10 +102,46 @@ describe('EditorToolbar', () => {
     expect(screen.queryByRole('button', { name: '撤销' })).toBeNull();
   });
 
-  it('always shows non-empty shortcut hints while preserving accessible command labels', () => {
-    render(<EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={vi.fn()} />);
-    expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体 (Ctrl+B)');
-    expect(screen.getByRole('button', { name: '粗体' }).getAttribute('aria-label')).toBe('粗体');
+  it('updates main command titles from the current platform binding without changing controls that never had hints', () => {
+    const { rerender } = render(
+      <EditorToolbar
+        bootstrap={{
+          ...bootstrap,
+          shortcuts: {
+            ...bootstrap.shortcuts,
+            bold: { win: 'Ctrl+Alt+B', mac: 'Cmd+Option+B' }
+          }
+        }}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+    const bold = screen.getByRole('button', { name: '粗体' });
+    const headings = screen.getByRole('button', { name: '标题' });
+    const undo = screen.getByRole('button', { name: '撤销' });
+
+    expect(bold.title).toBe('粗体 (Ctrl+Alt+B)');
+    expect(bold.getAttribute('aria-label')).toBe('粗体');
+    expect(headings.title).toBe('标题');
+    expect(headings.textContent).toBe('H');
+    expect(undo.title).toBe('撤销');
+
+    rerender(
+      <EditorToolbar
+        bootstrap={{
+          ...bootstrap,
+          shortcuts: {
+            ...bootstrap.shortcuts,
+            bold: { win: '', mac: 'Cmd+Option+B' }
+          }
+        }}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+    expect(screen.getByRole('button', { name: '粗体' }).title).toBe('粗体');
+    expect(screen.getByRole('button', { name: '标题' }).title).toBe('标题');
+    expect(screen.getByRole('button', { name: '撤销' }).title).toBe('撤销');
   });
 
   it('renders a compact ordinary heading menu without the paragraph command', async () => {
@@ -197,6 +233,76 @@ describe('EditorToolbar', () => {
     await user.click(heading3);
     expect(executeCommand).toHaveBeenCalledWith('heading3');
     expect(menu.hidden).toBe(true);
+  });
+
+  it('shows current-platform H1-H6 bindings in the ordinary menu and removes cleared hints', async () => {
+    const user = userEvent.setup();
+    const commands = [1, 2, 3, 4, 5, 6].map((level) => ({
+      id: `heading${level}`,
+      label: `${level}级标题`,
+      icon: 'heading',
+      surface: 'heading-menu',
+      action: 'heading',
+      group: 'heading',
+      level
+    }));
+    const customShortcuts = Object.fromEntries(
+      commands.map((command, index) => [
+        command.id,
+        { win: `Ctrl+Alt+${index + 1}`, mac: `Cmd+Option+${index + 1}` }
+      ])
+    );
+    const ordinaryBootstrap: ToolbarBootstrap = {
+      ...bootstrap,
+      commands,
+      shortcuts: customShortcuts
+    };
+    const { rerender } = render(
+      <EditorToolbar
+        bootstrap={ordinaryBootstrap}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: '标题' }));
+    const menu = screen.getByRole('menu', { name: '标题' });
+    expect(
+      within(menu)
+        .getAllByRole('menuitem')
+        .map((item) =>
+          item.querySelector('.easymde-popover-item-shortcut')?.textContent
+        )
+    ).toEqual([
+      'Ctrl+Alt+1',
+      'Ctrl+Alt+2',
+      'Ctrl+Alt+3',
+      'Ctrl+Alt+4',
+      'Ctrl+Alt+5',
+      'Ctrl+Alt+6'
+    ]);
+
+    rerender(
+      <EditorToolbar
+        bootstrap={{
+          ...ordinaryBootstrap,
+          shortcuts: {
+            ...customShortcuts,
+            heading3: { win: '', mac: 'Cmd+Option+3' }
+          }
+        }}
+        platform="win"
+        executeCommand={vi.fn()}
+      />
+    );
+    const heading3 = within(screen.getByRole('menu', { name: '标题' })).getByRole(
+      'menuitem',
+      { name: /3级标题/ }
+    );
+    expect(heading3.querySelector('.easymde-popover-item-shortcut')).toBeNull();
+    expect(heading3.textContent).toBe('H33级标题');
+    expect(heading3.textContent).not.toContain('Ctrl+3');
+    expect(heading3.textContent).not.toContain('Ctrl+Alt+3');
   });
 
   it('preserves the documented Dashicons fallback for extension commands', () => {
@@ -433,12 +539,157 @@ describe('EditorToolbar', () => {
     const heading = within(menu).getByRole('menuitem', { name: /标题 1/ });
     expect(heading.querySelector('[data-heading-level="1"]')?.textContent).toBe('H1');
     expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
-      'H1标题 1',
+      'H1标题 1Ctrl+1',
       'H2专题标题',
       'H0零级扩展标题',
       '扩展标题命令'
     ]);
+    expect(
+      heading.querySelector('.easymde-popover-item-shortcut')?.textContent
+    ).toBe('Ctrl+1');
+    for (const item of within(menu).getAllByRole('menuitem').slice(1)) {
+      expect(item.querySelector('.easymde-popover-item-shortcut')).toBeNull();
+    }
+    expect(trigger.title).toBe('标题');
     expect(container.querySelector('.is-immersive-heading-menu')).toBe(menu);
+  });
+
+  it('keeps a longest heading shortcut visible inside the viewport edge', async () => {
+    const user = userEvent.setup();
+    const viewportWidth = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(360);
+    const headingOne = bootstrap.commands.find((command) => 'heading1' === command.id);
+    if (!headingOne) throw new Error('heading-one-command-unavailable');
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={{
+          ...bootstrap,
+          commands: [headingOne],
+          shortcuts: {
+            heading1: {
+              win: 'Ctrl+Alt+Shift+1',
+              mac: 'Cmd+Ctrl+Option+Shift+1'
+            }
+          }
+        }}
+        platform="win"
+        executeCommand={vi.fn()}
+        variant="immersive"
+      />
+    );
+    const trigger = screen.getByRole('button', { name: '标题' });
+    const menu = container.querySelector<HTMLDivElement>('[role="menu"]');
+    if (!menu) throw new Error('heading-menu-unavailable');
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      bottom: 100,
+      height: 30,
+      left: 330,
+      right: 378,
+      top: 70,
+      width: 48,
+      x: 330,
+      y: 70,
+      toJSON: () => ({})
+    });
+    vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({
+      bottom: 144,
+      height: 38,
+      left: 330,
+      right: 650,
+      top: 106,
+      width: 320,
+      x: 330,
+      y: 106,
+      toJSON: () => ({})
+    });
+
+    try {
+      await user.click(trigger);
+      expect(menu.style.left).toBe('28px');
+      expect(
+        within(menu).getByRole('menuitem', { name: /标题 1/ }).textContent
+      ).toBe('H1标题 1Ctrl+Alt+Shift+1');
+    } finally {
+      viewportWidth.mockRestore();
+    }
+  });
+
+  it('positions the ordinary menu for a longest macOS shortcut without losing its trigger anchor', async () => {
+    const user = userEvent.setup();
+    let viewportWidth = 480;
+    const viewport = vi
+      .spyOn(window, 'innerWidth', 'get')
+      .mockImplementation(() => viewportWidth);
+    const headingOne = bootstrap.commands.find((command) => 'heading1' === command.id);
+    if (!headingOne) throw new Error('heading-one-command-unavailable');
+    const { container } = render(
+      <EditorToolbar
+        bootstrap={{
+          ...bootstrap,
+          commands: [headingOne],
+          shortcuts: {
+            heading1: {
+              win: 'Ctrl+Alt+Shift+1',
+              mac: 'Cmd+Ctrl+Option+Shift+1'
+            }
+          }
+        }}
+        platform="mac"
+        executeCommand={vi.fn()}
+      />
+    );
+    const trigger = screen.getByRole('button', { name: '标题' });
+    const menu = container.querySelector<HTMLDivElement>('[role="menu"]');
+    if (!menu) throw new Error('ordinary-heading-menu-unavailable');
+    let triggerLeft = 430;
+    vi.spyOn(trigger, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 130,
+      height: 30,
+      left: triggerLeft,
+      right: triggerLeft + 48,
+      top: 100,
+      width: 48,
+      x: triggerLeft,
+      y: 100,
+      toJSON: () => ({})
+    }));
+    vi.spyOn(menu, 'getBoundingClientRect').mockReturnValue({
+      bottom: 176,
+      height: 38,
+      left: 430,
+      right: 790,
+      top: 138,
+      width: 360,
+      x: 430,
+      y: 138,
+      toJSON: () => ({})
+    });
+
+    try {
+      await user.click(trigger);
+      expect(menu.classList.contains('is-ordinary-heading-menu')).toBe(true);
+      expect(menu.style.position).toBe('fixed');
+      expect(menu.style.left).toBe('108px');
+      expect(menu.style.top).toBe('138px');
+      expect(
+        menu.style.getPropertyValue('--easymde-heading-arrow-viewport-left')
+      ).toBe('447px');
+      expect(
+        menu.style.getPropertyValue('--easymde-heading-arrow-viewport-top')
+      ).toBe('130px');
+      expect(
+        within(menu).getByRole('menuitem', { name: /一级标题/ }).textContent
+      ).toBe('H1一级标题Cmd+Ctrl+Option+Shift+1');
+
+      viewportWidth = 1024;
+      triggerLeft = 100;
+      fireEvent(window, new Event('resize'));
+      expect(menu.style.left).toBe('100px');
+      expect(
+        menu.style.getPropertyValue('--easymde-heading-arrow-viewport-left')
+      ).toBe('117px');
+    } finally {
+      viewport.mockRestore();
+    }
   });
 
   it('preserves immersive heading menu focus and Escape behavior', async () => {

@@ -49,8 +49,6 @@ final class SettingsCenterStrings {
 			'editorBehavior'                               => __( 'Editor Behavior', 'easymde' ),
 			'documentDefaults'                             => __( 'Document Defaults', 'easymde' ),
 			'defaultEditingMode'                           => __( 'Default Editing Mode', 'easymde' ),
-			'autoFocusEditor'                              => __( 'Auto-focus Editor', 'easymde' ),
-			'autoFocusEditorDescription'                   => __( 'Automatically focus the editor when creating a new article', 'easymde' ),
 			'showLineNumbers'                              => __( 'Show Line Numbers', 'easymde' ),
 			'showLineNumbersDescription'                   => __( 'Show line numbers on the left side of the editor', 'easymde' ),
 			'syntaxHighlight'                              => __( 'Code Highlighting', 'easymde' ),

@@ -5,7 +5,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	general: {
 		interfaceLanguage: "en-US",
 		editingMode: "live-preview",
-		autoFocusEditor: false,
 		showLineNumbers: true,
 		syntaxHighlight: true,
 		statusBarMode: "detailed",
@@ -69,8 +68,4 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 export const SETTINGS_CENTER_DEFAULT_SETTINGS: SettingsCenterSettings = {
 	...SETTINGS_CENTER_TEST_SETTINGS,
 	revision: 0,
-	general: {
-		...SETTINGS_CENTER_TEST_SETTINGS.general,
-		autoFocusEditor: true,
-	},
 };

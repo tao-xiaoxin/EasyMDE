@@ -341,6 +341,7 @@ describe("parseSettingsCenterBootstrap", () => {
 
 	it("physically rejects the removed General settings fields", () => {
 		for (const key of [
+			"autoFocusEditor",
 			"cleanPastedContent",
 			"smartListRecognition",
 			"defaultCategory",
@@ -518,6 +519,7 @@ describe("parseSettingsCenterBootstrap", () => {
 	});
 
 	it.each([
+		["general", "autoFocusEditor", true],
 		["general", "featuredImagePlaceholder", true],
 		["markdown", "htmlRendering", false],
 	] as const)(

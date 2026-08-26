@@ -343,7 +343,7 @@ describe("SettingsCenterRoot global search", () => {
 			value: () => ({ bottom: 1120, top: 1100 }),
 		});
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(screen.getByRole("button", { name: "markdown" }));
 
 		expect(scrollTo).toHaveBeenCalledWith({ top: 807, behavior: "auto" });
@@ -1007,10 +1007,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const user = userEvent.setup();
 		const importedSettings: SettingsCenterSettings = {
 			...bootstrap().settings,
-			general: {
-				...bootstrap().settings.general,
-				autoFocusEditor: true,
-			},
+			general: bootstrap().settings.general,
 			images: {
 				...bootstrap().settings.images,
 				titleDisplay: "filename",
@@ -1021,6 +1018,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			images: Record<string, unknown>;
 			markdown: Record<string, unknown>;
 		};
+		legacySettings.general.autoFocusEditor = true;
 		delete legacySettings.general.applyEditorThemeToFrontend;
 		delete legacySettings.general.showPublishedCodeCopyButton;
 		delete legacySettings.images.maxImageSizeMb;
@@ -1098,7 +1096,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
 			settings: SettingsCenterSettings;
 		};
-		expect(body.settings.general.autoFocusEditor).toBe(true);
+		expect(body.settings.general).not.toHaveProperty("autoFocusEditor");
 		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
 		expect(body.settings.general.statusBarMode).toBe("detailed");
@@ -1179,7 +1177,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		fetch.mockRestore();
 	});
 
-	it.each([3, 4, 5, 6])(
+	it.each([3, 4, 5, 6, 7])(
 		"imports schema %s configurations while removing the retired editor theme",
 		async (schemaVersion) => {
 			const user = userEvent.setup();
@@ -1190,8 +1188,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				markdown: Record<string, unknown>;
 			};
 			legacySettings.general.autoFocusEditor = true;
-			legacySettings.general.statusBarMode =
-				schemaVersion % 2 === 0 ? "words" : "words-reading-time";
+			legacySettings.general.statusBarMode = "words";
 			legacySettings.markdown.editorTheme = "system";
 			legacySettings.markdown.htmlRendering = false;
 			legacySettings.general.featuredImagePlaceholder = true;
@@ -1238,12 +1235,10 @@ describe("SettingsCenterRoot Transfer section", () => {
 			const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
 				settings: SettingsCenterSettings;
 			};
-			expect(body.settings.general.autoFocusEditor).toBe(true);
+			expect(body.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 			expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
-			expect(body.settings.general.statusBarMode).toBe(
-				schemaVersion % 2 === 0 ? "compact" : "detailed",
-			);
+			expect(body.settings.general.statusBarMode).toBe("compact");
 			expect(body.settings.markdown).not.toHaveProperty("editorTheme");
 			expect(body.settings.markdown).not.toHaveProperty("htmlRendering");
 			expect(body.settings.general).not.toHaveProperty(
@@ -1253,7 +1248,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		},
 	);
 
-	it("rejects a schema 7 payload with retired fields and status modes", async () => {
+	it("rejects a schema 8 payload with retired fields and status modes", async () => {
 		const user = userEvent.setup();
 		const settings = structuredClone(bootstrap().settings) as unknown as {
 			markdown: Record<string, unknown>;
@@ -1266,6 +1261,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			}
 		).general;
 		general.featuredImagePlaceholder = true;
+		general.autoFocusEditor = true;
 		general.statusBarMode = "words-reading-time";
 		const fetch = vi.spyOn(window, "fetch");
 		const { container } = render(
@@ -1283,7 +1279,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				"transferChooseConfigurationFile",
 			),
 			new File(
-				[JSON.stringify({ schemaVersion: 7, settings })],
+				[JSON.stringify({ schemaVersion: 8, settings })],
 				"settings.json",
 				{ type: "application/json" },
 			),
@@ -1341,8 +1337,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(7);
-			expect(exported.settings.general.autoFocusEditor).toBe(false);
+			expect(exported.schemaVersion).toBe(8);
+			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
 			expect(exported.settings.images.backupAccessKey).toBe("");
@@ -1698,7 +1694,7 @@ describe("SettingsCenterRoot persistence", () => {
 			throw new Error("settings-center-overlay-missing");
 		}
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const trigger = screen.getByRole("button", { name: "saveSettings" });
 		await user.click(trigger);
 		const dialog = within(overlayRoot).getByRole("alertdialog", {
@@ -1716,10 +1712,8 @@ describe("SettingsCenterRoot persistence", () => {
 	it("enables owner-backed controls while keeping unsupported fields unavailable", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		expect(
-			screen
-				.getByRole("switch", { name: "autoFocusEditor" })
-				.matches(":disabled"),
-		).toBe(false);
+			screen.queryByRole("switch", { name: "autoFocusEditor" }),
+		).toBeNull();
 		expect(
 			screen.queryByRole("combobox", { name: "interfaceLanguage" }),
 		).toBeNull();
@@ -1845,7 +1839,7 @@ describe("SettingsCenterRoot persistence", () => {
 		} as Response);
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
 			name: "saveSettings",
 		});
@@ -2282,7 +2276,7 @@ describe("SettingsCenterRoot persistence", () => {
 		try {
 			render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-			await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+			await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 			await user.click(
 				screen.getByRole<HTMLButtonElement>("button", {
 					name: "saveSettings",
@@ -2309,7 +2303,7 @@ describe("SettingsCenterRoot persistence", () => {
 		const user = userEvent.setup();
 		const latestSettings = {
 			...bootstrap().settings,
-			general: { ...bootstrap().settings.general, autoFocusEditor: true },
+			general: { ...bootstrap().settings.general, showLineNumbers: true },
 		};
 		const fetch = vi
 			.spyOn(window, "fetch")
@@ -2334,7 +2328,7 @@ describe("SettingsCenterRoot persistence", () => {
 			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(
 			screen.getByRole<HTMLButtonElement>("button", { name: "saveSettings" }),
 		);
@@ -2349,8 +2343,8 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(reload);
 		await waitFor(() =>
 			expect(
-				screen
-					.getByRole("switch", { name: "autoFocusEditor" })
+					screen
+						.getByRole("switch", { name: "showLineNumbers" })
 					.getAttribute("aria-checked"),
 			).toBe("true"),
 		);
@@ -2418,7 +2412,7 @@ describe("SettingsCenterRoot persistence", () => {
 			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 		await waitFor(() =>
 			expect(screen.getByText("settingsConflict")).not.toBeNull(),
@@ -2440,7 +2434,7 @@ describe("SettingsCenterRoot persistence", () => {
 			.mockRejectedValue(new Error("settings-save-failed"));
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
-		await user.click(screen.getByRole("switch", { name: "autoFocusEditor" }));
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
 			name: "saveSettings",
 		});

@@ -40,8 +40,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"editorBehavior",
 	"documentDefaults",
 	"defaultEditingMode",
-	"autoFocusEditor",
-	"autoFocusEditorDescription",
 	"showLineNumbers",
 	"showLineNumbersDescription",
 	"syntaxHighlight",
@@ -641,7 +639,6 @@ export function parseSettingsCenterSettings(
 		summaryMode: 16,
 	};
 	const generalBooleans = [
-		"autoFocusEditor",
 		"showLineNumbers",
 		"syntaxHighlight",
 		"autoSave",

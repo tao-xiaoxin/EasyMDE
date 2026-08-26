@@ -37,8 +37,8 @@ msgid "Cancel"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:380 src/Admin/AdminAssets.php:820
-#: src/Admin/SettingsCenterStrings.php:273
-#: src/Admin/SettingsCenterStrings.php:360
+#: src/Admin/SettingsCenterStrings.php:271
+#: src/Admin/SettingsCenterStrings.php:358
 msgid "Close"
 msgstr ""
 
@@ -123,7 +123,7 @@ msgid "More actions"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:401 src/Admin/AdminAssets.php:484
-#: src/Admin/SettingsCenterStrings.php:351
+#: src/Admin/SettingsCenterStrings.php:349
 msgid "Markdown"
 msgstr ""
 
@@ -336,7 +336,7 @@ msgstr ""
 msgid "Ready to publish"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:457 src/Admin/SettingsCenterStrings.php:80
+#: src/Admin/AdminAssets.php:457 src/Admin/SettingsCenterStrings.php:78
 msgid "Private"
 msgstr ""
 
@@ -344,7 +344,7 @@ msgstr ""
 msgid "Only site administrators and editors can view this article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:459 src/Admin/SettingsCenterStrings.php:79
+#: src/Admin/AdminAssets.php:459 src/Admin/SettingsCenterStrings.php:77
 msgid "Public"
 msgstr ""
 
@@ -1403,1324 +1403,1316 @@ msgid "Default Editing Mode"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:52
-msgid "Auto-focus Editor"
-msgstr ""
-
-#: src/Admin/SettingsCenterStrings.php:53
-msgid "Automatically focus the editor when creating a new article"
-msgstr ""
-
-#: src/Admin/SettingsCenterStrings.php:54
 msgid "Show Line Numbers"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:55
+#: src/Admin/SettingsCenterStrings.php:53
 msgid "Show line numbers on the left side of the editor"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:56
+#: src/Admin/SettingsCenterStrings.php:54
 msgid "Code Highlighting"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:57
+#: src/Admin/SettingsCenterStrings.php:55
 msgid "Enable code syntax highlighting"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:58
+#: src/Admin/SettingsCenterStrings.php:56
 msgid "Status Bar Display"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:59
+#: src/Admin/SettingsCenterStrings.php:57
 msgid "Auto Save"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:60
+#: src/Admin/SettingsCenterStrings.php:58
 msgid "Periodically save content to prevent accidental loss"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:61
+#: src/Admin/SettingsCenterStrings.php:59
 msgid "Auto Save Interval"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:62
+#: src/Admin/SettingsCenterStrings.php:60
 msgid "Synchronized Scrolling (Preview and Editor)"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:63
+#: src/Admin/SettingsCenterStrings.php:61
 msgid "Synchronize scrolling between the preview and editor areas"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:64
+#: src/Admin/SettingsCenterStrings.php:62
 msgid "Default Publish Visibility"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:65
+#: src/Admin/SettingsCenterStrings.php:63
 msgid "Open Preview After Publishing"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:66
+#: src/Admin/SettingsCenterStrings.php:64
 msgid "Automatically open the article preview after publishing or updating"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:67
+#: src/Admin/SettingsCenterStrings.php:65
 msgid "Default Summary Sync Method"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:68
+#: src/Admin/SettingsCenterStrings.php:66
 msgid "Automatically extract the summary from the beginning of the content"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:69
+#: src/Admin/SettingsCenterStrings.php:67
 msgid "Live Preview (WYSIWYG)"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:70
+#: src/Admin/SettingsCenterStrings.php:68
 msgid "Source Editing"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:71
+#: src/Admin/SettingsCenterStrings.php:69
 msgid "Preview Only"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:72
+#: src/Admin/SettingsCenterStrings.php:70
 msgid "Show Word Count and Reading Time"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:73
+#: src/Admin/SettingsCenterStrings.php:71
 msgid "Show Word Count Only"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:74
+#: src/Admin/SettingsCenterStrings.php:72
 msgid "Hide Status Bar"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:75
+#: src/Admin/SettingsCenterStrings.php:73
 msgid "30 seconds"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:76
+#: src/Admin/SettingsCenterStrings.php:74
 msgid "60 seconds"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:77
+#: src/Admin/SettingsCenterStrings.php:75
 msgid "2 minutes"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:78
+#: src/Admin/SettingsCenterStrings.php:76
 msgid "5 minutes"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:81
+#: src/Admin/SettingsCenterStrings.php:79
 msgid "Password Protected"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:82
+#: src/Admin/SettingsCenterStrings.php:80
 msgid "Automatically Extract (First 55 Characters)"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:83
+#: src/Admin/SettingsCenterStrings.php:81
 msgid "Automatically Extract (First 100 Characters)"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:84
+#: src/Admin/SettingsCenterStrings.php:82
 msgid "Enter Manually"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:85
+#: src/Admin/SettingsCenterStrings.php:83
 msgid "Common Shortcuts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:86
+#: src/Admin/SettingsCenterStrings.php:84
 msgid "Headings and Formatting"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:87
+#: src/Admin/SettingsCenterStrings.php:85
 msgid "Shortcut Behavior"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:88
+#: src/Admin/SettingsCenterStrings.php:86
 msgid "Restore Default Shortcuts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:89
+#: src/Admin/SettingsCenterStrings.php:87
 msgid "Function"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:90
+#: src/Admin/SettingsCenterStrings.php:88
 msgid "Windows / Linux"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:91
+#: src/Admin/SettingsCenterStrings.php:89
 msgid "macOS"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:92
+#: src/Admin/SettingsCenterStrings.php:90
 msgid "Save Article"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:93 src/Support/ToolbarRegistry.php:98
+#: src/Admin/SettingsCenterStrings.php:91 src/Support/ToolbarRegistry.php:98
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:94 src/Support/ToolbarRegistry.php:113
+#: src/Admin/SettingsCenterStrings.php:92 src/Support/ToolbarRegistry.php:113
 msgid "Italic"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:95
-#: src/Admin/SettingsCenterStrings.php:322
+#: src/Admin/SettingsCenterStrings.php:93
+#: src/Admin/SettingsCenterStrings.php:320
 msgid "Insert Link"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:96
-#: src/Admin/SettingsCenterStrings.php:323
+#: src/Admin/SettingsCenterStrings.php:94
+#: src/Admin/SettingsCenterStrings.php:321
 msgid "Insert Image"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:97 src/Support/ToolbarRegistry.php:154
+#: src/Admin/SettingsCenterStrings.php:95 src/Support/ToolbarRegistry.php:154
 msgid "Heading 1"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:98 src/Support/ToolbarRegistry.php:155
+#: src/Admin/SettingsCenterStrings.php:96 src/Support/ToolbarRegistry.php:155
 msgid "Heading 2"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:99 src/Support/ToolbarRegistry.php:182
+#: src/Admin/SettingsCenterStrings.php:97 src/Support/ToolbarRegistry.php:182
 msgid "Quote"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:100
+#: src/Admin/SettingsCenterStrings.php:98
 msgid "Unordered List"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:101
+#: src/Admin/SettingsCenterStrings.php:99
 msgid "Ordered List"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:102
-#: src/Admin/SettingsCenterStrings.php:318
+#: src/Admin/SettingsCenterStrings.php:100
+#: src/Admin/SettingsCenterStrings.php:316
 msgid "Show Shortcut Hints"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:103
+#: src/Admin/SettingsCenterStrings.php:101
 msgid "Show shortcut hints in the toolbar and action menus."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:104
+#: src/Admin/SettingsCenterStrings.php:102
 msgid "Detect and Warn About Conflicts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:105
+#: src/Admin/SettingsCenterStrings.php:103
 msgid "Automatically warn and highlight when shortcut conflicts are detected."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:106
+#: src/Admin/SettingsCenterStrings.php:104
 msgid "Custom Shortcut Suggestions"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:107
+#: src/Admin/SettingsCenterStrings.php:105
 msgid "Clearing an input and saving restores that item's default shortcut."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:108
+#: src/Admin/SettingsCenterStrings.php:106
 msgid "Save Settings"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:109
+#: src/Admin/SettingsCenterStrings.php:107
 msgid "Saving…"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:110
+#: src/Admin/SettingsCenterStrings.php:108
 msgid "Settings saved."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:111
+#: src/Admin/SettingsCenterStrings.php:109
 #: src/Support/SettingsCenterRepository.php:430
 #: src/Support/SettingsCenterRepository.php:438
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:112
+#: src/Admin/SettingsCenterStrings.php:110
 msgid ""
 "Settings could not be saved because the network request failed. Try again."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:113
+#: src/Admin/SettingsCenterStrings.php:111
 msgid "Settings could not be saved because WordPress rejected the request."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:114
+#: src/Admin/SettingsCenterStrings.php:112
 msgid "Settings could not be saved because the returned data was invalid."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:115
+#: src/Admin/SettingsCenterStrings.php:113
 msgid "Settings changed elsewhere. Reload the latest settings before saving."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:116
+#: src/Admin/SettingsCenterStrings.php:114
 msgid "Reload Settings"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:117
+#: src/Admin/SettingsCenterStrings.php:115
 msgid "Unavailable"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:118
+#: src/Admin/SettingsCenterStrings.php:116
 msgid ""
 "This setting is not connected to a WordPress runtime owner yet and cannot be "
 "changed."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:119
+#: src/Admin/SettingsCenterStrings.php:117
 msgid "Unsaved changes"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:120
-#: src/Admin/SettingsCenterStrings.php:312
+#: src/Admin/SettingsCenterStrings.php:118
+#: src/Admin/SettingsCenterStrings.php:310
 msgid "Image Host Service"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:121
+#: src/Admin/SettingsCenterStrings.php:119
 msgid "Select Image Host Service"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:122
+#: src/Admin/SettingsCenterStrings.php:120
 msgid "Cloudflare R2"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:123
+#: src/Admin/SettingsCenterStrings.php:121
 msgid "Alibaba Cloud OSS"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:124
+#: src/Admin/SettingsCenterStrings.php:122
 msgid "Tencent Cloud COS"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:125
+#: src/Admin/SettingsCenterStrings.php:123
 msgid "Storage Bucket"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:126
+#: src/Admin/SettingsCenterStrings.php:124
 msgid "Custom Endpoint"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:127
-#: src/Admin/SettingsCenterStrings.php:313
+#: src/Admin/SettingsCenterStrings.php:125
+#: src/Admin/SettingsCenterStrings.php:311
 msgid "Viewing Image Domain"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:128
+#: src/Admin/SettingsCenterStrings.php:126
 msgid "Use this domain to generate the image URL returned after upload."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:129
+#: src/Admin/SettingsCenterStrings.php:127
 msgid "Upload Failure Retry Count"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:130
+#: src/Admin/SettingsCenterStrings.php:128
 msgid ""
 "Use the same number of additional attempts after the first failure for the "
 "primary and enabled backup image hosts (0–5)."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:131
+#: src/Admin/SettingsCenterStrings.php:129
 msgid ""
 "For Tencent Cloud COS, enter the complete bucket name in BucketName-APPID "
 "format."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:132
+#: src/Admin/SettingsCenterStrings.php:130
 msgid "Access Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:133
+#: src/Admin/SettingsCenterStrings.php:131
 msgid "Secret Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:134
+#: src/Admin/SettingsCenterStrings.php:132
 msgid "Show Secret"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:135
+#: src/Admin/SettingsCenterStrings.php:133
 msgid "Hide Secret"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:136
+#: src/Admin/SettingsCenterStrings.php:134
 msgid "Revealing…"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:137
+#: src/Admin/SettingsCenterStrings.php:135
 msgid "The saved credential could not be revealed."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:138
+#: src/Admin/SettingsCenterStrings.php:136
 msgid "Primary credentials configured"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:139
+#: src/Admin/SettingsCenterStrings.php:137
 msgid "Backup credentials configured"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:140
+#: src/Admin/SettingsCenterStrings.php:138
 msgid "Upload Verification Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:141
+#: src/Admin/SettingsCenterStrings.php:139
 msgid "Backup Upload Verification Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:142
+#: src/Admin/SettingsCenterStrings.php:140
 msgid "Not Verified"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:143
+#: src/Admin/SettingsCenterStrings.php:141
 msgid "Verifying Upload…"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:144
+#: src/Admin/SettingsCenterStrings.php:142
 msgid "Upload Verified"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:145
+#: src/Admin/SettingsCenterStrings.php:143
 msgid "Settings Changed; Verify Again"
 msgstr ""
 
 #. translators: %s: localized date and time of the most recent upload verification.
-#: src/Admin/SettingsCenterStrings.php:147
+#: src/Admin/SettingsCenterStrings.php:145
 #, php-format
 msgid "Last verified: %s"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:148
+#: src/Admin/SettingsCenterStrings.php:146
 msgid "Verify Upload"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:149
+#: src/Admin/SettingsCenterStrings.php:147
 msgid "Verify Backup Upload"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:150
+#: src/Admin/SettingsCenterStrings.php:148
 msgid "Upload Verification Succeeded"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:151
+#: src/Admin/SettingsCenterStrings.php:149
 msgid "Upload Verification Failed"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:152
+#: src/Admin/SettingsCenterStrings.php:150
 msgid ""
 "The test image was uploaded successfully. The URL below is the address "
 "inserted into articles."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:153
+#: src/Admin/SettingsCenterStrings.php:151
 msgid "No article image URL was created."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:154
+#: src/Admin/SettingsCenterStrings.php:152
 msgid "Check the image host configuration, then verify the upload again."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:155
+#: src/Admin/SettingsCenterStrings.php:153
 msgid ""
 "This HTTP image URL may be blocked when an article is viewed over HTTPS."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:156
+#: src/Admin/SettingsCenterStrings.php:154
 msgid "Uploaded Object Path"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:157
+#: src/Admin/SettingsCenterStrings.php:155
 msgid "Uploaded Image URL"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:158
+#: src/Admin/SettingsCenterStrings.php:156
 msgid "Complete the required image host settings before verifying an upload."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:159
+#: src/Admin/SettingsCenterStrings.php:157
 msgid "The image host rejected the configured credentials."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:160
+#: src/Admin/SettingsCenterStrings.php:158
 msgid "The configured credentials do not allow access to this storage space."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:161
+#: src/Admin/SettingsCenterStrings.php:159
 msgid ""
 "Could not reach the image host. Check the network connection and try again."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:162
+#: src/Admin/SettingsCenterStrings.php:160
 msgid "The image host did not respond in time. Try again."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:163
+#: src/Admin/SettingsCenterStrings.php:161
 msgid "The image host reported a service error. Try again later."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:164
+#: src/Admin/SettingsCenterStrings.php:162
 msgid "The image host returned an invalid response."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:165
+#: src/Admin/SettingsCenterStrings.php:163
 msgid "Primary and Backup Image Hosts Match"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:166
+#: src/Admin/SettingsCenterStrings.php:164
 msgid ""
 "Change the backup service, bucket, or endpoint so it does not duplicate the "
 "primary upload target."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:167
+#: src/Admin/SettingsCenterStrings.php:165
 msgid "File Name Rule"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:168
+#: src/Admin/SettingsCenterStrings.php:166
 msgid "Choose a template or combine variables to customize the storage path."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:169
+#: src/Admin/SettingsCenterStrings.php:167
 msgid "Common Naming Templates"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:170
+#: src/Admin/SettingsCenterStrings.php:168
 msgid "Select one to fill the rule automatically"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:171
+#: src/Admin/SettingsCenterStrings.php:169
 msgid "Date Archive"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:172
+#: src/Admin/SettingsCenterStrings.php:170
 msgid "MD5 Content Hash"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:173
+#: src/Admin/SettingsCenterStrings.php:171
 msgid "Year and Month Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:174
+#: src/Admin/SettingsCenterStrings.php:172
 msgid "Keep Original Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:175
+#: src/Admin/SettingsCenterStrings.php:173
 msgid "Article Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:176
+#: src/Admin/SettingsCenterStrings.php:174
 msgid "Time-based Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:177
+#: src/Admin/SettingsCenterStrings.php:175
 msgid "Available Variables"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:178
+#: src/Admin/SettingsCenterStrings.php:176
 msgid "Year"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:179
+#: src/Admin/SettingsCenterStrings.php:177
 msgid "Month"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:180
+#: src/Admin/SettingsCenterStrings.php:178
 msgid "Day"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:181
+#: src/Admin/SettingsCenterStrings.php:179
 msgid "Full Date"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:182
+#: src/Admin/SettingsCenterStrings.php:180
 msgid "Upload Time"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:183
+#: src/Admin/SettingsCenterStrings.php:181
 msgid "Post ID"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:184
+#: src/Admin/SettingsCenterStrings.php:182
 msgid "File MD5"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:185
+#: src/Admin/SettingsCenterStrings.php:183
 msgid "Unique Identifier"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:186
+#: src/Admin/SettingsCenterStrings.php:184
 msgid "Original File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:187
+#: src/Admin/SettingsCenterStrings.php:185
 msgid "File Extension"
 msgstr ""
 
 #. translators: %s: file-name rule variable label.
-#: src/Admin/SettingsCenterStrings.php:189
+#: src/Admin/SettingsCenterStrings.php:187
 #, php-format
 msgid "Insert %s variable"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:190
+#: src/Admin/SettingsCenterStrings.php:188
 msgid "Example Preview"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:191
+#: src/Admin/SettingsCenterStrings.php:189
 msgid "Enter a file name rule"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:192
+#: src/Admin/SettingsCenterStrings.php:190
 msgid "Backup Image Host"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:193
+#: src/Admin/SettingsCenterStrings.php:191
 msgid ""
 "After the primary image host succeeds, write the same object to backup "
 "storage. The upload succeeds only when every enabled destination succeeds."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:194
-#: src/Admin/SettingsCenterStrings.php:315
+#: src/Admin/SettingsCenterStrings.php:192
+#: src/Admin/SettingsCenterStrings.php:313
 msgid "Enable Backup Image Host"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:195
+#: src/Admin/SettingsCenterStrings.php:193
 msgid ""
 "Write the same file content and object path to a second storage service."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:196
-#: src/Admin/SettingsCenterStrings.php:314
+#: src/Admin/SettingsCenterStrings.php:194
+#: src/Admin/SettingsCenterStrings.php:312
 msgid "Backup Image Host Service"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:197
+#: src/Admin/SettingsCenterStrings.php:195
 msgid "Qiniu Kodo"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:198
+#: src/Admin/SettingsCenterStrings.php:196
 msgid "Backup Storage Bucket"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:199
+#: src/Admin/SettingsCenterStrings.php:197
 msgid "Backup Custom Domain Endpoint"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:200
+#: src/Admin/SettingsCenterStrings.php:198
 msgid "Backup Access Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:201
+#: src/Admin/SettingsCenterStrings.php:199
 msgid "Backup Secret Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:202
+#: src/Admin/SettingsCenterStrings.php:200
 msgid "Show Backup Access Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:203
+#: src/Admin/SettingsCenterStrings.php:201
 msgid "Hide Backup Access Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:204
+#: src/Admin/SettingsCenterStrings.php:202
 msgid "Show Backup Secret Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:205
+#: src/Admin/SettingsCenterStrings.php:203
 msgid "Hide Backup Secret Key"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:206
+#: src/Admin/SettingsCenterStrings.php:204
 msgid "Upload Behavior"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:207
+#: src/Admin/SettingsCenterStrings.php:205
 msgid "Compress Images Automatically"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:208
+#: src/Admin/SettingsCenterStrings.php:206
 msgid "Compress images before upload to save storage space."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:209
+#: src/Admin/SettingsCenterStrings.php:207
 msgid "Maximum Supported Image Size (MB)"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:210
+#: src/Admin/SettingsCenterStrings.php:208
 msgid "Set the maximum image upload size from 1 MB to 10 MB."
 msgstr ""
 
 #. translators: %s: current system upload limit in megabytes.
-#: src/Admin/SettingsCenterStrings.php:212
+#: src/Admin/SettingsCenterStrings.php:210
 #, php-format
 msgid ""
 "This value exceeds the current system upload limit of %s MB. Increase the "
 "system limit or choose a smaller value."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:213
+#: src/Admin/SettingsCenterStrings.php:211
 msgid "Image Title Display"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:214
+#: src/Admin/SettingsCenterStrings.php:212
 msgid "Allowed Upload Formats"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:215
+#: src/Admin/SettingsCenterStrings.php:213
 msgid "Select the image file formats that the editor may choose and upload."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:216
+#: src/Admin/SettingsCenterStrings.php:214
 msgid "JPG / JPEG / JFIF"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:217
+#: src/Admin/SettingsCenterStrings.php:215
 msgid "PNG"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:218
+#: src/Admin/SettingsCenterStrings.php:216
 msgid "WebP"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:219
+#: src/Admin/SettingsCenterStrings.php:217
 msgid "GIF"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:220
+#: src/Admin/SettingsCenterStrings.php:218
 msgid "Allow Uploading JPG / JPEG / JFIF Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:221
+#: src/Admin/SettingsCenterStrings.php:219
 msgid "Allow Uploading PNG Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:222
+#: src/Admin/SettingsCenterStrings.php:220
 msgid "Allow Uploading WebP Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:223
+#: src/Admin/SettingsCenterStrings.php:221
 msgid "Allow Uploading GIF Format"
 msgstr ""
 
 #. translators: Separator between image upload format labels.
-#: src/Admin/SettingsCenterStrings.php:225
+#: src/Admin/SettingsCenterStrings.php:223
 msgctxt "image upload format list separator"
 msgid ","
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:226
+#: src/Admin/SettingsCenterStrings.php:224
 msgid "Use File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:227
+#: src/Admin/SettingsCenterStrings.php:225
 msgid "Leave Empty"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:228
+#: src/Admin/SettingsCenterStrings.php:226
 msgid "Editor Settings"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:229
+#: src/Admin/SettingsCenterStrings.php:227
 msgid "Word Wrap"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:230
+#: src/Admin/SettingsCenterStrings.php:228
 msgid "Wrap lines in the editor instead of scrolling horizontally."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:231
+#: src/Admin/SettingsCenterStrings.php:229
 msgid "Markdown Parsing and Rendering"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:232
+#: src/Admin/SettingsCenterStrings.php:230
 msgid "GitHub Flavored Markdown"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:233
+#: src/Admin/SettingsCenterStrings.php:231
 msgid "Use GitHub-flavored Markdown parsing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:234
+#: src/Admin/SettingsCenterStrings.php:232
 msgid "Smart Punctuation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:235
+#: src/Admin/SettingsCenterStrings.php:233
 msgid "Convert straight quotes and hyphens to smart punctuation."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:236
+#: src/Admin/SettingsCenterStrings.php:234
 msgid "Table Alignment"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:237
+#: src/Admin/SettingsCenterStrings.php:235
 msgid "Automatically Align by Content"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:238
+#: src/Admin/SettingsCenterStrings.php:236
 msgid "Align All Left"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:239
+#: src/Admin/SettingsCenterStrings.php:237
 msgid "Align All Center"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:240
+#: src/Admin/SettingsCenterStrings.php:238
 msgid "Code Block Line Numbers"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:241
+#: src/Admin/SettingsCenterStrings.php:239
 msgid "Show"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:242
+#: src/Admin/SettingsCenterStrings.php:240
 msgid "Hide"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:243
+#: src/Admin/SettingsCenterStrings.php:241
 msgid "Convert Pasted Content to Markdown"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:244
+#: src/Admin/SettingsCenterStrings.php:242
 msgid "Convert pasted content to Markdown whenever possible."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:245
+#: src/Admin/SettingsCenterStrings.php:243
 msgid "Export Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:246
+#: src/Admin/SettingsCenterStrings.php:244
 msgid ""
 "Export all current settings as a JSON configuration file for backup or "
 "migration to another site."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:247
+#: src/Admin/SettingsCenterStrings.php:245
 msgid "File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:248
+#: src/Admin/SettingsCenterStrings.php:246
 msgid "Export File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:249
+#: src/Admin/SettingsCenterStrings.php:247
 msgid "Import Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:250
+#: src/Admin/SettingsCenterStrings.php:248
 msgid ""
 "Import settings from a local JSON configuration file and overwrite the "
 "current configuration after confirmation."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:251
+#: src/Admin/SettingsCenterStrings.php:249
 msgid "Choose Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:252
+#: src/Admin/SettingsCenterStrings.php:250
 msgid "Confirm Import"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:253
+#: src/Admin/SettingsCenterStrings.php:251
 msgid "Import Instructions"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:254
+#: src/Admin/SettingsCenterStrings.php:252
 msgid ""
 "Importing will overwrite the current configuration. Back up important "
 "settings first."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:255
+#: src/Admin/SettingsCenterStrings.php:253
 msgid ""
 "Configuration files are valid only in the same or a compatible EasyMDE "
 "version."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:256
+#: src/Admin/SettingsCenterStrings.php:254
 msgid ""
 "Import handles plugin configuration only and does not affect articles or "
 "media data."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:257
+#: src/Admin/SettingsCenterStrings.php:255
 msgid "Configuration Management"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:258
+#: src/Admin/SettingsCenterStrings.php:256
 msgid "Manage and maintain plugin configuration operations."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:259
+#: src/Admin/SettingsCenterStrings.php:257
 msgid "Reset Current Configuration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:260
+#: src/Admin/SettingsCenterStrings.php:258
 msgid "Restore all settings to their defaults."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:261
+#: src/Admin/SettingsCenterStrings.php:259
 msgid "Clear Local Cache"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:262
+#: src/Admin/SettingsCenterStrings.php:260
 msgid "Clear cached data without affecting configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:263
+#: src/Admin/SettingsCenterStrings.php:261
 msgid "Open Configuration Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:264
+#: src/Admin/SettingsCenterStrings.php:262
 msgid "View and copy the configuration directory path."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:265
+#: src/Admin/SettingsCenterStrings.php:263
 msgid "View Configuration Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:266
+#: src/Admin/SettingsCenterStrings.php:264
 msgid "Check whether the current configuration is valid."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:267
+#: src/Admin/SettingsCenterStrings.php:265
 msgid "Close Operation Dialog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:268
+#: src/Admin/SettingsCenterStrings.php:266
 msgid "Configuration Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:269
+#: src/Admin/SettingsCenterStrings.php:267
 msgid "Configuration Status Check"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:270
+#: src/Admin/SettingsCenterStrings.php:268
 msgid "This operation changes local state on the current device."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:271
+#: src/Admin/SettingsCenterStrings.php:269
 msgid "View where EasyMDE configuration is stored on the current device."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:272
+#: src/Admin/SettingsCenterStrings.php:270
 msgid "Check whether required configuration is complete and usable."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:274
+#: src/Admin/SettingsCenterStrings.php:272
 msgid ""
 "Resetting restores General, Shortcuts, Images, Markdown, and notification "
 "settings to their defaults. Export a backup first."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:275
+#: src/Admin/SettingsCenterStrings.php:273
 msgid ""
 "This operation clears browser cache only. It does not delete articles, "
 "media, or current configuration. Some temporary state may require reloading."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:276
+#: src/Admin/SettingsCenterStrings.php:274
 msgid "Confirm Reset"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:277
+#: src/Admin/SettingsCenterStrings.php:275
 msgid "Confirm Clear"
 msgstr ""
 
 #. translators: %s: selected configuration file name.
-#: src/Admin/SettingsCenterStrings.php:279
+#: src/Admin/SettingsCenterStrings.php:277
 #, php-format
 msgid "Selected %s. Confirm to overwrite the current configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:280
+#: src/Admin/SettingsCenterStrings.php:278
 msgid "Close Configuration Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:281
+#: src/Admin/SettingsCenterStrings.php:279
 msgid ""
 "A WordPress administration page cannot open a server file directory "
 "directly. Copy the non-sensitive storage owner below to identify where this "
 "configuration belongs."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:282
+#: src/Admin/SettingsCenterStrings.php:280
 msgid "WordPress database / EasyMDE options"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:283
+#: src/Admin/SettingsCenterStrings.php:281
 msgid "Copy Location"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:284
+#: src/Admin/SettingsCenterStrings.php:282
 msgid "The configuration storage location was copied."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:285
+#: src/Admin/SettingsCenterStrings.php:283
 msgid ""
 "The configuration storage location could not be copied. Check browser "
 "clipboard permission."
 msgstr ""
 
 #. translators: %s: number of configuration checks.
-#: src/Admin/SettingsCenterStrings.php:287
+#: src/Admin/SettingsCenterStrings.php:285
 #, php-format
 msgid "%s key configuration items checked"
 msgstr ""
 
 #. translators: %s: number of configuration checks that passed.
-#: src/Admin/SettingsCenterStrings.php:289
+#: src/Admin/SettingsCenterStrings.php:287
 #, php-format
 msgid "%s items passed"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:290
+#: src/Admin/SettingsCenterStrings.php:288
 msgid "Settings Bootstrap"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:291
+#: src/Admin/SettingsCenterStrings.php:289
 msgid "The validated WordPress settings bootstrap is available."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:292
+#: src/Admin/SettingsCenterStrings.php:290
 msgid "Runtime Assets"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:293
+#: src/Admin/SettingsCenterStrings.php:291
 msgid "Brand, header, and empty-state assets have registered URLs."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:294
+#: src/Admin/SettingsCenterStrings.php:292
 msgid "Image Settings Draft"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:295
+#: src/Admin/SettingsCenterStrings.php:293
 msgid "The current image-host draft has a configured domain."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:296
+#: src/Admin/SettingsCenterStrings.php:294
 msgid "The current image-host draft has no configured domain."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:297
+#: src/Admin/SettingsCenterStrings.php:295
 msgid "WordPress Settings Endpoint"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:298
+#: src/Admin/SettingsCenterStrings.php:296
 msgid "The WordPress settings endpoint is configured for this page."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:299
+#: src/Admin/SettingsCenterStrings.php:297
 msgid "The configuration file was downloaded."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:300
+#: src/Admin/SettingsCenterStrings.php:298
 msgid "The configuration file could not be downloaded."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:301
+#: src/Admin/SettingsCenterStrings.php:299
 msgid "The export file name is invalid."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:302
+#: src/Admin/SettingsCenterStrings.php:300
 msgid "The selected configuration file is invalid or incompatible."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:303
+#: src/Admin/SettingsCenterStrings.php:301
 msgid "The configuration was imported into the unsaved draft."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:304
+#: src/Admin/SettingsCenterStrings.php:302
 msgid "The settings draft was reset to the default configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:305
+#: src/Admin/SettingsCenterStrings.php:303
 msgid "EasyMDE local browser cache was cleared."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:306
+#: src/Admin/SettingsCenterStrings.php:304
 msgid "EasyMDE local browser cache could not be cleared."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:307
+#: src/Admin/SettingsCenterStrings.php:305
 msgid "This browser operation is unavailable."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:308
+#: src/Admin/SettingsCenterStrings.php:306
 msgid ""
 "Only settings connected to a WordPress runtime owner can be imported or "
 "reset."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:309
+#: src/Admin/SettingsCenterStrings.php:307
 msgid "Editing Mode"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:310
+#: src/Admin/SettingsCenterStrings.php:308
 msgid "Status Bar Mode"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:311
+#: src/Admin/SettingsCenterStrings.php:309
 msgid "Publish Visibility"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:316
+#: src/Admin/SettingsCenterStrings.php:314
 msgid "Code Line Numbers"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:317
+#: src/Admin/SettingsCenterStrings.php:315
 msgid "Math"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:319
+#: src/Admin/SettingsCenterStrings.php:317
 msgid "Detect Shortcut Conflicts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:320
+#: src/Admin/SettingsCenterStrings.php:318
 msgid "Show Shortcut Suggestions"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:321
+#: src/Admin/SettingsCenterStrings.php:319
 msgid "Save"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:324
+#: src/Admin/SettingsCenterStrings.php:322
 msgid "Version Information"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:325
-#: src/Admin/SettingsCenterStrings.php:368
+#: src/Admin/SettingsCenterStrings.php:323
+#: src/Admin/SettingsCenterStrings.php:366
 msgid "Current Version"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:327
+#: src/Admin/SettingsCenterStrings.php:325
 msgid "Check for Updates"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:328
+#: src/Admin/SettingsCenterStrings.php:326
 msgid "Rendering Engine"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:329
+#: src/Admin/SettingsCenterStrings.php:327
 msgid "league/commonmark 2.8.2"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:330
+#: src/Admin/SettingsCenterStrings.php:328
 msgid "Compatible Version"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:331
+#: src/Admin/SettingsCenterStrings.php:329
 msgid "WordPress 6.7+"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:332
+#: src/Admin/SettingsCenterStrings.php:330
 msgid "PHP Requirement"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:333
+#: src/Admin/SettingsCenterStrings.php:331
 msgid "7.4+"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:334
+#: src/Admin/SettingsCenterStrings.php:332
 msgid "Configuration Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:335
+#: src/Admin/SettingsCenterStrings.php:333
 msgid "Normal"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:336
+#: src/Admin/SettingsCenterStrings.php:334
 msgid "Core Capabilities"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:337
+#: src/Admin/SettingsCenterStrings.php:335
 msgid "Markdown Editing and Live Preview"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:338
+#: src/Admin/SettingsCenterStrings.php:336
 msgid "Code Highlighting and Syntax Support"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:339
+#: src/Admin/SettingsCenterStrings.php:337
 msgid "Image Upload and Link Insertion"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:340
+#: src/Admin/SettingsCenterStrings.php:338
 msgid "Shortcuts and Workflow Optimization"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:341
+#: src/Admin/SettingsCenterStrings.php:339
 msgid "Configuration Import, Export, and Migration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:342
+#: src/Admin/SettingsCenterStrings.php:340
 msgid "Resources and Support"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:343
+#: src/Admin/SettingsCenterStrings.php:341
 msgid "Official Documentation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:344
+#: src/Admin/SettingsCenterStrings.php:342
 msgid "Changelog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:345
+#: src/Admin/SettingsCenterStrings.php:343
 msgid "Issue Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:346
+#: src/Admin/SettingsCenterStrings.php:344
 msgid "GitHub Repository"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:347
+#: src/Admin/SettingsCenterStrings.php:345
 msgid "Open Source License"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:348
+#: src/Admin/SettingsCenterStrings.php:346
 msgid ""
 "Feedback is welcome. Help EasyMDE continue improving the writing experience."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:349
+#: src/Admin/SettingsCenterStrings.php:347
 msgid "Plugin Introduction"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:350
+#: src/Admin/SettingsCenterStrings.php:348
 msgid ""
 "EasyMDE is a Markdown editor plugin built for WordPress. It provides "
 "Markdown source editing, split-pane live Preview, local runtime assets, and "
 "WordPress-native media, revisions, permissions, saving, and publishing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:352
+#: src/Admin/SettingsCenterStrings.php:350
 msgid "Live Preview"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:353
+#: src/Admin/SettingsCenterStrings.php:351
 msgid "WordPress Media"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:354
+#: src/Admin/SettingsCenterStrings.php:352
 msgid "Local Assets"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:355
+#: src/Admin/SettingsCenterStrings.php:353
 msgid "Shortcuts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:356
+#: src/Admin/SettingsCenterStrings.php:354
 msgid "Usage Help"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:357
+#: src/Admin/SettingsCenterStrings.php:355
 msgid "Find documentation about configuration, editing, and migration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:358
+#: src/Admin/SettingsCenterStrings.php:356
 msgid "Review the main changes in recent EasyMDE versions."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:359
+#: src/Admin/SettingsCenterStrings.php:357
 msgid "Close About Dialog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:361
+#: src/Admin/SettingsCenterStrings.php:359
 msgid "Open Full Documentation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:362
+#: src/Admin/SettingsCenterStrings.php:360
 msgid "Quick Start"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:363
+#: src/Admin/SettingsCenterStrings.php:361
 msgid ""
 "Configure the editor, appearance, image behavior, and writing preferences."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:364
+#: src/Admin/SettingsCenterStrings.php:362
 msgid "Editor Workflow"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:365
+#: src/Admin/SettingsCenterStrings.php:363
 msgid "Use Markdown editing, split Preview, and WordPress-native publishing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:366
+#: src/Admin/SettingsCenterStrings.php:364
 msgid "Configuration Migration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:367
+#: src/Admin/SettingsCenterStrings.php:365
 msgid "Export a JSON backup and import it into a compatible EasyMDE version."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:369
+#: src/Admin/SettingsCenterStrings.php:367
 msgid "2026-07-16"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:370
+#: src/Admin/SettingsCenterStrings.php:368
 msgid ""
 "Deliver the ordinary editor through React 18, strict TypeScript, and Vite."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:371
+#: src/Admin/SettingsCenterStrings.php:369
 msgid ""
 "Preserve source and Preview, themes, media, drafts, clipboard, and WeChat "
 "export."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:372
+#: src/Admin/SettingsCenterStrings.php:370
 msgid ""
 "Keep publishing, taxonomies, featured media, and revisions WordPress-native."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:373
+#: src/Admin/SettingsCenterStrings.php:371
 msgid "0.1.7"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:374
+#: src/Admin/SettingsCenterStrings.php:372
 msgid "2026-07-04"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:375
+#: src/Admin/SettingsCenterStrings.php:373
 msgid "Add a compact icon toolbar and appearance popover."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:376
+#: src/Admin/SettingsCenterStrings.php:374
 msgid "Add Typora-inspired shortcuts and rich-text WeChat export."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:377
+#: src/Admin/SettingsCenterStrings.php:375
 msgid "This About action is not connected to WordPress yet."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:378
+#: src/Admin/SettingsCenterStrings.php:376
 msgid "Close About Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:379
+#: src/Admin/SettingsCenterStrings.php:377
 msgid "Keep at least one image upload format enabled."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:380
+#: src/Admin/SettingsCenterStrings.php:378
 msgid "Close Image Upload Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:381
+#: src/Admin/SettingsCenterStrings.php:379
 msgid "Editor Theme Rendering"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:382
+#: src/Admin/SettingsCenterStrings.php:380
 msgid ""
 "Apply the selected editor theme to published articles. Disable this to use "
 "the theme only in editor previews."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:383
+#: src/Admin/SettingsCenterStrings.php:381
 msgid "Code Block Copy"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:384
+#: src/Admin/SettingsCenterStrings.php:382
 msgid "Show a copy button on code blocks in published articles."
 msgstr ""
 
@@ -2755,7 +2747,7 @@ msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
 #: src/Rest/ImageHostingController.php:657
-#: src/Support/SettingsCenterRepository.php:691
+#: src/Support/SettingsCenterRepository.php:690
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
@@ -2864,12 +2856,12 @@ msgstr ""
 #: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:368
 #: src/Support/SettingsCenterRepository.php:315
 #: src/Support/SettingsCenterRepository.php:446
-#: src/Support/SettingsCenterRepository.php:593
-#: src/Support/SettingsCenterRepository.php:628
+#: src/Support/SettingsCenterRepository.php:592
+#: src/Support/SettingsCenterRepository.php:627
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:671
+#: src/Support/SettingsCenterRepository.php:670
 msgid "One or more shortcut values are invalid."
 msgstr ""
 

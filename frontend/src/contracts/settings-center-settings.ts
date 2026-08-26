@@ -5,7 +5,6 @@ export type GeneralSettings = Readonly<{
 	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
 	interfaceLanguage: string;
 	editingMode: string;
-	autoFocusEditor: boolean;
 	showLineNumbers: boolean;
 	syntaxHighlight: boolean;
 	statusBarMode: StatusBarMode;

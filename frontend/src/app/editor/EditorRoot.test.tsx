@@ -507,7 +507,6 @@ function fixture(): EditorRootProps &
     sessionPort,
     settings: {
       general: {
-        autoFocusEditor: true,
         applyEditorThemeToFrontend: true,
         showPublishedCodeCopyButton: true,
         autoSave: true,
@@ -603,7 +602,7 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
-  it('focuses new posts only when the administrator enables editor autofocus', async () => {
+  it('focuses new editable posts by default without stealing focus for existing posts', async () => {
     const existingProps = fixture();
     const sentinel = document.createElement('button');
     sentinel.type = 'button';
@@ -623,6 +622,24 @@ describe('EditorRoot', () => {
       expect(document.activeElement?.closest('.cm-editor')).not.toBeNull()
     );
     newView.unmount();
+
+    const previewFixture = fixture();
+    const previewProps = {
+      ...previewFixture,
+      isNewPost: true,
+      settings: {
+        ...previewFixture.settings,
+        general: {
+          ...previewFixture.settings.general,
+          editingMode: 'preview'
+        }
+      }
+    };
+    sentinel.focus();
+    const previewView = render(<EditorRoot {...previewProps} />);
+
+    expect(document.activeElement).toBe(sentinel);
+    previewView.unmount();
     sentinel.remove();
   });
 

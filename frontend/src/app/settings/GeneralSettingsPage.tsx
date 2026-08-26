@@ -26,7 +26,6 @@ type Strings = SettingsCenterBootstrap["strings"];
 const DEFAULT_DRAFT: Draft = {
 	interfaceLanguage: "zh-CN",
 	editingMode: "live-preview",
-	autoFocusEditor: true,
 	showLineNumbers: true,
 	syntaxHighlight: true,
 	statusBarMode: "detailed",
@@ -71,7 +70,6 @@ export function matchesGeneralSettingsQuery(
 	const normalizedQuery = query.trim().toLowerCase();
 	const searchFields: ReadonlyArray<ReadonlyArray<string | undefined>> = [
 		[s.defaultEditingMode],
-		[s.autoFocusEditor, s.autoFocusEditorDescription],
 		[s.showLineNumbers, s.showLineNumbersDescription],
 		[s.syntaxHighlight, s.syntaxHighlightDescription],
 		[s.statusBarDisplay],
@@ -183,17 +181,6 @@ export function GeneralSettingsPage({
 							["compact", s.compactStatusBar],
 							["hidden", s.hiddenStatusBar],
 						]}
-					/>
-				</SettingsRow>
-				<SettingsRow
-					label={s.autoFocusEditor}
-					description={s.autoFocusEditorDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.autoFocusEditor}
-						checked={draft.autoFocusEditor}
-						onChange={() => setValue("autoFocusEditor", !draft.autoFocusEditor)}
 					/>
 				</SettingsRow>
 				<SettingsRow

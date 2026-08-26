@@ -1483,11 +1483,11 @@ msgid "Preview Only"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:72
-msgid "Detailed Status Bar"
+msgid "Show Word Count and Reading Time"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:73
-msgid "Compact Status Bar"
+msgid "Show Word Count Only"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:74

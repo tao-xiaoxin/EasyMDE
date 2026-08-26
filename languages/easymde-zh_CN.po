@@ -1493,12 +1493,12 @@ msgid "Preview Only"
 msgstr "仅预览"
 
 #: src/Admin/SettingsCenterStrings.php:72
-msgid "Detailed Status Bar"
-msgstr "详细状态栏"
+msgid "Show Word Count and Reading Time"
+msgstr "显示字数和阅读时间"
 
 #: src/Admin/SettingsCenterStrings.php:73
-msgid "Compact Status Bar"
-msgstr "简洁状态栏"
+msgid "Show Word Count Only"
+msgstr "仅显示字数"
 
 #: src/Admin/SettingsCenterStrings.php:74
 msgid "Hide Status Bar"

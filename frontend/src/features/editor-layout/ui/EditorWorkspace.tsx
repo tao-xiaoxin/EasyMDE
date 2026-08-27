@@ -13,6 +13,7 @@ import type {
 } from 'react';
 
 import { resolveLocalDraftLocale } from '../../../contracts/bootstrap/local-drafts-bootstrap';
+import type { StatusBarMode } from '../../../contracts/settings-center-settings';
 
 type OrdinaryStatusDocument = Readonly<{
   getValue: () => string;
@@ -31,7 +32,7 @@ type EditorWorkspaceProps = Readonly<{
   mode?: string;
   onLayoutChange?: () => void;
   ordinaryStatus?: OrdinaryEditorStatus;
-  statusBarMode?: string;
+  statusBarMode?: StatusBarMode;
   preview: ReactNode;
   splitResizable?: boolean;
   splitResizeLabel?: string;
@@ -68,7 +69,7 @@ export function EditorWorkspace({
   mode = 'live-preview',
   onLayoutChange,
   ordinaryStatus,
-  statusBarMode = 'words-reading-time',
+  statusBarMode = 'detailed',
   preview,
   splitResizable = false,
   splitResizeLabel = '',
@@ -192,7 +193,7 @@ export function EditorWorkspace({
       {workspace}
       {ordinaryStatus && 'hidden' !== statusBarMode ? (
         <footer className="easymde-editor-status-bar">
-          {'words' === statusBarMode ? (
+          {'compact' === statusBarMode ? (
             <span className="easymde-editor-word-count">
               {formatCount(ordinaryStatus.wordCountTemplate, count)}
             </span>

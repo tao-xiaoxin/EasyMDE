@@ -46,6 +46,97 @@ async function login(page) {
 	await expect(page.locator("#wpadminbar")).toBeVisible();
 }
 
+async function saveSettingsCenter(page) {
+	const saveButton = page.locator(
+		".easymde-settings-center__save-bar > button",
+	);
+	if (!(await saveButton.isEnabled())) return;
+	await saveButton.click();
+	await expect(page.locator("[data-save-status]")).toHaveAttribute(
+		"data-save-status",
+		/saved|idle/u,
+	);
+	await expect(saveButton).toBeDisabled();
+}
+
+async function openSettingsSection(page, section) {
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	await page.locator(`button[data-nav-id="${section}"]`).click();
+}
+
+async function selectSettingsOption(page, label, optionLabel) {
+	const trigger = page.getByRole("combobox", { name: label, exact: true });
+	if ((await trigger.textContent())?.trim() === optionLabel) return;
+	await trigger.click();
+	const listbox = page.getByRole("listbox", { name: label, exact: true });
+	await expect(listbox).toBeVisible();
+	await listbox
+		.getByRole("option", { name: optionLabel, exact: true })
+		.click();
+	await expect(trigger).toHaveText(optionLabel);
+}
+
+async function resetSettingsCenterDefaults(page) {
+	await openSettingsSection(page, "transfer");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	await page
+		.locator(".easymde-settings-center__transfer-management button")
+		.filter({ hasText: strings.transferResetCurrentConfiguration })
+		.click();
+	const dialog = page.getByRole("dialog", {
+		name: strings.transferResetCurrentConfiguration,
+		exact: true,
+	});
+	await expect(dialog).toBeVisible();
+	await dialog
+		.getByRole("button", { name: strings.transferConfirmReset, exact: true })
+		.click();
+	await saveSettingsCenter(page);
+}
+
+async function setRemoteImageUploadMode(page, mode) {
+	await openSettingsSection(page, "images");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const optionLabels = {
+		both: strings.remoteImageUploadBoth,
+		off: strings.remoteImageUploadOff,
+		source: strings.remoteImageUploadSource,
+		visual: strings.remoteImageUploadVisual,
+	};
+	await selectSettingsOption(
+		page,
+		strings.remoteImageUploadMode,
+		optionLabels[mode],
+	);
+	await saveSettingsCenter(page);
+	return { label: strings.remoteImageUploadMode, optionLabel: optionLabels[mode] };
+}
+
+async function dispatchBrowserPaste(target, { html = "", plainText }) {
+	await target.evaluate(
+		(element, { htmlValue, plainTextValue }) => {
+			const transfer = new DataTransfer();
+			transfer.setData("text/plain", plainTextValue);
+			if (htmlValue) {
+				transfer.setData("text/html", htmlValue);
+			}
+			element.dispatchEvent(
+				new ClipboardEvent("paste", {
+					bubbles: true,
+					cancelable: true,
+					clipboardData: transfer,
+				}),
+			);
+		},
+		{ htmlValue: html, plainTextValue: plainText },
+	);
+}
+
 async function expectRemovedSettingsPage(
 	page,
 	path,
@@ -1844,6 +1935,260 @@ test("blocks a same-platform shortcut conflict without sending or persisting it"
 		"Ctrl",
 		"B",
 	]);
+});
+
+test("persists all remote image import modes and resets the documented defaults", async ({
+	page,
+}) => {
+	await login(page);
+	try {
+		await resetSettingsCenterDefaults(page);
+		await openSettingsSection(page, "general");
+		const generalDefaults = await page.evaluate(() => ({
+			autoSaveInterval:
+				window.EasyMDESettingsCenterBootstrap.settings.general.autoSaveInterval,
+			label: window.EasyMDESettingsCenterBootstrap.strings.autoSaveInterval,
+		}));
+		expect(generalDefaults.autoSaveInterval).toBe("30");
+		await expect(
+			page.getByRole("combobox", {
+				name: generalDefaults.label,
+				exact: true,
+			}),
+		).toContainText("30");
+
+		await openSettingsSection(page, "images");
+		const strings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		await expect(
+			page.getByRole("spinbutton", {
+				name: strings.uploadRetryCount,
+				exact: true,
+			}),
+		).toHaveValue("0");
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.imageTitleDisplay,
+				exact: true,
+			}),
+		).toHaveText(strings.leaveEmpty);
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.fileNameRule,
+				exact: true,
+			}),
+		).toHaveValue("{year}/{month}/{md5}.{ext}");
+		await expect(
+			page.getByRole("button", {
+				name: strings.fileNamePresetMd5,
+				exact: true,
+			}),
+		).toHaveAttribute("aria-pressed", "true");
+
+		for (const mode of ["both", "visual", "source", "off"]) {
+			const selected = await setRemoteImageUploadMode(page, mode);
+			await page.reload();
+			await expect(page.locator(".easymde-settings-center")).toBeVisible();
+			await page.locator('button[data-nav-id="images"]').click();
+			await expect(
+				page.getByRole("combobox", {
+					name: selected.label,
+					exact: true,
+				}),
+			).toHaveText(selected.optionLabel);
+		}
+
+		await resetSettingsCenterDefaults(page);
+		await openSettingsSection(page, "images");
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.remoteImageUploadMode,
+				exact: true,
+			}),
+		).toHaveText(strings.remoteImageUploadBoth);
+		await expect(
+			page.getByRole("spinbutton", {
+				name: strings.uploadRetryCount,
+				exact: true,
+			}),
+		).toHaveValue("0");
+	} finally {
+		await resetSettingsCenterDefaults(page);
+	}
+});
+
+test("imports source Markdown images only for source-enabled modes", async ({
+	page,
+}) => {
+	await login(page);
+	const importRequests = [];
+	await page.route(
+		"**/wp-json/easymde/v1/image-hosting/import*",
+		async (route) => {
+			const body = route.request().postDataJSON();
+			const importedUrl = `https://media.synthetic.test/source-${importRequests.length + 1}.png`;
+			importRequests.push({ body, importedUrl });
+			await route.fulfill({
+				contentType: "application/json",
+				json: {
+					alt: body.alt_text,
+					backup: { status: "disabled" },
+					title: "source-import.png",
+					url: importedUrl,
+				},
+				status: 200,
+			});
+		},
+	);
+	try {
+		await resetSettingsCenterDefaults(page);
+		for (const mode of ["source", "both"]) {
+			await setRemoteImageUploadMode(page, mode);
+			await page.goto("/wp-admin/post-new.php");
+			await expect(page.locator("#easymde-editor")).toBeVisible();
+			const source = page.locator("#easymde-source");
+			const sourceEditor = page.locator(
+				".easymde-source-react .cm-content",
+			);
+			const postId = Number(await page.locator("#post_ID").inputValue());
+			const originalUrl = `https://source.synthetic.test/${mode}.png`;
+			const altText = `Remote ${mode}`;
+			const markdown = `![${altText}](${originalUrl})`;
+			const previousRequestCount = importRequests.length;
+			await sourceEditor.fill("Before ");
+			await sourceEditor.focus();
+			await sourceEditor.press("End");
+			await dispatchBrowserPaste(sourceEditor, { plainText: markdown });
+			await expect.poll(() => importRequests.length).toBe(
+				previousRequestCount + 1,
+			);
+			const imported = importRequests.at(-1);
+			expect(imported.body).toEqual({
+				alt_text: altText,
+				post_id: postId,
+				url: originalUrl,
+			});
+			await expect(source).toHaveValue(
+				`Before ![${altText}](${imported.importedUrl})`,
+			);
+		}
+
+		for (const mode of ["off", "visual"]) {
+			await setRemoteImageUploadMode(page, mode);
+			await page.goto("/wp-admin/post-new.php");
+			await expect(page.locator("#easymde-editor")).toBeVisible();
+			const source = page.locator("#easymde-source");
+			const sourceEditor = page.locator(
+				".easymde-source-react .cm-content",
+			);
+			const markdown = `![Keep ${mode}](https://source.synthetic.test/${mode}.png)`;
+			const previousRequestCount = importRequests.length;
+			await sourceEditor.fill("Before ");
+			await sourceEditor.focus();
+			await sourceEditor.press("End");
+			await dispatchBrowserPaste(sourceEditor, { plainText: markdown });
+			await expect(source).toHaveValue(`Before ${markdown}`);
+			await page.waitForTimeout(300);
+			expect(importRequests).toHaveLength(previousRequestCount);
+		}
+	} finally {
+		await resetSettingsCenterDefaults(page);
+	}
+});
+
+test("imports a single visual HTML image only for visual-enabled modes", async ({
+	page,
+}) => {
+	await login(page);
+	const importRequests = [];
+	await page.route(
+		"**/wp-json/easymde/v1/image-hosting/import*",
+		async (route) => {
+			const body = route.request().postDataJSON();
+			const importedUrl = `https://media.synthetic.test/visual-${importRequests.length + 1}.png`;
+			importRequests.push({ body, importedUrl });
+			await route.fulfill({
+				contentType: "application/json",
+				json: {
+					alt: body.alt_text,
+					backup: { status: "disabled" },
+					title: "visual-import.png",
+					url: importedUrl,
+				},
+				status: 200,
+			});
+		},
+	);
+	const openVisualEditor = async () => {
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		await page
+			.locator(".easymde-source-react .cm-content")
+			.fill("Visual baseline");
+		const strings = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.strings.immersive,
+		);
+		await page.locator(".easymde-toolbar-immersive-toggle").click();
+		await page
+			.getByRole("button", { name: strings.preview, exact: true })
+			.click();
+		const unlock = page.getByRole("button", {
+			name: strings.previewUnlockEdit,
+			exact: true,
+		});
+		await expect(unlock).toBeEnabled();
+		await unlock.click();
+		const visualEditor = page.getByRole("textbox", {
+			name: strings.previewEditorLabel,
+			exact: true,
+		});
+		await expect(visualEditor).toHaveAttribute("contenteditable", "true");
+		await visualEditor.evaluate((element) => {
+			const selection = element.ownerDocument.getSelection();
+			const range = element.ownerDocument.createRange();
+			range.selectNodeContents(element);
+			range.collapse(false);
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+			element.focus();
+		});
+		return visualEditor;
+	};
+	try {
+		await resetSettingsCenterDefaults(page);
+		await setRemoteImageUploadMode(page, "visual");
+		const visualEditor = await openVisualEditor();
+		const postId = Number(await page.locator("#post_ID").inputValue());
+		const originalUrl = "https://source.synthetic.test/visual.png";
+		const altText = "Visual remote";
+		await dispatchBrowserPaste(visualEditor, {
+			html: `<img alt="${altText}" src="${originalUrl}">`,
+			plainText: originalUrl,
+		});
+		await expect.poll(() => importRequests.length).toBe(1);
+		expect(importRequests[0].body).toEqual({
+			alt_text: altText,
+			post_id: postId,
+			url: originalUrl,
+		});
+		await expect
+			.poll(() => page.locator("#easymde-source").inputValue())
+			.toContain(`![${altText}](${importRequests[0].importedUrl})`);
+
+		await setRemoteImageUploadMode(page, "source");
+		const sourceOnlyVisualEditor = await openVisualEditor();
+		const previousRequestCount = importRequests.length;
+		const sourceOnlyUrl = "https://source.synthetic.test/source-only.png";
+		await dispatchBrowserPaste(sourceOnlyVisualEditor, {
+			html: `<img alt="Source only" src="${sourceOnlyUrl}">`,
+			plainText: sourceOnlyUrl,
+		});
+		await page.waitForTimeout(300);
+		expect(importRequests).toHaveLength(previousRequestCount);
+	} finally {
+		await resetSettingsCenterDefaults(page);
+	}
 });
 
 test("persists the pasted-image upload switch and restores its prior value", async ({

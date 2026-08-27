@@ -23,6 +23,20 @@ function escapeTitle(value: string): string {
     .trim();
 }
 
+export function imageMarkdownText({
+  alt,
+  title = '',
+  url,
+}: Readonly<{
+  alt: string;
+  title?: string;
+  url: string;
+}>): string {
+  const escapedTitle = escapeTitle(title);
+  const titleSuffix = escapedTitle ? ` "${escapedTitle}"` : '';
+  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')}${titleSuffix})`;
+}
+
 export function imageInsertionText({
   defaultAlt,
   fileName,
@@ -36,7 +50,5 @@ export function imageInsertionText({
 }>): string {
   const alt = defaultImageAlt(fileName, defaultAlt);
   const title = 'filename' === insertion.titleDisplay ? fileName : '';
-  const escapedTitle = escapeTitle(title);
-  const titleSuffix = escapedTitle ? ` "${escapedTitle}"` : '';
-  return `![${escapeAltText(alt)}](${url.replace(/\)/g, '%29')}${titleSuffix})`;
+  return imageMarkdownText({ alt, title, url });
 }

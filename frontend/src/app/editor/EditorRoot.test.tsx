@@ -259,8 +259,6 @@ function fixture(): EditorRootProps &
       splitMode: '分屏模式',
       splitPreview: '分屏预览',
       splitPreviewDescription: '默认显示实时预览区域',
-      syncScroll: '同步滚动',
-      syncScrollDescription: '编辑区和预览区联动',
       table: '表格',
       tableColumns: '列数',
       tableRows: '行数',
@@ -308,9 +306,7 @@ function fixture(): EditorRootProps &
       unsaved: '未保存',
       viewModes: '视图模式',
       wechat: '复制到公众号',
-      wechatCopied: '已复制',
-      wordCount: '字数统计',
-      wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长'
+      wechatCopied: '已复制'
     },
     immersiveEnvironment: {
       activeElement: () =>
@@ -365,6 +361,7 @@ function fixture(): EditorRootProps &
       insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       postId: 7,
+      remoteImageUploadMode: 'both',
       strings: {
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
@@ -384,6 +381,14 @@ function fixture(): EditorRootProps &
         status: 'uploaded',
         title: '',
         url: 'https://example.test/upload.png'
+      } satisfies ImageUploadResult)
+    },
+    remoteImageImportPort: {
+      import: vi.fn().mockResolvedValue({
+        alt: 'remote image',
+        status: 'uploaded',
+        title: '',
+        url: 'https://example.test/imported.png'
       } satisfies ImageUploadResult)
     },
     isNewPost: false,
@@ -523,7 +528,7 @@ function fixture(): EditorRootProps &
         openPreviewAfterPublish: true,
         publishVisibility: 'public',
         showLineNumbers: true,
-        statusBarMode: 'words-reading-time',
+        statusBarMode: 'detailed',
         summaryMode: 'auto-55',
         syncScroll: true,
         syntaxHighlight: true
@@ -1976,8 +1981,12 @@ describe('EditorRoot', () => {
     ).toBe('Failed');
   });
 
-  it('accepts only plain text when rich content is pasted into visual Preview', async () => {
-    const props = fixture();
+  it('preserves the plain visual paste path for a remote image when image hosting is disabled', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      imageUpload: { ...baseProps.imageUpload, enabled: false }
+    };
     props.submissionField.value = 'Before';
     props.submissionField.defaultValue = 'Before';
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
@@ -2018,7 +2027,7 @@ describe('EditorRoot', () => {
         getData: (type: string) =>
           'text/plain' === type
             ? ' **safe**'
-            : '<img src="x" onerror="window.__unsafePaste = true">'
+            : '<img alt="remote" src="https://images.example.test/remote.png">'
       }
     });
 
@@ -2027,6 +2036,7 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.submissionField.value).toBe('Before **safe**')
     );
+    expect(props.remoteImageImportPort.import).not.toHaveBeenCalled();
 
     const paragraph = visualEditor.querySelector('p');
     if (!paragraph) throw new Error('missing synthetic drop target');
@@ -2110,6 +2120,79 @@ describe('EditorRoot', () => {
     ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
   }
   );
+
+  it('completes a deferred remote image import after visual editing switches to read-only', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Before **selected** after';
+    props.submissionField.defaultValue = 'Before **selected** after';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
+    });
+    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    vi.mocked(props.remoteImageImportPort.import).mockImplementation(() =>
+      new Promise((resolve) => {
+        resolveImport = resolve;
+      })
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const selectedText = visualEditor.querySelector('strong')?.firstChild;
+    if (!selectedText) throw new Error('missing remote image paste target');
+    const range = document.createRange();
+    range.selectNodeContents(selectedText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => 'text/html' === type
+          ? '<img alt="remote" src="https://images.example.test/remote.png">'
+          : '',
+        items: []
+      }
+    });
+
+    visualEditor.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.remoteImageImportPort.import).toHaveBeenCalledOnce();
+    });
+
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://images.example.test/remote.png)** after'
+      );
+    });
+    expect(view.getByRole('button', { name: '解除锁定并编辑' })).not.toBeNull();
+    expect(vi.mocked(props.remoteImageImportPort.import).mock.calls[0]?.[0].signal.aborted).toBe(false);
+    resolveImport({
+      alt: 'remote',
+      status: 'uploaded',
+      title: '',
+      url: 'https://example.test/imported.png'
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://example.test/imported.png)** after'
+      );
+    });
+    expect(props.onFailure).not.toHaveBeenCalledWith('remote-image-import-completed-after-teardown');
+  });
 
   it('remounts the Preview owner before applying a theme from visual Preview', async () => {
     const props = fixture();
@@ -3839,7 +3922,7 @@ describe('EditorRoot', () => {
     ).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
-    for (const name of ['文章大纲', '字数统计', '分屏预览', '自动保存', '同步滚动']) {
+    for (const name of ['文章大纲', '分屏预览', '自动保存']) {
       expect(
         view.getByRole('checkbox', { name }).getAttribute('aria-checked')
       ).toBe('true');
@@ -4218,14 +4301,13 @@ describe('EditorRoot', () => {
     fireEvent.mouseUp(document);
   });
 
-  it('applies immersive settings to the real outline, statistics, draft and scroll owners', async () => {
+  it('applies immersive settings to the real outline, draft and scroll owners', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
     fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '字数统计' }));
     fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
     expect(
       view.container
@@ -4239,15 +4321,54 @@ describe('EditorRoot', () => {
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
     fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '同步滚动' }));
 
     expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
-    expect(view.container.querySelector('.easymde-immersive-stats')).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-stats')).not.toBeNull();
     expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
-    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(4);
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(6);
+    expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(4);
   });
+
+  it.each([
+    {
+      characters: true,
+      minutes: true,
+      mode: 'detailed',
+      words: true
+    },
+    {
+      characters: true,
+      minutes: false,
+      mode: 'compact',
+      words: false
+    },
+    {
+      characters: false,
+      minutes: false,
+      mode: 'hidden',
+      words: false
+    }
+  ] as const)(
+    'links immersive statistics to the $mode global status mode',
+    async ({ characters, minutes, mode, words }) => {
+      const baseProps = fixture();
+      const props = {
+        ...baseProps,
+        settings: {
+          general: { ...baseProps.settings.general, statusBarMode: mode },
+          markdown: baseProps.settings.markdown
+        }
+      };
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+      expect(null !== view.queryByText('8 字符')).toBe(characters);
+      expect(null !== view.queryByText('1 词')).toBe(words);
+      expect(null !== view.queryByText('约 1 分钟')).toBe(minutes);
+    }
+  );
 
   it('keeps disabled server settings authoritative over immersive preferences', async () => {
     const baseProps = fixture();
@@ -4255,9 +4376,7 @@ describe('EditorRoot', () => {
       preferences: {
         autoSave: true,
         outline: true,
-        splitPreview: true,
-        syncScroll: true,
-        wordCount: true
+        splitPreview: true
       },
       status: 'loaded'
     });
@@ -4278,11 +4397,9 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
     const autoSave = view.getByRole('checkbox', { name: '自动保存' });
-    const syncScroll = view.getByRole('checkbox', { name: '同步滚动' });
     expect(autoSave.getAttribute('aria-checked')).toBe('false');
-    expect(syncScroll.getAttribute('aria-checked')).toBe('false');
     expect((autoSave as HTMLButtonElement).disabled).toBe(true);
-    expect((syncScroll as HTMLButtonElement).disabled).toBe(true);
+    expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
     expect(baseProps.immersivePreferencesPort.write).not.toHaveBeenCalled();
 
@@ -4290,25 +4407,21 @@ describe('EditorRoot', () => {
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledWith(
       expect.objectContaining({
         autoSave: true,
-        outline: false,
-        syncScroll: true
+        outline: false
       })
     );
 
     fireEvent.click(autoSave);
-    fireEvent.click(syncScroll);
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
   });
 
-  it('applies restored immersive preferences to the existing draft and scroll owners', async () => {
+  it('applies restored immersive preferences to drafts without overriding global scroll sync', async () => {
     const props = fixture();
     vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
         autoSave: false,
         outline: true,
-        splitPreview: true,
-        syncScroll: false,
-        wordCount: true
+        splitPreview: true
       },
       status: 'loaded'
     });
@@ -4321,17 +4434,13 @@ describe('EditorRoot', () => {
         .getByRole('checkbox', { name: '自动保存' })
         .getAttribute('aria-checked')
     ).toBe('false');
-    expect(
-      view
-        .getByRole('checkbox', { name: '同步滚动' })
-        .getAttribute('aria-checked')
-    ).toBe('false');
+    expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(
       view.container
         .querySelector('.easymde-editor')
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
-    expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
+    expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalled();
 
     fireEvent.click(view.getByRole('button', { name: 'Bold' }));
     await act(
@@ -4366,9 +4475,7 @@ describe('EditorRoot', () => {
     savedPreferences = {
       autoSave: false,
       outline: false,
-      splitPreview: false,
-      syncScroll: false,
-      wordCount: false
+      splitPreview: false
     };
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(
@@ -5257,6 +5364,40 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('imports one remote Markdown image from the source surface', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => 'text/plain' === type
+          ? '![remote](https://images.example.test/remote.png)'
+          : '',
+        items: []
+      }
+    });
+
+    source?.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.remoteImageImportPort.import).toHaveBeenCalledWith(
+        expect.objectContaining({
+          altText: 'remote',
+          postId: 7,
+          url: 'https://images.example.test/remote.png'
+        })
+      );
+      expect(props.submissionField.value).toBe(
+        '![remote image](https://example.test/imported.png)'
+      );
+    });
+    expect(props.imageUploadPort.upload).not.toHaveBeenCalled();
   });
 
   it('blocks automatic image paste while preserving drag-and-drop upload', async () => {

@@ -17,19 +17,13 @@ const strings = {
   outlineDescription: '左侧显示标题层级导航',
   settings: '设置',
   splitPreview: '分屏预览',
-  splitPreviewDescription: '默认显示实时预览区域',
-  syncScroll: '同步滚动',
-  syncScrollDescription: '编辑区和预览区联动',
-  wordCount: '字数统计',
-  wordCountDescription: '在文章标题旁显示词数、字符数与阅读时长'
+  splitPreviewDescription: '默认显示实时预览区域'
 } as ImmersiveStrings;
 
 const settings: ImmersiveSettings = {
   autoSave: true,
   outline: true,
-  splitPreview: true,
-  syncScroll: true,
-  wordCount: true
+  splitPreview: true
 };
 
 describe('ImmersiveSettingsPopover', () => {
@@ -46,6 +40,14 @@ describe('ImmersiveSettingsPopover', () => {
     );
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+
+    expect(view.getAllByRole('checkbox')).toHaveLength(3);
+    expect(
+      view.queryByRole('checkbox', { name: '字数统计' })
+    ).toBeNull();
+    expect(
+      view.queryByRole('checkbox', { name: '同步滚动' })
+    ).toBeNull();
 
     const outline = view.getByRole('checkbox', { name: '文章大纲' });
     expect(outline.getAttribute('aria-checked')).toBe('true');

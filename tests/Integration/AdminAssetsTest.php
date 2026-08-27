@@ -101,6 +101,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'mediaPicker', $bootstrap );
 		$this->assertArrayHasKey( 'previewEnhancement', $bootstrap );
 		$this->assertArrayHasKey( 'immersive', $bootstrap['strings'] );
+		$this->assertArrayNotHasKey( 'wordCount', $bootstrap['strings']['immersive'] );
+		$this->assertArrayNotHasKey( 'wordCountDescription', $bootstrap['strings']['immersive'] );
+		$this->assertArrayNotHasKey( 'syncScroll', $bootstrap['strings']['immersive'] );
+		$this->assertArrayNotHasKey( 'syncScrollDescription', $bootstrap['strings']['immersive'] );
 		$this->assertArrayNotHasKey( 'publishing', $bootstrap );
 		$this->assertArrayNotHasKey( 'revisions', $bootstrap );
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
@@ -174,6 +178,11 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			rest_url( 'easymde/v1/image-hosting/upload' ),
 			$bootstrap['imageUpload']['endpoint']
 		);
+		$this->assertSame(
+			rest_url( 'easymde/v1/image-hosting/import' ),
+			$bootstrap['imageUpload']['importEndpoint']
+		);
+		$this->assertSame( 'both', $bootstrap['imageUpload']['remoteImageUploadMode'] );
 		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertArrayNotHasKey( 'credentials', $bootstrap['imageUpload'] );
 		$this->assertArrayNotHasKey( 'providerEndpoint', $bootstrap['imageUpload'] );

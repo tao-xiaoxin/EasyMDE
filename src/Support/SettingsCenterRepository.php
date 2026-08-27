@@ -439,9 +439,9 @@ final class SettingsCenterRepository {
 				'autoFocusEditor'             => true,
 				'showLineNumbers'             => true,
 				'syntaxHighlight'             => true,
-				'statusBarMode'               => 'words-reading-time',
+				'statusBarMode'               => 'detailed',
 				'autoSave'                    => true,
-				'autoSaveInterval'            => '60',
+				'autoSaveInterval'            => '30',
 				'syncScroll'                  => true,
 				'publishVisibility'           => 'public',
 				'openPreviewAfterPublish'     => true,
@@ -456,7 +456,7 @@ final class SettingsCenterRepository {
 				'domain'                 => '',
 				'accessKey'              => '',
 				'secretKey'              => '',
-				'fileNameRule'           => '{date}/{uuid}.{ext}',
+				'fileNameRule'           => '{year}/{month}/{md5}.{ext}',
 				'backupEnabled'          => false,
 				'backupService'          => 'qiniu-kodo',
 				'backupEndpoint'         => '',
@@ -467,6 +467,7 @@ final class SettingsCenterRepository {
 				'uploadRetryCount'       => 0,
 				'compressImages'         => true,
 				'autoUploadPastedImages' => true,
+				'remoteImageUploadMode'  => 'both',
 				'maxImageSizeMb'         => 5,
 				'uploadFormats'          => array(
 					'jpg'  => true,
@@ -557,6 +558,12 @@ final class SettingsCenterRepository {
 			if (
 				array_key_exists( 'titleDisplay', $input['images'] ) &&
 				! in_array( $input['images']['titleDisplay'], array( 'filename', 'none' ), true )
+			) {
+				return $this->invalid_payload_error();
+			}
+			if (
+				array_key_exists( 'remoteImageUploadMode', $input['images'] ) &&
+				! in_array( $input['images']['remoteImageUploadMode'], array( 'both', 'visual', 'source', 'off' ), true )
 			) {
 				return $this->invalid_payload_error();
 			}
@@ -663,15 +670,16 @@ final class SettingsCenterRepository {
 			'general'  => array(
 				'interfaceLanguage' => 'zh-CN',
 				'editingMode'       => 'live-preview',
-				'statusBarMode'     => 'words-reading-time',
-				'autoSaveInterval'  => '60',
+				'statusBarMode'     => 'detailed',
+				'autoSaveInterval'  => '30',
 				'publishVisibility' => 'public',
 				'summaryMode'       => 'auto-55',
 			),
 			'images'   => array(
-				'service'       => 'cloudflare-r2',
-				'backupService' => 'qiniu-kodo',
-				'titleDisplay'  => 'none',
+				'service'               => 'cloudflare-r2',
+				'backupService'         => 'qiniu-kodo',
+				'remoteImageUploadMode' => 'both',
+				'titleDisplay'          => 'none',
 			),
 			'markdown' => array(
 				'tableAlignment'  => 'center',
@@ -691,8 +699,10 @@ final class SettingsCenterRepository {
 					'preview'      => 'preview',
 				),
 				'statusBarMode'     => array(
-					'words-reading-time' => 'words-reading-time',
-					'words'              => 'words',
+					'detailed'           => 'detailed',
+					'compact'            => 'compact',
+					'words-reading-time' => 'detailed',
+					'words'              => 'compact',
 					'hidden'             => 'hidden',
 				),
 				'autoSaveInterval'  => array(
@@ -713,19 +723,25 @@ final class SettingsCenterRepository {
 				),
 			),
 			'images'   => array(
-				'service'       => array(
+				'service'               => array(
 					'cloudflare-r2' => 'cloudflare-r2',
 					'qiniu-kodo'    => 'qiniu-kodo',
 					'aliyun-oss'    => 'aliyun-oss',
 					'tencent-cos'   => 'tencent-cos',
 				),
-				'backupService' => array(
+				'backupService'         => array(
 					'qiniu-kodo'    => 'qiniu-kodo',
 					'cloudflare-r2' => 'cloudflare-r2',
 					'aliyun-oss'    => 'aliyun-oss',
 					'tencent-cos'   => 'tencent-cos',
 				),
-				'titleDisplay'  => array(
+				'remoteImageUploadMode' => array(
+					'both'   => 'both',
+					'visual' => 'visual',
+					'source' => 'source',
+					'off'    => 'off',
+				),
+				'titleDisplay'          => array(
 					'none'          => 'none',
 					'Do not insert' => 'none',
 					'filename'      => 'filename',

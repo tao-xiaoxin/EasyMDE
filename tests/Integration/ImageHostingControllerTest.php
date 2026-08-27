@@ -8,6 +8,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 
 	private $settings_provider;
 	private $runtime;
+	private $remote_downloader;
 	private $post_id;
 	private $plugin;
 
@@ -92,7 +93,18 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			}
 		};
 
-		$controller = new ImageHostingController( new Capabilities(), $this->settings_provider, $this->runtime );
+		$this->remote_downloader = new class() {
+			public $calls = array();
+			public $result;
+
+			public function download( $url, $maximum_bytes ) {
+				$this->calls[] = array( $url, $maximum_bytes );
+
+				return $this->result;
+			}
+		};
+
+		$controller = new ImageHostingController( new Capabilities(), $this->settings_provider, $this->runtime, $this->remote_downloader );
 		add_action( 'rest_api_init', array( $controller, 'register_routes' ) );
 		do_action( 'rest_api_init' );
 		remove_action( 'rest_api_init', array( $controller, 'register_routes' ) );
@@ -615,6 +627,169 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_remote_import_downloads_once_uploads_once_projects_alt_and_cleans_the_temporary_file() {
+		$file                            = $this->png_file();
+		$this->remote_downloader->result = $file;
+
+		$response = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => 'https://cdn.example.test/path/source.png?version=1',
+					'alt_text' => 'Remote image alt',
+				)
+			)
+		);
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 'Remote image alt', $response->get_data()['alt'] );
+		$this->assertSame( array( array( 'https://cdn.example.test/path/source.png?version=1', 5242880 ) ), $this->remote_downloader->calls );
+		$this->assertCount( 1, $this->runtime->upload_calls );
+		$this->assertSame( $this->post_id, $this->runtime->upload_calls[0][1]['post_id'] );
+		$this->assertFileDoesNotExist( $file['tmp_name'] );
+	}
+
+	public function test_remote_import_requires_exact_typed_json_and_never_downloads_an_invalid_request() {
+		$cases = array(
+			array( 'post_id' => $this->post_id, 'url' => 'https://cdn.example.test/image.png' ),
+			array( 'post_id' => (string) $this->post_id, 'url' => 'https://cdn.example.test/image.png', 'alt_text' => '' ),
+			array( 'post_id' => $this->post_id, 'url' => 'https://cdn.example.test/image.png', 'alt_text' => '', 'extra' => true ),
+		);
+
+		foreach ( $cases as $payload ) {
+			$response = rest_do_request( $this->import_request( $payload ) );
+			$this->assertSame( 400, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_request', $response->as_error()->get_error_code() );
+		}
+
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_remote_import_rejects_declared_or_actual_request_bodies_above_the_hard_limit() {
+		$declared = $this->import_request( array() );
+		$declared->set_header( 'Content-Length', (string) ( ImageHostingController::MAX_IMPORT_BODY + 1 ) );
+		$actual = new class( 'POST', '/easymde/v1/image-hosting/import' ) extends WP_REST_Request {
+			public $get_param_calls = 0;
+
+			public function get_param( $key ) {
+				$this->get_param_calls++;
+
+				return parent::get_param( $key );
+			}
+		};
+		$actual->set_header( 'Content-Type', 'application/json' );
+		$actual->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+		$actual->set_header( 'X-EasyMDE-Image-Hosting-Nonce', wp_create_nonce( ImageHostingController::UPLOAD_NONCE_ACTION ) );
+		$actual->set_body(
+			wp_json_encode(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => 'https://cdn.example.test/' . str_repeat( 'x', ImageHostingController::MAX_IMPORT_BODY ),
+					'alt_text' => '',
+				)
+			)
+		);
+
+		foreach ( array( $declared, $actual ) as $request ) {
+			$response = rest_do_request( $request );
+			$this->assertSame( 413, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_payload_too_large', $response->as_error()->get_error_code() );
+		}
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertSame( 0, $actual->get_param_calls );
+	}
+
+	public function test_remote_import_requires_upload_capability_post_access_and_both_nonces() {
+		$payload = array(
+			'post_id'  => $this->post_id,
+			'url'      => 'https://cdn.example.test/image.png',
+			'alt_text' => '',
+		);
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+		$forbidden = rest_do_request( $this->import_request( $payload ) );
+
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		$missing_action_nonce = $this->import_request( $payload );
+		$missing_action_nonce->remove_header( 'X-EasyMDE-Image-Hosting-Nonce' );
+		$invalid_action_nonce = rest_do_request( $missing_action_nonce );
+		$missing_rest_nonce   = $this->import_request( $payload );
+		$missing_rest_nonce->remove_header( 'X-WP-Nonce' );
+		$invalid_rest_nonce = rest_do_request( $missing_rest_nonce );
+
+		$this->assertSame( 403, $forbidden->get_status() );
+		$this->assertSame( 'easymde_rest_cannot_upload_media', $forbidden->as_error()->get_error_code() );
+		$this->assertSame( 403, $invalid_action_nonce->get_status() );
+		$this->assertSame( 'easymde_rest_invalid_image_hosting_nonce', $invalid_action_nonce->as_error()->get_error_code() );
+		$this->assertSame( 403, $invalid_rest_nonce->get_status() );
+		$this->assertSame( 'easymde_rest_invalid_image_hosting_nonce', $invalid_rest_nonce->as_error()->get_error_code() );
+		$this->assertCount( 0, $this->remote_downloader->calls );
+	}
+
+	public function test_remote_import_requires_access_to_the_named_post() {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'author' ) ) );
+		$response = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => 'https://cdn.example.test/image.png',
+					'alt_text' => '',
+				)
+			)
+		);
+
+		$this->assertSame( 403, $response->get_status() );
+		$this->assertSame( 'easymde_rest_cannot_edit_post', $response->as_error()->get_error_code() );
+		$this->assertCount( 0, $this->remote_downloader->calls );
+	}
+
+	public function test_remote_import_redacts_download_failures_and_does_not_call_the_upload_runtime() {
+		$this->remote_downloader->result = new WP_Error(
+			'easymde_image_hosting_import_download_failed',
+			'Synthetic private URL and transport detail.',
+			array( 'status' => 502, 'raw' => 'synthetic-secret' )
+		);
+
+		$response = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => 'https://cdn.example.test/image.png',
+					'alt_text' => '',
+				)
+			)
+		);
+
+		$this->assertSame( 502, $response->get_status() );
+		$this->assertSame( 'easymde_image_hosting_import_download_failed', $response->as_error()->get_error_code() );
+		$this->assertStringNotContainsString( 'Synthetic private URL', wp_json_encode( $response->get_data() ) );
+		$this->assertStringNotContainsString( 'synthetic-secret', wp_json_encode( $response->get_data() ) );
+		$this->assertCount( 1, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_remote_import_cleans_the_download_after_an_upload_failure_without_retrying_import() {
+		$file                            = $this->png_file();
+		$this->remote_downloader->result = $file;
+		$this->runtime->upload_result    = new WP_Error( 'synthetic_provider_error', 'Synthetic private detail.' );
+
+		$response = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => 'https://cdn.example.test/image.png',
+					'alt_text' => '',
+				)
+			)
+		);
+
+		$this->assertSame( 502, $response->get_status() );
+		$this->assertSame( 'easymde_image_hosting_upload_failed', $response->as_error()->get_error_code() );
+		$this->assertCount( 1, $this->remote_downloader->calls );
+		$this->assertCount( 1, $this->runtime->upload_calls );
+		$this->assertFileDoesNotExist( $file['tmp_name'] );
+	}
+
 	private function verification_request( array $payload ) {
 		if ( isset( $payload['target'] ) && ! array_key_exists( 'revision', $payload ) ) {
 			$payload = array_merge( $this->verification_payload( $payload['target'] ), $payload );
@@ -679,6 +854,16 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$request->set_header( 'X-EasyMDE-Image-Hosting-Nonce', wp_create_nonce( ImageHostingController::UPLOAD_NONCE_ACTION ) );
 		$request->set_param( 'post_id', $this->post_id );
 		$request->set_file_params( array( 'file' => $file ) );
+
+		return $request;
+	}
+
+	private function import_request( array $payload ) {
+		$request = new WP_REST_Request( 'POST', '/easymde/v1/image-hosting/import' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_header( 'X-WP-Nonce', wp_create_nonce( 'wp_rest' ) );
+		$request->set_header( 'X-EasyMDE-Image-Hosting-Nonce', wp_create_nonce( ImageHostingController::UPLOAD_NONCE_ACTION ) );
+		$request->set_body( wp_json_encode( $payload ) );
 
 		return $request;
 	}

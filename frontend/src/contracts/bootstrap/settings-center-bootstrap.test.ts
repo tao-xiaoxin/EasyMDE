@@ -53,8 +53,8 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			windows: string;
 			mac: string;
 		}>,
-		settings: SETTINGS_CENTER_TEST_SETTINGS,
-		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
+		settings: structuredClone(SETTINGS_CENTER_TEST_SETTINGS),
+		defaultSettings: structuredClone(SETTINGS_CENTER_DEFAULT_SETTINGS),
 		strings: {
 			...Object.fromEntries(
 				SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key]),
@@ -104,6 +104,36 @@ describe("parseSettingsCenterBootstrap", () => {
 			}).general.showPublishedCodeCopyButton,
 		).toBe(true);
 	});
+
+	it.each(["detailed", "compact", "hidden"])(
+		"accepts the canonical status-bar mode %s",
+		(statusBarMode) => {
+			expect(
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}).general.statusBarMode,
+			).toBe(statusBarMode);
+		},
+	);
+
+	it.each(["words-reading-time", "words"])(
+		"rejects the retired status-bar mode %s",
+		(statusBarMode) => {
+			expect(() =>
+				parseSettingsCenterSettings({
+					...SETTINGS_CENTER_TEST_SETTINGS,
+					general: {
+						...SETTINGS_CENTER_TEST_SETTINGS.general,
+						statusBarMode,
+					},
+				}),
+			).toThrow("settings-center-general-statusBarMode-invalid");
+		},
+	);
 
 	it.each([
 		[
@@ -404,6 +434,15 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("uses semantic string keys for canonical status-bar modes", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).toEqual(
+			expect.arrayContaining(["detailedStatusBar", "compactStatusBar"]),
+		);
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining(["wordsAndReadingTime", "wordsOnly"]),
+		);
+	});
+
 	it("does not expose removed Markdown settings strings", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
 			expect.arrayContaining([
@@ -504,12 +543,7 @@ describe("parseSettingsCenterBootstrap", () => {
 		},
 	);
 
-	it.each([
-		"lineEnding",
-		"unorderedMarker",
-		"orderedStart",
-		"blockquoteStyle",
-	])(
+	it.each(["lineEnding", "unorderedMarker", "orderedStart", "blockquoteStyle"])(
 		"rejects the removed Markdown field %s as an exact-shape violation",
 		(removedKey) => {
 			const settings = structuredClone(
@@ -845,6 +879,18 @@ describe("parseSettingsCenterBootstrap", () => {
 
 		expect(Object.keys(parsed.settings.shortcuts.values)).toHaveLength(19);
 		expect(parsed.settings.images.autoUploadPastedImages).toBe(true);
+		expect(parsed.settings.images.remoteImageUploadMode).toBe("both");
+	});
+
+	it("rejects an invalid remote image upload mode", () => {
+		const value = bootstrap();
+		(
+			value.settings as unknown as MutableSettingsRecord
+		).images.remoteImageUploadMode = "enabled";
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-images-remoteImageUploadMode-invalid",
+		);
 	});
 
 	it("rejects removed shortcut behavior fields", () => {

@@ -15,229 +15,221 @@ msgid ""
 "your site administrator."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:289
+#: src/Admin/AdminAssets.php:291
 msgid "Pasted image upload is disabled. Use Insert Image to upload a file."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:376
+#: src/Admin/AdminAssets.php:378
 msgid "Auto save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:377
+#: src/Admin/AdminAssets.php:379
 msgid "Automatically save a local draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:378
+#: src/Admin/AdminAssets.php:380
 msgid "Auto save is enabled"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:379
+#: src/Admin/AdminAssets.php:381
 msgid "Article outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:380 src/Admin/AdminAssets.php:859
+#: src/Admin/AdminAssets.php:382 src/Admin/AdminAssets.php:857
 #: src/Admin/SettingsCenterStrings.php:23
 msgid "Cancel"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:381 src/Admin/AdminAssets.php:825
-#: src/Admin/SettingsCenterStrings.php:290
-#: src/Admin/SettingsCenterStrings.php:374
+#: src/Admin/AdminAssets.php:383 src/Admin/AdminAssets.php:823
+#: src/Admin/SettingsCenterStrings.php:296
+#: src/Admin/SettingsCenterStrings.php:380
 msgid "Close"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:382
+#: src/Admin/AdminAssets.php:384
 msgid "Column"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:383
+#: src/Admin/AdminAssets.php:385
 msgid "Edit"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:384
+#: src/Admin/AdminAssets.php:386
 msgid "Edit mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:385
+#: src/Admin/AdminAssets.php:387
 msgid "Editor settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:386
+#: src/Admin/AdminAssets.php:388
 msgid "Enter immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:387
+#: src/Admin/AdminAssets.php:389
 msgid "Expand"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:388
+#: src/Admin/AdminAssets.php:390
 msgid "Exit immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:389
+#: src/Admin/AdminAssets.php:391
 msgid "Close outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:390
+#: src/Admin/AdminAssets.php:392
 msgid "History"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:391
+#: src/Admin/AdminAssets.php:393
 msgid "No revisions are available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:392
+#: src/Admin/AdminAssets.php:394
 msgid "Revisions could not be loaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:393
+#: src/Admin/AdminAssets.php:395
 msgid "Loading revisions..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:394
+#: src/Admin/AdminAssets.php:396
 msgid "All"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:395
+#: src/Admin/AdminAssets.php:397
 msgid "Revision history"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:396
+#: src/Admin/AdminAssets.php:398
 msgid "Immersive writing"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:397
+#: src/Admin/AdminAssets.php:399
 msgid "Insert"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:398
+#: src/Admin/AdminAssets.php:400
 msgid "Insert table"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:399
+#: src/Admin/AdminAssets.php:401
 msgid "Line"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:400
+#: src/Admin/AdminAssets.php:402
 msgid "Manual save"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:401
+#: src/Admin/AdminAssets.php:403
 msgid "More actions"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:402 src/Admin/AdminAssets.php:489
-#: src/Admin/SettingsCenterStrings.php:365
+#: src/Admin/AdminAssets.php:404 src/Admin/AdminAssets.php:487
+#: src/Admin/SettingsCenterStrings.php:371
 msgid "Markdown"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:403
+#: src/Admin/AdminAssets.php:405
 msgid "No headings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:404
+#: src/Admin/AdminAssets.php:406
 msgid "Outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:405
+#: src/Admin/AdminAssets.php:407
 msgid "Show heading navigation on the left"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:406 src/Admin/AdminAssets.php:488
+#: src/Admin/AdminAssets.php:408 src/Admin/AdminAssets.php:486
 msgid "Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:407
+#: src/Admin/AdminAssets.php:409
 msgid "Changes recorded"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:408
+#: src/Admin/AdminAssets.php:410
 msgid "Content loaded"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:409
+#: src/Admin/AdminAssets.php:411
 msgid "Editable"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:410
+#: src/Admin/AdminAssets.php:412
 msgid "Visual article editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:411
+#: src/Admin/AdminAssets.php:413
 msgid "Lock as read only"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:412
+#: src/Admin/AdminAssets.php:414
 msgid "Read only"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:413
+#: src/Admin/AdminAssets.php:415
 msgid "Unlock and edit"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:414
+#: src/Admin/AdminAssets.php:416
 msgid "Preview mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:415
+#: src/Admin/AdminAssets.php:417
 msgid "Publish article"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:416
+#: src/Admin/AdminAssets.php:418
 msgid "Restore revision"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:417
+#: src/Admin/AdminAssets.php:419
 msgid ""
 "Unsaved changes will be lost when WordPress restores this revision. Continue?"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:418
+#: src/Admin/AdminAssets.php:420
 msgid "Restore this revision"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:419
+#: src/Admin/AdminAssets.php:421
 msgid "Resize article outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:420
+#: src/Admin/AdminAssets.php:422
 msgid "Resize editor and Preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:421
+#: src/Admin/AdminAssets.php:423
 msgid "Saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:422
+#: src/Admin/AdminAssets.php:424
 msgid "Settings"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:423
+#: src/Admin/AdminAssets.php:425
 msgid "Open outline"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:424
+#: src/Admin/AdminAssets.php:426
 msgid "Split"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:425
+#: src/Admin/AdminAssets.php:427
 msgid "Split mode"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:426
+#: src/Admin/AdminAssets.php:428
 msgid "Split preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:427
-msgid "Show live preview by default"
-msgstr ""
-
-#: src/Admin/AdminAssets.php:428
-msgid "Synchronized scrolling"
-msgstr ""
-
 #: src/Admin/AdminAssets.php:429
-msgid "Keep the editor and preview in sync"
+msgid "Show live preview by default"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:430
@@ -445,808 +437,804 @@ msgstr ""
 msgid "Copied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:484
-msgid "Word count"
-msgstr ""
-
-#: src/Admin/AdminAssets.php:485
-msgid "Show words, characters, and reading time beside the title"
-msgstr ""
-
-#: src/Admin/AdminAssets.php:597
+#: src/Admin/AdminAssets.php:595
 msgid "Not saved yet."
 msgstr ""
 
 #. translators: 1: display name of the last editor, 2: localized post modified date and time.
-#: src/Admin/AdminAssets.php:621
+#: src/Admin/AdminAssets.php:619
 #, php-format
 msgid "Last edited by %1$s on %2$s"
 msgstr ""
 
 #. translators: %s: localized post modified date and time.
-#: src/Admin/AdminAssets.php:629
+#: src/Admin/AdminAssets.php:627
 #, php-format
 msgid "Last edited on %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:653
+#: src/Admin/AdminAssets.php:651
 msgid "Primary color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:654
+#: src/Admin/AdminAssets.php:652
 msgid "H1, list markers, and task checkmarks"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:659
+#: src/Admin/AdminAssets.php:657
 msgid "Heading color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:660
+#: src/Admin/AdminAssets.php:658
 msgid "H2-H6, bold text, and definition terms"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:665
+#: src/Admin/AdminAssets.php:663
 msgid "Text color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:666
+#: src/Admin/AdminAssets.php:664
 msgid "Paragraphs, lists, and table body"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:671
+#: src/Admin/AdminAssets.php:669
 msgid "Muted color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:672
+#: src/Admin/AdminAssets.php:670
 msgid "Strikethrough, footnotes, and image captions"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:677
+#: src/Admin/AdminAssets.php:675
 msgid "Link color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:678
+#: src/Admin/AdminAssets.php:676
 msgid "Body links and footnote links"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:683
+#: src/Admin/AdminAssets.php:681
 msgid "Background color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:684
+#: src/Admin/AdminAssets.php:682
 msgid "Article and content block base background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:689
+#: src/Admin/AdminAssets.php:687
 msgid "Border color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:690
+#: src/Admin/AdminAssets.php:688
 msgid "Dividers, tables, and control borders"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:695
+#: src/Admin/AdminAssets.php:693
 msgid "Highlight background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:696
+#: src/Admin/AdminAssets.php:694
 msgid "Marked text and emphasized content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:701
+#: src/Admin/AdminAssets.php:699
 msgid "Selection background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:702
+#: src/Admin/AdminAssets.php:700
 msgid "Selected article text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:707
+#: src/Admin/AdminAssets.php:705
 msgid "Quote accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:708
+#: src/Admin/AdminAssets.php:706
 msgid "Blockquote left border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:713
+#: src/Admin/AdminAssets.php:711
 msgid "Quote background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:714
+#: src/Admin/AdminAssets.php:712
 msgid "Blockquote content background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:719
+#: src/Admin/AdminAssets.php:717
 msgid "Table header background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:720
+#: src/Admin/AdminAssets.php:718
 msgid "Table heading row background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:725
+#: src/Admin/AdminAssets.php:723
 msgid "Table zebra stripes"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:726
+#: src/Admin/AdminAssets.php:724
 msgid "Even content row background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:731
+#: src/Admin/AdminAssets.php:729
 msgid "Inline code color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:732
+#: src/Admin/AdminAssets.php:730
 msgid "Inline code and keyboard shortcut text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:737
+#: src/Admin/AdminAssets.php:735
 msgid "Inline code background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:738
+#: src/Admin/AdminAssets.php:736
 msgid "Inline code and keyboard shortcut background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:743
+#: src/Admin/AdminAssets.php:741
 msgid "Code text color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:744
+#: src/Admin/AdminAssets.php:742
 msgid "Plain code and punctuation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:749
+#: src/Admin/AdminAssets.php:747
 msgid "Code block background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:750
+#: src/Admin/AdminAssets.php:748
 msgid "Code block and line number area"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:755
+#: src/Admin/AdminAssets.php:753
 msgid "Keyword color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:756
+#: src/Admin/AdminAssets.php:754
 msgid "Keywords, functions, and booleans"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:761
+#: src/Admin/AdminAssets.php:759
 msgid "String color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:762
+#: src/Admin/AdminAssets.php:760
 msgid "Strings, property values, and numbers"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:767
+#: src/Admin/AdminAssets.php:765
 msgid "Comment color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:768
+#: src/Admin/AdminAssets.php:766
 msgid "Comments, line numbers, and auxiliary markers"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:773
+#: src/Admin/AdminAssets.php:771
 msgid "Information accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:774
+#: src/Admin/AdminAssets.php:772
 msgid "NOTE and information callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:779
+#: src/Admin/AdminAssets.php:777
 msgid "Information background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:780
+#: src/Admin/AdminAssets.php:778
 msgid "NOTE and information callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:785
+#: src/Admin/AdminAssets.php:783
 msgid "Success accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:786
+#: src/Admin/AdminAssets.php:784
 msgid "TIP, success, and completed states"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:791
+#: src/Admin/AdminAssets.php:789
 msgid "Success background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:792
+#: src/Admin/AdminAssets.php:790
 msgid "TIP and success callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:797
+#: src/Admin/AdminAssets.php:795
 msgid "Warning accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:798
+#: src/Admin/AdminAssets.php:796
 msgid "WARNING callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:803
+#: src/Admin/AdminAssets.php:801
 msgid "Warning background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:804
+#: src/Admin/AdminAssets.php:802
 msgid "WARNING callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:809
+#: src/Admin/AdminAssets.php:807
 msgid "Danger accent"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:810
+#: src/Admin/AdminAssets.php:808
 msgid "CAUTION and error callout border"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:815
+#: src/Admin/AdminAssets.php:813
 msgid "Danger background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:816
+#: src/Admin/AdminAssets.php:814
 msgid "CAUTION and error callout background"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:823
+#: src/Admin/AdminAssets.php:821
 msgid "Create a personal article and code theme with live preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:824
+#: src/Admin/AdminAssets.php:822
 msgid "Close custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:826
+#: src/Admin/AdminAssets.php:824
 msgid "Article theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:827
+#: src/Admin/AdminAssets.php:825
 msgid "Code theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:828
+#: src/Admin/AdminAssets.php:826
 msgid "Enter article theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:829
+#: src/Admin/AdminAssets.php:827
 msgid "Enter code theme name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:830
+#: src/Admin/AdminAssets.php:828
 msgid "Changes have not been applied"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:831
+#: src/Admin/AdminAssets.php:829
 msgid "Enter a valid six-digit hex color"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:832
+#: src/Admin/AdminAssets.php:830
 msgid "Enter both theme names"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:833
+#: src/Admin/AdminAssets.php:831
 msgid "Modified style preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:834
+#: src/Admin/AdminAssets.php:832
 msgid "Live"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:835
+#: src/Admin/AdminAssets.php:833
 msgid "The preview updates with the selected colors."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:836
+#: src/Admin/AdminAssets.php:834
 msgid "Fix invalid CSS to update the live preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:837
+#: src/Admin/AdminAssets.php:835
 msgid "Live preview is temporarily unavailable."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:838
+#: src/Admin/AdminAssets.php:836
 msgid "Theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:839
+#: src/Admin/AdminAssets.php:837
 msgid "Theme variable categories"
 msgstr ""
 
 #. translators: %s: Custom CSS theme variable category label.
-#: src/Admin/AdminAssets.php:841
+#: src/Admin/AdminAssets.php:839
 #, php-format
 msgid "%s theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:842 src/Admin/AdminAssets.php:856
+#: src/Admin/AdminAssets.php:840 src/Admin/AdminAssets.php:854
 msgid "Custom CSS code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:843
+#: src/Admin/AdminAssets.php:841
 msgid "Reset"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:844
+#: src/Admin/AdminAssets.php:842
 msgid "Expand code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:845
+#: src/Admin/AdminAssets.php:843
 msgid "Shrink code editor"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:846
+#: src/Admin/AdminAssets.php:844
 msgid "Back to variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:847
+#: src/Admin/AdminAssets.php:845
 msgid "CSS target"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:848
+#: src/Admin/AdminAssets.php:846
 msgid "Article CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:849
+#: src/Admin/AdminAssets.php:847
 msgid "Code CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:850
+#: src/Admin/AdminAssets.php:848
 msgid "These rules are applied to article content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:851
+#: src/Admin/AdminAssets.php:849
 msgid "These rules are applied to code content."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:852
+#: src/Admin/AdminAssets.php:850
 msgid "Foundation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:853
+#: src/Admin/AdminAssets.php:851
 msgid "Blocks"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:854
+#: src/Admin/AdminAssets.php:852
 msgid "Code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:855
+#: src/Admin/AdminAssets.php:853
 msgid "Alerts"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:857
+#: src/Admin/AdminAssets.php:855
 msgid "Add detailed CSS rules"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:858
+#: src/Admin/AdminAssets.php:856
 msgid "Back to theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:860
+#: src/Admin/AdminAssets.php:858
 msgid "Reset all"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:861
+#: src/Admin/AdminAssets.php:859
 msgid "Apply theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:862
+#: src/Admin/AdminAssets.php:860
 msgid "EasyMDE Blue"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:863
+#: src/Admin/AdminAssets.php:861
 msgid "EasyMDE Blue Code"
 msgstr ""
 
 #. translators: %s: Custom CSS color variable label.
-#: src/Admin/AdminAssets.php:865
+#: src/Admin/AdminAssets.php:863
 #, php-format
 msgid "%s color picker"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:866
+#: src/Admin/AdminAssets.php:864
 msgid "Current theme variables"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:867
+#: src/Admin/AdminAssets.php:865
 msgid "Add custom rules below"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:868
+#: src/Admin/AdminAssets.php:866
 msgid "Heading 1 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:869
+#: src/Admin/AdminAssets.php:867
 msgid "Heading 2 preview sample"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:870
+#: src/Admin/AdminAssets.php:868
 msgid ""
 "This body text demonstrates the current theme typography, spacing, and "
 "layout."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:871
+#: src/Admin/AdminAssets.php:869
 msgid "Theme preview with"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:872
+#: src/Admin/AdminAssets.php:870
 msgid "bold text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:873
+#: src/Admin/AdminAssets.php:871
 msgid "italic text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:874
+#: src/Admin/AdminAssets.php:872
 msgid "deleted text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:875
+#: src/Admin/AdminAssets.php:873
 msgid "highlight"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:876
+#: src/Admin/AdminAssets.php:874
 msgid "inline code"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:877
+#: src/Admin/AdminAssets.php:875
 msgid "Theme preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:878
+#: src/Admin/AdminAssets.php:876
 msgid "Blockquote and callout styling preview."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:879
+#: src/Admin/AdminAssets.php:877
 msgid "Unordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:880
+#: src/Admin/AdminAssets.php:878
 msgid "Completed task"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:881
+#: src/Admin/AdminAssets.php:879
 msgid "Ordered list item"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:882
+#: src/Admin/AdminAssets.php:880
 msgid "Second step"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:883
+#: src/Admin/AdminAssets.php:881
 msgid "Header"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:884
+#: src/Admin/AdminAssets.php:882
 msgid "Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:885
+#: src/Admin/AdminAssets.php:883
 msgid "Link color preview"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:886
+#: src/Admin/AdminAssets.php:884
 msgid "NOTE"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:887
+#: src/Admin/AdminAssets.php:885
 msgid "TIP"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:888
+#: src/Admin/AdminAssets.php:886
 msgid "WARNING"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:889
+#: src/Admin/AdminAssets.php:887
 msgid "CAUTION"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:890
+#: src/Admin/AdminAssets.php:888
 msgid "Information"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:891
+#: src/Admin/AdminAssets.php:889
 msgid "Success"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:892
+#: src/Admin/AdminAssets.php:890
 msgid "Warning"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:893
+#: src/Admin/AdminAssets.php:891
 msgid "Danger"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:894
+#: src/Admin/AdminAssets.php:892
 msgid "Additional details"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:895
+#: src/Admin/AdminAssets.php:893
 msgid "Longer supporting content can be previewed here."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:896
+#: src/Admin/AdminAssets.php:894
 msgid "Definition list"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:897
+#: src/Admin/AdminAssets.php:895
 msgid "Used to explain terms or add structured details."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:898
+#: src/Admin/AdminAssets.php:896
 msgid "Tertiary heading and supporting content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:899
+#: src/Admin/AdminAssets.php:897
 msgid ""
 "Images, mathematical formulas, and footnotes use the body text system. "
 "Example footnote"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:900
+#: src/Admin/AdminAssets.php:898
 msgid "[1] Footnote and supporting text color sample."
 msgstr ""
 
 #. translators: Separator between inline Custom CSS preview examples.
-#: src/Admin/AdminAssets.php:902
+#: src/Admin/AdminAssets.php:900
 msgctxt "inline Custom CSS preview separator"
 msgid ", "
 msgstr ""
 
 #. translators: Conjunction before the keyboard shortcut in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:904
+#: src/Admin/AdminAssets.php:902
 msgctxt "inline Custom CSS preview conjunction"
 msgid "and "
 msgstr ""
 
 #. translators: Sentence-ending punctuation in the inline Custom CSS preview.
-#: src/Admin/AdminAssets.php:906
+#: src/Admin/AdminAssets.php:904
 msgctxt "inline Custom CSS preview sentence end"
 msgid "."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:912
+#: src/Admin/AdminAssets.php:910
 msgid "Markdown source"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:913
+#: src/Admin/AdminAssets.php:911
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:914
+#: src/Admin/AdminAssets.php:912
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:915
+#: src/Admin/AdminAssets.php:913
 msgid "Insert Media"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:916
+#: src/Admin/AdminAssets.php:914
 msgid "Markdown toolbar"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:917
+#: src/Admin/AdminAssets.php:915
 msgid "Undo"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:918
+#: src/Admin/AdminAssets.php:916
 msgid "Appearance"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:919
+#: src/Admin/AdminAssets.php:917
 msgid "Font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:920
+#: src/Admin/AdminAssets.php:918
 msgid "Headings"
 msgstr ""
 
 #. translators: %s: Heading level from 1 through 6.
-#: src/Admin/AdminAssets.php:922
+#: src/Admin/AdminAssets.php:920
 #, php-format
 msgid "Heading %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:923
+#: src/Admin/AdminAssets.php:921
 msgid "Heading level"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:924
+#: src/Admin/AdminAssets.php:922
 msgid "Article theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:925
+#: src/Admin/AdminAssets.php:923
 msgid "Code theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:926
+#: src/Admin/AdminAssets.php:924
 msgid "Custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:927
+#: src/Admin/AdminAssets.php:925
 msgid "Custom CSS theme"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:928
+#: src/Admin/AdminAssets.php:926
 msgid "Named custom CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:929
+#: src/Admin/AdminAssets.php:927
 msgid "CSS name"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:930
+#: src/Admin/AdminAssets.php:928
 msgid "Save CSS"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:931
+#: src/Admin/AdminAssets.php:929
 msgid "Saved CSS."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:932
+#: src/Admin/AdminAssets.php:930
 msgid "CSS save failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:933
+#: src/Admin/AdminAssets.php:931
 msgid "Theme could not be applied. The saved theme is still available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:934
+#: src/Admin/AdminAssets.php:932
 msgid "Custom font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:935
+#: src/Admin/AdminAssets.php:933
 msgid "Windows font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:936
+#: src/Admin/AdminAssets.php:934
 msgid "Apple font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:937
+#: src/Admin/AdminAssets.php:935
 msgid "Serif font"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:938
+#: src/Admin/AdminAssets.php:936
 msgid ""
 "Fonts are applied in custom, Windows, Apple, and serif fallback order when "
 "supported by the current system."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:939
+#: src/Admin/AdminAssets.php:937
 msgid "Local draft saved"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:940
+#: src/Admin/AdminAssets.php:938
 msgid "A newer local draft is available."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:941
+#: src/Admin/AdminAssets.php:939
 msgid "Restore draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:942
+#: src/Admin/AdminAssets.php:940
 msgid "Discard draft"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:943
+#: src/Admin/AdminAssets.php:941
 msgid "Draft restored."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:944
+#: src/Admin/AdminAssets.php:942
 msgid "Draft discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:945
+#: src/Admin/AdminAssets.php:943
 msgid "Local draft could not be read."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:946
+#: src/Admin/AdminAssets.php:944
 msgid "Local draft could not be saved."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:947
+#: src/Admin/AdminAssets.php:945
 msgid "Local draft could not be discarded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:948
+#: src/Admin/AdminAssets.php:946
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:949 src/Frontend/FrontendAssets.php:107
+#: src/Admin/AdminAssets.php:947 src/Frontend/FrontendAssets.php:107
 msgid "Rendering failed."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:950
+#: src/Admin/AdminAssets.php:948
 msgid "Copied preview for WeChat."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:951
+#: src/Admin/AdminAssets.php:949
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:952
+#: src/Admin/AdminAssets.php:950
 msgid "Clipboard access is not available in this browser."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:953
+#: src/Admin/AdminAssets.php:951
 msgid "Uploading pasted image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:954
+#: src/Admin/AdminAssets.php:952
 msgid "Pasted image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:955
+#: src/Admin/AdminAssets.php:953
 msgid ""
 "Pasted image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:956
+#: src/Admin/AdminAssets.php:954
 msgid "Pasted image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:957
+#: src/Admin/AdminAssets.php:955
 msgid "Uploading dropped image..."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:958
+#: src/Admin/AdminAssets.php:956
 msgid "Dropped image uploaded."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:959
+#: src/Admin/AdminAssets.php:957
 msgid ""
 "Dropped image upload failed after the configured attempts were exhausted. "
 "Please try uploading the image again."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:960
+#: src/Admin/AdminAssets.php:958
 msgid "Dropped image is too large for this site."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:961
+#: src/Admin/AdminAssets.php:959
 msgid "alt text"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:962
+#: src/Admin/AdminAssets.php:960
 msgid "image"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:963
+#: src/Admin/AdminAssets.php:961
 msgid "The WordPress media library could not be opened."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:964
+#: src/Admin/AdminAssets.php:962
 msgid "link text"
 msgstr ""
 
 #. translators: %s: Locale-formatted Markdown character count.
-#: src/Admin/AdminAssets.php:966
+#: src/Admin/AdminAssets.php:964
 #, php-format
 msgid "Character count: %s"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:967 src/Rest/CustomCssController.php:154
+#: src/Admin/AdminAssets.php:965 src/Rest/CustomCssController.php:154
 msgid ""
 "A theme with this name already exists. Please choose another name and try "
 "again."
 msgstr ""
 
 #: src/Admin/EditorMediaUploadPolicy.php:43
-#: src/Rest/ImageHostingController.php:324 src/Rest/MediaController.php:75
+#: src/ImageHosting/RemoteImageDownloader.php:95
+#: src/Rest/ImageHostingController.php:367
+#: src/Rest/ImageHostingController.php:442 src/Rest/MediaController.php:75
 #: src/Rest/MediaController.php:155
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
 #: src/Admin/EditorMediaUploadPolicy.php:50
-#: src/Rest/ImageHostingController.php:300 src/Rest/MediaController.php:83
+#: src/ImageHosting/RemoteImageDownloader.php:78
+#: src/Rest/ImageHostingController.php:366
+#: src/Rest/ImageHostingController.php:418 src/Rest/MediaController.php:83
 msgid "The image is larger than the allowed upload size."
 msgstr ""
 
@@ -1595,12 +1583,12 @@ msgid "Paragraph"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:97
-#: src/Admin/SettingsCenterStrings.php:336
+#: src/Admin/SettingsCenterStrings.php:342
 msgid "Insert Link"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:98
-#: src/Admin/SettingsCenterStrings.php:337
+#: src/Admin/SettingsCenterStrings.php:343
 msgid "Insert Image"
 msgstr ""
 
@@ -1750,7 +1738,7 @@ msgid "Unsaved changes"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:135
-#: src/Admin/SettingsCenterStrings.php:329
+#: src/Admin/SettingsCenterStrings.php:335
 msgid "Image Host Service"
 msgstr ""
 
@@ -1779,7 +1767,7 @@ msgid "Custom Endpoint"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:142
-#: src/Admin/SettingsCenterStrings.php:330
+#: src/Admin/SettingsCenterStrings.php:336
 msgid "Viewing Image Domain"
 msgstr ""
 
@@ -2056,7 +2044,7 @@ msgid ""
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:209
-#: src/Admin/SettingsCenterStrings.php:332
+#: src/Admin/SettingsCenterStrings.php:338
 msgid "Enable Backup Image Host"
 msgstr ""
 
@@ -2066,7 +2054,7 @@ msgid ""
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:211
-#: src/Admin/SettingsCenterStrings.php:331
+#: src/Admin/SettingsCenterStrings.php:337
 msgid "Backup Image Host Service"
 msgstr ""
 
@@ -2120,683 +2108,709 @@ msgid ""
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:224
-msgid "Compress Images Automatically"
+msgid "Remote image import"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:225
-msgid "Compress images before upload to save storage space."
+msgid ""
+"Import absolute HTTP or HTTPS images pasted as HTML or Markdown into the "
+"configured image host."
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:226
-msgid "Maximum Supported Image Size (MB)"
+msgid "Visual and source editors"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:227
+msgid "Visual editor only"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:228
+msgid "Source editor only"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:229
+msgid "Do not import"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:230
+msgid "Compress Images Automatically"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:231
+msgid "Compress images before upload to save storage space."
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:232
+msgid "Maximum Supported Image Size (MB)"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:233
 msgid "Set the maximum image upload size from 1 MB to 10 MB."
 msgstr ""
 
 #. translators: %s: current system upload limit in megabytes.
-#: src/Admin/SettingsCenterStrings.php:229
+#: src/Admin/SettingsCenterStrings.php:235
 #, php-format
 msgid ""
 "This value exceeds the current system upload limit of %s MB. Increase the "
 "system limit or choose a smaller value."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:230
+#: src/Admin/SettingsCenterStrings.php:236
 msgid "Image Title Display"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:231
+#: src/Admin/SettingsCenterStrings.php:237
 msgid "Allowed Upload Formats"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:232
+#: src/Admin/SettingsCenterStrings.php:238
 msgid "Select the image file formats that the editor may choose and upload."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:233
+#: src/Admin/SettingsCenterStrings.php:239
 msgid "JPG / JPEG / JFIF"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:234
+#: src/Admin/SettingsCenterStrings.php:240
 msgid "PNG"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:235
+#: src/Admin/SettingsCenterStrings.php:241
 msgid "WebP"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:236
+#: src/Admin/SettingsCenterStrings.php:242
 msgid "GIF"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:237
+#: src/Admin/SettingsCenterStrings.php:243
 msgid "Allow Uploading JPG / JPEG / JFIF Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:238
+#: src/Admin/SettingsCenterStrings.php:244
 msgid "Allow Uploading PNG Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:239
+#: src/Admin/SettingsCenterStrings.php:245
 msgid "Allow Uploading WebP Format"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:240
+#: src/Admin/SettingsCenterStrings.php:246
 msgid "Allow Uploading GIF Format"
 msgstr ""
 
 #. translators: Separator between image upload format labels.
-#: src/Admin/SettingsCenterStrings.php:242
+#: src/Admin/SettingsCenterStrings.php:248
 msgctxt "image upload format list separator"
 msgid ","
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:243
+#: src/Admin/SettingsCenterStrings.php:249
 msgid "Use File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:244
+#: src/Admin/SettingsCenterStrings.php:250
 msgid "Leave Empty"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:245
+#: src/Admin/SettingsCenterStrings.php:251
 msgid "Editor Settings"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:246
+#: src/Admin/SettingsCenterStrings.php:252
 msgid "Word Wrap"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:247
+#: src/Admin/SettingsCenterStrings.php:253
 msgid "Wrap lines in the editor instead of scrolling horizontally."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:248
+#: src/Admin/SettingsCenterStrings.php:254
 msgid "Markdown Parsing and Rendering"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:249
+#: src/Admin/SettingsCenterStrings.php:255
 msgid "GitHub Flavored Markdown"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:250
+#: src/Admin/SettingsCenterStrings.php:256
 msgid "Use GitHub-flavored Markdown parsing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:251
+#: src/Admin/SettingsCenterStrings.php:257
 msgid "Smart Punctuation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:252
+#: src/Admin/SettingsCenterStrings.php:258
 msgid "Convert straight quotes and hyphens to smart punctuation."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:253
+#: src/Admin/SettingsCenterStrings.php:259
 msgid "Table Alignment"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:254
+#: src/Admin/SettingsCenterStrings.php:260
 msgid "Automatically Align by Content"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:255
+#: src/Admin/SettingsCenterStrings.php:261
 msgid "Align All Left"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:256
+#: src/Admin/SettingsCenterStrings.php:262
 msgid "Align All Center"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:257
+#: src/Admin/SettingsCenterStrings.php:263
 msgid "Code Block Line Numbers"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:258
+#: src/Admin/SettingsCenterStrings.php:264
 msgid "Show"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:259
+#: src/Admin/SettingsCenterStrings.php:265
 msgid "Hide"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:260
+#: src/Admin/SettingsCenterStrings.php:266
 msgid "Convert Pasted Content to Markdown"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:261
+#: src/Admin/SettingsCenterStrings.php:267
 msgid "Convert pasted content to Markdown whenever possible."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:262
+#: src/Admin/SettingsCenterStrings.php:268
 msgid "Export Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:263
+#: src/Admin/SettingsCenterStrings.php:269
 msgid ""
 "Export all current settings as a JSON configuration file for backup or "
 "migration to another site."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:264
+#: src/Admin/SettingsCenterStrings.php:270
 msgid "File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:265
+#: src/Admin/SettingsCenterStrings.php:271
 msgid "Export File Name"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:266
+#: src/Admin/SettingsCenterStrings.php:272
 msgid "Import Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:267
+#: src/Admin/SettingsCenterStrings.php:273
 msgid ""
 "Import settings from a local JSON configuration file and overwrite the "
 "current configuration after confirmation."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:268
+#: src/Admin/SettingsCenterStrings.php:274
 msgid "Choose Configuration File"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:269
+#: src/Admin/SettingsCenterStrings.php:275
 msgid "Confirm Import"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:270
+#: src/Admin/SettingsCenterStrings.php:276
 msgid "Import Instructions"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:271
+#: src/Admin/SettingsCenterStrings.php:277
 msgid ""
 "Importing will overwrite the current configuration. Back up important "
 "settings first."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:272
+#: src/Admin/SettingsCenterStrings.php:278
 msgid ""
 "Configuration files are valid only in the same or a compatible EasyMDE "
 "version."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:273
+#: src/Admin/SettingsCenterStrings.php:279
 msgid ""
 "Import handles plugin configuration only and does not affect articles or "
 "media data."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:274
+#: src/Admin/SettingsCenterStrings.php:280
 msgid "Configuration Management"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:275
+#: src/Admin/SettingsCenterStrings.php:281
 msgid "Manage and maintain plugin configuration operations."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:276
+#: src/Admin/SettingsCenterStrings.php:282
 msgid "Reset Current Configuration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:277
+#: src/Admin/SettingsCenterStrings.php:283
 msgid "Restore all settings to their defaults."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:278
+#: src/Admin/SettingsCenterStrings.php:284
 msgid "Clear Local Cache"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:279
+#: src/Admin/SettingsCenterStrings.php:285
 msgid "Clear cached data without affecting configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:280
+#: src/Admin/SettingsCenterStrings.php:286
 msgid "Open Configuration Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:281
+#: src/Admin/SettingsCenterStrings.php:287
 msgid "View and copy the configuration directory path."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:282
+#: src/Admin/SettingsCenterStrings.php:288
 msgid "View Configuration Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:283
+#: src/Admin/SettingsCenterStrings.php:289
 msgid "Check whether the current configuration is valid."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:284
+#: src/Admin/SettingsCenterStrings.php:290
 msgid "Close Operation Dialog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:285
+#: src/Admin/SettingsCenterStrings.php:291
 msgid "Configuration Directory"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:286
+#: src/Admin/SettingsCenterStrings.php:292
 msgid "Configuration Status Check"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:287
+#: src/Admin/SettingsCenterStrings.php:293
 msgid "This operation changes local state on the current device."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:288
+#: src/Admin/SettingsCenterStrings.php:294
 msgid "View where EasyMDE configuration is stored on the current device."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:289
+#: src/Admin/SettingsCenterStrings.php:295
 msgid "Check whether required configuration is complete and usable."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:291
+#: src/Admin/SettingsCenterStrings.php:297
 msgid ""
 "Resetting restores General, Shortcuts, Images, Markdown, and notification "
 "settings to their defaults. Export a backup first."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:292
+#: src/Admin/SettingsCenterStrings.php:298
 msgid ""
 "This operation clears browser cache only. It does not delete articles, "
 "media, or current configuration. Some temporary state may require reloading."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:293
+#: src/Admin/SettingsCenterStrings.php:299
 msgid "Confirm Reset"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:294
+#: src/Admin/SettingsCenterStrings.php:300
 msgid "Confirm Clear"
 msgstr ""
 
 #. translators: %s: selected configuration file name.
-#: src/Admin/SettingsCenterStrings.php:296
+#: src/Admin/SettingsCenterStrings.php:302
 #, php-format
 msgid "Selected %s. Confirm to overwrite the current configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:297
+#: src/Admin/SettingsCenterStrings.php:303
 msgid "Close Configuration Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:298
+#: src/Admin/SettingsCenterStrings.php:304
 msgid ""
 "A WordPress administration page cannot open a server file directory "
 "directly. Copy the non-sensitive storage owner below to identify where this "
 "configuration belongs."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:299
+#: src/Admin/SettingsCenterStrings.php:305
 msgid "WordPress database / EasyMDE options"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:300
+#: src/Admin/SettingsCenterStrings.php:306
 msgid "Copy Location"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:301
+#: src/Admin/SettingsCenterStrings.php:307
 msgid "The configuration storage location was copied."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:302
+#: src/Admin/SettingsCenterStrings.php:308
 msgid ""
 "The configuration storage location could not be copied. Check browser "
 "clipboard permission."
 msgstr ""
 
 #. translators: %s: number of configuration checks.
-#: src/Admin/SettingsCenterStrings.php:304
+#: src/Admin/SettingsCenterStrings.php:310
 #, php-format
 msgid "%s key configuration items checked"
 msgstr ""
 
 #. translators: %s: number of configuration checks that passed.
-#: src/Admin/SettingsCenterStrings.php:306
+#: src/Admin/SettingsCenterStrings.php:312
 #, php-format
 msgid "%s items passed"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:307
+#: src/Admin/SettingsCenterStrings.php:313
 msgid "Settings Bootstrap"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:308
+#: src/Admin/SettingsCenterStrings.php:314
 msgid "The validated WordPress settings bootstrap is available."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:309
+#: src/Admin/SettingsCenterStrings.php:315
 msgid "Runtime Assets"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:310
+#: src/Admin/SettingsCenterStrings.php:316
 msgid "Brand, header, and empty-state assets have registered URLs."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:311
+#: src/Admin/SettingsCenterStrings.php:317
 msgid "Image Settings Draft"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:312
+#: src/Admin/SettingsCenterStrings.php:318
 msgid "The current image-host draft has a configured domain."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:313
+#: src/Admin/SettingsCenterStrings.php:319
 msgid "The current image-host draft has no configured domain."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:314
+#: src/Admin/SettingsCenterStrings.php:320
 msgid "WordPress Settings Endpoint"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:315
+#: src/Admin/SettingsCenterStrings.php:321
 msgid "The WordPress settings endpoint is configured for this page."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:316
+#: src/Admin/SettingsCenterStrings.php:322
 msgid "The configuration file was downloaded."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:317
+#: src/Admin/SettingsCenterStrings.php:323
 msgid "The configuration file could not be downloaded."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:318
+#: src/Admin/SettingsCenterStrings.php:324
 msgid "The export file name is invalid."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:319
+#: src/Admin/SettingsCenterStrings.php:325
 msgid "The selected configuration file is invalid or incompatible."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:320
+#: src/Admin/SettingsCenterStrings.php:326
 msgid "The configuration was imported into the unsaved draft."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:321
+#: src/Admin/SettingsCenterStrings.php:327
 msgid "The settings draft was reset to the default configuration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:322
+#: src/Admin/SettingsCenterStrings.php:328
 msgid "EasyMDE local browser cache was cleared."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:323
+#: src/Admin/SettingsCenterStrings.php:329
 msgid "EasyMDE local browser cache could not be cleared."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:324
+#: src/Admin/SettingsCenterStrings.php:330
 msgid "This browser operation is unavailable."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:325
+#: src/Admin/SettingsCenterStrings.php:331
 msgid ""
 "Only settings connected to a WordPress runtime owner can be imported or "
 "reset."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:326
+#: src/Admin/SettingsCenterStrings.php:332
 msgid "Editing Mode"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:327
+#: src/Admin/SettingsCenterStrings.php:333
 msgid "Status Bar Mode"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:328
+#: src/Admin/SettingsCenterStrings.php:334
 msgid "Publish Visibility"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:333
+#: src/Admin/SettingsCenterStrings.php:339
 msgid "Code Line Numbers"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:334
+#: src/Admin/SettingsCenterStrings.php:340
 msgid "Math"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:335
+#: src/Admin/SettingsCenterStrings.php:341
 msgid "Save"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:338
+#: src/Admin/SettingsCenterStrings.php:344
 msgid "Version Information"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:339
-#: src/Admin/SettingsCenterStrings.php:382
+#: src/Admin/SettingsCenterStrings.php:345
+#: src/Admin/SettingsCenterStrings.php:388
 msgid "Current Version"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:341
+#: src/Admin/SettingsCenterStrings.php:347
 msgid "Check for Updates"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:342
+#: src/Admin/SettingsCenterStrings.php:348
 msgid "Rendering Engine"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:343
+#: src/Admin/SettingsCenterStrings.php:349
 msgid "league/commonmark 2.8.2"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:344
+#: src/Admin/SettingsCenterStrings.php:350
 msgid "Compatible Version"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:345
+#: src/Admin/SettingsCenterStrings.php:351
 msgid "WordPress 6.7+"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:346
+#: src/Admin/SettingsCenterStrings.php:352
 msgid "PHP Requirement"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:347
+#: src/Admin/SettingsCenterStrings.php:353
 msgid "7.4+"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:348
+#: src/Admin/SettingsCenterStrings.php:354
 msgid "Configuration Status"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:349
+#: src/Admin/SettingsCenterStrings.php:355
 msgid "Normal"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:350
+#: src/Admin/SettingsCenterStrings.php:356
 msgid "Core Capabilities"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:351
+#: src/Admin/SettingsCenterStrings.php:357
 msgid "Markdown Editing and Live Preview"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:352
+#: src/Admin/SettingsCenterStrings.php:358
 msgid "Code Highlighting and Syntax Support"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:353
+#: src/Admin/SettingsCenterStrings.php:359
 msgid "Image Upload and Link Insertion"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:354
+#: src/Admin/SettingsCenterStrings.php:360
 msgid "Shortcuts and Workflow Optimization"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:355
+#: src/Admin/SettingsCenterStrings.php:361
 msgid "Configuration Import, Export, and Migration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:356
+#: src/Admin/SettingsCenterStrings.php:362
 msgid "Resources and Support"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:357
+#: src/Admin/SettingsCenterStrings.php:363
 msgid "Official Documentation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:358
+#: src/Admin/SettingsCenterStrings.php:364
 msgid "Changelog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:359
+#: src/Admin/SettingsCenterStrings.php:365
 msgid "Issue Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:360
+#: src/Admin/SettingsCenterStrings.php:366
 msgid "GitHub Repository"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:361
+#: src/Admin/SettingsCenterStrings.php:367
 msgid "Open Source License"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:362
+#: src/Admin/SettingsCenterStrings.php:368
 msgid ""
 "Feedback is welcome. Help EasyMDE continue improving the writing experience."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:363
+#: src/Admin/SettingsCenterStrings.php:369
 msgid "Plugin Introduction"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:364
+#: src/Admin/SettingsCenterStrings.php:370
 msgid ""
 "EasyMDE is a Markdown editor plugin built for WordPress. It provides "
 "Markdown source editing, split-pane live Preview, local runtime assets, and "
 "WordPress-native media, revisions, permissions, saving, and publishing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:366
+#: src/Admin/SettingsCenterStrings.php:372
 msgid "Live Preview"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:367
+#: src/Admin/SettingsCenterStrings.php:373
 msgid "WordPress Media"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:368
+#: src/Admin/SettingsCenterStrings.php:374
 msgid "Local Assets"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:369
+#: src/Admin/SettingsCenterStrings.php:375
 msgid "Shortcuts"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:370
+#: src/Admin/SettingsCenterStrings.php:376
 msgid "Usage Help"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:371
+#: src/Admin/SettingsCenterStrings.php:377
 msgid "Find documentation about configuration, editing, and migration."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:372
+#: src/Admin/SettingsCenterStrings.php:378
 msgid "Review the main changes in recent EasyMDE versions."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:373
+#: src/Admin/SettingsCenterStrings.php:379
 msgid "Close About Dialog"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:375
+#: src/Admin/SettingsCenterStrings.php:381
 msgid "Open Full Documentation"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:376
+#: src/Admin/SettingsCenterStrings.php:382
 msgid "Quick Start"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:377
+#: src/Admin/SettingsCenterStrings.php:383
 msgid ""
 "Configure the editor, appearance, image behavior, and writing preferences."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:378
+#: src/Admin/SettingsCenterStrings.php:384
 msgid "Editor Workflow"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:379
+#: src/Admin/SettingsCenterStrings.php:385
 msgid "Use Markdown editing, split Preview, and WordPress-native publishing."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:380
+#: src/Admin/SettingsCenterStrings.php:386
 msgid "Configuration Migration"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:381
+#: src/Admin/SettingsCenterStrings.php:387
 msgid "Export a JSON backup and import it into a compatible EasyMDE version."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:383
+#: src/Admin/SettingsCenterStrings.php:389
 msgid "2026-07-16"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:384
+#: src/Admin/SettingsCenterStrings.php:390
 msgid ""
 "Deliver the ordinary editor through React 18, strict TypeScript, and Vite."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:385
+#: src/Admin/SettingsCenterStrings.php:391
 msgid ""
 "Preserve source and Preview, themes, media, drafts, clipboard, and WeChat "
 "export."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:386
+#: src/Admin/SettingsCenterStrings.php:392
 msgid ""
 "Keep publishing, taxonomies, featured media, and revisions WordPress-native."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:387
+#: src/Admin/SettingsCenterStrings.php:393
 msgid "0.1.7"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:388
+#: src/Admin/SettingsCenterStrings.php:394
 msgid "2026-07-04"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:389
+#: src/Admin/SettingsCenterStrings.php:395
 msgid "Add a compact icon toolbar and appearance popover."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:390
+#: src/Admin/SettingsCenterStrings.php:396
 msgid "Add Typora-inspired shortcuts and rich-text WeChat export."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:391
+#: src/Admin/SettingsCenterStrings.php:397
 msgid "This About action is not connected to WordPress yet."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:392
+#: src/Admin/SettingsCenterStrings.php:398
 msgid "Close About Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:393
+#: src/Admin/SettingsCenterStrings.php:399
 msgid "Keep at least one image upload format enabled."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:394
+#: src/Admin/SettingsCenterStrings.php:400
 msgid "Close Image Upload Feedback"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:395
+#: src/Admin/SettingsCenterStrings.php:401
 msgid "Editor Theme Rendering"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:396
+#: src/Admin/SettingsCenterStrings.php:402
 msgid ""
 "Apply the selected editor theme to published articles. Disable this to use "
 "the theme only in editor previews."
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:397
+#: src/Admin/SettingsCenterStrings.php:403
 msgid "Code Block Copy"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:398
+#: src/Admin/SettingsCenterStrings.php:404
 msgid "Show a copy button on code blocks in published articles."
 msgstr ""
 
@@ -2830,14 +2844,34 @@ msgid "Unable to copy code. Try again."
 msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
-#: src/Rest/ImageHostingController.php:657
-#: src/Support/SettingsCenterRepository.php:654
+#: src/Rest/ImageHostingController.php:775
+#: src/Support/SettingsCenterRepository.php:661
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:495
 msgid "The image-hosting operation could not be completed."
+msgstr ""
+
+#: src/ImageHosting/RemoteImageDownloader.php:28
+#: src/ImageHosting/RemoteImageDownloader.php:38
+#: src/Rest/ImageHostingController.php:364
+msgid "The remote image URL is invalid."
+msgstr ""
+
+#: src/ImageHosting/RemoteImageDownloader.php:31
+#: src/ImageHosting/RemoteImageDownloader.php:48
+#: src/ImageHosting/RemoteImageDownloader.php:70
+#: src/ImageHosting/RemoteImageDownloader.php:83
+#: src/ImageHosting/WordPressPinnedHttpClient.php:117
+#: src/Rest/ImageHostingController.php:368
+msgid "The remote image could not be downloaded."
+msgstr ""
+
+#: src/ImageHosting/RemoteImageDownloader.php:88
+#: src/Rest/ImageHostingController.php:365
+msgid "The remote image is empty."
 msgstr ""
 
 #: src/Rest/CustomCssController.php:124
@@ -2848,47 +2882,48 @@ msgstr ""
 msgid "Custom CSS style not found."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:107
+#: src/Rest/ImageHostingController.php:124
+#: src/Rest/ImageHostingController.php:152
 msgid "The image-hosting request is too large."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:169
+#: src/Rest/ImageHostingController.php:208
 msgid "The selected image-hosting service is not configured."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:271
-#: src/Rest/ImageHostingController.php:649
+#: src/Rest/ImageHostingController.php:389
+#: src/Rest/ImageHostingController.php:767
 #: src/Support/SettingsCenterRepository.php:409
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:609
+#: src/Rest/ImageHostingController.php:727
 msgid "The image-hosting request could not be verified."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:617
+#: src/Rest/ImageHostingController.php:735
 msgid "The image-hosting request is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:625
+#: src/Rest/ImageHostingController.php:743
 msgid ""
 "Enter both credentials for the changed image-hosting target before testing "
 "it."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:633
+#: src/Rest/ImageHostingController.php:751
 msgid "The image upload is invalid."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:641
+#: src/Rest/ImageHostingController.php:759
 msgid "The image-hosting validation image could not be uploaded."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:665
+#: src/Rest/ImageHostingController.php:783
 msgid "The image could not be uploaded to the configured image host."
 msgstr ""
 
-#: src/Rest/ImageHostingController.php:673
+#: src/Rest/ImageHostingController.php:791
 msgid "The image-hosting service returned an invalid result."
 msgstr ""
 
@@ -2937,19 +2972,19 @@ msgstr ""
 msgid "The settings payload is too large."
 msgstr ""
 
-#: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:367
+#: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:369
 #: src/Support/SettingsCenterRepository.php:317
 #: src/Support/SettingsCenterRepository.php:401
-#: src/Support/SettingsCenterRepository.php:546
-#: src/Support/SettingsCenterRepository.php:581
+#: src/Support/SettingsCenterRepository.php:547
+#: src/Support/SettingsCenterRepository.php:588
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:624
+#: src/Support/SettingsCenterRepository.php:631
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:635
+#: src/Support/SettingsCenterRepository.php:642
 msgid "One or more shortcut values conflict."
 msgstr ""
 

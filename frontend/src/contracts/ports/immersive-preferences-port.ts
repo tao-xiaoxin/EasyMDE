@@ -2,8 +2,6 @@ export type ImmersivePreferences = Readonly<{
   autoSave: boolean;
   outline: boolean;
   splitPreview: boolean;
-  syncScroll: boolean;
-  wordCount: boolean;
 }>;
 
 export type ImmersivePreferencesWriteResult =

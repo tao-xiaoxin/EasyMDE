@@ -65,8 +65,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"livePreview",
 	"sourceEditing",
 	"previewOnly",
-	"wordsAndReadingTime",
-	"wordsOnly",
+	"detailedStatusBar",
+	"compactStatusBar",
 	"hiddenStatusBar",
 	"seconds30",
 	"seconds60",
@@ -215,6 +215,12 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"compressImagesDescription",
 	"autoUploadPastedImages",
 	"autoUploadPastedImagesDescription",
+	"remoteImageUploadMode",
+	"remoteImageUploadModeDescription",
+	"remoteImageUploadBoth",
+	"remoteImageUploadVisual",
+	"remoteImageUploadSource",
+	"remoteImageUploadOff",
 	"maximumImageSize",
 	"maximumImageSizeDescription",
 	"maximumImageSizeSystemLimitExceeded",
@@ -684,7 +690,7 @@ export function parseSettingsCenterSettings(
 	assertEnumFields(general, "general", {
 		interfaceLanguage: ["zh-CN", "zh-TW", "en-US"],
 		editingMode: ["live-preview", "source", "preview"],
-		statusBarMode: ["words-reading-time", "words", "hidden"],
+		statusBarMode: ["detailed", "compact", "hidden"],
 		autoSaveInterval: ["30", "60", "120", "300"],
 		publishVisibility: ["public", "private", "password"],
 		summaryMode: ["auto-55", "auto-100", "manual"],
@@ -704,6 +710,7 @@ export function parseSettingsCenterSettings(
 		backupDomain: 255,
 		backupAccessKey: 255,
 		backupSecretKey: 255,
+		remoteImageUploadMode: 16,
 		titleDisplay: 16,
 	};
 	const imageBooleans = [
@@ -742,6 +749,7 @@ export function parseSettingsCenterSettings(
 	assertEnumFields(images, "images", {
 		service: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
 		backupService: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
+		remoteImageUploadMode: ["both", "visual", "source", "off"],
 		titleDisplay: ["none", "filename"],
 	});
 	assertSettingsDomain(images.domain, "settings-center-images-domain-invalid");

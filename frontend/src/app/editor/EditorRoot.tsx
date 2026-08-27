@@ -33,6 +33,7 @@ import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-exp
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
+import type { RemoteImageImportPort } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersiveEnvironmentPort } from '../../contracts/ports/immersive-environment-port';
 import type {
   ImmersivePreferences,
@@ -86,6 +87,7 @@ import {
 } from '../../features/editor-settings/ui/OrdinaryEditorSettings';
 import {
   createImageUploadSession,
+  createRemoteImageImportCoordinator,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
 import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
@@ -148,8 +150,7 @@ function constrainImmersivePreferences(
 ) {
   return {
     ...preferences,
-    autoSave: settings.autoSave && preferences.autoSave,
-    syncScroll: settings.syncScroll && preferences.syncScroll
+    autoSave: settings.autoSave && preferences.autoSave
   };
 }
 
@@ -164,10 +165,7 @@ function preserveDisabledImmersivePreferences(
     ...constrained,
     autoSave: settings.autoSave
       ? constrained.autoSave
-      : current.preferences.autoSave,
-    syncScroll: settings.syncScroll
-      ? constrained.syncScroll
-      : current.preferences.syncScroll
+      : current.preferences.autoSave
   };
 }
 
@@ -195,9 +193,10 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'remoteImageUploadMode' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
+  remoteImageImportPort: RemoteImageImportPort;
   isNewPost: boolean;
   immersiveEnvironment: ImmersiveEnvironmentPort;
   immersiveI18n: Parameters<typeof ImmersiveEditor>[0]['i18n'];
@@ -545,8 +544,7 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [
       props.immersivePreferencesPort,
-      props.settings.general.autoSave,
-      props.settings.general.syncScroll
+      props.settings.general.autoSave
     ]
   );
   const [immersivePreferences, setImmersivePreferences] =
@@ -631,20 +629,11 @@ export function EditorRoot(props: EditorRootProps) {
   useEffect(() => {
     localDraftsEnabledRef.current = localDraftsEnabled;
   }, [localDraftsEnabled]);
-  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(() =>
-    'loaded' === immersivePreferences.status
-      ? immersivePreferences.preferences.syncScroll
-      : props.settings.general.syncScroll
-  );
+  const scrollSyncEnabled = props.settings.general.syncScroll;
   const setLocalDraftsEnabledFromImmersive = useCallback(
     (enabled: boolean) =>
       setLocalDraftsEnabled(props.settings.general.autoSave && enabled),
     [props.settings.general.autoSave]
-  );
-  const setScrollSyncEnabledFromImmersive = useCallback(
-    (enabled: boolean) =>
-      setScrollSyncEnabled(props.settings.general.syncScroll && enabled),
-    [props.settings.general.syncScroll]
   );
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
@@ -1300,6 +1289,37 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [props.imageUploadPort, protectedOperationError]
   );
+  const remoteImageImportPort = useMemo<RemoteImageImportPort>(
+    () => ({
+      import: (request) => {
+        const sessionError = protectedOperationError('post-write');
+        return sessionError
+          ? Promise.resolve({ code: sessionError.message, status: 'failed' })
+          : props.remoteImageImportPort.import(request);
+      }
+    }),
+    [props.remoteImageImportPort, protectedOperationError]
+  );
+  const remoteImageImportCoordinator = useMemo(() => {
+    if (!documentSession) return null;
+    return createRemoteImageImportCoordinator({
+      document: documentPort(documentSession, () => rootActiveRef.current),
+      insertion: props.imageUpload.insertion,
+      onDiagnostic: props.onFailure,
+      postId: props.imageUpload.postId,
+      remoteImageImport: remoteImageImportPort
+    });
+  }, [
+    documentSession,
+    props.imageUpload.insertion,
+    props.imageUpload.postId,
+    props.onFailure,
+    remoteImageImportPort
+  ]);
+  useEffect(
+    () => () => remoteImageImportCoordinator?.destroy(),
+    [remoteImageImportCoordinator]
+  );
   const previewPort = useMemo<PreviewRequestPort>(
     () => ({
       render: (request, signal) => {
@@ -1439,7 +1459,6 @@ export function EditorRoot(props: EditorRootProps) {
     if ('loaded' === preferences.status) {
       setImmersiveMode(preferences.preferences.splitPreview ? 'split' : 'source');
       setLocalDraftsEnabled(preferences.preferences.autoSave);
-      setScrollSyncEnabled(preferences.preferences.syncScroll);
     } else if ('missing' === preferences.status) {
       setImmersiveMode('split');
     }
@@ -1577,7 +1596,7 @@ export function EditorRoot(props: EditorRootProps) {
   }, [documentSession, props.sessionPort]);
 
   useEffect(() => {
-    if (!documentSession) {
+    if (!documentSession || !remoteImageImportCoordinator) {
       return;
     }
     return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
@@ -1620,7 +1639,7 @@ export function EditorRoot(props: EditorRootProps) {
   ]);
 
   useEffect(() => {
-    if (!documentSession) {
+    if (!documentSession || !remoteImageImportCoordinator) {
       return;
     }
     const canonicalDocument = documentPort(
@@ -1658,6 +1677,9 @@ export function EditorRoot(props: EditorRootProps) {
       onDiagnostic: props.onFailure,
       onStatus: setImageUploadStatus,
       postId: props.imageUpload.postId,
+      remoteImageImportCoordinator,
+      remoteImageUploadMode: props.imageUpload.remoteImageUploadMode,
+      surface: visualRuntime ? 'visual' : 'source',
       strings: props.imageUpload.strings,
       target: visualEditorSurface
         ?? documentSession.document.getInputElement(),
@@ -1671,6 +1693,7 @@ export function EditorRoot(props: EditorRootProps) {
     nextImageUploadOperationId,
     props.onFailure,
     setImageUploadStatus,
+    remoteImageImportCoordinator,
     visualEditorSurface,
     visualPreviewEditing
   ]);
@@ -1828,12 +1851,9 @@ export function EditorRoot(props: EditorRootProps) {
           onConfirmPublish={publish}
           onSelectFeaturedImage={selectFeaturedImage}
           readPublishSnapshot={props.nativePublishPort.read}
-          onScrollSyncEnabledChange={setScrollSyncEnabledFromImmersive}
           onViewModeChange={changeImmersiveMode}
           revisionPort={revisionPort}
           restoreRevision={restoreRevision}
-          scrollSyncEnabled={scrollSyncEnabled}
-          syncScrollAllowed={props.settings.general.syncScroll}
           styleControls={
               <Fragment>
                 <AppearanceControls

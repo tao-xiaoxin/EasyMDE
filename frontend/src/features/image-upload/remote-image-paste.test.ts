@@ -1,0 +1,82 @@
+import { describe, expect, it } from 'vitest';
+
+import { remoteImagePasteCandidate } from './remote-image-paste';
+
+function transfer(values: Readonly<Record<string, string>>): DataTransfer {
+  return {
+    files: [],
+    getData: (type: string) => values[type] ?? '',
+    items: [],
+  } as unknown as DataTransfer;
+}
+
+describe('remoteImagePasteCandidate', () => {
+  it('recognizes one absolute HTTP image from otherwise empty HTML', () => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': ' \n<!-- source --><img alt="Remote cover" src="https://images.example.test/cover.png"> ',
+          'text/plain': 'https://images.example.test/cover.png',
+        }),
+        document,
+        'visual',
+      ),
+    ).toEqual({
+      altText: 'Remote cover',
+      fallbackText: 'https://images.example.test/cover.png',
+      sourceText: '<img alt="Remote cover" src="https://images.example.test/cover.png">',
+      url: 'https://images.example.test/cover.png',
+    });
+  });
+
+  it('uses a Markdown image fallback when HTML has no plain-text representation', () => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({ 'text/html': '<img alt="Remote [cover]" src="http://images.example.test/cover.png">' }),
+        document,
+        'visual',
+      ),
+    ).toMatchObject({
+      altText: 'Remote [cover]',
+      fallbackText: '![Remote cover](http://images.example.test/cover.png)',
+      url: 'http://images.example.test/cover.png',
+    });
+  });
+
+  it('recognizes exactly one inline Markdown image only on source surfaces', () => {
+    const clipboard = transfer({
+      'text/plain': '  ![Remote cover](https://images.example.test/cover.png)  ',
+    });
+
+    expect(remoteImagePasteCandidate(clipboard, document, 'source')).toEqual({
+      altText: 'Remote cover',
+      fallbackText: '![Remote cover](https://images.example.test/cover.png)',
+      sourceText: '![Remote cover](https://images.example.test/cover.png)',
+      url: 'https://images.example.test/cover.png',
+    });
+    expect(remoteImagePasteCandidate(clipboard, document, 'visual')).toBeNull();
+  });
+
+  it('bounds imported Alt text to the WordPress request contract', () => {
+    const candidate = remoteImagePasteCandidate(
+      transfer({
+        'text/html': `<img alt="${'a'.repeat(4096)}" src="https://images.example.test/cover.png">`,
+      }),
+      document,
+      'visual',
+    );
+
+    expect(candidate?.altText).toHaveLength(2048);
+  });
+
+  it.each([
+    ['plain URL', { 'text/plain': 'https://images.example.test/cover.png' }],
+    ['ordinary link', { 'text/html': '<a href="https://images.example.test/cover.png">cover</a>' }],
+    ['rich text with image', { 'text/html': '<p>Caption</p><img src="https://images.example.test/cover.png">' }],
+    ['relative image', { 'text/html': '<img src="/cover.png">' }],
+    ['data image', { 'text/html': '<img src="data:image/png;base64,AAAA">' }],
+    ['reference image', { 'text/plain': '![cover][remote]\n\n[remote]: https://images.example.test/cover.png' }],
+  ])('does not claim %s', (_label, values) => {
+    expect(remoteImagePasteCandidate(transfer(values), document, 'source')).toBeNull();
+  });
+});

@@ -418,6 +418,7 @@ export function ImmersiveVisualEditor({
       }
     };
     const handlePaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
       if (hasImageFile(event.clipboardData)) {
         if (!imageUploadEnabled || !imagePasteUploadEnabled) {
           event.preventDefault();

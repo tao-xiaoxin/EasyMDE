@@ -253,8 +253,11 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		foreach (array('endpoint', 'domain', 'backupEndpoint', 'backupDomain') as $field) {
 			$this->assertArrayHasKey($field, $settings['images']);
 		}
+		$this->assertSame('30', $settings['general']['autoSaveInterval']);
+		$this->assertSame('{year}/{month}/{md5}.{ext}', $settings['images']['fileNameRule']);
 		$this->assertSame(0, $settings['images']['uploadRetryCount']);
 		$this->assertSame(5, $settings['images']['maxImageSizeMb']);
+		$this->assertSame('both', $settings['images']['remoteImageUploadMode']);
 		$this->assertSame('none', $settings['images']['titleDisplay']);
 		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['images']);
@@ -272,6 +275,33 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
 		$this->assertSame('center', $repository->get_published_table_alignment());
 		$this->assertTrue($repository->should_show_published_code_line_numbers());
+	}
+
+	public function test_status_bar_mode_defaults_to_detailed_and_normalizes_legacy_values_without_writing()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->assertSame('detailed', $repository->get_settings()['general']['statusBarMode']);
+
+		foreach (
+			array(
+				'words-reading-time' => 'detailed',
+				'words' => 'compact',
+			)
+			as $stored_mode => $expected_mode
+		) {
+			$stored = array(
+				'settings_center' => array(
+					'general' => array(
+						'statusBarMode' => $stored_mode,
+					),
+				),
+			);
+			update_option(Options::EDITOR_SETTINGS, $stored, false);
+
+			$this->assertSame($expected_mode, $repository->get_settings(true)['general']['statusBarMode']);
+			$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+		}
 	}
 
 	public function test_published_markdown_presentation_accessors_follow_saved_settings()
@@ -401,6 +431,25 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), $invalid_display);
 			$this->assertFalse(get_option(Options::EDITOR_SETTINGS, false), $invalid_display);
 		}
+	}
+
+	public function test_remote_image_upload_mode_uses_the_strict_four_state_contract()
+	{
+		foreach (array('both', 'visual', 'source', 'off') as $mode) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['remoteImageUploadMode'] = $mode;
+
+			$this->assertSame($mode, $repository->update_settings($settings)['images']['remoteImageUploadMode']);
+			delete_option(Options::EDITOR_SETTINGS);
+		}
+
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['remoteImageUploadMode'] = 'enabled';
+		$result = $repository->update_settings($settings);
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code());
 	}
 
 	public function test_image_hosting_runtime_uses_the_effective_configured_upload_limit()

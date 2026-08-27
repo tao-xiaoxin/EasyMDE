@@ -101,6 +101,24 @@ function Harness({
 }
 
 describe("ImagesSettingsPage", () => {
+	it("updates the remote image import scope", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		render(<Harness onSettingsChange={onSettingsChange} />);
+		const select = screen.getByRole("combobox", {
+			name: "remoteImageUploadMode",
+		});
+
+		expect(select.textContent).toContain("remoteImageUploadBoth");
+		await user.click(select);
+		await user.click(
+			screen.getByRole("option", { name: "remoteImageUploadSource" }),
+		);
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ remoteImageUploadMode: "source" }),
+		);
+	});
+
 	it("updates automatic pasted-image uploading independently of upload capabilities", async () => {
 		const user = userEvent.setup();
 		const onSettingsChange = vi.fn();
@@ -466,7 +484,7 @@ describe("ImagesSettingsPage", () => {
 			name: "fileNameRule",
 		});
 
-		expect(screen.getByText("20260713/a8f4c2d1.webp")).not.toBeNull();
+		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
 		await user.clear(input);
 		await user.type(input, "folder/.webp");
 		input.setSelectionRange(7, 7);

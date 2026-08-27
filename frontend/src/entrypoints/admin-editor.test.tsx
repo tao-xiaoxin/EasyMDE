@@ -57,6 +57,9 @@ vi.mock(
 vi.mock('../integrations/wordpress/media/wordpress-image-upload', () => ({
   createWordPressImageUploadPort: vi.fn(() => ({}))
 }));
+vi.mock('../integrations/wordpress/media/wordpress-remote-image-import', () => ({
+  createWordPressRemoteImageImportPort: vi.fn(() => ({}))
+}));
 vi.mock('../integrations/wordpress/media/wordpress-media-frame', () => ({
   createWordPressMediaFramePort: vi.fn(() => ({}))
 }));
@@ -80,8 +83,10 @@ const bootstrap = {
   imageUpload: {
     actionNonce: 'image-hosting-nonce',
     endpoint: '/image-hosting/upload',
+    importEndpoint: '/image-hosting/import',
     nonce: 'nonce',
-    postId: 7
+    postId: 7,
+    remoteImageUploadMode: 'both'
   },
   immersiveStrings: {
     autoSave: 'Auto save',
@@ -135,8 +140,6 @@ const bootstrap = {
     splitMode: 'Split mode',
     splitPreview: 'Split preview',
     splitPreviewDescription: 'Show live preview by default',
-    syncScroll: 'Synchronized scrolling',
-    syncScrollDescription: 'Keep the editor and preview in sync',
     table: 'Table',
     tableColumns: 'Columns',
     tableRows: 'Rows',
@@ -180,9 +183,7 @@ const bootstrap = {
     unsaved: 'Unsaved',
     viewModes: 'View modes',
     wechat: 'Copy to WeChat',
-    wechatCopied: 'Copied',
-    wordCount: 'Word count',
-    wordCountDescription: 'Show words, characters, and reading time beside the title'
+    wechatCopied: 'Copied'
   },
   labels: {
     mediaPickerFailure: 'Media failed',

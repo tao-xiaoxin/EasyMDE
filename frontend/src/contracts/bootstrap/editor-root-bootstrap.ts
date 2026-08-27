@@ -7,6 +7,7 @@ import type { NativePublishCategory } from '../ports/native-publish-port';
 import type {
   GeneralSettings,
   MarkdownSettings,
+  StatusBarMode,
   SummaryMode
 } from '../settings-center-settings';
 import {
@@ -141,8 +142,6 @@ export type EditorRootBootstrap = Readonly<{
     splitMode: string;
     splitPreview: string;
     splitPreviewDescription: string;
-    syncScroll: string;
-    syncScrollDescription: string;
     table: string;
     tableColumns: string;
     tableRows: string;
@@ -153,8 +152,6 @@ export type EditorRootBootstrap = Readonly<{
     viewModes: string;
     wechat: string;
     wechatCopied: string;
-    wordCount: string;
-    wordCountDescription: string;
     addTags: string;
     categories: string;
     categoriesDescription: string;
@@ -449,7 +446,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       editingMode: new Set(['live-preview', 'source', 'preview']),
       interfaceLanguage: new Set(['zh-CN', 'zh-TW', 'en-US']),
       publishVisibility: new Set(['public', 'private', 'password']),
-      statusBarMode: new Set(['words-reading-time', 'words', 'hidden']),
+      statusBarMode: new Set(['detailed', 'compact', 'hidden']),
       summaryMode: new Set(['auto-55', 'auto-100', 'manual'])
     };
     const removedGeneralFields = [
@@ -486,7 +483,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         openPreviewAfterPublish: general.openPreviewAfterPublish as boolean,
         publishVisibility: general.publishVisibility as string,
         showLineNumbers: general.showLineNumbers as boolean,
-        statusBarMode: general.statusBarMode as string,
+        statusBarMode: general.statusBarMode as StatusBarMode,
         summaryMode: general.summaryMode as SummaryMode,
         syncScroll: general.syncScroll as boolean,
         syntaxHighlight: general.syntaxHighlight as boolean
@@ -592,8 +589,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'splitMode',
         'splitPreview',
         'splitPreviewDescription',
-        'syncScroll',
-        'syncScrollDescription',
         'table',
         'tableColumns',
         'tableRows',
@@ -604,8 +599,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         'viewModes',
         'wechat',
         'wechatCopied',
-        'wordCount',
-        'wordCountDescription',
         'addTags',
         'categories',
         'categoriesDescription',

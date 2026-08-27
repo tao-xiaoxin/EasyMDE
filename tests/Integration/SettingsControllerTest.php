@@ -46,9 +46,12 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		foreach ( array( 'endpoint', 'domain', 'backupEndpoint', 'backupDomain' ) as $field ) {
 			$this->assertArrayHasKey( $field, $data['settings']['images'] );
 		}
+		$this->assertSame( '30', $data['settings']['general']['autoSaveInterval'] );
+		$this->assertSame( '{year}/{month}/{md5}.{ext}', $data['settings']['images']['fileNameRule'] );
 		$this->assertSame( 0, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertSame( 5, $data['settings']['images']['maxImageSizeMb'] );
 		$this->assertTrue( $data['settings']['images']['autoUploadPastedImages'] );
+		$this->assertSame( 'both', $data['settings']['images']['remoteImageUploadMode'] );
 		$this->assertSame( 'none', $data['settings']['images']['titleDisplay'] );
 		$this->assertSame( array( 'values' ), array_keys( $data['settings']['shortcuts'] ) );
 		foreach ( array( 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ) as $removed ) {
@@ -175,6 +178,28 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
 
+	public function test_status_bar_mode_rest_contract_accepts_only_canonical_values() {
+		foreach ( array( 'detailed', 'compact', 'hidden' ) as $mode ) {
+			$settings = $this->current_settings();
+			$settings['general']['statusBarMode'] = $mode;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 200, $response->get_status(), $mode );
+			$this->assertSame( $mode, $response->get_data()['settings']['general']['statusBarMode'], $mode );
+		}
+
+		foreach ( array( 'words-reading-time', 'words' ) as $legacy_mode ) {
+			$settings = $this->current_settings();
+			$settings['general']['statusBarMode'] = $legacy_mode;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $legacy_mode );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $legacy_mode );
+		}
+	}
+
 	public function test_post_rejects_invalid_upload_retry_counts() {
 		foreach ( array( 'uploadRetryCount' ) as $field ) {
 			foreach ( array( -1, 6, '2', 2.5 ) as $invalid ) {
@@ -214,6 +239,23 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			$response = $this->post_json( array( 'settings' => $settings ) );
 			$this->assertSame( 400, $response->get_status(), $invalid_display );
 		}
+	}
+
+	public function test_post_accepts_only_the_four_remote_image_upload_modes() {
+		foreach ( array( 'both', 'visual', 'source', 'off' ) as $mode ) {
+			$settings = $this->current_settings();
+			$settings['images']['remoteImageUploadMode'] = $mode;
+			$response = $this->post_json( array( 'settings' => $settings ) );
+			$this->assertSame( 200, $response->get_status(), $mode );
+			$this->assertSame( $mode, $response->get_data()['settings']['images']['remoteImageUploadMode'] );
+			delete_option( Options::EDITOR_SETTINGS );
+		}
+
+		$settings = $this->current_settings();
+		$settings['images']['remoteImageUploadMode'] = 'enabled';
+		$response = $this->post_json( array( 'settings' => $settings ) );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
 	}
 
 	public function test_post_accepts_each_supported_image_host_service_as_primary()

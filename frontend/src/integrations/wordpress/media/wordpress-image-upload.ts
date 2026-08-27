@@ -43,7 +43,7 @@ function hasExplicitUrlPort(value: string): boolean {
   }
   return authority.includes(':');
 }
-function uploadedResult(value: unknown): ImageUploadResult {
+export function parseUploadedImageResult(value: unknown): ImageUploadResult {
   if (!value || 'object' !== typeof value || Array.isArray(value)) {
     throw new Error('image-upload-response-invalid');
   }
@@ -149,7 +149,7 @@ export function createWordPressImageUploadPort({
       body.append('post_id', String(postId));
       body.append('alt_text', altText);
       try {
-        return uploadedResult(
+        return parseUploadedImageResult(
           await request({
             body,
             headers: {

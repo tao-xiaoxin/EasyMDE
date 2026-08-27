@@ -13,6 +13,8 @@ export type ImageUploadStrings = Readonly<{
 
 export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
+export type RemoteImageUploadMode = 'both' | 'visual' | 'source' | 'off';
+
 export type ImageUploadInsertion = Readonly<{
   titleDisplay: 'filename' | 'none';
 }>;
@@ -23,10 +25,12 @@ export type ImageUploadBootstrap = Readonly<{
   autoUploadPastedImages: boolean;
   enabled: boolean;
   endpoint: string;
+  importEndpoint: string;
   insertion: ImageUploadInsertion;
   maxBytes: number;
   nonce: string;
   postId: number;
+  remoteImageUploadMode: RemoteImageUploadMode;
   strings: ImageUploadStrings;
 }>;
 
@@ -89,10 +93,12 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     'autoUploadPastedImages',
     'enabled',
     'endpoint',
+    'importEndpoint',
     'insertion',
     'maxBytes',
     'nonce',
     'postId',
+    'remoteImageUploadMode',
     'strings'
   ];
   if (
@@ -116,6 +122,12 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   if ('boolean' !== typeof bootstrap.autoUploadPastedImages) {
     throw new Error('image-upload-auto-paste-invalid');
   }
+  if (
+    'string' !== typeof bootstrap.remoteImageUploadMode ||
+    !['both', 'visual', 'source', 'off'].includes(bootstrap.remoteImageUploadMode)
+  ) {
+    throw new Error('image-upload-remote-paste-mode-invalid');
+  }
 
   return {
     actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
@@ -123,10 +135,12 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     autoUploadPastedImages: bootstrap.autoUploadPastedImages,
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
+    importEndpoint: stringValue(bootstrap.importEndpoint, 'image-upload-import-endpoint-invalid'),
     insertion: parseImageUploadInsertion(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),
+    remoteImageUploadMode: bootstrap.remoteImageUploadMode as RemoteImageUploadMode,
     strings: {
       defaultAlt: stringValue(messages.defaultAlt, 'image-upload-string-invalid'),
       dropFailed: stringValue(messages.dropFailed, 'image-upload-string-invalid'),

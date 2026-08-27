@@ -8,12 +8,14 @@ const validBootstrap = {
   autoUploadPastedImages: true,
   enabled: true,
   endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+  importEndpoint: '/wp-json/easymde/v1/image-hosting/import',
   insertion: {
     titleDisplay: 'none'
   },
   maxBytes: 1024,
   nonce: 'synthetic-nonce',
   postId: 17,
+  remoteImageUploadMode: 'both',
   strings: {
     defaultAlt: 'image',
     dropFailed: 'Drop failed',
@@ -85,5 +87,9 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       autoUploadPastedImages: 'true'
     })).toThrow('image-upload-auto-paste-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      remoteImageUploadMode: 'enabled'
+    })).toThrow('image-upload-remote-paste-mode-invalid');
   });
 });

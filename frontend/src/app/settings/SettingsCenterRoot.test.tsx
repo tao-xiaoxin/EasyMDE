@@ -1143,6 +1143,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 			blockquoteStyle: "spaced",
 		});
 		legacySettings.general.featuredImagePlaceholder = true;
+		legacySettings.general.statusBarMode = "words-reading-time";
 		const savedSettings = {
 			...importedSettings,
 			revision: importedSettings.revision + 1,
@@ -1198,6 +1199,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		expect(body.settings.general.autoFocusEditor).toBe(true);
 		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+		expect(body.settings.general.statusBarMode).toBe("detailed");
 		expect(body.settings.images.maxImageSizeMb).toBe(5);
 		expect(body.settings.images.titleDisplay).toBe("filename");
 		expect(body.settings.images).not.toHaveProperty("insertFormat");
@@ -1223,6 +1225,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 		legacySettings.markdown.editorTheme = "system";
 		legacySettings.markdown.htmlRendering = false;
 		legacySettings.general.featuredImagePlaceholder = true;
+		legacySettings.general.statusBarMode = "words";
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
 			json: async () => ({
@@ -1270,18 +1273,23 @@ describe("SettingsCenterRoot Transfer section", () => {
 		);
 		expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 		expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+		expect(body.settings.general.statusBarMode).toBe("compact");
 		fetch.mockRestore();
 	});
 
-	it.each([3, 4, 5])(
+	it.each([3, 4, 5, 6])(
 		"imports schema %s configurations while removing the retired editor theme",
 		async (schemaVersion) => {
 			const user = userEvent.setup();
-			const legacySettings = structuredClone(bootstrap().settings) as unknown as {
+			const legacySettings = structuredClone(
+				bootstrap().settings,
+			) as unknown as {
 				general: Record<string, unknown>;
 				markdown: Record<string, unknown>;
 			};
 			legacySettings.general.autoFocusEditor = true;
+			legacySettings.general.statusBarMode =
+				schemaVersion % 2 === 0 ? "words" : "words-reading-time";
 			legacySettings.markdown.editorTheme = "system";
 			legacySettings.markdown.htmlRendering = false;
 			legacySettings.general.featuredImagePlaceholder = true;
@@ -1331,6 +1339,9 @@ describe("SettingsCenterRoot Transfer section", () => {
 			expect(body.settings.general.autoFocusEditor).toBe(true);
 			expect(body.settings.general.applyEditorThemeToFrontend).toBe(true);
 			expect(body.settings.general.showPublishedCodeCopyButton).toBe(true);
+			expect(body.settings.general.statusBarMode).toBe(
+				schemaVersion % 2 === 0 ? "compact" : "detailed",
+			);
 			expect(body.settings.markdown).not.toHaveProperty("editorTheme");
 			expect(body.settings.markdown).not.toHaveProperty("htmlRendering");
 			expect(body.settings.general).not.toHaveProperty(
@@ -1340,14 +1351,20 @@ describe("SettingsCenterRoot Transfer section", () => {
 		},
 	);
 
-	it("rejects retired fields from schema 6 imports", async () => {
+	it("rejects a schema 7 payload with retired fields and status modes", async () => {
 		const user = userEvent.setup();
 		const settings = structuredClone(bootstrap().settings) as unknown as {
 			markdown: Record<string, unknown>;
 		};
 		settings.markdown.editorTheme = "system";
 		settings.markdown.htmlRendering = false;
-		(settings as unknown as { general: Record<string, unknown> }).general.featuredImagePlaceholder = true;
+		const general = (
+			settings as unknown as {
+				general: Record<string, unknown>;
+			}
+		).general;
+		general.featuredImagePlaceholder = true;
+		general.statusBarMode = "words-reading-time";
 		const fetch = vi.spyOn(window, "fetch");
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
@@ -1364,7 +1381,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				"transferChooseConfigurationFile",
 			),
 			new File(
-				[JSON.stringify({ schemaVersion: 6, settings })],
+				[JSON.stringify({ schemaVersion: 7, settings })],
 				"settings.json",
 				{ type: "application/json" },
 			),
@@ -1422,7 +1439,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(6);
+			expect(exported.schemaVersion).toBe(7);
 			expect(exported.settings.general.autoFocusEditor).toBe(false);
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");

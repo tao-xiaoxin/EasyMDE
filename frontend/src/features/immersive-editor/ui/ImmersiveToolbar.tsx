@@ -34,7 +34,6 @@ export function ImmersiveToolbar({
   settings,
   strings,
   styleControls,
-  syncScrollAllowed = true,
   toolbar,
   wechatCopied,
   onCopyWechat,
@@ -50,7 +49,6 @@ export function ImmersiveToolbar({
   settings: ImmersiveSettings;
   strings: ImmersiveStrings;
   styleControls: ReactNode;
-  syncScrollAllowed?: boolean;
   toolbar: ReactNode;
   wechatCopied: boolean;
   onCopyWechat: () => void;
@@ -125,7 +123,6 @@ export function ImmersiveToolbar({
           autoSaveAllowed={autoSaveAllowed}
           settings={settings}
           strings={strings}
-          syncScrollAllowed={syncScrollAllowed}
           onChange={onSettingsChange}
         />
       </div>

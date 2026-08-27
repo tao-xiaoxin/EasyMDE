@@ -536,6 +536,7 @@ Current routes:
 - `POST /easymde/v1/image-hosting/verification`
 - `POST /easymde/v1/image-hosting/secret`
 - `POST /easymde/v1/image-hosting/upload`
+- `POST /easymde/v1/image-hosting/import`
 - `GET /easymde/v1/theme-options`
 - `POST /easymde/v1/custom-css`
 - `POST /easymde/v1/custom-css/preview`
@@ -545,9 +546,9 @@ Current routes:
 - `GET /easymde/v1/settings`
 - `POST /easymde/v1/settings`
 
-Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
+Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. `/image-hosting/import` requires a positive `post_id`, `upload_files`, target-specific `edit_post`, the WordPress REST Nonce, and the image-upload action Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings and the pasted-image automatic-upload preference. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings, local pasted-image automatic-upload preference, and four-state remote-image paste preference. The current development defaults are a 30-second autosave interval, no automatic retry after a failed provider write, no Markdown image title, and `{year}/{month}/{md5}.{ext}` object paths. The new `remoteImageUploadMode` contract has no legacy parser, migration, compatibility alias, or schema-version branch. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
 
 Preview Markdown payloads are capped at 1 MiB. The Image Hosting setting
 `autoUploadPastedImages` defaults to enabled and controls image-file paste in
@@ -563,6 +564,31 @@ client-side destination switch and no fallback to `/media`. PHP validates the cu
 capability, action Nonce, real MIME, extension, byte size, configured format,
 and optional post authority before it reads server-only credentials or
 contacts a provider.
+
+`remoteImageUploadMode` controls only remote images discovered in the current
+paste and defaults to `both`. Its exact values are `both` (visual and source),
+`visual` (visual only), `source` (source only), and `off` (neither). A visual
+candidate is a single pasted HTML `<img>` whose `src` is an absolute HTTP or
+HTTPS URL. A source candidate is a pasted Markdown image whose destination is
+an absolute HTTP or HTTPS URL. Plain URLs, non-image Markdown links, relative
+and protocol-relative URLs, `data:` and `blob:` URLs, local files, existing
+document content, editor opening, and Preview rendering never trigger remote
+import. Local clipboard files remain governed only by
+`autoUploadPastedImages`.
+
+The browser sends an eligible URL to the protected same-origin
+`/image-hosting/import` route and never fetches its cross-origin bytes. The
+server accepts only canonical absolute HTTP/HTTPS URLs without credentials or
+fragments, resolves every hostname to public addresses, and uses
+`wp_safe_remote_get()` with unsafe URLs rejected, TLS verification enabled,
+redirects disabled, a ten-second timeout, streaming to a temporary file, and a
+response-size limit. It then verifies the real GIF, JPEG, PNG, or WebP MIME and
+the configured size and format limits before passing the temporary file to the
+existing Image Hosting runtime. Every exit removes the temporary file. Stable,
+redacted REST failures never expose the source URL, provider response, or
+credentials. The current paste is replaced only after a successful import;
+cancellation, stale completion, runtime replacement, and teardown cannot alter
+later editor content.
 
 The toolbar media command is a separate explicit entry point. It opens the
 WordPress-native media frame and inserts the selected attachment without
@@ -607,7 +633,9 @@ returns one authoritative URL built from the primary Viewing Image Domain and ge
 object key. The single persisted `uploadRetryCount` appears in the primary
 settings section, is a strict integer from `0` through `5`, defaults to `0`,
 and means the maximum number of extra attempts after a destination's first
-failed write. The same configured `N` applies independently to the primary and,
+failed write. Values from `1` through `5` explicitly opt in to automatic retry
+and its duplicate-request, overwrite, provider-charge, and residual-object
+risks. The same configured `N` applies independently to the primary and,
 when enabled, backup destination. Attempts for each destination run serially,
 reuse the exact prepared bytes, object key, and provider, and stop on the first success. The
 runtime proceeds to backup only after primary success. Exhausting the primary
@@ -647,7 +675,10 @@ protected, `no-store`, browser-memory-only contract above.
 `ObjectKeyBuilder` defines `{md5}` as the lowercase hexadecimal MD5 digest of
 the final bytes sent to the provider, after optional resize/compression. This
 mirrors PicFast PicGo's `hashlib.md5(file_data).hexdigest()` content-digest
-algorithm; EasyMDE derives the extension from the verified MIME type.
+algorithm; EasyMDE derives the extension from the verified MIME type. The
+default `fileNameRule` is `{year}/{month}/{md5}.{ext}`, and the default
+`titleDisplay` is `none`, so generated Markdown image syntax has no title
+unless the administrator explicitly changes that setting.
 
 ## Compatibility Facade
 

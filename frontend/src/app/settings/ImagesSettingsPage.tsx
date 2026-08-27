@@ -945,6 +945,12 @@ export function ImagesSettingsPage({
 		{ value: "filename", label: strings.useFileName },
 		{ value: "none", label: strings.leaveEmpty },
 	];
+	const remoteImageUploadModeOptions: ReadonlyArray<SelectOption> = [
+		{ value: "both", label: strings.remoteImageUploadBoth },
+		{ value: "visual", label: strings.remoteImageUploadVisual },
+		{ value: "source", label: strings.remoteImageUploadSource },
+		{ value: "off", label: strings.remoteImageUploadOff },
+	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
 			service: "cloudflare-r2",
@@ -953,7 +959,7 @@ export function ImagesSettingsPage({
 			domain: draft.domain,
 			accessKey: "",
 			secretKey: "",
-			fileNameRule: "{date}/{uuid}.{ext}",
+			fileNameRule: "{year}/{month}/{md5}.{ext}",
 			uploadRetryCount: 0,
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
@@ -964,6 +970,7 @@ export function ImagesSettingsPage({
 			backupSecretKey: "",
 			compressImages: true,
 			autoUploadPastedImages: true,
+			remoteImageUploadMode: "both",
 			maxImageSizeMb: 5,
 			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
 			titleDisplay: "none",
@@ -1414,6 +1421,29 @@ export function ImagesSettingsPage({
 										!settings.autoUploadPastedImages,
 									)
 								}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow
+							label={strings.remoteImageUploadMode}
+							description={strings.remoteImageUploadModeDescription}
+						>
+							<CompactSelect
+								label={strings.remoteImageUploadMode}
+								value={settings.remoteImageUploadMode}
+								options={remoteImageUploadModeOptions}
+								onChange={(value) => {
+									if (
+										value !== "both" &&
+										value !== "visual" &&
+										value !== "source" &&
+										value !== "off"
+									) {
+										throw new Error(
+											"settings-center-remote-image-upload-mode-invalid",
+										);
+									}
+									setValue("remoteImageUploadMode", value);
+								}}
 							/>
 						</ImageBehaviorRow>
 						<fieldset

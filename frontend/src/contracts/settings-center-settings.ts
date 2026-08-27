@@ -1,4 +1,5 @@
 export type SummaryMode = "auto-55" | "auto-100" | "manual";
+export type StatusBarMode = "detailed" | "compact" | "hidden";
 
 export type GeneralSettings = Readonly<{
 	// Retained only for persisted/imported settings compatibility; WordPress owns the UI locale.
@@ -7,7 +8,7 @@ export type GeneralSettings = Readonly<{
 	autoFocusEditor: boolean;
 	showLineNumbers: boolean;
 	syntaxHighlight: boolean;
-	statusBarMode: string;
+	statusBarMode: StatusBarMode;
 	autoSave: boolean;
 	autoSaveInterval: string;
 	syncScroll: boolean;
@@ -19,6 +20,7 @@ export type GeneralSettings = Readonly<{
 }>;
 
 export type ImageUploadFormat = "jpg" | "png" | "webp" | "gif";
+export type RemoteImageUploadMode = "both" | "visual" | "source" | "off";
 export type ImageHostProvider =
 	| "cloudflare-r2"
 	| "qiniu-kodo"
@@ -43,6 +45,7 @@ export type ImageSettings = Readonly<{
 	backupSecretKey: string;
 	compressImages: boolean;
 	autoUploadPastedImages: boolean;
+	remoteImageUploadMode: RemoteImageUploadMode;
 	maxImageSizeMb: number;
 	uploadFormats: Readonly<Record<ImageUploadFormat, boolean>>;
 	titleDisplay: "filename" | "none";

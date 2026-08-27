@@ -20,6 +20,10 @@ The preview uses the EasyMDE REST preview endpoint, which renders through the sa
 
 Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown`, marks the post with `_easymde_enabled = 1`, and writes rendered compatibility HTML to `post_content`. Opening an ordinary existing post without saving does not create EasyMDE metadata, rewrite content, or create a revision.
 
+The current development default enables autosave every 30 seconds. Autosave
+remains a WordPress-owned save path rather than a second browser persistence
+authority.
+
 ## Toolbar And Shortcuts
 
 The compact toolbar includes common Markdown actions for formatting, headings,
@@ -64,6 +68,26 @@ insert a Base64 replacement. Ordinary text or HTML paste, the toolbar media
 picker, and drag-and-drop upload are unaffected. There is no destination
 selector or WordPress media-library fallback for pasted or dropped files.
 
+**Remote image import** defaults to **Visual and source editors**. It applies
+only to remote images contained in the current paste: the visual editor accepts
+a pasted HTML `<img>` with an absolute HTTP or HTTPS `src`, and the source
+editor accepts a pasted Markdown image with an absolute HTTP or HTTPS
+destination. Choose **Visual editor only**, **Source editor only**, or **Do not
+import** to limit or disable those two paths. Plain URLs, ordinary Markdown
+links, relative or protocol-relative URLs, `data:` or `blob:` URLs, local
+files, existing document images, opening an editor, and rendering Preview do
+not trigger remote import. Local clipboard image files remain controlled only
+by **Automatically upload pasted images**.
+
+Eligible remote URLs are sent to a protected same-origin WordPress REST route;
+the browser does not download their bytes directly. WordPress checks Nonces,
+upload permission, and permission to edit the current post, rejects unsafe or
+private destinations and redirects, and bounds download time and size before
+verifying the actual allowed image type. EasyMDE inserts the configured image
+syntax only after the existing Image Hosting runtime succeeds. A failed,
+cancelled, or stale request leaves the later editor content unchanged and
+shows the existing redacted upload failure state.
+
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
 Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates
 the current form without saving it by uploading the EasyMDE icon as a synthetic
@@ -78,7 +102,9 @@ and asks the administrator to check the configuration before verifying again. An
 supported provider can be the primary or the optional
 backup. Primary and backup writes always use the same generated object key;
 there is no setting for changing that invariant. **Upload Retry Count** appears
-once in the primary settings, accepts `0` through `5`, and defaults to `0`.
+once in the primary settings, accepts `0` through `5`, and defaults to `0`, so
+protected uploads are not retried automatically unless an administrator
+explicitly opts in.
 That one value is the number of extra serial attempts after a destination's
 first failed write and applies to both primary and enabled backup writes. Every
 attempt uses the same image bytes, object key, and provider, and stops after the
@@ -129,7 +155,10 @@ reliable cross-provider rollback transaction.
 The `{md5}` filename variable is the lowercase hexadecimal MD5 digest of the
 final bytes sent to the provider, after any enabled image processing. This
 matches PicFast PicGo's content-MD5 algorithm; EasyMDE derives the extension
-from the verified MIME type rather than trusting the original filename.
+from the verified MIME type rather than trusting the original filename. The
+default file-name rule is `{year}/{month}/{md5}.{ext}`, and the default image
+title setting is **Leave Empty**, so inserted Markdown has no title unless the
+administrator changes it.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

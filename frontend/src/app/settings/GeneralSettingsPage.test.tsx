@@ -75,6 +75,33 @@ describe("GeneralSettingsPage", () => {
 		});
 	});
 
+	it("offers a five-second auto-save interval and reports the selected setting", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<GeneralSettingsPage
+				onChange={onChange}
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: "autoSaveInterval" }),
+		);
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["seconds5", "seconds30", "seconds60", "minutes2", "minutes5"]);
+		await user.click(screen.getByRole("option", { name: "seconds5" }));
+
+		expect(onChange).toHaveBeenLastCalledWith({
+			...SETTINGS_CENTER_TEST_SETTINGS.general,
+			autoSaveInterval: "5",
+		});
+	});
+
 	it("offers every summary sync method and reports the selected setting", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();

@@ -371,12 +371,11 @@ canonical General route is the sole Settings Center entry.
 The supported General runtime settings are passed from `AdminAssets` through
 the validated Editor Root bootstrap and consumed by the Editor Root's
 document source, workspace layout, Preview feature overrides, focus behavior,
-and local-draft session. This keeps WordPress settings authoritative while
-leaving browser-session immersive preferences as a separate presentation
-override. When the server temporarily disables immersive auto-save or
-synchronized scrolling, a loaded browser preference is preserved for a later
-re-enable rather than being rewritten as false by an unrelated immersive
-setting change. The bootstrap marks both `post-new.php` and nonzero
+and local-draft session. The Settings Center auto-save switch and interval are
+the only local-draft configuration for ordinary and immersive editing;
+browser-session immersive preferences own presentation only. Retired
+immersive auto-save values are ignored without a read-time write and disappear
+on the next legitimate immersive preference change. The bootstrap marks both `post-new.php` and nonzero
 `auto-draft` contexts as new documents so the auto-focus preference cannot
 focus an existing post.
 

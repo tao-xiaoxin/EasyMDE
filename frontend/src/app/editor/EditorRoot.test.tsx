@@ -208,7 +208,6 @@ function fixture(): EditorRootProps &
     },
     immersiveStrings: {
       autoSave: '自动保存',
-      autoSaveDescription: '自动保存本地草稿',
       autoSaveEnabled: '自动保存已开启',
       articleOutline: '文章大纲',
       cancel: '取消',
@@ -1097,7 +1096,17 @@ describe('EditorRoot', () => {
   });
 
   it('synchronizes continuous visual typing immediately and stores the latest local draft', async () => {
-    const props = fixture();
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      settings: {
+        general: {
+          ...baseProps.settings.general,
+          autoSaveInterval: '5'
+        },
+        markdown: baseProps.settings.markdown
+      }
+    };
     vi.mocked(props.previewPort.render).mockResolvedValue({
       features: {},
       html: '<p>selected</p>' as SafePreviewHtml
@@ -1131,7 +1140,7 @@ describe('EditorRoot', () => {
       expect(props.submissionField.value).toBe('Continuous value 6');
       expect(canonicalInput).toHaveBeenCalledTimes(7);
 
-      act(() => vi.advanceTimersByTime(499));
+      act(() => vi.advanceTimersByTime(4999));
       expect(props.localDraftStorage.write).not.toHaveBeenCalled();
       act(() => vi.advanceTimersByTime(1));
       expect(props.localDraftStorage.write).toHaveBeenCalledOnce();
@@ -3821,11 +3830,12 @@ describe('EditorRoot', () => {
     ).not.toBeNull();
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
     expect(view.getByRole('dialog', { name: '编辑器设置' })).not.toBeNull();
-    for (const name of ['文章大纲', '分屏预览', '自动保存']) {
+    for (const name of ['文章大纲', '分屏预览']) {
       expect(
         view.getByRole('checkbox', { name }).getAttribute('aria-checked')
       ).toBe('true');
     }
+    expect(view.queryByRole('checkbox', { name: '自动保存' })).toBeNull();
     expect(view.queryByText(/AI/u)).toBeNull();
   });
 
@@ -4200,7 +4210,7 @@ describe('EditorRoot', () => {
     fireEvent.mouseUp(document);
   });
 
-  it('applies immersive settings to the real outline, draft and scroll owners', async () => {
+  it('applies immersive presentation settings to the real outline and scroll owners', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
@@ -4219,14 +4229,12 @@ describe('EditorRoot', () => {
         .querySelector('.easymde-editor')
         ?.classList.contains('is-immersive-split')
     ).toBe(true);
-    fireEvent.click(view.getByRole('checkbox', { name: '自动保存' }));
-
     expect(view.queryByRole('complementary', { name: '文章大纲' })).toBeNull();
     expect(view.container.querySelector('.easymde-immersive-stats')).not.toBeNull();
-    expect(view.queryByText('自动保存已开启')).toBeNull();
+    expect(view.getByText('自动保存已开启')).not.toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(4);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(3);
   });
 
   it.each([
@@ -4269,11 +4277,10 @@ describe('EditorRoot', () => {
     }
   );
 
-  it('keeps disabled server settings authoritative over immersive preferences', async () => {
+  it('keeps the disabled global auto-save setting authoritative in immersive mode', async () => {
     const baseProps = fixture();
     vi.mocked(baseProps.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
-        autoSave: true,
         outline: true,
         splitPreview: true
       },
@@ -4295,26 +4302,20 @@ describe('EditorRoot', () => {
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
-    const autoSave = view.getByRole('checkbox', { name: '自动保存' });
-    expect(autoSave.getAttribute('aria-checked')).toBe('false');
-    expect((autoSave as HTMLButtonElement).disabled).toBe(true);
+    expect(view.queryByRole('checkbox', { name: '自动保存' })).toBeNull();
+    expect(view.queryByText('自动保存已开启')).toBeNull();
     expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(props.scrollSyncPort.prepareBinding).not.toHaveBeenCalled();
     expect(baseProps.immersivePreferencesPort.write).not.toHaveBeenCalled();
 
     fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledWith(
-      expect.objectContaining({
-        autoSave: true,
-        outline: false
-      })
+      { outline: false, splitPreview: true }
     );
-
-    fireEvent.click(autoSave);
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
   });
 
-  it('applies restored immersive preferences to drafts without overriding global scroll sync', async () => {
+  it('keeps global auto save authoritative when retired immersive preferences disable it', async () => {
     const props = fixture();
     vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
@@ -4323,16 +4324,12 @@ describe('EditorRoot', () => {
         splitPreview: true
       },
       status: 'loaded'
-    });
+    } as ReturnType<typeof props.immersivePreferencesPort.read>);
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
-    expect(
-      view
-        .getByRole('checkbox', { name: '自动保存' })
-        .getAttribute('aria-checked')
-    ).toBe('false');
+    expect(view.getByText('自动保存已开启')).not.toBeNull();
     expect(view.queryByRole('checkbox', { name: '同步滚动' })).toBeNull();
     expect(
       view.container
@@ -4345,7 +4342,7 @@ describe('EditorRoot', () => {
     await act(
       () => new Promise((resolve) => globalThis.setTimeout(resolve, 600))
     );
-    expect(props.localDraftStorage.write).not.toHaveBeenCalled();
+    expect(props.localDraftStorage.write).toHaveBeenCalled();
   });
 
   it('reads the latest immersive preferences again on every entry', async () => {
@@ -4372,7 +4369,6 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
 
     savedPreferences = {
-      autoSave: false,
       outline: false,
       splitPreview: false
     };

@@ -115,7 +115,8 @@ async function readImportedSettings(
 		payload.schemaVersion !== 5 &&
 		payload.schemaVersion !== 6 &&
 		payload.schemaVersion !== 7 &&
-		payload.schemaVersion !== 8
+		payload.schemaVersion !== 8 &&
+		payload.schemaVersion !== 9
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
@@ -417,7 +418,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 8, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 9, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

@@ -373,7 +373,6 @@ final class AdminAssets {
 			'strings'            => array(
 				'immersive'          => array(
 					'autoSave'                    => __( 'Auto save', 'easymde' ),
-					'autoSaveDescription'         => __( 'Automatically save a local draft', 'easymde' ),
 					'autoSaveEnabled'             => __( 'Auto save is enabled', 'easymde' ),
 					'articleOutline'              => __( 'Article outline', 'easymde' ),
 					'cancel'                      => __( 'Cancel', 'easymde' ),

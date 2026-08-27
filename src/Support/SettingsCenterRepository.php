@@ -734,6 +734,7 @@ final class SettingsCenterRepository {
 					'hidden'             => 'hidden',
 				),
 				'autoSaveInterval'  => array(
+					'5'   => '5',
 					'30'  => '30',
 					'60'  => '60',
 					'120' => '120',

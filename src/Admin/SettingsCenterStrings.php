@@ -70,6 +70,7 @@ final class SettingsCenterStrings {
 			'detailedStatusBar'                            => __( 'Show Word Count and Reading Time', 'easymde' ),
 			'compactStatusBar'                             => __( 'Show Word Count Only', 'easymde' ),
 			'hiddenStatusBar'                              => __( 'Hide Status Bar', 'easymde' ),
+			'seconds5'                                     => __( '5 seconds', 'easymde' ),
 			'seconds30'                                    => __( '30 seconds', 'easymde' ),
 			'seconds60'                                    => __( '60 seconds', 'easymde' ),
 			'minutes2'                                     => __( '2 minutes', 'easymde' ),

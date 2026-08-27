@@ -91,7 +91,6 @@ export type EditorRootBootstrap = Readonly<{
   settings: EditorRootSettingsBootstrap;
   immersiveStrings: Readonly<{
     autoSave: string;
-    autoSaveDescription: string;
     autoSaveEnabled: string;
     articleOutline: string;
     cancel: string;
@@ -441,7 +440,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'showPublishedCodeCopyButton'
     ] as const;
     const allowedValues: Readonly<Record<string, ReadonlySet<string>>> = {
-      autoSaveInterval: new Set(['30', '60', '120', '300']),
+      autoSaveInterval: new Set(['5', '30', '60', '120', '300']),
       editingMode: new Set(['live-preview', 'source', 'preview']),
       interfaceLanguage: new Set(['zh-CN', 'zh-TW', 'en-US']),
       publishVisibility: new Set(['public', 'private', 'password']),
@@ -537,7 +536,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     immersiveStrings: Object.fromEntries(
       [
         'autoSave',
-        'autoSaveDescription',
         'autoSaveEnabled',
         'articleOutline',
         'cancel',

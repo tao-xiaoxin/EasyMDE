@@ -1293,6 +1293,58 @@ describe("SettingsCenterRoot Transfer section", () => {
 		fetch.mockRestore();
 	});
 
+	it("imports the schema 9 five-second auto-save interval", async () => {
+		const user = userEvent.setup();
+		const currentSettings = bootstrap().settings;
+		const settings = {
+			...currentSettings,
+			general: {
+				...currentSettings.general,
+				autoSaveInterval: "5",
+			},
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: { ...settings, revision: settings.revision + 1 },
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const transferSection = container.querySelector(
+			'[data-settings-section="transfer"]',
+		);
+		if (!(transferSection instanceof HTMLElement))
+			throw new Error("settings-center-transfer-section-missing");
+		const transfer = within(transferSection);
+
+		await user.upload(
+			transfer.getByLabelText<HTMLInputElement>(
+				"transferChooseConfigurationFile",
+			),
+			new File(
+				[JSON.stringify({ schemaVersion: 9, settings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
+		);
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.general.autoSaveInterval).toBe("5");
+		fetch.mockRestore();
+	});
+
 	it("exports the current draft with secrets redacted", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
@@ -1337,7 +1389,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(8);
+			expect(exported.schemaVersion).toBe(9);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");

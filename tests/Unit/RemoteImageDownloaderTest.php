@@ -186,7 +186,7 @@ final class RemoteImageDownloaderTest extends WP_UnitTestCase {
 		$this->assertSame( '8.8.8.8', $client->requests[0][4] );
 	}
 
-	public function test_download_rejects_unsafe_or_credentialed_urls_before_resolution() {
+	public function test_download_rejects_unsupported_or_credentialed_urls_before_resolution() {
 		$client        = new RemoteImageDownloaderFakePinnedClient();
 		$resolve_calls = 0;
 		$download      = new RemoteImageDownloader(
@@ -200,8 +200,6 @@ final class RemoteImageDownloaderTest extends WP_UnitTestCase {
 		$urls          = array(
 			'file:///etc/passwd',
 			'https://user:password@example.test/image.png',
-			'http://127.0.0.1/image.png',
-			'http://169.254.169.254/latest/meta-data',
 		);
 
 		foreach ( $urls as $url ) {
@@ -209,8 +207,30 @@ final class RemoteImageDownloaderTest extends WP_UnitTestCase {
 			$this->assertWPError( $result );
 			$this->assertSame( 'easymde_image_hosting_import_invalid_url', $result->get_error_code() );
 		}
-		$this->assertSame( 1, $resolve_calls );
+		$this->assertSame( 0, $resolve_calls );
 		$this->assertCount( 0, $client->requests );
+	}
+
+	public function test_download_rejects_direct_private_addresses_without_requesting() {
+		$urls = array(
+			'http://127.0.0.1/image.png',
+			'http://169.254.169.254/latest/meta-data',
+		);
+
+		foreach ( $urls as $url ) {
+			$client   = new RemoteImageDownloaderFakePinnedClient();
+			$download = new RemoteImageDownloader(
+				$client,
+				static function ( $host ) {
+					return array( $host );
+				}
+			);
+			$result   = $download->download( $url, 1024 );
+
+			$this->assertWPError( $result );
+			$this->assertSame( 'easymde_image_hosting_import_invalid_url', $result->get_error_code() );
+			$this->assertCount( 0, $client->requests );
+		}
 	}
 
 	public function test_download_rejects_redirects_empty_oversized_and_non_image_responses_and_cleans_every_temp_file() {

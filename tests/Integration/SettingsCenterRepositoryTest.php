@@ -246,7 +246,7 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 	{
 		$settings = (new SettingsCenterRepository(new Options(), new ToolbarRegistry()))->get_settings();
 
-		foreach (array('cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder') as $removed) {
+		foreach (array('autoFocusEditor', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['general']);
 		}
 		$this->assertArrayNotHasKey('accountId', $settings['images']);
@@ -618,6 +618,33 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame(0, $settings['revision']);
         $this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
     }
+
+	public function test_retired_editor_autofocus_is_zero_write_on_read_and_removed_on_next_save()
+	{
+		$legacy = array(
+			'version' => '0.1.8',
+			'settings_center' => array(
+				'general' => array(
+					'autoFocusEditor' => false,
+				),
+			),
+		);
+		update_option(Options::EDITOR_SETTINGS, $legacy, false);
+
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings(true);
+
+		$this->assertArrayNotHasKey('autoFocusEditor', $settings['general']);
+		$this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
+
+		$settings['general']['autoSave'] = false;
+		$saved = $repository->update_settings($settings);
+
+		$this->assertIsArray($saved);
+		$this->assertArrayNotHasKey('autoFocusEditor', $saved['general']);
+		$stored = get_option(Options::EDITOR_SETTINGS);
+		$this->assertArrayNotHasKey('autoFocusEditor', $stored['settings_center']['general']);
+	}
 
 	public function test_markdown_settings_contract_omits_removed_presentation_and_capability_fields()
 	{

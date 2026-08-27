@@ -32,6 +32,21 @@ describe("GeneralSettingsPage", () => {
 		).toBeNull();
 	});
 
+	it("does not expose editor auto-focus because new articles focus by default", () => {
+		render(
+			<GeneralSettingsPage
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("switch", { name: "autoFocusEditor" }),
+		).toBeNull();
+	});
+
 	it("shows the published code copy button enabled by default and reports changes", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();

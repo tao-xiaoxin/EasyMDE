@@ -432,7 +432,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       'summaryMode'
     ] as const;
     const booleanFields = [
-      'autoFocusEditor',
       'showLineNumbers',
       'syntaxHighlight',
       'autoSave',
@@ -450,6 +449,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
       summaryMode: new Set(['auto-55', 'auto-100', 'manual'])
     };
     const removedGeneralFields = [
+      'autoFocusEditor',
       'cleanPastedContent',
       'smartListRecognition',
       'defaultCategory',
@@ -471,7 +471,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     }
     settings = {
       general: {
-        autoFocusEditor: general.autoFocusEditor as boolean,
         applyEditorThemeToFrontend:
           general.applyEditorThemeToFrontend as boolean,
         showPublishedCodeCopyButton:

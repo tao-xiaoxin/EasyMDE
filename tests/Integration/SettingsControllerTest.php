@@ -39,7 +39,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( '', $data['settings']['images']['accessKey'] );
         $this->assertSame( '', $data['settings']['images']['secretKey'] );
-		foreach ( array( 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder' ) as $removed ) {
+		foreach ( array( 'autoFocusEditor', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory', 'featuredImagePlaceholder' ) as $removed ) {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['general'] );
 		}
 		$this->assertArrayNotHasKey( 'accountId', $data['settings']['images'] );
@@ -85,7 +85,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 	}
 
 	public function test_post_rejects_removed_general_fields_as_unknown_contract_keys() {
-		foreach ( array( 'featuredImagePlaceholder', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory' ) as $removed_key ) {
+		foreach ( array( 'autoFocusEditor', 'featuredImagePlaceholder', 'cleanPastedContent', 'smartListRecognition', 'defaultCategory' ) as $removed_key ) {
 			$settings = $this->current_settings();
 			$settings['general'][ $removed_key ] = false;
 

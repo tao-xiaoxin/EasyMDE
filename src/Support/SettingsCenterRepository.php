@@ -436,7 +436,6 @@ final class SettingsCenterRepository {
 			'general'   => array(
 				'interfaceLanguage'           => 'zh-CN',
 				'editingMode'                 => 'live-preview',
-				'autoFocusEditor'             => true,
 				'showLineNumbers'             => true,
 				'syntaxHighlight'             => true,
 				'statusBarMode'               => 'detailed',

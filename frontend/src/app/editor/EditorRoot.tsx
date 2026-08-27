@@ -1626,14 +1626,12 @@ export function EditorRoot(props: EditorRootProps) {
   useLayoutEffect(() => {
     if (
       !documentSession
-      || !props.settings.general.autoFocusEditor
       || !props.isNewPost
       || 'preview' === props.settings.general.editingMode
     ) return;
     documentSession.document.focus();
   }, [
     documentSession,
-    props.settings.general.autoFocusEditor,
     props.settings.general.editingMode,
     props.isNewPost
   ]);

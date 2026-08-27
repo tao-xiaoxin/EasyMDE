@@ -94,8 +94,7 @@ function validBootstrap() {
     },
     settings: {
       general: {
-        autoFocusEditor: true,
-        applyEditorThemeToFrontend: true,
+			applyEditorThemeToFrontend: true,
         showPublishedCodeCopyButton: true,
         autoSave: true,
         autoSaveInterval: '60',
@@ -312,6 +311,7 @@ function validBootstrap() {
 
 describe('parseEditorRootBootstrap', () => {
   it.each([
+    'autoFocusEditor',
     'cleanPastedContent',
     'smartListRecognition',
     'defaultCategory',

@@ -73,6 +73,7 @@ function bootstrap(): SettingsCenterBootstrap {
 		},
 		settings: SETTINGS_CENTER_TEST_SETTINGS,
 		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
+		reservedShortcuts: [],
 		strings: Object.fromEntries(
 			SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key]),
 		) as SettingsCenterBootstrap["strings"],

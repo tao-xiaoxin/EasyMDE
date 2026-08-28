@@ -43,10 +43,7 @@ import {
 	SettingsSelect,
 	SettingsToggle,
 } from "./SettingsControls";
-import {
-	ImageLibraryIcon,
-	SlidersIcon,
-} from "./settings-center-icons";
+import { ImageLibraryIcon, SlidersIcon } from "./settings-center-icons";
 import { useDialogFocusTrap } from "./settings-center-utils";
 
 type ImageSettingsDraft = ImageSettings;
@@ -949,6 +946,12 @@ export function ImagesSettingsPage({
 		{ value: "filename", label: strings.useFileName },
 		{ value: "none", label: strings.leaveEmpty },
 	];
+	const remoteImageUploadModeOptions: ReadonlyArray<SelectOption> = [
+		{ value: "both", label: strings.remoteImageUploadBoth },
+		{ value: "visual", label: strings.remoteImageUploadVisual },
+		{ value: "source", label: strings.remoteImageUploadSource },
+		{ value: "off", label: strings.remoteImageUploadOff },
+	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
 			service: "cloudflare-r2",
@@ -957,7 +960,7 @@ export function ImagesSettingsPage({
 			domain: draft.domain,
 			accessKey: "",
 			secretKey: "",
-			fileNameRule: "{date}/{uuid}.{ext}",
+			fileNameRule: "{year}/{month}/{md5}.{ext}",
 			uploadRetryCount: 0,
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
@@ -967,6 +970,8 @@ export function ImagesSettingsPage({
 			backupAccessKey: "",
 			backupSecretKey: "",
 			compressImages: true,
+			autoUploadPastedImages: true,
+			remoteImageUploadMode: "both",
 			maxImageSizeMb: 5,
 			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
 			titleDisplay: "none",
@@ -1398,6 +1403,44 @@ export function ImagesSettingsPage({
 							<SlidersIcon size={25} />
 							{strings.uploadBehavior}
 						</h2>
+						<ImageBehaviorRow
+							label={strings.autoUploadPastedImages}
+							description={strings.autoUploadPastedImagesDescription}
+						>
+							<SettingsToggle
+								label={strings.autoUploadPastedImages}
+								checked={settings.autoUploadPastedImages}
+								onChange={() =>
+									setValue(
+										"autoUploadPastedImages",
+										!settings.autoUploadPastedImages,
+									)
+								}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow
+							label={strings.remoteImageUploadMode}
+							description={strings.remoteImageUploadModeDescription}
+						>
+							<CompactSelect
+								label={strings.remoteImageUploadMode}
+								value={settings.remoteImageUploadMode}
+								options={remoteImageUploadModeOptions}
+								onChange={(value) => {
+									if (
+										value !== "both" &&
+										value !== "visual" &&
+										value !== "source" &&
+										value !== "off"
+									) {
+										throw new Error(
+											"settings-center-remote-image-upload-mode-invalid",
+										);
+									}
+									setValue("remoteImageUploadMode", value);
+								}}
+							/>
+						</ImageBehaviorRow>
 						<fieldset
 							disabled={!runtimeCapabilities?.compressImages}
 							title={
@@ -1427,7 +1470,9 @@ export function ImagesSettingsPage({
 								options={titleDisplayOptions}
 								onChange={(value) => {
 									if (value !== "filename" && value !== "none") {
-										throw new Error("settings-center-image-title-display-invalid");
+										throw new Error(
+											"settings-center-image-title-display-invalid",
+										);
 									}
 									setValue("titleDisplay", value);
 								}}
@@ -1446,7 +1491,8 @@ export function ImagesSettingsPage({
 									value={settings.maxImageSizeMb}
 									onChange={(value) => setValue("maxImageSizeMb", value)}
 								/>
-								{settings.maxImageSizeMb * 1024 * 1024 > uploadLimits.systemMaxBytes ? (
+								{settings.maxImageSizeMb * 1024 * 1024 >
+								uploadLimits.systemMaxBytes ? (
 									<small
 										className="easymde-settings-center__image-size-warning"
 										role="alert"
@@ -1489,7 +1535,6 @@ export function ImagesSettingsPage({
 							</div>
 						</SettingsRow>
 					</section>
-
 				</div>
 			</div>
 			{feedbackPortal}

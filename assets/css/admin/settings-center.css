@@ -1107,14 +1107,12 @@
 	transform: translateX(20px);
 }
 
-.easymde-settings-center__shortcut-card,
-.easymde-settings-center__shortcut-behavior {
+.easymde-settings-center__shortcut-card {
 	padding: 24px 36px 22px;
 	background: #fefefe;
 }
 
-.easymde-settings-center__shortcut-card + .easymde-settings-center__shortcut-card,
-.easymde-settings-center__shortcut-behavior {
+.easymde-settings-center__shortcut-card + .easymde-settings-center__shortcut-card {
 	border-top: 1px solid #e5e9ef;
 }
 
@@ -1126,8 +1124,7 @@
 	margin-bottom: 12px;
 }
 
-.easymde-settings-center__shortcut-heading h2,
-.easymde-settings-center__shortcut-behavior > h2 {
+.easymde-settings-center__shortcut-heading h2 {
 	display: flex;
 	align-items: center;
 	gap: 13px;
@@ -1137,8 +1134,7 @@
 	line-height: 1.5;
 }
 
-.easymde-settings-center__shortcut-heading h2 > svg,
-.easymde-settings-center__shortcut-behavior > h2 > svg {
+.easymde-settings-center__shortcut-heading h2 > svg {
 	color: #0868ff;
 }
 
@@ -1173,7 +1169,8 @@
 }
 
 .easymde-settings-center__shortcut-heading > button:focus-visible,
-.easymde-settings-center__shortcut-row input:focus-visible {
+.easymde-settings-center__shortcut-recorder:focus-visible,
+.easymde-settings-center__shortcut-clear:focus-visible {
 	outline: none;
 }
 
@@ -1201,7 +1198,9 @@
 }
 
 .easymde-settings-center__shortcut-row {
-	height: 55px;
+	min-height: 55px;
+	align-items: start;
+	padding: 9px 0;
 	border-bottom: 1px solid #e8ecf2;
 }
 
@@ -1210,49 +1209,141 @@
 }
 
 .easymde-settings-center__shortcut-row > span {
+	padding-top: 8px;
 	color: #111d38;
 	font-size: 16px;
 	font-weight: 500;
 }
 
-.easymde-settings-center__shortcut-row input {
-	appearance: auto;
-	width: auto;
+.easymde-settings-center__shortcut-cell {
+	position: relative;
+	min-width: 0;
+}
+
+.easymde-settings-center__shortcut-cell:first-of-type {
+	margin-right: 17px;
+}
+
+.easymde-settings-center__shortcut-cell:last-child {
+	margin-left: 17px;
+}
+
+.easymde-settings-center__shortcut-recorder {
+	display: flex;
+	width: 100%;
 	min-width: 0;
 	height: 34px;
 	min-height: 0;
-	padding: 0 13px;
+	align-items: center;
+	padding: 0 38px 0 10px;
 	border: 1px solid #cfd8e7;
 	border-radius: 6px;
 	outline: 0;
 	box-shadow: none;
 	background: #fff;
 	color: #13203d;
-	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-	font-size: 15.5px;
+	cursor: pointer;
+	font-size: 13px;
 	font-weight: 500;
+	text-align: left;
 }
 
-.easymde-settings-center__shortcut-row input:first-of-type {
-	margin-right: 17px;
-}
-
-.easymde-settings-center__shortcut-row input:last-child {
-	margin-left: 17px;
-}
-
-.easymde-settings-center__shortcut-row input:focus {
+.easymde-settings-center__shortcut-recorder[data-recording="true"] {
 	border-color: #2e77ff;
+	box-shadow: 0 0 0 2px #dce9ff;
+	color: #0867f4;
+}
+
+.easymde-settings-center__shortcut-recorder:focus-visible,
+.easymde-settings-center__shortcut-clear:focus-visible {
 	box-shadow: 0 0 0 2px #dce9ff;
 }
 
-.easymde-settings-center__shortcut-row input[aria-invalid="true"] {
+.easymde-settings-center__shortcut-recorder[aria-invalid="true"] {
 	border-color: #dc2626;
 	box-shadow: 0 0 0 2px #fee2e2;
 }
 
-.easymde-settings-center__shortcut-behavior > h2 {
-	margin-bottom: 20px;
+.easymde-settings-center__shortcut-keys {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 4px;
+}
+
+.easymde-settings-center__shortcut-keys kbd {
+	min-width: 22px;
+	padding: 2px 5px;
+	border: 1px solid #d8dfeb;
+	border-bottom-color: #bac5d6;
+	border-radius: 4px;
+	background: #f8fafc;
+	box-shadow: 0 1px 0 #d8dfeb;
+	color: #13203d;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	font-size: 12px;
+	line-height: 1.35;
+	text-align: center;
+}
+
+.easymde-settings-center__shortcut-clear {
+	position: absolute;
+	top: 5px;
+	right: 7px;
+	display: grid;
+	width: 24px;
+	height: 24px;
+	min-height: 0;
+	place-items: center;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: #71809f;
+	cursor: pointer;
+}
+
+.easymde-settings-center__shortcut-clear:hover:not(:disabled) {
+	background: #eef4ff;
+	color: #0867f4;
+}
+
+.easymde-settings-center__shortcut-clear:disabled {
+	opacity: 0;
+	cursor: default;
+}
+
+.easymde-settings-center__shortcut-cell > small {
+	display: block;
+	margin-top: 5px;
+	color: #b91c1c;
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.easymde-settings-center__shortcut-conflict-dialog ul {
+	display: grid;
+	gap: 10px;
+	margin: 0;
+}
+
+.easymde-settings-center__shortcut-conflict-dialog li {
+	display: grid;
+	grid-template-columns: 110px minmax(130px, auto) minmax(0, 1fr);
+	align-items: center;
+	gap: 12px;
+	margin: 0;
+	padding: 11px 12px;
+	border: 1px solid #f1caca;
+	border-radius: 6px;
+	background: #fff8f8;
+	color: #44516a;
+}
+
+.easymde-settings-center__shortcut-conflict-dialog li > strong {
+	min-width: 0;
+	color: #7f1d1d;
+	overflow-wrap: anywhere;
 }
 
 .easymde-settings-center__images-page {
@@ -3142,12 +3233,6 @@
 	font-size: 14px;
 }
 
-.easymde-settings-center__shortcut-description {
-	margin: -8px 0 22px;
-	color: #71809f;
-	font-size: 14px;
-}
-
 .easymde-settings-center__notices {
 	position: fixed;
 	top: 14px;
@@ -3627,7 +3712,6 @@
 	}
 
 	.easymde-settings-center__shortcut-card,
-	.easymde-settings-center__shortcut-behavior,
 	.easymde-settings-center__image-group,
 	.easymde-settings-center__transfer-group,
 	.easymde-settings-center__transfer-management {
@@ -3723,6 +3807,11 @@
 }
 
 @media (max-width: 480px) {
+	.easymde-settings-center__shortcut-conflict-dialog li {
+		grid-template-columns: minmax(0, 1fr);
+		gap: 6px;
+	}
+
 	.easymde-settings-center__sidebar {
 		grid-template-columns: minmax(0, 1fr) 140px;
 		padding: 0 12px;
@@ -3765,7 +3854,6 @@
 
 	.easymde-settings-center__section-body,
 	.easymde-settings-center__shortcut-card,
-	.easymde-settings-center__shortcut-behavior,
 	.easymde-settings-center__image-group,
 	.easymde-settings-center__transfer-group,
 	.easymde-settings-center__transfer-management {

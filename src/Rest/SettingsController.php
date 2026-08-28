@@ -127,9 +127,9 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
-			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
+			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
 			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'pasteAsMarkdown' ),
-			'shortcuts' => array( 'values', 'showHints', 'detectConflicts', 'showSuggestions' ),
+			'shortcuts' => array( 'values' ),
 		);
 
 		if ( ! $this->has_exact_keys( $value, $shapes['settings'] ) || ! is_int( $value['revision'] ) || $value['revision'] < 0 ) {
@@ -152,20 +152,21 @@ final class SettingsController {
 				'summaryMode'       => 16,
 			),
 			'images'   => array(
-				'service'         => 32,
-				'endpoint'        => 255,
-				'bucket'          => 128,
-				'domain'          => 255,
-				'accessKey'       => 255,
-				'secretKey'       => 255,
-				'fileNameRule'    => 160,
-				'backupService'   => 32,
-				'backupEndpoint'  => 255,
-				'backupBucket'    => 128,
-				'backupDomain'    => 255,
-				'backupAccessKey' => 255,
-				'backupSecretKey' => 255,
-				'titleDisplay'    => 16,
+				'service'               => 32,
+				'endpoint'              => 255,
+				'bucket'                => 128,
+				'domain'                => 255,
+				'accessKey'             => 255,
+				'secretKey'             => 255,
+				'fileNameRule'          => 160,
+				'backupService'         => 32,
+				'backupEndpoint'        => 255,
+				'backupBucket'          => 128,
+				'backupDomain'          => 255,
+				'backupAccessKey'       => 255,
+				'backupSecretKey'       => 255,
+				'remoteImageUploadMode' => 16,
+				'titleDisplay'          => 16,
 			),
 			'markdown' => array(
 				'tableAlignment'  => 16,
@@ -173,10 +174,9 @@ final class SettingsController {
 			),
 		);
 		$boolean_fields = array(
-			'general'   => array( 'showLineNumbers', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
-			'images'    => array( 'backupEnabled', 'compressImages' ),
-			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'pasteAsMarkdown' ),
-			'shortcuts' => array( 'showHints', 'detectConflicts', 'showSuggestions' ),
+			'general'  => array( 'showLineNumbers', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
+			'images'   => array( 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ),
+			'markdown' => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'pasteAsMarkdown' ),
 		);
 
 		foreach ( $string_fields as $section => $fields ) {
@@ -218,7 +218,7 @@ final class SettingsController {
 			return $this->invalid_payload_error();
 		}
 
-		$shortcut_ids = array( 'save', 'bold', 'italic', 'link', 'image', 'heading-one', 'heading-two', 'quote', 'unordered-list', 'ordered-list' );
+		$shortcut_ids = array( 'save', 'bold', 'italic', 'strikethrough', 'paragraph', 'heading-one', 'heading-two', 'heading-three', 'heading-four', 'heading-five', 'heading-six', 'quote', 'unordered-list', 'ordered-list', 'inline-code', 'code-fence', 'math-block', 'link', 'image' );
 		if ( ! is_array( $value['shortcuts']['values'] ) || ! $this->has_exact_keys( $value['shortcuts']['values'], $shortcut_ids ) ) {
 			return $this->invalid_payload_error();
 		}
@@ -243,9 +243,10 @@ final class SettingsController {
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),
 			'images'   => array(
-				'service'       => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
-				'backupService' => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
-				'titleDisplay'  => array( 'none', 'filename' ),
+				'service'               => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'backupService'         => array( 'cloudflare-r2', 'qiniu-kodo', 'aliyun-oss', 'tencent-cos' ),
+				'remoteImageUploadMode' => array( 'both', 'visual', 'source', 'off' ),
+				'titleDisplay'          => array( 'none', 'filename' ),
 			),
 			'markdown' => array(
 				'tableAlignment'  => array( 'auto', 'left', 'center' ),

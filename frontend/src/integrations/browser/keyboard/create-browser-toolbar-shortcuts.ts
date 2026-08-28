@@ -6,6 +6,10 @@ import type {
   PreparedToolbarShortcutBinding,
   ToolbarShortcutsPort
 } from '../../../contracts/ports/toolbar-shortcuts-port';
+import {
+  canonicalizeKeyboardShortcut,
+  keyboardShortcutFromEvent
+} from '../../../shared/keyboard/keyboard-shortcut';
 
 type ToolbarShortcutPlatform = 'mac' | 'win';
 
@@ -20,57 +24,13 @@ type CreateBrowserToolbarShortcutsOptions = Readonly<{
   source: HTMLElement;
 }>;
 
-function normalizeKey(key: string): string {
-  const namedKeys: Readonly<Record<string, string>> = {
-    ' ': 'Space',
-    ArrowDown: 'Down',
-    ArrowLeft: 'Left',
-    ArrowRight: 'Right',
-    ArrowUp: 'Up',
-    Backspace: 'Backspace',
-    Delete: 'Delete',
-    End: 'End',
-    Enter: 'Enter',
-    Esc: 'Escape',
-    Escape: 'Escape',
-    Home: 'Home',
-    PageDown: 'PageDown',
-    PageUp: 'PageUp',
-    Tab: 'Tab'
-  };
-  if (namedKeys[key]) return namedKeys[key];
-  if (['Shift', 'Alt', 'Control', 'Meta'].includes(key)) return '';
-  if (/^F([1-9]|1[0-2])$/.test(key)) return key;
-  if (1 !== key.length) return '';
-  if (/[a-z]/i.test(key)) return key.toUpperCase();
-  return '0123456789[]`\\/.,-='.includes(key) ? key : '';
-}
-
-function normalizeShortcut(event: KeyboardEvent, platform: ToolbarShortcutPlatform): string {
-  const key = normalizeKey(event.key);
-  if (!key) return '';
-  const modifiers: Array<string> = [];
-  if ('mac' === platform) {
-    if (event.metaKey) modifiers.push('Cmd');
-    if (event.ctrlKey) modifiers.push('Ctrl');
-    if (event.altKey) modifiers.push('Option');
-    if (event.shiftKey) modifiers.push('Shift');
-  } else {
-    if (event.ctrlKey) modifiers.push('Ctrl');
-    if (event.altKey) modifiers.push('Alt');
-    if (event.shiftKey) modifiers.push('Shift');
-    if (event.metaKey) modifiers.push('Meta');
-  }
-  return modifiers.length ? [...modifiers, key].join('+') : '';
-}
-
 function shouldHandle(
   event: KeyboardEvent,
   editorRoot: HTMLElement,
   source: HTMLElement
 ): boolean {
   const target = event.target;
-  if (event.isComposing || 229 === event.keyCode || !(target instanceof Element)) return false;
+  if (!(target instanceof Element)) return false;
   if (target !== editorRoot && !editorRoot.contains(target)) return false;
   if (target === source) return true;
   return !target.matches('input, textarea, select');
@@ -92,10 +52,19 @@ export function createBrowserToolbarShortcuts({
   ) {
     throw new Error('toolbar-shortcut-surfaces-invalid');
   }
-  const bindings = commands.flatMap(({ id }) => {
-    const shortcut = shortcuts[id]?.[platform] ?? '';
-    return shortcut ? [{ commandId: id, shortcut }] : [];
-  });
+  const bindings = new Map<string, string>();
+  for (const { id } of commands) {
+    const shortcut = canonicalizeKeyboardShortcut(
+      shortcuts[id]?.[platform] ?? '',
+      platform
+    );
+    if (null === shortcut) throw new Error('toolbar-shortcut-binding-invalid');
+    if (!shortcut) continue;
+    if (bindings.has(shortcut)) {
+      throw new Error('toolbar-shortcut-bindings-conflict');
+    }
+    bindings.set(shortcut, id);
+  }
 
   return {
     prepareBinding(executeCommand): PreparedToolbarShortcutBinding {
@@ -107,13 +76,13 @@ export function createBrowserToolbarShortcuts({
       let disposed = false;
       const onKeyDown = (event: KeyboardEvent) => {
         if (!active || !shouldHandle(event, editorRoot, source)) return;
-        const shortcut = normalizeShortcut(event, platform);
+        const shortcut = keyboardShortcutFromEvent(event, platform);
         if (!shortcut) return;
-        const binding = bindings.find((candidate) => candidate.shortcut === shortcut);
-        if (!binding) return;
+        const commandId = bindings.get(shortcut);
+        if (!commandId) return;
         event.preventDefault();
         event.stopPropagation();
-        executeCommand(binding.commandId);
+        executeCommand(commandId);
       };
 
       return {

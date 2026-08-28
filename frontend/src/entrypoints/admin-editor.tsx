@@ -24,6 +24,7 @@ import {
 import { createWordPressAppearancePort } from '../integrations/wordpress/appearance/create-wordpress-appearance-port';
 import { createWordPressFontControlsPort } from '../integrations/wordpress/appearance/create-wordpress-font-controls-port';
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
+import { createWordPressRemoteImageImportPort } from '../integrations/wordpress/media/wordpress-remote-image-import';
 import { createWordPressMediaFramePort } from '../integrations/wordpress/media/wordpress-media-frame';
 import { createWordPressNativeSubmissionPort } from '../integrations/wordpress/native-form/wordpress-native-submission';
 import { createWordPressNativePublishPort } from '../integrations/wordpress/native-form/create-wordpress-native-publish-port';
@@ -302,6 +303,13 @@ export function mountAdminEditor(
       apiFetch,
       endpoint: bootstrap.imageUpload.endpoint,
       formData: FormData,
+      nonce: bootstrap.imageUpload.nonce,
+      siteUrl: windowRef.location.href
+    }),
+    remoteImageImportPort: createWordPressRemoteImageImportPort({
+      actionNonce: bootstrap.imageUpload.actionNonce,
+      apiFetch,
+      endpoint: bootstrap.imageUpload.importEndpoint,
       nonce: bootstrap.imageUpload.nonce,
       siteUrl: windowRef.location.href
     }),

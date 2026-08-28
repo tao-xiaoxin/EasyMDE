@@ -47,8 +47,14 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 				backupCredentialsConfigured: false,
 			},
 		},
-		settings: SETTINGS_CENTER_TEST_SETTINGS,
-		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
+		reservedShortcuts: [] as Array<{
+			id: string;
+			label: string;
+			windows: string;
+			mac: string;
+		}>,
+		settings: structuredClone(SETTINGS_CENTER_TEST_SETTINGS),
+		defaultSettings: structuredClone(SETTINGS_CENTER_DEFAULT_SETTINGS),
 		strings: {
 			...Object.fromEntries(
 				SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key]),
@@ -65,6 +71,9 @@ function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 			transferChecksSummary: "%s key configuration items checked",
 			transferChecksPassed: "%s items passed",
 			lastVerified: "Last tested: %s",
+			recordShortcut: "Record %s shortcut",
+			clearShortcut: "Clear %s shortcut",
+			shortcutConflictInline: "Conflicts with %s.",
 			noSearchResults,
 		},
 	};
@@ -569,12 +578,7 @@ describe("parseSettingsCenterBootstrap", () => {
 		},
 	);
 
-	it.each([
-		"lineEnding",
-		"unorderedMarker",
-		"orderedStart",
-		"blockquoteStyle",
-	])(
+	it.each(["lineEnding", "unorderedMarker", "orderedStart", "blockquoteStyle"])(
 		"rejects the removed Markdown field %s as an exact-shape violation",
 		(removedKey) => {
 			const settings = structuredClone(
@@ -887,7 +891,8 @@ describe("parseSettingsCenterBootstrap", () => {
 		"rejects an invalid system upload limit of %s bytes",
 		(systemMaxBytes) => {
 			const value = bootstrap();
-			(value.uploadLimits as { systemMaxBytes: number }).systemMaxBytes = systemMaxBytes as number;
+			(value.uploadLimits as { systemMaxBytes: number }).systemMaxBytes =
+				systemMaxBytes as number;
 
 			expect(() => parseSettingsCenterBootstrap(value)).toThrow(
 				"settings-center-system-max-upload-bytes-invalid",
@@ -904,12 +909,46 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
-	it("rejects a missing ordered-list shortcut", () => {
+	it("accepts the complete current shortcut and pasted-image contracts", () => {
+		const parsed = parseSettingsCenterBootstrap(bootstrap());
+
+		expect(Object.keys(parsed.settings.shortcuts.values)).toHaveLength(19);
+		expect(parsed.settings.images.autoUploadPastedImages).toBe(true);
+		expect(parsed.settings.images.remoteImageUploadMode).toBe("both");
+	});
+
+	it("rejects an invalid remote image upload mode", () => {
+		const value = bootstrap();
+		(
+			value.settings as unknown as MutableSettingsRecord
+		).images.remoteImageUploadMode = "enabled";
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-images-remoteImageUploadMode-invalid",
+		);
+	});
+
+	it("rejects removed shortcut behavior fields", () => {
+		const value = bootstrap();
+		value.settings = {
+			...value.settings,
+			shortcuts: {
+				...value.settings.shortcuts,
+				showHints: true,
+			} as typeof value.settings.shortcuts,
+		};
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-shortcuts-settings-invalid",
+		);
+	});
+
+	it("rejects a missing heading-six shortcut", () => {
 		const value = bootstrap();
 		const shortcutValues = {
 			...value.settings.shortcuts.values,
 		} as Record<string, unknown>;
-		delete shortcutValues["ordered-list"];
+		delete shortcutValues["heading-six"];
 		value.settings = {
 			...value.settings,
 			shortcuts: {
@@ -919,7 +958,53 @@ describe("parseSettingsCenterBootstrap", () => {
 		};
 
 		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
-			"settings-center-shortcut-ordered-list-invalid",
+			"settings-center-shortcut-heading-six-invalid",
+		);
+	});
+
+	it.each([
+		["windows", "control+b"],
+		["windows", "Shift+B"],
+		["mac", "Command+B"],
+	] as const)("rejects a noncanonical %s shortcut", (platform, shortcut) => {
+		const value = bootstrap();
+		const shortcuts = value.settings.shortcuts.values as unknown as Record<
+			string,
+			{ windows: string; mac: string }
+		>;
+		const bold = shortcuts.bold;
+		if (!bold) throw new Error("settings-center-test-fixture-bold-missing");
+		bold[platform] = shortcut;
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-shortcut-bold-invalid",
+		);
+	});
+
+	it("parses read-only reserved shortcut bindings", () => {
+		const value = bootstrap();
+		value.reservedShortcuts = [
+			{
+				id: "copywechat",
+				label: "Copy to WeChat",
+				windows: "Ctrl+Shift+C",
+				mac: "Cmd+Shift+C",
+			},
+		];
+
+		expect(parseSettingsCenterBootstrap(value).reservedShortcuts).toEqual(
+			value.reservedShortcuts,
+		);
+	});
+
+	it("rejects an invalid reserved shortcut descriptor", () => {
+		const value = bootstrap();
+		value.reservedShortcuts = [
+			{ id: "", label: "Copy to WeChat", windows: "Ctrl+C", mac: "" },
+		];
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-reserved-shortcut-0-invalid",
 		);
 	});
 });

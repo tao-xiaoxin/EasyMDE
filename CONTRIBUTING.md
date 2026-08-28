@@ -208,6 +208,11 @@ test, or an old-SHA result is not completion evidence.
   expands the current scope.
 - Issue linkage does not prove mergeability. Validation, compatibility,
   privacy, CI, and review requirements still apply.
+- Keep every complete sentence in a public Issue or pull request body on one
+  source line. Do not insert hard line breaks inside a sentence only to wrap
+  Markdown at a preferred column; let GitHub wrap rendered prose. Break lines
+  only at paragraph, list-item, code-block, or other intentional semantic
+  boundaries, and verify the rendered body before continuing the workflow.
 
 For security-sensitive work, use GitHub private vulnerability reporting, a
 private security advisory, or another maintainer-approved private channel. If a

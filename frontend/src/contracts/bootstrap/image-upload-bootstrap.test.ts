@@ -5,14 +5,17 @@ import { parseImageUploadBootstrap } from './image-upload-bootstrap';
 const validBootstrap = {
   actionNonce: 'synthetic-action-nonce',
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+  autoUploadPastedImages: true,
   enabled: true,
   endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+  importEndpoint: '/wp-json/easymde/v1/image-hosting/import',
   insertion: {
     titleDisplay: 'none'
   },
   maxBytes: 1024,
   nonce: 'synthetic-nonce',
   postId: 17,
+  remoteImageUploadMode: 'both',
   strings: {
     defaultAlt: 'image',
     dropFailed: 'Drop failed',
@@ -20,6 +23,9 @@ const validBootstrap = {
     dropUploaded: 'Drop uploaded',
     dropUploading: 'Drop uploading',
     pasteFailed: 'Paste failed',
+    pasteAlreadyHosted: 'Paste already hosted',
+    pasteChecking: 'Paste checking',
+    pasteUploadDisabled: 'Paste upload disabled',
     pasteTooLarge: 'Paste too large',
     pasteUploaded: 'Paste uploaded',
     pasteUploading: 'Paste uploading'
@@ -65,6 +71,10 @@ describe('parseImageUploadBootstrap', () => {
     })).toThrow('image-upload-string-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
+      strings: { ...validBootstrap.strings, pasteChecking: undefined }
+    })).toThrow('image-upload-string-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
       allowedMimeTypes: ['image/svg+xml']
     })).toThrow('image-upload-mime-types-invalid');
     expect(() => parseImageUploadBootstrap({
@@ -79,5 +89,13 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       insertAfterUpload: true
     })).toThrow('image-upload-bootstrap-fields-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      autoUploadPastedImages: 'true'
+    })).toThrow('image-upload-auto-paste-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      remoteImageUploadMode: 'enabled'
+    })).toThrow('image-upload-remote-paste-mode-invalid');
   });
 });

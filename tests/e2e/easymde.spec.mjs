@@ -1728,6 +1728,8 @@ test.describe('EasyMDE editor workflows', () => {
     ).toHaveCount(0);
     expect(await immersiveHeadingMenu.evaluate((menu) => {
       const rect = menu.getBoundingClientRect();
+      const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+      const shortcuts = Array.from(menu.querySelectorAll('.easymde-popover-item-shortcut'));
       const style = getComputedStyle(menu);
       const bottomTarget = document.elementFromPoint(
         rect.left + 8,
@@ -1738,16 +1740,22 @@ test.describe('EasyMDE editor workflows', () => {
         bottomIsInteractive:
           null !== bottomTarget &&
           (bottomTarget === menu || menu.contains(bottomTarget)),
+        contentIsUnclipped: [...items, ...shortcuts].every(
+          (element) => element.scrollWidth <= element.clientWidth + 1
+        ),
         boxShadow: style.boxShadow,
         height: rect.height,
-        width: rect.width
+        preservesMinimumMenuWidth: rect.width >= 176,
+        isWithinViewport: rect.left >= 12 && rect.right <= window.innerWidth - 12
       };
     })).toEqual({
       borderRadius: '5.625px',
       bottomIsInteractive: true,
+      contentIsUnclipped: true,
       boxShadow: 'rgba(38, 52, 85, 0.1) 0px 8px 22px 0px',
       height: 264.125,
-      width: 176
+      preservesMinimumMenuWidth: true,
+      isWithinViewport: true
     });
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: immersiveLabels.table }).click();

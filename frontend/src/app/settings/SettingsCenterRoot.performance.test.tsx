@@ -52,6 +52,7 @@ vi.mock("./GeneralSettingsPage", async () => {
 vi.mock("./ShortcutsSettingsPage", async () => {
 	const { createElement: createMockElement } = await import("@wordpress/element");
 	return {
+		findShortcutConflicts: () => [],
 		ShortcutsSettingsPage: () => {
 			pageRenders.shortcuts += 1;
 			return createMockElement("div", null, "shortcuts-page");
@@ -130,6 +131,7 @@ function bootstrap(): SettingsCenterBootstrap {
 			issuesUrl: "https://example.test/issues",
 			licenseUrl: "https://example.test/license",
 		},
+		reservedShortcuts: [],
 		drafts: {
 			images: {
 				domain: "",

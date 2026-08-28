@@ -20,7 +20,6 @@ export type ToolbarShortcut = Readonly<{
 
 export type ToolbarBootstrap = Readonly<{
   commands: ReadonlyArray<ToolbarCommand>;
-  showShortcutHints?: boolean;
   shortcuts: Readonly<Record<string, ToolbarShortcut>>;
   headingLabelFormat: string;
   headingLevelLabel: string;
@@ -82,11 +81,6 @@ function optionalBoolean(value: unknown, code: string): boolean | undefined {
   if ('boolean' !== typeof value) {
     throw new ToolbarBootstrapError(code);
   }
-  return value;
-}
-
-function requiredBoolean(value: unknown, code: string): boolean {
-  if ('boolean' !== typeof value) throw new ToolbarBootstrapError(code);
   return value;
 }
 
@@ -162,7 +156,6 @@ export function parseToolbarBootstrap(value: unknown): ToolbarBootstrap {
 
   return {
     commands,
-    showShortcutHints: requiredBoolean(bootstrap.showShortcutHints, 'invalid-shortcut-hints'),
     shortcuts,
     headingLabelFormat: requiredString(
       strings.headingLabelFormat,

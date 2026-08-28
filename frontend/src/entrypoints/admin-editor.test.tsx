@@ -57,6 +57,9 @@ vi.mock(
 vi.mock('../integrations/wordpress/media/wordpress-image-upload', () => ({
   createWordPressImageUploadPort: vi.fn(() => ({}))
 }));
+vi.mock('../integrations/wordpress/media/wordpress-remote-image-import', () => ({
+  createWordPressRemoteImageImportPort: vi.fn(() => ({}))
+}));
 vi.mock('../integrations/wordpress/media/wordpress-media-frame', () => ({
   createWordPressMediaFramePort: vi.fn(() => ({}))
 }));
@@ -80,8 +83,10 @@ const bootstrap = {
   imageUpload: {
     actionNonce: 'image-hosting-nonce',
     endpoint: '/image-hosting/upload',
+    importEndpoint: '/image-hosting/import',
     nonce: 'nonce',
-    postId: 7
+    postId: 7,
+    remoteImageUploadMode: 'both'
   },
   immersiveStrings: {
     autoSave: 'Auto save',

@@ -61,6 +61,7 @@ function bootstrap({
 				backupCredentialsConfigured: false,
 			},
 		},
+		reservedShortcuts: [],
 		settings: configuredImageDomains
 			? {
 					...SETTINGS_CENTER_TEST_SETTINGS,
@@ -80,6 +81,9 @@ function bootstrap({
 			duplicatePrompt: "duplicatePrompt %s",
 			deletePrompt: "deletePrompt %s",
 			transferFileSelectedNotice: "transferFileSelectedNotice %s",
+			recordShortcut: "Record %s shortcut",
+			clearShortcut: "Clear %s shortcut",
+			shortcutConflictInline: "Conflicts with %s.",
 		} as unknown as SettingsCenterBootstrap["strings"],
 	};
 }
@@ -634,7 +638,7 @@ describe("SettingsCenterRoot global search", () => {
 });
 
 describe("SettingsCenterRoot shortcuts section", () => {
-	it("renders General and Shortcuts as consecutive settings sections", () => {
+	it("renders all 19 commands in three groups without shortcut behavior switches", () => {
 		const { container } = render(
 			<SettingsCenterRoot bootstrap={bootstrap()} />,
 		);
@@ -654,31 +658,79 @@ describe("SettingsCenterRoot shortcuts section", () => {
 			screen.getByRole("heading", { name: "headingAndFormatting" }),
 		).not.toBeNull();
 		expect(
-			screen.getByRole("heading", { name: "shortcutBehavior" }),
+			screen.getByRole("heading", { name: "codeAndFormula" }),
 		).not.toBeNull();
+		expect(
+			screen.getAllByRole("button", { name: /^Record .* shortcut:/ }),
+		).toHaveLength(38);
+		expect(
+			screen.queryByRole("switch", { name: "showShortcutHints" }),
+		).toBeNull();
 	});
 
-	it("restores every shortcut from the single reference reset command", async () => {
+	it("records a real keyboard chord and persists canonical code tokens", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
-			name: "saveArticle windowsLinux",
-		});
-		const macSave = screen.getByRole<HTMLInputElement>("textbox", {
-			name: "saveArticle macOS",
-		});
-		const headingWindows = screen.getByRole<HTMLInputElement>("textbox", {
-			name: "headingOne windowsLinux",
+		const recorder = screen.getByRole("button", {
+			name: "Record insertLink windowsLinux shortcut: Ctrl+K",
 		});
 
-		expect(windowsSave.value).toBe("Ctrl+S");
-		expect(macSave.value).toBe("Cmd+S");
-		await user.clear(windowsSave);
-		await user.type(windowsSave, "Ctrl+Shift+S");
-		await user.clear(headingWindows);
-		await user.type(headingWindows, "Ctrl+Shift+1");
-		expect(windowsSave.value).toBe("Ctrl+Shift+S");
-		expect(headingWindows.value).toBe("Ctrl+Shift+1");
+		await user.click(recorder);
+		expect(recorder.textContent).toContain("shortcutRecording");
+		fireEvent.keyDown(recorder, {
+			key: "[",
+			code: "BracketLeft",
+			ctrlKey: true,
+			shiftKey: true,
+		});
+		expect(recorder.textContent).toContain("[");
+		expect(recorder.textContent).not.toContain("shortcutRecording");
+		expect(recorder.ownerDocument.activeElement).toBe(recorder);
+	});
+
+	it("ignores composition and modifier-only events while recording", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const recorder = screen.getByRole("button", {
+			name: "Record italic windowsLinux shortcut: Ctrl+I",
+		});
+
+		await user.click(recorder);
+		fireEvent.keyDown(recorder, {
+			key: "Control",
+			code: "ControlLeft",
+			ctrlKey: true,
+		});
+		fireEvent.keyDown(recorder, {
+			key: "Process",
+			code: "KeyI",
+			ctrlKey: true,
+			isComposing: true,
+			keyCode: 229,
+		});
+		expect(recorder.textContent).toBe("shortcutRecording");
+		expect(recorder.getAttribute("aria-invalid")).toBeNull();
+		fireEvent.keyDown(recorder, { key: "i", code: "KeyI" });
+		expect(recorder.getAttribute("aria-invalid")).toBe("true");
+		fireEvent.keyDown(recorder, { key: "Escape", code: "Escape" });
+		expect(recorder.textContent).toContain("Ctrl");
+		expect(recorder.getAttribute("aria-invalid")).toBeNull();
+	});
+
+	it("keeps a cleared shortcut disabled until the single reset command is used", async () => {
+		const user = userEvent.setup();
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const recorder = screen.getByRole("button", {
+			name: "Record saveArticle windowsLinux shortcut: Ctrl+S",
+		});
+		await user.click(
+			screen.getByRole("button", {
+				name: "Clear saveArticle windowsLinux shortcut",
+			}),
+		);
+		expect(recorder.textContent).toBe("shortcutDisabled");
+		await user.tab();
+		expect(recorder.textContent).toBe("shortcutDisabled");
 
 		const commonGroup = screen
 			.getByRole("heading", { name: "commonShortcuts" })
@@ -690,9 +742,8 @@ describe("SettingsCenterRoot shortcuts section", () => {
 				name: "restoreDefaultShortcuts",
 			}),
 		);
-		expect(windowsSave.value).toBe("Ctrl+S");
-		expect(macSave.value).toBe("Cmd+S");
-		expect(headingWindows.value).toBe("Ctrl+1");
+		expect(recorder.textContent).toContain("Ctrl");
+		expect(recorder.textContent).toContain("S");
 	});
 
 	it("shows the reset command only on the reference common-shortcuts group", () => {
@@ -721,71 +772,112 @@ describe("SettingsCenterRoot shortcuts section", () => {
 		).toBeNull();
 	});
 
-	it("restores an empty shortcut from defaults when suggestions are enabled", async () => {
+	it("marks conflicts inline and opens an alert dialog instead of saving", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
-			name: "saveArticle windowsLinux",
+		const fetch = vi.spyOn(window, "fetch");
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const { unmount } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} overlayRoot={overlayRoot} />,
+		);
+		const bold = screen.getByRole("button", {
+			name: "Record bold windowsLinux shortcut: Ctrl+B",
 		});
+		await user.click(bold);
+		fireEvent.keyDown(bold, { key: "s", code: "KeyS", ctrlKey: true });
+		expect(bold.getAttribute("aria-invalid")).toBe("true");
+		expect(screen.getAllByText("Conflicts with saveArticle.")).toHaveLength(1);
 
-		await user.clear(windowsSave);
-		await user.tab();
-
-		expect(windowsSave.value).toBe("Ctrl+S");
+		const save = screen.getByRole("button", { name: "saveSettings" });
+		await user.click(save);
+		expect(fetch).not.toHaveBeenCalled();
+		const dialog = within(overlayRoot).getByRole("alertdialog", {
+			name: "shortcutConflictTitle",
+		});
+		expect(within(dialog).getByText("saveArticle, bold")).not.toBeNull();
+		expect(within(dialog).getByText("Ctrl")).not.toBeNull();
+		await user.click(
+			within(dialog).getByRole("button", {
+				name: "returnToShortcutSettings",
+			}),
+		);
+		await waitFor(() => expect(save.ownerDocument.activeElement).toBe(save));
+		fetch.mockRestore();
+		unmount();
+		overlayRoot.remove();
 	});
 
-	it("preserves an empty shortcut when suggestions are disabled", async () => {
-		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		await user.click(
-			screen.getByRole("switch", { name: "customShortcutSuggestions" }),
-		);
-		const windowsSave = screen.getByRole<HTMLInputElement>("textbox", {
-			name: "saveArticle windowsLinux",
+	it("marks a conflict with a read-only registry command", () => {
+		const value: SettingsCenterBootstrap = {
+			...bootstrap(),
+			reservedShortcuts: [
+				{
+					id: "copywechat",
+					label: "Copy to WeChat",
+					windows: "Ctrl+B",
+					mac: "",
+				},
+			],
+		};
+		render(<SettingsCenterRoot bootstrap={value} />);
+
+		const bold = screen.getByRole("button", {
+			name: "Record bold windowsLinux shortcut: Ctrl+B",
 		});
-		await user.clear(windowsSave);
-		await user.tab();
-		expect(windowsSave.value).toBe("");
+		expect(bold.getAttribute("aria-invalid")).toBe("true");
+		expect(screen.getByText("Conflicts with Copy to WeChat.")).not.toBeNull();
 	});
 
-	it("enables shortcut behavior and marks duplicate bindings by platform", async () => {
+	it("opens the same alert dialog for a server-rejected shortcut conflict", async () => {
 		const user = userEvent.setup();
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
-		const behavior = screen
-			.getByRole("heading", { name: "shortcutBehavior" })
-			.closest("section");
-		if (!behavior) throw new Error("shortcut-behavior-section-missing");
-		const hints = within(behavior).getByRole("switch", {
-			name: "showShortcutHints",
-		});
-
-		expect(hints.getAttribute("aria-checked")).toBe("true");
-		expect(hints.matches(":disabled")).toBe(false);
-		await user.clear(
-			screen.getByRole("textbox", { name: "bold windowsLinux" }),
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: false,
+			status: 409,
+			json: async () => ({
+				code: "easymde_settings_shortcut_conflict",
+				data: {
+					bindings: [
+						{ editable: true, id: "bold", label: "Server Bold" },
+						{ editable: false, id: "extension", label: "Extension command" },
+					],
+					platform: "windows",
+					shortcut: "Ctrl+B",
+				},
+			}),
+		} as Response);
+		const { unmount } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} overlayRoot={overlayRoot} />,
 		);
-		await user.type(
-			screen.getByRole("textbox", { name: "bold windowsLinux" }),
-			"Ctrl+S",
-		);
-		expect(
-			screen
-				.getByRole("textbox", { name: "saveArticle windowsLinux" })
-				.getAttribute("aria-invalid"),
-		).toBe("true");
-		expect(
-			screen
-				.getByRole("textbox", { name: "bold windowsLinux" })
-				.getAttribute("aria-invalid"),
-		).toBe("true");
 		await user.click(
-			screen.getByRole("switch", { name: "detectShortcutConflicts" }),
+			screen.getByRole("button", {
+				name: "Clear italic windowsLinux shortcut",
+			}),
 		);
+		const save = screen.getByRole("button", { name: "saveSettings" });
+		await user.click(save);
+
+		const dialog = await within(overlayRoot).findByRole("alertdialog", {
+			name: "shortcutConflictTitle",
+		});
+		expect(within(dialog).getByText("windowsLinux")).not.toBeNull();
+		expect(within(dialog).getByText("Ctrl")).not.toBeNull();
+		expect(within(dialog).getByText("B")).not.toBeNull();
 		expect(
-			screen
-				.getByRole("textbox", { name: "bold windowsLinux" })
-				.getAttribute("aria-invalid"),
-		).toBeNull();
+			within(dialog).getByText("Server Bold, Extension command"),
+		).not.toBeNull();
+		expect(screen.getByText("settingsSaveRejected")).not.toBeNull();
+		expect(fetch).toHaveBeenCalledOnce();
+		await user.click(
+			within(dialog).getByRole("button", {
+				name: "returnToShortcutSettings",
+			}),
+		);
+		await waitFor(() => expect(save.ownerDocument.activeElement).toBe(save));
+		fetch.mockRestore();
+		unmount();
+		overlayRoot.remove();
 	});
 });
 
@@ -923,14 +1015,16 @@ describe("SettingsCenterRoot Markdown section", () => {
 		expect(
 			screen.queryByRole("heading", { name: "markdownExtensions" }),
 		).toBeNull();
-		expect(
-			screen.queryByRole("heading", { name: "otherSettings" }),
-		).toBeNull();
+		expect(screen.queryByRole("heading", { name: "otherSettings" })).toBeNull();
 		const parsing = screen
 			.getByRole("heading", { name: "markdownParsingRendering" })
 			.closest("section");
 		expect(parsing).not.toBeNull();
-		expect(within(parsing as HTMLElement).getByRole("switch", { name: "pasteAsMarkdown" })).not.toBeNull();
+		expect(
+			within(parsing as HTMLElement).getByRole("switch", {
+				name: "pasteAsMarkdown",
+			}),
+		).not.toBeNull();
 	});
 
 	it("does not render settings for parser defaults or editor-owned presentation", () => {
@@ -969,8 +1063,12 @@ describe("SettingsCenterRoot Markdown section", () => {
 		expect(wordWrap.getAttribute("aria-checked")).toBe("false");
 		expect(screen.getByRole("button", { name: "saveSettings" })).not.toBeNull();
 		expect(themeRendering.matches(":disabled")).toBe(false);
-		expect(controls.queryByRole("textbox", { name: "unorderedListMarker" })).toBeNull();
-		expect(controls.queryByRole("switch", { name: "showLineNumbers" })).toBeNull();
+		expect(
+			controls.queryByRole("textbox", { name: "unorderedListMarker" }),
+		).toBeNull();
+		expect(
+			controls.queryByRole("switch", { name: "showLineNumbers" }),
+		).toBeNull();
 		expect(wordWrap.getAttribute("aria-describedby")).toBeNull();
 		expect(
 			document.getElementById("easymde-markdown-unavailable"),
@@ -1793,35 +1891,39 @@ describe("SettingsCenterRoot persistence", () => {
 		const requestBody = {
 			current: null as { settings: SettingsCenterSettings } | null,
 		};
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
-			requestBody.current = JSON.parse(String(init?.body)) as {
-				settings: SettingsCenterSettings;
-			};
-			return {
-				ok: true,
-				json: async () => ({
-					settings: {
-						...bootstrap().settings,
-						revision: bootstrap().settings.revision + 1,
-						general: {
-							...bootstrap().settings.general,
-							summaryMode: "auto-100",
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				requestBody.current = JSON.parse(String(init?.body)) as {
+					settings: SettingsCenterSettings;
+				};
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...bootstrap().settings,
+							revision: bootstrap().settings.revision + 1,
+							general: {
+								...bootstrap().settings.general,
+								summaryMode: "auto-100",
+							},
 						},
-					},
-					credentialStatus: {
-						primaryConfigured: false,
-						backupConfigured: false,
-					},
-				}),
-			} as Response;
-		});
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
 		await user.click(screen.getByRole("combobox", { name: "summaryMode" }));
 		await user.click(screen.getByRole("option", { name: "summary100" }));
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		expect(requestBody.current?.settings.general.summaryMode).toBe("auto-100");
 		fetch.mockRestore();
 	});

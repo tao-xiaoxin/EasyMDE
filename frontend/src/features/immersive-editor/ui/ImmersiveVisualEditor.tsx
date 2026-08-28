@@ -36,6 +36,7 @@ export type VisualPreviewSnapshot = Readonly<{
 type Props = Readonly<{
   documentSession: EditorDocumentSession;
   imageUploadEnabled: boolean;
+  imagePasteUploadEnabled: boolean;
   onCanonicalDocumentChange: () => void;
   onDiagnostic: (code: string) => void;
   onDispose: (runtime: ImmersiveVisualEditorRuntime) => void;
@@ -102,6 +103,7 @@ function ensureEmptyVisualParagraph(
 export function ImmersiveVisualEditor({
   documentSession,
   imageUploadEnabled,
+  imagePasteUploadEnabled,
   onCanonicalDocumentChange,
   onDiagnostic,
   onDispose,
@@ -416,8 +418,11 @@ export function ImmersiveVisualEditor({
       }
     };
     const handlePaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
       if (hasImageFile(event.clipboardData)) {
-        if (!imageUploadEnabled) event.preventDefault();
+        if (!imageUploadEnabled || !imagePasteUploadEnabled) {
+          event.preventDefault();
+        }
         return;
       }
       event.preventDefault();
@@ -479,6 +484,7 @@ export function ImmersiveVisualEditor({
     applyDocumentChange,
     documentSession,
     imageUploadEnabled,
+    imagePasteUploadEnabled,
     onDispose,
     onFailure,
     onPendingChange,

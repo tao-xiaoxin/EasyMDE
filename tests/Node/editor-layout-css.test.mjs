@@ -588,7 +588,7 @@ test('ordinary editor settings combines theme and font controls in one responsiv
   );
 });
 
-test('ordinary heading menu uses compact geometry without changing immersive styles', () => {
+test('ordinary heading menu uses content-sized viewport-bounded geometry without changing immersive styles', () => {
   const toolbar = readFileSync(
     new URL('../../assets/css/admin/toolbar.css', import.meta.url),
     'utf8'
@@ -607,15 +607,28 @@ test('ordinary heading menu uses compact geometry without changing immersive sty
   );
   assert.match(
     popover,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\s*\{[^}]*inset-inline-end:\s*auto;[^}]*inset-inline-start:\s*0;[^}]*width:\s*208px;[^}]*padding:\s*7px;/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu\s*\{[^}]*position:\s*fixed;[^}]*inset-inline-end:\s*auto;[^}]*inset-inline-start:\s*auto;[^}]*width:\s*max-content;[^}]*min-width:\s*min\(208px, calc\(100vw - 24px\)\);[^}]*max-width:\s*calc\(100vw - 24px\);[^}]*padding:\s*7px;[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden;/s
   );
   assert.match(
     popover,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover::before\s*\{[^}]*content:\s*"";[^}]*position:\s*absolute;[^}]*top:\s*-8px;[^}]*inset-inline-start:\s*20px;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu::before\s*\{[^}]*content:\s*"";[^}]*position:\s*fixed;[^}]*top:\s*var\(--easymde-heading-arrow-viewport-top\);[^}]*right:\s*auto;[^}]*left:\s*var\(--easymde-heading-arrow-viewport-left\);[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
+  );
+  const ordinaryHeadingArrowRule = popover.match(
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu::before\s*\{([^}]*)\}/s
+  )?.[1];
+  assert.ok(ordinaryHeadingArrowRule);
+  assert.doesNotMatch(ordinaryHeadingArrowRule, /inset-inline-(?:start|end):/);
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*30px minmax\(max-content, 1fr\) max-content;[^}]*min-height:\s*32px;[^}]*padding:\s*0 9px;[^}]*border-radius:\s*8px;/s
   );
   assert.match(
     popover,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*30px minmax\(0, 1fr\) auto;[^}]*min-height:\s*32px;[^}]*padding:\s*0 9px;[^}]*border-radius:\s*8px;/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item-label\s*\{[^}]*min-width:\s*max-content;/s
+  );
+  assert.match(
+    popover,
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item-shortcut\s*\{[^}]*min-width:\s*max-content;[^}]*justify-self:\s*end;/s
   );
   assert.match(
     popover,

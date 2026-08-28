@@ -38,8 +38,55 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame('Ctrl+Shift+S', $saved['shortcuts']['values']['save']['windows']);
         $this->assertSame(1, $saved['revision']);
         $stored = get_option(Options::EDITOR_SETTINGS);
-        $this->assertSame('Ctrl+Shift+S', $stored['shortcuts']['savepost']['win']);
+        $this->assertArrayNotHasKey('shortcuts', $stored);
+        $this->assertSame('Ctrl+Shift+S', $stored['settings_center']['shortcuts']['values']['save']['windows']);
         $this->assertSame($saved, $repository->get_settings());
+    }
+
+    public function test_current_settings_expose_only_the_19_editable_shortcuts_and_paste_upload_policy()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+
+        $this->assertSame(
+            array(
+                'save',
+                'bold',
+                'italic',
+                'strikethrough',
+                'paragraph',
+                'heading-one',
+                'heading-two',
+                'heading-three',
+                'heading-four',
+                'heading-five',
+                'heading-six',
+                'quote',
+                'unordered-list',
+                'ordered-list',
+                'inline-code',
+                'code-fence',
+                'math-block',
+                'link',
+                'image',
+            ),
+            array_keys($settings['shortcuts']['values'])
+        );
+        $this->assertSame(array('values'), array_keys($settings['shortcuts']));
+        $this->assertTrue($settings['images']['autoUploadPastedImages']);
+    }
+
+    public function test_update_persists_the_paste_upload_policy()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+        $settings['images']['autoUploadPastedImages'] = false;
+
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertFalse($saved['images']['autoUploadPastedImages']);
+        $this->assertFalse(get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['autoUploadPastedImages']);
     }
 
     public function test_upload_format_runtime_contract_uses_only_enabled_formats()
@@ -208,8 +255,11 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		foreach (array('endpoint', 'domain', 'backupEndpoint', 'backupDomain') as $field) {
 			$this->assertArrayHasKey($field, $settings['images']);
 		}
+		$this->assertSame('30', $settings['general']['autoSaveInterval']);
+		$this->assertSame('{year}/{month}/{md5}.{ext}', $settings['images']['fileNameRule']);
 		$this->assertSame(0, $settings['images']['uploadRetryCount']);
 		$this->assertSame(5, $settings['images']['maxImageSizeMb']);
+		$this->assertSame('both', $settings['images']['remoteImageUploadMode']);
 		$this->assertSame('none', $settings['images']['titleDisplay']);
 		foreach (array('region', 'backupRegion', 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder') as $removed) {
 			$this->assertArrayNotHasKey($removed, $settings['images']);
@@ -314,6 +364,44 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertFalse($repository->should_show_published_code_copy_button());
 	}
 
+	public function test_public_presentation_accessors_do_not_project_toolbar_shortcuts()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'general' => array(
+						'applyEditorThemeToFrontend' => false,
+						'showPublishedCodeCopyButton' => false,
+					),
+					'markdown' => array(
+						'tableAlignment' => 'left',
+						'codeLineNumbers' => 'hide',
+					),
+				),
+			),
+			false
+		);
+		$registry = new ToolbarRegistry();
+		$registry->register_toolbar_button(
+			'bold',
+			array(
+				'label' => 'Invalid shortcut override',
+				'defaultShortcutWin' => 'control+b',
+			)
+		);
+		$repository = new SettingsCenterRepository(new Options(), $registry);
+
+		$this->assertFalse($repository->should_apply_editor_theme_to_frontend());
+		$this->assertFalse($repository->should_show_published_code_copy_button());
+		$this->assertSame('left', $repository->get_published_table_alignment());
+		$this->assertFalse($repository->should_show_published_code_line_numbers());
+
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('easymde-toolbar-shortcut-invalid');
+		$repository->get_settings();
+	}
+
 	public function test_legacy_caption_mode_migrates_to_title_display_without_reintroducing_removed_fields()
 	{
 		update_option(Options::EDITOR_SETTINGS, array('settings_center' => array(
@@ -385,6 +473,25 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		}
 	}
 
+	public function test_remote_image_upload_mode_uses_the_strict_four_state_contract()
+	{
+		foreach (array('both', 'visual', 'source', 'off') as $mode) {
+			$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+			$settings = $repository->get_settings();
+			$settings['images']['remoteImageUploadMode'] = $mode;
+
+			$this->assertSame($mode, $repository->update_settings($settings)['images']['remoteImageUploadMode']);
+			delete_option(Options::EDITOR_SETTINGS);
+		}
+
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['images']['remoteImageUploadMode'] = 'enabled';
+		$result = $repository->update_settings($settings);
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_invalid_payload', $result->get_error_code());
+	}
+
 	public function test_image_hosting_runtime_uses_the_effective_configured_upload_limit()
 	{
 		$filter = static function () {
@@ -397,11 +504,13 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$settings = $repository->get_settings();
 			$settings['images']['maxImageSizeMb'] = 8;
 			$settings['images']['titleDisplay'] = 'filename';
+			$settings['images']['remoteImageUploadMode'] = 'off';
 			$this->assertIsArray($repository->update_settings($settings));
 
 			$runtime = $repository->get_image_hosting_settings();
 			$this->assertSame(3 * MB_IN_BYTES, $runtime['behaviors']['maxBytes']);
 			$this->assertSame('filename', $runtime['behaviors']['titleDisplay']);
+			$this->assertSame('off', $runtime['behaviors']['remoteImageUploadMode']);
 		} finally {
 			remove_filter('upload_size_limit', $filter);
 		}
@@ -609,12 +718,20 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		}
 	}
 
-    public function test_get_settings_imports_legacy_shortcuts_before_first_center_save()
+    public function test_stored_legacy_shortcuts_and_behavior_fields_have_no_current_owner()
     {
         $legacy = array(
             'shortcuts' => array(
                 'savepost' => array('win' => 'Ctrl+Shift+S', 'mac' => 'Cmd+Shift+S'),
                 'bold' => array('win' => 'Ctrl+Alt+B', 'mac' => 'Cmd+Option+B'),
+            ),
+            'settings_center' => array(
+                'shortcuts' => array(
+                    'values' => array(),
+                    'showHints' => false,
+                    'detectConflicts' => false,
+                    'showSuggestions' => false,
+                ),
             ),
         );
         update_option(Options::EDITOR_SETTINGS, $legacy, false);
@@ -622,11 +739,36 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $settings = $repository->get_settings();
 
-        $this->assertSame('Ctrl+Shift+S', $settings['shortcuts']['values']['save']['windows']);
-        $this->assertSame('Cmd+Shift+S', $settings['shortcuts']['values']['save']['mac']);
-        $this->assertSame('Ctrl+Alt+B', $settings['shortcuts']['values']['bold']['windows']);
-        $this->assertSame('Cmd+Option+B', $settings['shortcuts']['values']['bold']['mac']);
+        $this->assertSame('Ctrl+S', $settings['shortcuts']['values']['save']['windows']);
+        $this->assertSame('Cmd+S', $settings['shortcuts']['values']['save']['mac']);
+        $this->assertSame(array('values'), array_keys($settings['shortcuts']));
         $this->assertSame($legacy, get_option(Options::EDITOR_SETTINGS));
+    }
+
+    public function test_current_stored_shortcuts_are_not_silently_normalized_or_replaced()
+    {
+        update_option(
+            Options::EDITOR_SETTINGS,
+            array(
+                'settings_center' => array(
+                    'shortcuts' => array(
+                        'values' => array(
+                            'bold' => array(
+                                'windows' => 'control+b',
+                                'mac' => 'command+b',
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            false
+        );
+
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $settings = $repository->get_settings();
+
+        $this->assertSame('control+b', $settings['shortcuts']['values']['bold']['windows']);
+        $this->assertSame('command+b', $settings['shortcuts']['values']['bold']['mac']);
     }
 
     public function test_get_shortcut_config_for_script_maps_center_values_and_keeps_unmanaged_defaults()
@@ -640,7 +782,11 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 
         $this->assertSame('Ctrl+Alt+B', $shortcuts['bold']['win']);
         $this->assertSame('Cmd+B', $shortcuts['bold']['mac']);
-        $this->assertSame('Alt+Shift+5', $shortcuts['strike']['win']);
+        $this->assertSame($settings['shortcuts']['values']['strikethrough']['windows'], $shortcuts['strike']['win']);
+        $this->assertSame($settings['shortcuts']['values']['paragraph']['mac'], $shortcuts['paragraph']['mac']);
+        $this->assertSame($settings['shortcuts']['values']['heading-six']['windows'], $shortcuts['heading6']['win']);
+        $this->assertSame($settings['shortcuts']['values']['math-block']['mac'], $shortcuts['mathblock']['mac']);
+        $this->assertSame('Ctrl+Shift+W', $shortcuts['copywechat']['win']);
     }
 
     public function test_save_preserves_existing_secrets_and_accepts_explicit_replacements()
@@ -677,20 +823,50 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame('replacement-secret-key', $stored['settings_center']['images']['secretKey']);
     }
 
-    public function test_shortcuts_preserve_mac_option_and_use_runtime_modifier_order()
+    public function test_shortcuts_accept_only_canonical_modifier_order_and_keys()
     {
-        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
-        $settings = $repository->get_settings();
-        $settings['shortcuts']['values']['quote']['mac'] = 'Option+Cmd+Q';
-        $settings['shortcuts']['values']['quote']['windows'] = 'Shift+Ctrl+Q';
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['shortcuts']['values']['quote']['mac'] = 'Cmd+Ctrl+Option+Shift+Q';
+		$settings['shortcuts']['values']['quote']['windows'] = 'Ctrl+Alt+Shift+Meta+Q';
+		$settings['shortcuts']['values']['inline-code']['windows'] = 'Alt+Backquote';
+		$settings['shortcuts']['values']['inline-code']['mac'] = 'Ctrl+BracketLeft';
 
         $saved = $repository->update_settings($settings);
 
-        $this->assertSame('Cmd+Option+Q', $saved['shortcuts']['values']['quote']['mac']);
-        $this->assertSame('Ctrl+Shift+Q', $saved['shortcuts']['values']['quote']['windows']);
+		$this->assertSame('Cmd+Ctrl+Option+Shift+Q', $saved['shortcuts']['values']['quote']['mac']);
+		$this->assertSame('Ctrl+Alt+Shift+Meta+Q', $saved['shortcuts']['values']['quote']['windows']);
+		$this->assertSame('Alt+Backquote', $saved['shortcuts']['values']['inline-code']['windows']);
+		$this->assertSame('Ctrl+BracketLeft', $saved['shortcuts']['values']['inline-code']['mac']);
         $stored = get_option(Options::EDITOR_SETTINGS);
-        $this->assertSame('Cmd+Option+Q', $stored['shortcuts']['quote']['mac']);
-        $this->assertSame('Ctrl+Shift+Q', $stored['shortcuts']['quote']['win']);
+		$this->assertSame('Cmd+Ctrl+Option+Shift+Q', $stored['settings_center']['shortcuts']['values']['quote']['mac']);
+		$this->assertSame('Ctrl+Alt+Shift+Meta+Q', $stored['settings_center']['shortcuts']['values']['quote']['windows']);
+    }
+
+    /**
+     * @dataProvider non_canonical_shortcut_provider
+     */
+    public function test_shortcuts_reject_non_canonical_aliases_and_control_keys($platform, $value)
+    {
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings = $repository->get_settings();
+		$settings['shortcuts']['values']['bold'][$platform] = $value;
+
+		$result = $repository->update_settings($settings);
+
+		$this->assertWPError($result);
+		$this->assertSame('easymde_settings_invalid_shortcut', $result->get_error_code());
+    }
+
+    public function non_canonical_shortcut_provider()
+    {
+		return array(
+			'wrong modifier order' => array('windows', 'Shift+Ctrl+B'),
+			'lowercase key'        => array('windows', 'Ctrl+b'),
+			'literal punctuation'  => array('mac', 'Cmd+`'),
+			'escape'               => array('windows', 'Ctrl+Escape'),
+			'tab'                  => array('mac', 'Cmd+Tab'),
+		);
     }
 
     public function test_stale_revision_is_rejected_without_clobbering_newer_settings()
@@ -777,13 +953,206 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $before = get_option(Options::EDITOR_SETTINGS, array());
         $settings = $repository->get_settings();
-        $settings['shortcuts']['values']['save']['windows'] = 'Alt+S';
+        $settings['shortcuts']['values']['save']['windows'] = 'Shift+S';
 
         $result = $repository->update_settings($settings);
 
         $this->assertWPError($result);
         $this->assertSame('easymde_settings_invalid_shortcut', $result->get_error_code());
         $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
+    }
+
+    public function test_duplicate_and_reserved_shortcuts_fail_without_writing_the_editor_option()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+        $before = get_option(Options::EDITOR_SETTINGS, array());
+        $settings = $repository->get_settings();
+        $settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+S';
+
+        $result = $repository->update_settings($settings);
+
+        $this->assertWPError($result);
+        $this->assertSame('easymde_settings_shortcut_conflict', $result->get_error_code());
+        $this->assertSame(
+            array(
+                'status'   => 409,
+                'platform' => 'windows',
+                'shortcut' => 'Ctrl+S',
+                'bindings' => array(
+                    array('id' => 'save', 'label' => 'Save post', 'editable' => true),
+                    array('id' => 'bold', 'label' => 'Bold', 'editable' => true),
+                ),
+            ),
+            $result->get_error_data()
+        );
+        $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
+
+        $settings = $repository->get_settings();
+        $settings['shortcuts']['values']['image']['windows'] = 'Ctrl+Shift+W';
+        $result = $repository->update_settings($settings);
+
+        $this->assertWPError($result);
+        $this->assertSame('easymde_settings_shortcut_conflict', $result->get_error_code());
+        $this->assertSame(
+            array(
+                'status'   => 409,
+                'platform' => 'windows',
+                'shortcut' => 'Ctrl+Shift+W',
+                'bindings' => array(
+                    array('id' => 'copywechat', 'label' => 'Copy to WeChat', 'editable' => false),
+                    array('id' => 'image', 'label' => 'Image', 'editable' => true),
+                ),
+            ),
+            $result->get_error_data()
+        );
+        $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
+    }
+
+    public function test_registered_extension_shortcuts_are_reserved_from_editable_bindings()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'Ctrl+Alt+E',
+                'defaultShortcutMac' => 'Cmd+Option+E',
+            )
+        );
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+        $before = get_option(Options::EDITOR_SETTINGS, array());
+        $settings = $repository->get_settings();
+        $settings['shortcuts']['values']['image']['mac'] = 'Cmd+Option+E';
+
+        $result = $repository->update_settings($settings);
+
+        $this->assertWPError($result);
+        $this->assertSame('easymde_settings_shortcut_conflict', $result->get_error_code());
+        $this->assertSame('mac', $result->get_error_data()['platform']);
+        $this->assertSame(
+            array(
+                array('id' => 'synthetic-export', 'label' => 'Synthetic export', 'editable' => false),
+                array('id' => 'image', 'label' => 'Image', 'editable' => true),
+            ),
+            $result->get_error_data()['bindings']
+        );
+        $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
+    }
+
+    public function test_editable_default_shortcut_conflict_is_reported_and_clearing_or_changing_it_saves()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'Ctrl+B',
+            )
+        );
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+        $settings = $repository->get_settings();
+
+        $conflict = $repository->update_settings($settings);
+
+        $this->assertWPError($conflict);
+        $this->assertSame('easymde_settings_shortcut_conflict', $conflict->get_error_code());
+        $this->assertSame(409, $conflict->get_error_data()['status']);
+        $this->assertSame('windows', $conflict->get_error_data()['platform']);
+        $this->assertSame(
+            array(
+                array('id' => 'synthetic-export', 'label' => 'Synthetic export', 'editable' => false),
+                array('id' => 'bold', 'label' => 'Bold', 'editable' => true),
+            ),
+            $conflict->get_error_data()['bindings']
+        );
+
+        $settings['shortcuts']['values']['bold']['windows'] = '';
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertSame('', $saved['shortcuts']['values']['bold']['windows']);
+
+        $saved['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+P';
+        $changed = $repository->update_settings($saved);
+
+        $this->assertIsArray($changed);
+        $this->assertSame('Ctrl+Alt+P', $changed['shortcuts']['values']['bold']['windows']);
+    }
+
+    public function test_non_canonical_extension_shortcut_fails_at_the_registry_projection_boundary()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'control+b',
+            )
+        );
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('easymde-toolbar-shortcut-invalid');
+
+        $repository->get_reserved_shortcuts_for_script();
+    }
+
+    public function test_non_canonical_extension_shortcut_cannot_reach_the_editor_bootstrap()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutMac' => 'Command+B',
+            )
+        );
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('easymde-toolbar-shortcut-invalid');
+
+        $repository->get_shortcut_config_for_script();
+    }
+
+    public function test_reserved_only_shortcut_duplicates_do_not_block_an_unrelated_settings_save()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-first',
+            array(
+                'label'              => 'Synthetic first',
+                'defaultShortcutWin' => 'Ctrl+Alt+P',
+                'defaultShortcutMac' => 'Cmd+Option+P',
+            )
+        );
+        $property = new \ReflectionProperty(ToolbarRegistry::class, 'toolbar_buttons');
+        $property->setAccessible(true);
+        $commands = $property->getValue($registry);
+        $commands['synthetic-second'] = array(
+            'id'                 => 'synthetic-second',
+            'label'              => 'Synthetic second',
+            'description'        => '',
+            'icon'               => 'editor-code',
+            'surface'            => 'main',
+            'action'             => 'wrap',
+            'group'              => 'default',
+            'prefix'             => '',
+            'suffix'             => '',
+            'linePrefix'         => '',
+            'defaultShortcutWin' => 'Ctrl+Alt+P',
+            'defaultShortcutMac' => 'Cmd+Option+P',
+        );
+        $property->setValue($registry, $commands);
+
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+        $settings = $repository->get_settings();
+        $settings['general']['showLineNumbers'] = false;
+
+        $result = $repository->update_settings($settings);
+
+        $this->assertIsArray($result);
+        $this->assertFalse($result['general']['showLineNumbers']);
     }
 
 	public function test_removed_image_host_fields_are_not_reintroduced_by_stored_data()

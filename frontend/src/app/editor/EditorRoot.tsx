@@ -33,6 +33,7 @@ import type { WechatExportBootstrap } from '../../contracts/bootstrap/wechat-exp
 import type { AppearancePort } from '../../contracts/ports/appearance-port';
 import type { FontControlsPort } from '../../contracts/ports/font-controls-port';
 import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
+import type { RemoteImageImportPort } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersiveEnvironmentPort } from '../../contracts/ports/immersive-environment-port';
 import type {
   ImmersivePreferencesPort,
@@ -65,6 +66,7 @@ import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
 import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
 import { buildFontStack } from '../../domain/font-stack';
+import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
 import {
   AppearanceControls,
   type AppearanceNotification,
@@ -84,6 +86,7 @@ import {
 } from '../../features/editor-settings/ui/OrdinaryEditorSettings';
 import {
   createImageUploadSession,
+  createRemoteImageImportCoordinator,
   type ImageUploadStatus
 } from '../../features/image-upload/image-upload-session';
 import { EditorWorkspace } from '../../features/editor-layout/ui/EditorWorkspace';
@@ -153,9 +156,10 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedMimeTypes' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'strings'
+    'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'remoteImageUploadMode' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
+  remoteImageImportPort: RemoteImageImportPort;
   isNewPost: boolean;
   immersiveEnvironment: ImmersiveEnvironmentPort;
   immersiveI18n: Parameters<typeof ImmersiveEditor>[0]['i18n'];
@@ -252,7 +256,9 @@ function RootExportCommands({
   return (
     <Fragment>
       {commands.map((command) => {
-        const shortcut = toolbar.shortcuts[command.id]?.[platform] ?? '';
+        const shortcut = formatKeyboardShortcut(
+          toolbar.shortcuts[command.id]?.[platform] ?? ''
+        );
         const title = shortcut
           ? `${command.label} (${shortcut})`
           : command.label;
@@ -1211,6 +1217,37 @@ export function EditorRoot(props: EditorRootProps) {
     }),
     [props.imageUploadPort, protectedOperationError]
   );
+  const remoteImageImportPort = useMemo<RemoteImageImportPort>(
+    () => ({
+      import: (request) => {
+        const sessionError = protectedOperationError('post-write');
+        return sessionError
+          ? Promise.resolve({ code: sessionError.message, status: 'failed' })
+          : props.remoteImageImportPort.import(request);
+      }
+    }),
+    [props.remoteImageImportPort, protectedOperationError]
+  );
+  const remoteImageImportCoordinator = useMemo(() => {
+    if (!documentSession) return null;
+    return createRemoteImageImportCoordinator({
+      document: documentPort(documentSession, () => rootActiveRef.current),
+      insertion: props.imageUpload.insertion,
+      onDiagnostic: props.onFailure,
+      postId: props.imageUpload.postId,
+      remoteImageImport: remoteImageImportPort
+    });
+  }, [
+    documentSession,
+    props.imageUpload.insertion,
+    props.imageUpload.postId,
+    props.onFailure,
+    remoteImageImportPort
+  ]);
+  useEffect(
+    () => () => remoteImageImportCoordinator?.destroy(),
+    [remoteImageImportCoordinator]
+  );
   const previewPort = useMemo<PreviewRequestPort>(
     () => ({
       render: (request, signal) => {
@@ -1481,7 +1518,7 @@ export function EditorRoot(props: EditorRootProps) {
   }, [documentSession, props.sessionPort]);
 
   useEffect(() => {
-    if (!documentSession) {
+    if (!documentSession || !remoteImageImportCoordinator) {
       return;
     }
     return props.nativeSubmissionPort.subscribeBeforeSubmit(() => {
@@ -1522,7 +1559,7 @@ export function EditorRoot(props: EditorRootProps) {
   ]);
 
   useEffect(() => {
-    if (!documentSession) {
+    if (!documentSession || !remoteImageImportCoordinator) {
       return;
     }
     const canonicalDocument = documentPort(
@@ -1537,6 +1574,7 @@ export function EditorRoot(props: EditorRootProps) {
       : null;
     return createImageUploadSession({
       allowedMimeTypes: props.imageUpload.allowedMimeTypes,
+      autoUploadPastedImages: props.imageUpload.autoUploadPastedImages,
       document: visualRuntime
         ? {
             applyTextChange: (change) => {
@@ -1559,6 +1597,9 @@ export function EditorRoot(props: EditorRootProps) {
       onDiagnostic: props.onFailure,
       onStatus: setImageUploadStatus,
       postId: props.imageUpload.postId,
+      remoteImageImportCoordinator,
+      remoteImageUploadMode: props.imageUpload.remoteImageUploadMode,
+      surface: visualRuntime ? 'visual' : 'source',
       strings: props.imageUpload.strings,
       target: visualEditorSurface
         ?? documentSession.document.getInputElement(),
@@ -1572,6 +1613,7 @@ export function EditorRoot(props: EditorRootProps) {
     nextImageUploadOperationId,
     props.onFailure,
     setImageUploadStatus,
+    remoteImageImportCoordinator,
     visualEditorSurface,
     visualPreviewEditing
   ]);
@@ -2039,6 +2081,7 @@ export function EditorRoot(props: EditorRootProps) {
               <ImmersiveVisualEditor
                 documentSession={documentSession}
                 imageUploadEnabled={props.imageUpload.enabled}
+                imagePasteUploadEnabled={props.imageUpload.autoUploadPastedImages}
                 onCanonicalDocumentChange={
                   handleVisualCanonicalDocumentChange
                 }

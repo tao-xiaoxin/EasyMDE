@@ -178,6 +178,11 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			rest_url( 'easymde/v1/image-hosting/upload' ),
 			$bootstrap['imageUpload']['endpoint']
 		);
+		$this->assertSame(
+			rest_url( 'easymde/v1/image-hosting/import' ),
+			$bootstrap['imageUpload']['importEndpoint']
+		);
+		$this->assertSame( 'both', $bootstrap['imageUpload']['remoteImageUploadMode'] );
 		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertArrayNotHasKey( 'credentials', $bootstrap['imageUpload'] );
 		$this->assertArrayNotHasKey( 'providerEndpoint', $bootstrap['imageUpload'] );
@@ -186,27 +191,37 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {
 		update_option(
 			Options::EDITOR_SETTINGS,
-			array(
-				'shortcuts' => array(
-					'bold' => array(
-						'win' => 'Ctrl+Shift+B',
-						'mac' => 'Cmd+Shift+B',
-					),
-				),
-			),
+			array(),
 			false
 		);
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
-		$settings['shortcuts']['showHints']                  = false;
+		$settings['shortcuts']['values']['heading-one']['windows'] = 'Ctrl+Alt+1';
+		$settings['shortcuts']['values']['heading-two']['windows'] = '';
+		$settings['images']['autoUploadPastedImages']         = false;
 		$this->assertNotWPError( $repository->update_settings( $settings ) );
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post' );
 
 		$this->assertSame( 'Ctrl+Alt+B', $bootstrap['toolbar']['shortcuts']['bold']['win'] );
-		$this->assertFalse( $bootstrap['toolbar']['showShortcutHints'] );
-		$this->assertSame( 'Cmd+Shift+B', get_option( Options::EDITOR_SETTINGS )['shortcuts']['bold']['mac'] );
+		$this->assertSame( 'Ctrl+Alt+1', $bootstrap['toolbar']['shortcuts']['heading1']['win'] );
+		$this->assertSame( '', $bootstrap['toolbar']['shortcuts']['heading2']['win'] );
+		$this->assertArrayNotHasKey( 'showShortcutHints', $bootstrap['toolbar'] );
+		$this->assertFalse( $bootstrap['imageUpload']['autoUploadPastedImages'] );
+		$this->assertSame(
+			'Pasted image upload is disabled. Use Insert Image to upload a file.',
+			$bootstrap['imageUpload']['strings']['pasteUploadDisabled']
+		);
+		$this->assertSame(
+			'Checking pasted image...',
+			$bootstrap['imageUpload']['strings']['pasteChecking']
+		);
+		$this->assertSame(
+			'Pasted image already uses the current image host.',
+			$bootstrap['imageUpload']['strings']['pasteAlreadyHosted']
+		);
+		$this->assertArrayNotHasKey( 'shortcuts', get_option( Options::EDITOR_SETTINGS ) );
 	}
 
 	public function test_editor_status_uses_the_last_editor_and_localized_modified_time() {

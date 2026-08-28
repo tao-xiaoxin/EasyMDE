@@ -4,13 +4,18 @@ export type ImageUploadStrings = Readonly<{
   dropTooLarge: string;
   dropUploaded: string;
   dropUploading: string;
+  pasteAlreadyHosted: string;
+  pasteChecking: string;
   pasteFailed: string;
+  pasteUploadDisabled: string;
   pasteTooLarge: string;
   pasteUploaded: string;
   pasteUploading: string;
 }>;
 
 export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+export type RemoteImageUploadMode = 'both' | 'visual' | 'source' | 'off';
 
 export type ImageUploadInsertion = Readonly<{
   titleDisplay: 'filename' | 'none';
@@ -19,12 +24,15 @@ export type ImageUploadInsertion = Readonly<{
 export type ImageUploadBootstrap = Readonly<{
   actionNonce: string;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
+  autoUploadPastedImages: boolean;
   enabled: boolean;
   endpoint: string;
+  importEndpoint: string;
   insertion: ImageUploadInsertion;
   maxBytes: number;
   nonce: string;
   postId: number;
+  remoteImageUploadMode: RemoteImageUploadMode;
   strings: ImageUploadStrings;
 }>;
 
@@ -84,12 +92,15 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   const expectedKeys = [
     'actionNonce',
     'allowedMimeTypes',
+    'autoUploadPastedImages',
     'enabled',
     'endpoint',
+    'importEndpoint',
     'insertion',
     'maxBytes',
     'nonce',
     'postId',
+    'remoteImageUploadMode',
     'strings'
   ];
   if (
@@ -110,23 +121,38 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   if ('string' !== typeof actionNonce || '' === actionNonce.trim()) {
     throw new Error('image-upload-action-nonce-invalid');
   }
+  if ('boolean' !== typeof bootstrap.autoUploadPastedImages) {
+    throw new Error('image-upload-auto-paste-invalid');
+  }
+  if (
+    'string' !== typeof bootstrap.remoteImageUploadMode ||
+    !['both', 'visual', 'source', 'off'].includes(bootstrap.remoteImageUploadMode)
+  ) {
+    throw new Error('image-upload-remote-paste-mode-invalid');
+  }
 
   return {
     actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
+    autoUploadPastedImages: bootstrap.autoUploadPastedImages,
     enabled: true === bootstrap.enabled,
     endpoint: stringValue(bootstrap.endpoint, 'image-upload-endpoint-invalid'),
+    importEndpoint: stringValue(bootstrap.importEndpoint, 'image-upload-import-endpoint-invalid'),
     insertion: parseImageUploadInsertion(bootstrap.insertion),
     maxBytes: integerValue(bootstrap.maxBytes, 1, 'image-upload-max-bytes-invalid'),
     nonce: stringValue(bootstrap.nonce, 'image-upload-nonce-invalid'),
     postId: integerValue(bootstrap.postId, 0, 'image-upload-post-id-invalid'),
+    remoteImageUploadMode: bootstrap.remoteImageUploadMode as RemoteImageUploadMode,
     strings: {
       defaultAlt: stringValue(messages.defaultAlt, 'image-upload-string-invalid'),
       dropFailed: stringValue(messages.dropFailed, 'image-upload-string-invalid'),
       dropTooLarge: stringValue(messages.dropTooLarge, 'image-upload-string-invalid'),
       dropUploaded: stringValue(messages.dropUploaded, 'image-upload-string-invalid'),
       dropUploading: stringValue(messages.dropUploading, 'image-upload-string-invalid'),
+      pasteAlreadyHosted: stringValue(messages.pasteAlreadyHosted, 'image-upload-string-invalid'),
+      pasteChecking: stringValue(messages.pasteChecking, 'image-upload-string-invalid'),
       pasteFailed: stringValue(messages.pasteFailed, 'image-upload-string-invalid'),
+      pasteUploadDisabled: stringValue(messages.pasteUploadDisabled, 'image-upload-string-invalid'),
       pasteTooLarge: stringValue(messages.pasteTooLarge, 'image-upload-string-invalid'),
       pasteUploaded: stringValue(messages.pasteUploaded, 'image-upload-string-invalid'),
       pasteUploading: stringValue(messages.pasteUploading, 'image-upload-string-invalid'),

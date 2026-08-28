@@ -9,6 +9,7 @@ import type {
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
+import type { RemoteImageImportResult } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type {
@@ -355,17 +356,22 @@ function fixture(): EditorRootProps &
     },
     imageUpload: {
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+      autoUploadPastedImages: true,
       enabled: true,
       insertion: { titleDisplay: 'none' },
       maxBytes: 1024,
       postId: 7,
+      remoteImageUploadMode: 'both',
       strings: {
         defaultAlt: 'image',
         dropFailed: 'Drop failed',
         dropTooLarge: 'Drop too large',
         dropUploaded: 'Drop uploaded',
         dropUploading: 'Drop uploading',
+        pasteAlreadyHosted: 'Paste already hosted',
+        pasteChecking: 'Paste checking',
         pasteFailed: 'Paste failed',
+        pasteUploadDisabled: 'Paste upload disabled',
         pasteTooLarge: 'Paste too large',
         pasteUploaded: 'Paste uploaded',
         pasteUploading: 'Paste uploading'
@@ -377,6 +383,14 @@ function fixture(): EditorRootProps &
         status: 'uploaded',
         title: '',
         url: 'https://example.test/upload.png'
+      } satisfies ImageUploadResult)
+    },
+    remoteImageImportPort: {
+      import: vi.fn().mockResolvedValue({
+        alt: 'remote image',
+        status: 'uploaded',
+        title: '',
+        url: 'https://example.test/imported.png'
       } satisfies ImageUploadResult)
     },
     isNewPost: false,
@@ -729,6 +743,35 @@ describe('EditorRoot', () => {
     expect(immersiveEntry.firstElementChild?.className).toBe(
       'dashicons dashicons-fullscreen-alt'
     );
+  });
+
+  it('formats canonical punctuation tokens in export command titles', async () => {
+    const props = fixture();
+    const toolbar = {
+      ...props.toolbar,
+      commands: [
+        ...props.toolbar.commands,
+        {
+          action: 'extensionExport',
+          group: 'export',
+          icon: 'admin-generic',
+          id: 'extension-export',
+          label: 'Extension export',
+          surface: 'main'
+        }
+      ],
+      shortcuts: {
+        ...props.toolbar.shortcuts,
+        'extension-export': {
+          mac: 'Cmd+Backquote',
+          win: 'Ctrl+Backquote'
+        }
+      }
+    };
+    const view = render(<EditorRoot {...props} toolbar={toolbar} />);
+
+    const button = await view.findByRole('button', { name: 'Extension export' });
+    expect(button.title).toBe('Extension export (Ctrl+`)');
   });
 
   it('recomposes the existing source and preview owners in immersive mode', async () => {
@@ -1966,8 +2009,12 @@ describe('EditorRoot', () => {
     ).toBe('Failed');
   });
 
-  it('accepts only plain text when rich content is pasted into visual Preview', async () => {
-    const props = fixture();
+  it('preserves the plain visual paste path for a remote image when image hosting is disabled', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      imageUpload: { ...baseProps.imageUpload, enabled: false }
+    };
     props.submissionField.value = 'Before';
     props.submissionField.defaultValue = 'Before';
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
@@ -2008,7 +2055,7 @@ describe('EditorRoot', () => {
         getData: (type: string) =>
           'text/plain' === type
             ? ' **safe**'
-            : '<img src="x" onerror="window.__unsafePaste = true">'
+            : '<img alt="remote" src="https://images.example.test/remote.png">'
       }
     });
 
@@ -2017,6 +2064,7 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.submissionField.value).toBe('Before **safe**')
     );
+    expect(props.remoteImageImportPort.import).not.toHaveBeenCalled();
 
     const paragraph = visualEditor.querySelector('p');
     if (!paragraph) throw new Error('missing synthetic drop target');
@@ -2100,6 +2148,80 @@ describe('EditorRoot', () => {
     ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
   }
   );
+
+  it('completes a deferred remote image import after visual editing switches to read-only', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Before **selected** after';
+    props.submissionField.defaultValue = 'Before **selected** after';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
+    });
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
+    vi.mocked(props.remoteImageImportPort.import).mockImplementation(() =>
+      new Promise((resolve) => {
+        resolveImport = resolve;
+      })
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const selectedText = visualEditor.querySelector('strong')?.firstChild;
+    if (!selectedText) throw new Error('missing remote image paste target');
+    const range = document.createRange();
+    range.selectNodeContents(selectedText);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => 'text/html' === type
+          ? '<img alt="remote" src="https://images.example.test/remote.png">'
+          : '',
+        items: []
+      }
+    });
+
+    visualEditor.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.remoteImageImportPort.import).toHaveBeenCalledOnce();
+    });
+
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://images.example.test/remote.png)** after'
+      );
+    });
+    expect(view.getByRole('button', { name: '解除锁定并编辑' })).not.toBeNull();
+    expect(vi.mocked(props.remoteImageImportPort.import).mock.calls[0]?.[0].signal.aborted).toBe(false);
+    resolveImport({
+      alt: 'remote',
+      backup: { status: 'disabled' },
+      status: 'imported',
+      title: '',
+      url: 'https://example.test/imported.png'
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(
+        'Before **![remote](https://example.test/imported.png)** after'
+      );
+    });
+    expect(props.onFailure).not.toHaveBeenCalledWith('remote-image-import-completed-after-teardown');
+  });
 
   it('remounts the Preview owner before applying a theme from visual Preview', async () => {
     const props = fixture();
@@ -5258,6 +5380,78 @@ describe('EditorRoot', () => {
     );
     source?.dispatchEvent(afterUnmount);
     expect(props.imageUploadPort.upload).toHaveBeenCalledTimes(1);
+  });
+
+  it('imports one remote Markdown image from the source surface', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', {
+      value: {
+        files: [],
+        getData: (type: string) => 'text/plain' === type
+          ? '![remote](https://images.example.test/remote.png)'
+          : '',
+        items: []
+      }
+    });
+
+    source?.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.remoteImageImportPort.import).toHaveBeenCalledWith(
+        expect.objectContaining({
+          altText: 'remote',
+          postId: 7,
+          url: 'https://images.example.test/remote.png'
+        })
+      );
+      expect(props.submissionField.value).toBe(
+        '![remote image](https://example.test/imported.png)'
+      );
+    });
+    expect(props.imageUploadPort.upload).not.toHaveBeenCalled();
+  });
+
+  it('blocks automatic image paste while preserving drag-and-drop upload', async () => {
+    const baseProps = fixture();
+    const props = {
+      ...baseProps,
+      imageUpload: {
+        ...baseProps.imageUpload,
+        autoUploadPastedImages: false
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    const source = view.container.querySelector('.cm-content');
+    expect(source).not.toBeNull();
+    const file = new File(['image'], 'screen-shot.png', {
+      type: 'image/png'
+    });
+    const paste = imageTransferEvent('paste', file);
+
+    source?.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(props.imageUploadPort.upload).not.toHaveBeenCalled();
+    expect(props.submissionField.value).toBe('selected');
+    await waitFor(() => {
+      expect(view.getByText('Paste upload disabled')).not.toBeNull();
+    });
+
+    const drop = imageTransferEvent('drop', file);
+    source?.dispatchEvent(drop);
+
+    expect(drop.defaultPrevented).toBe(true);
+    await waitFor(() => {
+      expect(props.imageUploadPort.upload).toHaveBeenCalledOnce();
+      expect(props.submissionField.value).toBe(
+        '![screen shot](https://example.test/upload.png)'
+      );
+    });
   });
 
   it('shows a dismissible error alert without inserting Markdown when backup retries are exhausted', async () => {

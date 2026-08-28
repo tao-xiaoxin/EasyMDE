@@ -29,7 +29,7 @@ const DEFAULT_DRAFT: Draft = {
 	showLineNumbers: true,
 	statusBarMode: "detailed",
 	autoSave: true,
-	autoSaveInterval: "60",
+	autoSaveInterval: "30",
 	syncScroll: true,
 	publishVisibility: "public",
 	openPreviewAfterPublish: true,
@@ -284,9 +284,7 @@ export function GeneralSettingsPage({
 					<NativeSelect
 						label={s.summaryMode}
 						value={draft.summaryMode}
-						onChange={(value) =>
-							setValue("summaryMode", value as SummaryMode)
-						}
+						onChange={(value) => setValue("summaryMode", value as SummaryMode)}
 						options={[
 							["auto-55", s.summary55],
 							["auto-100", s.summary100],

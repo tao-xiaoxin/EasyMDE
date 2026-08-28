@@ -46,9 +46,14 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		foreach ( array( 'endpoint', 'domain', 'backupEndpoint', 'backupDomain' ) as $field ) {
 			$this->assertArrayHasKey( $field, $data['settings']['images'] );
 		}
+		$this->assertSame( '30', $data['settings']['general']['autoSaveInterval'] );
+		$this->assertSame( '{year}/{month}/{md5}.{ext}', $data['settings']['images']['fileNameRule'] );
 		$this->assertSame( 0, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertSame( 5, $data['settings']['images']['maxImageSizeMb'] );
+		$this->assertTrue( $data['settings']['images']['autoUploadPastedImages'] );
+		$this->assertSame( 'both', $data['settings']['images']['remoteImageUploadMode'] );
 		$this->assertSame( 'none', $data['settings']['images']['titleDisplay'] );
+		$this->assertSame( array( 'values' ), array_keys( $data['settings']['shortcuts'] ) );
 		foreach ( array( 'fallbackDomain', 'backupSameObjectKey', 'backupFailureMode', 'retryCount', 'backupRetryCount', 'insertMarkdown', 'preserveFileName', 'copyUrl', 'maxImageSize', 'insertFormat', 'altSource', 'captionMode', 'featuredPlaceholder' ) as $removed ) {
 			$this->assertArrayNotHasKey( $removed, $data['settings']['images'] );
 		}
@@ -103,6 +108,18 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_post_rejects_removed_shortcut_behavior_fields_as_unknown_contract_keys() {
+		foreach ( array( 'showHints', 'detectConflicts', 'showSuggestions' ) as $removed_key ) {
+			$settings = $this->current_settings();
+			$settings['shortcuts'][ $removed_key ] = true;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $removed_key );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $removed_key );
+		}
+	}
+
     public function test_get_projects_settings_and_credential_status_from_one_option_snapshot() {
         $reads = 0;
         $filter = static function () use ( &$reads ) {
@@ -140,6 +157,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $settings['general']['autoSave'] = false;
 		$settings['general']['autoSaveInterval'] = '5';
 		$settings['images']['uploadRetryCount'] = 5;
+		$settings['images']['autoUploadPastedImages'] = false;
         $settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
 
         $response = $this->post_json( array( 'settings' => $settings ) );
@@ -158,6 +176,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $this->assertFalse( $data['settings']['general']['autoSave'] );
 		$this->assertSame( '5', $data['settings']['general']['autoSaveInterval'] );
 		$this->assertSame( 5, $data['settings']['images']['uploadRetryCount'] );
+		$this->assertFalse( $data['settings']['images']['autoUploadPastedImages'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
 
@@ -222,6 +241,23 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			$response = $this->post_json( array( 'settings' => $settings ) );
 			$this->assertSame( 400, $response->get_status(), $invalid_display );
 		}
+	}
+
+	public function test_post_accepts_only_the_four_remote_image_upload_modes() {
+		foreach ( array( 'both', 'visual', 'source', 'off' ) as $mode ) {
+			$settings = $this->current_settings();
+			$settings['images']['remoteImageUploadMode'] = $mode;
+			$response = $this->post_json( array( 'settings' => $settings ) );
+			$this->assertSame( 200, $response->get_status(), $mode );
+			$this->assertSame( $mode, $response->get_data()['settings']['images']['remoteImageUploadMode'] );
+			delete_option( Options::EDITOR_SETTINGS );
+		}
+
+		$settings = $this->current_settings();
+		$settings['images']['remoteImageUploadMode'] = 'enabled';
+		$response = $this->post_json( array( 'settings' => $settings ) );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
 	}
 
 	public function test_post_accepts_each_supported_image_host_service_as_primary()
@@ -420,10 +456,34 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
 
         $invalid_shortcut = $settings;
-        $invalid_shortcut['shortcuts']['values']['bold']['windows'] = 'Alt+B';
+        $invalid_shortcut['shortcuts']['values']['bold']['windows'] = 'Shift+B';
         $response = $this->post_json( array( 'settings' => $invalid_shortcut ) );
         $this->assertSame( 400, $response->get_status() );
         $this->assertSame( 'easymde_settings_invalid_shortcut', $response->as_error()->get_error_code() );
+
+		$invalid_paste_policy = $settings;
+		$invalid_paste_policy['images']['autoUploadPastedImages'] = 'true';
+		$response = $this->post_json( array( 'settings' => $invalid_paste_policy ) );
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+
+		$conflict = $settings;
+		$conflict['shortcuts']['values']['bold']['windows'] = 'Ctrl+S';
+		$response = $this->post_json( array( 'settings' => $conflict ) );
+		$this->assertSame( 409, $response->get_status() );
+		$this->assertSame( 'easymde_settings_shortcut_conflict', $response->as_error()->get_error_code() );
+		$this->assertSame(
+			array(
+				'status'   => 409,
+				'platform' => 'windows',
+				'shortcut' => 'Ctrl+S',
+				'bindings' => array(
+					array( 'id' => 'save', 'label' => 'Save post', 'editable' => true ),
+					array( 'id' => 'bold', 'label' => 'Bold', 'editable' => true ),
+				),
+			),
+			$response->as_error()->get_error_data()
+		);
     }
 
     public function test_post_rejects_the_retired_syntax_highlight_field() {

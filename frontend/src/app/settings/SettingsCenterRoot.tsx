@@ -78,6 +78,43 @@ type ImageVerificationInvalidation = Readonly<{
 	primary: boolean;
 	backup: boolean;
 }>;
+function reconcileSavedSettings(
+	requested: SettingsCenterSettings,
+	authoritative: SettingsCenterSettings,
+): SettingsCenterSettings {
+	const unchanged = <Value,>(requestedValue: Value, savedValue: Value) =>
+		JSON.stringify(requestedValue) === JSON.stringify(savedValue);
+	return {
+		revision: authoritative.revision,
+		general: unchanged(requested.general, authoritative.general)
+			? requested.general
+			: authoritative.general,
+		shortcuts: unchanged(requested.shortcuts, authoritative.shortcuts)
+			? requested.shortcuts
+			: authoritative.shortcuts,
+		images: unchanged(requested.images, authoritative.images)
+			? requested.images
+			: authoritative.images,
+		markdown: unchanged(requested.markdown, authoritative.markdown)
+			? requested.markdown
+			: authoritative.markdown,
+	};
+}
+
+function mutationAffectsSettingsSearch(mutation: MutationRecord): boolean {
+	const element =
+		mutation.target instanceof Element
+			? mutation.target
+			: mutation.target.parentElement;
+	if (element?.closest("[data-settings-section]")) return true;
+	if ("childList" !== mutation.type) return false;
+	return [...mutation.addedNodes, ...mutation.removedNodes].some(
+		(node) =>
+			node instanceof Element &&
+			(node.matches("[data-settings-section]") ||
+				Boolean(node.querySelector("[data-settings-section]"))),
+	);
+}
 const PRIMARY_VERIFICATION_SETTING_KEYS = [
 	"fileNameRule",
 	"service",
@@ -212,6 +249,7 @@ export function SettingsCenterRoot({
 	const [saveFeedbackFocused, setSaveFeedbackFocused] = useState(false);
 	const saveFeedbackIdRef = useRef(0);
 	const saveControllerRef = useRef<AbortController | null>(null);
+	const saveInFlightRef = useRef(false);
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const ownedOverlayRoot = useMemo(() => {
@@ -490,7 +528,8 @@ export function SettingsCenterRoot({
 			root.ownerDocument.defaultView?.MutationObserver;
 		if (!MutationObserverOwner)
 			throw new Error("settings-center-search-observer-missing");
-		const observer = new MutationObserverOwner(() => {
+		const observer = new MutationObserverOwner((mutations) => {
+			if (!mutations.some(mutationAffectsSettingsSearch)) return;
 			searchIndexDirtyRef.current = true;
 			if (normalizedQueryRef.current) rebuildSearchIndex();
 		});
@@ -784,7 +823,13 @@ export function SettingsCenterRoot({
 		[updateSettingsSection],
 	);
 	const saveSettings = async (trigger: HTMLButtonElement) => {
-		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
+		if (
+			!settingsDirty ||
+			"saving" === saveStatus ||
+			saveConflict ||
+			saveInFlightRef.current
+		)
+			return;
 		if (hasDuplicateImageHostConfiguration(settings.images)) {
 			if (!overlayRoot) {
 				throw new Error("settings-center-duplicate-dialog-root-missing");
@@ -792,7 +837,6 @@ export function SettingsCenterRoot({
 			setDuplicateSaveTrigger(trigger);
 			return;
 		}
-		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		const requestedSettings = settings;
 		const resetSecrets = resetSecretsRef.current;
@@ -801,6 +845,8 @@ export function SettingsCenterRoot({
 			requestedSettings.images,
 			resetSecrets,
 		);
+		saveInFlightRef.current = true;
+		saveControllerRef.current?.abort();
 		saveControllerRef.current = controller;
 		setSaveFeedback(null);
 		setSaveStatus("saving");
@@ -811,12 +857,26 @@ export function SettingsCenterRoot({
 				{ resetSecrets },
 			);
 			if (controller.signal.aborted) return;
-			const saved = result.settings;
-			setImageDraft((current) => ({
-				...current,
-				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
-				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
-			}));
+			const saved = reconcileSavedSettings(
+				requestedSettings,
+				result.settings,
+			);
+			setImageDraft((current) => {
+				if (
+					current.primaryCredentialsConfigured ===
+						result.credentialStatus.primaryConfigured &&
+					current.backupCredentialsConfigured ===
+						result.credentialStatus.backupConfigured
+				)
+					return current;
+				return {
+					...current,
+					primaryCredentialsConfigured:
+						result.credentialStatus.primaryConfigured,
+					backupCredentialsConfigured:
+						result.credentialStatus.backupConfigured,
+				};
+			});
 			if (verificationInvalidation.primary || verificationInvalidation.backup) {
 				setVerificationInvalidationTokens((current) => ({
 					primary: current.primary + (verificationInvalidation.primary ? 1 : 0),
@@ -874,6 +934,7 @@ export function SettingsCenterRoot({
 		} finally {
 			if (saveControllerRef.current === controller)
 				saveControllerRef.current = null;
+			saveInFlightRef.current = false;
 		}
 	};
 	const reloadLatestSettings = async () => {

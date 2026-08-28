@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/media-picker-bridge.ts": {
+      "handle": "easymde-media-picker-bridge",
+      "file": "assets/media-picker-bridge-S5fT_33y.js",
+      "asset": "assets/media-picker-bridge-S5fT_33y.asset.php",
+      "dependencies": [
+        "media-editor"
+      ],
+      "resources": []
+    }
+  }
+}

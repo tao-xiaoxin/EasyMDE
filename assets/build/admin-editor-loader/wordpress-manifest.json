@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "entries": {
-    "frontend/src/entrypoints/admin-editor.tsx": {
+    "frontend/src/entrypoints/admin-editor-loader.ts": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-CfZf-ScF.js",
-      "asset": "assets/admin-editor-CfZf-ScF.asset.php",
+      "file": "assets/admin-editor-loader-BanDoQqu.js",
+      "asset": "assets/admin-editor-loader-BanDoQqu.asset.php",
       "dependencies": [
         "wp-api-fetch",
         "wp-element",

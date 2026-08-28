@@ -77,7 +77,9 @@ function fixture(): EditorRootProps &
     dispose: vi.fn()
   };
   const mediaFrame = {
+    attachFrame: vi.fn(() => vi.fn()),
     close: () => undefined,
+    frameUrl: 'https://example.test/media-picker',
     open: vi.fn(),
     select: (_attachment: unknown) => undefined
   };
@@ -426,7 +428,9 @@ function fixture(): EditorRootProps &
       userId: 42
     },
     mediaPicker: {
+      canUseMedia: true,
       defaultAlt: 'image',
+      frameUrl: 'https://example.test/media-picker',
       insertMedia: 'Insert Media',
       insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'

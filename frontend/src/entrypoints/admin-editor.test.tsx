@@ -5,6 +5,7 @@ import { parseEditorRootBootstrap } from '../contracts/bootstrap/editor-root-boo
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserWechatClipboard } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
+import { createWordPressMediaFramePort } from '../integrations/wordpress/media/wordpress-media-frame';
 import { mountAdminEditor } from './admin-editor';
 
 vi.hoisted(() => {
@@ -192,7 +193,14 @@ const bootstrap = {
   },
   layout: {},
   localDrafts: { locale: 'en_US', postId: 7 },
-  mediaPicker: {},
+  mediaPicker: {
+    canUseMedia: true,
+    defaultAlt: 'image',
+    frameUrl: 'https://example.test/wp-admin/admin-post.php?action=easymde_media_picker',
+    insertMedia: 'Insert Media',
+    insertion: { titleDisplay: 'none' },
+    placeholderAlt: 'alt text'
+  },
   preview: { postId: 7 },
   previewEnhancement: { assetBaseUrl: 'https://example.test/plugin/' },
   toolbar: { commands: [], shortcuts: [] },
@@ -311,6 +319,39 @@ describe('mountAdminEditor', () => {
     expect(
       nativeEditor?.classList.contains('easymde-native-editor-hidden')
     ).toBe(false);
+  });
+
+  it('creates and disposes the isolated WordPress media frame adapter', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({
+      render,
+      unmount: vi.fn()
+    } as never);
+    const dispose = vi.fn();
+    vi.mocked(createWordPressMediaFramePort).mockReturnValue({
+      dispose,
+      open: vi.fn()
+    });
+    const wordpress = {
+      apiFetch: Object.assign(vi.fn(), {
+        nonceMiddleware: { nonce: 'nonce' }
+      }),
+      hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+    };
+
+    const teardown = mountAdminEditor(bootstrap, {
+      document,
+      failureMessage: 'Editor failed',
+      window,
+      wordpress
+    });
+
+    expect(createWordPressMediaFramePort).toHaveBeenCalledWith({
+      frameUrl: bootstrap.mediaPicker.frameUrl,
+      window
+    });
+    teardown();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 
   it('forwards the clipboard fetch RequestInit, including its abort signal', async () => {

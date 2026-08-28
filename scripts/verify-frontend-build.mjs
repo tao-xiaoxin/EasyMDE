@@ -27,7 +27,6 @@ const productionSpec = {
 	sourceEntry: "frontend/src/entrypoints/admin-editor.tsx",
 	expectedHandle: "easymde-admin-editor-toolbar",
 	expectedDependencies: [
-		"media-editor",
 		"wp-api-fetch",
 		"wp-element",
 		"wp-hooks",
@@ -38,12 +37,37 @@ const productionSpec = {
 	resourceHasManifestRecord: false,
 	resourceReferencedByScript: false,
 	label: "production build",
-	ignoredOutputPrefixes: ["code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "settings-center/"],
+	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
 	],
 };
+const adminEditorLoaderProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/admin-editor-loader"),
+	sourceEntry: "frontend/src/entrypoints/admin-editor-loader.ts",
+	expectedHandle: "easymde-admin-editor-toolbar",
+	expectedDependencies: [
+		"wp-api-fetch",
+		"wp-element",
+		"wp-hooks",
+		"wp-i18n",
+	],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "admin editor loader production build",
+	requiredRuntimePatterns: [
+		{ pattern: /fetch[Pp]riority|fetchpriority/, label: "high-priority editor fetch" },
+		{ pattern: /MutationObserver/, label: "editor DOM gate" },
+		{ pattern: /pagehide/, label: "editor loader teardown" },
+	],
+};
+const adminEditorLoaderProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-admin-editor-loader-production-check",
+);
 const productionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-frontend-production-check",
@@ -142,6 +166,23 @@ const mermaidProductionSpec = {
 const mermaidProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-frontend-mermaid-production-check",
+);
+const mediaPickerProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/media-picker"),
+	sourceEntry: "frontend/src/entrypoints/media-picker-bridge.ts",
+	expectedHandle: "easymde-media-picker-bridge",
+	expectedDependencies: ["media-editor"],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "media picker bridge production build",
+	requiredRuntimePattern: /easymde-media-picker-connect/,
+	requiredRuntimeLabel: "media picker bridge handshake",
+};
+const mediaPickerProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-media-picker-production-check",
 );
 const forbiddenContent = [
 	{
@@ -511,6 +552,12 @@ export function validateFrontendProductionBuild(
 	return validateBuild(productionSpec, outputRoot);
 }
 
+export function validateAdminEditorLoaderProductionBuild(
+	outputRoot = adminEditorLoaderProductionSpec.outputRoot,
+) {
+	return validateBuild(adminEditorLoaderProductionSpec, outputRoot);
+}
+
 export function validateCodeCopyProductionBuild(
 	outputRoot = codeCopyProductionSpec.outputRoot,
 ) {
@@ -541,6 +588,12 @@ export function validateFrontendMermaidProductionBuild(
 	return validateBuild(mermaidProductionSpec, outputRoot);
 }
 
+export function validateMediaPickerProductionBuild(
+	outputRoot = mediaPickerProductionSpec.outputRoot,
+) {
+	return validateBuild(mediaPickerProductionSpec, outputRoot);
+}
+
 export function compareFrontendProductionBuilds(
 	generatedRoot = productionCheckRoot,
 	committedRoot = productionSpec.outputRoot,
@@ -550,6 +603,18 @@ export function compareFrontendProductionBuilds(
 		generatedRoot,
 		committedRoot,
 		"production frontend",
+	);
+}
+
+export function compareAdminEditorLoaderProductionBuilds(
+	generatedRoot = adminEditorLoaderProductionCheckRoot,
+	committedRoot = adminEditorLoaderProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		adminEditorLoaderProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"admin editor loader production build",
 	);
 }
 
@@ -636,28 +701,44 @@ export function compareFrontendMermaidProductionBuilds(
 	);
 }
 
+export function compareMediaPickerProductionBuilds(
+	generatedRoot = mediaPickerProductionCheckRoot,
+	committedRoot = mediaPickerProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		mediaPickerProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"media picker bridge production build",
+	);
+}
+
 if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
 	try {
-		if (process.argv.includes("--production-check")) {
-			compareFrontendProductionBuilds();
+			if (process.argv.includes("--production-check")) {
+				compareFrontendProductionBuilds();
+				compareAdminEditorLoaderProductionBuilds();
 			compareCodeCopyProductionBuilds();
 			compareSettingsProductionBuilds();
 			compareFrontendEnhancementsProductionBuilds();
 			compareFrontendBootstrapProductionBuilds();
 			compareFrontendMermaidProductionBuilds();
+			compareMediaPickerProductionBuilds();
 			console.log(
 				"Committed frontend production build matches the validated source build.",
 			);
-		} else if (process.argv.includes("--production")) {
-			validateFrontendProductionBuild();
+			} else if (process.argv.includes("--production")) {
+				validateFrontendProductionBuild();
+				validateAdminEditorLoaderProductionBuild();
 			validateSettingsProductionBuild();
 			validateCodeCopyProductionBuild();
 			validateFrontendEnhancementsProductionBuild();
 			validateFrontendBootstrapProductionBuild();
 			validateFrontendMermaidProductionBuild();
+			validateMediaPickerProductionBuild();
 			console.log("Frontend production build is valid.");
 		} else {
 			validateFrontendBuild();

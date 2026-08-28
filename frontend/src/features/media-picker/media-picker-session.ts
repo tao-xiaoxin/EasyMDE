@@ -7,7 +7,7 @@ import type {
 import type { MediaPickerBootstrap } from '../../contracts/bootstrap/media-picker-bootstrap';
 import { imageInsertionText } from '../image-upload/image-insertion';
 
-export type MediaPickerResult = 'cancelled' | 'inserted' | 'placeholder';
+export type MediaPickerResult = 'cancelled' | 'inserted';
 
 type OpenMediaPickerSessionOptions = Readonly<{
   document: MediaPickerDocumentPort;
@@ -79,9 +79,8 @@ export function openMediaPickerSession({
   }
 
   if (!frame) {
-    document.applyTextChange(replacementSnapshot(initial, `![${strings.placeholderAlt}]()`));
     document.focus();
-    return Promise.resolve('placeholder');
+    return Promise.reject(new Error('media-picker-unavailable'));
   }
 
   return new Promise((resolve, reject) => {

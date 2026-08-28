@@ -1,0 +1,8 @@
+{
+  "frontend/src/entrypoints/media-picker-bridge.ts": {
+    "file": "assets/media-picker-bridge-S5fT_33y.js",
+    "name": "mediaPicker",
+    "src": "frontend/src/entrypoints/media-picker-bridge.ts",
+    "isEntry": true
+  }
+}

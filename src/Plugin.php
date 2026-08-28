@@ -6,6 +6,7 @@ use EasyMDE\Admin\AdminAssets;
 use EasyMDE\Admin\EditorMediaUploadPolicy;
 use EasyMDE\Admin\EditorSaveHandler;
 use EasyMDE\Admin\EditorScreen;
+use EasyMDE\Admin\MediaPickerPage;
 use EasyMDE\Admin\PostModeController;
 use EasyMDE\Admin\SettingsPage;
 use EasyMDE\Content\MarkdownFeatureDetector;
@@ -107,6 +108,7 @@ final class Plugin {
 			$settings_page,
 			$post_mode_controller,
 			new EditorScreen( $post_document, $post_mode_controller, $theme_state_repository ),
+			new MediaPickerPage( $post_mode_controller, $post_document ),
 			new AdminAssets( $post_mode_controller, $frontend_assets, $theme_state_repository, $this->toolbar_registry, $settings_center_repository ),
 			new EditorMediaUploadPolicy( $post_document, $settings_center_repository ),
 			new EditorSaveHandler( $post_document, $theme_state_repository ),

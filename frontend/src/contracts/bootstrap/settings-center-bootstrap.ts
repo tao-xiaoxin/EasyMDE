@@ -102,6 +102,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"saveSettings",
 	"savingSettings",
 	"settingsSaved",
+	"closeSettingsFeedback",
 	"settingsSaveFailed",
 	"settingsSaveNetworkFailed",
 	"settingsSaveRejected",

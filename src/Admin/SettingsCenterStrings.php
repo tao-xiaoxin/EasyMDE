@@ -107,6 +107,7 @@ final class SettingsCenterStrings {
 			'saveSettings'                                 => __( 'Save Settings', 'easymde' ),
 			'savingSettings'                               => __( 'Saving…', 'easymde' ),
 			'settingsSaved'                                => __( 'Settings saved.', 'easymde' ),
+			'closeSettingsFeedback'                        => __( 'Close Settings Feedback', 'easymde' ),
 			'settingsSaveFailed'                           => __( 'Settings could not be saved. Try again.', 'easymde' ),
 			'settingsSaveNetworkFailed'                    => __( 'Settings could not be saved because the network request failed. Try again.', 'easymde' ),
 			'settingsSaveRejected'                         => __( 'Settings could not be saved because WordPress rejected the request.', 'easymde' ),

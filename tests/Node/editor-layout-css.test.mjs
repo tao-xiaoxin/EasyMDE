@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
+const messageAlertCss = readFileSync(new URL('../../assets/css/admin/message-alert.css', import.meta.url), 'utf8');
 const frontendCss = readFileSync(new URL('../../assets/css/frontend/base.css', import.meta.url), 'utf8');
 const codeFrameCss = readFileSync(new URL('../../assets/css/frontend/code-frame.css', import.meta.url), 'utf8');
 const frontendAssetsPhp = readFileSync(new URL('../../src/Frontend/FrontendAssets.php', import.meta.url), 'utf8');
@@ -167,11 +168,11 @@ test('immersive Custom CSS typography preserves the reference tracking', () => {
 
 test('shared editor message alerts use one compact semantic treatment', () => {
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert-host\s*\{[^}]*display:\s*flex;[^}]*width:\s*min\(560px, calc\(100vw - 32px\)\);[^}]*justify-content:\s*center;/s
   );
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert\s*\{[^}]*width:\s*fit-content;[^}]*min-width:\s*min\(344px, 100%\);[^}]*max-width:\s*100%;[^}]*min-height:\s*44px;[^}]*padding-block:\s*5px;[^}]*padding-inline:\s*26px 6px;[^}]*border-color:\s*rgba\(var\(--easymde-message-rgb\), \.18\);[^}]*border-radius:\s*10px;[^}]*background:\s*rgba\(var\(--easymde-message-rgb\), \.055\);[^}]*box-shadow:\s*0 6px 18px rgba\(var\(--easymde-message-rgb\), \.08\);[^}]*font-size:\s*14px;[^}]*letter-spacing:\s*\.5px;[^}]*line-height:\s*21px;/s
   );
   for (const [type, rgb] of [
@@ -181,7 +182,7 @@ test('shared editor message alerts use one compact semantic treatment', () => {
     ['error', '255, 51, 78']
   ]) {
     assert.match(
-      css,
+      messageAlertCss,
       new RegExp(
         `\\.easymde-editor-message-alert\\.is-${type}\\s*\\{[^}]*--easymde-message-rgb:\\s*${rgb};`,
         's'
@@ -189,22 +190,22 @@ test('shared editor message alerts use one compact semantic treatment', () => {
     );
   }
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert__icon\s*\{[^}]*width:\s*15px;[^}]*height:\s*15px;[^}]*flex:\s*0 0 15px;[^}]*background:\s*rgb\(var\(--easymde-message-rgb\)\);[^}]*font-size:\s*10px;[^}]*line-height:\s*15px;/s
   );
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert__message\s*\{[^}]*min-width:\s*0;[^}]*margin-inline-start:\s*11px;[^}]*flex:\s*0 1 auto;[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s
   );
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert__close\s*\{[^}]*width:\s*30px;[^}]*height:\s*30px;[^}]*margin-inline-start:\s*auto;[^}]*margin-inline-end:\s*-2px;[^}]*flex:\s*0 0 30px;/s
   );
   assert.match(
-    css,
+    messageAlertCss,
     /\.easymde-editor-message-alert__close svg\s*\{[^}]*width:\s*17px;[^}]*height:\s*17px;/s
   );
-  const mobileAlerts = cssBlock(css, '@media (max-width: 600px)');
+  const mobileAlerts = cssBlock(messageAlertCss, '@media (max-width: 600px)');
   assertDeclaration(
     cssRule(mobileAlerts, '.easymde-editor-message-alert-host'),
     'width',
@@ -219,15 +220,16 @@ test('shared editor message alerts use one compact semantic treatment', () => {
 
   const reducedMotionPrelude = '@media (prefers-reduced-motion: reduce)';
   const reducedMotion = cssBlock(
-    css,
+    messageAlertCss,
     reducedMotionPrelude,
-    css.lastIndexOf(reducedMotionPrelude)
+    messageAlertCss.lastIndexOf(reducedMotionPrelude)
   );
   assertDeclaration(
     cssRule(reducedMotion, '.easymde-editor-message-alert__close'),
     'transition',
     'none'
   );
+  assert.doesNotMatch(css, /\.easymde-editor-message-alert\s*\{/);
 });
 
 test('immersive Custom CSS duplicate error keeps the approved centered width', () => {

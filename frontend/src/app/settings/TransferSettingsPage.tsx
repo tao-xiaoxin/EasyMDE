@@ -23,6 +23,7 @@ import {
 	Upload,
 	X,
 } from "../../generated/lucide-icons";
+import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import {
 	formatSinglePlaceholder,
 	useDialogFocusTrap,
@@ -508,19 +509,13 @@ export function TransferSettingsPage({
 	const feedbackPortal =
 		feedback && overlayRoot
 			? createPortal(
-					<div
-						className="easymde-settings-center__transfer-feedback"
-						role="status"
-					>
-						<Info size={19} />
-						<span>{feedback}</span>
-						<button
-							type="button"
-							aria-label={strings.closeTransferFeedback}
-							onClick={() => setFeedback(null)}
-						>
-							<X size={16} />
-						</button>
+					<div className="easymde-editor-message-alert-host">
+						<EditorMessageAlert
+							closeLabel={strings.closeTransferFeedback}
+							message={feedback}
+							onDismiss={() => setFeedback(null)}
+							type="info"
+						/>
 					</div>,
 					overlayRoot,
 				)

@@ -1,6 +1,7 @@
 import {
 	createElement,
 	createPortal,
+	memo,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -16,6 +17,7 @@ import { ChevronRight, X } from "../../generated/lucide-icons";
 import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
 import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
+import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
 import {
@@ -67,10 +69,52 @@ type SearchSection = Readonly<{
 	groups: ReadonlyArray<SearchGroup>;
 }>;
 type SaveError = "conflict" | "invalid" | "network" | "rejected" | null;
+type SaveFeedback = Readonly<{
+	id: number;
+	kind: "error" | "success";
+	message: string;
+}>;
 type ImageVerificationInvalidation = Readonly<{
 	primary: boolean;
 	backup: boolean;
 }>;
+function reconcileSavedSettings(
+	requested: SettingsCenterSettings,
+	authoritative: SettingsCenterSettings,
+): SettingsCenterSettings {
+	const unchanged = <Value,>(requestedValue: Value, savedValue: Value) =>
+		JSON.stringify(requestedValue) === JSON.stringify(savedValue);
+	return {
+		revision: authoritative.revision,
+		general: unchanged(requested.general, authoritative.general)
+			? requested.general
+			: authoritative.general,
+		shortcuts: unchanged(requested.shortcuts, authoritative.shortcuts)
+			? requested.shortcuts
+			: authoritative.shortcuts,
+		images: unchanged(requested.images, authoritative.images)
+			? requested.images
+			: authoritative.images,
+		markdown: unchanged(requested.markdown, authoritative.markdown)
+			? requested.markdown
+			: authoritative.markdown,
+	};
+}
+
+function mutationAffectsSettingsSearch(mutation: MutationRecord): boolean {
+	const element =
+		mutation.target instanceof Element
+			? mutation.target
+			: mutation.target.parentElement;
+	if (element?.closest("[data-settings-section]")) return true;
+	if ("childList" !== mutation.type) return false;
+	return [...mutation.addedNodes, ...mutation.removedNodes].some(
+		(node) =>
+			node instanceof Element &&
+			(node.matches("[data-settings-section]") ||
+				Boolean(node.querySelector("[data-settings-section]"))),
+	);
+}
 const PRIMARY_VERIFICATION_SETTING_KEYS = [
 	"fileNameRule",
 	"service",
@@ -170,6 +214,14 @@ const SETTINGS_SEARCH_FOCUSABLE_CONTROL_SELECTOR = [
 	'button:not(:disabled):not([aria-disabled="true"])',
 	'a[href]:not([aria-disabled="true"])',
 ].join(", ");
+const SETTINGS_IMAGE_RUNTIME_CAPABILITIES = { compressImages: true } as const;
+const MemoizedGeneralSettingsPage = memo(GeneralSettingsPage);
+const MemoizedShortcutsSettingsPage = memo(ShortcutsSettingsPage);
+const MemoizedImagesSettingsPage = memo(ImagesSettingsPage);
+const MemoizedMarkdownSettingsPage = memo(MarkdownSettingsPage);
+const MemoizedTransferSettingsPage = memo(TransferSettingsPage);
+const MemoizedAboutSettingsPage = memo(AboutSettingsPage);
+
 export function SettingsCenterRoot({
 	bootstrap,
 	overlayRoot: providedOverlayRoot,
@@ -193,8 +245,11 @@ export function SettingsCenterRoot({
 		"idle" | "saving" | "saved" | "error"
 	>("idle");
 	const [saveConflict, setSaveConflict] = useState(false);
-	const [saveError, setSaveError] = useState<SaveError>(null);
+	const [saveFeedback, setSaveFeedback] = useState<SaveFeedback | null>(null);
+	const [saveFeedbackFocused, setSaveFeedbackFocused] = useState(false);
+	const saveFeedbackIdRef = useRef(0);
 	const saveControllerRef = useRef<AbortController | null>(null);
+	const saveInFlightRef = useRef(false);
 	const [query, setQuery] = useState("");
 	const [searchItems, setSearchItems] = useState<ReadonlyArray<SearchItem>>([]);
 	const ownedOverlayRoot = useMemo(() => {
@@ -231,6 +286,14 @@ export function SettingsCenterRoot({
 		return () => ownedOverlayRoot.remove();
 	}, [ownedOverlayRoot]);
 	const strings = bootstrap.strings;
+	const showSaveFeedback = (
+		kind: SaveFeedback["kind"],
+		message: string,
+	) => {
+		saveFeedbackIdRef.current += 1;
+		setSaveFeedbackFocused(false);
+		setSaveFeedback({ id: saveFeedbackIdRef.current, kind, message });
+	};
 	const brandSuffixLength = 3;
 	const brandPrefix = strings.brandName.slice(0, -brandSuffixLength);
 	const brandSuffix = strings.brandName.slice(-brandSuffixLength);
@@ -465,7 +528,8 @@ export function SettingsCenterRoot({
 			root.ownerDocument.defaultView?.MutationObserver;
 		if (!MutationObserverOwner)
 			throw new Error("settings-center-search-observer-missing");
-		const observer = new MutationObserverOwner(() => {
+		const observer = new MutationObserverOwner((mutations) => {
+			if (!mutations.some(mutationAffectsSettingsSearch)) return;
 			searchIndexDirtyRef.current = true;
 			if (normalizedQueryRef.current) rebuildSearchIndex();
 		});
@@ -509,6 +573,21 @@ export function SettingsCenterRoot({
 		}, SETTINGS_SAVE_CONFIRMATION_DURATION);
 		return () => windowRef.clearTimeout(timeout);
 	}, [saveStatus]);
+
+	useEffect(() => {
+		if ("success" !== saveFeedback?.kind || saveFeedbackFocused)
+			return;
+		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
+		if (!windowRef)
+			throw new Error("settings-center-save-feedback-window-missing");
+		const feedbackId = saveFeedback.id;
+		const timeout = windowRef.setTimeout(() => {
+			setSaveFeedback((current) =>
+				current?.id === feedbackId ? null : current,
+			);
+		}, SETTINGS_SAVE_CONFIRMATION_DURATION);
+		return () => windowRef.clearTimeout(timeout);
+	}, [saveFeedback, saveFeedbackFocused]);
 
 	const navigationViewportTop = (container: HTMLDivElement) => {
 		const stickyHeader = stickyHeaderRef.current;
@@ -674,39 +753,83 @@ export function SettingsCenterRoot({
 	const settingsDirty =
 		resetSecretsRef.current ||
 		JSON.stringify(settings) !== JSON.stringify(savedSettings);
-	const saveBarVisible = settingsDirty || "idle" !== saveStatus || saveConflict;
-	const updateSettingsSection = <Key extends keyof SettingsCenterSettings>(
-		key: Key,
-		value: SettingsCenterSettings[Key],
-	) => {
-		const previousSettings = settingsRef.current;
-		const nextSettings: SettingsCenterSettings = {
-			...previousSettings,
-			[key]: value,
-		};
-		settingsRef.current = nextSettings;
-		setSettings(nextSettings);
-		setSaveError(null);
-		setSaveStatus((status) => ("saving" === status ? status : "idle"));
-	};
-	const replaceSettingsDraft = (nextSettings: SettingsCenterSettings) => {
-		resetSecretsRef.current = false;
-		setSaveConflict(false);
-		setSaveError(null);
-		settingsRef.current = nextSettings;
-		setSettings(nextSettings);
-		setSaveStatus("idle");
-	};
-	const resetSettingsDraft = (nextSettings: SettingsCenterSettings) => {
-		resetSecretsRef.current = true;
-		setSaveConflict(false);
-		setSaveError(null);
-		settingsRef.current = nextSettings;
-		setSettings(nextSettings);
-		setSaveStatus("idle");
-	};
+	const saveBarVisible =
+		settingsDirty || "saving" === saveStatus || saveConflict;
+	const updateSettingsSection = useCallback(
+		<Key extends keyof SettingsCenterSettings>(
+			key: Key,
+			value: SettingsCenterSettings[Key],
+		) => {
+			const previousSettings = settingsRef.current;
+			const nextSettings: SettingsCenterSettings = {
+				...previousSettings,
+				[key]: value,
+			};
+			settingsRef.current = nextSettings;
+			setSettings(nextSettings);
+			setSaveFeedback(null);
+			setSaveStatus((status) => ("saving" === status ? status : "idle"));
+		},
+		[],
+	);
+	const replaceSettingsDraft = useCallback(
+		(nextSettings: SettingsCenterSettings) => {
+			resetSecretsRef.current = false;
+			setSaveConflict(false);
+			setSaveFeedback(null);
+			settingsRef.current = nextSettings;
+			setSettings(nextSettings);
+			setSaveStatus("idle");
+		},
+		[],
+	);
+	const resetSettingsDraft = useCallback(
+		(nextSettings: SettingsCenterSettings) => {
+			resetSecretsRef.current = true;
+			setSaveConflict(false);
+			setSaveFeedback(null);
+			settingsRef.current = nextSettings;
+			setSettings(nextSettings);
+			setSaveStatus("idle");
+		},
+		[],
+	);
+	const updateGeneralSettings = useCallback(
+		(value: SettingsCenterSettings["general"]) =>
+			updateSettingsSection("general", value),
+		[updateSettingsSection],
+	);
+	const updateShortcutSettings = useCallback(
+		(value: SettingsCenterSettings["shortcuts"]) =>
+			updateSettingsSection("shortcuts", value),
+		[updateSettingsSection],
+	);
+	const updateImageSettings = useCallback(
+		(value: SettingsCenterSettings["images"]) =>
+			updateSettingsSection("images", value),
+		[updateSettingsSection],
+	);
+	const updateMarkdownSettings = useCallback(
+		(value: SettingsCenterSettings["markdown"]) =>
+			updateSettingsSection("markdown", value),
+		[updateSettingsSection],
+	);
+	const updateApplyEditorThemeToFrontend = useCallback(
+		(value: boolean) =>
+			updateSettingsSection("general", {
+				...settingsRef.current.general,
+				applyEditorThemeToFrontend: value,
+			}),
+		[updateSettingsSection],
+	);
 	const saveSettings = async (trigger: HTMLButtonElement) => {
-		if (!settingsDirty || "saving" === saveStatus || saveConflict) return;
+		if (
+			!settingsDirty ||
+			"saving" === saveStatus ||
+			saveConflict ||
+			saveInFlightRef.current
+		)
+			return;
 		if (hasDuplicateImageHostConfiguration(settings.images)) {
 			if (!overlayRoot) {
 				throw new Error("settings-center-duplicate-dialog-root-missing");
@@ -714,7 +837,6 @@ export function SettingsCenterRoot({
 			setDuplicateSaveTrigger(trigger);
 			return;
 		}
-		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		const requestedSettings = settings;
 		const resetSecrets = resetSecretsRef.current;
@@ -723,7 +845,10 @@ export function SettingsCenterRoot({
 			requestedSettings.images,
 			resetSecrets,
 		);
+		saveInFlightRef.current = true;
+		saveControllerRef.current?.abort();
 		saveControllerRef.current = controller;
+		setSaveFeedback(null);
 		setSaveStatus("saving");
 		try {
 			const result = await settingsPort.save(
@@ -732,12 +857,26 @@ export function SettingsCenterRoot({
 				{ resetSecrets },
 			);
 			if (controller.signal.aborted) return;
-			const saved = result.settings;
-			setImageDraft((current) => ({
-				...current,
-				primaryCredentialsConfigured: result.credentialStatus.primaryConfigured,
-				backupCredentialsConfigured: result.credentialStatus.backupConfigured,
-			}));
+			const saved = reconcileSavedSettings(
+				requestedSettings,
+				result.settings,
+			);
+			setImageDraft((current) => {
+				if (
+					current.primaryCredentialsConfigured ===
+						result.credentialStatus.primaryConfigured &&
+					current.backupCredentialsConfigured ===
+						result.credentialStatus.backupConfigured
+				)
+					return current;
+				return {
+					...current,
+					primaryCredentialsConfigured:
+						result.credentialStatus.primaryConfigured,
+					backupCredentialsConfigured:
+						result.credentialStatus.backupConfigured,
+				};
+			});
 			if (verificationInvalidation.primary || verificationInvalidation.backup) {
 				setVerificationInvalidationTokens((current) => ({
 					primary: current.primary + (verificationInvalidation.primary ? 1 : 0),
@@ -761,8 +900,10 @@ export function SettingsCenterRoot({
 				setSettings(nextSettings);
 			}
 			setSaveConflict(false);
-			setSaveError(null);
 			setSaveStatus(currentSettingsUnchanged ? "saved" : "idle");
+			if (currentSettingsUnchanged) {
+				showSaveFeedback("success", strings.settingsSaved);
+			}
 		} catch (error) {
 			if (!controller.signal.aborted) {
 				const code =
@@ -778,12 +919,22 @@ export function SettingsCenterRoot({
 								? "invalid"
 								: "rejected";
 				setSaveConflict("conflict" === nextError);
-				setSaveError(nextError);
 				setSaveStatus("error");
+				if ("conflict" !== nextError) {
+					showSaveFeedback(
+						"error",
+						"network" === nextError
+							? strings.settingsSaveNetworkFailed
+							: "invalid" === nextError
+								? strings.settingsSaveInvalid
+								: strings.settingsSaveRejected,
+					);
+				}
 			}
 		} finally {
 			if (saveControllerRef.current === controller)
 				saveControllerRef.current = null;
+			saveInFlightRef.current = false;
 		}
 	};
 	const reloadLatestSettings = async () => {
@@ -791,6 +942,7 @@ export function SettingsCenterRoot({
 		saveControllerRef.current?.abort();
 		const controller = new AbortController();
 		saveControllerRef.current = controller;
+		setSaveFeedback(null);
 		setSaveStatus("saving");
 		try {
 			const result = await settingsPort.get(controller.signal);
@@ -810,7 +962,6 @@ export function SettingsCenterRoot({
 			}));
 			resetSecretsRef.current = false;
 			setSaveConflict(false);
-			setSaveError(null);
 			setSaveStatus("idle");
 		} catch (error) {
 			if (!controller.signal.aborted) {
@@ -818,12 +969,19 @@ export function SettingsCenterRoot({
 					error instanceof Error
 						? error.message
 						: "settings-center-get-rejected";
-				setSaveError(
+				const nextError: Exclude<SaveError, "conflict" | null> =
 					code.endsWith("-network-failed")
 						? "network"
 						: code.endsWith("-response-invalid")
 							? "invalid"
-							: "rejected",
+							: "rejected";
+				showSaveFeedback(
+					"error",
+					"network" === nextError
+						? strings.settingsSaveNetworkFailed
+						: "invalid" === nextError
+							? strings.settingsSaveInvalid
+							: strings.settingsSaveRejected,
 				);
 				setSaveStatus("error");
 			}
@@ -941,19 +1099,11 @@ export function SettingsCenterRoot({
 						aria-live="polite"
 					>
 						<span data-save-status={saveStatus}>
-							{"error" === saveStatus
-								? "conflict" === saveError
-									? strings.settingsConflict
-									: "network" === saveError
-										? strings.settingsSaveNetworkFailed
-										: "invalid" === saveError
-											? strings.settingsSaveInvalid
-											: strings.settingsSaveRejected
-								: "saved" === saveStatus
-									? strings.settingsSaved
-									: settingsDirty
-										? strings.settingsUnsavedChanges
-										: ""}
+							{saveConflict
+								? strings.settingsConflict
+								: settingsDirty
+									? strings.settingsUnsavedChanges
+									: ""}
 						</span>
 						<button
 							type="button"
@@ -1069,16 +1219,14 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<GeneralSettingsPage
+									<MemoizedGeneralSettingsPage
 										embedded
 										query=""
 										searchEmptyIllustrationUrl={
 											bootstrap.assets.searchEmptyIllustrationUrl
 										}
 										settings={settings.general}
-										onChange={(value) =>
-											updateSettingsSection("general", value)
-										}
+										onChange={updateGeneralSettings}
 										strings={strings}
 									/>
 								</section>
@@ -1090,12 +1238,10 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<ShortcutsSettingsPage
+									<MemoizedShortcutsSettingsPage
 										defaultValues={bootstrap.defaultSettings.shortcuts.values}
 										settings={settings.shortcuts}
-										onChange={(value) =>
-											updateSettingsSection("shortcuts", value)
-										}
+										onChange={updateShortcutSettings}
 										strings={strings}
 									/>
 								</section>
@@ -1107,7 +1253,7 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<ImagesSettingsPage
+									<MemoizedImagesSettingsPage
 										brandMarkUrl={bootstrap.assets.brandMarkUrl}
 										verificationInvalidationTokens={
 											verificationInvalidationTokens
@@ -1115,14 +1261,12 @@ export function SettingsCenterRoot({
 										uploadVerificationPort={imageHostingVerificationPort}
 										settingsRevision={settings.revision}
 										secretRevealPort={imageHostingSecretRevealPort}
-									runtimeCapabilities={{
-										compressImages: true,
-									}}
-									uploadLimits={bootstrap.uploadLimits}
+										runtimeCapabilities={SETTINGS_IMAGE_RUNTIME_CAPABILITIES}
+										uploadLimits={bootstrap.uploadLimits}
 										draft={imageDraft}
 										overlayRoot={overlayRoot}
 										settings={settings.images}
-										onChange={(value) => updateSettingsSection("images", value)}
+										onChange={updateImageSettings}
 										strings={strings}
 									/>
 								</section>
@@ -1134,20 +1278,15 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<MarkdownSettingsPage
+									<MemoizedMarkdownSettingsPage
 										applyEditorThemeToFrontend={
 											settings.general.applyEditorThemeToFrontend
 										}
-										onApplyEditorThemeToFrontendChange={(value) =>
-											updateSettingsSection("general", {
-												...settings.general,
-												applyEditorThemeToFrontend: value,
-											})
+										onApplyEditorThemeToFrontendChange={
+											updateApplyEditorThemeToFrontend
 										}
 										settings={settings.markdown}
-										onChange={(value) =>
-											updateSettingsSection("markdown", value)
-										}
+										onChange={updateMarkdownSettings}
 										strings={strings}
 									/>
 								</section>
@@ -1159,7 +1298,7 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<TransferSettingsPage
+									<MemoizedTransferSettingsPage
 										overlayRoot={overlayRoot}
 										bootstrap={bootstrap}
 										settings={settings}
@@ -1176,7 +1315,7 @@ export function SettingsCenterRoot({
 									}}
 									className="easymde-settings-center__settings-section"
 								>
-									<AboutSettingsPage
+									<MemoizedAboutSettingsPage
 										overlayRoot={overlayRoot}
 										bootstrap={bootstrap}
 									/>
@@ -1208,6 +1347,23 @@ export function SettingsCenterRoot({
 							strings={strings}
 							onClose={() => setDuplicateSaveTrigger(null)}
 						/>,
+						overlayRoot,
+					)
+				: null}
+			{saveFeedback && overlayRoot
+				? createPortal(
+						<div
+							key={saveFeedback.id}
+							className="easymde-editor-message-alert-host"
+						>
+							<EditorMessageAlert
+								closeLabel={strings.closeSettingsFeedback}
+								message={saveFeedback.message}
+								onDismiss={() => setSaveFeedback(null)}
+								onFocusChange={setSaveFeedbackFocused}
+								type={saveFeedback.kind}
+							/>
+						</div>,
 						overlayRoot,
 					)
 				: null}

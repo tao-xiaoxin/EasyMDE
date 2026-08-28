@@ -929,6 +929,25 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it.each([
+		["windows", "control+b"],
+		["windows", "Shift+B"],
+		["mac", "Command+B"],
+	] as const)("rejects a noncanonical %s shortcut", (platform, shortcut) => {
+		const value = bootstrap();
+		const shortcuts = value.settings.shortcuts.values as unknown as Record<
+			string,
+			{ windows: string; mac: string }
+		>;
+		const bold = shortcuts.bold;
+		if (!bold) throw new Error("settings-center-test-fixture-bold-missing");
+		bold[platform] = shortcut;
+
+		expect(() => parseSettingsCenterBootstrap(value)).toThrow(
+			"settings-center-shortcut-bold-invalid",
+		);
+	});
+
 	it("parses read-only reserved shortcut bindings", () => {
 		const value = bootstrap();
 		value.reservedShortcuts = [

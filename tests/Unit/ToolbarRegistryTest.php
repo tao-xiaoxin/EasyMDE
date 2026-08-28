@@ -43,4 +43,20 @@ final class ToolbarRegistryTest extends WP_UnitTestCase
         $this->assertSame('Ctrl+Shift+W', $command['defaultShortcutWin']);
         $this->assertSame('Cmd+Ctrl+W', $command['defaultShortcutMac']);
     }
+
+    public function test_registration_rejects_an_id_that_sanitizes_to_empty()
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('easymde-toolbar-command-id-invalid');
+
+        (new ToolbarRegistry())->register_toolbar_button('!!!', array('label' => 'Invalid identity'));
+    }
+
+    public function test_registration_rejects_an_empty_label()
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('easymde-toolbar-command-label-invalid');
+
+        (new ToolbarRegistry())->register_toolbar_button('synthetic-command', array('label' => '   '));
+    }
 }

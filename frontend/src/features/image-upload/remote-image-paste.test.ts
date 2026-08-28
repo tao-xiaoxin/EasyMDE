@@ -43,6 +43,58 @@ describe('remoteImagePasteCandidate', () => {
     });
   });
 
+  it('rejects raw URL whitespace while preserving a percent-encoded space', () => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': '<img alt="Remote cover" src=" https://images.example.test/cover.png ">',
+        }),
+        document,
+        'visual',
+      ),
+    ).toBeNull();
+
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': '<img alt="Remote cover" src="https://images.example.test/remote%20cover.png">',
+        }),
+        document,
+        'visual',
+      ),
+    ).toMatchObject({
+      fallbackText: '![Remote cover](https://images.example.test/remote%20cover.png)',
+      url: 'https://images.example.test/remote%20cover.png',
+    });
+  });
+
+  it.each(['(', ')'])('rejects a raw %s in an HTML image URL', (parenthesis) => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': `<img alt="Remote cover" src="https://images.example.test/remote${parenthesis}cover.png">`,
+        }),
+        document,
+        'visual',
+      ),
+    ).toBeNull();
+  });
+
+  it('preserves percent-encoded parentheses in the HTML image fallback', () => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': '<img alt="Remote cover" src="https://images.example.test/remote%28cover%29.png">',
+        }),
+        document,
+        'visual',
+      ),
+    ).toMatchObject({
+      fallbackText: '![Remote cover](https://images.example.test/remote%28cover%29.png)',
+      url: 'https://images.example.test/remote%28cover%29.png',
+    });
+  });
+
   it('recognizes exactly one inline Markdown image only on source surfaces', () => {
     const clipboard = transfer({
       'text/plain': '  ![Remote cover](https://images.example.test/cover.png)  ',

@@ -437,7 +437,7 @@ msgstr ""
 msgid "View modes"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:484 src/Support/ToolbarRegistry.php:291
+#: src/Admin/AdminAssets.php:484 src/Support/ToolbarRegistry.php:301
 msgid "Copy to WeChat"
 msgstr ""
 
@@ -1566,19 +1566,19 @@ msgstr ""
 msgid "Save Article"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:91 src/Support/ToolbarRegistry.php:98
+#: src/Admin/SettingsCenterStrings.php:91 src/Support/ToolbarRegistry.php:108
 msgid "Bold"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:92 src/Support/ToolbarRegistry.php:113
+#: src/Admin/SettingsCenterStrings.php:92 src/Support/ToolbarRegistry.php:123
 msgid "Italic"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:93 src/Support/ToolbarRegistry.php:128
+#: src/Admin/SettingsCenterStrings.php:93 src/Support/ToolbarRegistry.php:138
 msgid "Strikethrough"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:94 src/Support/ToolbarRegistry.php:143
+#: src/Admin/SettingsCenterStrings.php:94 src/Support/ToolbarRegistry.php:153
 msgid "Paragraph"
 msgstr ""
 
@@ -1592,31 +1592,31 @@ msgstr ""
 msgid "Insert Image"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:97 src/Support/ToolbarRegistry.php:154
+#: src/Admin/SettingsCenterStrings.php:97 src/Support/ToolbarRegistry.php:164
 msgid "Heading 1"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:98 src/Support/ToolbarRegistry.php:155
+#: src/Admin/SettingsCenterStrings.php:98 src/Support/ToolbarRegistry.php:165
 msgid "Heading 2"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:99 src/Support/ToolbarRegistry.php:156
+#: src/Admin/SettingsCenterStrings.php:99 src/Support/ToolbarRegistry.php:166
 msgid "Heading 3"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:100 src/Support/ToolbarRegistry.php:157
+#: src/Admin/SettingsCenterStrings.php:100 src/Support/ToolbarRegistry.php:167
 msgid "Heading 4"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:101 src/Support/ToolbarRegistry.php:158
+#: src/Admin/SettingsCenterStrings.php:101 src/Support/ToolbarRegistry.php:168
 msgid "Heading 5"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:102 src/Support/ToolbarRegistry.php:159
+#: src/Admin/SettingsCenterStrings.php:102 src/Support/ToolbarRegistry.php:169
 msgid "Heading 6"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:103 src/Support/ToolbarRegistry.php:182
+#: src/Admin/SettingsCenterStrings.php:103 src/Support/ToolbarRegistry.php:192
 msgid "Quote"
 msgstr ""
 
@@ -1628,7 +1628,7 @@ msgstr ""
 msgid "Ordered List"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:106 src/Support/ToolbarRegistry.php:224
+#: src/Admin/SettingsCenterStrings.php:106 src/Support/ToolbarRegistry.php:234
 msgid "Inline code"
 msgstr ""
 
@@ -1636,7 +1636,7 @@ msgstr ""
 msgid "Code block"
 msgstr ""
 
-#: src/Admin/SettingsCenterStrings.php:108 src/Support/ToolbarRegistry.php:252
+#: src/Admin/SettingsCenterStrings.php:108 src/Support/ToolbarRegistry.php:262
 msgid "Math block"
 msgstr ""
 
@@ -2845,7 +2845,7 @@ msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
 #: src/Rest/ImageHostingController.php:842
-#: src/Support/SettingsCenterRepository.php:660
+#: src/Support/SettingsCenterRepository.php:679
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
@@ -2975,40 +2975,40 @@ msgstr ""
 #: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:369
 #: src/Support/SettingsCenterRepository.php:317
 #: src/Support/SettingsCenterRepository.php:401
-#: src/Support/SettingsCenterRepository.php:546
-#: src/Support/SettingsCenterRepository.php:587
+#: src/Support/SettingsCenterRepository.php:565
+#: src/Support/SettingsCenterRepository.php:606
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:630
+#: src/Support/SettingsCenterRepository.php:649
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:641
+#: src/Support/SettingsCenterRepository.php:660
 msgid "One or more shortcut values conflict."
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:85
+#: src/Support/ToolbarRegistry.php:95
 msgid "Save post"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:196
+#: src/Support/ToolbarRegistry.php:206
 msgid "Unordered list"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:210
+#: src/Support/ToolbarRegistry.php:220
 msgid "Ordered list"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:239
+#: src/Support/ToolbarRegistry.php:249
 msgid "Code fence"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:265
+#: src/Support/ToolbarRegistry.php:275
 msgid "Link"
 msgstr ""
 
-#: src/Support/ToolbarRegistry.php:278
+#: src/Support/ToolbarRegistry.php:288
 msgid "Image"
 msgstr ""
 

@@ -362,6 +362,44 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertFalse($repository->should_show_published_code_copy_button());
 	}
 
+	public function test_public_presentation_accessors_do_not_project_toolbar_shortcuts()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'general' => array(
+						'applyEditorThemeToFrontend' => false,
+						'showPublishedCodeCopyButton' => false,
+					),
+					'markdown' => array(
+						'tableAlignment' => 'left',
+						'codeLineNumbers' => 'hide',
+					),
+				),
+			),
+			false
+		);
+		$registry = new ToolbarRegistry();
+		$registry->register_toolbar_button(
+			'bold',
+			array(
+				'label' => 'Invalid shortcut override',
+				'defaultShortcutWin' => 'control+b',
+			)
+		);
+		$repository = new SettingsCenterRepository(new Options(), $registry);
+
+		$this->assertFalse($repository->should_apply_editor_theme_to_frontend());
+		$this->assertFalse($repository->should_show_published_code_copy_button());
+		$this->assertSame('left', $repository->get_published_table_alignment());
+		$this->assertFalse($repository->should_show_published_code_line_numbers());
+
+		$this->expectException(\RuntimeException::class);
+		$this->expectExceptionMessage('easymde-toolbar-shortcut-invalid');
+		$repository->get_settings();
+	}
+
 	public function test_legacy_caption_mode_migrates_to_title_display_without_reintroducing_removed_fields()
 	{
 		update_option(Options::EDITOR_SETTINGS, array('settings_center' => array(

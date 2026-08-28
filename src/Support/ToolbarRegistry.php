@@ -16,7 +16,17 @@ final class ToolbarRegistry {
 	}
 
 	public function register_toolbar_button( $id, array $config ) {
-		$this->toolbar_buttons[ sanitize_key( $id ) ] = $this->normalize_command_config( $id, $config );
+		$command_id = sanitize_key( $id );
+		if ( '' === $command_id ) {
+			throw new \RuntimeException( 'easymde-toolbar-command-id-invalid' );
+		}
+
+		$command = $this->normalize_command_config( $command_id, $config );
+		if ( ! is_string( $command['label'] ) || '' === trim( $command['label'] ) ) {
+			throw new \RuntimeException( 'easymde-toolbar-command-label-invalid' );
+		}
+
+		$this->toolbar_buttons[ $command_id ] = $command;
 	}
 
 	public function register_shortcode_helper( $id, array $config ) {

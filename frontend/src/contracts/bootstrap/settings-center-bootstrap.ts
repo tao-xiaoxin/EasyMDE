@@ -3,6 +3,7 @@ import type {
 	SettingsCenterSettings,
 } from "../settings-center-settings";
 import { SHORTCUT_IDS } from "../settings-center-settings";
+import { canonicalizeKeyboardShortcut } from "../../shared/keyboard/keyboard-shortcut";
 
 export const SETTINGS_CENTER_STRING_KEYS = [
 	"brandName",
@@ -828,6 +829,12 @@ export function parseSettingsCenterSettings(
 			utf8ByteLength(shortcut.windows) > 64 ||
 			typeof shortcut.mac !== "string" ||
 			utf8ByteLength(shortcut.mac) > 64
+		) {
+			throw new Error(`settings-center-shortcut-${id}-invalid`);
+		}
+		if (
+			canonicalizeKeyboardShortcut(shortcut.windows, "win") !== shortcut.windows ||
+			canonicalizeKeyboardShortcut(shortcut.mac, "mac") !== shortcut.mac
 		) {
 			throw new Error(`settings-center-shortcut-${id}-invalid`);
 		}

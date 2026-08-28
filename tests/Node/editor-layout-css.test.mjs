@@ -609,8 +609,13 @@ test('ordinary heading menu uses content-sized viewport-bounded geometry without
   );
   assert.match(
     popover,
-    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu::before\s*\{[^}]*content:\s*"";[^}]*position:\s*fixed;[^}]*top:\s*var\(--easymde-heading-arrow-viewport-top\);[^}]*right:\s*auto;[^}]*left:\s*var\(--easymde-heading-arrow-viewport-left\);[^}]*inset-inline-end:\s*auto;[^}]*inset-inline-start:\s*auto;[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu::before\s*\{[^}]*content:\s*"";[^}]*position:\s*fixed;[^}]*top:\s*var\(--easymde-heading-arrow-viewport-top\);[^}]*right:\s*auto;[^}]*left:\s*var\(--easymde-heading-arrow-viewport-left\);[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*border-top:\s*1px solid #d0d7de;[^}]*border-left:\s*1px solid #d0d7de;[^}]*background:\s*#fff;[^}]*transform:\s*rotate\(45deg\);/s
   );
+  const ordinaryHeadingArrowRule = popover.match(
+    /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-toolbar-popover\.is-ordinary-heading-menu::before\s*\{([^}]*)\}/s
+  )?.[1];
+  assert.ok(ordinaryHeadingArrowRule);
+  assert.doesNotMatch(ordinaryHeadingArrowRule, /inset-inline-(?:start|end):/);
   assert.match(
     popover,
     /\.easymde-editor:not\(\.is-immersive\) \.easymde-toolbar-popover-headings \.easymde-popover-item\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*30px minmax\(max-content, 1fr\) max-content;[^}]*min-height:\s*32px;[^}]*padding:\s*0 9px;[^}]*border-radius:\s*8px;/s

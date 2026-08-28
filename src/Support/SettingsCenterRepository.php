@@ -70,25 +70,25 @@ final class SettingsCenterRepository {
 	}
 
 	public function should_apply_editor_theme_to_frontend() {
-		$settings = $this->get_settings();
+		$settings = $this->get_published_presentation_settings();
 
 		return $settings['general']['applyEditorThemeToFrontend'];
 	}
 
 	public function should_show_published_code_copy_button() {
-		$settings = $this->get_settings();
+		$settings = $this->get_published_presentation_settings();
 
 		return $settings['general']['showPublishedCodeCopyButton'];
 	}
 
 	public function get_published_table_alignment() {
-		$settings = $this->get_settings();
+		$settings = $this->get_published_presentation_settings();
 
 		return $settings['markdown']['tableAlignment'];
 	}
 
 	public function should_show_published_code_line_numbers() {
-		$settings = $this->get_settings();
+		$settings = $this->get_published_presentation_settings();
 
 		return 'show' === $settings['markdown']['codeLineNumbers'];
 	}
@@ -488,6 +488,25 @@ final class SettingsCenterRepository {
 				'values' => $shortcuts,
 			),
 		);
+	}
+
+	private function get_published_presentation_settings() {
+		$stored   = $this->options->get_editor_settings();
+		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
+			? $stored['settings_center']
+			: array();
+		$defaults = array(
+			'general'  => array(
+				'applyEditorThemeToFrontend'  => true,
+				'showPublishedCodeCopyButton' => true,
+			),
+			'markdown' => array(
+				'tableAlignment'  => 'center',
+				'codeLineNumbers' => 'show',
+			),
+		);
+
+		return $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
 	}
 
 	private function merge_settings( array $defaults, array $stored ) {

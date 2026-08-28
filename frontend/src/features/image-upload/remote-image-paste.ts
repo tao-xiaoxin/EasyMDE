@@ -10,7 +10,7 @@ export type RemoteImagePasteCandidate = Readonly<{
 }>;
 
 function absoluteHttpUrl(value: string): string | null {
-  if (!value || value.length > 2048) return null;
+  if (!value || value.length > 2048 || /[\s()]/.test(value)) return null;
   try {
     const url = new URL(value);
     return ['http:', 'https:'].includes(url.protocol) ? value : null;

@@ -518,8 +518,7 @@ function fixture(): EditorRootProps &
         showLineNumbers: true,
         statusBarMode: 'detailed',
         summaryMode: 'auto-55',
-        syncScroll: true,
-        syntaxHighlight: true
+        syncScroll: true
       },
       markdown: { wordWrap: true }
     },

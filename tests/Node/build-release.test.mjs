@@ -493,6 +493,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/css/admin/settings-center.css'));
+    assert.ok(entries.includes('easymde/assets/css/admin/message-alert.css'));
     assert.ok(entries.includes('easymde/assets/images/settings-center/brand-icon-clean.png'));
     assert.ok(entries.includes('easymde/assets/images/settings-center/header-illustration.png'));
     assert.ok(entries.includes('easymde/assets/images/settings-center/search-empty-illustration.png'));

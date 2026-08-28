@@ -17,6 +17,7 @@ import { ChevronRight, X } from "../../generated/lucide-icons";
 import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
 import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
 import { createWordPressSettingsPort } from "../../integrations/wordpress/settings/create-wordpress-settings-port";
+import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import { AboutDialog, AboutSettingsPage } from "./AboutSettingsPage";
 import { GeneralSettingsPage } from "./GeneralSettingsPage";
 import {
@@ -36,7 +37,6 @@ import {
 	SearchIcon,
 } from "./settings-center-icons";
 import { formatSinglePlaceholder } from "./settings-center-utils";
-import { SettingsFeedbackAlert } from "./SettingsFeedbackAlert";
 import { TransferSettingsPage } from "./TransferSettingsPage";
 
 type NavId =
@@ -1291,14 +1291,18 @@ export function SettingsCenterRoot({
 				: null}
 			{saveFeedback && overlayRoot
 				? createPortal(
-						<SettingsFeedbackAlert
+						<div
 							key={saveFeedback.id}
-							closeLabel={strings.closeSettingsFeedback}
-							kind={saveFeedback.kind}
-							message={saveFeedback.message}
-							onClose={() => setSaveFeedback(null)}
-							onFocusChange={setSaveFeedbackFocused}
-						/>,
+							className="easymde-editor-message-alert-host"
+						>
+							<EditorMessageAlert
+								closeLabel={strings.closeSettingsFeedback}
+								message={saveFeedback.message}
+								onDismiss={() => setSaveFeedback(null)}
+								onFocusChange={setSaveFeedbackFocused}
+								type={saveFeedback.kind}
+							/>
+						</div>,
 						overlayRoot,
 					)
 				: null}

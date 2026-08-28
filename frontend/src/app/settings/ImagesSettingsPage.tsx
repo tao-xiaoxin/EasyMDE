@@ -37,6 +37,7 @@ import {
 	RefreshCcw,
 	X,
 } from "../../generated/lucide-icons";
+import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import {
 	SettingsRow,
 	SettingsSelect,
@@ -47,7 +48,6 @@ import {
 	SlidersIcon,
 } from "./settings-center-icons";
 import { useDialogFocusTrap } from "./settings-center-utils";
-import { SettingsFeedbackAlert } from "./SettingsFeedbackAlert";
 
 type ImageSettingsDraft = ImageSettings;
 
@@ -1126,12 +1126,14 @@ export function ImagesSettingsPage({
 	const feedbackPortal =
 		formatError && overlayRoot
 			? createPortal(
-					<SettingsFeedbackAlert
-						closeLabel={strings.closeImageFeedback}
-						kind="error"
-						message={strings.uploadFormatRequired}
-						onClose={() => setFormatError(false)}
-					/>,
+					<div className="easymde-editor-message-alert-host">
+						<EditorMessageAlert
+							closeLabel={strings.closeImageFeedback}
+							message={strings.uploadFormatRequired}
+							onDismiss={() => setFormatError(false)}
+							type="error"
+						/>
+					</div>,
 					overlayRoot,
 				)
 			: null;

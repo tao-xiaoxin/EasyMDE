@@ -37,6 +37,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         delete_option(Options::EDITOR_SETTINGS);
         wp_dequeue_style('easymde-admin-menu');
         wp_dequeue_script('easymde-admin-settings-center');
+        wp_dequeue_style('easymde-admin-message-alert');
         wp_dequeue_style('easymde-admin-settings-center');
         wp_set_current_user(0);
 
@@ -321,7 +322,12 @@ final class SettingsPageTest extends WP_UnitTestCase
         $settings_page->enqueue_assets('toplevel_page_easymde');
 
         $this->assertTrue(wp_script_is('easymde-admin-settings-center', 'enqueued'));
+        $this->assertTrue(wp_style_is('easymde-admin-message-alert', 'enqueued'));
         $this->assertTrue(wp_style_is('easymde-admin-settings-center', 'enqueued'));
+        $this->assertSame(
+            array('easymde-admin-message-alert'),
+            wp_styles()->registered['easymde-admin-settings-center']->deps
+        );
         $this->assertNotEmpty(
             wp_scripts()->get_data('easymde-admin-settings-center', 'before')
         );

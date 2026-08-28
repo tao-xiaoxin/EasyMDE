@@ -1447,11 +1447,6 @@ export function EditorRoot(props: EditorRootProps) {
         }
       : {})
   } as CSSProperties;
-  const previewFeatureOverrides = useMemo(
-    () => ({ syntaxHighlight: props.settings.general.syntaxHighlight }),
-    [props.settings.general.syntaxHighlight]
-  );
-
   useEffect(() => {
     rootActiveRef.current = true;
     return () => {
@@ -2012,7 +2007,6 @@ export function EditorRoot(props: EditorRootProps) {
                   : 'message'
               }
               enhancementPort={props.enhancementPort}
-              featureOverrides={previewFeatureOverrides}
               initial={{
                 codeTheme: props.appearance.state.codeTheme,
                 features: props.preview.features,

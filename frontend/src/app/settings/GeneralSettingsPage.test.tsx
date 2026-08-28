@@ -47,6 +47,21 @@ describe("GeneralSettingsPage", () => {
 		).toBeNull();
 	});
 
+	it("does not expose the retired Code Highlighting setting", () => {
+		render(
+			<GeneralSettingsPage
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("switch", { name: "syntaxHighlight" }),
+		).toBeNull();
+	});
+
 	it("shows the published code copy button enabled by default and reports changes", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();

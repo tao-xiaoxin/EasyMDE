@@ -426,6 +426,18 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $this->assertSame( 'easymde_settings_invalid_shortcut', $response->as_error()->get_error_code() );
     }
 
+    public function test_post_rejects_the_retired_syntax_highlight_field() {
+        $settings = $this->current_settings();
+        $this->assertArrayNotHasKey( 'syntaxHighlight', $settings['general'] );
+        $settings['general']['syntaxHighlight'] = false;
+
+        $response = $this->post_json( array( 'settings' => $settings ) );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+        $this->assertFalse( get_option( Options::EDITOR_SETTINGS, false ) );
+    }
+
     public function test_reset_secrets_requires_a_complete_revisioned_settings_payload() {
         $settings = $this->current_settings();
         $settings['images']['accessKey'] = 'synthetic-access-key';

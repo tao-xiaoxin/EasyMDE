@@ -42,8 +42,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"defaultEditingMode",
 	"showLineNumbers",
 	"showLineNumbersDescription",
-	"syntaxHighlight",
-	"syntaxHighlightDescription",
 	"statusBarDisplay",
 	"autoSave",
 	"autoSaveDescription",
@@ -642,7 +640,6 @@ export function parseSettingsCenterSettings(
 	};
 	const generalBooleans = [
 		"showLineNumbers",
-		"syntaxHighlight",
 		"autoSave",
 		"syncScroll",
 		"openPreviewAfterPublish",

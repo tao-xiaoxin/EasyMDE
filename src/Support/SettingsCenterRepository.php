@@ -482,7 +482,6 @@ final class SettingsCenterRepository {
 				'interfaceLanguage'           => 'zh-CN',
 				'editingMode'                 => 'live-preview',
 				'showLineNumbers'             => true,
-				'syntaxHighlight'             => true,
 				'statusBarMode'               => 'detailed',
 				'autoSave'                    => true,
 				'autoSaveInterval'            => '60',

@@ -432,7 +432,6 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     ] as const;
     const booleanFields = [
       'showLineNumbers',
-      'syntaxHighlight',
       'autoSave',
       'syncScroll',
       'openPreviewAfterPublish',
@@ -483,8 +482,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
         showLineNumbers: general.showLineNumbers as boolean,
         statusBarMode: general.statusBarMode as StatusBarMode,
         summaryMode: general.summaryMode as SummaryMode,
-        syncScroll: general.syncScroll as boolean,
-        syntaxHighlight: general.syntaxHighlight as boolean
+        syncScroll: general.syncScroll as boolean
       } satisfies GeneralSettings,
       markdown: { wordWrap: markdown.wordWrap }
     };

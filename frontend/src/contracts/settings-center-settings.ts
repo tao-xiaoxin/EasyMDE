@@ -6,7 +6,6 @@ export type GeneralSettings = Readonly<{
 	interfaceLanguage: string;
 	editingMode: string;
 	showLineNumbers: boolean;
-	syntaxHighlight: boolean;
 	statusBarMode: StatusBarMode;
 	autoSave: boolean;
 	autoSaveInterval: string;

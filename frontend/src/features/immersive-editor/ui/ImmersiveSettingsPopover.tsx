@@ -21,12 +21,10 @@ import type {
 type Position = Readonly<{ right: number; tailRight: number; top: number }>;
 
 export function ImmersiveSettingsPopover({
-  autoSaveAllowed = true,
   settings,
   strings,
   onChange
 }: Readonly<{
-  autoSaveAllowed?: boolean;
   settings: ImmersiveSettings;
   strings: ImmersiveStrings;
   onChange: (settings: ImmersiveSettings) => void;
@@ -98,13 +96,11 @@ export function ImmersiveSettingsPopover({
 
   const items: ReadonlyArray<Readonly<{
     description: string;
-    disabled?: boolean;
     key: keyof ImmersiveSettings;
     label: string;
   }>> = [
     { key: 'outline', label: strings.articleOutline, description: strings.outlineDescription },
-    { key: 'splitPreview', label: strings.splitPreview, description: strings.splitPreviewDescription },
-    { key: 'autoSave', label: strings.autoSave, description: strings.autoSaveDescription, disabled: !autoSaveAllowed }
+    { key: 'splitPreview', label: strings.splitPreview, description: strings.splitPreviewDescription }
   ];
   const portalRoot = triggerRef.current?.closest<HTMLElement>(
     '[data-easymde-editor-owner="react"]'
@@ -167,13 +163,11 @@ export function ImmersiveSettingsPopover({
                       <button
                         key={item.key}
                         type="button"
-                        disabled={item.disabled}
                         role="checkbox"
                         aria-checked={checked}
                         aria-label={item.label}
                         aria-describedby={descriptionId}
                         onClick={() => {
-                          if (item.disabled) return;
                           onChange({
                             ...settings,
                             [item.key]: !checked

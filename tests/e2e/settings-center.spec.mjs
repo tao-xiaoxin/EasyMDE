@@ -1233,6 +1233,17 @@ test("persists the bounded upload retry count across a settings-center refresh",
 	await expect(retryInput).toHaveValue("4");
 	await retryInput.fill(testRetryCount);
 	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
+	const saveFeedbackStrings = await page.evaluate(() => ({
+		close: window.EasyMDESettingsCenterBootstrap.strings.closeSettingsFeedback,
+		saved: window.EasyMDESettingsCenterBootstrap.strings.settingsSaved,
+	}));
+	const saveFeedback = page
+		.getByRole("status")
+		.filter({ hasText: saveFeedbackStrings.saved });
+	await expect(saveFeedback).toBeVisible();
+	await expect(
+		saveFeedback.getByRole("button", { name: saveFeedbackStrings.close }),
+	).toBeVisible();
 	await expect(page.locator("[data-save-status]")).toHaveAttribute(
 		"data-save-status",
 		"saved",
@@ -1253,6 +1264,44 @@ test("persists the bounded upload retry count across a settings-center refresh",
 		"data-save-status",
 		"saved",
 	);
+});
+
+test("reports a real settings save network failure in the shared message popup", async ({
+	page,
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await login(page);
+	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	const strings = await page.evaluate(() =>
+		window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	await page.route("**/wp-json/easymde/v1/settings", async (route) => {
+		if (route.request().method() === "POST") {
+			await route.abort("failed");
+			return;
+		}
+		await route.continue();
+	});
+
+	await page
+		.getByRole("switch", { name: strings.showLineNumbers })
+		.click();
+	const saveButton = page.getByRole("button", { name: strings.saveSettings });
+	await saveButton.click();
+	const feedback = page
+		.getByRole("alert")
+		.filter({ hasText: strings.settingsSaveNetworkFailed });
+	await expect(feedback).toBeVisible();
+	await expect(saveButton).toBeEnabled();
+	await expect(
+		page.getByRole("status").filter({ hasText: strings.settingsSaved }),
+	).toHaveCount(0);
+	await feedback
+		.getByRole("button", { name: strings.closeSettingsFeedback })
+		.click();
+	await expect(feedback).toHaveCount(0);
+	await page.unroute("**/wp-json/easymde/v1/settings");
 });
 
 test("keeps the maximum image size unit inside the horizontal stepper", async ({

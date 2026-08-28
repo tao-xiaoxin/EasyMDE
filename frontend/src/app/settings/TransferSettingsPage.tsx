@@ -23,6 +23,7 @@ import {
 	Upload,
 	X,
 } from "../../generated/lucide-icons";
+import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import {
 	formatSinglePlaceholder,
 	useDialogFocusTrap,
@@ -115,7 +116,8 @@ async function readImportedSettings(
 		payload.schemaVersion !== 5 &&
 		payload.schemaVersion !== 6 &&
 		payload.schemaVersion !== 7 &&
-		payload.schemaVersion !== 8
+		payload.schemaVersion !== 8 &&
+		payload.schemaVersion !== 9
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
@@ -417,7 +419,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 8, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 9, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),
@@ -507,19 +509,13 @@ export function TransferSettingsPage({
 	const feedbackPortal =
 		feedback && overlayRoot
 			? createPortal(
-					<div
-						className="easymde-settings-center__transfer-feedback"
-						role="status"
-					>
-						<Info size={19} />
-						<span>{feedback}</span>
-						<button
-							type="button"
-							aria-label={strings.closeTransferFeedback}
-							onClick={() => setFeedback(null)}
-						>
-							<X size={16} />
-						</button>
+					<div className="easymde-editor-message-alert-host">
+						<EditorMessageAlert
+							closeLabel={strings.closeTransferFeedback}
+							message={feedback}
+							onDismiss={() => setFeedback(null)}
+							type="info"
+						/>
 					</div>,
 					overlayRoot,
 				)

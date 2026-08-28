@@ -27,12 +27,14 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $settings = $repository->get_settings();
         $settings['general']['autoSave'] = false;
+        $settings['general']['autoSaveInterval'] = '5';
         $settings['shortcuts']['values']['save']['windows'] = 'Ctrl+Shift+S';
 
         $saved = $repository->update_settings($settings);
 
         $this->assertIsArray($saved);
         $this->assertFalse($saved['general']['autoSave']);
+        $this->assertSame('5', $saved['general']['autoSaveInterval']);
         $this->assertSame('Ctrl+Shift+S', $saved['shortcuts']['values']['save']['windows']);
         $this->assertSame(1, $saved['revision']);
         $stored = get_option(Options::EDITOR_SETTINGS);
@@ -502,11 +504,13 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$settings = $repository->get_settings();
 			$settings['images']['maxImageSizeMb'] = 8;
 			$settings['images']['titleDisplay'] = 'filename';
+			$settings['images']['remoteImageUploadMode'] = 'off';
 			$this->assertIsArray($repository->update_settings($settings));
 
 			$runtime = $repository->get_image_hosting_settings();
 			$this->assertSame(3 * MB_IN_BYTES, $runtime['behaviors']['maxBytes']);
 			$this->assertSame('filename', $runtime['behaviors']['titleDisplay']);
+			$this->assertSame('off', $runtime['behaviors']['remoteImageUploadMode']);
 		} finally {
 			remove_filter('upload_size_limit', $filter);
 		}
@@ -1035,6 +1039,46 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertSame($before, get_option(Options::EDITOR_SETTINGS, array()));
     }
 
+    public function test_editable_default_shortcut_conflict_is_reported_and_clearing_or_changing_it_saves()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'Ctrl+B',
+            )
+        );
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+        $settings = $repository->get_settings();
+
+        $conflict = $repository->update_settings($settings);
+
+        $this->assertWPError($conflict);
+        $this->assertSame('easymde_settings_shortcut_conflict', $conflict->get_error_code());
+        $this->assertSame(409, $conflict->get_error_data()['status']);
+        $this->assertSame('windows', $conflict->get_error_data()['platform']);
+        $this->assertSame(
+            array(
+                array('id' => 'synthetic-export', 'label' => 'Synthetic export', 'editable' => false),
+                array('id' => 'bold', 'label' => 'Bold', 'editable' => true),
+            ),
+            $conflict->get_error_data()['bindings']
+        );
+
+        $settings['shortcuts']['values']['bold']['windows'] = '';
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertSame('', $saved['shortcuts']['values']['bold']['windows']);
+
+        $saved['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+P';
+        $changed = $repository->update_settings($saved);
+
+        $this->assertIsArray($changed);
+        $this->assertSame('Ctrl+Alt+P', $changed['shortcuts']['values']['bold']['windows']);
+    }
+
     public function test_non_canonical_extension_shortcut_fails_at_the_registry_projection_boundary()
     {
         $registry = new ToolbarRegistry();
@@ -1071,31 +1115,44 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository->get_shortcut_config_for_script();
     }
 
-    public function test_canonical_extension_duplicate_uses_the_shortcut_conflict_error()
+    public function test_reserved_only_shortcut_duplicates_do_not_block_an_unrelated_settings_save()
     {
         $registry = new ToolbarRegistry();
         $registry->register_toolbar_button(
-            'synthetic-export',
+            'synthetic-first',
             array(
-                'label'              => 'Synthetic export',
-                'defaultShortcutWin' => 'Ctrl+B',
+                'label'              => 'Synthetic first',
+                'defaultShortcutWin' => 'Ctrl+Alt+P',
+                'defaultShortcutMac' => 'Cmd+Option+P',
             )
         );
-        $repository = new SettingsCenterRepository(new Options(), $registry);
-
-        $result = $repository->update_settings($repository->get_settings());
-
-        $this->assertWPError($result);
-        $this->assertSame('easymde_settings_shortcut_conflict', $result->get_error_code());
-        $this->assertSame(409, $result->get_error_data()['status']);
-        $this->assertSame('windows', $result->get_error_data()['platform']);
-        $this->assertSame(
-            array(
-                array('id' => 'synthetic-export', 'label' => 'Synthetic export', 'editable' => false),
-                array('id' => 'bold', 'label' => 'Bold', 'editable' => true),
-            ),
-            $result->get_error_data()['bindings']
+        $property = new \ReflectionProperty(ToolbarRegistry::class, 'toolbar_buttons');
+        $property->setAccessible(true);
+        $commands = $property->getValue($registry);
+        $commands['synthetic-second'] = array(
+            'id'                 => 'synthetic-second',
+            'label'              => 'Synthetic second',
+            'description'        => '',
+            'icon'               => 'editor-code',
+            'surface'            => 'main',
+            'action'             => 'wrap',
+            'group'              => 'default',
+            'prefix'             => '',
+            'suffix'             => '',
+            'linePrefix'         => '',
+            'defaultShortcutWin' => 'Ctrl+Alt+P',
+            'defaultShortcutMac' => 'Cmd+Option+P',
         );
+        $property->setValue($registry, $commands);
+
+        $repository = new SettingsCenterRepository(new Options(), $registry);
+        $settings = $repository->get_settings();
+        $settings['general']['showLineNumbers'] = false;
+
+        $result = $repository->update_settings($settings);
+
+        $this->assertIsArray($result);
+        $this->assertFalse($result['general']['showLineNumbers']);
     }
 
 	public function test_removed_image_host_fields_are_not_reintroduced_by_stored_data()

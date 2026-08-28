@@ -47,6 +47,21 @@ describe("GeneralSettingsPage", () => {
 		).toBeNull();
 	});
 
+	it("does not expose the retired Code Highlighting setting", () => {
+		render(
+			<GeneralSettingsPage
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("switch", { name: "syntaxHighlight" }),
+		).toBeNull();
+	});
+
 	it("shows the published code copy button enabled by default and reports changes", async () => {
 		const user = userEvent.setup();
 		const onChange = vi.fn();
@@ -72,6 +87,33 @@ describe("GeneralSettingsPage", () => {
 		expect(onChange).toHaveBeenLastCalledWith({
 			...settings,
 			showPublishedCodeCopyButton: false,
+		});
+	});
+
+	it("offers a five-second auto-save interval and reports the selected setting", async () => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		render(
+			<GeneralSettingsPage
+				onChange={onChange}
+				query=""
+				searchEmptyIllustrationUrl="/plugin/search-empty.png"
+				settings={SETTINGS_CENTER_TEST_SETTINGS.general}
+				strings={strings}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: "autoSaveInterval" }),
+		);
+		expect(
+			screen.getAllByRole("option").map((option) => option.textContent),
+		).toEqual(["seconds5", "seconds30", "seconds60", "minutes2", "minutes5"]);
+		await user.click(screen.getByRole("option", { name: "seconds5" }));
+
+		expect(onChange).toHaveBeenLastCalledWith({
+			...SETTINGS_CENTER_TEST_SETTINGS.general,
+			autoSaveInterval: "5",
 		});
 	});
 

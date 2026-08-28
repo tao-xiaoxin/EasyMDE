@@ -15,14 +15,12 @@ const normalizePreferences = (value: unknown): ImmersivePreferences | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
   if (
-    'boolean' !== typeof candidate.autoSave ||
     'boolean' !== typeof candidate.outline ||
     'boolean' !== typeof candidate.splitPreview
   ) {
     return null;
   }
   return {
-    autoSave: candidate.autoSave,
     outline: candidate.outline,
     splitPreview: candidate.splitPreview
   };

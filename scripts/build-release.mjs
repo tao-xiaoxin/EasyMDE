@@ -134,6 +134,7 @@ const runtimeSupportAssetPaths = [
   'assets/images/fullstack-blue-h2.png',
   'assets/images/fullstack-blue-h3.png',
   'assets/images/fullstack-blue-h4.png',
+  'assets/css/admin/message-alert.css',
   'assets/css/admin/settings-center.css',
   'assets/images/settings-center/brand-icon-clean.png',
   'assets/images/settings-center/header-illustration.png',

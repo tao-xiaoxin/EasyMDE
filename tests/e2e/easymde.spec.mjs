@@ -1532,7 +1532,10 @@ test.describe('EasyMDE editor workflows', () => {
       name: immersiveLabels.editorSettings
     });
     await expect(settingsDialog).toBeVisible();
-    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(2);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: immersiveLabels.autoSave })
+    ).toHaveCount(0);
     await expect(
       settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
     ).toHaveCount(0);
@@ -1742,7 +1745,7 @@ test.describe('EasyMDE editor workflows', () => {
         ),
         boxShadow: style.boxShadow,
         height: rect.height,
-        isWiderThanLegacyMenu: rect.width > 176,
+        preservesMinimumMenuWidth: rect.width >= 176,
         isWithinViewport: rect.left >= 12 && rect.right <= window.innerWidth - 12
       };
     })).toEqual({
@@ -1751,7 +1754,7 @@ test.describe('EasyMDE editor workflows', () => {
       contentIsUnclipped: true,
       boxShadow: 'rgba(38, 52, 85, 0.1) 0px 8px 22px 0px',
       height: 264.125,
-      isWiderThanLegacyMenu: true,
+      preservesMinimumMenuWidth: true,
       isWithinViewport: true
     });
     await page.keyboard.press('Escape');
@@ -1926,7 +1929,10 @@ test.describe('EasyMDE editor workflows', () => {
     const settingsDialog = page.getByRole('dialog', {
       name: immersiveLabels.editorSettings
     });
-    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(2);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: immersiveLabels.autoSave })
+    ).toHaveCount(0);
     await expect(
       settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
     ).toHaveCount(0);

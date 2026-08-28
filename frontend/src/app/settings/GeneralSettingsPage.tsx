@@ -27,7 +27,6 @@ const DEFAULT_DRAFT: Draft = {
 	interfaceLanguage: "zh-CN",
 	editingMode: "live-preview",
 	showLineNumbers: true,
-	syntaxHighlight: true,
 	statusBarMode: "detailed",
 	autoSave: true,
 	autoSaveInterval: "30",
@@ -71,7 +70,6 @@ export function matchesGeneralSettingsQuery(
 	const searchFields: ReadonlyArray<ReadonlyArray<string | undefined>> = [
 		[s.defaultEditingMode],
 		[s.showLineNumbers, s.showLineNumbersDescription],
-		[s.syntaxHighlight, s.syntaxHighlightDescription],
 		[s.statusBarDisplay],
 		[s.autoSave, s.autoSaveDescription],
 		[s.autoSaveInterval],
@@ -194,17 +192,6 @@ export function GeneralSettingsPage({
 						onChange={() => setValue("showLineNumbers", !draft.showLineNumbers)}
 					/>
 				</SettingsRow>
-				<SettingsRow
-					label={s.syntaxHighlight}
-					description={s.syntaxHighlightDescription}
-					query={normalizedQuery}
-				>
-					<SettingsToggle
-						label={s.syntaxHighlight}
-						checked={draft.syntaxHighlight}
-						onChange={() => setValue("syntaxHighlight", !draft.syntaxHighlight)}
-					/>
-				</SettingsRow>
 			</SettingsSection>
 			<SettingsSection icon={EditPencilIcon} title={s.editorBehavior}>
 				<SettingsRow
@@ -224,6 +211,7 @@ export function GeneralSettingsPage({
 						value={draft.autoSaveInterval}
 						onChange={(value) => setValue("autoSaveInterval", value)}
 						options={[
+							["5", s.seconds5],
 							["30", s.seconds30],
 							["60", s.seconds60],
 							["120", s.minutes2],

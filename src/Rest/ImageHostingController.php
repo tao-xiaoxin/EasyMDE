@@ -319,6 +319,15 @@ final class ImageHostingController {
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
+		$remote_image_upload_mode = isset( $settings['behaviors']['remoteImageUploadMode'] ) && is_string( $settings['behaviors']['remoteImageUploadMode'] )
+			? $settings['behaviors']['remoteImageUploadMode']
+			: '';
+		if ( ! in_array( $remote_image_upload_mode, array( 'both', 'visual', 'source', 'off' ), true ) ) {
+			return $this->invalid_runtime_result_error();
+		}
+		if ( 'off' === $remote_image_upload_mode ) {
+			return $this->remote_import_disabled_error();
+		}
 		if ( $this->is_primary_viewing_domain_url( $payload['url'], $settings ) ) {
 			return rest_ensure_response(
 				array(
@@ -562,15 +571,18 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
+		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'backupEnabled', 'compressImages' ) as $field ) {
+		foreach ( array( 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}
+		}
+		if ( ! is_string( $draft['remoteImageUploadMode'] ) || ! in_array( $draft['remoteImageUploadMode'], array( 'both', 'visual', 'source', 'off' ), true ) ) {
+			return false;
 		}
 		if ( ! is_int( $draft['uploadRetryCount'] ) || $draft['uploadRetryCount'] < 0 || $draft['uploadRetryCount'] > 5 ) {
 			return false;
@@ -801,6 +813,14 @@ final class ImageHostingController {
 			'easymde_image_hosting_invalid_request',
 			__( 'The image-hosting request is invalid.', 'easymde' ),
 			array( 'status' => 400 )
+		);
+	}
+
+	private function remote_import_disabled_error() {
+		return new WP_Error(
+			'easymde_image_hosting_remote_import_disabled',
+			__( 'Remote image import is disabled by the current settings.', 'easymde' ),
+			array( 'status' => 409 )
 		);
 	}
 

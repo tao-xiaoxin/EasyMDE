@@ -9,6 +9,8 @@ export type RemoteImagePasteCandidate = Readonly<{
   url: string;
 }>;
 
+const MAX_SINGLE_IMAGE_PLAIN_TEXT_LENGTH = 4096;
+
 function absoluteHttpUrl(value: string): string | null {
   if (!value || value.length > 2048 || /[\s()]/.test(value)) return null;
   try {
@@ -17,6 +19,13 @@ function absoluteHttpUrl(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function singleImageFallbackText(plainText: string, altText: string, url: string): string {
+  const trimmed = plainText.trim();
+  return trimmed && trimmed.length <= MAX_SINGLE_IMAGE_PLAIN_TEXT_LENGTH
+    ? trimmed
+    : imageMarkdownText({ alt: altText, url });
 }
 
 function singleHtmlImage(
@@ -39,7 +48,7 @@ function singleHtmlImage(
   const altText = (image.getAttribute('alt') ?? '').slice(0, 2048);
   return {
     altText,
-    fallbackText: plainText.trim() || imageMarkdownText({ alt: altText, url }),
+    fallbackText: singleImageFallbackText(plainText, altText, url),
     sourceText: image.outerHTML,
     url,
   };

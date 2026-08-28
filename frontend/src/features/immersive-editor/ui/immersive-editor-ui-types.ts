@@ -1,6 +1,5 @@
 export type ImmersiveStrings = Readonly<{
   autoSave: string;
-  autoSaveDescription: string;
   autoSaveEnabled: string;
   articleOutline: string;
   cancel: string;
@@ -102,7 +101,6 @@ export type ImmersiveStrings = Readonly<{
 }>;
 
 export type ImmersiveSettings = Readonly<{
-  autoSave: boolean;
   outline: boolean;
   splitPreview: boolean;
 }>;

@@ -43,6 +43,50 @@ describe('remoteImagePasteCandidate', () => {
     });
   });
 
+  it('preserves a short plain-text representation for one HTML image', () => {
+    expect(
+      remoteImagePasteCandidate(
+        transfer({
+          'text/html': '<img alt="Remote cover" src="https://images.example.test/cover.png">',
+          'text/plain': 'Remote cover caption',
+        }),
+        document,
+        'visual',
+      ),
+    ).toMatchObject({
+      fallbackText: 'Remote cover caption',
+    });
+  });
+
+  it('preserves plain text at the single-image fallback limit', () => {
+    const plainText = 'x'.repeat(4096);
+    const candidate = remoteImagePasteCandidate(
+      transfer({
+        'text/html': '<img alt="Remote cover" src="https://images.example.test/cover.png">',
+        'text/plain': plainText,
+      }),
+      document,
+      'visual',
+    );
+
+    expect(candidate?.fallbackText).toBe(plainText);
+  });
+
+  it('uses the Markdown fallback when one HTML image has oversized plain text', () => {
+    const candidate = remoteImagePasteCandidate(
+      transfer({
+        'text/html': '<img alt="Remote cover" src="https://images.example.test/cover.png">',
+        'text/plain': 'x'.repeat(4097),
+      }),
+      document,
+      'visual',
+    );
+
+    expect(candidate?.fallbackText).toBe(
+      '![Remote cover](https://images.example.test/cover.png)',
+    );
+  });
+
   it('rejects raw URL whitespace while preserving a percent-encoded space', () => {
     expect(
       remoteImagePasteCandidate(

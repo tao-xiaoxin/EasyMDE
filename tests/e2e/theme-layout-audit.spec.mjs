@@ -936,6 +936,15 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 	try {
 		await page.setViewportSize(screenshotViewport);
 		await login(page);
+		await page.route(
+			"**/easymde-e2e-fixtures/markdown-full-capability-image.png",
+			(route) =>
+				route.fulfill({
+					status: 200,
+					contentType: "image/png",
+					body: fullCapabilityImage,
+				}),
+		);
 		const postResponse = await page.goto(postUrl);
 		if (!postResponse || !postResponse.ok()) {
 			throw new Error(
@@ -951,13 +960,6 @@ test("audits all registered article themes in ordinary, immersive split, and pur
 			"/easymde-e2e-fixtures/markdown-full-capability-image.png",
 			page.url(),
 		).href;
-		await page.route(fixtureImageUrl, (route) =>
-			route.fulfill({
-				status: 200,
-				contentType: "image/png",
-				body: fullCapabilityImage,
-			}),
-		);
 		const localCapabilityMarkdown = fullCapabilityMarkdown.replace(
 			/https:\/\/raw\.githubusercontent\.com\/tao-xiaoxin\/EasyMDE\/main\/docs\/assets\/easymde-logo-rounded\.png/g,
 			fixtureImageUrl,

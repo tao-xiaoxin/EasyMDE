@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { createBrowserImmersivePreferencesPort } from './browser-immersive-preferences';
 
 const preferences = {
-  autoSave: false,
   outline: true,
   splitPreview: false
 } as const;
@@ -39,6 +38,7 @@ describe('browser immersive preferences', () => {
         key,
         JSON.stringify({
           ...preferences,
+          autoSave: false,
           syncScroll: true,
           wordCount: false
         })
@@ -61,10 +61,15 @@ describe('browser immersive preferences', () => {
     expect(port.read()).toEqual({ preferences, status: 'loaded' });
     expect(JSON.parse(storage.get(key) ?? '')).toEqual({
       ...preferences,
+      autoSave: false,
       syncScroll: true,
       wordCount: false
     });
-    expect(port.write(preferences)).toEqual({ status: 'saved' });
+    expect(
+      port.write(
+        preferences as unknown as Parameters<typeof port.write>[0]
+      )
+    ).toEqual({ status: 'saved' });
     expect(JSON.parse(storage.get(key) ?? '')).toEqual(preferences);
   });
 

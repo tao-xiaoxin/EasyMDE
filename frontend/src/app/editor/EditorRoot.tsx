@@ -36,7 +36,6 @@ import type { ImageUploadPort } from '../../contracts/ports/image-upload-port';
 import type { RemoteImageImportPort } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersiveEnvironmentPort } from '../../contracts/ports/immersive-environment-port';
 import type {
-  ImmersivePreferences,
   ImmersivePreferencesPort,
   ImmersivePreferencesReadResult
 } from '../../contracts/ports/immersive-preferences-port';
@@ -143,42 +142,6 @@ type EditorStatus = Readonly<{
   owner: 'editor' | 'local-draft';
   type: EditorMessageAlertType;
 }>;
-
-function constrainImmersivePreferences(
-  preferences: ImmersivePreferences,
-  settings: EditorRootSettingsBootstrap['general']
-) {
-  return {
-    ...preferences,
-    autoSave: settings.autoSave && preferences.autoSave
-  };
-}
-
-function preserveDisabledImmersivePreferences(
-  preferences: ImmersivePreferences,
-  current: ImmersivePreferencesReadResult,
-  settings: EditorRootSettingsBootstrap['general']
-): ImmersivePreferences {
-  const constrained = constrainImmersivePreferences(preferences, settings);
-  if ('loaded' !== current.status) return constrained;
-  return {
-    ...constrained,
-    autoSave: settings.autoSave
-      ? constrained.autoSave
-      : current.preferences.autoSave
-  };
-}
-
-function constrainImmersivePreferencesRead(
-  result: ImmersivePreferencesReadResult,
-  settings: EditorRootSettingsBootstrap['general']
-): ImmersivePreferencesReadResult {
-  if ('loaded' !== result.status) return result;
-  return {
-    status: 'loaded',
-    preferences: constrainImmersivePreferences(result.preferences, settings)
-  };
-}
 
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
@@ -524,32 +487,9 @@ export function EditorRoot(props: EditorRootProps) {
   const submissionStateRef = useRef(initialSubmissionStateRef.current);
   const [documentSession, setDocumentSession] =
     useState<EditorDocumentSession | null>(null);
-  const immersivePreferencesPort = useMemo<ImmersivePreferencesPort>(
-    () => ({
-      read: () =>
-        constrainImmersivePreferencesRead(
-          props.immersivePreferencesPort.read(),
-          props.settings.general
-        ),
-      write: (preferences) => {
-        const current = props.immersivePreferencesPort.read();
-        return props.immersivePreferencesPort.write(
-          preserveDisabledImmersivePreferences(
-            preferences,
-            current,
-            props.settings.general
-          )
-        );
-      }
-    }),
-    [
-      props.immersivePreferencesPort,
-      props.settings.general.autoSave
-    ]
-  );
   const [immersivePreferences, setImmersivePreferences] =
     useState<ImmersivePreferencesReadResult>(() =>
-      immersivePreferencesPort.read()
+      props.immersivePreferencesPort.read()
     );
   const [draftCandidate, setDraftCandidate] = useState(false);
   const [draftUnreadable, setDraftUnreadable] = useState(false);
@@ -620,21 +560,9 @@ export function EditorRoot(props: EditorRootProps) {
   const immersiveModeRef = useRef(immersiveMode);
   immersiveModeRef.current = immersiveMode;
   const previousWechatLayoutRef = useRef({ immersive, mode: immersiveMode });
-  const [localDraftsEnabled, setLocalDraftsEnabled] = useState(() =>
-    'loaded' === immersivePreferences.status
-      ? immersivePreferences.preferences.autoSave
-      : props.settings.general.autoSave && props.localDrafts.enabled
-  );
-  const localDraftsEnabledRef = useRef(localDraftsEnabled);
-  useEffect(() => {
-    localDraftsEnabledRef.current = localDraftsEnabled;
-  }, [localDraftsEnabled]);
+  const localDraftsEnabled =
+    props.settings.general.autoSave && props.localDrafts.enabled;
   const scrollSyncEnabled = props.settings.general.syncScroll;
-  const setLocalDraftsEnabledFromImmersive = useCallback(
-    (enabled: boolean) =>
-      setLocalDraftsEnabled(props.settings.general.autoSave && enabled),
-    [props.settings.general.autoSave]
-  );
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
       props.onFailure(immersivePreferences.code);
@@ -1454,11 +1382,10 @@ export function EditorRoot(props: EditorRootProps) {
     closeForToolbar();
     toolbarSessionRef.current?.closePopovers();
     restoreImmersiveFocusRef.current = true;
-    const preferences = immersivePreferencesPort.read();
+    const preferences = props.immersivePreferencesPort.read();
     setImmersivePreferences(preferences);
     if ('loaded' === preferences.status) {
       setImmersiveMode(preferences.preferences.splitPreview ? 'split' : 'source');
-      setLocalDraftsEnabled(preferences.preferences.autoSave);
     } else if ('missing' === preferences.status) {
       setImmersiveMode('split');
     }
@@ -1472,7 +1399,7 @@ export function EditorRoot(props: EditorRootProps) {
     }));
     immersiveRef.current = true;
     setImmersive(true);
-  }, [closeForToolbar, immersivePreferencesPort]);
+  }, [closeForToolbar, props.immersivePreferencesPort]);
   const exitImmersive = useCallback(() => {
     if (!prepareSourceMutation()) return;
     immersiveRef.current = false;
@@ -1557,11 +1484,6 @@ export function EditorRoot(props: EditorRootProps) {
         }
       : {})
   } as CSSProperties;
-  const previewFeatureOverrides = useMemo(
-    () => ({ syntaxHighlight: props.settings.general.syntaxHighlight }),
-    [props.settings.general.syntaxHighlight]
-  );
-
   useEffect(() => {
     rootActiveRef.current = true;
     return () => {
@@ -1707,7 +1629,7 @@ export function EditorRoot(props: EditorRootProps) {
         focus: documentSession.document.focus,
         getValue: documentSession.document.getValue
       },
-      enabled: localDraftsEnabledRef.current && props.settings.general.autoSave,
+      enabled: localDraftsEnabled,
       onCandidate: setDraftCandidate,
       onDiagnostic: props.onFailure,
       onUnreadable: setDraftUnreadable,
@@ -1732,18 +1654,11 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     props.localDraftStorage,
     props.localDrafts,
-    props.settings.general.autoSave,
     props.settings.general.autoSaveInterval,
+    localDraftsEnabled,
     props.onFailure,
     setLocalDraftStatus
   ]);
-
-  useEffect(() => {
-    localDraftSessionRef.current?.setEnabled(
-      localDraftsEnabled && props.settings.general.autoSave
-    );
-  }, [localDraftsEnabled, props.settings.general.autoSave]);
-
   useEffect(() => {
     if (!documentSession) return undefined;
     const update = () =>
@@ -1830,21 +1745,18 @@ export function EditorRoot(props: EditorRootProps) {
           documentSession={documentSession}
           environment={props.immersiveEnvironment}
           generalSettings={props.settings.general}
-          immersivePreferencesPort={immersivePreferencesPort}
-          autoSaveAllowed={props.settings.general.autoSave}
+          immersivePreferencesPort={props.immersivePreferencesPort}
           i18n={props.immersiveI18n}
           initialPreferences={
             'loaded' === immersivePreferences.status
               ? immersivePreferences.preferences
               : null
           }
-          localDraftsEnabled={localDraftsEnabled}
           mode={immersiveMode}
           direction={props.layout.direction}
           onCopyWechat={copyWechatFromImmersive}
           onExit={exitImmersive}
           onFailure={props.onFailure}
-          onLocalDraftsEnabledChange={setLocalDraftsEnabledFromImmersive}
           onBeforeSourceMutation={prepareSourceMutation}
           onConfirmPublish={publish}
           onSelectFeaturedImage={selectFeaturedImage}
@@ -2137,7 +2049,6 @@ export function EditorRoot(props: EditorRootProps) {
                   : 'message'
               }
               enhancementPort={props.enhancementPort}
-              featureOverrides={previewFeatureOverrides}
               initial={{
                 codeTheme: props.appearance.state.codeTheme,
                 features: props.preview.features,

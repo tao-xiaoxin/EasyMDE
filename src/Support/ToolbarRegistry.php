@@ -26,6 +26,7 @@ final class ToolbarRegistry {
 			throw new \RuntimeException( 'easymde-toolbar-command-label-invalid' );
 		}
 
+		$this->assert_shortcut_available( $command_id, $command );
 		$this->toolbar_buttons[ $command_id ] = $command;
 	}
 
@@ -81,6 +82,106 @@ final class ToolbarRegistry {
 			array(
 				'id' => $command_id,
 			)
+		);
+	}
+
+	private function assert_shortcut_available( $command_id, array $command ) {
+		$shortcut_fields = array(
+			array(
+				'field'  => 'defaultShortcutWin',
+				'is_mac' => false,
+			),
+			array(
+				'field'  => 'defaultShortcutMac',
+				'is_mac' => true,
+			),
+		);
+
+		foreach ( $shortcut_fields as $shortcut_field ) {
+			$shortcut = $this->canonical_shortcut( $command[ $shortcut_field['field'] ], $shortcut_field['is_mac'] );
+			if ( null === $shortcut ) {
+				continue;
+			}
+
+			foreach ( $this->toolbar_buttons as $existing_id => $existing_command ) {
+				if (
+					$existing_id === $command_id ||
+					ToolbarShortcutCatalog::is_editable_command( $command_id ) ||
+					ToolbarShortcutCatalog::is_editable_command( $existing_id )
+				) {
+					continue;
+				}
+
+				$existing_shortcut = $this->canonical_shortcut( $existing_command[ $shortcut_field['field'] ], $shortcut_field['is_mac'] );
+				if ( $shortcut === $existing_shortcut ) {
+					throw new \RuntimeException( 'easymde-toolbar-shortcut-conflict' );
+				}
+			}
+		}
+	}
+
+	private function canonical_shortcut( $value, $is_mac ) {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return null;
+		}
+
+		$parts = explode( '+', $value );
+		if ( count( $parts ) < 2 || count( $parts ) > 5 ) {
+			return null;
+		}
+
+		$key = array_pop( $parts );
+		if ( ! $this->is_canonical_shortcut_key( $key ) ) {
+			return null;
+		}
+
+		$order      = $is_mac ? array( 'Cmd', 'Ctrl', 'Option', 'Shift' ) : array( 'Ctrl', 'Alt', 'Shift', 'Meta' );
+		$last_index = -1;
+		$has_owner  = false;
+		foreach ( $parts as $modifier ) {
+			$index = array_search( $modifier, $order, true );
+			if ( false === $index || $index <= $last_index ) {
+				return null;
+			}
+			$last_index = $index;
+			$has_owner  = $has_owner || 'Shift' !== $modifier;
+		}
+
+		return $has_owner ? $value : null;
+	}
+
+	private function is_canonical_shortcut_key( $value ) {
+		$named_keys = array(
+			'Space',
+			'Enter',
+			'Backspace',
+			'Delete',
+			'Insert',
+			'Home',
+			'End',
+			'PageUp',
+			'PageDown',
+			'ArrowUp',
+			'ArrowDown',
+			'ArrowLeft',
+			'ArrowRight',
+			'Backquote',
+			'Minus',
+			'Equal',
+			'BracketLeft',
+			'BracketRight',
+			'Backslash',
+			'Semicolon',
+			'Quote',
+			'Comma',
+			'Period',
+			'Slash',
+		);
+
+		return is_string( $value ) && (
+			1 === preg_match( '/^[A-Z0-9]$/D', $value ) ||
+			1 === preg_match( '/^F(?:[1-9]|1[0-2])$/D', $value ) ||
+			in_array( $value, $named_keys, true )
 		);
 	}
 

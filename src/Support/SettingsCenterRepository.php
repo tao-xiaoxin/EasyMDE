@@ -264,10 +264,11 @@ final class SettingsCenterRepository {
 			),
 			'fileNameRule'     => $images['fileNameRule'],
 			'behaviors'        => array(
-				'autoCompress'  => $images['compressImages'],
-				'maxBytes'      => min( $images['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ),
-				'uploadFormats' => array_keys( array_filter( $images['uploadFormats'] ) ),
-				'titleDisplay'  => $images['titleDisplay'],
+				'autoCompress'          => $images['compressImages'],
+				'maxBytes'              => min( $images['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ),
+				'uploadFormats'         => array_keys( array_filter( $images['uploadFormats'] ) ),
+				'titleDisplay'          => $images['titleDisplay'],
+				'remoteImageUploadMode' => $images['remoteImageUploadMode'],
 			),
 			'credentialStatus' => array(
 				'primaryConfigured' => '' !== $images['accessKey'] && '' !== $images['secretKey'],
@@ -437,7 +438,6 @@ final class SettingsCenterRepository {
 				'interfaceLanguage'           => 'zh-CN',
 				'editingMode'                 => 'live-preview',
 				'showLineNumbers'             => true,
-				'syntaxHighlight'             => true,
 				'statusBarMode'               => 'detailed',
 				'autoSave'                    => true,
 				'autoSaveInterval'            => '30',
@@ -724,6 +724,7 @@ final class SettingsCenterRepository {
 					'hidden'             => 'hidden',
 				),
 				'autoSaveInterval'  => array(
+					'5'   => '5',
 					'30'  => '30',
 					'60'  => '60',
 					'120' => '120',
@@ -964,6 +965,9 @@ final class SettingsCenterRepository {
 					'editable' => false,
 				);
 				if ( isset( $owners[ $platform ][ $shortcut ] ) ) {
+					if ( ! $owners[ $platform ][ $shortcut ]['editable'] && ! $binding['editable'] ) {
+						continue;
+					}
 					return array(
 						'platform' => $platform,
 						'shortcut' => $shortcut,
@@ -1014,27 +1018,6 @@ final class SettingsCenterRepository {
 		return $labels;
 	}
 	private function center_shortcut_id( $command_id ) {
-		$map = array(
-			'savepost'      => 'save',
-			'bold'          => 'bold',
-			'italic'        => 'italic',
-			'strike'        => 'strikethrough',
-			'paragraph'     => 'paragraph',
-			'link'          => 'link',
-			'image'         => 'image',
-			'heading1'      => 'heading-one',
-			'heading2'      => 'heading-two',
-			'heading3'      => 'heading-three',
-			'heading4'      => 'heading-four',
-			'heading5'      => 'heading-five',
-			'heading6'      => 'heading-six',
-			'quote'         => 'quote',
-			'unorderedlist' => 'unordered-list',
-			'orderedlist'   => 'ordered-list',
-			'inlinecode'    => 'inline-code',
-			'codefence'     => 'code-fence',
-			'mathblock'     => 'math-block',
-		);
-		return isset( $map[ $command_id ] ) ? $map[ $command_id ] : false;
+		return ToolbarShortcutCatalog::settings_id_for_command( $command_id );
 	}
 }

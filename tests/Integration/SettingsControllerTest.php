@@ -155,6 +155,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
     public function test_post_accepts_a_complete_settings_object_and_returns_the_next_revision() {
         $settings = $this->current_settings();
         $settings['general']['autoSave'] = false;
+		$settings['general']['autoSaveInterval'] = '5';
 		$settings['images']['uploadRetryCount'] = 5;
 		$settings['images']['autoUploadPastedImages'] = false;
         $settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
@@ -173,6 +174,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( 1, $data['settings']['revision'] );
         $this->assertFalse( $data['settings']['general']['autoSave'] );
+		$this->assertSame( '5', $data['settings']['general']['autoSaveInterval'] );
 		$this->assertSame( 5, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertFalse( $data['settings']['images']['autoUploadPastedImages'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
@@ -482,6 +484,18 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			),
 			$response->as_error()->get_error_data()
 		);
+    }
+
+    public function test_post_rejects_the_retired_syntax_highlight_field() {
+        $settings = $this->current_settings();
+        $this->assertArrayNotHasKey( 'syntaxHighlight', $settings['general'] );
+        $settings['general']['syntaxHighlight'] = false;
+
+        $response = $this->post_json( array( 'settings' => $settings ) );
+
+        $this->assertSame( 400, $response->get_status() );
+        $this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+        $this->assertFalse( get_option( Options::EDITOR_SETTINGS, false ) );
     }
 
     public function test_reset_secrets_requires_a_complete_revisioned_settings_payload() {

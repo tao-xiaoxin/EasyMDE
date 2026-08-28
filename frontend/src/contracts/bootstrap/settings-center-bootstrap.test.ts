@@ -86,6 +86,18 @@ type MutableSettingsRecord = Record<string, unknown> & {
 };
 
 describe("parseSettingsCenterBootstrap", () => {
+	it("accepts the five-second auto-save interval", () => {
+		expect(
+			parseSettingsCenterSettings({
+				...SETTINGS_CENTER_TEST_SETTINGS,
+				general: {
+					...SETTINGS_CENTER_TEST_SETTINGS.general,
+					autoSaveInterval: "5",
+				},
+			}).general.autoSaveInterval,
+		).toBe("5");
+	});
+
 	it("preserves the frontend theme application preference", () => {
 		expect(
 			parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).general
@@ -365,6 +377,17 @@ describe("parseSettingsCenterBootstrap", () => {
 		}
 	});
 
+	it("physically rejects the retired syntax highlighting setting", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.general.syntaxHighlight = false;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-general-settings-invalid",
+		);
+	});
+
 	it.each([
 		["fallbackDomain", "https://legacy.example.test"],
 		["backupSameObjectKey", true],
@@ -433,6 +456,16 @@ describe("parseSettingsCenterBootstrap", () => {
 				"currentCategory",
 			]),
 		);
+	});
+
+	it("omits the Code Highlighting setting strings but keeps the About capability string", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
+			expect.arrayContaining([
+				"syntaxHighlight",
+				"syntaxHighlightDescription",
+			]),
+		);
+		expect(SETTINGS_CENTER_STRING_KEYS).toContain("aboutCodeHighlighting");
 	});
 
 	it("uses semantic string keys for canonical status-bar modes", () => {

@@ -24,9 +24,11 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			public $max_bytes = 5242880;
 			public $primary_domain = 'https://images.example.test';
 			public $title_display = 'filename';
+			public $remote_image_upload_mode = 'both';
+			public $include_remote_image_upload_mode = true;
 
 			public function get_image_hosting_settings() {
-				return array(
+				$settings = array(
 					'revision'    => 7,
 					'primary'     => array(
 						'retryCount' => 2,
@@ -47,13 +49,19 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'accessKey'     => 'synthetic-backup-access',
 						'secretKey'     => 'synthetic-backup-secret',
 					),
-						'behaviors'   => array(
-							'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
-							'maxBytes'      => $this->max_bytes,
-							'titleDisplay'  => $this->title_display,
-						),
-						'fileNameRule' => '{date}/{uuid}.{ext}',
+					'behaviors'   => array(
+						'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
+						'maxBytes'      => $this->max_bytes,
+						'titleDisplay'  => $this->title_display,
+						'remoteImageUploadMode' => $this->remote_image_upload_mode,
+					),
+					'fileNameRule' => '{date}/{uuid}.{ext}',
 				);
+				if ( ! $this->include_remote_image_upload_mode ) {
+					unset( $settings['behaviors']['remoteImageUploadMode'] );
+				}
+
+				return $settings;
 			}
 
 			public function get_image_hosting_secret( $target, $field, $revision ) {
@@ -278,6 +286,40 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 'draft-secret', $this->runtime->validation_calls[0][0]['primary']['secretKey'] );
 		$this->assertStringNotContainsString( 'draft-secret', wp_json_encode( $response->get_data() ) );
 		$this->assertSame( 7, $this->settings_provider->get_image_hosting_settings()['revision'] );
+	}
+
+	public function test_verification_accepts_the_complete_image_settings_draft_without_projecting_editor_only_fields() {
+		$payload = $this->verification_payload( 'primary' );
+		$payload['settings']['autoUploadPastedImages'] = true;
+		$payload['settings']['remoteImageUploadMode']  = 'both';
+
+		$response = rest_do_request( $this->verification_request( $payload ) );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertCount( 1, $this->runtime->validation_calls );
+		$this->assertArrayNotHasKey( 'autoUploadPastedImages', $this->runtime->validation_calls[0][0] );
+		$this->assertArrayNotHasKey( 'remoteImageUploadMode', $this->runtime->validation_calls[0][0] );
+	}
+
+	public function test_verification_rejects_missing_invalid_or_extra_image_settings_without_calling_the_runtime() {
+		$missing_auto_upload = $this->verification_payload( 'primary' );
+		unset( $missing_auto_upload['settings']['autoUploadPastedImages'] );
+		$missing_remote_mode = $this->verification_payload( 'primary' );
+		unset( $missing_remote_mode['settings']['remoteImageUploadMode'] );
+		$invalid_auto_upload = $this->verification_payload( 'primary' );
+		$invalid_auto_upload['settings']['autoUploadPastedImages'] = 'true';
+		$invalid_remote_mode = $this->verification_payload( 'primary' );
+		$invalid_remote_mode['settings']['remoteImageUploadMode'] = 'enabled';
+		$extra_field = $this->verification_payload( 'primary' );
+		$extra_field['settings']['editorOnly'] = true;
+
+		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_remote_mode, $extra_field ) as $payload ) {
+			$response = rest_do_request( $this->verification_request( $payload ) );
+
+			$this->assertSame( 400, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_invalid_request', $response->as_error()->get_error_code() );
+		}
+		$this->assertCount( 0, $this->runtime->validation_calls );
 	}
 
 	public function test_verification_reuses_saved_credentials_only_for_the_same_revision_and_target_identity() {
@@ -712,6 +754,56 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertCount( 0, $this->runtime->upload_calls );
 	}
 
+	public function test_remote_import_rejects_when_remote_upload_mode_is_off_before_download_or_upload_including_same_primary_origin() {
+		$this->settings_provider->remote_image_upload_mode = 'off';
+		$urls = array(
+			'https://cdn.example.test/path/source.png',
+			'https://images.example.test/path/source.png',
+		);
+
+		foreach ( $urls as $url ) {
+			$response = rest_do_request(
+				$this->import_request(
+					array(
+						'post_id'  => $this->post_id,
+						'url'      => $url,
+						'alt_text' => '',
+					)
+				)
+			);
+
+			$this->assertSame( 409, $response->get_status(), $url );
+			$this->assertSame( 'easymde_image_hosting_remote_import_disabled', $response->as_error()->get_error_code(), $url );
+		}
+
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_remote_import_rejects_missing_or_invalid_remote_upload_mode_before_download_or_upload() {
+		$cases = array( 'missing', 'invalid' );
+
+		foreach ( $cases as $case ) {
+			$this->settings_provider->include_remote_image_upload_mode = 'missing' !== $case;
+			$this->settings_provider->remote_image_upload_mode         = 'invalid';
+			$response = rest_do_request(
+				$this->import_request(
+					array(
+						'post_id'  => $this->post_id,
+						'url'      => 'https://cdn.example.test/path/source.png',
+						'alt_text' => '',
+					)
+				)
+			);
+
+			$this->assertSame( 500, $response->get_status(), $case );
+			$this->assertSame( 'easymde_image_hosting_invalid_runtime_result', $response->as_error()->get_error_code(), $case );
+		}
+
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
 	public function test_remote_import_does_not_treat_related_hostnames_as_the_primary_hostname() {
 		$urls = array(
 			'https://backup.example.test/path/source.png',
@@ -940,12 +1032,14 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 				'backupEndpoint'      => '',
 				'backupBucket'        => 'synthetic-backup',
 				'backupDomain'        => 'https://backup.example.test',
-				'backupAccessKey'     => '',
-				'backupSecretKey'     => '',
-					'compressImages'      => true,
-					'maxImageSizeMb'      => 5,
-					'uploadFormats'       => array( 'jpg' => true, 'png' => true, 'webp' => true, 'gif' => true ),
-					'titleDisplay'        => 'none',
+					'backupAccessKey'     => '',
+					'backupSecretKey'     => '',
+				'compressImages'         => true,
+				'autoUploadPastedImages' => true,
+				'remoteImageUploadMode'  => 'both',
+				'maxImageSizeMb'         => 5,
+				'uploadFormats'          => array( 'jpg' => true, 'png' => true, 'webp' => true, 'gif' => true ),
+				'titleDisplay'           => 'none',
 			),
 		);
 	}

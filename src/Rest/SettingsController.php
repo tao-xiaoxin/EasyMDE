@@ -126,7 +126,7 @@ final class SettingsController {
 
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
-			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'syntaxHighlight', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
+			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
 			'images'    => array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
 			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values' ),
@@ -174,7 +174,7 @@ final class SettingsController {
 			),
 		);
 		$boolean_fields = array(
-			'general'  => array( 'showLineNumbers', 'syntaxHighlight', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
+			'general'  => array( 'showLineNumbers', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
 			'images'   => array( 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ),
 			'markdown' => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'pasteAsMarkdown' ),
 		);
@@ -238,7 +238,7 @@ final class SettingsController {
 				'interfaceLanguage' => array( 'zh-CN', 'zh-TW', 'en-US' ),
 				'editingMode'       => array( 'live-preview', 'source', 'preview' ),
 				'statusBarMode'     => array( 'detailed', 'compact', 'hidden' ),
-				'autoSaveInterval'  => array( '30', '60', '120', '300' ),
+				'autoSaveInterval'  => array( '5', '30', '60', '120', '300' ),
 				'publishVisibility' => array( 'public', 'private', 'password' ),
 				'summaryMode'       => array( 'auto-55', 'auto-100', 'manual' ),
 			),

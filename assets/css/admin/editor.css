@@ -1878,18 +1878,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-publish-dialog-footer > div { width: 100%; }
 }
 
-.easymde-editor-message-alert-host {
-    position: fixed;
-    z-index: 100310;
-    top: max(101px, env(safe-area-inset-top));
-    left: 50%;
-    display: flex;
-    box-sizing: border-box;
-    width: min(560px, calc(100vw - 32px));
-    justify-content: center;
-    transform: translateX(-50%);
-}
-
 .easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
     position: static;
     z-index: auto;
@@ -1922,110 +1910,11 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 }
 
-.easymde-editor-message-alert {
-    display: flex;
-    box-sizing: border-box;
-    width: fit-content;
-    min-width: min(344px, 100%);
-    max-width: 100%;
-    min-height: 44px;
-    align-items: center;
-    padding-block: 5px;
-    padding-inline: 26px 6px;
-    border: 1px solid;
-    border-color: rgba(var(--easymde-message-rgb), .18);
-    border-radius: 10px;
-    background: rgba(var(--easymde-message-rgb), .055);
-    box-shadow: 0 6px 18px rgba(var(--easymde-message-rgb), .08);
-    color: #1a1b20;
-    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    letter-spacing: .5px;
-    line-height: 21px;
-}
-
-.easymde-editor-message-alert.is-compact {
-    max-width: min(520px, 100%);
-}
-
 .easymde-immersive-custom-css-dialog .easymde-editor-message-alert.is-error.is-compact {
     width: 344px;
 }
 
-.easymde-editor-message-alert.is-success { --easymde-message-rgb: 0, 200, 2; }
-.easymde-editor-message-alert.is-info { --easymde-message-rgb: 11, 125, 255; }
-.easymde-editor-message-alert.is-warning { --easymde-message-rgb: 255, 172, 0; }
-.easymde-editor-message-alert.is-error { --easymde-message-rgb: 255, 51, 78; }
-
-.easymde-editor-message-alert__icon {
-    display: grid;
-    width: 15px;
-    height: 15px;
-    flex: 0 0 15px;
-    place-items: center;
-    border-radius: 50%;
-    background: rgb(var(--easymde-message-rgb));
-    color: #fff;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 15px;
-}
-
-.easymde-editor-message-alert__message {
-    min-width: 0;
-    margin-inline-start: 11px;
-    flex: 0 1 auto;
-    overflow-wrap: anywhere;
-    white-space: normal;
-}
-
-.easymde-editor-message-alert__close {
-    display: grid;
-    box-sizing: border-box;
-    width: 30px;
-    height: 30px;
-    margin-inline-start: auto;
-    margin-inline-end: -2px;
-    padding: 0;
-    flex: 0 0 30px;
-    place-items: center;
-    border: 0;
-    border-radius: 5px;
-    background: transparent;
-    color: #7a8290;
-    cursor: pointer;
-    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to;
-    transition-duration: 150ms;
-    transition-timing-function: cubic-bezier(.4, 0, .2, 1);
-}
-
-.easymde-editor-message-alert__close svg {
-    width: 17px;
-    height: 17px;
-}
-
-.easymde-editor .easymde-editor-message-alert__close:hover {
-    background: rgba(255, 255, 255, .45);
-    color: #505968;
-}
-
-.easymde-editor .easymde-editor-message-alert__close:focus-visible {
-    outline: none;
-    box-shadow: 0 0 0 2px currentcolor;
-}
-
 @media (max-width: 600px) {
-    .easymde-editor-message-alert-host {
-        top: max(24px, env(safe-area-inset-top));
-        width: calc(100vw - 24px);
-    }
-
-    .easymde-editor-message-alert {
-        width: 100%;
-        min-width: 0;
-    }
-
     .easymde-immersive-custom-css-dialog > header > .easymde-editor-message-alert-host.is-dialog-compact {
         width: 100%;
         padding-inline: 12px;
@@ -2033,12 +1922,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
     .easymde-immersive-custom-css-dialog .easymde-editor-message-alert.is-error.is-compact {
         width: 100%;
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .easymde-editor-message-alert__close {
-        transition: none;
     }
 }
 

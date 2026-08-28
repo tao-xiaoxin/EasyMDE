@@ -179,8 +179,9 @@ final class SettingsPage {
 		}
 
 		try {
-			$asset       = $this->get_settings_center_asset();
-			$css_version = $this->get_static_asset_version( 'assets/css/admin/settings-center.css' );
+			$asset                 = $this->get_settings_center_asset();
+			$css_version           = $this->get_static_asset_version( 'assets/css/admin/settings-center.css' );
+			$message_alert_version = $this->get_static_asset_version( 'assets/css/admin/message-alert.css' );
 		} catch ( \Throwable $error ) {
 			wp_trigger_error(
 				__METHOD__,
@@ -192,9 +193,15 @@ final class SettingsPage {
 		}
 
 		wp_enqueue_style(
+			'easymde-admin-message-alert',
+			Asset::url( 'assets/css/admin/message-alert.css' ),
+			array(),
+			$message_alert_version
+		);
+		wp_enqueue_style(
 			'easymde-admin-settings-center',
 			Asset::url( 'assets/css/admin/settings-center.css' ),
-			array(),
+			array( 'easymde-admin-message-alert' ),
 			$css_version
 		);
 		wp_enqueue_script(

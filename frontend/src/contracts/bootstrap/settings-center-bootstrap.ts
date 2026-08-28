@@ -44,8 +44,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"defaultEditingMode",
 	"showLineNumbers",
 	"showLineNumbersDescription",
-	"syntaxHighlight",
-	"syntaxHighlightDescription",
 	"statusBarDisplay",
 	"autoSave",
 	"autoSaveDescription",
@@ -67,6 +65,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"detailedStatusBar",
 	"compactStatusBar",
 	"hiddenStatusBar",
+	"seconds5",
 	"seconds30",
 	"seconds60",
 	"minutes2",
@@ -115,6 +114,7 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"saveSettings",
 	"savingSettings",
 	"settingsSaved",
+	"closeSettingsFeedback",
 	"settingsSaveFailed",
 	"settingsSaveNetworkFailed",
 	"settingsSaveRejected",
@@ -671,7 +671,6 @@ export function parseSettingsCenterSettings(
 	};
 	const generalBooleans = [
 		"showLineNumbers",
-		"syntaxHighlight",
 		"autoSave",
 		"syncScroll",
 		"openPreviewAfterPublish",
@@ -689,7 +688,7 @@ export function parseSettingsCenterSettings(
 		interfaceLanguage: ["zh-CN", "zh-TW", "en-US"],
 		editingMode: ["live-preview", "source", "preview"],
 		statusBarMode: ["detailed", "compact", "hidden"],
-		autoSaveInterval: ["30", "60", "120", "300"],
+		autoSaveInterval: ["5", "30", "60", "120", "300"],
 		publishVisibility: ["public", "private", "password"],
 		summaryMode: ["auto-55", "auto-100", "manual"],
 	});

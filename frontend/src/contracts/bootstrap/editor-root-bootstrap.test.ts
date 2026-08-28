@@ -107,8 +107,7 @@ function validBootstrap() {
         showLineNumbers: true,
         statusBarMode: 'detailed',
         summaryMode: 'auto-55',
-        syncScroll: true,
-        syntaxHighlight: true
+        syncScroll: true
       },
       markdown: { wordWrap: true }
     },
@@ -159,7 +158,6 @@ function validBootstrap() {
     strings: {
       immersive: {
         autoSave: 'Auto save',
-        autoSaveDescription: 'Automatically save a local draft',
         autoSaveEnabled: 'Auto save is enabled',
         articleOutline: 'Article outline',
         cancel: 'Cancel',
@@ -312,6 +310,15 @@ function validBootstrap() {
 }
 
 describe('parseEditorRootBootstrap', () => {
+  it('accepts the five-second auto-save interval', () => {
+    const value = validBootstrap();
+    value.settings.general.autoSaveInterval = '5';
+
+    expect(
+      parseEditorRootBootstrap(value).settings.general.autoSaveInterval
+    ).toBe('5');
+  });
+
   it.each([
     'autoFocusEditor',
     'cleanPastedContent',

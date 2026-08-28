@@ -59,4 +59,88 @@ final class ToolbarRegistryTest extends WP_UnitTestCase
 
         (new ToolbarRegistry())->register_toolbar_button('synthetic-command', array('label' => '   '));
     }
+
+    public function test_registration_rejects_a_second_reserved_shortcut_on_the_same_platform_before_overwriting()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-first',
+            array(
+                'label'              => 'Synthetic first',
+                'defaultShortcutWin' => 'Ctrl+Alt+P',
+            )
+        );
+
+        try {
+            $registry->register_toolbar_button(
+                'synthetic-second',
+                array(
+                    'label'              => 'Synthetic second',
+                    'defaultShortcutWin' => 'Ctrl+Alt+P',
+                )
+            );
+            $this->fail('Expected duplicate toolbar shortcut registration to throw.');
+        } catch (\RuntimeException $error) {
+            $this->assertSame('easymde-toolbar-shortcut-conflict', $error->getMessage());
+        }
+
+        $commands = $registry->get_command_registry();
+        $this->assertArrayHasKey('synthetic-first', $commands);
+        $this->assertArrayNotHasKey('synthetic-second', $commands);
+    }
+
+    public function test_registration_allows_same_id_updates_empty_shortcuts_and_cross_platform_matches()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-command',
+            array(
+                'label'              => 'Synthetic command',
+                'defaultShortcutWin' => 'Ctrl+Alt+P',
+            )
+        );
+        $registry->register_toolbar_button(
+            'synthetic-command',
+            array(
+                'label'              => 'Synthetic command updated',
+                'defaultShortcutWin' => 'Ctrl+Alt+P',
+            )
+        );
+        $registry->register_toolbar_button(
+            'synthetic-mac-command',
+            array(
+                'label'              => 'Synthetic mac command',
+                'defaultShortcutMac' => 'Cmd+Option+P',
+            )
+        );
+        $registry->register_toolbar_button(
+            'synthetic-empty-command',
+            array(
+                'label' => 'Synthetic empty command',
+            )
+        );
+        $registry->register_toolbar_button(
+            'synthetic-empty-command-two',
+            array(
+                'label' => 'Synthetic empty command two',
+            )
+        );
+
+        $this->assertSame('Synthetic command updated', $registry->get_command_registry()['synthetic-command']['label']);
+    }
+
+    public function test_registration_allows_an_editable_shortcut_collision_for_settings_resolution()
+    {
+        $registry = new ToolbarRegistry();
+        $registry->register_toolbar_button(
+            'synthetic-export',
+            array(
+                'label'              => 'Synthetic export',
+                'defaultShortcutWin' => 'Ctrl+B',
+            )
+        );
+
+        $commands = $registry->get_command_registry();
+        $this->assertSame('Ctrl+B', $commands['synthetic-export']['defaultShortcutWin']);
+    }
 }

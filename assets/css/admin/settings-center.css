@@ -2969,64 +2969,6 @@
 	background: #0867f4;
 }
 
-.easymde-settings-center__transfer-feedback {
-	position: fixed;
-	top: 24px;
-	right: 28px;
-	z-index: 1300;
-	display: flex;
-	min-height: 48px;
-	max-width: 520px;
-	align-items: center;
-	gap: 11px;
-	padding: 11px 16px;
-	border: 1px solid #bcd6ff;
-	border-radius: 10px;
-	background: #f8fbff;
-	box-shadow: 0 12px 34px rgba(25, 42, 76, .18);
-	color: #245da9;
-	font-size: 13px;
-	font-weight: 600;
-}
-
-.easymde-settings-center__transfer-feedback > svg {
-	flex: none;
-	color: #1682ff;
-}
-
-.easymde-settings-center__transfer-feedback.is-error {
-	border-color: #ffc4c8;
-	background: #fff7f7;
-	color: #cf2f38;
-}
-
-.easymde-settings-center__transfer-feedback.is-error > svg {
-	color: #e23a43;
-}
-
-.easymde-settings-center__transfer-feedback > span {
-	line-height: 20px;
-}
-
-.easymde-settings-center__transfer-feedback > button {
-	display: grid;
-	width: 26.25px;
-	height: 26.25px;
-	flex: none;
-	margin-left: 7.5px;
-	padding: 0;
-	place-items: center;
-	border-radius: 5px;
-	color: inherit;
-	cursor: pointer;
-	opacity: .65;
-}
-
-.easymde-settings-center__transfer-feedback > button:hover {
-	background: rgba(0, 0, 0, .05);
-	opacity: 1;
-}
-
 .easymde-settings-center__about-page > :not(:last-child) {
 	border-color: #e5e9ef;
 	border-bottom-width: 1px;
@@ -3249,7 +3191,6 @@
 
 .easymde-settings-center__transfer-page button:focus-visible,
 .easymde-settings-center__transfer-dialog button:focus-visible,
-.easymde-settings-center__transfer-feedback button:focus-visible,
 .easymde-settings-center__about-page :is(button, a):focus-visible {
 	outline: 2px solid #7da9ff;
 	outline-offset: 2px;
@@ -3952,8 +3893,7 @@
 		flex: 1 1 auto;
 	}
 
-	.easymde-settings-center__notices,
-	.easymde-settings-center__transfer-feedback {
+	.easymde-settings-center__notices {
 		right: 12px;
 		left: 12px;
 		max-width: none;

@@ -153,7 +153,11 @@ export function findShortcutConflicts(
 			]);
 		}
 		for (const [shortcut, bindings] of owners) {
-			if (bindings.length > 1) conflicts.push({ platform, shortcut, bindings });
+			if (
+				bindings.length > 1 &&
+				bindings.some((binding) => binding.editable)
+			)
+				conflicts.push({ platform, shortcut, bindings });
 		}
 	}
 	return conflicts;

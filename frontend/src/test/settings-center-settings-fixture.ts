@@ -6,7 +6,6 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		interfaceLanguage: "en-US",
 		editingMode: "live-preview",
 		showLineNumbers: true,
-		syntaxHighlight: true,
 		statusBarMode: "detailed",
 		autoSave: true,
 		autoSaveInterval: "30",

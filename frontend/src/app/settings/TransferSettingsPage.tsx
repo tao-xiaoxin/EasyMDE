@@ -27,6 +27,7 @@ import {
 	formatSinglePlaceholder,
 	useDialogFocusTrap,
 } from "./settings-center-utils";
+import { SettingsFeedbackAlert } from "./SettingsFeedbackAlert";
 
 type Strings = SettingsCenterBootstrap["strings"];
 type DialogKind = "reset" | "clear-cache" | "directory" | "status";
@@ -508,20 +509,12 @@ export function TransferSettingsPage({
 	const feedbackPortal =
 		feedback && overlayRoot
 			? createPortal(
-					<div
-						className="easymde-settings-center__transfer-feedback"
-						role="status"
-					>
-						<Info size={19} />
-						<span>{feedback}</span>
-						<button
-							type="button"
-							aria-label={strings.closeTransferFeedback}
-							onClick={() => setFeedback(null)}
-						>
-							<X size={16} />
-						</button>
-					</div>,
+					<SettingsFeedbackAlert
+						closeLabel={strings.closeTransferFeedback}
+						kind="info"
+						message={feedback}
+						onClose={() => setFeedback(null)}
+					/>,
 					overlayRoot,
 				)
 			: null;

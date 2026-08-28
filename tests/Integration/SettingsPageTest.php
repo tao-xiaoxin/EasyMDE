@@ -147,7 +147,7 @@ final class SettingsPageTest extends WP_UnitTestCase
             'shortcuts', 'images', 'markdown', 'transfer', 'about', 'generalDescription',
             'shortcutsDescription', 'imagesDescription', 'markdownDescription', 'transferDescription',
             'transferPageTitle', 'aboutDescription', 'sectionPending', 'sectionPendingDescription',
-            'saveSettings', 'savingSettings', 'settingsSaved', 'settingsSaveFailed',
+			'saveSettings', 'savingSettings', 'settingsSaved', 'closeSettingsFeedback', 'settingsSaveFailed',
 			'settingsUnsavedChanges', 'settingsUnavailable', 'insertFileNameVariable',
 			'maximumImageSize', 'maximumImageSizeDescription', 'maximumImageSizeSystemLimitExceeded', 'imageTitleDisplay',
 			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',

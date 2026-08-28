@@ -47,6 +47,7 @@ import {
 	SlidersIcon,
 } from "./settings-center-icons";
 import { useDialogFocusTrap } from "./settings-center-utils";
+import { SettingsFeedbackAlert } from "./SettingsFeedbackAlert";
 
 type ImageSettingsDraft = ImageSettings;
 
@@ -1125,20 +1126,12 @@ export function ImagesSettingsPage({
 	const feedbackPortal =
 		formatError && overlayRoot
 			? createPortal(
-					<div
-						className="easymde-settings-center__transfer-feedback is-error"
-						role="alert"
-					>
-						<Info size={19} />
-						<span>{strings.uploadFormatRequired}</span>
-						<button
-							type="button"
-							aria-label={strings.closeImageFeedback}
-							onClick={() => setFormatError(false)}
-						>
-							<X size={16} />
-						</button>
-					</div>,
+					<SettingsFeedbackAlert
+						closeLabel={strings.closeImageFeedback}
+						kind="error"
+						message={strings.uploadFormatRequired}
+						onClose={() => setFormatError(false)}
+					/>,
 					overlayRoot,
 				)
 			: null;

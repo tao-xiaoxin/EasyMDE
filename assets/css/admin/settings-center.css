@@ -2903,6 +2903,16 @@
 	color: #1682ff;
 }
 
+.easymde-settings-center__transfer-feedback.is-success {
+	border-color: #b8e2cb;
+	background: #f2fbf6;
+	color: #147447;
+}
+
+.easymde-settings-center__transfer-feedback.is-success > svg {
+	color: #14804a;
+}
+
 .easymde-settings-center__transfer-feedback.is-error {
 	border-color: #ffc4c8;
 	background: #fff7f7;

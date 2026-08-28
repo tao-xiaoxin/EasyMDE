@@ -1636,6 +1636,10 @@ msgid "Settings saved."
 msgstr "设置已保存。"
 
 #: src/Admin/SettingsCenterStrings.php:110
+msgid "Close Settings Feedback"
+msgstr "关闭设置反馈"
+
+#: src/Admin/SettingsCenterStrings.php:111
 #: src/Support/SettingsCenterRepository.php:430
 #: src/Support/SettingsCenterRepository.php:438
 msgid "Settings could not be saved. Try again."

@@ -85,6 +85,8 @@ function validBootstrap() {
         dropTooLarge: 'Drop too large',
         dropUploaded: 'Drop uploaded',
         dropUploading: 'Drop uploading',
+        pasteAlreadyHosted: 'Paste already hosted',
+        pasteChecking: 'Paste checking',
         pasteFailed: 'Paste failed',
         pasteUploadDisabled: 'Paste upload disabled',
         pasteTooLarge: 'Paste too large',

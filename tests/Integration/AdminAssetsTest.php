@@ -213,6 +213,14 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			'Pasted image upload is disabled. Use Insert Image to upload a file.',
 			$bootstrap['imageUpload']['strings']['pasteUploadDisabled']
 		);
+		$this->assertSame(
+			'Checking pasted image...',
+			$bootstrap['imageUpload']['strings']['pasteChecking']
+		);
+		$this->assertSame(
+			'Pasted image already uses the current image host.',
+			$bootstrap['imageUpload']['strings']['pasteAlreadyHosted']
+		);
 		$this->assertArrayNotHasKey( 'shortcuts', get_option( Options::EDITOR_SETTINGS ) );
 	}
 

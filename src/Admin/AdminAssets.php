@@ -287,6 +287,8 @@ final class AdminAssets {
 					'dropTooLarge'        => $strings['imageDropTooLarge'],
 					'dropUploaded'        => $strings['imageDropUploaded'],
 					'dropUploading'       => $strings['imageDropUploading'],
+					'pasteAlreadyHosted'  => __( 'Pasted image already uses the current image host.', 'easymde' ),
+					'pasteChecking'       => __( 'Checking pasted image...', 'easymde' ),
 					'pasteFailed'         => $strings['imagePasteFailed'],
 					'pasteUploadDisabled' => __( 'Pasted image upload is disabled. Use Insert Image to upload a file.', 'easymde' ),
 					'pasteTooLarge'       => $strings['imagePasteTooLarge'],

@@ -79,14 +79,14 @@ files, existing document images, opening an editor, and rendering Preview do
 not trigger remote import. Local clipboard image files remain controlled only
 by **Automatically upload pasted images**.
 
-Eligible remote URLs are sent to a protected same-origin WordPress REST route;
-the browser does not download their bytes directly. WordPress checks Nonces,
-upload permission, and permission to edit the current post, rejects unsafe or
-private destinations and redirects, and bounds download time and size before
-verifying the actual allowed image type. EasyMDE inserts the configured image
-syntax only after the existing Image Hosting runtime succeeds. A failed,
-cancelled, or stale request leaves the later editor content unchanged and
-shows the existing redacted upload failure state.
+EasyMDE shows a checking state while the protected WordPress route compares an eligible pasted URL with the configured primary Viewing Image Domain.
+When the URL uses the exact same scheme and case-insensitive canonical ASCII hostname, EasyMDE reports that the image is already hosted, keeps the original URL and path, and performs no remote download or primary, backup, or other image-host storage write.
+User information, explicit ports, queries, fragments, trailing-dot aliases, Unicode/IDNA guesses, suffixes, subdomains, provider endpoints, CDN aliases, and the backup Viewing Image Domain do not qualify as already hosted and continue through normal remote-import validation.
+
+Eligible remote URLs are sent to a protected same-origin WordPress REST route; the browser does not download their bytes directly.
+For an imported result, WordPress checks Nonces, upload permission, and permission to edit the current post, rejects unsafe or private destinations and redirects, and bounds download time and size before verifying the actual allowed image type.
+EasyMDE inserts newly hosted image syntax only after the existing Image Hosting runtime succeeds.
+A failed, cancelled, or stale request leaves the later editor content unchanged and shows the existing redacted upload failure state.
 
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
 Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates

@@ -9,6 +9,7 @@ import type {
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
+import type { RemoteImageImportResult } from '../../contracts/ports/remote-image-import-port';
 import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type {
@@ -368,6 +369,8 @@ function fixture(): EditorRootProps &
         dropTooLarge: 'Drop too large',
         dropUploaded: 'Drop uploaded',
         dropUploading: 'Drop uploading',
+        pasteAlreadyHosted: 'Paste already hosted',
+        pasteChecking: 'Paste checking',
         pasteFailed: 'Paste failed',
         pasteUploadDisabled: 'Paste upload disabled',
         pasteTooLarge: 'Paste too large',
@@ -2146,7 +2149,7 @@ describe('EditorRoot', () => {
       features: {},
       html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
     });
-    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     vi.mocked(props.remoteImageImportPort.import).mockImplementation(() =>
       new Promise((resolve) => {
         resolveImport = resolve;
@@ -2199,7 +2202,8 @@ describe('EditorRoot', () => {
     expect(vi.mocked(props.remoteImageImportPort.import).mock.calls[0]?.[0].signal.aborted).toBe(false);
     resolveImport({
       alt: 'remote',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://example.test/imported.png'
     });

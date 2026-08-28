@@ -2034,6 +2034,7 @@ test("imports source Markdown images only for source-enabled modes", async ({
 				json: {
 					alt: body.alt_text,
 					backup: { status: "disabled" },
+					status: "imported",
 					title: "source-import.png",
 					url: importedUrl,
 				},
@@ -2113,6 +2114,7 @@ test("imports a single visual HTML image only for visual-enabled modes", async (
 				json: {
 					alt: body.alt_text,
 					backup: { status: "disabled" },
+					status: "imported",
 					title: "visual-import.png",
 					url: importedUrl,
 				},
@@ -2188,6 +2190,228 @@ test("imports a single visual HTML image only for visual-enabled modes", async (
 		expect(importRequests).toHaveLength(previousRequestCount);
 	} finally {
 		await resetSettingsCenterDefaults(page);
+	}
+});
+
+test("keeps exact primary-domain remote images unchanged without bypassing origin boundaries", async ({
+	page,
+}) => {
+	await login(page);
+	let originalDomain = null;
+	let originalMode = null;
+	let settingsStrings = null;
+	const primaryOrigin = "https://images.example.test";
+	const sourceImageUrl = `${primaryOrigin}/already-source.png`;
+	const visualImageUrl = `${primaryOrigin}/already-visual.png`;
+	const schemeMismatchUrl = "http://images.example.test/not-the-primary-origin.png";
+	const waitForRealImport = () =>
+		page.waitForResponse((response) => {
+			const request = response.request();
+			return (
+				request.method() === "POST" &&
+				new URL(response.url()).pathname.endsWith(
+					"/easymde/v1/image-hosting/import",
+				)
+			);
+		});
+	const expectAlreadyHostedStatus = async () => {
+		const strings = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.imageUpload.strings,
+		);
+		expect(strings.pasteAlreadyHosted).toEqual(expect.any(String));
+		await expect(
+			page
+				.getByRole("status")
+				.filter({ hasText: strings.pasteAlreadyHosted }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("status").filter({ hasText: strings.pasteUploaded }),
+		).toHaveCount(0);
+	};
+	const openVisualEditor = async () => {
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		await page
+			.locator(".easymde-source-react .cm-content")
+			.fill("Visual baseline");
+		const strings = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.strings.immersive,
+		);
+		await page.locator(".easymde-toolbar-immersive-toggle").click();
+		await page
+			.getByRole("button", { name: strings.preview, exact: true })
+			.click();
+		const unlock = page.getByRole("button", {
+			name: strings.previewUnlockEdit,
+			exact: true,
+		});
+		await expect(unlock).toBeEnabled();
+		await unlock.click();
+		const visualEditor = page.getByRole("textbox", {
+			name: strings.previewEditorLabel,
+			exact: true,
+		});
+		await expect(visualEditor).toHaveAttribute("contenteditable", "true");
+		await visualEditor.evaluate((element) => {
+			const selection = element.ownerDocument.getSelection();
+			const range = element.ownerDocument.createRange();
+			range.selectNodeContents(element);
+			range.collapse(false);
+			selection?.removeAllRanges();
+			selection?.addRange(range);
+			element.focus();
+		});
+		return visualEditor;
+	};
+	try {
+		await openSettingsSection(page, "images");
+		settingsStrings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		originalMode = await page.evaluate(
+			() =>
+				window.EasyMDESettingsCenterBootstrap.settings.images
+					.remoteImageUploadMode,
+		);
+		const primary = page.locator(
+			'[data-settings-section="images"] .is-host-service',
+		);
+		const domain = primary.getByRole("textbox", {
+			name: settingsStrings.imageFallbackDomain,
+			exact: true,
+		});
+		originalDomain = await domain.inputValue();
+		await domain.fill(primaryOrigin);
+		await selectSettingsOption(
+			page,
+			settingsStrings.remoteImageUploadMode,
+			settingsStrings.remoteImageUploadBoth,
+		);
+		await saveSettingsCenter(page);
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const source = page.locator("#easymde-source");
+		const sourceEditor = page.locator(
+			".easymde-source-react .cm-content",
+		);
+		const sourceAlt = "Already hosted source";
+		const sourceMarkdown = `![${sourceAlt}](${sourceImageUrl})`;
+		const sourcePostId = Number(await page.locator("#post_ID").inputValue());
+		expect(sourcePostId).toBeGreaterThan(0);
+		await sourceEditor.fill("Before ");
+		await sourceEditor.focus();
+		await sourceEditor.press("End");
+		const sourceResponsePromise = waitForRealImport();
+		await dispatchBrowserPaste(sourceEditor, { plainText: sourceMarkdown });
+		const sourceResponse = await sourceResponsePromise;
+		expect(sourceResponse.status()).toBe(200);
+		expect(sourceResponse.request().postDataJSON()).toEqual({
+			alt_text: sourceAlt,
+			post_id: sourcePostId,
+			url: sourceImageUrl,
+		});
+		expect(await sourceResponse.json()).toMatchObject({
+			status: "unchanged",
+			url: sourceImageUrl,
+		});
+		await expect(source).toHaveValue(`Before ${sourceMarkdown}`);
+		await expectAlreadyHostedStatus();
+
+		const visualEditor = await openVisualEditor();
+		const visualAlt = "Already hosted visual";
+		const visualPostId = Number(await page.locator("#post_ID").inputValue());
+		expect(visualPostId).toBeGreaterThan(0);
+		await visualEditor.focus();
+		const visualResponsePromise = waitForRealImport();
+		await dispatchBrowserPaste(visualEditor, {
+			html: `<img alt="${visualAlt}" src="${visualImageUrl}">`,
+			plainText: visualImageUrl,
+		});
+		const visualResponse = await visualResponsePromise;
+		expect(visualResponse.status()).toBe(200);
+		expect(visualResponse.request().postDataJSON()).toEqual({
+			alt_text: visualAlt,
+			post_id: visualPostId,
+			url: visualImageUrl,
+		});
+		expect(await visualResponse.json()).toMatchObject({
+			status: "unchanged",
+			url: visualImageUrl,
+		});
+		await expect
+			.poll(() => page.locator("#easymde-source").inputValue())
+			.toContain(`![${visualAlt}](${visualImageUrl})`);
+		await expectAlreadyHostedStatus();
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const boundarySource = page.locator("#easymde-source");
+		const boundaryEditor = page.locator(
+			".easymde-source-react .cm-content",
+		);
+		const boundaryAlt = "Scheme mismatch";
+		const boundaryMarkdown = `![${boundaryAlt}](${schemeMismatchUrl})`;
+		const boundaryPostId = Number(await page.locator("#post_ID").inputValue());
+		expect(boundaryPostId).toBeGreaterThan(0);
+		await boundaryEditor.focus();
+		const boundaryResponsePromise = waitForRealImport();
+		await dispatchBrowserPaste(boundaryEditor, {
+			plainText: boundaryMarkdown,
+		});
+		const boundaryResponse = await boundaryResponsePromise;
+		expect(boundaryResponse.request().postDataJSON()).toEqual({
+			alt_text: boundaryAlt,
+			post_id: boundaryPostId,
+			url: schemeMismatchUrl,
+		});
+		expect(boundaryResponse.ok()).toBe(false);
+		expect((await boundaryResponse.json()).status).not.toBe("unchanged");
+		await expect(boundarySource).toHaveValue(boundaryMarkdown);
+		const pasteFailed = await page.evaluate(
+			() => window.EasyMDEEditorRootBootstrap.imageUpload.strings.pasteFailed,
+		);
+		await expect(
+			page.getByRole("alert").filter({ hasText: pasteFailed }),
+		).toBeVisible();
+	} finally {
+		if (
+			originalDomain !== null &&
+			originalMode !== null &&
+			settingsStrings !== null
+		) {
+			await openSettingsSection(page, "images");
+			const primary = page.locator(
+				'[data-settings-section="images"] .is-host-service',
+			);
+			await primary
+				.getByRole("textbox", {
+					name: settingsStrings.imageFallbackDomain,
+					exact: true,
+				})
+				.fill(originalDomain);
+			const originalModeLabels = {
+				both: settingsStrings.remoteImageUploadBoth,
+				off: settingsStrings.remoteImageUploadOff,
+				source: settingsStrings.remoteImageUploadSource,
+				visual: settingsStrings.remoteImageUploadVisual,
+			};
+			await selectSettingsOption(
+				page,
+				settingsStrings.remoteImageUploadMode,
+				originalModeLabels[originalMode],
+			);
+			await saveSettingsCenter(page);
+			await page.reload();
+			await expect(page.locator(".easymde-settings-center")).toBeVisible();
+			await page.locator('button[data-nav-id="images"]').click();
+			await expect(
+				primary.getByRole("textbox", {
+					name: settingsStrings.imageFallbackDomain,
+					exact: true,
+				}),
+			).toHaveValue(originalDomain);
+		}
 	}
 });
 

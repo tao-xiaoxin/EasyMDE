@@ -319,6 +319,16 @@ final class ImageHostingController {
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
+		if ( $this->is_primary_viewing_domain_url( $payload['url'], $settings ) ) {
+			return rest_ensure_response(
+				array(
+					'status' => 'unchanged',
+					'url'    => $payload['url'],
+					'alt'    => sanitize_text_field( $payload['alt_text'] ),
+					'title'  => $this->unchanged_import_title( $payload['url'], $settings ),
+				)
+			);
+		}
 		$maximum_bytes = isset( $settings['behaviors']['maxBytes'] ) && is_int( $settings['behaviors']['maxBytes'] )
 			? $settings['behaviors']['maxBytes']
 			: 0;
@@ -349,7 +359,7 @@ final class ImageHostingController {
 			}
 			$data        = $response->get_data();
 			$data['alt'] = sanitize_text_field( $payload['alt_text'] );
-			$response->set_data( $data );
+			$response->set_data( array( 'status' => 'imported' ) + $data );
 
 			return $response;
 		} finally {
@@ -357,6 +367,63 @@ final class ImageHostingController {
 				wp_delete_file( $temporary_path );
 			}
 		}
+	}
+
+	private function is_primary_viewing_domain_url( $url, array $settings ) {
+		$primary_domain = isset( $settings['primary']['domain'] ) && is_string( $settings['primary']['domain'] )
+			? $settings['primary']['domain']
+			: '';
+		if ( ! $this->is_valid_public_result_url( $primary_domain, false ) ) {
+			return false;
+		}
+
+		$source_origin  = $this->canonical_import_origin( $url );
+		$primary_origin = $this->canonical_import_origin( $primary_domain );
+
+		return '' !== $source_origin && $source_origin === $primary_origin;
+	}
+
+	private function canonical_import_origin( $url ) {
+		if ( ! is_string( $url ) || '' === $url || strlen( $url ) > 2048 || 1 === preg_match( '/[\x00-\x20\x7F]/', $url ) ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( $url );
+		if (
+			! is_array( $parts ) ||
+			! isset( $parts['scheme'], $parts['host'] ) ||
+			! in_array( strtolower( (string) $parts['scheme'] ), array( 'http', 'https' ), true ) ||
+			isset( $parts['user'] ) ||
+			isset( $parts['pass'] ) ||
+			isset( $parts['port'] ) ||
+			isset( $parts['query'] ) ||
+			isset( $parts['fragment'] ) ||
+			esc_url_raw( $url, array( 'http', 'https' ) ) !== $url
+		) {
+			return '';
+		}
+
+		$host = (string) $parts['host'];
+		if ( 1 !== preg_match( '/^[A-Za-z0-9.-]+$/D', $host ) || '.' === substr( $host, -1 ) ) {
+			return '';
+		}
+
+		return strtolower( (string) $parts['scheme'] ) . '://' . strtolower( $host );
+	}
+
+	private function unchanged_import_title( $url, array $settings ) {
+		$mode = isset( $settings['behaviors']['titleDisplay'] ) && is_string( $settings['behaviors']['titleDisplay'] )
+			? $settings['behaviors']['titleDisplay']
+			: '';
+		if ( 'filename' !== $mode ) {
+			return '';
+		}
+
+		$parts     = wp_parse_url( $url );
+		$path      = is_array( $parts ) && isset( $parts['path'] ) ? rawurldecode( (string) $parts['path'] ) : '';
+		$file_name = sanitize_file_name( basename( $path ) );
+
+		return sanitize_text_field( $file_name );
 	}
 
 	private function project_import_download_error( WP_Error $error ) {

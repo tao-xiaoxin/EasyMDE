@@ -23,6 +23,8 @@ const validBootstrap = {
     dropUploaded: 'Drop uploaded',
     dropUploading: 'Drop uploading',
     pasteFailed: 'Paste failed',
+    pasteAlreadyHosted: 'Paste already hosted',
+    pasteChecking: 'Paste checking',
     pasteUploadDisabled: 'Paste upload disabled',
     pasteTooLarge: 'Paste too large',
     pasteUploaded: 'Paste uploaded',
@@ -66,6 +68,10 @@ describe('parseImageUploadBootstrap', () => {
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,
       strings: { ...validBootstrap.strings, pasteFailed: '' }
+    })).toThrow('image-upload-string-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      strings: { ...validBootstrap.strings, pasteChecking: undefined }
     })).toThrow('image-upload-string-invalid');
     expect(() => parseImageUploadBootstrap({
       ...validBootstrap,

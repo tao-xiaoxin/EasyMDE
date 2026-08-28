@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ImageUploadDocumentSnapshot, ImageUploadRequest, ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { ImageUploadInsertion, ImageUploadMimeType } from '../../contracts/bootstrap/image-upload-bootstrap';
-import type { RemoteImageImportRequest } from '../../contracts/ports/remote-image-import-port';
+import type {
+  RemoteImageImportRequest,
+  RemoteImageImportResult,
+} from '../../contracts/ports/remote-image-import-port';
 import {
   createImageUploadSession,
   createRemoteImageImportCoordinator,
@@ -16,6 +19,8 @@ const strings = {
   dropUploaded: 'Drop uploaded',
   dropUploading: 'Drop uploading',
   pasteFailed: 'Paste failed',
+  pasteAlreadyHosted: 'Paste already hosted',
+  pasteChecking: 'Paste checking',
   pasteUploadDisabled: 'Paste upload disabled',
   pasteTooLarge: 'Paste too large',
   pasteUploaded: 'Paste uploaded',
@@ -74,8 +79,11 @@ function setup(
   },
   autoUploadPastedImages = true,
   remoteImportResult:
-    | Promise<ImageUploadResult>
-    | ((request: RemoteImageImportRequest) => Promise<ImageUploadResult>) = uploadResult,
+    | Promise<RemoteImageImportResult>
+    | ((request: RemoteImageImportRequest) => Promise<RemoteImageImportResult>) = Promise.resolve({
+      code: 'unused',
+      status: 'failed',
+    }),
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -519,7 +527,8 @@ describe('createImageUploadSession', () => {
       true,
       Promise.resolve({
         alt: 'Remote cover',
-        status: 'uploaded',
+        backup: { status: 'disabled' },
+        status: 'imported',
         title: '',
         url: 'https://cdn.example.test/cover.png',
       }),
@@ -542,6 +551,40 @@ describe('createImageUploadSession', () => {
     }));
     expect(session.upload).not.toHaveBeenCalled();
     expect(session.getSnapshot().value).toBe('Hello![Remote cover](https://cdn.example.test/cover.png) world');
+    expect(session.statuses).toEqual([
+      { message: strings.pasteChecking, operationId: 'image-upload-1', type: 'info' },
+      { message: strings.pasteUploaded, operationId: 'image-upload-1', type: 'success' },
+    ]);
+  });
+
+  it('reports an unchanged remote image distinctly while normalizing its owned Markdown', async () => {
+    const session = setup(
+      Promise.resolve({ code: 'unused', status: 'failed' }),
+      operationIdSequence(),
+      ['image/png'],
+      { titleDisplay: 'none' },
+      true,
+      Promise.resolve({
+        alt: 'Remote cover',
+        status: 'unchanged',
+        title: 'cover.png',
+        url: 'https://images.example.test/cover.png',
+      }),
+    );
+
+    session.target.dispatchEvent(remotePaste({
+      'text/html': '<img src="https://images.example.test/cover.png" alt="Remote cover">',
+      'text/plain': 'Remote cover',
+    }));
+    await vi.waitFor(() => expect(session.statuses).toHaveLength(2));
+
+    expect(session.getSnapshot().value).toBe(
+      'Hello![Remote cover](https://images.example.test/cover.png) world',
+    );
+    expect(session.statuses).toEqual([
+      { message: strings.pasteChecking, operationId: 'image-upload-1', type: 'info' },
+      { message: strings.pasteAlreadyHosted, operationId: 'image-upload-1', type: 'success' },
+    ]);
   });
 
   it('restores the original Markdown when remote import fails', async () => {
@@ -564,7 +607,7 @@ describe('createImageUploadSession', () => {
   });
 
   it('replaces the owned remote paste before text typed at its trailing caret', async () => {
-    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     const session = setup(
       Promise.resolve({ code: 'unused', status: 'failed' }),
       operationIdSequence(),
@@ -590,7 +633,8 @@ describe('createImageUploadSession', () => {
     });
     resolveImport({
       alt: 'Remote',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/cover.png',
     });
@@ -607,7 +651,7 @@ describe('createImageUploadSession', () => {
   });
 
   it('keeps user edits that overlap the owned remote paste instead of overwriting them', async () => {
-    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     const session = setup(
       Promise.resolve({ code: 'unused', status: 'failed' }),
       operationIdSequence(),
@@ -628,7 +672,8 @@ describe('createImageUploadSession', () => {
     });
     resolveImport({
       alt: 'Remote',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/cover.png',
     });
@@ -639,12 +684,12 @@ describe('createImageUploadSession', () => {
   });
 
   it('imports concurrent remote pastes in paste order when the later result is ready first', async () => {
-    let resolveFirst: (result: ImageUploadResult) => void = () => undefined;
-    let resolveSecond: (result: ImageUploadResult) => void = () => undefined;
-    const firstResult = new Promise<ImageUploadResult>((resolve) => {
+    let resolveFirst: (result: RemoteImageImportResult) => void = () => undefined;
+    let resolveSecond: (result: RemoteImageImportResult) => void = () => undefined;
+    const firstResult = new Promise<RemoteImageImportResult>((resolve) => {
       resolveFirst = resolve;
     });
-    const secondResult = new Promise<ImageUploadResult>((resolve) => {
+    const secondResult = new Promise<RemoteImageImportResult>((resolve) => {
       resolveSecond = resolve;
     });
     const firstUrl = 'https://origin.example.test/first.png';
@@ -662,7 +707,8 @@ describe('createImageUploadSession', () => {
     session.target.dispatchEvent(remotePaste({ 'text/plain': `![Second](${secondUrl})` }));
     resolveSecond({
       alt: 'Second',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/second.png',
     });
@@ -675,7 +721,8 @@ describe('createImageUploadSession', () => {
 
     resolveFirst({
       alt: 'First',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/first.png',
     });
@@ -687,7 +734,7 @@ describe('createImageUploadSession', () => {
   });
 
   it('restores an intercepted remote paste before teardown aborts its import', async () => {
-    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     const session = setup(
       Promise.resolve({ code: 'unused', status: 'failed' }),
       operationIdSequence(),
@@ -711,7 +758,8 @@ describe('createImageUploadSession', () => {
     expect(session.remoteImageImport.mock.calls[0]?.[0].signal.aborted).toBe(true);
     resolveImport({
       alt: 'late',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/late.png',
     });
@@ -720,7 +768,7 @@ describe('createImageUploadSession', () => {
   });
 
   it('restores queued remote pastes in order on teardown without starting the queued import', async () => {
-    let resolveImport: (result: ImageUploadResult) => void = () => undefined;
+    let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     const session = setup(
       Promise.resolve({ code: 'unused', status: 'failed' }),
       operationIdSequence(),
@@ -745,7 +793,8 @@ describe('createImageUploadSession', () => {
     expect(session.remoteImageImport.mock.calls[0]?.[0].signal.aborted).toBe(true);
     resolveImport({
       alt: 'late',
-      status: 'uploaded',
+      backup: { status: 'disabled' },
+      status: 'imported',
       title: '',
       url: 'https://cdn.example.test/late.png',
     });

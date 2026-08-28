@@ -576,19 +576,16 @@ document content, editor opening, and Preview rendering never trigger remote
 import. Local clipboard files remain governed only by
 `autoUploadPastedImages`.
 
-The browser sends an eligible URL to the protected same-origin
-`/image-hosting/import` route and never fetches its cross-origin bytes. The
-server accepts only canonical absolute HTTP/HTTPS URLs without credentials or
-fragments, resolves every hostname to public addresses, and uses
-`wp_safe_remote_get()` with unsafe URLs rejected, TLS verification enabled,
-redirects disabled, a ten-second timeout, streaming to a temporary file, and a
-response-size limit. It then verifies the real GIF, JPEG, PNG, or WebP MIME and
-the configured size and format limits before passing the temporary file to the
-existing Image Hosting runtime. Every exit removes the temporary file. Stable,
-redacted REST failures never expose the source URL, provider response, or
-credentials. The current paste is replaced only after a successful import;
-cancellation, stale completion, runtime replacement, and teardown cannot alter
-later editor content.
+After authorization and settings lookup, `/image-hosting/import` returns an `unchanged` result only when the source URL has the exact same scheme and case-insensitive canonical ASCII hostname as the configured primary Viewing Image Domain.
+The unchanged comparison rejects source URLs with user information, an explicit port, a query, a fragment, a trailing-dot hostname alias, or a Unicode/IDNA guess; it also rejects suffixes, subdomains, provider endpoints, CDN aliases, the backup Viewing Image Domain, and every other domain.
+Path differences are allowed, and an unchanged result preserves the original URL, omits backup status, and calls neither the downloader nor the Image Hosting runtime, so it performs no primary, backup, or other storage write.
+Every other eligible source continues through the normal `imported` validation, download, and image-hosting path described below.
+
+The browser sends every eligible URL to the protected same-origin `/image-hosting/import` route and never fetches its cross-origin bytes.
+For an `imported` result, the server accepts only canonical absolute HTTP/HTTPS URLs without credentials or fragments, resolves all A and AAAA addresses, rejects any address outside the explicit public CIDR policy, and uses the forced WordPress Requests cURL transport pinned to one validated address with TLS verification, redirects disabled, a ten-second timeout, streaming to a temporary file, and a response-size limit.
+The imported path verifies the real GIF, JPEG, PNG, or WebP MIME and the configured size and format limits before passing the temporary file to the existing Image Hosting runtime, and every exit removes that temporary file.
+Stable, redacted REST failures never expose the source URL, provider response, or credentials.
+Only an authoritative result may update the current paste; cancellation, stale completion, runtime replacement, and teardown cannot alter later editor content.
 
 The toolbar media command is a separate explicit entry point. It opens the
 WordPress-native media frame and inserts the selected attachment without

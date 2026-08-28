@@ -39,6 +39,8 @@ final class I18nTest extends WP_UnitTestCase
 		$this->assertSame('远程图片 URL 无效。', translate('The remote image URL is invalid.', 'easymde'));
 		$this->assertSame('无法下载远程图片。', translate('The remote image could not be downloaded.', 'easymde'));
 		$this->assertSame('远程图片为空。', translate('The remote image is empty.', 'easymde'));
+		$this->assertSame('正在检查粘贴的图片...', translate('Checking pasted image...', 'easymde'));
+		$this->assertSame('粘贴的图片已使用当前图床。', translate('Pasted image already uses the current image host.', 'easymde'));
     }
 
     public function test_en_us_does_not_receive_runtime_chinese_replacements()

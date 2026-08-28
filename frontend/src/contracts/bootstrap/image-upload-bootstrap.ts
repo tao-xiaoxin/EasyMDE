@@ -4,6 +4,8 @@ export type ImageUploadStrings = Readonly<{
   dropTooLarge: string;
   dropUploaded: string;
   dropUploading: string;
+  pasteAlreadyHosted: string;
+  pasteChecking: string;
   pasteFailed: string;
   pasteUploadDisabled: string;
   pasteTooLarge: string;
@@ -147,6 +149,8 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
       dropTooLarge: stringValue(messages.dropTooLarge, 'image-upload-string-invalid'),
       dropUploaded: stringValue(messages.dropUploaded, 'image-upload-string-invalid'),
       dropUploading: stringValue(messages.dropUploading, 'image-upload-string-invalid'),
+      pasteAlreadyHosted: stringValue(messages.pasteAlreadyHosted, 'image-upload-string-invalid'),
+      pasteChecking: stringValue(messages.pasteChecking, 'image-upload-string-invalid'),
       pasteFailed: stringValue(messages.pasteFailed, 'image-upload-string-invalid'),
       pasteUploadDisabled: stringValue(messages.pasteUploadDisabled, 'image-upload-string-invalid'),
       pasteTooLarge: stringValue(messages.pasteTooLarge, 'image-upload-string-invalid'),

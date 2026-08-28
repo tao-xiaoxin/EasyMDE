@@ -1,5 +1,3 @@
-import type { ImageUploadResult } from './image-upload-port';
-
 export type RemoteImageImportRequest = Readonly<{
   altText: string;
   postId: number;
@@ -7,6 +5,22 @@ export type RemoteImageImportRequest = Readonly<{
   url: string;
 }>;
 
+export type RemoteImageImportResult =
+  | Readonly<{
+      alt: string;
+      backup: Readonly<{ status: 'disabled' | 'uploaded' }>;
+      status: 'imported';
+      title: string;
+      url: string;
+    }>
+  | Readonly<{
+      alt: string;
+      status: 'unchanged';
+      title: string;
+      url: string;
+    }>
+  | Readonly<{ code: string; status: 'failed' }>;
+
 export type RemoteImageImportPort = Readonly<{
-  import: (request: RemoteImageImportRequest) => Promise<ImageUploadResult>;
+  import: (request: RemoteImageImportRequest) => Promise<RemoteImageImportResult>;
 }>;

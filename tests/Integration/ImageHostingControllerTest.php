@@ -22,6 +22,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 
 		$this->settings_provider = new class() {
 			public $max_bytes = 5242880;
+			public $primary_domain = 'https://images.example.test';
+			public $title_display = 'filename';
 
 			public function get_image_hosting_settings() {
 				return array(
@@ -31,7 +33,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'service'   => 'cloudflare-r2',
 						'endpoint'  => 'https://synthetic-account.r2.cloudflarestorage.com',
 						'bucket'    => 'synthetic-primary',
-						'domain'    => 'https://images.example.test',
+						'domain'    => $this->primary_domain,
 						'accessKey' => 'synthetic-access',
 						'secretKey' => 'synthetic-secret',
 					),
@@ -48,7 +50,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'behaviors'   => array(
 							'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
 							'maxBytes'      => $this->max_bytes,
-							'titleDisplay'  => 'filename',
+							'titleDisplay'  => $this->title_display,
 						),
 						'fileNameRule' => '{date}/{uuid}.{ext}',
 				);
@@ -642,11 +644,110 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		);
 
 		$this->assertSame( 200, $response->get_status() );
-		$this->assertSame( 'Remote image alt', $response->get_data()['alt'] );
+		$this->assertSame(
+			array(
+				'status' => 'imported',
+				'url'    => 'https://images.example.test/2026/08/example.png',
+				'alt'    => 'Remote image alt',
+				'title'  => 'Example',
+				'backup' => array( 'status' => 'uploaded' ),
+			),
+			$response->get_data()
+		);
 		$this->assertSame( array( array( 'https://cdn.example.test/path/source.png?version=1', 5242880 ) ), $this->remote_downloader->calls );
 		$this->assertCount( 1, $this->runtime->upload_calls );
 		$this->assertSame( $this->post_id, $this->runtime->upload_calls[0][1]['post_id'] );
 		$this->assertFileDoesNotExist( $file['tmp_name'] );
+	}
+
+	public function test_remote_import_returns_an_exact_primary_origin_without_downloading_or_uploading() {
+		$this->settings_provider->primary_domain = 'https://PRIMARY-VIEWING.EXAMPLE.TEST';
+		$url                                     = 'https://primary-viewing.example.test/path/source%20name.png';
+
+		$response = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => $url,
+					'alt_text' => 'Remote image alt',
+				)
+			)
+		);
+
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame(
+			array(
+				'status' => 'unchanged',
+				'url'    => $url,
+				'alt'    => 'Remote image alt',
+				'title'  => 'source-name.png',
+			),
+			$response->get_data()
+		);
+
+		$this->settings_provider->title_display = 'none';
+		$without_title                         = 'https://primary-viewing.example.test/path/without-title.png';
+		$second_response                       = rest_do_request(
+			$this->import_request(
+				array(
+					'post_id'  => $this->post_id,
+					'url'      => $without_title,
+					'alt_text' => '',
+				)
+			)
+		);
+
+		$this->assertSame(
+			array(
+				'status' => 'unchanged',
+				'url'    => $without_title,
+				'alt'    => '',
+				'title'  => '',
+			),
+			$second_response->get_data()
+		);
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_remote_import_does_not_treat_related_hostnames_as_the_primary_hostname() {
+		$urls = array(
+			'https://backup.example.test/path/source.png',
+			'https://cdn.images.example.test/path/source.png',
+			'https://images.example.test.evil.test/path/source.png',
+			'https://evilimages.example.test/path/source.png',
+			'https://provider-cdn-a.example.test/path/source.png',
+			'https://provider-cdn-b.example.test/path/source.png',
+			'https://user:password@images.example.test/path/source.png',
+			'https://images.example.test:443/path/source.png',
+			'https://images.example.test/path/source.png?version=1',
+			'https://images.example.test/path/source.png#preview',
+			'http://images.example.test/path/source.png',
+			'https://images.example.test./path/source.png',
+			'https://imáges.example.test/path/source.png',
+		);
+
+		foreach ( $urls as $url ) {
+			$file                            = $this->png_file();
+			$this->remote_downloader->result = $file;
+			$response                        = rest_do_request(
+				$this->import_request(
+					array(
+						'post_id'  => $this->post_id,
+						'url'      => $url,
+						'alt_text' => '',
+					)
+				)
+			);
+
+			$this->assertSame( 200, $response->get_status(), $url );
+			$this->assertFileDoesNotExist( $file['tmp_name'], $url );
+		}
+
+		$this->assertCount( count( $urls ), $this->remote_downloader->calls );
+		$this->assertCount( count( $urls ), $this->runtime->upload_calls );
 	}
 
 	public function test_remote_import_requires_exact_typed_json_and_never_downloads_an_invalid_request() {

@@ -36,7 +36,8 @@ export type RemoteImageImportCoordinator = Readonly<{
   enqueue: (request: Readonly<{
     candidate: RemoteImagePasteCandidate;
     onFailed: () => void;
-    onSucceeded: () => void;
+    onImported: () => void;
+    onUnchanged: () => void;
     ownedRange: OwnedTextRange;
   }>) => void;
 }>;
@@ -252,7 +253,7 @@ export function createRemoteImageImportCoordinator({
       queue.length = 0;
       running?.controller.abort();
     },
-    enqueue: ({ candidate, onFailed, onSucceeded, ownedRange }) => {
+    enqueue: ({ candidate, onFailed, onImported, onUnchanged, ownedRange }) => {
       if (!active) {
         onDiagnostic('remote-image-import-coordinator-inactive');
         onFailed();
@@ -287,7 +288,11 @@ export function createRemoteImageImportCoordinator({
               onFailed();
               return;
             }
-            onSucceeded();
+            if ('unchanged' === result.status) {
+              onUnchanged();
+            } else {
+              onImported();
+            }
           } catch {
             if (active) {
               onDiagnostic('remote-image-import-operation-failed');
@@ -431,11 +436,12 @@ export function createImageUploadSession({
       return;
     }
     event.preventDefault();
-    reportStatus(strings.pasteUploading, 'info');
+    reportStatus(strings.pasteChecking, 'info');
     remoteImageImportCoordinator.enqueue({
       candidate,
       onFailed: () => reportStatus(strings.pasteFailed, 'error'),
-      onSucceeded: () => reportStatus(strings.pasteUploaded, 'success'),
+      onImported: () => reportStatus(strings.pasteUploaded, 'success'),
+      onUnchanged: () => reportStatus(strings.pasteAlreadyHosted, 'success'),
       ownedRange,
     });
   };

@@ -76,6 +76,20 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('always installs Markdown syntax highlighting', () => {
+    const { container, submissionField } = createFixture('# Heading');
+    const options = {
+      container,
+      label: 'Markdown source',
+      submissionField
+    };
+    const session = createCodeMirrorDocumentSession(options);
+
+    expect(container.querySelector('.cm-line span')).not.toBeNull();
+
+    session.destroy();
+  });
+
   it('always continues Markdown list markers as an editor capability', () => {
     const { container, submissionField } = createFixture('- item');
     submissionField.setSelectionRange(6, 6);

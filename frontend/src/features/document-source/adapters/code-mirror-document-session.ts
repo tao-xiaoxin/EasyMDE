@@ -67,7 +67,6 @@ type CreateCodeMirrorDocumentSessionOptions = Readonly<{
   label: string;
   lineNumbers?: boolean;
   submissionField: HTMLTextAreaElement;
-  syntaxHighlight?: boolean;
   wordWrap?: boolean;
 }>;
 
@@ -171,7 +170,6 @@ export function createCodeMirrorDocumentSession({
   label,
   lineNumbers: showLineNumbers = true,
   submissionField,
-  syntaxHighlight = true,
   wordWrap = true
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
@@ -198,7 +196,7 @@ export function createCodeMirrorDocumentSession({
   const extensions = [
     history(),
     markdownLanguage,
-    ...(syntaxHighlight ? [syntaxHighlighting(markdownHighlightStyle)] : []),
+    syntaxHighlighting(markdownHighlightStyle),
     EditorView.domEventHandlers({
       drop(event) {
         return hasImageFileTransfer(event.dataTransfer);

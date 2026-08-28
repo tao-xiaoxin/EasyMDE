@@ -51,8 +51,6 @@ final class SettingsCenterStrings {
 			'defaultEditingMode'                           => __( 'Default Editing Mode', 'easymde' ),
 			'showLineNumbers'                              => __( 'Show Line Numbers', 'easymde' ),
 			'showLineNumbersDescription'                   => __( 'Show line numbers on the left side of the editor', 'easymde' ),
-			'syntaxHighlight'                              => __( 'Code Highlighting', 'easymde' ),
-			'syntaxHighlightDescription'                   => __( 'Enable code syntax highlighting', 'easymde' ),
 			'statusBarDisplay'                             => __( 'Status Bar Display', 'easymde' ),
 			'autoSave'                                     => __( 'Auto Save', 'easymde' ),
 			'autoSaveDescription'                          => __( 'Periodically save content to prevent accidental loss', 'easymde' ),

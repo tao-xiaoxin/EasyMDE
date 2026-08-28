@@ -79,9 +79,15 @@ final class AdminAssets {
 			EASYMDE_VERSION
 		);
 		wp_enqueue_style(
+			'easymde-admin-message-alert',
+			Asset::url( 'assets/css/admin/message-alert.css' ),
+			array(),
+			$this->get_static_asset_version( 'assets/css/admin/message-alert.css' )
+		);
+		wp_enqueue_style(
 			'easymde-admin',
 			Asset::url( 'assets/css/admin/editor.css' ),
-			array( 'easymde-admin-toolbar', 'easymde-admin-popover' ),
+			array( 'easymde-admin-toolbar', 'easymde-admin-popover', 'easymde-admin-message-alert' ),
 			$this->get_static_asset_version( 'assets/css/admin/editor.css' )
 		);
 		try {
@@ -373,7 +379,6 @@ final class AdminAssets {
 			'strings'            => array(
 				'immersive'          => array(
 					'autoSave'                    => __( 'Auto save', 'easymde' ),
-					'autoSaveDescription'         => __( 'Automatically save a local draft', 'easymde' ),
 					'autoSaveEnabled'             => __( 'Auto save is enabled', 'easymde' ),
 					'articleOutline'              => __( 'Article outline', 'easymde' ),
 					'cancel'                      => __( 'Cancel', 'easymde' ),

@@ -13,6 +13,14 @@ const settingsRootSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/SettingsCenterRoot.tsx"),
 	"utf8",
 );
+const imagesSettingsSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/ImagesSettingsPage.tsx"),
+	"utf8",
+);
+const transferSettingsSource = readFileSync(
+	join(repoRoot, "frontend/src/app/settings/TransferSettingsPage.tsx"),
+	"utf8",
+);
 const settingsControlsSource = readFileSync(
 	join(repoRoot, "frontend/src/app/settings/SettingsControls.tsx"),
 	"utf8",
@@ -52,6 +60,23 @@ function cssRuleBody(selector) {
 
 	return match[1];
 }
+
+test("Settings Center feedback reuses the shared editor message alert", () => {
+	for (const source of [
+		settingsRootSource,
+		imagesSettingsSource,
+		transferSettingsSource,
+	]) {
+		assert.match(
+			source,
+			/import \{ EditorMessageAlert \} from "\.\.\/\.\.\/shared\/ui\/EditorMessageAlert";/,
+		);
+		assert.match(source, /className="easymde-editor-message-alert-host"/);
+		assert.match(source, /<EditorMessageAlert/);
+		assert.doesNotMatch(source, /SettingsFeedbackAlert/);
+	}
+	assert.doesNotMatch(settingsCss, /easymde-settings-center__transfer-feedback/);
+});
 
 test("Settings Center does not paint an opaque pre-mount viewport veil", () => {
 	assert.doesNotMatch(

@@ -77,6 +77,18 @@ type MutableSettingsRecord = Record<string, unknown> & {
 };
 
 describe("parseSettingsCenterBootstrap", () => {
+	it("accepts the five-second auto-save interval", () => {
+		expect(
+			parseSettingsCenterSettings({
+				...SETTINGS_CENTER_TEST_SETTINGS,
+				general: {
+					...SETTINGS_CENTER_TEST_SETTINGS.general,
+					autoSaveInterval: "5",
+				},
+			}).general.autoSaveInterval,
+		).toBe("5");
+	});
+
 	it("preserves the frontend theme application preference", () => {
 		expect(
 			parseSettingsCenterSettings(SETTINGS_CENTER_TEST_SETTINGS).general

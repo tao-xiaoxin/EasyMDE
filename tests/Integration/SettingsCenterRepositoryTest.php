@@ -27,12 +27,14 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $settings = $repository->get_settings();
         $settings['general']['autoSave'] = false;
+        $settings['general']['autoSaveInterval'] = '5';
         $settings['shortcuts']['values']['save']['windows'] = 'Ctrl+Shift+S';
 
         $saved = $repository->update_settings($settings);
 
         $this->assertIsArray($saved);
         $this->assertFalse($saved['general']['autoSave']);
+        $this->assertSame('5', $saved['general']['autoSaveInterval']);
         $this->assertSame('Ctrl+Shift+S', $saved['shortcuts']['values']['save']['windows']);
         $this->assertSame(1, $saved['revision']);
         $stored = get_option(Options::EDITOR_SETTINGS);

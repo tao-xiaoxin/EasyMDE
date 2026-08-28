@@ -10,21 +10,18 @@ import { ImmersiveSettingsPopover } from './ImmersiveSettingsPopover';
 
 const strings = {
   articleOutline: '文章大纲',
-  autoSave: '自动保存',
-  autoSaveDescription: '自动保存本地草稿',
   editorSettings: '编辑器设置',
   close: '关闭',
   outlineDescription: '左侧显示标题层级导航',
   settings: '设置',
   splitPreview: '分屏预览',
   splitPreviewDescription: '默认显示实时预览区域'
-} as ImmersiveStrings;
+} as unknown as ImmersiveStrings;
 
 const settings: ImmersiveSettings = {
-  autoSave: true,
   outline: true,
   splitPreview: true
-};
+} as ImmersiveSettings;
 
 describe('ImmersiveSettingsPopover', () => {
   it('exposes reference-style checkbox buttons and toggles the complete row', () => {
@@ -41,7 +38,10 @@ describe('ImmersiveSettingsPopover', () => {
 
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
 
-    expect(view.getAllByRole('checkbox')).toHaveLength(3);
+    expect(view.getAllByRole('checkbox')).toHaveLength(2);
+    expect(
+      view.queryByRole('checkbox', { name: '自动保存' })
+    ).toBeNull();
     expect(
       view.queryByRole('checkbox', { name: '字数统计' })
     ).toBeNull();

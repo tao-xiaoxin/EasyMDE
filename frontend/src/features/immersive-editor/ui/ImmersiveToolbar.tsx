@@ -28,7 +28,6 @@ function WeChatGlyph() {
 }
 
 export function ImmersiveToolbar({
-  autoSaveAllowed = true,
   historyAvailable,
   mode,
   settings,
@@ -43,7 +42,6 @@ export function ImmersiveToolbar({
   onSettingsChange,
   onTable
 }: Readonly<{
-  autoSaveAllowed?: boolean;
   historyAvailable: boolean;
   mode: ImmersiveViewMode;
   settings: ImmersiveSettings;
@@ -120,7 +118,6 @@ export function ImmersiveToolbar({
         </button>
         {styleControls}
         <ImmersiveSettingsPopover
-          autoSaveAllowed={autoSaveAllowed}
           settings={settings}
           strings={strings}
           onChange={onSettingsChange}

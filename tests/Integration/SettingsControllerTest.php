@@ -138,6 +138,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
     public function test_post_accepts_a_complete_settings_object_and_returns_the_next_revision() {
         $settings = $this->current_settings();
         $settings['general']['autoSave'] = false;
+		$settings['general']['autoSaveInterval'] = '5';
 		$settings['images']['uploadRetryCount'] = 5;
         $settings['shortcuts']['values']['bold']['windows'] = 'Ctrl+Alt+B';
 
@@ -155,6 +156,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         );
         $this->assertSame( 1, $data['settings']['revision'] );
         $this->assertFalse( $data['settings']['general']['autoSave'] );
+		$this->assertSame( '5', $data['settings']['general']['autoSaveInterval'] );
 		$this->assertSame( 5, $data['settings']['images']['uploadRetryCount'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }

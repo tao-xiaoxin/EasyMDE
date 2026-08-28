@@ -211,6 +211,7 @@ export function GeneralSettingsPage({
 						value={draft.autoSaveInterval}
 						onChange={(value) => setValue("autoSaveInterval", value)}
 						options={[
+							["5", s.seconds5],
 							["30", s.seconds30],
 							["60", s.seconds60],
 							["120", s.minutes2],

@@ -1293,6 +1293,58 @@ describe("SettingsCenterRoot Transfer section", () => {
 		fetch.mockRestore();
 	});
 
+	it("imports the schema 9 five-second auto-save interval", async () => {
+		const user = userEvent.setup();
+		const currentSettings = bootstrap().settings;
+		const settings = {
+			...currentSettings,
+			general: {
+				...currentSettings.general,
+				autoSaveInterval: "5",
+			},
+		};
+		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				settings: { ...settings, revision: settings.revision + 1 },
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const transferSection = container.querySelector(
+			'[data-settings-section="transfer"]',
+		);
+		if (!(transferSection instanceof HTMLElement))
+			throw new Error("settings-center-transfer-section-missing");
+		const transfer = within(transferSection);
+
+		await user.upload(
+			transfer.getByLabelText<HTMLInputElement>(
+				"transferChooseConfigurationFile",
+			),
+			new File(
+				[JSON.stringify({ schemaVersion: 9, settings })],
+				"settings.json",
+				{ type: "application/json" },
+			),
+		);
+		await user.click(
+			transfer.getByRole("button", { name: "transferConfirmImport" }),
+		);
+		await user.click(screen.getByRole("button", { name: "saveSettings" }));
+		await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+		const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body)) as {
+			settings: SettingsCenterSettings;
+		};
+		expect(body.settings.general.autoSaveInterval).toBe("5");
+		fetch.mockRestore();
+	});
+
 	it("exports the current draft with secrets redacted", async () => {
 		const user = userEvent.setup();
 		const { container } = render(
@@ -1337,7 +1389,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(8);
+			expect(exported.schemaVersion).toBe(9);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");
@@ -1825,6 +1877,49 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
+	it("does not announce save success before WordPress completes the mutation", async () => {
+		const user = userEvent.setup();
+		const responseControl = {
+			resolve: null as ((response: Response) => void) | null,
+		};
+		const fetch = vi.spyOn(window, "fetch").mockImplementation(
+			() =>
+				new Promise<Response>((resolve) => {
+					responseControl.resolve = resolve;
+				}),
+		);
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
+
+		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
+		const save = screen.getByRole<HTMLButtonElement>("button", {
+			name: "saveSettings",
+		});
+		await user.click(save);
+
+		expect(save.getAttribute("aria-busy")).toBe("true");
+		expect(within(overlayRoot).queryByRole("status")).toBeNull();
+		const resolveResponse = responseControl.resolve;
+		if (!resolveResponse)
+			throw new Error("settings-save-response-resolver-missing");
+		resolveResponse({
+			ok: true,
+			json: async () => ({
+				settings: bootstrap().settings,
+				credentialStatus: {
+					primaryConfigured: false,
+					backupConfigured: false,
+				},
+			}),
+		} as Response);
+
+		expect(await within(overlayRoot).findByRole("status")).not.toBeNull();
+		expect(fetch).toHaveBeenCalledOnce();
+		fetch.mockRestore();
+	});
+
 	it("saves edited owner-backed settings through WordPress and reports completion", async () => {
 		const user = userEvent.setup();
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
@@ -1837,7 +1932,10 @@ describe("SettingsCenterRoot persistence", () => {
 				},
 			}),
 		} as Response);
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
 
 		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
@@ -1846,8 +1944,16 @@ describe("SettingsCenterRoot persistence", () => {
 		expect(save.disabled).toBe(false);
 		await user.click(save);
 
+		const feedback = await within(overlayRoot).findByRole("status");
+		expect(within(feedback).getByText("settingsSaved")).not.toBeNull();
+		expect(document.activeElement).toBe(save);
+		await user.click(
+			within(feedback).getByRole("button", {
+				name: "closeSettingsFeedback",
+			}),
+		);
 		await waitFor(() =>
-			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+			expect(within(overlayRoot).queryByRole("status")).toBeNull(),
 		);
 		expect(fetch).toHaveBeenCalledOnce();
 		fetch.mockRestore();
@@ -2432,7 +2538,10 @@ describe("SettingsCenterRoot persistence", () => {
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockRejectedValue(new Error("settings-save-failed"));
-		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
+		if (!(overlayRoot instanceof HTMLElement))
+			throw new Error("settings-center-overlay-missing");
 
 		await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
 		const save = screen.getByRole<HTMLButtonElement>("button", {
@@ -2440,9 +2549,11 @@ describe("SettingsCenterRoot persistence", () => {
 		});
 		await user.click(save);
 
-		await waitFor(() =>
-			expect(screen.getByText("settingsSaveNetworkFailed")).not.toBeNull(),
-		);
+		const feedback = await within(overlayRoot).findByRole("alert");
+		expect(
+			within(feedback).getByText("settingsSaveNetworkFailed"),
+		).not.toBeNull();
+		expect(document.activeElement).toBe(save);
 		expect(screen.queryByText("settingsSaved")).toBeNull();
 		expect(save.disabled).toBe(false);
 		fetch.mockRestore();

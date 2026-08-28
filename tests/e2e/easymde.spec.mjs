@@ -1532,7 +1532,10 @@ test.describe('EasyMDE editor workflows', () => {
       name: immersiveLabels.editorSettings
     });
     await expect(settingsDialog).toBeVisible();
-    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(2);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: immersiveLabels.autoSave })
+    ).toHaveCount(0);
     await expect(
       settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
     ).toHaveCount(0);
@@ -1918,7 +1921,10 @@ test.describe('EasyMDE editor workflows', () => {
     const settingsDialog = page.getByRole('dialog', {
       name: immersiveLabels.editorSettings
     });
-    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(3);
+    await expect(settingsDialog.getByRole('checkbox')).toHaveCount(2);
+    await expect(
+      settingsDialog.getByRole('checkbox', { name: immersiveLabels.autoSave })
+    ).toHaveCount(0);
     await expect(
       settingsDialog.getByRole('checkbox', { name: /字数统计|Word count/iu })
     ).toHaveCount(0);

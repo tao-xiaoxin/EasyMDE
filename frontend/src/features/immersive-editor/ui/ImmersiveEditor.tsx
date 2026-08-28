@@ -52,7 +52,6 @@ import type { GeneralSettings } from '../../../contracts/settings-center-setting
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
 type Props = Readonly<{
-  autoSaveAllowed?: boolean;
   direction: 'ltr' | 'rtl';
   generalSettings: GeneralSettings;
   documentSession: EditorDocumentSession;
@@ -68,9 +67,7 @@ type Props = Readonly<{
   onBeforeSourceMutation: () => boolean;
   onExit: () => void;
   onFailure: (code: string) => void;
-  localDraftsEnabled: boolean;
   mode: ImmersiveViewMode;
-  onLocalDraftsEnabledChange: (enabled: boolean) => void;
   readPublishSnapshot: () => NativePublishSnapshot;
   onConfirmPublish: (
     draft: NativePublishDraft,
@@ -455,14 +452,11 @@ export function ImmersiveEditor({
   restoreRevision,
   styleControls,
   toolbar,
-  localDraftsEnabled,
   mode,
-  autoSaveAllowed = true,
   onCopyWechat,
   onBeforeSourceMutation,
   onExit,
   onFailure,
-  onLocalDraftsEnabledChange,
   readPublishSnapshot,
   onConfirmPublish,
   onSelectFeaturedImage,
@@ -485,19 +479,13 @@ export function ImmersiveEditor({
     useState<NativePublishSnapshot | null>(null);
   const [initialPublishSnapshot] = useState(readPublishSnapshot);
   const [initialSettings] = useState<ImmersiveSettings>(() => {
-    const settings = {
-      autoSave: localDraftsEnabled,
+    return {
       outline: true,
       splitPreview: true,
       ...(initialPreferences ?? {})
     };
-    return {
-      ...settings,
-      autoSave: autoSaveAllowed && settings.autoSave
-    };
   });
   const [settings, setSettings] = useState(initialSettings);
-  const restoredOwnerSettingsRef = useRef(false);
 
   useEffect(() => environment.activateFavicon(), [environment]);
 
@@ -505,18 +493,6 @@ export function ImmersiveEditor({
     if (!wechatCopied) return undefined;
     return environment.schedule(() => setWechatCopied(false), 1800);
   }, [environment, wechatCopied]);
-
-  useEffect(() => {
-    if (restoredOwnerSettingsRef.current) return;
-    restoredOwnerSettingsRef.current = true;
-    if (initialSettings.autoSave !== localDraftsEnabled) {
-      onLocalDraftsEnabledChange(initialSettings.autoSave);
-    }
-  }, [
-    initialSettings,
-    localDraftsEnabled,
-    onLocalDraftsEnabledChange
-  ]);
 
   useEffect(
     () =>
@@ -558,16 +534,9 @@ export function ImmersiveEditor({
     onViewModeChange(next);
   };
   const changeSettings = (next: ImmersiveSettings) => {
-    const constrained = {
-      ...next,
-      autoSave: autoSaveAllowed && next.autoSave
-    };
-    setSettings(constrained);
-    const result = immersivePreferencesPort.write(constrained);
+    setSettings(next);
+    const result = immersivePreferencesPort.write(next);
     if ('unavailable' === result.status) onFailure(result.code);
-    if (constrained.autoSave !== settings.autoSave) {
-      onLocalDraftsEnabledChange(constrained.autoSave);
-    }
     if (next.splitPreview !== settings.splitPreview) {
       changeMode(next.splitPreview ? 'split' : 'source');
     }
@@ -662,7 +631,6 @@ export function ImmersiveEditor({
         onTitleChange={changeTitle}
       />
       <ImmersiveToolbar
-        autoSaveAllowed={autoSaveAllowed}
         historyAvailable={null !== revisionPort}
         mode={mode}
         settings={settings}

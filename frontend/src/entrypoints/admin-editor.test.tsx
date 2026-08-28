@@ -85,7 +85,6 @@ const bootstrap = {
   },
   immersiveStrings: {
     autoSave: 'Auto save',
-    autoSaveDescription: 'Automatically save a local draft',
     autoSaveEnabled: 'Auto save is enabled',
     articleOutline: 'Article outline',
     cancel: 'Cancel',

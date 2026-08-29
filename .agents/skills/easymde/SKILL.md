@@ -1,13 +1,13 @@
 ---
 name: easymde
-description: Use this Skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local drafts, WeChat export, AI assistance, accessibility, performance, Vite builds, testing, and release packaging. Use the separate easymde-migration Skill when a task transfers ownership from legacy JavaScript or DOM-driven browser code to React.
+description: Use this Skill when building, modifying, debugging, reviewing, or validating EasyMDE React and TypeScript admin-editor features or related browser-side interfaces, including WordPress integration, Markdown editing and preview, publishing, revisions, media, themes, custom CSS, settings, local drafts, WeChat export, AI assistance, accessibility, performance, Vite builds, testing, release packaging, browser-owner inventory, deprecation, and removal evidence.
 ---
 
 # EasyMDE React and TypeScript Development Guide
 
 EasyMDE is a standalone WordPress Markdown editor. React and TypeScript, built with Vite, are the approved browser-application architecture for the admin editor and related interactive WordPress administration surfaces.
 
-This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. When a task replaces an existing JavaScript or DOM-driven owner, also load `.agents/skills/easymde-migration/SKILL.md`.
+This Skill is the executable development contract. The durable rationale lives in `docs/REACT_DESIGN_PHILOSOPHY.md`. It also owns the browser-owner inventory, characterization, deprecation, and removal evidence for work that replaces an existing JavaScript or DOM-driven owner.
 
 Do not introduce a pattern, dependency, abstraction, directory, service, or framework merely because it is common in another React project.
 
@@ -32,8 +32,8 @@ Appearance, Fonts, Custom CSS, Media, Local Draft, and WeChat behavior. Use the
 ordinary workspace footer only for the live Markdown character count and the
 PHP-provided last-editor timestamp; it must not become a second statistics,
 revision, or persistence owner. Use the
-migration Skill only for Legacy inventory and deletion evidence where it does
-not conflict with this explicit decision.
+browser-owner inventory and deletion evidence in this Skill where they do not
+conflict with this explicit decision.
 
 ## Rule Priority and Evidence
 
@@ -43,7 +43,7 @@ Apply rules in this order:
 2. Root `AGENTS.md`, the live repository, and existing public compatibility contracts.
 3. The current focused GitHub Issue and pull request, interpreted within the first two authorities.
 4. `docs/ARCHITECTURE.md` and `docs/REACT_DESIGN_PHILOSOPHY.md`.
-5. This Skill; migration work also uses `easymde-migration`.
+5. This Skill, including its browser ownership and removal contract.
 6. Official React, WordPress, TypeScript, and WAI-ARIA documentation matching supported versions.
 7. Generic companion Skills that are actually available.
 8. react-admin and other mature projects as design references.
@@ -119,8 +119,7 @@ Maintenance rules:
 - remove stale or duplicate rules instead of appending contradictory
   exceptions;
 - keep routing paths and Skill frontmatter names accurate;
-- route translation detail to `.agents/skills/i18n/SKILL.md` and temporary
-  ownership transfer to `.agents/skills/easymde-migration/SKILL.md`;
+- route translation detail and string-owner transfers to `.agents/skills/i18n/SKILL.md`;
 - do not require every Feature pull request to modify every guidance file;
 - do not update durable guidance for a private implementation rename that
   changes no owned contract;
@@ -136,14 +135,58 @@ file as proof of better governance.
 
 Use this Skill for normal React and TypeScript work with one stable owner.
 
-Also use `easymde-migration` when the task:
+This Skill also applies when the task transfers behavior from `assets/js/admin/`
+or another legacy owner, introduces a temporary seam, activates a new React
+owner, or deprecates or removes a legacy module, selector, event, Script Handle,
+CSS owner, or compatibility shim. Do not turn ordinary feature work into an
+ownership-transfer project, and do not use migration wording to justify
+unrelated redesign.
 
-- transfers behavior from `assets/js/admin/` or another legacy owner;
-- introduces a temporary seam used by legacy and React code;
-- activates a new React owner;
-- deprecates or removes a legacy module, selector, event, script handle, CSS owner, or compatibility shim.
+## Browser Ownership, Characterization, and Removal
 
-Do not turn ordinary feature work into a migration project, and do not use migration wording to justify unrelated redesign.
+For every user-observable browser behavior, record the current and intended
+owner before editing. Inventory its initialization and teardown entrypoints,
+reads and writes, mutable state and saved baseline, listeners, events, timers,
+observers, pointer capture, selection, focus, scroll, cancellation and stale
+results, external-store snapshots and subscriptions, async concurrency,
+loading/empty/success/error/permission/conflict/unavailable states, Bootstrap
+fields, translation owner, assets, package entries, and unit, integration,
+browser, negative, and protected-surface tests. Include extension consumers and
+the native WordPress form when either can observe the behavior. The inventory
+must identify every state-changing path and its single active owner; DOM
+presence, a mounted component, or a passing static check is not ownership proof.
+
+Characterization tests preserve intentional user-visible and compatibility
+behavior, including awkward edge cases. They must not freeze an incidental
+implementation detail unless a real consumer or project contract depends on
+it. Test behavior at the lowest reliable boundary and preserve or rewrite
+tests that still express the product contract when an implementation is
+removed.
+
+A compatibility shim is removable only when it has a named owner and consumer,
+the exact public or release contract it preserves, delegation and failure
+tests, privacy-safe observability for remaining use where appropriate, and an
+explicit removal condition. It must not own independent state or hide a write
+path. Before deleting a superseded owner, prove zero consumers and zero legacy
+state-changing/write paths, then exhaustively search selectors, events, timers,
+observers, storage keys, Bootstrap fields, assets, tests, documentation, and
+package entries. Do not delete uncertain dead code; record the uncertainty and
+obtain maintainer direction when ownership cannot be proven. A linked focused
+Issue must authorize deletion.
+
+Shadow comparison is permitted only for read-only, privacy-safe results. Never
+shadow Save, Publish, Restore, Upload, Settings, Custom CSS, or another
+mutation. Any comparison must not become a second owner or affect the current
+document, native form, or persisted state.
+
+For editing behavior, verify selection start, end, and direction; IME
+composition and shortcuts; undo and redo grouping; focus entry and return;
+source and Preview scroll; pointer cancellation and lost capture; and editor
+instance identity across normal renders and owner changes. Browser evidence
+must show that the change introduces no Console Error or Warning. Declare
+task-specific performance thresholds before measuring; when no representative
+measurement is available, report performance as `unverified` rather than
+claiming improvement or completion.
 
 ## Start With the Live Contract
 
@@ -866,9 +909,10 @@ activates and verifies another React translation unit.
 
 Each user-visible message instance has one owner. Do not ship the same instance
 through more than one translation path. When translation ownership moves from
-legacy JavaScript or PHP to React, also use
-`.agents/skills/easymde-migration/SKILL.md`. Stable Error Codes, REST Routes,
-Script Handles, Storage Keys, and public identifiers remain untranslated.
+legacy JavaScript or PHP to React, follow the string-owner transfer and old
+Bootstrap-field removal contract in `.agents/skills/i18n/SKILL.md`. Stable Error
+Codes, REST Routes, Script Handles, Storage Keys, and public identifiers remain
+untranslated.
 Dynamic extension labels remain validated and translated by their documented
 owner. The i18n Skill owns the complete executable pipeline and evidence.
 
@@ -2299,8 +2343,7 @@ Maintainability rules:
 - keep concrete implementations private;
 - deprecate before removing public extension boundaries;
 - update `docs/REACT_DESIGN_PHILOSOPHY.md` and this Skill together when a durable rule changes;
-- remove obsolete rules rather than preserving contradictions;
-- use the migration Skill only for temporary ownership transfer rules.
+- remove obsolete rules rather than preserving contradictions.
 
 ## Prohibited Patterns
 

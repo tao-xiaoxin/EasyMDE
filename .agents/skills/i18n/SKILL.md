@@ -5,9 +5,9 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 # EasyMDE React-Focused i18n Skill
 
-这个 skill 的目标是：指导 EasyMDE 在保持 WordPress 权威模型不变前提下，把现有浏览器字符串逐步迁移到 React/TypeScript，并保证翻译链路可迁移、可验证、可回滚。
+这个 skill 的目标是：指导 EasyMDE 在保持 WordPress 权威模型不变前提下，把现有浏览器字符串逐步迁移到 React/TypeScript，并保证翻译链路可验证、可追踪、可恢复。
 
-**它不是 WordPress i18n 通用入门手册，也不替代 `AGENTS.md`、`.agents/skills/easymde/SKILL.md`、`.agents/skills/easymde-migration/SKILL.md` 或 `docs/REACT_DESIGN_PHILOSOPHY.md`。**
+**它不是 WordPress i18n 通用入门手册，也不替代 `AGENTS.md`、`.agents/skills/easymde/SKILL.md` 或 `docs/REACT_DESIGN_PHILOSOPHY.md`。**
 
 ## 规则优先级（执行顺序）
 
@@ -16,11 +16,10 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 3. 当前聚焦 Issue 与 Pull Request，在前两项边界内解释；
 4. `docs/ARCHITECTURE.md`、`docs/REACT_DESIGN_PHILOSOPHY.md`；
 5. `.agents/skills/easymde/SKILL.md`；
-6. `.agents/skills/easymde-migration/SKILL.md`（当涉及所有权转移）；
-7. 官方文档（按当前支持版本）；
-8. 当前任务实际需要的通用 Skill；
-9. react-admin 作为设计思想借鉴，不作为项目权威；
-10. 其他博客、搜索摘要、经验贴仅作为辅助输入。
+6. 官方文档（按当前支持版本）；
+7. 当前任务实际需要的通用 Skill；
+8. react-admin 作为设计思想借鉴，不作为项目权威；
+9. 其他博客、搜索摘要、经验贴仅作为辅助输入。
 
 下层资料不得覆盖上层规则；一旦冲突，以上层为准。
 
@@ -29,7 +28,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 不要把 Companion Skill 当成依赖安装列表，也不要为每个 i18n 任务读取全部通用 Skill。只组合当前任务所需的最小集合：
 
 - 普通 EasyMDE React/TypeScript 文案开发：`easymde`；
-- legacy owner 转移、双实现接管或旧字段删除：`easymde-migration`；
+- legacy owner 转移或旧字段删除：由本 Skill 与 `easymde` Skill 按各自责任共同覆盖；
 - 新增或改变可执行逻辑：按风险使用 `test-driven-development`；
 - 处理不可信输入、错误详情或隐私边界：按风险使用 `security-and-hardening`；
 - 修改 ARIA、表单、焦点或可见交互：按风险使用 `web-design-guidelines`，需要真实浏览器证据时再使用 `browser-testing-with-devtools`；
@@ -48,7 +47,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - `scripts/i18n.mjs`
 - 待改字符串的 owner、consumer、entrypoint 和相关测试。
 
-涉及 legacy owner 转移时再读取 `.agents/skills/easymde-migration/SKILL.md`；涉及后台或公开前台 Bootstrap 时分别读取 `src/Admin/AdminAssets.php` 或 `src/Frontend/FrontendAssets.php`。不要读取与任务无关的完整目录来制造上下文。
+涉及 legacy owner 转移或旧 Bootstrap 字段删除时，读取本 Skill 与 `easymde` Skill 的相关章节；涉及后台或公开前台 Bootstrap 时分别读取 `src/Admin/AdminAssets.php` 或 `src/Frontend/FrontendAssets.php`。不要读取与任务无关的完整目录来制造上下文。
 
 禁止基于“理想架构”宣称功能已实现；所有结论必须来源于当前文件中的事实。
 
@@ -142,7 +141,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - 未来 React UI：`@wordpress/i18n` 在已迁移的 React 消息源内；
 - 一个消息实例若迁移成功到 React owner，则必须：
   - 在原 bootstrap owner 中删除该条；
-  - 在 Issue、PR 或 migration spec 中记录 legacy removal evidence；
+  - 在聚焦 Issue 或 PR 中记录旧 owner 移除证据；
   - 保持 release ZIP 与行为回归检测通过。
 
 规则：
@@ -152,6 +151,23 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - 不同 Feature 可以合法拥有相同英文，如 `Save`、`Cancel` 或 `Retry`；
 - 不得仅因英文相同就合并 owner 或创建全局消息桶；
 - 共享消息必须证明语义、Gettext context、consumer、生命周期和删除策略一致。
+
+## 字符串所有权转移与旧 Bootstrap 字段移除
+
+字符串 owner 转移必须以一个可独立验收的 Feature 或消息单元进行。开始
+前在聚焦 Issue 或 PR 中记录 source message、Gettext context、复数或
+插值要求、Bootstrap object/field、当前 owner、目标 owner、所有 consumer、
+提取与 Catalog 路径、Script Handle、运行时加载条件、失败/恢复边界和发布
+证据。后台 `EasyMDEConfig.strings` 与公开前台
+`EasyMDEFrontendConfig.strings` 必须分别核对，不能只清理其中一个。
+
+只有在新 owner 的源码提取、Catalog 生成、WordPress 加载、非默认 locale
+运行时和安装包验证均通过后，才能让 React 接管该消息。接管与旧 owner
+移除必须保持单一 owner：从原 Bootstrap map 删除对应 field/条目及其
+legacy consumer，搜索确认没有重复 source、旧 field 或未声明的加载路径，
+并重新运行 i18n、行为和 release 校验。未迁移消息继续由原 owner 提供；
+不得用 inline English fallback、空消息或另一套全局 catalog 掩盖提取、
+交付或加载故障。
 
 ## 翻译对象边界
 
@@ -192,7 +208,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 ### 迁移可接受前置条件
 
-- 已在关联 Issue、PR 或 migration spec 中明确该 Unit 的验收标准；
+- 已在关联 Issue 或 PR 中明确该 Unit 的验收标准；
 - 已记录 owner 转移计划（迁移矩阵）；
 - 该 Unit 所有新增/变更字符串由同一个 runtime owner 提供；
 - 新 owner 在测试环境下已完成以下能力：
@@ -224,7 +240,7 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 - 后台 map 是 `EasyMDEConfig.strings`，公开前台 map 是 `EasyMDEFrontendConfig.strings`，不得只检查其中一个；
 - 不得创建无边界的全局字符串集合，也不得把已由 React owner 管理的消息重新加入 Bootstrap；
 - 对应运行面的提取、catalog、script translation delivery 和 runtime 已验证后，React-owned 新消息不得继续加入 legacy map；
-- ownership 转移完成后，删除对应 Bootstrap field 和 legacy consumer，并保留回滚边界与删除证据。
+- ownership 转移完成后，删除对应 Bootstrap field 和 legacy consumer，并保留失败/恢复边界与删除证据。
 
 ### 迁移规范模板（每个单元必填）
 
@@ -248,7 +264,7 @@ JSON filename strategy:
 Source-to-build mapping:
 Catalog loading evidence:
 Activation condition:
-Rollback boundary:
+Failure/recovery boundary:
 Legacy removal evidence:
 Release ZIP evidence:
 Unverified states:
@@ -615,7 +631,7 @@ Release Validation 已用负向 Fixture 拒绝 handle catalog 之外的额外 JS
 1. 我能否区分当前事实和计划能力？
 2. 我是否明确知道当前是哪一个 owner 负责该文案？
 3. 一条字符串是否可能在 PHP bootstrap 与 React owner 两端同时存在？
-4. 迁移失败时是否有回退路径和未翻译文案的可观测证据？
+4. 迁移失败时是否有可观察的错误状态、恢复边界和未翻译文案证据？
 5. 安装包是否真正包含该语言资产，CI/运行时证据是否可重放？
 6. 前台增强页与后台编辑页的 locale 边界是否有显式避免互相串用？
 7. 扩展命令/工具的文案是否保持它们的扩展所有权？
@@ -633,7 +649,7 @@ Release Validation 已用负向 Fixture 拒绝 handle catalog 之外的额外 JS
 - `wp_set_script_module_translations()` 在当前最小版本下作为已实现状态；
 - 不完整的“预览通过”而不跑 i18n/release 检查；
 - 用 React inline English fallback 掩盖缺失提取、catalog 或 delivery 故障；
-- 未声明 rollback boundary 即启动迁移；
+- 未声明 failure/recovery boundary 即启动迁移；
 - 创建第二套消息源或未声明的 catalog 运行线。
 
 ## 官方参考（版本对齐）

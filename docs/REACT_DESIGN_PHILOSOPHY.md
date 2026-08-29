@@ -2,7 +2,7 @@
 
 本文定义 EasyMDE WordPress 后台 React、TypeScript 与 Vite 应用的长期设计哲学和架构原则。
 
-它回答“为什么这样设计、责任属于谁、边界如何长期保持稳定”，不是迁移阶段清单，也不是逐条编码检查表。日常实现规则由 `.agents/skills/easymde/SKILL.md` 负责；`.agents/skills/easymde-migration/SKILL.md` 仅负责 Legacy 清点与删除证据，不得覆盖 Issue #91 已批准的直接 React Cutover。
+它回答“为什么这样设计、责任属于谁、边界如何长期保持稳定”，不是迁移阶段清单，也不是逐条编码检查表。日常实现规则以及浏览器 owner 清点、表征、弃用和删除证据由 `.agents/skills/easymde/SKILL.md` 负责，不得覆盖 Issue #91 已批准的直接 React Cutover。
 
 Issue #91 的普通 WordPress Editor 目标是一个完整的 React Editor Root，
 不是多个 React Root 与 Legacy DOM 的长期拼装。直接 Cutover 删除
@@ -26,7 +26,7 @@ Editor 视觉基线。删除这些 React 表面不等于删除能力：对应发
 - 查阅目录、依赖与接口决策时，读“React 运行时与应用 Root”至“Port、Runtime 与 Adapter”。
 - 实现功能时，按需查阅状态、跨语言边界、正式数据流、组件 API、UI、性能与发布包章节。
 - 判断本地静态资源或真正 External Service 边界时，读“资源交付与发行渠道”；Service 证据、批准与实施检查使用 `.agents/skills/easymde/SKILL.md`。
-- 日常执行检查使用 `.agents/skills/easymde/SKILL.md`；Issue #91 直接 Cutover 仅使用 `.agents/skills/easymde-migration/SKILL.md` 清点旧消费者和证明删除，不建立运行时 Handoff。
+- 日常执行检查以及 Issue #91 直接 Cutover 的旧消费者清点和删除证明使用 `.agents/skills/easymde/SKILL.md`，不建立运行时 Handoff。
 - 本文与实时代码不一致时，先根据本文的证据优先级确定是实现欠账还是文档过时，不得默认任何一方自动覆盖另一方。
 
 ## 一、权威来源与证据策略
@@ -37,7 +37,7 @@ Editor 视觉基线。删除这些 React 表面不等于删除能力：对应发
 2. 根目录 `AGENTS.md`、实时仓库和现有公开兼容合同。
 3. 在前两项边界内解释的当前聚焦 GitHub Issue 和 Pull Request。
 4. `docs/ARCHITECTURE.md` 与本文。
-5. `.agents/skills/easymde/SKILL.md`；迁移任务再叠加 `.agents/skills/easymde-migration/SKILL.md`。
+5. `.agents/skills/easymde/SKILL.md`，包括浏览器 owner 和删除合同。
 6. 与项目最低支持版本匹配的 React、WordPress、TypeScript 和 WAI-ARIA 官方文档及官方源码。
 7. 已实际加载的通用 Skill。
 8. react-admin 等成熟项目的设计经验。
@@ -777,7 +777,12 @@ TypeScript Interface 不能验证 PHP、REST、Storage、Manifest 或扩展输�
 
 ### 国际化合同
 
-当前仓库由 PHP Gettext 提供浏览器字符串，并通过 Bootstrap 传入 JavaScript；现有 `scripts/i18n.mjs` 只提取 PHP。保持这一事实，直到独立 i18n / Build 任务完整引入 TS / TSX 路径。
+当前仓库由 PHP Gettext 提供大部分浏览器字符串，并通过 Bootstrap 传入
+JavaScript；`scripts/i18n.mjs` 扫描 `easymde.php`、`includes`、`src`、
+`templates` 中的 PHP 源码，并提取已激活的
+`frontend/src/integrations/wordpress/i18n/create-wordpress-immersive-i18n-port.ts`
+React 计数器消息，再合并 PHP/JavaScript catalog。保持这一事实，直到新的
+聚焦 i18n / Build 任务扩展更多 TS / TSX 消息 owner。
 
 每个用户可见消息实例只有一个翻译 Owner，不得同时由 PHP Bootstrap 和
 JavaScript Catalog 提供。Error Code、ID、Route、Handle、Storage Key 和扩展
@@ -785,10 +790,9 @@ JavaScript Catalog 提供。Error Code、ID、Route、Handle、Storage Key 和�
 缺失的必需合同。
 
 完整的 PHP / React 字符串所有权、提取、Catalog、Script Translation 加载、
-Locale、Placeholder、Context、Plural、RTL 和安装包验证流程由
-`.agents/skills/i18n/SKILL.md` 唯一负责；涉及 Legacy Owner 转移时同时使用
-`.agents/skills/easymde-migration/SKILL.md`。本文只保留长期边界和当前事实，
-不复制执行清单。
+Locale、Placeholder、Context、Plural、RTL、旧 Bootstrap 字段移除和安装包
+验证流程由 `.agents/skills/i18n/SKILL.md` 唯一负责。本文只保留长期边界和
+当前事实，不复制执行清单。
 
 安全合同：
 
@@ -1065,7 +1069,7 @@ Frontend Package Impact 的测试选择属于 `.agents/skills/easymde/SKILL.md`�
 
 - 架构变化记录 Context、Decision、Alternatives、Consequences 和 Removal / Review Date；
 - 稳定规则变化时同步本文与主 Skill；
-- 迁移规则只进入 Migration Skill；
+- 浏览器 owner 的执行、表征、弃用和删除规则进入 `.agents/skills/easymde/SKILL.md`；字符串 owner 转移和旧 Bootstrap 字段移除规则进入 `.agents/skills/i18n/SKILL.md`；
 - 已过时规则应删除，不为“历史完整”永久保留；
 - Public Contract 小而版本化，Concrete Implementation 私有；
 - 代码审查关注 Owner、边界、失败行为和证据，不把个人风格当缺陷；

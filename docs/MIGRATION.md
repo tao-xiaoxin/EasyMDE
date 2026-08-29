@@ -3,9 +3,10 @@
 This document records implemented data-model and compatibility transitions.
 Browser ownership for the ordinary WordPress Editor is no longer a staged
 migration: Issue #91 uses one React Editor Root with no Legacy handoff,
-fallback, parallel DOM, or Focus Mode runtime. The temporary browser-removal
-procedure remains in `.agents/skills/easymde-migration/SKILL.md` until its
-separate deletion gate is approved.
+fallback, parallel DOM, or Focus Mode runtime. Browser ownership inventories,
+characterization, deprecation, and removal evidence are maintained by the
+long-term EasyMDE Skill; this document records only implemented data and
+compatibility facts.
 
 ## Editor Enablement
 

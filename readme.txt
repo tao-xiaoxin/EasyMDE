@@ -166,11 +166,15 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 = 0.1.8 =
 
-* Deliver the ordinary editor as one React 18, strict TypeScript, and Vite Root while preserving the historical toolbar and fixed source/preview workspace.
-* Keep synchronized title editing, CodeMirror, Preview enhancements, themes, fonts, local drafts, media, clipboard, and WeChat export in focused React components.
-* Keep publishing, categories, tags, excerpts, featured media, and revisions on WordPress-native screens and Meta Boxes without duplicate React dialogs.
-* Remove Outline, writing statistics, view-mode switching, draggable resizing, React publishing/revision dialogs, and all Focus Mode assets from the ordinary runtime.
-* Remove the editor-surface dark mode without changing article themes, code themes, custom CSS, or frontend rendering.
+* Rebuild the ordinary WordPress editor as a single React 18 root using strict TypeScript and Vite, while retaining the split source/preview workspace, toolbar, drafts, media, preview, themes, fonts, and WeChat export.
+* Add immersive writing with visual Markdown editing and a focused workspace, while keeping publishing, autosave, media, revisions, and other document authority on WordPress-native paths.
+* Add a React Settings Center for editor defaults, Markdown behavior, keyboard shortcuts, and image-hosting configuration, with saved settings applied through the existing WordPress settings boundary.
+* Add explicitly triggered uploads to Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS, with optional backup destinations and bounded retries; exhausted destinations fail visibly without silent provider switching, WordPress Media fallback, or URL insertion.
+* Move Preview enhancements, WeChat rich-text export, and public code-copy runtime assets to local TypeScript/Vite bundles, keeping rendering and browser integrations self-contained without runtime CDNs.
+* Expand and unify appearance with Crimson Focus, Inkwell, Animal Island, Phycat, Mdmdt, Dog's Choice, Bloom, and Spring article theme families, plus Terminal Noir and associated Typora-derived code palettes.
+* Improve per-post and user-default font stacks and named custom CSS, preserving sanitized CSS snapshots and each article theme's code-theme defaults.
+* Keep Markdown and rendered HTML under the WordPress persistence boundary: ordinary supported posts are not written or migrated on open, and EasyMDE state is established on the next legitimate save.
+* Simplify the ordinary editor by removing Outline, writing statistics, view-mode switching, draggable resizing, duplicate React publishing/revision dialogs, and editor-surface dark mode without changing article themes, code themes, custom CSS, or frontend rendering.
 
 = 0.1.7 =
 

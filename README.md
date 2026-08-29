@@ -24,8 +24,8 @@
 EasyMDE 是一个独立的 WordPress Markdown 编辑器插件。它让新的和现有的受支持 WordPress 内容通过正常的 WordPress 编辑入口使用 EasyMDE。
 
 <p align="center">
-  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>下载最新可安装插件包 EasyMDE.zip</strong></a>
-  · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">查看发布说明</a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>下载最新插件</strong></a>
+  · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">最新发布</a>
 </p>
 
 <p align="center">

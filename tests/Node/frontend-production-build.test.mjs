@@ -17,16 +17,20 @@ import test, { before } from 'node:test';
 
 import {
   compareCodeCopyProductionBuilds,
+  compareAdminEditorLoaderProductionBuilds,
   compareFrontendProductionBuilds,
   compareFrontendBootstrapProductionBuilds,
   compareFrontendEnhancementsProductionBuilds,
   compareFrontendMermaidProductionBuilds,
+  compareMediaPickerProductionBuilds,
   compareSettingsProductionBuilds,
   validateFrontendBootstrapProductionBuild,
   validateFrontendEnhancementsProductionBuild,
   validateFrontendMermaidProductionBuild,
+  validateMediaPickerProductionBuild,
   validateSettingsProductionBuild,
   validateCodeCopyProductionBuild,
+  validateAdminEditorLoaderProductionBuild,
   validateFrontendProductionBuild
 } from '../../scripts/verify-frontend-build.mjs';
 
@@ -37,6 +41,9 @@ const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center
 const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+const adminEditorLoaderOutputRoot = join(repoRoot, '.cache/easymde-admin-editor-loader-production-check');
+const committedAdminEditorLoaderOutputRoot = join(repoRoot, 'assets/build/admin-editor-loader');
+const adminEditorLoaderSourceEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
 const codeCopyOutputRoot = join(repoRoot, '.cache/easymde-code-copy-production-check');
 const committedCodeCopyOutputRoot = join(repoRoot, 'assets/build/code-copy');
 const codeCopySourceEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
@@ -46,6 +53,9 @@ const bootstrapOutputRoot = join(repoRoot, '.cache/easymde-frontend-bootstrap-pr
 const committedBootstrapOutputRoot = join(repoRoot, 'assets/build/frontend-bootstrap');
 const mermaidOutputRoot = join(repoRoot, '.cache/easymde-frontend-mermaid-production-check');
 const committedMermaidOutputRoot = join(repoRoot, 'assets/build/frontend-mermaid');
+const mediaPickerOutputRoot = join(repoRoot, '.cache/easymde-media-picker-production-check');
+const committedMediaPickerOutputRoot = join(repoRoot, 'assets/build/media-picker');
+const mediaPickerSourceEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
 let buildResult;
 
 function readJson(path) {
@@ -65,11 +75,11 @@ test('root package exposes the production frontend build and includes it in the 
 
   assert.equal(
     packageJson.scripts['build:frontend'],
-    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production'
+    'vite build --config frontend/vite.production.config.ts && vite build --config frontend/vite.admin-editor-loader.config.ts && vite build --config frontend/vite.code-copy.config.ts && vite build --config frontend/vite.enhancements.config.ts && vite build --config frontend/vite.bootstrap.config.ts && vite build --config frontend/vite.mermaid.config.ts && vite build --config frontend/vite.settings.config.ts && vite build --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production'
   );
   assert.equal(
     packageJson.scripts['check:frontend-production'],
-    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && node scripts/verify-frontend-build.mjs --production-check'
+    'vite build --mode easymde-check --config frontend/vite.production.config.ts && vite build --mode easymde-check --config frontend/vite.admin-editor-loader.config.ts && vite build --mode easymde-check --config frontend/vite.code-copy.config.ts && vite build --mode easymde-check --config frontend/vite.enhancements.config.ts && vite build --mode easymde-check --config frontend/vite.bootstrap.config.ts && vite build --mode easymde-check --config frontend/vite.mermaid.config.ts && vite build --mode easymde-check --config frontend/vite.settings.config.ts && vite build --mode easymde-check --config frontend/vite.media-picker.config.ts && node scripts/verify-frontend-build.mjs --production-check'
   );
   assert.equal(
     packageJson.scripts['frontend:check'],
@@ -131,6 +141,32 @@ test('production build emits one independent WordPress settings-center React ent
   assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
   validateSettingsProductionBuild(settingsOutputRoot);
 });
+
+test('production build emits an independent WordPress media picker bridge entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(mediaPickerOutputRoot), true);
+
+  const viteManifest = readJson(join(mediaPickerOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(mediaPickerOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[mediaPickerSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[mediaPickerSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/media-picker-bridge-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-media-picker-bridge');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, ['media-editor']);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(mediaPickerOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /easymde-media-picker-connect/);
+  assert.doesNotMatch(script, /wp-api-fetch|wp\.element|react(?:-dom)?/i);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateMediaPickerProductionBuild(mediaPickerOutputRoot);
+});
+
 test('production build emits one self-contained WordPress editor React entry', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   assert.equal(existsSync(outputRoot), true);
@@ -147,7 +183,6 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.equal(wordpressEntry.file, viteEntry.file);
   assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
   assert.deepEqual(wordpressEntry.dependencies, [
-    'media-editor',
     'wp-api-fetch',
     'wp-element',
     'wp-hooks',
@@ -163,7 +198,7 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.match(script, /wp\.element/);
   assert.match(script, /wp\.i18n/);
   assert.doesNotMatch(script, /tannin|pluralForms|setLocaleData/);
-  assert.match(script, /EasyMDEEditorRootBootstrap/);
+  assert.match(script, /EasyMDEAdminEditorStart/);
   assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
   assert.match(script, /cm-editor/);
   assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
@@ -176,7 +211,6 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.doesNotMatch(script, /Object\.hasOwn\(/);
   assert.match(css, /\.easymde-react-toolbar-contents\s*\{[^}]*display:\s*contents;/s);
   for (const dependency of [
-    'media-editor',
     'wp-api-fetch',
     'wp-element',
     'wp-hooks',
@@ -185,6 +219,38 @@ test('production build emits one self-contained WordPress editor React entry', (
     assert.match(metadata, new RegExp(`'${dependency}'`));
   }
   assert.equal(readdirSync(outputRoot).some((name) => name.endsWith('.map')), false);
+});
+
+test('production build emits a head loader for the editor entry', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  assert.equal(existsSync(adminEditorLoaderOutputRoot), true);
+
+  const viteManifest = readJson(join(adminEditorLoaderOutputRoot, 'manifest.json'));
+  const wordpressManifest = readJson(join(adminEditorLoaderOutputRoot, 'wordpress-manifest.json'));
+  const viteEntry = viteManifest[adminEditorLoaderSourceEntry];
+  const wordpressEntry = wordpressManifest.entries[adminEditorLoaderSourceEntry];
+
+  assert.equal(wordpressManifest.schemaVersion, 1);
+  assert.equal(viteEntry.isEntry, true);
+  assert.match(viteEntry.file, /^assets\/admin-editor-loader-[a-zA-Z0-9_-]+\.js$/);
+  assert.equal(wordpressEntry.handle, 'easymde-admin-editor-toolbar');
+  assert.equal(wordpressEntry.file, viteEntry.file);
+  assert.equal(wordpressEntry.asset, viteEntry.file.replace(/\.js$/, '.asset.php'));
+  assert.deepEqual(wordpressEntry.dependencies, [
+    'wp-api-fetch',
+    'wp-element',
+    'wp-hooks',
+    'wp-i18n'
+  ]);
+  assert.deepEqual(wordpressEntry.resources, []);
+
+  const script = readFileSync(join(adminEditorLoaderOutputRoot, viteEntry.file), 'utf8');
+  assert.match(script, /fetch[Pp]riority|fetchpriority/);
+  assert.match(script, /MutationObserver/);
+  assert.match(script, /pagehide/);
+  assert.match(script, /EasyMDEAdminEditorLoaderBootstrap/);
+  assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
+  validateAdminEditorLoaderProductionBuild(adminEditorLoaderOutputRoot);
 });
 
 test('production build emits shared enhancement, bootstrap, and Mermaid entries', () => {
@@ -288,9 +354,14 @@ test('production comparison rejects stale or omitted committed runtime artifacts
 
 test('enhancement and bootstrap comparisons reject stale committed artifacts', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+  compareAdminEditorLoaderProductionBuilds(
+    adminEditorLoaderOutputRoot,
+    committedAdminEditorLoaderOutputRoot
+  );
   compareFrontendEnhancementsProductionBuilds(enhancementsOutputRoot, committedEnhancementsOutputRoot);
   compareFrontendBootstrapProductionBuilds(bootstrapOutputRoot, committedBootstrapOutputRoot);
   compareFrontendMermaidProductionBuilds(mermaidOutputRoot, committedMermaidOutputRoot);
+  compareMediaPickerProductionBuilds(mediaPickerOutputRoot, committedMediaPickerOutputRoot);
   compareSettingsProductionBuilds(settingsOutputRoot, committedSettingsOutputRoot);
 });
 
@@ -366,6 +437,10 @@ test('production frontend artifacts are eligible for version control', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   const wordpressManifest = readJson(join(committedOutputRoot, 'wordpress-manifest.json'));
   const wordpressEntry = wordpressManifest.entries[sourceEntry];
+  const adminEditorLoaderManifest = readJson(
+    join(committedAdminEditorLoaderOutputRoot, 'wordpress-manifest.json')
+  );
+  const adminEditorLoaderEntry = adminEditorLoaderManifest.entries[adminEditorLoaderSourceEntry];
   const codeCopyWordpressManifest = readJson(
     join(committedCodeCopyOutputRoot, 'wordpress-manifest.json')
   );
@@ -375,6 +450,10 @@ test('production frontend artifacts are eligible for version control', () => {
     'assets/build/wordpress-manifest.json',
     `assets/build/${wordpressEntry.file}`,
     `assets/build/${wordpressEntry.asset}`,
+    'assets/build/admin-editor-loader/manifest.json',
+    'assets/build/admin-editor-loader/wordpress-manifest.json',
+    `assets/build/admin-editor-loader/${readJson(join(committedAdminEditorLoaderOutputRoot, 'manifest.json'))[adminEditorLoaderSourceEntry].file}`,
+    `assets/build/admin-editor-loader/${adminEditorLoaderEntry.asset}`,
     'assets/build/code-copy/manifest.json',
     'assets/build/code-copy/wordpress-manifest.json',
     `assets/build/code-copy/${codeCopyEntry.file}`,
@@ -382,7 +461,11 @@ test('production frontend artifacts are eligible for version control', () => {
     'assets/build/settings-center/manifest.json',
     'assets/build/settings-center/wordpress-manifest.json',
     `assets/build/settings-center/${readJson(join(committedSettingsOutputRoot, 'manifest.json'))[settingsSourceEntry].file}`,
-    `assets/build/settings-center/${readJson(join(committedSettingsOutputRoot, 'wordpress-manifest.json')).entries[settingsSourceEntry].asset}`
+    `assets/build/settings-center/${readJson(join(committedSettingsOutputRoot, 'wordpress-manifest.json')).entries[settingsSourceEntry].asset}`,
+    'assets/build/media-picker/manifest.json',
+    'assets/build/media-picker/wordpress-manifest.json',
+    `assets/build/media-picker/${readJson(join(committedMediaPickerOutputRoot, 'manifest.json'))[mediaPickerSourceEntry].file}`,
+    `assets/build/media-picker/${readJson(join(committedMediaPickerOutputRoot, 'wordpress-manifest.json')).entries[mediaPickerSourceEntry].asset}`
   ];
   const result = spawnSync('git', ['check-ignore', '--no-index', ...paths], {
     cwd: repoRoot,

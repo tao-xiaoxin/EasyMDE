@@ -1,6 +1,7 @@
 <?php
 
 use EasyMDE\Admin\AdminAssets;
+use EasyMDE\Admin\MediaPickerPage;
 use EasyMDE\Admin\PostModeController;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Frontend\FrontendAssets;
@@ -23,6 +24,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 	private $get_custom_css_variables;
 	private $get_custom_css_dialog_strings;
 	private $get_editor_root_bootstrap;
+	private $get_react_editor_loader_asset;
 
 	public function set_up() {
 		parent::set_up();
@@ -45,6 +47,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_custom_css_variables = $reflection->getMethod( 'get_custom_css_variables' );
 		$this->get_custom_css_dialog_strings = $reflection->getMethod( 'get_custom_css_dialog_strings' );
 		$this->get_editor_root_bootstrap = $reflection->getMethod( 'get_editor_root_bootstrap' );
+		$this->get_react_editor_loader_asset = $reflection->getMethod( 'get_react_editor_loader_asset' );
 		$this->get_react_editor_asset->setAccessible( true );
 		$this->get_static_asset_version->setAccessible( true );
 		$this->get_storage_config->setAccessible( true );
@@ -52,6 +55,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->get_custom_css_variables->setAccessible( true );
 		$this->get_custom_css_dialog_strings->setAccessible( true );
 		$this->get_editor_root_bootstrap->setAccessible( true );
+		$this->get_react_editor_loader_asset->setAccessible( true );
 		wp_cache_flush();
 	}
 
@@ -84,6 +88,8 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			array( 'titleDisplay' => 'none' ),
 			$bootstrap['mediaPicker']['insertion']
 		);
+		$this->assertTrue( $bootstrap['mediaPicker']['canUseMedia'] );
+		$this->assertSame( MediaPickerPage::get_url( $post_id, 'post' ), $bootstrap['mediaPicker']['frameUrl'] );
 		$this->assertSame( $post_id, $bootstrap['localDrafts']['postId'] );
 		$this->assertArrayHasKey( 'document', $bootstrap );
 		$this->assertArrayHasKey( 'appearance', $bootstrap );
@@ -119,6 +125,30 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_new_post_bootstrap_exposes_a_media_picker_frame_without_a_post_id() {
+		$user_id       = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$previous_get  = $_GET;
+		$previous_page = array_key_exists( 'pagenow', $GLOBALS ) ? $GLOBALS['pagenow'] : null;
+		$had_page      = array_key_exists( 'pagenow', $GLOBALS );
+
+		try {
+			wp_set_current_user( $user_id );
+			$_GET              = array( 'post_type' => 'post' );
+			$GLOBALS['pagenow'] = 'post-new.php';
+			$bootstrap         = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0, 'post', true );
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_page ) {
+				$GLOBALS['pagenow'] = $previous_page;
+			} else {
+				unset( $GLOBALS['pagenow'] );
+			}
+		}
+
+		$this->assertTrue( $bootstrap['mediaPicker']['canUseMedia'] );
+		$this->assertSame( MediaPickerPage::get_url( 0, 'post' ), $bootstrap['mediaPicker']['frameUrl'] );
 	}
 
 	public function test_editor_upload_bootstrap_uses_fixed_markdown_behavior_and_effective_size_limit() {
@@ -591,16 +621,181 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertSame( 'easymde-admin-editor-toolbar', $asset['handle'] );
 		$this->assertMatchesRegularExpression( '#^assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
-		$this->assertSame( array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), $asset['dependencies'] );
+		$this->assertSame( array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), $asset['dependencies'] );
 		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $asset['version'] );
 		$this->assertFileExists( Asset::path( $asset['path'] ) );
+	}
+
+	public function test_resolves_the_committed_head_loader_manifest_and_dependency_metadata() {
+		$asset = $this->get_react_editor_loader_asset->invoke( $this->admin_assets );
+
+		$this->assertSame( 'easymde-admin-editor-toolbar', $asset['handle'] );
+		$this->assertMatchesRegularExpression( '#^assets/build/admin-editor-loader/assets/admin-editor-loader-[A-Za-z0-9_-]+\.js$#', $asset['path'] );
+		$this->assertSame( array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), $asset['dependencies'] );
+		$this->assertMatchesRegularExpression( '/^[a-f0-9]{16}$/', $asset['version'] );
+		$this->assertFileExists( Asset::path( $asset['path'] ) );
+	}
+
+	public function test_react_editor_does_not_queue_wordpress_media_dependencies() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		$previous_get = $_GET;
+		$previous_screen = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen = array_key_exists( 'current_screen', $GLOBALS );
+
+		try {
+			wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+			wp_dequeue_script( 'media-editor' );
+			wp_set_current_user( $user_id );
+			$_GET = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+			$this->admin_assets->enqueue_admin_assets( 'post.php' );
+
+			$queue = wp_scripts()->queue;
+			$editor_index = array_search( 'easymde-admin-editor-toolbar', $queue, true );
+
+			$this->assertNotFalse( $editor_index );
+			$this->assertStringContainsString( 'admin-editor-loader', wp_scripts()->registered['easymde-admin-editor-toolbar']->src );
+			$this->assertFalse( wp_scripts()->get_data( 'easymde-admin-editor-toolbar', 'group' ) );
+			$this->assertFalse( wp_script_is( 'media-editor', 'enqueued' ) );
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
+	}
+
+	public function test_react_editor_head_loader_bootstrap_points_to_the_verified_main_bundle() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		$previous_get = $_GET;
+		$previous_screen = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen = array_key_exists( 'current_screen', $GLOBALS );
+
+		try {
+			wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+			wp_set_current_user( $user_id );
+			$_GET = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+			$this->admin_assets->enqueue_admin_assets( 'post.php' );
+
+			$before = wp_scripts()->get_data( 'easymde-admin-editor-toolbar', 'before' );
+			$inline = is_array( $before ) ? implode( "\n", $before ) : (string) $before;
+			$decoded_inline = str_replace( '\\/', '/', $inline );
+
+			$this->assertStringContainsString( 'EasyMDEAdminEditorLoaderBootstrap', $inline );
+			$this->assertMatchesRegularExpression( '#assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js#', $decoded_inline );
+			$this->assertStringNotContainsString( 'wp_enqueue_media', $inline );
+
+			$this->assertSame(
+				0,
+				has_action( 'admin_print_styles-post.php', array( $this->admin_assets, 'render_react_editor_preload' ) )
+			);
+			$this->assertFalse( has_action( 'admin_print_scripts-post.php', array( $this->admin_assets, 'render_react_editor_preload' ) ) );
+			ob_start();
+			$this->admin_assets->render_react_editor_preload();
+			$preload = ob_get_clean();
+			$this->assertMatchesRegularExpression( '#^<link rel="preload" as="script" fetchpriority="high" href="http://example\.org/.*/assets/build/assets/admin-editor-[A-Za-z0-9_-]+\.js">\n$#', $preload );
+			$this->assertSame( 1, substr_count( $preload, 'rel="preload"' ) );
+
+			ob_start();
+			$this->admin_assets->render_react_editor_preload();
+			$this->assertSame( '', ob_get_clean() );
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
+	}
+
+	public function test_react_editor_registers_a_priority_zero_early_loader_print_hook() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		$previous_get = $_GET;
+		$previous_screen = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen = array_key_exists( 'current_screen', $GLOBALS );
+
+		try {
+			wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+			wp_set_current_user( $user_id );
+			$_GET = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+			$this->admin_assets->enqueue_admin_assets( 'post.php' );
+
+			$this->assertSame(
+				0,
+				has_action( 'admin_print_scripts-post.php', array( $this->admin_assets, 'render_react_editor_loader' ) )
+			);
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
+	}
+
+	public function test_react_editor_loader_prints_once_and_generic_print_does_not_repeat_it() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		$previous_get = $_GET;
+		$previous_screen = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen = array_key_exists( 'current_screen', $GLOBALS );
+
+		try {
+			wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+			wp_set_current_user( $user_id );
+			$_GET = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+			$this->admin_assets->enqueue_admin_assets( 'post.php' );
+			$script_url = wp_scripts()->registered['easymde-admin-editor-toolbar']->src;
+			$script_file = basename( (string) wp_parse_url( $script_url, PHP_URL_PATH ) );
+
+			ob_start();
+			do_action( 'admin_print_scripts-post.php' );
+			$early = ob_get_clean();
+
+			$this->assertStringContainsString( 'EasyMDEAdminEditorLoaderBootstrap', $early );
+			$this->assertSame( 1, substr_count( $early, $script_file ) );
+			$this->assertFalse( has_action( 'admin_print_scripts-post.php', array( $this->admin_assets, 'render_react_editor_loader' ) ) );
+
+			ob_start();
+			do_action( 'admin_print_scripts-post.php' );
+			$this->assertSame( 0, substr_count( ob_get_clean(), $script_file ) );
+
+			ob_start();
+			wp_print_scripts();
+			$generic = ob_get_clean();
+			$this->assertSame( 0, substr_count( $generic, $script_file ) );
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
 	}
 
 	public function test_react_editor_registers_its_handle_based_translation_catalog() {
 		$enqueue_react_editor_asset = new ReflectionMethod( AdminAssets::class, 'enqueue_react_editor_asset' );
 		$enqueue_react_editor_asset->setAccessible( true );
 
-		$this->assertTrue( $enqueue_react_editor_asset->invoke( $this->admin_assets ) );
+		$result = $enqueue_react_editor_asset->invoke( $this->admin_assets );
+		$this->assertIsArray( $result );
+		$this->assertArrayHasKey( 'loader', $result );
+		$this->assertArrayHasKey( 'main', $result );
 
 		$script = wp_scripts()->registered['easymde-admin-editor-toolbar'];
 		$this->assertSame( 'easymde', $script->textdomain );
@@ -615,7 +810,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		file_put_contents( $build_dir . '/' . $file, 'console.log("corrupted");' );
 		file_put_contents(
 			$build_dir . '/' . $asset,
-			"<?php\nreturn array(\n\t'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
+			"<?php\nreturn array(\n\t'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
 		);
 		file_put_contents(
 			$build_dir . '/wordpress-manifest.json',
@@ -627,7 +822,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 							'handle'       => 'easymde-admin-editor-toolbar',
 							'file'         => $file,
 							'asset'        => $asset,
-							'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
+							'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 							'resources'    => array(),
 						),
 					)

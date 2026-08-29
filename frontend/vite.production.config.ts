@@ -32,7 +32,6 @@ export default defineConfig(({ mode }) => {
 				sourceEntry,
 				scriptHandle: "easymde-admin-editor-toolbar",
 				dependencies: [
-					"media-editor",
 					"wp-api-fetch",
 					"wp-element",
 					"wp-hooks",

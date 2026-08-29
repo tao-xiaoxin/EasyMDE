@@ -41,7 +41,9 @@ function createFramePort() {
 }
 
 const strings = {
+  canUseMedia: true,
   defaultAlt: 'image',
+  frameUrl: 'https://example.test/media-picker',
   insertMedia: 'Insert Media',
   insertion: {
     titleDisplay: 'none' as const,
@@ -166,13 +168,14 @@ describe('openMediaPickerSession', () => {
     expect(document.focus).toHaveBeenCalledTimes(1);
   });
 
-  it('inserts the established Markdown placeholder when WordPress media is unavailable', async () => {
+  it('fails explicitly without changing Markdown when WordPress media is unavailable', async () => {
     const document = createDocumentPort('Intro');
 
-    await expect(openMediaPickerSession({ document: document.port, frame: null, strings })).resolves.toBe(
-      'placeholder',
+    await expect(openMediaPickerSession({ document: document.port, frame: null, strings })).rejects.toThrow(
+      'media-picker-unavailable',
     );
-    expect(document.getValue()).toBe('Intro![alt text]()');
+    expect(document.getValue()).toBe('Intro');
+    expect(document.applyTextChange).not.toHaveBeenCalled();
     expect(document.focus).toHaveBeenCalledTimes(1);
   });
 

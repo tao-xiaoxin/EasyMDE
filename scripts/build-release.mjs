@@ -77,17 +77,26 @@ const baseRequirements = [
   ...javaScriptTranslationCatalogRequirements
 ];
 const productionFrontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+const adminEditorLoaderFrontendEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
 const codeCopyFrontendEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
 const settingsFrontendEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancements.ts';
 const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
 const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
+const mediaPickerFrontendEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
-    dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
+    dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
     entry: productionFrontendEntry,
     filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-admin-editor-toolbar'
+  },
+  {
+    buildRoot: 'assets/build/admin-editor-loader',
+    dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
+    entry: adminEditorLoaderFrontendEntry,
+    filePattern: /^assets\/admin-editor-loader-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-admin-editor-toolbar'
   },
   {
@@ -124,6 +133,13 @@ const productionFrontendBuilds = [
     entry: frontendMermaidEntry,
     filePattern: /^assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-mermaid'
+  },
+  {
+    buildRoot: 'assets/build/media-picker',
+    dependencies: ['media-editor'],
+    entry: mediaPickerFrontendEntry,
+    filePattern: /^assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-media-picker-bridge'
   },
 ];
 

@@ -251,6 +251,9 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const adminEditorLoaderEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
+  const adminEditorLoaderScript = 'assets/admin-editor-loader-fixture.js';
+  const adminEditorLoaderMetadata = 'assets/admin-editor-loader-fixture.asset.php';
   const codeCopyEntry = 'frontend/src/entrypoints/frontend-code-copy.ts';
   const codeCopyScript = 'assets/frontend-code-copy-fixture.js';
   const codeCopyMetadata = 'assets/frontend-code-copy-fixture.asset.php';
@@ -266,6 +269,9 @@ function createCompleteFixture(root) {
   const mermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
   const mermaidScript = 'assets/frontend-mermaid-fixture.js';
   const mermaidMetadata = 'assets/frontend-mermaid-fixture.asset.php';
+  const mediaPickerEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
+  const mediaPickerScript = 'assets/media-picker-bridge-fixture.js';
+  const mediaPickerMetadata = 'assets/media-picker-bridge-fixture.asset.php';
 
   writeText(
     root,
@@ -288,7 +294,7 @@ function createCompleteFixture(root) {
           handle: 'easymde-admin-editor-toolbar',
           file: frontendScript,
           asset: frontendMetadata,
-          dependencies: ['media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
+          dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
           resources: []
         }
       }
@@ -298,7 +304,44 @@ function createCompleteFixture(root) {
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
-    "<?php return array( 'dependencies' => array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), 'version' => '0123456789abcdef' );\n"
+    "<?php return array( 'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), 'version' => '0123456789abcdef' );\n"
+  );
+  writeText(
+    root,
+    'assets/build/admin-editor-loader/manifest.json',
+    JSON.stringify({
+      [adminEditorLoaderEntry]: {
+        file: adminEditorLoaderScript,
+        isEntry: true,
+        src: adminEditorLoaderEntry
+      }
+    })
+  );
+  writeText(
+    root,
+    'assets/build/admin-editor-loader/wordpress-manifest.json',
+    JSON.stringify({
+      schemaVersion: 1,
+      entries: {
+        [adminEditorLoaderEntry]: {
+          handle: 'easymde-admin-editor-toolbar',
+          file: adminEditorLoaderScript,
+          asset: adminEditorLoaderMetadata,
+          dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
+          resources: []
+        }
+      }
+    })
+  );
+  writeText(
+    root,
+    `assets/build/admin-editor-loader/${adminEditorLoaderScript}`,
+    'fetchPriority; MutationObserver; pagehide; EasyMDEAdminEditorLoaderBootstrap;\n'
+  );
+  writeText(
+    root,
+    `assets/build/admin-editor-loader/${adminEditorLoaderMetadata}`,
+    "<?php return array( 'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ), 'version' => 'fedcba9876543210' );\n"
   );
   writeText(
     root,
@@ -367,6 +410,15 @@ function createCompleteFixture(root) {
       handle: 'easymde-admin-settings-center',
       dependencies: ['wp-element'],
       source: 'window.EasyMDESettingsCenterBootstrap = {};\n'
+    },
+    {
+      root: 'assets/build/media-picker',
+      entry: mediaPickerEntry,
+      script: mediaPickerScript,
+      metadata: mediaPickerMetadata,
+      handle: 'easymde-media-picker-bridge',
+      dependencies: ['media-editor'],
+      source: 'window.EasyMDEMediaPickerBridge = {}; easymde-media-picker-connect;\n'
     }
   ]) {
     writeText(
@@ -486,6 +538,10 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/manifest.json'));
+    assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/admin-editor-loader\/assets\/admin-editor-loader-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/admin-editor-loader\/assets\/admin-editor-loader-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/code-copy/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/code-copy\/assets\/frontend-code-copy-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -506,6 +562,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/frontend-mermaid/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/frontend-mermaid\/assets\/frontend-mermaid-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/media-picker/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
@@ -711,6 +770,7 @@ test('release build fails when required runtime assets or templates are missing'
     rmSync(join(root, 'assets/vendor/highlight/styles/github.min.css'), { force: true });
     rmSync(join(root, 'assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js'), { force: true });
+    rmSync(join(root, 'assets/build/media-picker/assets/media-picker-bridge-fixture.js'), { force: true });
     rmSync(join(root, 'assets/css/frontend/code-copy.css'), { force: true });
     rmSync(join(root, 'assets/build/assets/admin-editor-fixture.js'), { force: true });
     rmSync(join(root, 'assets/build/code-copy/assets/frontend-code-copy-fixture.js'), { force: true });
@@ -724,6 +784,7 @@ test('release build fails when required runtime assets or templates are missing'
     assert.ok(missing.includes('assets/vendor/highlight/styles/github.min.css'));
     assert.ok(missing.includes('assets/build/frontend-mermaid/assets/frontend-mermaid-fixture.js'));
     assert.ok(missing.includes('assets/build/frontend-enhancements/assets/frontend-enhancements-fixture.js'));
+    assert.ok(missing.includes('assets/build/media-picker/assets/media-picker-bridge-fixture.js'));
     assert.ok(missing.includes('assets/css/frontend/code-copy.css'));
     assert.ok(missing.includes('assets/build/assets/admin-editor-fixture.js'));
     assert.ok(missing.includes('assets/build/code-copy/assets/frontend-code-copy-fixture.js'));

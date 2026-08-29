@@ -132,6 +132,125 @@ final class EditorMediaUploadPolicyTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_rejects_an_oversized_image_for_an_authorized_new_supported_post_type() {
+		$user_id = self::factory()->user->create( array( 'role' => 'editor' ) );
+		wp_set_current_user( $user_id );
+
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings   = $repository->get_settings();
+		$settings['images']['maxImageSizeMb'] = 1;
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+
+		$_REQUEST['action']            = 'upload-attachment';
+		$_REQUEST['post_id']           = '0';
+		$_REQUEST['easymde_post_type'] = 'post';
+		$file                          = $this->oversized_png();
+
+		try {
+			$filtered = ( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file );
+			$this->assertSame( 'The image is larger than the allowed upload size.', $filtered['error'] );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_leaves_a_new_upload_unchanged_without_the_media_post_type_param() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+		$repository = $this->repository_with_only_format_enabled( 'jpg' );
+		$file       = $this->oversized_png();
+		$_REQUEST   = array(
+			'action'   => 'upload-attachment',
+			'post_id'  => '0',
+		);
+
+		try {
+			$this->assertSame(
+				$file,
+				( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file )
+			);
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_leaves_a_new_upload_unchanged_for_an_unsupported_media_post_type() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+		$repository = $this->repository_with_only_format_enabled( 'jpg' );
+		$file       = $this->oversized_png();
+		$_REQUEST   = array(
+			'action'            => 'upload-attachment',
+			'post_id'           => '0',
+			'easymde_post_type' => 'unsupported',
+		);
+
+		try {
+			$this->assertSame(
+				$file,
+				( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file )
+			);
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_leaves_a_new_upload_unchanged_for_a_non_scalar_media_post_type_param() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+		$repository = $this->repository_with_only_format_enabled( 'jpg' );
+		$file       = $this->oversized_png();
+		$_REQUEST   = array(
+			'action'            => 'upload-attachment',
+			'post_id'           => '0',
+			'easymde_post_type' => array( 'post' ),
+		);
+
+		try {
+			$this->assertSame(
+				$file,
+				( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file )
+			);
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
+	public function test_leaves_a_new_upload_unchanged_without_the_post_type_create_capability() {
+		register_post_type(
+			'easymde_policy_book',
+			array(
+				'capability_type' => 'book',
+				'map_meta_cap'    => true,
+				'public'          => false,
+			)
+		);
+		$include_book = static function () {
+			return array( 'post', 'page', 'easymde_policy_book' );
+		};
+		add_filter( 'easymde_supported_post_types', $include_book );
+		$user_id = self::factory()->user->create( array( 'role' => 'editor' ) );
+		wp_set_current_user( $user_id );
+		$repository = $this->repository_with_only_format_enabled( 'jpg' );
+		$file       = $this->oversized_png();
+		$_REQUEST   = array(
+			'action'            => 'upload-attachment',
+			'post_id'           => '0',
+			'easymde_post_type' => 'easymde_policy_book',
+		);
+
+		try {
+			$this->assertSame(
+				$file,
+				( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file )
+			);
+		} finally {
+			unlink( $file['tmp_name'] );
+			remove_filter( 'easymde_supported_post_types', $include_book );
+			unregister_post_type( 'easymde_policy_book' );
+		}
+	}
+
 	private function oversized_png() {
 		$file = $this->image_file( 'oversized.png', $this->png_bytes(), 'image/png' );
 		$path = $file['tmp_name'];

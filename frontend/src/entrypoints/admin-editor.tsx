@@ -50,10 +50,17 @@ type ApiFetchRuntime = WordPressApiFetch &
 type WordPressEditorRuntime = Readonly<{
   apiFetch: ApiFetchRuntime;
   hooks: WordPressHooks;
-  media?: unknown;
 }>;
 
 type AdminEditorBrowserRuntime = Readonly<{
+  document: Document;
+  failureMessage: string;
+  window: Window;
+  wordpress: WordPressEditorRuntime;
+}>;
+
+export type AdminEditorStartRuntime = Readonly<{
+  bootstrap: unknown;
   document: Document;
   failureMessage: string;
   window: Window;
@@ -82,28 +89,6 @@ function platform(windowRef: Window): 'mac' | 'win' {
   return /Mac|iPhone|iPad|iPod/i.test(windowRef.navigator.platform)
     ? 'mac'
     : 'win';
-}
-
-function failureCode(error: unknown): string {
-  return error instanceof Error && /^[a-z0-9-]{1,120}$/.test(error.message)
-    ? error.message
-    : 'react-editor-startup-failed';
-}
-
-function showStartupFailure(
-  root: HTMLElement,
-  message: string,
-  code: string
-): void {
-  root.replaceChildren();
-  const notice = root.ownerDocument.createElement('div');
-  notice.className = 'notice notice-error easymde-editor-startup-error';
-  notice.setAttribute('role', 'alert');
-  const paragraph = root.ownerDocument.createElement('p');
-  paragraph.textContent = message;
-  notice.append(paragraph);
-  root.append(notice);
-  console.error(`[EasyMDE] ${code}`);
 }
 
 function createExternalCommandExecutor(
@@ -277,6 +262,12 @@ export function mountAdminEditor(
     { documentRef, runtime: createWindowPreviewEnhancementRuntime(windowRef) }
   );
   const apiFetch = runtime.wordpress.apiFetch;
+  const mediaPickerFrame = bootstrap.mediaPicker.canUseMedia
+    ? createWordPressMediaFramePort({
+        frameUrl: bootstrap.mediaPicker.frameUrl,
+        window: windowRef
+      })
+    : null;
   const props: EditorRootProps = {
     appearance: bootstrap.appearance,
     appearancePort: createWordPressAppearancePort({
@@ -343,7 +334,7 @@ export function mountAdminEditor(
     },
     mediaPicker: bootstrap.mediaPicker,
     mediaPickerFailureMessage: bootstrap.labels.mediaPickerFailure,
-    mediaPickerFrame: createWordPressMediaFramePort(runtime.wordpress.media),
+    mediaPickerFrame,
     nativePublishPort: createWordPressNativePublishPort(
       documentRef,
       bootstrap.wordpress.publishCategories
@@ -440,6 +431,7 @@ export function mountAdminEditor(
   return () => {
     if (!active) return;
     active = false;
+    mediaPickerFrame?.dispose?.();
     root.unmount();
     nativeEditor?.classList.remove('easymde-native-editor-hidden');
   };
@@ -447,40 +439,24 @@ export function mountAdminEditor(
 
 declare global {
   interface Window {
+    EasyMDEAdminEditorStart?: (runtime: AdminEditorStartRuntime) => () => void;
     EasyMDEEditorRootBootstrap?: unknown;
   }
 }
 
-function start(): void {
-  const root = document.querySelector<HTMLElement>('#easymde-editor-root');
-  const failureMessage = root?.dataset.failureMessage ?? '';
-  try {
-    const browserWindow = window as Window &
-      Readonly<{
-        wp?: Partial<WordPressEditorRuntime>;
-      }>;
-    const wordpress = browserWindow.wp;
-    if (!wordpress?.apiFetch || !wordpress.hooks) {
-      throw new Error('react-editor-wordpress-runtime-unavailable');
-    }
-    const unmount = mountAdminEditor(window.EasyMDEEditorRootBootstrap, {
-      document,
-      failureMessage,
-      window,
-      wordpress: {
-        apiFetch: wordpress.apiFetch,
-        hooks: wordpress.hooks,
-        ...(wordpress.media ? { media: wordpress.media } : {})
-      }
-    });
-    window.addEventListener('pagehide', unmount, { once: true });
-  } catch (error) {
-    if (root && failureMessage) {
-      showStartupFailure(root, failureMessage, failureCode(error));
-      return;
-    }
-    console.error(`[EasyMDE] ${failureCode(error)}`);
+export function startAdminEditor(runtime: AdminEditorStartRuntime): () => void {
+  if (!runtime.wordpress.apiFetch || !runtime.wordpress.hooks) {
+    throw new Error('react-editor-wordpress-runtime-unavailable');
   }
+
+  return mountAdminEditor(runtime.bootstrap, {
+    document: runtime.document,
+    failureMessage: runtime.failureMessage,
+    window: runtime.window,
+    wordpress: runtime.wordpress
+  });
 }
 
-start();
+if (import.meta.env.MODE !== 'test') {
+  window.EasyMDEAdminEditorStart = startAdminEditor;
+}

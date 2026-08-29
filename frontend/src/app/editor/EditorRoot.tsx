@@ -103,6 +103,7 @@ import {
   type PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
+import { WordPressMediaPickerDialog } from '../../features/media-picker/ui/WordPressMediaPickerDialog';
 import {
   createLocalDraftSession,
   type LocalDraftSession,
@@ -548,6 +549,9 @@ export function EditorRoot(props: EditorRootProps) {
     [fontState, props.fonts]
   );
   const [immersive, setImmersive] = useState(false);
+  const [mediaPickerDialog, setMediaPickerDialog] = useState<
+    'media' | 'featured' | null
+  >(null);
   const immersiveRef = useRef(immersive);
   immersiveRef.current = immersive;
   const [immersiveMode, setImmersiveMode] =
@@ -1163,20 +1167,51 @@ export function EditorRoot(props: EditorRootProps) {
   const handleToolbarReady = useCallback((session: EditorToolbarSession) => {
     toolbarSessionRef.current = session;
   }, []);
+  const closeMediaPickerDialog = useCallback(() => {
+    props.mediaPickerFrame?.cancel?.();
+    setMediaPickerDialog(null);
+  }, [props.mediaPickerFrame]);
+  const handleMediaPickerAttachError = useCallback(
+    (error: unknown) => {
+      props.mediaPickerFrame?.cancel?.();
+      setMediaPickerDialog(null);
+      if (!rootActiveRef.current) return;
+      props.onFailure(mediaPickerFailureCode(error));
+      publishEditorStatus({
+        id: 'media-picker',
+        message: props.mediaPickerFailureMessage,
+        owner: 'editor',
+        type: 'error'
+      });
+    },
+    [
+      props.mediaPickerFailureMessage,
+      props.mediaPickerFrame,
+      props.onFailure,
+      publishEditorStatus
+    ]
+  );
   const openMediaPicker = useCallback(
     (session: EditorDocumentSession) => {
       if (mediaOperationRef.current) {
         return mediaOperationRef.current;
       }
       const sessionError = protectedOperationError('authenticated');
+      const frame = props.mediaPickerFrame;
+      const frameAvailable = Boolean(frame?.attachFrame && frame.frameUrl);
       const operation = sessionError
         ? Promise.reject(sessionError)
+        : !frameAvailable
+          ? Promise.reject(new Error('media-picker-unavailable'))
         : openMediaPickerSession({
             document: documentPort(session, () => rootActiveRef.current),
-            frame: props.mediaPickerFrame,
+            frame,
             strings: props.mediaPicker
           });
       mediaOperationRef.current = operation;
+      if (!sessionError && frameAvailable) {
+        setMediaPickerDialog('media');
+      }
       void operation
         .catch((error: unknown) => {
           if (!rootActiveRef.current) {
@@ -1191,10 +1226,11 @@ export function EditorRoot(props: EditorRootProps) {
           });
         })
         .finally(() => {
-          if (mediaOperationRef.current === operation) {
-            mediaOperationRef.current = null;
-          }
-        });
+        if (mediaOperationRef.current === operation) {
+          mediaOperationRef.current = null;
+        }
+        setMediaPickerDialog(null);
+      });
       return operation;
     },
     [
@@ -1351,12 +1387,19 @@ export function EditorRoot(props: EditorRootProps) {
       return featuredImageOperationRef.current;
     }
     const sessionError = protectedOperationError('authenticated');
+    const frame = props.mediaPickerFrame;
+    const frameAvailable = Boolean(frame?.attachFrame && frame.frameUrl);
     const operation = sessionError
       ? Promise.reject(sessionError)
+      : !frameAvailable
+        ? Promise.reject(new Error('featured-image-picker-unavailable'))
       : openFeaturedImagePicker(
-          props.mediaPickerFrame,
+          frame,
           props.immersiveStrings.selectFeaturedImage
         );
+    if (!sessionError && frameAvailable) {
+      setMediaPickerDialog('featured');
+    }
     const reported = operation.catch((error: unknown) => {
       props.onFailure(
         error instanceof Error && /^featured-image-[a-z0-9-]+$/.test(error.message)
@@ -1370,6 +1413,7 @@ export function EditorRoot(props: EditorRootProps) {
       if (featuredImageOperationRef.current === reported) {
         featuredImageOperationRef.current = null;
       }
+      setMediaPickerDialog(null);
     });
     return reported;
   }, [
@@ -1494,6 +1538,13 @@ export function EditorRoot(props: EditorRootProps) {
       props.appearancePort.cancelPendingApply();
     };
   }, [props.appearancePort]);
+
+  useEffect(
+    () => () => {
+      props.mediaPickerFrame?.cancel?.();
+    },
+    [props.mediaPickerFrame]
+  );
 
   useEffect(() => () => wechatSession.dispose(), [wechatSession]);
   useEffect(
@@ -2102,6 +2153,19 @@ export function EditorRoot(props: EditorRootProps) {
           </ImmersivePreviewSurface>
         }
       />
+      {mediaPickerDialog && props.mediaPickerFrame ? (
+        <WordPressMediaPickerDialog
+          closeLabel={props.immersiveStrings.close}
+          frame={props.mediaPickerFrame}
+          label={
+            'featured' === mediaPickerDialog
+              ? props.immersiveStrings.selectFeaturedImage
+              : props.mediaPicker.insertMedia
+          }
+          onAttachError={handleMediaPickerAttachError}
+          onCancel={closeMediaPickerDialog}
+        />
+      ) : null}
     </div>
   );
 }

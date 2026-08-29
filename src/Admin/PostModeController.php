@@ -34,7 +34,8 @@ final class PostModeController {
 		global $post;
 
 		if ( 'content' === $editor_id && $this->should_use_easymde_editor_for_post( $post ) ) {
-			$settings['tinymce'] = false;
+			$settings['tinymce']       = false;
+			$settings['media_buttons'] = false;
 		}
 
 		return $settings;

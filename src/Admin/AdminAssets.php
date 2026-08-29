@@ -20,7 +20,11 @@ final class AdminAssets {
 	private $theme_state_repository;
 	private $toolbar_registry;
 	private $settings_center_repository;
-	private $react_editor_asset_error = false;
+	private $react_editor_asset_error   = false;
+	private $react_editor_loader_handle = '';
+	private $react_editor_loader_hook   = '';
+	private $react_editor_preload_hook  = '';
+	private $react_editor_preload_url   = '';
 
 	public function __construct(
 		PostModeController $post_mode_controller,
@@ -49,6 +53,55 @@ final class AdminAssets {
 		echo '<div class="notice notice-error"><p>';
 		esc_html_e( 'EasyMDE could not load the editor application. Reinstall EasyMDE or contact your site administrator.', 'easymde' );
 		echo '</p></div>';
+	}
+
+	public function render_react_editor_preload() {
+		if ( '' === $this->react_editor_preload_hook || '' === $this->react_editor_preload_url ) {
+			return;
+		}
+
+		remove_action( $this->react_editor_preload_hook, array( $this, 'render_react_editor_preload' ), 0 );
+		echo '<link rel="preload" as="script" fetchpriority="high" href="' . esc_url( $this->react_editor_preload_url ) . '">' . "\n";
+		$this->react_editor_preload_hook = '';
+		$this->react_editor_preload_url  = '';
+	}
+
+	public function render_react_editor_loader() {
+		$hook   = $this->react_editor_loader_hook;
+		$handle = $this->react_editor_loader_handle;
+
+		$this->react_editor_loader_hook   = '';
+		$this->react_editor_loader_handle = '';
+		if ( '' !== $hook ) {
+			remove_action( $hook, array( $this, 'render_react_editor_loader' ), 0 );
+		}
+
+		if ( '' === $handle ) {
+			return;
+		}
+
+		if ( ! wp_script_is( $handle, 'registered' ) || ! wp_script_is( $handle, 'enqueued' ) ) {
+			$this->react_editor_asset_error = true;
+			wp_trigger_error(
+				__METHOD__,
+				'EasyMDE React editor loader could not be printed (react-editor-loader-not-enqueued).',
+				E_USER_WARNING
+			);
+
+			return;
+		}
+
+		wp_print_scripts( array( $handle ) );
+		if ( wp_script_is( $handle, 'done' ) ) {
+			return;
+		}
+
+		$this->react_editor_asset_error = true;
+		wp_trigger_error(
+			__METHOD__,
+			'EasyMDE React editor loader could not be printed (react-editor-loader-print-failed).',
+			E_USER_WARNING
+		);
 	}
 
 	public function enqueue_admin_assets( $hook ) {
@@ -107,8 +160,8 @@ final class AdminAssets {
 			return;
 		}
 
-		wp_enqueue_media();
-		if ( $this->enqueue_react_editor_asset() ) {
+		$react_editor_assets = $this->enqueue_react_editor_asset();
+		if ( $react_editor_assets ) {
 			try {
 				$root_bootstrap = $this->get_editor_root_bootstrap(
 					$post_id,
@@ -120,7 +173,7 @@ final class AdminAssets {
 					throw $error;
 				}
 
-				wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+				wp_dequeue_script( $react_editor_assets['loader']['handle'] );
 				$this->react_editor_asset_error = true;
 				wp_trigger_error(
 					__METHOD__,
@@ -132,19 +185,33 @@ final class AdminAssets {
 			}
 
 			wp_add_inline_script(
-				'easymde-admin-editor-toolbar',
-				'window.EasyMDEEditorRootBootstrap = ' . wp_json_encode(
-					$root_bootstrap,
+				$react_editor_assets['loader']['handle'],
+				'window.EasyMDEAdminEditorLoaderBootstrap = ' . wp_json_encode(
+					array(
+						'editorBootstrap' => $root_bootstrap,
+						'failureMessage'  => __( 'The EasyMDE editor could not start. Your WordPress fields remain available.', 'easymde' ),
+						'mainScriptUrl'   => esc_url_raw( Asset::url( $react_editor_assets['main']['path'] ) ),
+					),
 					JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 				) . ';',
 				'before'
 			);
+
+			$this->react_editor_loader_hook   = 'admin_print_scripts-' . $hook;
+			$this->react_editor_loader_handle = $react_editor_assets['loader']['handle'];
+			add_action( $this->react_editor_loader_hook, array( $this, 'render_react_editor_loader' ), 0 );
+			$this->react_editor_preload_hook = 'admin_print_styles-' . $hook;
+			$this->react_editor_preload_url  = Asset::url( $react_editor_assets['main']['path'] );
+			add_action( $this->react_editor_preload_hook, array( $this, 'render_react_editor_preload' ), 0 );
 		}
 	}
 
 	private function enqueue_react_editor_asset( $build_dir = '' ) {
 		try {
-			$asset = $this->get_react_editor_asset( $build_dir );
+			$assets = array(
+				'loader' => $this->get_react_editor_loader_asset(),
+				'main'   => $this->get_react_editor_asset( $build_dir ),
+			);
 		} catch ( \Throwable $error ) {
 			$this->react_editor_asset_error = true;
 			wp_trigger_error(
@@ -157,15 +224,15 @@ final class AdminAssets {
 		}
 
 		wp_enqueue_script(
-			$asset['handle'],
-			Asset::url( $asset['path'] ),
-			$asset['dependencies'],
-			$asset['version'],
-			true
+			$assets['loader']['handle'],
+			Asset::url( $assets['loader']['path'] ),
+			$assets['loader']['dependencies'],
+			$assets['loader']['version'],
+			false
 		);
 
-		if ( ! wp_set_script_translations( $asset['handle'], 'easymde', Asset::path( 'languages' ) ) ) {
-			wp_dequeue_script( $asset['handle'] );
+		if ( ! wp_set_script_translations( $assets['loader']['handle'], 'easymde', Asset::path( 'languages' ) ) ) {
+			wp_dequeue_script( $assets['loader']['handle'] );
 			$this->react_editor_asset_error = true;
 			wp_trigger_error(
 				__METHOD__,
@@ -176,7 +243,7 @@ final class AdminAssets {
 			return false;
 		}
 
-		return true;
+		return $assets;
 	}
 
 	private function get_editor_root_bootstrap( $post_id, $post_type = '', $is_new_post = false ) {
@@ -187,6 +254,7 @@ final class AdminAssets {
 		$theme_state   = $theme_options['state'];
 		$custom_css    = $theme_options['customCss'];
 		$post_type     = $post_type ? sanitize_key( $post_type ) : get_post_type( $post_id );
+		$can_use_media = $this->can_use_media_picker( $post_id, $post_type, $is_new_post );
 
 		if ( 'custom' === $theme_state['markdownTheme'] && '' !== $theme_state['customCssId'] ) {
 			$has_selected_item = false;
@@ -339,7 +407,9 @@ final class AdminAssets {
 				),
 			),
 			'mediaPicker'        => array(
+				'canUseMedia'    => $can_use_media,
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
+				'frameUrl'       => $can_use_media ? MediaPickerPage::get_url( $post_id, $post_type ) : '',
 				'insertMedia'    => $strings['insertMedia'],
 				'insertion'      => array(
 					'titleDisplay' => $settings['images']['titleDisplay'],
@@ -568,16 +638,49 @@ final class AdminAssets {
 			'frontend/src/entrypoints/admin-editor.tsx',
 			$build_dir,
 			'easymde-admin-editor-toolbar',
-			array( 'media-editor', 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
+			array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 			'admin-editor',
 			true,
 			'react-editor-'
 		);
 	}
 
+	private function get_react_editor_loader_asset( $build_dir = '' ) {
+		$build_dir = $build_dir ? trailingslashit( $build_dir ) . 'admin-editor-loader/' : 'assets/build/admin-editor-loader/';
+
+		return ManifestAssetResolver::resolve(
+			'frontend/src/entrypoints/admin-editor-loader.ts',
+			$build_dir,
+			'easymde-admin-editor-toolbar',
+			array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
+			'admin-editor-loader',
+			true,
+			'react-editor-loader-'
+		);
+	}
+
 	private function get_post_id() {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only post ID is used only to localize editor assets.
 		return isset( $_GET['post'] ) ? absint( wp_unslash( $_GET['post'] ) ) : 0;
+	}
+
+	private function can_use_media_picker( $post_id, $post_type, $is_new_post = false ) {
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return false;
+		}
+
+		$post_id   = absint( $post_id );
+		$post_type = sanitize_key( (string) $post_type );
+
+		if ( $post_id > 0 ) {
+			return $this->post_mode_controller->is_easymde_editable_post( $post_id, $post_type );
+		}
+
+		if ( ! $is_new_post || '' === $post_type || ! $this->post_mode_controller->is_new_easymde_request( $post_type ) ) {
+			return false;
+		}
+
+		return true;
 	}
 
 	private function get_storage_config( $post_id ) {

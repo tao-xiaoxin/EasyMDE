@@ -23,5 +23,9 @@ export type MediaPickerFrameOptions = Readonly<{
 }>;
 
 export type MediaPickerFramePort = Readonly<{
+  attachFrame?: (frame: HTMLIFrameElement) => () => void;
+  cancel?: () => void;
+  dispose?: () => void;
+  frameUrl?: string;
   open: (options: MediaPickerFrameOptions) => void;
 }>;

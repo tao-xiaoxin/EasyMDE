@@ -291,7 +291,7 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $this->assertFalse($controller->should_load_editor($post_id, 'movie'));
     }
 
-    public function test_supported_post_disables_only_the_native_content_tinymce_editor()
+    public function test_supported_post_disables_native_content_tinymce_and_media_buttons()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
         $post_id = self::factory()->post->create(
@@ -305,10 +305,18 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $GLOBALS['post'] = get_post($post_id);
 
         $controller = new PostModeController(new PostDocument());
-        $settings = array('tinymce' => true, 'quicktags' => true);
+        $settings = array(
+            'tinymce'       => true,
+            'quicktags'     => true,
+            'media_buttons' => true,
+        );
 
         $this->assertSame(
-            array('tinymce' => false, 'quicktags' => true),
+            array(
+                'tinymce'       => false,
+                'quicktags'     => true,
+                'media_buttons' => false,
+            ),
             $controller->maybe_disable_tinymce($settings, 'content')
         );
         $this->assertSame($settings, $controller->maybe_disable_tinymce($settings, 'extension_editor'));
@@ -330,7 +338,11 @@ final class PostModeControllerTest extends WP_UnitTestCase
         $GLOBALS['post'] = get_post($post_id);
 
         $controller = new PostModeController(new PostDocument());
-        $settings = array('tinymce' => true, 'quicktags' => true);
+        $settings = array(
+            'tinymce'       => true,
+            'quicktags'     => true,
+            'media_buttons' => true,
+        );
 
         $this->assertSame($settings, $controller->maybe_disable_tinymce($settings, 'content'));
     }
@@ -791,6 +803,15 @@ final class PostModeControllerTest extends WP_UnitTestCase
 
         $this->assertTrue($controller->maybe_disable_block_editor(true, get_post($post_id)));
         $this->assertFalse($controller->should_load_editor($post_id, 'post'));
+
+        $GLOBALS['post'] = get_post($post_id);
+        $settings = array(
+            'tinymce'       => true,
+            'quicktags'     => true,
+            'media_buttons' => true,
+        );
+
+        $this->assertSame($settings, $controller->maybe_disable_tinymce($settings, 'content'));
     }
 
     public function include_book_post_type($post_types)

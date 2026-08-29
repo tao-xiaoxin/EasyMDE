@@ -142,7 +142,9 @@ function validBootstrap() {
       userId: 42
     },
     mediaPicker: {
+      canUseMedia: true,
       defaultAlt: 'image',
+      frameUrl: '/wp-admin/admin-post.php?action=easymde_media_picker&post_id=7',
       insertMedia: 'Insert Media',
       insertion: { titleDisplay: 'none' },
       placeholderAlt: 'alt text'

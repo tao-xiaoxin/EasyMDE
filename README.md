@@ -21,7 +21,7 @@
 
 <p align="center">简体中文 | <a href="README.en.md">English</a></p>
 
-EasyMDE 是一个独立的 WordPress Markdown 编辑器插件。它让新的和现有的受支持 WordPress 内容通过正常的 WordPress 编辑入口使用 EasyMDE。
+EasyMDE 是一个独立的 WordPress Markdown 编辑器插件，不是同名的 EasyMDE JavaScript 编辑器库。它让新的和现有的受支持 WordPress 内容通过正常的 WordPress 编辑入口使用 EasyMDE。
 
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>下载插件</strong></a>

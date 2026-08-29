@@ -14,8 +14,9 @@ implementing its behavior; do not load unrelated profiles.
 Use this Skill for focused React/TypeScript features and for changes that move,
 deprecate, or remove a browser owner. The live repository and `AGENTS.md` are
 above this Skill; current implementation facts belong to `docs/ARCHITECTURE.md`,
-durable design rationale to `docs/REACT_DESIGN_PHILOSOPHY.md`, translations to
-the [sibling i18n Skill](../i18n/SKILL.md), and release facts to
+durable design rationale to `docs/REACT_DESIGN_PHILOSOPHY.md`. When a task
+touches user-visible strings, load the repository-local `easymde-i18n` Skill at
+`.agents/skills/i18n/SKILL.md`. Release facts belong to
 `docs/TESTING_AND_RELEASE.md`.
 Focused maintainer decisions and Issue scope apply within those boundaries.
 

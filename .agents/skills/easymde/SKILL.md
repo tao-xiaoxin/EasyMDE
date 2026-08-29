@@ -835,7 +835,7 @@ Rules:
   Hosting primary- and backup-write contract defined by the External Service
   Decision Gate.
 
-Only Entrypoints and relevant Integrations may know `window.EasyMDEConfig`, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser Storage, Clipboard APIs, or legacy `execCommand` fallback.
+Only Entrypoints and relevant Integrations may know runtime-validated Bootstrap globals defined by their owning contracts, `window.wp`, `wp.apiFetch`, jQuery, WordPress selectors, native save/publish controls, `wp.media`, browser Storage, Clipboard APIs, or legacy `execCommand` fallback.
 
 ## Bootstrap, REST, and Cross-Language Contracts
 
@@ -894,27 +894,23 @@ Before tightening a browser descriptor schema or changing dispatch, characterize
 
 ### Internationalization
 
-Use `.agents/skills/i18n/SKILL.md` whenever a task adds, changes, moves,
+Use the [i18n Skill](../i18n/SKILL.md) whenever a task adds, changes, moves,
 reviews, or validates user-visible text, locale formatting, RTL, accessibility
 copy, extraction, catalogs, translation loading, or package language assets.
+Read current surfaces, owners, maps, and package facts in
+[current-contract.md](../i18n/references/current-contract.md); follow
+[owner-transfer.md](../i18n/references/owner-transfer.md) for message-owner
+changes or Bootstrap-field removal.
 
-The current implementation keeps PHP gettext as the owner of most
-browser-facing strings and passes those translated values through the Editor
-Root and `EasyMDEFrontendConfig.strings` Bootstrap maps. Immersive word,
-character, reading-time, and revision counters are the first React-owned
-translation unit; their focused Port uses WordPress `wp.i18n`, the production
-Script declares `wp-i18n`, and WordPress loads the handle-based JSON catalog.
-Preserve these single-owner boundaries unless a focused i18n/build migration
-activates and verifies another React translation unit.
+Each user-visible message instance has one translation owner. Keep that owner
+tied to the actual rendering surface and consumer; do not duplicate a message
+across translation paths or create a second runtime/global message bucket.
+Independent surfaces remain isolated and must not exchange data, merge
+translation maps, or create aliases.
 
-Each user-visible message instance has one owner. Do not ship the same instance
-through more than one translation path. When translation ownership moves from
-legacy JavaScript or PHP to React, follow the string-owner transfer and old
-Bootstrap-field removal contract in `.agents/skills/i18n/SKILL.md`. Stable Error
-Codes, REST Routes, Script Handles, Storage Keys, and public identifiers remain
-untranslated.
-Dynamic extension labels remain validated and translated by their documented
-owner. The i18n Skill owns the complete executable pipeline and evidence.
+Do not translate stable machine identifiers, including Error Codes, REST Routes,
+Script Handles, Storage Keys, and public identifiers. Dynamic extension labels
+remain validated and translated by their documented owner.
 
 ## Security Implementation and Threat-Model Checklist
 
@@ -2305,8 +2301,9 @@ Source/Preview layout, the restrained ordinary character-count/last-editor
 footer, and WordPress session-state presentation through focused
 Ports and Adapters. Native title, Markdown, appearance, publishing, revisions,
 taxonomies, featured media, and extension fields remain WordPress submission or
-Meta Box surfaces; PHP descriptors and translated Bootstrap strings remain the
-current configuration and message authority. The ordinary Editor has no
+Meta Box surfaces; PHP descriptors remain the current configuration authority,
+and message translation follows the routed per-message owner, with PHP
+authoritative only for PHP-owned message instances. The ordinary Editor has no
 Outline, expanded writing-statistics panel, Context Bar, view-mode switch, draggable
 split, React Publish, React Revision, React History, Legacy startup fallback,
 secondary Toolbar, Focus Mode runtime, dual DOM, or reload-required handoff

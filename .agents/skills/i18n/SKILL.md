@@ -31,10 +31,10 @@ description: Use this skill when adding, changing, migrating, reviewing, or vali
 
 - PHP 渲染或组装的 Bootstrap 值由 PHP Gettext 提供；已迁移的 React 文案由
   拥有渲染实例的 Feature 使用 `@wordpress/i18n` 提供。
-- 普通/沉浸式 Editor Root、独立 Settings Center、公开文章增强是三个运行
-  面：Editor Root 使用 `EasyMDEEditorRootBootstrap`，Settings Center 使用
-  `EasyMDESettingsCenterBootstrap.strings`，公开前台使用
-  `EasyMDEFrontendConfig.strings`。不得交换数据、合并后台 map 或创建别名。
+- 当前运行面、owner、Bootstrap 字段和 map 以
+  [current-contract.md](references/current-contract.md) 为准；不得在本 Skill
+  复制 live 实现快照。独立运行面保持隔离，不得交换数据、合并 map 或创建
+  别名，也不共享翻译 State。
 - 相同英文只有在语义、context、consumer、生命周期和删除策略一致时才共享；
   不要把翻译结果放进 Store、Post Meta、Options、Storage 或 Recovery Draft。
 

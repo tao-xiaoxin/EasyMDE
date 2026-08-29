@@ -528,7 +528,7 @@ test("removed browser spellcheck setting is absent from runtime docs and catalog
 		"templates/admin/settings-center.php",
 		"templates/admin/editor-shell.php",
 		"README.md",
-		"README.zh-CN.md",
+		"README.en.md",
 		"readme.txt",
 		"docs/USER_GUIDE.md",
 		"languages/easymde.pot",

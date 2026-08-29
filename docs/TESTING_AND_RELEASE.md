@@ -487,4 +487,4 @@ The package must not ship local-only or development artifacts such as:
 - PHPUnit, Playwright, Node test files, or test result directories;
 - Composer development packages.
 
-Repository-only docs such as `docs/`, `CONTRIBUTING.md`, and `README.zh-CN.md` are not part of the current release package unless the release packaging script is changed deliberately.
+Repository-only docs such as `docs/`, `CONTRIBUTING.md`, and `README.en.md` are not part of the current release package unless the release packaging script is changed deliberately.

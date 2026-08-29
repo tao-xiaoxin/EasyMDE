@@ -41,7 +41,7 @@ test('active editor copy and gettext sources do not advertise the removed contro
     'src/Admin/AdminAssets.php',
     'templates/admin/editor-shell.php',
     'README.md',
-    'README.zh-CN.md',
+    'README.en.md',
     'docs/USER_GUIDE.md',
     'languages/easymde.pot',
     'languages/easymde-zh_CN.po'

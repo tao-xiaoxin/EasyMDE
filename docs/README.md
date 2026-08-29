@@ -1,12 +1,12 @@
 # EasyMDE Documentation
 
-This index points to the current technical docs. The root [README](../README.md) and [Simplified Chinese README](../README.zh-CN.md) are GitHub entry points; this directory is the canonical technical documentation for now.
+This index points to the current technical docs. The root [Simplified Chinese README](../README.md) and [English README](../README.en.md) are GitHub entry points; this directory is the canonical technical documentation for now.
 
 ## Reading Paths
 
 **Users**
 
-1. [README](../README.md) for product scope, requirements, and installation.
+1. [Simplified Chinese README](../README.md) and [English README](../README.en.md) for product scope, requirements, and installation.
 2. [User Guide](USER_GUIDE.md) for editor behavior, themes, local drafts, rendering extras, and Copy to WeChat.
 3. [Upgrading EasyMDE](../UPGRADING.md) before updating a site with existing Markdown posts.
 4. [Security Policy](../SECURITY.md) for vulnerability reporting.

@@ -3,8 +3,8 @@
     <img src="./docs/assets/easymde-logo-rounded.png" alt="EasyMDE" width="460" />
   </a>
 </p>
-<h1 align="center">EasyMDE</h1>
-<p align="center">From Markdown to WordPress, without breaking your flow.</p>
+<h1 align="center">EasyMDE - WordPress Markdown Editor Plugin</h1>
+<p align="center">A standalone WordPress Markdown editor plugin, from Markdown to WordPress without breaking your flow.</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.8-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.8" />
@@ -21,30 +21,37 @@
 
 <p align="center"><a href="README.md">简体中文</a> | English</p>
 
+EasyMDE is a standalone WordPress Markdown editor plugin, not the unrelated EasyMDE JavaScript editor library. It lets new and existing supported WordPress content use EasyMDE through the normal WordPress editor entry points.
+
+<p align="center">
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>Download the installable EasyMDE.zip plugin</strong></a>
+  · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">Release notes</a>
+</p>
+
 <p align="center">
   <a href="./docs/assets/easymde-editor-showcase.png">
     <img src="./docs/assets/easymde-editor-showcase.png" alt="EasyMDE split-pane Markdown editor with live preview, code highlighting, Mermaid, and KaTeX" width="1200" />
   </a>
 </p>
 
-EasyMDE is a standalone WordPress Markdown editor plugin. When the plugin is active, new and existing WordPress posts and pages open in EasyMDE through the normal WordPress editor entry points. Opening an ordinary existing post does not convert or write anything until the author saves from EasyMDE.
+Opening ordinary existing content is zero-write: before the author saves through EasyMDE, it does not convert content, write metadata, rewrite `post_content`, or create a revision.
 
 EasyMDE stores Markdown as the source of truth, saves rendered HTML to `post_content` for WordPress compatibility, uses WordPress media/revisions/permissions/publishing flows, and ships local runtime assets instead of requiring Jetpack, Classic Editor, another Markdown plugin, or CDN-hosted editor/rendering libraries.
 
-Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled locally. Article images may separately be stored by an administrator-configured Image Hosting provider when an author pastes or drops a local image.
+Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled locally. An administrator can also configure Image Hosting for local image paste and drag-and-drop uploads.
 
 ## Requirements
 
 - WordPress 6.7 or newer.
 - PHP 7.4 or newer with the DOM extension enabled.
-- Composer runtime dependencies included in production release ZIPs.
+- Composer runtime dependencies included in the production `EasyMDE.zip` release asset.
 
 ## Installation
 
-1. Download an EasyMDE release ZIP from [GitHub Releases](https://github.com/tao-xiaoxin/EasyMDE/releases), or place the plugin folder at `wp-content/plugins/easymde`.
-2. In WordPress, go to **Plugins > Add New > Upload Plugin** for the ZIP, or activate the copied plugin from **Plugins**.
-3. Open or create content from the normal WordPress **Posts** and **Pages** screens.
-4. Supported posts and pages open in EasyMDE. Existing EasyMDE posts keep using stored Markdown metadata, while ordinary posts use an in-memory Markdown import of current `post_content` until first save.
+1. Download the GitHub Release asset `EasyMDE.zip` from the link above. GitHub's automatically generated Source code ZIP/TAR.GZ files are source archives, not installable plugins, and cannot be used for installation.
+2. In WordPress, go to **Plugins > Add New > Upload Plugin**, upload and install `EasyMDE.zip`, then activate the plugin.
+3. Open or create content from the normal WordPress **Posts**, **Pages**, or other post-type screens supported by `easymde_supported_post_types`.
+4. Supported content opens in EasyMDE. Existing EasyMDE content keeps using stored Markdown metadata, while ordinary content uses an in-memory Markdown import of current `post_content` until first save.
 
 ## Features
 
@@ -55,10 +62,7 @@ Plugin JavaScript, CSS, fonts, icons, and rendering libraries remain bundled loc
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
 - Explicit WordPress media-library insertion through the toolbar media picker.
-- Local clipboard paste and drag-and-drop upload through the protected same-origin Image Hosting path to administrator-configured Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS; any provider can be primary or the optional backup, both writes use the same generated object key, and the primary Viewing Image Domain owns the returned public URL. One administrator-configured value allows `0` through `5` extra serial attempts for both primary and enabled backup writes. Exhausting either required destination fails the whole upload without inserting a URL; there is no provider switch or WordPress media fallback.
-- Administrator-only **Verify Upload** sends the bundled EasyMDE PNG through WordPress to the selected provider using the current file-name rule, then displays a structured result with the authoritative object path and article URL; it never retries or switches providers automatically. Upload Endpoints require HTTPS, while the Viewing Image Domain may use HTTP or HTTPS. An HTTP image URL can be blocked as mixed content on an HTTPS article page, but that display restriction is not an upload failure. Time- or UUID-based rules may create a new object on each verification.
-- Saved Image Hosting keys remain redacted during ordinary settings reads and exports. An administrator may explicitly reveal one saved field with its eye control; the protected, non-cacheable response stays only in the current page's memory.
-- `{md5}` names use the lowercase MD5 digest of the final bytes sent to the provider after any enabled image processing, matching PicFast PicGo's content-MD5 algorithm; EasyMDE derives the extension from the verified MIME type.
+- Optional protected Image Hosting uploads for local image paste and drag-and-drop, configurable with Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
 - WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.

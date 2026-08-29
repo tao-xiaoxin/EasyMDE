@@ -22,7 +22,8 @@ repository-level summary and an exact route repeated elsewhere.
 | Owner | Responsibility |
 | --- | --- |
 | `AGENTS.md` | Repository-wide product, data, compatibility, security, privacy, architecture-routing, release-boundary, evidence, and authorization invariants. |
-| `CONTRIBUTING.md` | Detailed public contribution workflow, Git and staging sequence, Issue and pull request templates, local review, exact-Head CI, CodeRabbit coordination, finding quality, privacy-safe public evidence, and completion reporting. |
+| `CONTRIBUTING.md` | Detailed public contribution workflow, Git and staging sequence, local review, exact-Head CI, CodeRabbit coordination, finding quality, privacy-safe public evidence, completion reporting, and authoritative template routing. |
+| `docs/templates/` | Canonical reusable bodies for the templates linked from `CONTRIBUTING.md`; workflow, applicability, and authority remain in `CONTRIBUTING.md`. |
 | `.agents/skills/easymde/SKILL.md` | Executable React, TypeScript, browser, UI fidelity, accessibility, architecture, security, dependency, asset, testing, delivery, browser-owner inventory, deprecation, and removal evidence for feature work. |
 | `.agents/skills/i18n/SKILL.md` | PHP and React internationalization, extraction, catalogs, script translations, locale, plural, context, RTL, and language-asset package validation. |
 | `docs/ARCHITECTURE.md` | Current, actually implemented architecture. |

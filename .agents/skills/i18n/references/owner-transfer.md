@@ -41,11 +41,10 @@ Non-English runtime evidence:
 Unverified states:
 ```
 
-`Current Bootstrap object and field` 必须指向真实 source 和 consumer：普通/
-沉浸式 Editor Root 字段属于 `EasyMDEEditorRootBootstrap`，Settings Center
-字段属于 `EasyMDESettingsCenterBootstrap.strings`，公开前台字段属于
-`EasyMDEFrontendConfig.strings`。不要用模糊的“全局配置”“React 文案”或
-推测的未来入口代替路径。
+`Current Bootstrap object and field` 必须通过
+[current-contract.md](current-contract.md) 与 live source/consumer 核对，记录
+真实 object、field、runtime surface 和所有 consumer。不要用模糊的“全局配置”
+“React 文案”或推测的未来入口代替路径。
 
 ## 执行顺序
 

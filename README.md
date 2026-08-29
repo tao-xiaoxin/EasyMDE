@@ -124,14 +124,6 @@ Highlight.js、Mermaid 和 KaTeX 来自锁定的 npm 包；只有依赖或资源
   如果 EasyMDE 改善了你的 WordPress 写作流程，点亮 Star 可以帮助更多作者发现这个项目。
 </p>
 
-## Star 历史
-
-<p align="center">
-  <a href="https://star-history.com/#tao-xiaoxin/EasyMDE&Date">
-    <img src="https://api.star-history.com/svg?repos=tao-xiaoxin/EasyMDE&type=Date" alt="EasyMDE Star 历史图表" width="720" />
-  </a>
-</p>
-
 ## 许可证
 
 EasyMDE 使用 [Apache-2.0](LICENSE) 许可证。

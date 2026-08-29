@@ -11,6 +11,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class EditorMediaUploadPolicy {
 
+	const MEDIA_POST_TYPE_PARAM = 'easymde_post_type';
+
 	private $post_document;
 	private $settings_repository;
 
@@ -56,15 +58,63 @@ final class EditorMediaUploadPolicy {
 	private function is_supported_post_request() {
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- WordPress verifies the media-upload nonce before persistence; this only scopes validation.
 		$requested_post_id = isset( $_REQUEST['post_id'] ) ? $_REQUEST['post_id'] : 0;
-		$post_id           = is_scalar( $requested_post_id )
-			? absint( wp_unslash( $requested_post_id ) )
-			: 0;
-		if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+		if ( ! is_scalar( $requested_post_id ) ) {
 			return false;
 		}
 
-		$post = get_post( $post_id );
+		$post_id = absint( wp_unslash( $requested_post_id ) );
+		if ( $post_id > 0 ) {
+			if ( ! current_user_can( 'edit_post', $post_id ) ) {
+				return false;
+			}
 
-		return $post && $this->post_document->is_supported_post_type( $post->post_type );
+			$post = get_post( $post_id );
+
+			return $post && $this->post_document->is_supported_post_type( $post->post_type );
+		}
+
+		if ( ! $this->is_async_attachment_upload_request() ) {
+			return false;
+		}
+
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- WordPress verifies the media-upload nonce before persistence; this only scopes validation.
+		$requested_post_type = isset( $_REQUEST[ self::MEDIA_POST_TYPE_PARAM ] )
+			? $_REQUEST[ self::MEDIA_POST_TYPE_PARAM ]
+			: null;
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		if ( ! is_scalar( $requested_post_type ) ) {
+			return false;
+		}
+
+		$post_type = sanitize_key( (string) wp_unslash( $requested_post_type ) );
+		if ( '' === $post_type || ! $this->post_document->is_supported_post_type( $post_type ) ) {
+			return false;
+		}
+
+		if ( ! current_user_can( 'upload_files' ) || ! current_user_can( $this->create_post_capability( $post_type ) ) ) {
+			return false;
+		}
+
+		return true;
+	}
+
+	private function is_async_attachment_upload_request() {
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- WordPress verifies the media-upload nonce before persistence; this only scopes validation.
+		$requested_action = isset( $_REQUEST['action'] ) ? $_REQUEST['action'] : null;
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		if ( ! is_scalar( $requested_action ) ) {
+			return false;
+		}
+
+		return 'upload-attachment' === sanitize_key( (string) wp_unslash( $requested_action ) );
+	}
+
+	private function create_post_capability( $post_type ) {
+		$post_type_object = get_post_type_object( $post_type );
+		if ( $post_type_object && ! empty( $post_type_object->cap->create_posts ) ) {
+			return $post_type_object->cap->create_posts;
+		}
+
+		return 'page' === $post_type ? 'edit_pages' : 'edit_posts';
 	}
 }

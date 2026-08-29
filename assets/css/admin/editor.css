@@ -2417,7 +2417,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 
 .easymde-media-picker-backdrop {
     position: fixed;
-    z-index: 100200;
+    z-index: 100400;
     inset: 0;
     display: grid;
     box-sizing: border-box;

@@ -59,7 +59,19 @@ final class MediaPickerPage {
 		}
 
 		$this->prepare_screen_context();
-		wp_enqueue_media( array( 'post' => $target['post_id'] ) );
+		$inject_post_type = static function ( $params ) use ( $target ) {
+			return self::add_upload_post_type_param( $params, $target['post_type'] );
+		};
+		add_filter( 'plupload_default_params', $inject_post_type );
+		try {
+			if ( $target['post_id'] > 0 ) {
+				wp_enqueue_media( array( 'post' => $target['post_id'] ) );
+			} else {
+				wp_enqueue_media();
+			}
+		} finally {
+			remove_filter( 'plupload_default_params', $inject_post_type );
+		}
 		wp_enqueue_script(
 			$asset['handle'],
 			Asset::url( $asset['path'] ),
@@ -69,6 +81,16 @@ final class MediaPickerPage {
 		);
 
 		return $target;
+	}
+
+	private static function add_upload_post_type_param( $params, $post_type ) {
+		if ( ! is_array( $params ) || array_key_exists( EditorMediaUploadPolicy::MEDIA_POST_TYPE_PARAM, $params ) ) {
+			return $params;
+		}
+
+		$params[ EditorMediaUploadPolicy::MEDIA_POST_TYPE_PARAM ] = $post_type;
+
+		return $params;
 	}
 
 	private function prepare_screen_context() {

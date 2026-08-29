@@ -2043,10 +2043,13 @@ test.describe('EasyMDE editor workflows', () => {
 
     await sourceEditor.fill('Alpha');
     await main.locator('[data-easymde-command="image"]').click();
-    const mediaModal = page.locator('.media-modal:visible');
+    const mediaPickerDialog = page.locator('.easymde-media-picker-dialog');
+    await expect(mediaPickerDialog).toBeVisible();
+    const mediaFrame = page.frameLocator('.easymde-media-picker-frame');
+    const mediaModal = mediaFrame.locator('.media-modal:visible');
     await expect(mediaModal).toBeVisible();
     await mediaModal.locator('.media-modal-close').click();
-    await expect(mediaModal).toBeHidden();
+    await expect(mediaPickerDialog).toBeHidden();
     await expect(source).toHaveValue('Alpha');
   });
 
@@ -3641,13 +3644,23 @@ test.describe('EasyMDE editor workflows', () => {
 
     await login(page, user);
     await page.addInitScript(() => {
-      let editorBootstrap;
-      Object.defineProperty(window, 'EasyMDEEditorRootBootstrap', {
+      let loaderBootstrap;
+      Object.defineProperty(window, 'EasyMDEAdminEditorLoaderBootstrap', {
         configurable: true,
-        get: () => editorBootstrap,
+        get: () => loaderBootstrap,
         set: (value) => {
-          editorBootstrap = value && 'object' === typeof value && value.layout
-            ? { ...value, layout: { ...value.layout, direction: 'rtl' } }
+          loaderBootstrap = value
+            && 'object' === typeof value
+            && value.editorBootstrap
+            && 'object' === typeof value.editorBootstrap
+            && value.editorBootstrap.layout
+            ? {
+              ...value,
+              editorBootstrap: {
+                ...value.editorBootstrap,
+                layout: { ...value.editorBootstrap.layout, direction: 'rtl' }
+              }
+            }
             : value;
         }
       });
@@ -4329,7 +4342,10 @@ test.describe('EasyMDE editor workflows', () => {
     expect(publishBox.y + publishBox.height).toBeLessThanOrEqual(900);
 
     await publishDialog.locator('.easymde-publish-featured-empty').click();
-    const mediaModal = page.locator('.media-modal:visible');
+    const mediaPickerDialog = page.locator('.easymde-media-picker-dialog');
+    await expect(mediaPickerDialog).toBeVisible();
+    const mediaFrame = page.frameLocator('.easymde-media-picker-frame');
+    const mediaModal = mediaFrame.locator('.media-modal:visible');
     await expect(mediaModal).toBeVisible();
     await mediaModal.getByRole('tab', { name: /上传文件|Upload files/u }).click();
     const oversizedPng = Buffer.concat([
@@ -4340,7 +4356,7 @@ test.describe('EasyMDE editor workflows', () => {
       'POST' === response.request().method()
       && new URL(response.url()).pathname.endsWith('/wp-admin/async-upload.php')
     ));
-    await page.locator('input[type="file"]').last().setInputFiles({
+    await mediaFrame.locator('input[type="file"]').last().setInputFiles({
       name: 'oversized-article-template.png',
       mimeType: 'image/png',
       buffer: oversizedPng

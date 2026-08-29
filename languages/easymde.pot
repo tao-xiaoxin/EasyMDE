@@ -1232,7 +1232,7 @@ msgid ""
 "again."
 msgstr ""
 
-#: src/Admin/EditorMediaUploadPolicy.php:43
+#: src/Admin/EditorMediaUploadPolicy.php:45
 #: src/ImageHosting/RemoteImageDownloader.php:95
 #: src/Rest/ImageHostingController.php:443
 #: src/Rest/ImageHostingController.php:518 src/Rest/MediaController.php:75
@@ -1240,7 +1240,7 @@ msgstr ""
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
-#: src/Admin/EditorMediaUploadPolicy.php:50
+#: src/Admin/EditorMediaUploadPolicy.php:52
 #: src/ImageHosting/RemoteImageDownloader.php:78
 #: src/Rest/ImageHostingController.php:442
 #: src/Rest/ImageHostingController.php:494 src/Rest/MediaController.php:83
@@ -1268,19 +1268,19 @@ msgstr ""
 msgid "EasyMDE could not load the WordPress media library."
 msgstr ""
 
-#: src/Admin/MediaPickerPage.php:94
+#: src/Admin/MediaPickerPage.php:116
 msgid "Media Library"
 msgstr ""
 
-#: src/Admin/MediaPickerPage.php:108
+#: src/Admin/MediaPickerPage.php:130
 msgid "The requested media target is unavailable."
 msgstr ""
 
-#: src/Admin/MediaPickerPage.php:117 src/Admin/MediaPickerPage.php:143
+#: src/Admin/MediaPickerPage.php:139 src/Admin/MediaPickerPage.php:165
 msgid "The requested post type is not supported by EasyMDE."
 msgstr ""
 
-#: src/Admin/MediaPickerPage.php:129 src/Admin/MediaPickerPage.php:151
+#: src/Admin/MediaPickerPage.php:151 src/Admin/MediaPickerPage.php:173
 msgid "You are not allowed to use the media library for this post."
 msgstr ""
 

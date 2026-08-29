@@ -140,6 +140,40 @@ final class MediaPickerPageTest extends WP_UnitTestCase {
 		$this->assertSame( 'easymde-media-picker', $GLOBALS['hook_suffix'] );
 	}
 
+	public function test_injects_the_authorized_new_post_type_into_upload_params() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+		$_GET = array( 'post_id' => '0', 'post_type' => 'post' );
+		$captured = array();
+		$record = static function ( $params ) use ( &$captured ) {
+			$captured = $params;
+
+			return $params;
+		};
+		add_filter( 'plupload_default_params', $record, 20 );
+
+		try {
+			$this->media_picker_page->enqueue_assets_for_request();
+		} finally {
+			remove_filter( 'plupload_default_params', $record, 20 );
+		}
+
+		$this->assertSame( 'upload-attachment', $captured['action'] );
+		$this->assertSame( 'post', $captured['easymde_post_type'] );
+	}
+
+	public function test_does_not_overwrite_existing_upload_params() {
+		$reflection = new ReflectionMethod( MediaPickerPage::class, 'add_upload_post_type_param' );
+		$reflection->setAccessible( true );
+		$params = array(
+			'action'                         => 'existing-action',
+			'easymde_post_type'              => 'existing-type',
+			'_wpnonce'                       => 'existing-nonce',
+		);
+
+		$this->assertSame( $params, $reflection->invoke( null, $params, 'post' ) );
+	}
+
 	private function resolve_authorized_target() {
 		$reflection = new ReflectionMethod( MediaPickerPage::class, 'get_authorized_target' );
 		$reflection->setAccessible( true );

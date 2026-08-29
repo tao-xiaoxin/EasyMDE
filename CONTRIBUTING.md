@@ -2,9 +2,9 @@
 
 `AGENTS.md` owns repository-level invariants and authorization boundaries.
 
-`CONTRIBUTING.md` owns the detailed public contribution workflow, reusable
-templates, Git and push sequence, local review, CI coordination, remote review,
-finding quality, and public-evidence procedure.
+`CONTRIBUTING.md` owns the detailed public contribution workflow, authoritative
+template routing and applicability, Git and push sequence, local review, CI
+coordination, remote review, finding quality, and public-evidence procedure.
 
 React, UI, accessibility, browser, architecture, and security implementation
 rules belong to `.agents/skills/easymde/SKILL.md`.
@@ -284,54 +284,7 @@ Additional rules:
 
 ### Local Codex Review Prompt Template
 
-```markdown
-Use the local `codex-review` skill in read-only review mode.
-
-Review the current local branch and working tree against `<BASE_BRANCH>` for Issue `#<ISSUE_NUMBER>`.
-
-## Goal and scope
-
-- Intended change: `<FOCUSED_CHANGE_SUMMARY>`
-- Linked Issue and acceptance criteria: `#<ISSUE_NUMBER>`
-- Base branch: `<BASE_BRANCH>`
-- Review the exact current local state, including committed changes since the base, staged changes, unstaged changes, and untracked task files intended for inclusion.
-- Read the current `AGENTS.md` and apply only repository rules relevant to this change.
-
-## Required inspection
-
-1. Inspect `git status --short`, `git diff`, `git diff --cached`, and the diff and commits against `<BASE_BRANCH>`.
-2. Read the complete current contents and surrounding execution paths of every changed file; do not review only isolated diff hunks.
-3. Use current repository-relative file paths and current local file line numbers. Do not use stale GitHub PR line numbers, outdated remote diffs, or earlier review-thread positions.
-4. Trace relevant inputs, state transitions, outputs, error paths, cancellation paths, permissions, compatibility behavior, tests, build scripts, and release packaging.
-5. Check for functional regressions, data loss, authorization failures, unsafe rendering or input handling, WordPress/PHP compatibility problems, performance or reliability risks, missing runtime/release assets, invalid tests, unnecessary complexity, privacy leaks, secrets, local-path exposure, and unrelated scope changes.
-6. Verify that tests actually exercise the changed behavior and cannot pass only because of broad mocks, skipped tooling, polluted state, or file-presence assertions.
-7. Report only confirmed, actionable issues introduced or materially worsened by the current local change. Do not invent findings, request speculative refactors, or report personal style preferences.
-
-## Finding format
-
-For each independently fixable finding, provide:
-
-- Current local file path and current local line number or execution path.
-- What is wrong.
-- A realistic trigger.
-- Concrete user, security, compatibility, data, performance, test, build, or release impact.
-- The smallest focused correction direction.
-- Whether it blocks commit or push, with a factual reason.
-
-## Safety and authority
-
-- Do not modify files, stage changes, commit, push, create or close Issues or pull requests, merge, enable auto-merge, or delete branches.
-- Do not request or reproduce secrets, credentials, cookies, private keys, personal data, private article content, absolute local paths, private endpoints, raw logs, HAR data, browser storage, or unnecessary screenshots.
-- Treat existing code and passing tests as evidence, not proof. Clearly distinguish confirmed findings from questions or unverified assumptions.
-- The implementing agent will independently verify and resolve confirmed findings.
-
-## Verdict
-
-Return exactly one final verdict:
-
-- `BLOCK` when one or more confirmed merge-blocking findings remain, followed by the findings.
-- `APPROVE` when no confirmed merge-blocking findings remain, followed by exactly: `No merge-blocking findings found in the current local branch.`
-```
+The canonical reusable body is [docs/templates/LOCAL_CODEX_REVIEW.md](docs/templates/LOCAL_CODEX_REVIEW.md).
 
 ## Push, CI, and CodeRabbit Review Order
 
@@ -405,112 +358,11 @@ waiting instead of posting another request.
 
 ### Mandatory CodeRabbit First-Review Template
 
-```markdown
-@coderabbitai full review
-
-Please perform a complete, read-only review of the current pull request head `<HEAD_SHA>` against `<BASE_BRANCH>`.
-
-## Review identity
-
-- Current head SHA: `<HEAD_SHA>`
-- Base branch: `<BASE_BRANCH>`
-- Linked Issue: `#<ISSUE_NUMBER>`
-- Pull request scope: `<FOCUSED_CHANGE_SUMMARY>`
-- Files or subsystems changed: `<CHANGED_PATHS_OR_SUBSYSTEMS>`
-
-## Verified preconditions
-
-- Local `codex-review` verdict for the exact outgoing diff reviewed before commit and push: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
-- Confirmed local findings resolved: `<RESOLVED_FINDINGS_OR_NONE>`
-- Validation actually completed: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
-- Required CI/check status for `<HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
-- CodeRabbit queue state for this exact SHA, verified immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
-
-## Required review
-
-1. Read the linked Issue, pull request body, current root `AGENTS.md`, complete diff, changed-file context, and relevant surrounding execution paths.
-2. Verify that the implementation satisfies the linked Issue and remains inside its declared scope.
-3. Trace relevant inputs, state transitions, outputs, error and cancellation paths, permissions, compatibility behavior, tests, build scripts, generated files, and release packaging.
-4. Review the areas actually affected by this change, including functional correctness, regressions, authorization, data integrity, privacy, unsafe rendering or input handling, supported WordPress/PHP versions, performance, reliability, test validity, dependencies, assets, and release completeness where applicable.
-5. Re-check every unresolved or outdated review thread against `<HEAD_SHA>`; do not assume a finding still applies merely because it existed on an older SHA.
-6. Report only confirmed, actionable problems introduced or materially worsened by this pull request. Do not invent findings, request speculative refactors, enforce personal style preferences, or fill a finding quota.
-7. Treat confirmed data loss, authorization failures, secret or personal-data exposure, unsafe rendering, incompatible WordPress/PHP behavior, invalid migration or revision behavior, and broken release packages as merge-blocking.
-
-## Finding requirements
-
-For each independently fixable finding, include:
-
-- Repository-relative file path and current line or execution path.
-- What is wrong.
-- A realistic trigger or reproduction path.
-- Concrete user, security, compatibility, data, performance, test, build, or release impact.
-- The smallest focused correction direction.
-- Whether it blocks merge and the factual reason.
-
-## Privacy and authority
-
-- Use redacted values, synthetic examples, and privacy-safe behavioral evidence.
-- Do not request, quote, or repeat credentials, tokens, cookies, private keys, private article content, personal data, absolute local paths, private endpoints, raw browser storage, HAR files, or unnecessary logs.
-- Do not republish screenshots or attachments unless publication is necessary, authorized, and their content and embedded metadata have been inspected.
-- Do not modify files, push commits, merge, close the pull request or linked Issue, alter PR metadata, enable auto-merge, delete branches, or resolve threads.
-
-## Current-head verdict
-
-End the review with exactly one of these verdicts for `<HEAD_SHA>`:
-
-- `EASYMDE_CODERABBIT_REVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <HEAD_SHA>.`
-- `EASYMDE_CODERABBIT_REVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <HEAD_SHA>.`
-
-When blocking, list the confirmed findings before the final verdict. When no actionable finding remains, do not create suggestions merely to avoid approval.
-```
+The canonical reusable first-review and re-review bodies are in [docs/templates/CODERABBIT_REVIEW.md](docs/templates/CODERABBIT_REVIEW.md).
 
 ### Mandatory CodeRabbit Re-Review Template
 
-```markdown
-@coderabbitai full review
-
-Please perform a complete, read-only re-review of the current pull request head `<NEW_HEAD_SHA>` against `<BASE_BRANCH>`.
-
-## Re-review identity
-
-- Previous reviewed head SHA: `<PREVIOUS_HEAD_SHA>`
-- Current head SHA: `<NEW_HEAD_SHA>`
-- Base branch: `<BASE_BRANCH>`
-- Linked Issue: `#<ISSUE_NUMBER>`
-- Pull request scope: `<FOCUSED_CHANGE_SUMMARY>`
-
-## Fix summary
-
-- Confirmed findings addressed: `<FINDING_IDS_OR_CONCISE_SUMMARIES>`
-- Focused corrections made: `<CORRECTIONS_AND_CHANGED_PATHS>`
-- Findings rejected as invalid or stale, with evidence: `<REJECTED_FINDINGS_OR_NONE>`
-- Remaining unresolved threads or questions: `<UNRESOLVED_ITEMS_OR_NONE>`
-
-## Verified preconditions for the new SHA
-
-- Local `codex-review` verdict for the exact new committed and pushed diff: `<APPROVE_OR_BLOCK_WITH_SUMMARY>`
-- Regression and affected validation actually rerun: `<COMMANDS_AND_RESULTS_ACTUALLY_RUN>`
-- Required CI/check status for `<NEW_HEAD_SHA>`: `<GREEN_OR_INTENTIONALLY_SKIPPED_WITH_REASON>`
-- CodeRabbit queue state for `<NEW_HEAD_SHA>`, verified immediately before posting: `<NONE_QUEUED_OR_IN_PROGRESS_CONFIRMED_AT_POST_TIME>`
-
-## Required re-review
-
-1. Re-read the linked Issue, pull request body, current root `AGENTS.md`, full current diff, and relevant surrounding execution paths rather than reviewing only the last fix commit.
-2. Verify each previously confirmed finding against `<NEW_HEAD_SHA>` and state whether the root cause is resolved.
-3. Check whether the fixes introduced regressions, incomplete state transitions, weak tests, compatibility problems, privacy exposure, build or release omissions, or unrelated scope changes.
-4. Re-check unresolved and outdated threads against the new code and current line positions.
-5. Report only confirmed, actionable problems present in `<NEW_HEAD_SHA>`; do not repeat resolved or stale findings.
-6. Apply the same finding quality, privacy, read-only authority, human-merge, and human-closure requirements as the first review.
-
-## New-head verdict
-
-End the re-review with exactly one of these verdicts for `<NEW_HEAD_SHA>`:
-
-- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: APPROVE — no confirmed merge-blocking issue found for <NEW_HEAD_SHA>.`
-- `EASYMDE_CODERABBIT_REREVIEW_VERDICT: BLOCK — confirmed merge-blocking findings remain for <NEW_HEAD_SHA>.`
-
-When blocking, list the confirmed current findings before the final verdict. An approval or walkthrough for `<PREVIOUS_HEAD_SHA>` must not be reused as the verdict for `<NEW_HEAD_SHA>`.
-```
+The canonical reusable first-review and re-review bodies are in [docs/templates/CODERABBIT_REVIEW.md](docs/templates/CODERABBIT_REVIEW.md).
 
 After posting either template, wait for acknowledgement or review activity.
 Do not send another CodeRabbit mention merely because the response is slow.
@@ -521,116 +373,14 @@ Use this structure for a new public Issue. Remove sections that genuinely do not
 apply, but do not omit scope, acceptance criteria, or privacy review for
 material work.
 
-```markdown
-## Summary
-
-Describe the user-visible problem, repository maintenance need, or requested behavior in concrete terms.
-
-## Current behavior
-
-Explain what happens now and why it is incorrect, incomplete, unsafe, or difficult to maintain.
-Do not paste private logs, credentials, local paths, private article content, or unnecessary machine details.
-
-## Expected behavior
-
-Describe the observable outcome that should be true after the Issue is resolved.
-
-## Scope
-
-- Included:
-- Excluded:
-- Compatibility constraints:
-
-## Acceptance criteria
-
-- [ ] The intended behavior is implemented or documented.
-- [ ] Relevant failure and cancellation paths are covered.
-- [ ] Existing supported behavior remains compatible.
-- [ ] Appropriate tests or validation are added or updated.
-- [ ] Public text and artifacts pass the privacy checks below.
-- [ ] Closing this Issue still requires explicit human maintainer confirmation after the criteria are met.
-
-## Validation or reproduction
-
-Provide the smallest privacy-safe reproduction, test expectation, or verification plan.
-Use redacted examples and behavior descriptions instead of raw sensitive evidence.
-
-## Privacy and public artifact check
-
-- [ ] No credentials, tokens, cookies, authorization headers, private keys, or local configuration values are included.
-- [ ] No absolute local paths, usernames, home directories, temporary paths, screenshot paths, private endpoints, or internal service details are included unless they are an intentional non-sensitive public contract.
-- [ ] No personal data, private article content, raw browser storage, HAR data, or unnecessary logs are included.
-- [ ] Any attached image, archive, font, SVG, binary, or data URI has been checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, or machine metadata.
-- [ ] User-provided reference screenshots or files are not committed or republished unless publication is necessary, authorized, and privacy-reviewed.
-```
+The canonical reusable body is [docs/templates/ISSUE.md](docs/templates/ISSUE.md).
 
 ## Pull Request Body Template
 
 Use this structure for every pull request. Replace the first line with the
 correct closing or non-closing reference.
 
-```markdown
-Closes #123
-
-<!-- Use `Related to #123` instead when this PR does not fully resolve the Issue. -->
-
-## Summary
-
-- Describe the concrete changes.
-- Explain the user, compatibility, security, maintenance, or release problem they solve.
-
-## Scope and linked Issue
-
-- Linked Issue: #123
-- Confirm that this PR stays within the Issue scope.
-- List intentionally deferred or excluded work.
-
-## Human closure control
-
-This pull request and its linked Issues must remain open until a human maintainer explicitly authorizes merge or closure. Green CI, bot approval, resolved threads, completed checklists, or inactivity are not closure authorization.
-
-## Implementation notes
-
-Describe important state transitions, WordPress integration points, compatibility boundaries, and failure behavior.
-Do not include private implementation evidence or local environment details.
-
-## Safety and compatibility
-
-- Markdown source-of-truth impact:
-- `post_content` compatibility impact:
-- WordPress permissions, nonce, REST, save, revision, or publishing impact:
-- Existing settings, themes, extension APIs, and migration impact:
-- Runtime dependencies, assets, licenses, and release-package impact:
-
-## Validation
-
-List only checks actually performed, including commands and results where useful.
-State unavailable or unverified checks honestly.
-
-- [ ] Focused automated tests
-- [ ] Relevant integration or browser checks
-- [ ] PHP, Node, lint, i18n, build, or package checks as applicable
-- [ ] Negative, cancellation, permission, and failure-path checks as applicable
-- [ ] For agent-authored or automated work, local `codex-review` covered the exact outgoing state before push
-- [ ] For agent-authored or automated work, the current pushed Head matches the reviewed commit set, or local review was rerun after the state changed
-- [ ] Every confirmed local review finding was resolved and affected validation was rerun, when local review was used
-- [ ] Final local review verdict recorded without private local details, when local review was used
-- [ ] CI status reviewed for the current head SHA
-- [ ] Existing CodeRabbit request status checked before posting a new review command
-
-## Privacy and public artifact review
-
-- [ ] Reviewed the diff, commit messages, PR body, linked Issue, review replies, fixtures, and generated artifacts for private information.
-- [ ] No secrets, credentials, cookies, private keys, personal data, private article content, local configuration, or unredacted sensitive values are included.
-- [ ] No unnecessary absolute paths, usernames, home directories, localhost/private/staging endpoints, ports, logs, HAR files, browser storage, screenshot paths, or machine identifiers are included.
-- [ ] No user-provided reference screenshot or file was committed or publicly reposted without necessity, authorization, and content/metadata inspection.
-- [ ] New images, archives, fonts, SVGs, binaries, and embedded data were checked for unnecessary EXIF, XMP, IPTC, geolocation, creator-tool, document-ID, instance-ID, and similar metadata.
-- [ ] Sensitive values in public descriptions are redacted rather than repeated.
-
-## Remaining risks and follow-up
-
-List known limitations, assumptions, deferred work, unresolved local or remote review findings, bot availability or waiting state, or checks that could not be run.
-```
+The canonical reusable body is [docs/templates/PULL_REQUEST.md](docs/templates/PULL_REQUEST.md).
 
 ## Code Review Guidelines
 

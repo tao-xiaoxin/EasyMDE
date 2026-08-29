@@ -14,13 +14,17 @@ This index points to the current technical docs. The root [README](../README.md)
 **Local Contributors**
 
 1. [Contributing](../CONTRIBUTING.md) for project rules and PR expectations.
-2. [Agent Instructions](../AGENTS.md) for binding repository-wide invariants.
-3. [Core Philosophy](CORE-PHILOSOPHY.md) for a non-normative mnemonic introduction.
-4. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
-5. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
-6. [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md) for the copy boundary and rejected alternatives.
-7. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
-8. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
+2. [Local Codex Review Template](templates/LOCAL_CODEX_REVIEW.md) for the reusable local review body.
+3. [CodeRabbit Review Templates](templates/CODERABBIT_REVIEW.md) for first-review and re-review bodies.
+4. [Issue Body Template](templates/ISSUE.md) for new public Issue bodies.
+5. [Pull Request Body Template](templates/PULL_REQUEST.md) for pull request bodies.
+6. [Agent Instructions](../AGENTS.md) for binding repository-wide invariants.
+7. [Core Philosophy](CORE-PHILOSOPHY.md) for a non-normative mnemonic introduction.
+8. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
+9. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
+10. [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md) for the copy boundary and rejected alternatives.
+11. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
+12. [Testing and Release](TESTING_AND_RELEASE.md) for quality gates that apply when code, assets, release scripts, or packaging behavior change.
 
 **Maintainers Preparing Releases**
 

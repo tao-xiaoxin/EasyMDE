@@ -13,8 +13,6 @@ EasyMDE is a standalone WordPress Markdown editor. Contributions must preserve
 WordPress-native editing, permissions, media, revisions, saving, publishing,
 and release behavior. Read [AGENTS.md](AGENTS.md) before material
 implementation, security, compatibility, migration, or release work.
-[Core Philosophy](docs/CORE-PHILOSOPHY.md) is an optional mnemonic
-introduction; it does not define a second set of binding rules.
 
 ## Contributor Applicability
 
@@ -610,133 +608,13 @@ hypothetical future change, or combine unrelated problems.
 
 ### WeChat Clipboard Evidence
 
-Treat WeChat paste output as a browser integration boundary, not as a static
-HTML snapshot. For a copy or rendering change:
+Treat WeChat paste output as a browser integration boundary, not as a static HTML snapshot. The executable serializer, lifecycle, and compatibility contract is owned by [the WeChat export Skill reference](.agents/skills/easymde/references/wechat-export.md), and the focused command and test matrix is owned by [Testing and Release](docs/TESTING_AND_RELEASE.md); this section owns only review and evidence procedure.
 
-- Use `docs/examples/markdown-full-capability-test.md` or an equally synthetic,
-  reviewed fixture. Capture the source Preview and the pasted WeChat result at
-  the same controlled viewport and from the exact current build; a screenshot
-  from another draft, browser profile, session, or build is not current evidence.
-- Verify the single serializer's HTML in both modern Clipboard API and legacy
-  compatibility paths. Compare the payloads, then inspect pasted DOM for the
-  removed KaTeX `.katex-mathml` tree, source classes/transient attributes,
-  unsafe URLs, hidden controls, exporter-owned structural markers, and the
-  expected visual tree. Hidden SVG `<defs>` subtrees referenced by visible
-  clip-path/mask/gradient/filter attributes must remain. Safe image
-  `src`/`srcset` and link URLs may remain;
-  remote CSS backgrounds must not.
-- When approved theme images are present, delay one image request and verify
-  that modern `Clipboard.write` starts while the originating user activation is
-  still active; confirm deferred HTML and plain-text payloads resolve from the
-  shared cache and that a fast write cannot report success when that payload
-  later rejects. Confirm legacy compatibility succeeds only after preparation
-  has completed and invokes `execCommand` synchronously in the originating
-  click task; a pending approved image or rejected modern write must not cross
-  an `await` and then enter legacy. A synchronous `ClipboardItem` construction
-  or `write()` invocation failure may use the current payload when synchronous
-  preparation completed in that same click task; a pending approved image still
-  fails until preparation resolves. Cover both branches separately.
-  During a layout-only replacement, verify that the last resolved payload stays
-  available to legacy while the source markup is unchanged, that a successful
-  replacement supersedes it, that a failed replacement restores the newest
-  successful same-source payload even when an older overlapping refresh
-  resolves first, and that changed source markup cannot reuse the older payload.
-  Preparation generations must be monotonic so an older completion cannot
-  downgrade a newer successful fallback; a scroll-only change in viewport
-  coordinates must not invalidate a payload when dimensions and computed
-  layout are unchanged.
-  Verify modern plain-text extraction measures the connected export surface at
-  the rendered Preview width, and reuses the last non-zero visible Preview
-  width when immersive source mode hides the surface. When WeChat export is
-  disabled, verify that no background preparation or approved theme-image
-  request starts. If legacy has no prepared entry after a
-  transient preparation failure, verify that the first click starts one
-  background retry but still reports failure; only a later click may use the
-  retry after it resolves.
-  Also hold an approved theme-image request open long enough to verify the
-  ten-second abort timeout, cache eviction, and explicit copy failure; do not
-  treat a permanently pending asset request as a successful or silent state.
-- If immersive visual editing is involved, make several rapid edits before
-  copying and verify that preparation is coalesced for the same surface; the
-  copied payload must not remain from the moment immersive mode opened or an
-  earlier edit. Change a root font or article-theme class/style without
-  changing `innerHTML` and verify the prepared payload is invalidated before
-  copying. Change a responsive computed width or viewport geometry with the DOM
-  unchanged and verify that the prepared payload is invalidated before copying.
-  Check non-root theme decoration dimensions, positioning, flex sizing,
-  float/overflow, and box sizing; verify that generated theme-image dimensions
-  are not replaced by generic media bounds, that a single numeric
-  `background-size` keeps its missing axis automatic, and that a fixed
-  decoration wider than its host is not clamped, repeating theme backgrounds
-  retain their materialized CSS declaration instead of flattening to one image,
-  mixed non-image background layers such as gradients remain intact, unsafe
-  background URLs become `none` slots instead of invalidating the declaration,
-  the `background-repeat`/`background-position`/`background-size` longhands
-  remain aligned after removed image layers are compacted, visible quoted
-  pseudo-element text keeps its image behind the text, every safe image layer
-  is materialized once with its source order, size, and position,
-  and materialized images remain
-  behind copied text, and computed percentage background positions preserve
-  centered overlays on both axes, including CSS single-token position defaults;
-  verify omitted/`auto` background sizing remains intrinsic, `cover`/`contain`
-  map to equivalent `object-fit` sizing, and four-token edge offsets such as
-  `right 12px bottom 6px` preserve both edge and offset values;
-  verify fixed/sticky source decorations do
-  not regain that positioning in copied HTML and static-source offsets are
-  neutralized when an overlay creates a relative containing block.
-- Resize the browser viewport and, in immersive split mode, resize the source/
-  Preview divider without changing the document. Verify that the debounced
-  preparation refreshes the legacy payload and that a background preparation
-  failure is reported only by the subsequent copy attempt, not while viewing or
-  editing.
-- Trigger a late image/video load, metadata/resize event, font loading completion/failure, and post-render
-  Preview descendant insertion/removal. Verify that the same debounced
-  preparation refreshes the legacy payload, removed nodes stop notifying, and
-  observer/listener cleanup occurs when the Preview sink or Root is disposed.
-  Enter immersive visual Preview and verify the layout observer rebinds to the
-  active surface. Change an article theme and save Custom CSS while visual
-  editing, then keep the replacement Preview request pending; preparation must
-  still refresh after the visual editor is disposed and must not target its
-  detached runtime.
-- Include an inline image or video in a paragraph and verify that the pasted
-  element keeps its computed inline display and margins while receiving only
-  responsive size bounds.
-- Verify the session boundary as well as the serializer: disabled, inactive,
-  empty, loading, or failed Preview states must not invoke Clipboard; repeated
-  clicks share one pending operation; Adapter rejection stays a failure; and a
-  teardown cannot announce a late success.
-- Measure the actual scroll owners for code, tables, and display formulas:
-  long content may scroll horizontally, but it must not create a nested
-  vertical axis or an exporter-imposed whole-article height. Measure the
-  WeChat page/editor shell separately before attributing its scrollbar to the
-  copied article. Tables must use the generated block wrapper as their only
-  horizontal owner, preserve built-in theme `display:contents`/
-  `container-type`/`100cqi` shims, and keep short intrinsic tables centered.
-  Verify task-list checkboxes retain checked state as disabled, attribute-
-  minimized controls and that arbitrary form controls are absent.
-- Inspect screenshots and computed geometry for headings, theme decorations,
-  images, code line breaks, tables, inline formulas, and every display-formula
-  family listed in `docs/examples/markdown-full-capability-test.md` (integral,
-  limit/partial, matrix, equation system/piecewise, statistics, and
-  neural-network examples), plus both horizontal edges of at least one long
-  code/formula case.
-  When Mermaid HTML labels are present, include a flowchart screenshot with
-  multi-character non-ASCII labels and inspect the pasted DOM after WeChat's
-  sanitizer has rewritten `foreignObject` children. Complete labels must remain
-  on one line even when `white-space`, `word-break`, and `<nobr>` are removed;
-  verify that any zero-width markers are absent from modern `text/plain`.
-  Confirm focus, selection, page scroll, and temporary DOM are restored after
-  fallback and after failure.
-- Keep browser access limited to the explicitly authorized local authenticated
-  session. Do not publish or send an article. Do not commit raw screenshots,
-  article content, clipboard payloads, credentials, cookies, tokens, browser
-  storage, private URLs, or machine-specific paths; record only sanitized
-  metrics and temporary local evidence paths.
-
-The focused serializer tests, frontend build comparison, release package
-contract, and required browser evidence are maintained in
-`docs/TESTING_AND_RELEASE.md` and the EasyMDE Skill. The architectural choice
-is maintained in [ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md).
+1. Use `docs/examples/markdown-full-capability-test.md` or an equally synthetic, reviewed fixture with the exact current build, the same controlled viewport, and the same authorized browser session, then capture the source Preview and pasted WeChat result together.
+2. Exercise every applicable modern Clipboard and legacy compatibility path, compare their resulting payloads, and inspect the pasted DOM and rendered geometry against the linked implementation contract; file presence, static HTML, or snapshots alone are not runtime evidence.
+3. Use semantic readiness instead of fixed sleeps and record the browser, destination, viewport, fixture, commands, observed success or failure, and any unverified behavior.
+4. For immersive or layout-sensitive changes, repeat the evidence after relevant mode, viewport, or Preview-surface transitions and verify the active surface and lifecycle cleanup in the real browser.
+5. Keep browser access limited to the explicitly authorized local authenticated session; do not publish or send an article or commit raw screenshots, article content, clipboard payloads, credentials, cookies, tokens, browser storage, private URLs, or machine-specific paths, and retain only sanitized metrics and temporary local evidence paths.
 
 ## Completion Report
 

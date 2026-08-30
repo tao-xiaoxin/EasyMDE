@@ -219,6 +219,71 @@ private security advisory, or another maintainer-approved private channel. If a
 public reference is required, use a sanitized tracking Issue with no exploit
 details, secrets, private endpoints, or affected-user data.
 
+### Authoritative Version Tracking Issues
+
+Every authoritative version bump requires its focused, long-running version
+tracking Issue before the version-changing commit. An authoritative bump is any
+change to a different exact target version in one or more of these canonical
+release identity fields: the plugin header in `easymde.php`, `EASYMDE_VERSION`,
+the `readme.txt` Stable tag, the root `package.json` version, the top-level
+`package-lock.json` `version`, or `package-lock.json` `packages[""].version`.
+Increments, prereleases, retargets, and rollbacks all count. A dependency
+version change, a changelog-only change, or a correction that brings a field
+back into alignment with an already declared target does not create another
+version Issue; update the existing target Issue instead.
+
+For each exact version string and declared release-channel set, maintain exactly
+one tracking Issue. The Issue's GitHub `createdAt` timestamp must be earlier than
+the earliest commit that contains the version change. The tracking Issue is an
+auditable release index; it is not an umbrella implementation scope, a substitute
+for focused Issue gates, or merge authority. Every material implementation or
+correction still needs its own focused Issue and linkage.
+
+Create and maintain the tracking Issue as follows:
+
+- Record the exact target version, lifecycle (`planned`, `preparing`,
+  `candidate`, `published`, `deferred`, or `abandoned`), prior/base version or
+  commit, and the required and optional release channels. The current required
+  channel and the evidence that makes a candidate formal are defined in
+  [Testing and Release](docs/TESTING_AND_RELEASE.md#version-tracking-and-formal-release).
+- For every material change, record its focused Issue, PR or merged commit,
+  one privacy-safe sentence describing the change or category, and separate
+  changelog and release-note dispositions. Each disposition must independently
+  be one of: included with the exact section, bullet, or location; omitted as
+  non-user-visible with the reason; or deferred with the destination Issue or
+  version.
+- While preparing a candidate, record the candidate PR and exact SHA together
+  with the validation and review result. Once formally released, record the
+  exact tag, reviewed release-commit SHA, channel URL(s), public artifact name
+  and SHA-256, publication time, and the separate changelog and release-note
+  dispositions with their applicable exact locations, reasons, or destination
+  Issues/versions. [Testing and Release](docs/TESTING_AND_RELEASE.md#version-tracking-and-formal-release)
+  owns the meaning of these evidence states.
+- Update the same Issue whenever included work is merged, reverted, deferred,
+  or its changelog or release-note disposition changes. Do not use one umbrella
+  Issue to bypass the focused Issue requirement.
+- Use `Related to #N` as the canonical linkage for the tracking Issue. In a
+  version-preparation PR title, body, or commit message, never use `Closes`,
+  `Fixes`, `Resolves`, or any case, tense, punctuation, or owner/repository
+  variant of those keywords for the tracking Issue, such as
+  `Fixes tao-xiaoxin/EasyMDE#205`. A preparation PR may use a closing keyword
+  for a focused implementation Issue only when it fully satisfies that Issue.
+- Publication never closes the tracking Issue automatically. A human maintainer
+  must independently verify the formal-release evidence and record separate,
+  explicit closure authorization; an agent or bot must not infer that authority
+  from a tag, release, merge, CI result, or Issue state.
+- A deferred or abandoned target records its reason and remains open long-term.
+  A different exact target, including a retarget or rollback, requires a new
+  tracking Issue before any canonical field changes; leave the old Issue open
+  with `deferred` or `abandoned` and its reason. Never create a duplicate Issue
+  for the same exact target and channel set. A same-target correction before
+  publication stays on the same tracking Issue. After publication, use a new
+  focused correction Issue; if that correction changes the version, create the
+  new patch-version tracking Issue before changing fields. A same-version
+  replacement records both artifact/commit identities and the related incident
+  on the correction record. All required channels must be complete before the
+  target is treated as formally published.
+
 ### Human Confirmation for Closing and Merging
 
 Closing and merging are human maintainer decisions.

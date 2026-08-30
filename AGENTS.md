@@ -642,6 +642,25 @@ execution belong to `docs/TESTING_AND_RELEASE.md`; browser test selection and
 pre-delivery checks belong to the EasyMDE Skill; contribution validation and
 completion reporting belong to `CONTRIBUTING.md`.
 
+## Authoritative Version Tracking
+
+- An authoritative version bump changes a canonical release identity field to
+  a different exact target version: the plugin header in `easymde.php`,
+  `EASYMDE_VERSION`, the `readme.txt` Stable tag, the root `package.json`
+  version, the top-level `package-lock.json` `version`, or
+  `package-lock.json` `packages[""].version`. This includes increments,
+  prereleases, retargets, and rollbacks. A dependency-version change,
+  changelog-only change, or correction that realigns an already declared target
+  is not a new bump; update the existing target record.
+- Each exact version string and declared release-channel set has exactly one
+  long-running tracking Issue. Its GitHub `createdAt` must precede the earliest
+  commit containing that version change. The Issue is an audit index, not an
+  implementation scope or merge authority.
+- The complete creation, record, linkage, lifecycle, retarget, and human
+  closure procedure is owned by [Contributing](CONTRIBUTING.md#authoritative-version-tracking-issues).
+  Candidate and formal-release status, channel evidence, and artifact/commit
+  identity are owned by [Testing and Release](docs/TESTING_AND_RELEASE.md#version-tracking-and-formal-release).
+
 ## Runtime Assets and Distribution Channels
 
 Local, version-controlled runtime assets remain the default.

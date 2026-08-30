@@ -2,16 +2,11 @@
 
 EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\Plugin`. The global `EasyMDE_Plugin` class remains as a compatibility facade for existing extension code.
 
-This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
+This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [Design](DESIGN.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
 ## Issue #91 Direct React Cutover
 
-The maintainer-approved target for the ordinary WordPress Editor is one Vite
-production entry mounting one React 18 Editor Root. This is a direct cutover,
-not another sequence of Legacy-to-React runtime handoffs. The final ordinary
-Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the
-Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or
-Focus Mode / immersive-writing assets.
+The maintainer-approved target for the ordinary WordPress Editor is one React 18 Editor Root, with PHP enqueuing a Vite loader that dynamically loads its hashed main entry. This is a direct cutover, not another sequence of Legacy-to-React runtime handoffs. The final ordinary Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or Focus Mode / immersive-writing assets.
 
 The React Root preserves the ordinary editing capability matrix from Issues
 #91 and #86 while WordPress-native surfaces continue to own publishing and
@@ -31,53 +26,126 @@ revisions:
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is not part of the default ordinary-editor surface. Issue #126
-provides a same-root immersive presentation that reuses the ordinary
-CodeMirror, Preview, native form, and WordPress capability owners. The ordinary
-workspace has one restrained footer for the live Markdown character count and
-WordPress-owned last-editor timestamp. Immersive Outline, expanded writing
-statistics, and view switching remain scoped to the immersive presentation;
-Publish and Revision controls delegate to the existing WordPress owners.
+Focus Mode is not part of the default ordinary-editor surface, and the ordinary toolbar provides the entry into Issue #126's immersive presentation within the same Root. The immersive presentation reuses the ordinary CodeMirror, Preview, native form, and WordPress capability owners. The ordinary workspace has one restrained footer for the live Markdown character count and WordPress-owned last-editor timestamp. Immersive Outline, expanded writing statistics, and view switching remain scoped to the immersive presentation; Publish and Revision controls delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
 Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
-## Directory Boundaries
+## Repository Structure
 
-- `src/Admin/`: editor screen rendering, per-post editor gating, admin settings, admin assets, and save handling.
-- `src/Content/`: Markdown rendering, TOC generation, theme markup transforms, post document state, and revision restore coordination.
-- `src/Theme/`: article/code theme registries, theme state, font state, custom CSS library access, and custom CSS policy.
-- `src/Rest/`: `easymde/v1` REST controllers.
-- `src/Frontend/`: frontend content filtering and conditional frontend asset loading.
-- `src/Support/`: shared helpers, capabilities, options, lazy migration helpers, toolbar registry, and legacy facade support.
-- `templates/admin/`: admin templates that render prepared data.
-- `assets/themes/article/`: EasyMDE-owned article themes.
-- `assets/themes/code/`: EasyMDE-owned code themes.
-- `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources; compiled TypeScript bundles have their own manifest-backed `assets/build/` roots.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, the independent Settings Center, public code-copy enhancement, shared public code/math enhancement runtime, and the on-demand Mermaid package runtime, plus the test-only WordPress React build-contract fixture.
-- `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
-- `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
-- `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
-- `tests/e2e/`: Chromium Playwright coverage for installed release ZIP author workflows.
+```text
+.
+|-- easymde.php                         # Root plugin bootstrap, metadata, and version declaration.
+|-- uninstall.php                       # WordPress uninstall entry point and cleanup handling.
+|-- readme.txt                          # WordPress plugin-directory metadata and readme content.
+|-- README.md                           # Primary project documentation entry point.
+|-- README.en.md                        # English project documentation entry point.
+|-- AGENTS.md                           # Owner of repository-wide invariants and guidance ownership.
+|-- CONTRIBUTING.md                     # Public contribution workflow and review guidance.
+|-- SECURITY.md                         # Vulnerability reporting and security guidance.
+|-- UPGRADING.md                        # User-facing upgrade and rollback guidance.
+|-- THIRD-PARTY-NOTICES.md              # Notices for bundled runtime dependencies and assets.
+|-- LICENSE                              # Project license.
+|-- includes/                            # Legacy global compatibility classes and standalone helpers.
+|-- src/                                 # Namespaced PHP implementation modules.
+|   |-- Plugin.php                       # Service wiring and module registration.
+|   |-- Admin/                           # Admin screens, post gating, settings, assets, and save handling.
+|   |-- Content/                         # Markdown rendering, document state, TOC, transforms, and revisions.
+|   |-- Frontend/                        # Public content filtering and conditional frontend asset loading.
+|   |-- ImageHosting/                    # Image-hosting providers, signing, upload orchestration, and runtime policy.
+|   |-- Rest/                            # `easymde/v1` REST controllers and request boundaries.
+|   |-- Support/                         # Shared capabilities, options, migration, assets, toolbar, and facade support.
+|   `-- Theme/                           # Article/code theme registries, fonts, state, and Custom CSS policy.
+|-- templates/                           # PHP-rendered templates.
+|   `-- admin/                           # Prepared-data admin templates without business rules.
+|-- frontend/                            # TypeScript, React, CodeMirror, Vite, and frontend test-contract sources.
+|   |-- src/                             # Browser application source organized by architectural layer.
+|   |   |-- app/                         # React roots, error boundaries, and top-level composition.
+|   |   |   |-- editor/                  # Ordinary Editor Root composition.
+|   |   |   `-- settings/                # Independent Settings Center Root composition.
+|   |   |-- contracts/                   # Bootstrap data, Ports, Results, and runtime contracts.
+|   |   |   |-- bootstrap/               # WordPress-to-browser bootstrap schemas and fixtures.
+|   |   |   `-- ports/                   # Feature and integration interfaces.
+|   |   |-- domain/                      # Pure editor rules without React, DOM, WordPress, network, or storage access.
+|   |   |-- entrypoints/                 # Screen/runtime discovery, mounting, readiness, and teardown boundaries.
+|   |   |-- features/                    # User-recognizable editor and administration capabilities.
+|   |   |-- generated/                   # Checked-in generated browser source produced by local tooling.
+|   |   |-- integrations/                # Concrete WordPress, browser, and preview-runtime adapters.
+|   |   |   |-- browser/                 # Clipboard, Storage, DOM, and other browser adapters.
+|   |   |   |-- preview-runtime/         # Preview enhancement runtime adapters.
+|   |   |   `-- wordpress/               # WordPress, REST, media, and native-form adapters.
+|   |   |-- shared/                      # Stable cross-feature utilities and UI primitives.
+|   |   |   |-- keyboard/                # Shared keyboard and shortcut utilities.
+|   |   |   `-- ui/                      # Shared UI primitives.
+|   |   |-- test/                        # Frontend-only setup and fixtures.
+|   |   |   `-- fixtures/                # Frontend contract fixtures.
+|   |   `-- types/                       # TypeScript declarations for integration boundaries.
+|   |-- test/                            # Test-only frontend inputs outside production source.
+|   |   `-- build-contract/             # WordPress React/Vite build-contract fixture and verification input.
+|   `-- tsconfig.json                   # Strict frontend TypeScript configuration.
+|-- assets/                              # Committed styles, images, themes, vendor assets, and browser runtimes.
+|   |-- build/                           # Committed manifest-backed production browser runtime bundles.
+|   |-- css/                             # Admin and public content styles.
+|   |   |-- admin/                       # Admin/editor styles.
+|   |   `-- frontend/                    # Public content styles.
+|   |-- images/                          # Local UI, support, and theme images.
+|   |-- themes/                          # EasyMDE-maintained theme styles.
+|   |   |-- article/                     # Article theme styles.
+|   |   `-- code/                        # Code theme styles.
+|   `-- vendor/                          # Locally bundled third-party runtime assets and licenses.
+|       |-- fonts/                       # Bundled font files and licenses.
+|       |-- highlight/                   # Bundled Highlight.js runtime and styles.
+|       `-- katex/                       # Bundled KaTeX runtime, styles, and fonts.
+|-- languages/                           # Translation catalogs and compiled language assets.
+|-- scripts/                             # Asset, i18n, notice, test, CI, and release tooling.
+|   |-- lib/                             # Shared shell safety helpers.
+|   `-- vendor-licenses/                 # Tracked third-party license source material.
+|-- tests/                               # PHP, Node, and browser verification suites.
+|   |-- Unit/                            # Isolated PHP behavior tests.
+|   |-- Integration/                     # WordPress, service, and REST integration tests.
+|   |-- Node/                            # Node-based release, CI, asset, i18n, and safety tests.
+|   |-- e2e/                             # Chromium Playwright author-workflow tests.
+|   |-- fixtures/                        # Shared synthetic test inputs.
+|   `-- phpunit/                         # PHPUnit bootstrap and test support.
+|-- docs/                                # Architecture, product, development, release, and contributor documentation.
+|   |-- assets/                          # Documentation-only images and assets.
+|   |-- decisions/                       # Architectural decision records.
+|   |-- examples/                        # Documentation examples.
+|   `-- templates/                       # Canonical contribution and review templates.
+|-- docker/                              # Containerized development and CI support.
+|   `-- ci/                              # Reproducible CI image and WordPress test configuration.
+|-- .agents/                             # Repository-scoped agent guidance.
+|   `-- skills/                          # EasyMDE and internationalization execution skills.
+|-- .github/                             # GitHub repository automation.
+|   `-- workflows/                       # GitHub Actions workflow definitions.
+|-- composer.json                        # PHP runtime and development dependency manifest.
+|-- composer.lock                        # Locked PHP dependency graph.
+|-- package.json                         # Node scripts and dependency manifest.
+|-- package-lock.json                    # Locked Node dependency graph.
+|-- biome.json                           # JavaScript and TypeScript lint configuration.
+|-- phpcs.xml.dist                       # PHP coding-standard configuration.
+|-- phpunit.xml.dist                     # PHPUnit configuration.
+|-- playwright.config.mjs                # Playwright end-to-end configuration.
+`-- docker-compose.yml                   # Local and CI service orchestration configuration.
+```
+
+The repository tree describes tracked source and committed runtime boundaries, not the contents of an installable plugin ZIP.
+
+`assets/build/` contains committed manifest-backed production bundles and metadata, so generated filenames and hashes are intentionally omitted.
+
+The installable ZIP adds Composer runtime `vendor/` after dependency installation and excludes `frontend/`, tests, development metadata, and repository-only documentation; source archives are separate artifacts.
+
+Ignored dependency, cache, distribution, coverage, report, task, and machine-local paths are intentionally omitted, and `.gitignore` remains authoritative for those paths.
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. Exact `lucide-react@0.487.0` source is a development-only input to `scripts/generate-lucide-icons.mjs`; generated local icon nodes are compiled into the ordinary and immersive Editor interfaces without adding a browser runtime dependency. This version remains intentionally locked because the audited ordinary-toolbar contract uses its icon paths: `lucide-react@1.27.0` changes the visible Code, List, List Ordered, and Palette nodes. A future upgrade is therefore a visual-contract change and must repeat the controlled toolbar comparison. `npm run frontend:check` verifies the locked generated nodes, runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production Editor, public code-copy, shared enhancement, and DOM bootstrap builds that must match their committed runtimes byte for byte.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. Exact `lucide-react@0.487.0` source is a development-only input to `scripts/generate-lucide-icons.mjs`; generated local icon nodes are compiled into the ordinary and immersive Editor interfaces without adding a browser runtime dependency. This version remains intentionally locked because the audited ordinary-toolbar contract uses its icon paths: `lucide-react@1.27.0` changes the visible Code, List, List Ordered, and Palette nodes. A future upgrade is therefore a visual-contract change and must repeat the controlled toolbar comparison. `npm run frontend:check` verifies the locked generated nodes, runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production comparisons for all eight manifest-backed Vite entries that must match their committed runtimes byte for byte.
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor.tsx` is the sole production browser
-entry for the ordinary Editor. `AdminAssets` validates
-`assets/build/wordpress-manifest.json` and its dependency metadata, enqueues the
-stable `easymde-admin-editor-toolbar` handle, serializes the versioned Root
-Bootstrap contract, and does not enqueue an admin Legacy bootstrap, jQuery, or
-Focus Mode assets. `templates/admin/editor-shell.php` provides one empty
-`#easymde-editor-root` mount and native WordPress submission fields. The
-Markdown field remains visible until CodeMirror owns a working document session;
-React then hides both that bridge field and `#postdivrich`, restoring them on
-teardown or failure; there is no parallel Legacy editor container.
+`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, and serializes the versioned loader Bootstrap with `mainScriptUrl`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed `frontend/src/entrypoints/admin-editor.tsx` main entry, and starts the same React Editor Root after its DOM gate is ready. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
 
 `frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
 production entry for published EasyMDE content. `FrontendAssets` conditionally
@@ -172,188 +240,13 @@ results and never retry protected mutations automatically. The separately
 approved bounded Image Hosting primary- and backup-write contract is the only
 current exception; Verify Upload remains single-attempt.
 
-Local Draft recovery uses the versioned
-`easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a
-500-millisecond latest-write scheduler, explicit read/write/discard failures,
-and cross-tab conflict handling. New-post identity comes from the stable PHP
-Bootstrap contract rather than WordPress's temporary auto-draft ID. WeChat
-export is invoked with only the current stable sanitized and enhanced Preview.
-The session/EditorRoot owns that source boundary; the Adapter serializes the
-HTMLElement it receives and does not establish a second document authority. The
-`createBrowserWechatClipboard` Adapter owns one clone-and-serialize pipeline;
-that session passes it the current stable Preview sink. Both
-`navigator.clipboard.write` and the legacy `document.execCommand('copy')`
-compatibility path receive the same normalized HTML. The modern path derives
-`text/plain` from the connected normalized export surface captured for that
-same preparation after removing exporter whitespace markers and normalizing
-non-breaking spaces; the modern plain-text measurement host uses the rendered
-Preview width, reusing the last non-zero rendered width while immersive source
-mode temporarily hides the Preview surface. The legacy path selects the same
-HTML and lets the destination derive visible plain text. When WeChat export is
-disabled by bootstrap, EditorRoot does not schedule background preparation or
-fetch theme assets. Stable Preview notifications schedule
-one debounced preparation after the Preview settles; this may prewarm the
-Adapter's bounded same-origin theme-image cache (at most 32 entries). Each
-approved same-origin theme-image request has a ten-second abortable timeout
-that remains active through fetch, response-body reads, and Data URL
-conversion; timeout evicts the pending cache entry and fails the preparation
-so a later copy may retry it. The browser adapter forwards the serializer-owned
-RequestInit signal unchanged. When
-approved theme-image preparation is still pending, the modern path passes
-deferred `Blob` Promises to one `ClipboardItem` and starts
-`navigator.clipboard.write` in the originating click task. When no approved
-theme image needs asynchronous materialization, the modern path still uses
-the asynchronous prepared payload; background preparation never performs a
-synchronous full-Preview serialization. If `ClipboardItem` construction or
-the `write()` invocation throws synchronously and no current prepared payload
-exists, the adapter may make one synchronous serialization attempt in that
-originating click task for the activation-safe legacy fallback. Preparation
-retains one serialized HTML/plain-text payload for the current Preview sink; the legacy path
-consumes it only when ready and calls `execCommand` synchronously in that same
-click task. A click before required asynchronous preparation completes, a modern
-write rejected after an await, or a payload that resolves after a fast write with
-an error is an explicit failure and never enters legacy asynchronously. A
-synchronous `ClipboardItem`/`write()` setup failure may use the current prepared
-payload through legacy in the same click task. Immersive visual edits coalesce
-  preparation, and later stable Preview notifications replace the prepared
-  payload; the full sink markup, including root `class`/`style` attributes,
-  plus the current viewport, computed export styles, pseudo-element styles, and
-  element geometry is checked before reuse. Window/viewport resize and
-  immersive split-pane changes schedule a refreshed payload, so layout-only
-  changes cannot strand a stale legacy copy: while a replacement is pending,
-  the last resolved payload remains available to the synchronous legacy path
-  only when the source markup is unchanged; a successful replacement
-  supersedes it, a failed replacement restores the newest successful
-  same-source payload (including one resolved by an older overlapping refresh),
-  and changed source markup never reuses it. Preparation generations are
-  monotonic, so an older completion cannot downgrade a newer successful
-  same-source fallback. The layout fingerprint ignores viewport-relative
-  `left`/`top`/`right`/`bottom` coordinates so ordinary page scrolling does not
-  invalidate a payload; dimensions and computed styles that affect wrapping still
-  invalidate it. Background preparation failures remain quiet until the
-  actual copy attempt reports the failure. When the legacy path has no prepared
-  entry after a transient failure, that click starts one background retry but
-  still returns failure; a later click may use it only after it resolves. The browser
-  environment also observes the current sink's image/video load, error,
-  metadata, and resize events, FontFaceSet loading completion/failure,
-  ResizeObserver geometry, and inserted or removed descendants; those
-  post-render layout changes schedule the same refresh, removed nodes are
-  unobserved immediately, and observers/listeners are cleaned up with the sink.
-  Font, theme,
-  or responsive layout changes cannot reuse stale HTML, and output from the
-  moment immersive mode opened or from an earlier edit is not reused.
-  The EditorRoot observes whichever Preview surface is currently active,
-  including the immersive visual surface. When a visual appearance or Custom CSS
-  update first tears down that runtime, the refreshed ordinary Preview snapshot
-  triggers preparation after cleanup, so legacy Copy never depends on a stale or
-  disposed element.
-  Stable Preview snapshot notifications target that same active surface; a
-  hidden ordinary Preview refresh cannot cancel preparation for the editable
-  visual surface.
-  EditorRoot marks these notifications as background preparation: the adapter
-  starts at most one full Preview serialization per sink, keeps only the latest
-  request while that serialization is active, and waits for a quiet turn before
-  replacing it. Background style and geometry walks also yield to browser tasks
-  periodically, so rapid immersive split-layout changes remain interactive
-  without weakening the full markup, viewport, style, pseudo-element, and
-  geometry freshness checks used by Copy.
-Copy is a browser compatibility output and never writes Markdown,
-`post_content`, metadata, revisions, or publication state.
+Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
-Mermaid flowcharts use SVG `foreignObject` labels whose preview dimensions are
-calculated with the preview font. WeChat can use a wider fallback font and
-also strips `white-space`, `word-break`, and `<nobr>` during paste. The shared
-serializer therefore scopes visible overflow and non-wrapping structure to
-Mermaid `foreignObject` labels, expands numeric label widths around the original
-center by at least 32px or 1.5x, and gives the XHTML label container intrinsic
-`max-content` sizing. It also inserts zero-width word-joiner markers; modern
-plain text removes those markers. This keeps the full label when the destination
-font is wider without moving the node's center. Ordinary SVG, ER/text
-diagrams, and KaTeX are not rewritten by this Mermaid-specific path.
+WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
 
-The serializer removes scripts, styles, interactive controls, CSS classes, and
-source/editor transient attributes; keeps only valid fragment IDs and
-SVG-internal IDs; sanitizes URL and style values; preserves safe image `src`,
-`srcset` candidates, and link URLs; remote `<img>`/`srcset` candidates may
-remain but are not fetched by the serializer; removes unsafe URLs and replaces
-remote/non-allowlisted CSS background URLs with `none` layer slots; and
-materializes only same-origin `/assets/images/`
-GIF/JPEG/PNG/WebP background assets as bounded data images (at most 32 cached
-assets; each fetched source blob is limited by `MAX_DATA_IMAGE_LENGTH` =
-4,000,000). Repeating theme
-backgrounds retain their materialized `background` declaration rather than
-being flattened to one `<img>`. Generated theme-image
-`<img>` nodes retain their explicit background dimensions and are excluded from
-generic media bounds. A single numeric `background-size` token maps to an
-explicit width with `height:auto`; a second numeric token remains the
-explicit height. Omitted or `auto` sizing remains intrinsic rather than being
-stretched to the host box, while `cover` and `contain` map to equivalent
-`object-fit` sizing. CSS edge-offset positions such as `right 12px bottom 6px`
-retain both edge and offset values. Materialized theme images use `max-width:none` so a fixed
-decoration wider than its host is not clamped by destination image defaults.
-For non-repeating multi-layer
-backgrounds, non-image layers such as gradients remain in the copied CSS and
-each safe image layer becomes an isolated overlay with its original order,
-background size, and background position. The copied `background-repeat`,
-`background-position`, and `background-size` longhands are expanded according
-to CSS's repeated-final-layer semantics and compacted by the removed image
-indexes, so they remain aligned with retained layers. Quoted pseudo-elements
-with visible text use an isolated negative-level image overlay; empty
-decoration pseudo-elements may retain an in-flow image footprint. It preserves
-approved computed typography, borders, quoted-literal pseudo elements, theme
-  decorations, non-root decoration dimensions/relative/absolute positioning/
-  flex sizing/float/overflow and box sizing, non-math SVG responsiveness, media bounds without
-  changing inline media display or margins, and KaTeX's visual SVG tree, but
-  removes only the `.katex-mathml` tree so WeChat cannot import two competing
-  formula trees. Hidden SVG `<defs>` subtrees are retained for visible
-  clip-path/mask/gradient/filter references, while unrelated hidden nodes are
-  removed. Non-literal pseudo content such as `attr()` and counters is
-  intentionally omitted. KaTeX MathML in this contract means only the generated
-  `.katex-mathml` fallback tree; arbitrary MathML authored in Markdown is not
-  implicitly normalized. Materialized background-image overlays use an
-  isolated negative stacking level so they remain behind copied text. Computed
-  `0%`, `50%`, and `100%` background positions are normalized before composing
-  centered theme-image overlays. Single-token `background-position` values use
-  CSS's centered missing-axis default. Two-value keyword/offset positions follow
-  CSS axis order (`left 10px` uses the vertical offset and `top 10px` uses the
-  horizontal offset); explicit edge offsets use the four-value form. Fixed/sticky positioning is never reactivated
-  by a generated overlay, and offsets inert under static positioning are
-  neutralized when the exporter creates a relative containing block.
-  Exporter-owned `aria-hidden` decoration
-and `leaf` markers are structural exceptions to source transient-attribute
-removal. Article/div roots become portable sections and text leaves are wrapped
-for destination stability. Code frames encode line breaks explicitly and keep
-each source line non-wrapping.
-Tables and display formulas are centered within the destination column and
-receive horizontal-overflow rules; inline formulas remain non-wrapping. Each
-copied table is placed in a real block scroll owner while the table keeps
-intrinsic `max-content` sizing, so short tables remain centered and wide rows
-scroll horizontally without relying on ignored overflow on `display:table`.
-When full-width behavior is derived from rendered geometry rather than a
-literal `width:100%`, the serializer caches the source table's last visible
-classification and reuses it while immersive source mode hides the Preview;
-a later visible pass replaces that classification.
-Theme table shims (`display:contents`, `container-type`, and `100cqi`
-pseudo-element geometry) are preserved. Task-list checkboxes retain checked
-state as disabled, attribute-minimized controls; arbitrary form controls are
-removed. The actual code/table/formula scroll owner must be checked in the
-destination, and no exporter wrapper may impose a whole-article height or
-vertical scrollbar, so a page-level WeChat scrollbar is not evidence of an
-article-level serializer defect.
+`createBrowserWechatClipboard` currently limits materialized theme-image data payloads to 4,000,000 bytes, retains at most 32 background-asset cache entries, and applies 10,000 ms timeouts to approved theme-image fetch/conversion and Clipboard commit.
 
-On failure, the Adapter reports the actual browser result. Its temporary
-fallback container, Selection, Focus, and Scroll are restored on every exit;
-the WeChat export session exposes an error and never claims a copy succeeded.
-`createWechatExportSession` is the single session owner shared by the ordinary
-and immersive surfaces. It checks the enabled/active state and the current
-Preview sink before invoking the Adapter, rejects empty/loading/error Preview
-states with `wechat-preview-unavailable`, coalesces concurrent requests, maps
-Adapter rejection to `wechat-copy-failed`, reports
-`wechat-clipboard-unsupported` separately, and suppresses late status after
-teardown. A failed same-origin theme-image fetch or conversion rejects the
-copy; it never publishes a partial payload.
-The decision rationale and rejected alternatives are in
-[ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
+The executable serializer contract and edge cases are owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); architectural rationale and rejected alternatives are in [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md); focused verification steps are in [Testing and Release](TESTING_AND_RELEASE.md#wechat-clipboard-verification); and user-visible behavior is in the [User Guide](USER_GUIDE.md#copy-to-wechat).
 
 ## Service Wiring
 

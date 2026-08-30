@@ -146,9 +146,24 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production normal-editor, public code-copy, shared enhancement, DOM bootstrap, Mermaid, and Settings Center comparisons. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all eight manifest-backed Vite entries. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run check:frontend-production` builds the Editor, code-copy, shared frontend enhancements, DOM bootstrap, Mermaid, and Settings Center entries from their Vite configs into their `.cache/*-production-check/` directories, validates each output, and compares each complete file set and its bytes with the committed `assets/build/` runtimes without rewriting them. `npm run build:frontend` is the explicit maintainer command that regenerates all committed Vite/WordPress Manifest pairs, hashed scripts, and matching `.asset.php` dependency metadata. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps. The Editor entry retains the stable `easymde-admin-editor-toolbar` handle and declares the WordPress-owned `media-editor`, `wp-api-fetch`, `wp-element`, `wp-hooks`, and `wp-i18n` runtimes it consumes. The independent public TypeScript entries retain the stable `easymde-code-copy`, `easymde-enhancements`, `easymde-frontend`, and `easymde-mermaid` handles and have no WordPress script dependency. The independent Settings Center entry retains the stable `easymde-admin-settings-center` handle and depends only on the WordPress-owned `wp-element` runtime. The Mermaid and Settings Center entries are committed under their dedicated `assets/build/*` roots and are validated through their manifests and complete byte-for-byte production comparisons.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the eight Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
+
+The current production build and entry matrix is:
+
+| Vite config | Build root | Source entry | WordPress handle | Dependencies |
+| --- | --- | --- | --- | --- |
+| `frontend/vite.production.config.ts` | `assets/build` | `frontend/src/entrypoints/admin-editor.tsx` | `easymde-admin-editor-toolbar` | `wp-api-fetch`, `wp-element`, `wp-hooks`, `wp-i18n` |
+| `frontend/vite.admin-editor-loader.config.ts` | `assets/build/admin-editor-loader` | `frontend/src/entrypoints/admin-editor-loader.ts` | `easymde-admin-editor-toolbar` | `wp-api-fetch`, `wp-element`, `wp-hooks`, `wp-i18n` |
+| `frontend/vite.code-copy.config.ts` | `assets/build/code-copy` | `frontend/src/entrypoints/frontend-code-copy.ts` | `easymde-code-copy` | none |
+| `frontend/vite.settings.config.ts` | `assets/build/settings-center` | `frontend/src/entrypoints/settings-center.tsx` | `easymde-admin-settings-center` | `wp-element` |
+| `frontend/vite.enhancements.config.ts` | `assets/build/frontend-enhancements` | `frontend/src/entrypoints/frontend-enhancements.ts` | `easymde-enhancements` | none |
+| `frontend/vite.bootstrap.config.ts` | `assets/build/frontend-bootstrap` | `frontend/src/entrypoints/frontend-bootstrap.ts` | `easymde-frontend` | none |
+| `frontend/vite.mermaid.config.ts` | `assets/build/frontend-mermaid` | `frontend/src/entrypoints/frontend-mermaid-runtime.ts` | `easymde-mermaid` | none |
+| `frontend/vite.media-picker.config.ts` | `assets/build/media-picker` | `frontend/src/entrypoints/media-picker-bridge.ts` | `easymde-media-picker-bridge` | `media-editor` |
+
+Each row has a committed `manifest.json` and `wordpress-manifest.json`, and the `media-editor` dependency appears only in the `media-picker` WordPress manifest.
 
 ## WeChat Clipboard Verification
 
@@ -164,175 +179,18 @@ The session boundary has a separate focused command:
 npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
 ```
 
-The current focused Adapter suite covers the normalized clone, unsafe URL/style
-rejection, pseudo-element and same-origin theme-image portability, repeating
-theme-background preservation, inline media
-layout preservation with responsive bounds, Mermaid `foreignObject` label
-overflow and non-wrapping markers, KaTeX visual-tree and KaTeX MathML behavior,
-hidden SVG definition preservation for visible clip-path/gradient references,
-explicit code line breaks, intrinsic centered tables with a dedicated scroll
-owner, theme table `display:contents`/container-query shims, task-list checkbox
-state preservation, table/formula horizontal overflow, modern/legacy HTML
-parity, synchronous legacy preparation for payloads without remote theme
-images, synchronous modern setup fallback,
-modern write rejection without asynchronous legacy fallback, and an explicit
-failure result with sandbox cleanup. Its theme-image activation assertion verifies that modern
-`Clipboard.write` starts before a delayed approved image fetch resolves and
-that the deferred HTML payload still materializes; a stalled theme-image
-request aborts after the bounded timeout, including when the response body
-stalls after headers arrive, and fails preparation; repeating theme backgrounds
-retain their materialized CSS declaration rather than flattening to one image;
-a mixed gradient/image background retains its non-image layer and its
-`background-repeat`/`background-position`/`background-size` longhands (including
-compaction when the image layer precedes the gradient), an unsafe URL in a
-mixed stack becomes a `none` slot without losing the safe gradient, visible
-quoted pseudo-element text keeps its image behind the text, and multiple safe
-`background-image` layers are all materialized with their source order,
-matching size/position, and visible stacking levels. Two-value keyword/offset
-positions verify CSS axis order (`left 10px` versus `top 10px`);
-a fast write followed by a
-failed deferred payload remains an explicit failure. Its Mermaid assertion covers
-complete non-ASCII labels in both payload paths; the modern `text/plain`
-assertion removes exporter-only markers and its measurement host uses the
-rendered Preview width, including reuse of the last visible width when
-immersive source mode hides the Preview. The table regression also copies once
-while visible and again after the Preview pane is hidden, verifying that the
-last visible geometry-derived full-width decision is retained. EditorRoot
-coverage verifies that stable Preview refreshes keep preparation bound to the
-active visual surface rather than a hidden ordinary sink, and that a
-disabled WeChat export does not schedule background serialization or theme-image
-fetches. Legacy retry coverage verifies that a transient
-preparation failure starts one background retry without claiming success for
-that first click.
-The normal preparation path is intentionally asynchronous even when no theme
-image is pending; this keeps Mermaid/KaTeX-heavy Preview updates from blocking
-the editor main thread. EditorRoot background notifications are additionally
-coalesced per Preview: at most one full serialization runs at a time, only the
-latest request is retained while it runs, and a short quiet delay separates
-replacements. Background style and geometry walks must periodically yield to a
-browser task so rapid theme or split-pane changes remain interactive. The
-synchronous serializer is covered only as
-the click-task fallback when `ClipboardItem` construction or `write()` throws
-synchronously and no current prepared payload exists. The focused tests must
-also preserve the negative case: a modern write rejection after an `await` never
-crosses into legacy `execCommand`.
-The Adapter and EditorRoot regressions also verify that immersive visual edits
-  coalesce preparation and replace the prepared payload, root-only font/theme
-  changes or responsive computed-style/geometry changes cannot reuse a stale
-  prepared payload, a layout-only replacement keeps the last stable legacy
-  payload until the new one succeeds when source markup is unchanged, failed
-  replacement restores the newest successful same-source payload even when an
-  older overlapping refresh resolves first, and an older completion cannot
-  downgrade a newer successful same-source fallback because preparation
-  generations are monotonic. Scroll-only viewport-coordinate changes reuse the
-  prepared payload while dimensions and computed layout remain unchanged.
-  Ordinary non-root theme decorations retain
-  dimensions/positioning/flex sizing/float/overflow/box-sizing, materialized
-  theme-image dimensions are not overwritten by generic media bounds; a
-  single numeric `background-size` token keeps the missing height automatic,
-  omitted or `auto` sizing keeps the image intrinsic, `cover`/`contain` map to
-  `object-fit`, and materialized theme images are not clamped to their host
-  width. Four-token edge offsets such as `right 12px bottom 6px` retain both
-  edge and offset values.
-  Background images remain behind copied text, and computed percentage background
-positions compose both centered overlay transforms, including CSS single-token
-position defaults; a fixed/sticky source decoration must not reactivate that
-positioning in the copied payload, and
-static-source offsets must be neutralized when an overlay creates a relative
-containing block.
-The EditorRoot and layout-owner checks also cover viewport resize and immersive
-split-pane changes refreshing the debounced legacy payload, while background
-preparation rejection stays silent until the actual copy attempt. Browser
-environment coverage also verifies Preview image/video load, error, metadata,
-and resize observation and listener cleanup; the implementation observes font
-loading, post-render geometry, and inserted or removed descendants through the
-same Port and releases removed-node observers immediately.
-EditorRoot coverage also verifies that the observer is rebound when immersive
-visual Preview mounts, and that article-theme and Custom CSS changes refresh
-the legacy payload after visual-editor teardown even when the replacement
-Preview request is still pending.
-It does not yet prove an asynchronous modern-write rejection followed by a
-successful legacy copy, unsupported legacy results, non-2xx responses, invalid
-theme-image MIME/size responses, FileReader/data-conversion failures, or full
-Selection/Focus/Scroll restoration on every failure path; add those cases
-before treating the boundary as fully covered. The current Chromium E2E
-fixture only proves the editor/session command path, the activation-safe
-modern write, and local runtime loading. Its Clipboard stub does not assert
-the complete `text/html`/`text/plain` payload, the sanitized pasted WeChat DOM,
-or a legacy fallback; the authorized authenticated-browser check below is
-still required for those claims. `npm run frontend:check` is the required full frontend gate;
-`npm run check:frontend-production` must compare the compiled admin entry
-containing the Adapter with the committed hashed runtime without rewriting it.
+The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
-The companion `frontend/src/features/wechat-export/wechat-export-session.test.ts`
-currently covers one pending operation for concurrent requests, the unsupported
-Adapter result, and late completion after teardown. Keep it as the session
-boundary and extend it with disabled/inactive export, every empty/loading/error
-Preview readiness state, rejection before Clipboard, Adapter rejection mapping,
-and truthful status messages. The Chromium coverage in
-`tests/e2e/easymde.spec.mjs` must exercise both ordinary and immersive Copy to
-WeChat commands against the same stable Preview and confirm that local runtime
-assets remain the only loaded executable resources.
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown.
 
-The two long Chromium theme matrices keep the original editor page alive through
-WordPress's supported `wp.heartbeat.disableSuspend()` and
-`wp.heartbeat.connectNow()` APIs. The helper resumes a previously suspended
-Heartbeat with a real user-activity event, waits for the actual response, and
-verifies its authentication state on that same page so its editor DOM and
-Preview state are preserved. If the response reports an expired session, the
-helper completes WordPress's existing `#wp-auth-check-frame` interim login on
-that same page and verifies a second authenticated pulse; missing fields,
-failed reauthentication, or unavailable Heartbeat are explicit test failures.
-It never opens an auxiliary login page that could suspend the editor and mask
-the failure behind an auth-check overlay.
+The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources.
 
-When the copy boundary or any theme/Preview enhancement changes, run a fresh
-real-browser check in an explicitly authorized local authenticated WordPress
-and WeChat session using the synthetic full-capability fixture. Capture source
-Preview and pasted WeChat screenshots at the same viewport, then inspect the
-payload and pasted DOM. For Mermaid, verify complete labels in at least one
-HTML-label flowchart and one non-`foreignObject` diagram (for example ER/text);
-record whether the destination strips CSS/`nobr` and confirm the zero-width
-marker path keeps labels on one line. Before and after paste, record every
-numeric `foreignObject` width/x pair and verify that the label center is stable
-while its width satisfies the exporter gutter/scale contract; inspect the
-complete visible label text, not only the SVG markup. Measure card, code, table, and formula
-`clientWidth`,
-`scrollWidth`, `scrollTop`, and `overflow-x/y`; expected long content has one
-horizontal owner and no exporter-created article-wide vertical owner. For every
-table, assert that the generated block wrapper owns horizontal overflow and
-that the intrinsic table does not; include at least one built-in theme with
-`display:contents`, `container-type`, and its `100cqi` pseudo-element shim.
-Verify task-list checkboxes preserve checked state without names/values and are
-disabled, while arbitrary controls are absent. Check that `.katex-mathml`,
-source CSS classes/transient attributes, unsafe URLs,
-hidden controls, and remote executable resources are absent; exporter-owned
-`aria-hidden`/`leaf` markers are expected structural exceptions. A page-level scrollbar
-must be measured at the WeChat document/editor shell separately; it is not a
-copy regression unless the current pasted article itself owns that scroll.
-The Chromium E2E Clipboard stub proves command/session behavior and local asset
-loading, but not the final WeChat DOM. Focused Adapter tests compare both
-Clipboard API and legacy compatibility results, including equal
-visible `text/plain` after exporter-marker removal, restore/failure
-states, and visual geometry for headings, theme decorations, images, code,
-tables, inline formulas, every display-formula family, and both edges of a
-long case. Also verify that a loading/error/empty Preview does not call either
-copy path, repeated clicks do not create parallel clipboard writes, and
-leaving the editor does not announce a late success. Never publish or send the
-test article, and keep screenshots and browser reports temporary and
-privacy-safe.
+For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
+Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas.
+Verify Preview readiness, task-list state, removal of editor-only or unsafe content, and absence of exporter-created article-wide vertical scrolling.
+Keep the article synthetic and do not publish or send it.
 
-For a theme or copy-boundary change, run the canonical fixture through every
-registered Article Theme and its Registry-owned default Code Theme, recording
-the exact theme pair and build in the evidence. At minimum, inspect headings,
-theme decorations, images, code, tables, inline formulas, and every display
-formula family at both horizontal edges of one long case. The formula matrix is
-maintained in [the full-capability fixture](examples/markdown-full-capability-test.md):
-inline expressions, integral, partial-derivative/limit, matrix, equation
-system, piecewise, statistics, neural-network, error-rate, and percentage
-forms. A screenshot of only one theme or two formula cards is not complete
-family coverage. Keep this canonical list and the fixture synchronized when a
-new formula renderer or formula family is introduced.
+When a required browser, destination, or failure branch is unavailable, record it as unverified rather than treating the focused tests or Chromium stub as proof of real WeChat paste behavior.
 
 Translation maintenance commands are:
 
@@ -419,7 +277,7 @@ license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, either production Frontend manifest pair, the hashed Editor or public code-copy artifacts, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
+The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, any of the eight production Frontend manifest pairs, any manifest-referenced production entry script or matching `.asset.php` artifact, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 
@@ -430,7 +288,7 @@ The CI release package job also creates source snapshots from the checked-out tr
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes the committed Editor artifacts under `assets/build/`, the public code-copy artifacts under `assets/build/code-copy/`, the shared enhancement/bootstrap artifacts under `assets/build/frontend-enhancements/` and `assets/build/frontend-bootstrap/`, and the feature-gated Mermaid bundle under `assets/build/frontend-mermaid/`; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes all eight committed production entries under their manifest-backed `assets/build/` roots, including the Editor, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, and feature-gated Mermaid artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 
@@ -513,8 +371,7 @@ The current release package includes runtime plugin files such as:
 - `easymde.php`, `uninstall.php`, and `readme.txt`;
 - root `README.md`, `SECURITY.md`, `UPGRADING.md`, `THIRD-PARTY-NOTICES.md`, and `LICENSE`;
 - `composer.json` and `composer.lock`;
-- `includes/`, `src/`, `templates/`, `assets/` including both manifest-backed
-  production browser entries, `languages/`, and runtime `vendor/`.
+- `includes/`, `src/`, `templates/`, `assets/` including all eight manifest-backed production browser entries, `languages/`, and runtime `vendor/`.
 
 The package must include Composer runtime dependencies, local Highlight.js and
 KaTeX assets, the manifest-backed Mermaid TypeScript bundle, KaTeX fonts,

@@ -8,41 +8,51 @@ Stable tag: 0.1.8
 License: Apache-2.0
 License URI: https://www.apache.org/licenses/LICENSE-2.0
 
-A standalone WordPress Markdown editor with split-pane live preview, local rendering tools, themes, and WeChat rich-text export.
+A WordPress Markdown editor for writers, with split-pane live preview, themes, diagrams, math, and WeChat rich-text export.
 
 == Description ==
 
-EasyMDE opens new and existing supported WordPress posts and pages in a Markdown editing surface through the normal editor entry points. Existing ordinary content is not converted or written on open; EasyMDE state is established on the next legitimate save.
+EasyMDE gives WordPress writers, technical bloggers, and WeChat content creators a focused Markdown workspace in the normal WordPress editor. It works with Posts, Pages, and other post types supported by the site.
 
-Write Markdown on the left and review a live preview on the right. EasyMDE provides commonly used writing tools, media insertion, local rendering support, article themes, code highlighting, and rich-text export for the WeChat Official Accounts editor.
+Write Markdown on the left and review a live preview on the right. Use familiar WordPress tools to manage media, categories, tags, excerpts, featured images, revisions, and publishing while you work.
 
-EasyMDE is self-contained and does not require Jetpack, Classic Editor, another Markdown plugin, or external CDN assets.
+EasyMDE adds article themes, code highlighting, diagrams, mathematical formulas, and rich-text copy to the WeChat Official Accounts editor. It does not require Jetpack, Classic Editor, or another Markdown plugin.
 
 == Features ==
 
-* Split-pane Markdown source editing and live preview.
-* Scroll synchronization between source and preview panes.
-* Compact icon toolbar for common Markdown formatting actions.
-* Heading, appearance, and output controls in compact popovers.
-* Typora-inspired keyboard shortcuts with configurable Windows/Linux and macOS bindings.
-* Explicit WordPress media library insertion through the toolbar media picker.
-* Local image paste and drag-and-drop upload through the protected same-origin Image Hosting path to administrator-configured Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS; any provider can be primary or the optional backup, both writes use the same generated object key, and the primary Viewing Image Domain owns the returned public URL. One administrator-configured value allows 0 through 5 extra serial attempts for both primary and enabled backup writes. Exhausting either required destination fails the whole upload without returning or inserting a URL; there is no provider switch or WordPress media fallback.
-* Administrator-only Verify Upload sends the bundled EasyMDE PNG to the selected provider using the current file-name rule and reports the authoritative object path and URL without automatic retry or provider switching.
-* REST-powered server preview.
-* Browser local draft autosave and recovery.
-* Fixed 50/50 desktop source/preview workspace with the historical responsive stack at narrow widths.
-* WordPress-native publishing, categories, tags, excerpts, featured images, and revisions remain available in their existing Meta Boxes.
-* Local Highlight.js code highlighting.
-* Local Mermaid diagram rendering.
-* Local KaTeX math rendering.
-* `[TOC]` and `[toc]` table of contents generation.
-* Per-post article themes and code themes.
-* Fixed Mac-style framing for rendered source-code blocks, loaded only when needed.
-* Per-post article font stack selection.
-* Named reusable custom CSS styles.
-* Rich-text “Copy to WeChat” export from the rendered preview.
-* Markdown source stored in post meta and rendered HTML stored in post content.
-* No activation redirect and no unrelated admin-page redirect.
+= Focused writing =
+
+* Work in a split-pane Markdown editor and live preview with synchronized scrolling.
+* Use a compact icon toolbar for common Markdown actions.
+* Use Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS settings.
+* Insert media directly from the WordPress Media Library.
+* Recover browser-local drafts with clear restore, discard, and cross-tab choices.
+* Write beside the live preview on desktop; the panes stack vertically on narrow screens.
+
+= Rich content =
+
+* Write with headings, lists, links, images, tables, task lists, and code blocks.
+* Add code syntax highlighting, Mermaid diagrams, KaTeX formulas, and `[TOC]` or `[toc]` tables of contents.
+* Paste or drag local images into an article with optional Image Hosting.
+* Configure Image Hosting with Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS.
+
+= Personal appearance =
+
+* Choose an article theme, code theme, and font stack for each post.
+* Use the selected appearance on published content, or keep it in editor Preview only.
+* Show published code-block copy buttons by default; hide them when you prefer while keeping code rendering and syntax highlighting.
+* Save named custom CSS styles in your own library and reuse them when needed.
+
+= WordPress integration =
+
+* Write from the normal WordPress Posts, Pages, and other supported post-type screens.
+* Continue using WordPress's native publishing, categories, tags, excerpts, featured images, revisions, and permissions.
+* EasyMDE does not replace the normal WordPress tools you use to manage an article.
+
+= Publishing and sharing =
+
+* Publish formatted Markdown articles through WordPress.
+* Copy the current preview as rich text into the WeChat Official Accounts editor.
 
 == Themes and Appearance ==
 
@@ -77,7 +87,7 @@ EasyMDE also provides code theme options including GitHub, GitHub Dark, Atom One
 
 == Custom CSS ==
 
-Authors can save custom CSS styles with a name and reuse them on later posts.
+Authors with the WordPress `unfiltered_html` capability can save named custom CSS styles in their own library and reuse them on later posts.
 
 When a post uses custom CSS, EasyMDE stores a sanitized CSS snapshot with the post so published content can retain its appearance if the original saved style is later changed or removed.
 
@@ -107,10 +117,9 @@ Any supported provider may be primary or the optional backup. Provider Endpoints
 
 == Installation ==
 
-1. Upload the EasyMDE plugin folder to the `/wp-content/plugins/` directory, or install the plugin ZIP from **Plugins > Add New > Upload Plugin**.
-2. Activate EasyMDE from the **Plugins** screen in WordPress.
-3. Open or create content from the normal **Posts** and **Pages** screens.
-4. Supported posts and pages open in EasyMDE. Legacy EasyMDE Markdown posts read stored Markdown metadata, while ordinary existing posts use an in-memory Markdown import of current post content until first save.
+1. Download `EasyMDE.zip` from the [GitHub Release](https://github.com/tao-xiaoxin/EasyMDE/releases/latest).
+2. In WordPress, go to **Plugins > Add New > Upload Plugin**, upload `EasyMDE.zip`, and activate it.
+3. Open or create a Post, Page, or other supported content type in the normal WordPress editor and start writing in Markdown.
 
 == Frequently Asked Questions ==
 

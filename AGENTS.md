@@ -29,7 +29,7 @@ repository-level summary and an exact route repeated elsewhere.
 | `.agents/skills/easymde/references/wechat-export.md` | Executable WeChat Clipboard serialization and browser integration contract. |
 | `.agents/skills/i18n/SKILL.md` | PHP and React internationalization, extraction, catalogs, script translations, locale, plural, context, RTL, and language-asset package validation. |
 | `docs/ARCHITECTURE.md` | Current, actually implemented architecture. |
-| `docs/REACT_DESIGN_PHILOSOPHY.md` | Durable React design rationale, target boundaries, and long-term direction. |
+| `docs/DESIGN.md` | Durable design rationale, target boundaries, and long-term direction. |
 | `docs/TESTING_AND_RELEASE.md` | Current test, CI, installable ZIP, source archive, Plugin Check, and E2E execution. |
 | `docs/MIGRATION.md` | Implemented data-model, compatibility, and migration transition notes for contributors. |
 | `UPGRADING.md` | User-facing upgrade, rollback, and operator guidance. |
@@ -216,7 +216,7 @@ src/
 - Do not create empty abstraction layers, placeholder modules, or one-method
   classes without a real boundary and current consumer.
 - `docs/ARCHITECTURE.md` describes current implementation.
-  `docs/REACT_DESIGN_PHILOSOPHY.md` owns durable target rationale.
+  `docs/DESIGN.md` owns durable target rationale.
   `.agents/skills/easymde/SKILL.md` owns executable React architecture,
   dependency direction, and pre-delivery checks. Do not mix current and planned
   architecture.
@@ -602,7 +602,7 @@ This approval does not change CSP, Enqueue behavior, local runtime assets, or
 package/build ownership. The complete external-service Decision Record and
 official-policy sources belong to
 `.agents/skills/easymde/SKILL.md`; durable rationale belongs to
-`docs/REACT_DESIGN_PHILOSOPHY.md`; current facts remain in
+`docs/DESIGN.md`; current facts remain in
 `docs/ARCHITECTURE.md`.
 
 ## Repository Workflow and Authorization

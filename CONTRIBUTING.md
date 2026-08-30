@@ -47,7 +47,7 @@ deletion.
   release, or documented extension responsibility.
 - Update [Architecture](docs/ARCHITECTURE.md) only when current implemented
   architecture changes.
-- Update [React Design Philosophy](docs/REACT_DESIGN_PHILOSOPHY.md) only when a
+- Update [Design](docs/DESIGN.md) only when a
   durable React design rationale or boundary changes.
 - Update [Testing and Release](docs/TESTING_AND_RELEASE.md) when current quality
   gates or release execution changes.

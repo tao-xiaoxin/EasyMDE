@@ -117,7 +117,7 @@ Any supported provider may be primary or the optional backup. Provider Endpoints
 
 == Installation ==
 
-1. Download `EasyMDE.zip` from the GitHub Release. GitHub's automatically generated `Source code (zip)` and `Source code (tar.gz)` files are source archives, not installable plugins.
+1. Download `EasyMDE.zip` from the GitHub Release.
 2. In WordPress, go to **Plugins > Add New > Upload Plugin**, upload `EasyMDE.zip`, and activate it.
 3. Open or create a Post, Page, or other supported content type in the normal WordPress editor and start writing in Markdown.
 

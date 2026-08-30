@@ -36,18 +36,20 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 
 ## Requirements
 
-- WordPress 6.7 or newer.
-- PHP 7.4 or newer with the DOM extension enabled.
+| Environment | Requirement |
+| --- | --- |
+| WordPress | 6.7 or newer |
+| PHP | 7.4 or newer with the DOM extension enabled |
 
 ## Installation
 
-1. Download `EasyMDE.zip` from the GitHub Release above. Do not download GitHub's automatically generated `Source code (zip)` or `Source code (tar.gz)` files; they are not installable plugins.
+1. Download `EasyMDE.zip` from the GitHub Release above.
 2. In WordPress, go to **Plugins > Add New > Upload Plugin**, upload `EasyMDE.zip`, and activate it.
 3. Open **Posts** or **Pages** and start writing in Markdown.
 
 ## Features
 
-**Focused writing**
+### ✍️ Focused writing
 
 - Split Markdown source editor and live preview.
 - Scroll synchronization between source and preview panes.
@@ -56,7 +58,7 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Write beside the live preview on desktop; the panes stack vertically on narrow screens.
 
-**Rich content**
+### 🧩 Rich content
 
 - Common Markdown content such as headings, lists, links, images, tables, task lists, and code blocks.
 - Code syntax highlighting, Mermaid diagrams, and KaTeX mathematical formulas.
@@ -64,7 +66,7 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 - WordPress Media Library insertion through the toolbar media picker.
 - Optional Image Hosting for local image paste and drag-and-drop, with Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS.
 
-**Personal appearance**
+### 🎨 Personal appearance
 
 - Per-post article themes and code themes.
 - Use the selected appearance on published content, or keep it in editor Preview only.
@@ -72,14 +74,14 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 - Per-post article font stack selection.
 - With the required permission, save named custom CSS styles and reuse them when needed.
 
-**WordPress integration**
+### 🧭 WordPress integration
 
 - Write from the normal WordPress **Posts** and **Pages** editing screens.
 - Continue using WordPress Media Library, categories, tags, excerpts, featured images, and revisions.
 - Use WordPress's native save, publishing, and permission workflows.
 - No Jetpack, Classic Editor, or another Markdown plugin is required.
 
-**Publishing and sharing**
+### 📤 Publishing and sharing
 
 - Publish formatted articles through WordPress.
 - Copy the current preview as rich text to the WeChat Official Accounts editor.
@@ -100,7 +102,15 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 
 ## Development
 
-Contributors can start with [Development setup](docs/DEVELOPMENT.md) and [Testing and release](docs/TESTING_AND_RELEASE.md).
+Start with:
+
+```bash
+composer install
+npm install
+npm run assets:check
+```
+
+For more, see [Development setup](docs/DEVELOPMENT.md) and [Testing and release](docs/TESTING_AND_RELEASE.md).
 
 ## Support EasyMDE
 

@@ -36,18 +36,20 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 
 ## 要求
 
-- WordPress 6.7 或更高版本。
-- PHP 7.4 或更高版本，并启用 DOM 扩展。
+| 环境 | 要求 |
+| --- | --- |
+| WordPress | 6.7 或更高版本 |
+| PHP | 7.4 或更高版本，并启用 DOM 扩展 |
 
 ## 安装
 
-1. 下载上方 GitHub Release 中的 `EasyMDE.zip`。请不要下载 GitHub 自动生成的 `Source code (zip)` 或 `Source code (tar.gz)`，它们不是可安装插件。
+1. 下载上方 GitHub Release 中的 `EasyMDE.zip`。
 2. 在 WordPress 后台进入 **插件 > 安装插件 > 上传插件**，上传并启用 `EasyMDE.zip`。
 3. 打开 **文章** 或 **页面**，开始用 Markdown 写作。
 
 ## 功能
 
-**专注写作**
+### ✍️ 专注写作
 
 - 分栏 Markdown 源文档编辑器和实时预览。
 - 源文档与预览窗格滚动同步。
@@ -56,7 +58,7 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 - 浏览器本地草稿恢复支持明确恢复、丢弃和跨标签页冲突处理。
 - 桌面端并排写作与预览，窄屏下上下排列。
 
-**丰富内容**
+### 🧩 丰富内容
 
 - 支持标题、列表、链接、图片、表格、任务列表和代码块等常用 Markdown 内容。
 - 支持代码语法高亮、Mermaid 图表和 KaTeX 数学公式。
@@ -64,7 +66,7 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 - 通过工具栏媒体选择器插入 WordPress 媒体库内容。
 - 可选的图床上传用于本地图片粘贴和拖放，支持 Cloudflare R2、七牛云 Kodo、阿里云 OSS 和腾讯云 COS。
 
-**个性外观**
+### 🎨 个性外观
 
 - 每篇文章独立选择文章主题和代码主题。
 - 选定外观可应用于已发布内容，也可以只用于编辑器预览。
@@ -72,14 +74,14 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 - 每篇文章独立选择文章字体栈。
 - 具备相应权限时，可保存命名的自定义 CSS 样式，并按需复用于文章。
 
-**融入 WordPress**
+### 🧭 融入 WordPress
 
 - 在 WordPress 正常的 **文章** 和 **页面** 编辑入口中写作。
 - 继续使用 WordPress 的媒体库、分类、标签、摘要、特色图片和修订版本。
 - 使用 WordPress 原生的保存、发布和权限流程。
 - 不需要 Jetpack、Classic Editor 或其他 Markdown 插件。
 
-**发布与分享**
+### 📤 发布与分享
 
 - 在 WordPress 页面中发布排版后的文章内容。
 - 将当前预览以富文本 **复制到微信**，用于微信公众号编辑器。
@@ -100,7 +102,15 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 
 ## 开发
 
-开发者请参阅 [开发设置](docs/DEVELOPMENT.md) 和 [测试与发布](docs/TESTING_AND_RELEASE.md)。
+从以下命令开始：
+
+```bash
+composer install
+npm install
+npm run assets:check
+```
+
+更多请参阅 [开发设置](docs/DEVELOPMENT.md) 和 [测试与发布](docs/TESTING_AND_RELEASE.md)。
 
 ## 支持 EasyMDE
 

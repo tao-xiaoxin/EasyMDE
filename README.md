@@ -43,7 +43,7 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 
 ## 安装
 
-1. 下载上方 GitHub Release 中的 `EasyMDE.zip`。
+1. 下载 [GitHub Release](https://github.com/tao-xiaoxin/EasyMDE/releases/latest) 中的 `EasyMDE.zip`。
 2. 在 WordPress 后台进入 **插件 > 安装插件 > 上传插件**，上传并启用 `EasyMDE.zip`。
 3. 打开 **文章** 或 **页面**，开始用 Markdown 写作。
 

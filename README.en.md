@@ -43,7 +43,7 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 
 ## Installation
 
-1. Download `EasyMDE.zip` from the GitHub Release above.
+1. Download `EasyMDE.zip` from the [GitHub Release](https://github.com/tao-xiaoxin/EasyMDE/releases/latest).
 2. In WordPress, go to **Plugins > Add New > Upload Plugin**, upload `EasyMDE.zip`, and activate it.
 3. Open **Posts** or **Pages** and start writing in Markdown.
 

@@ -351,6 +351,49 @@ npm run notices:check
 
 The WordPress i18n runtime job installs WordPress, activates EasyMDE with runtime Composer dependencies, and runs `scripts/verify-wordpress-i18n.php`.
 
+## Version Tracking And Formal Release
+
+This section is the sole owner of candidate versus formal-release status,
+channel publication evidence, and artifact and commit identity. The creation,
+maintenance, linkage, and human-closure workflow for the tracking Issue is in
+[Contributing](../CONTRIBUTING.md#authoritative-version-tracking-issues).
+
+The current required release-channel set is GitHub Releases only. Record any
+optional channel explicitly on the tracking Issue, and do not claim or invent a
+WordPress.org release. If more than one channel is explicitly required, every
+required channel must have its publication evidence before the target is formal.
+
+`candidate` means that the exact target has a reviewed candidate PR and exact
+candidate or release-commit SHA, and that the applicable validation and review
+results are recorded. Candidate validation must verify that all six canonical
+release identity fields equal the exact target, including both root
+`package-lock.json` fields. Candidate evidence must stay bound to that commit
+and its identified artifacts. A prep merge, green CI, an Actions artifact, a tag
+by itself, a draft release, or a release candidate label is not formal
+publication.
+
+Mark the exact target `published` only when all of these conditions are recorded
+on its tracking Issue:
+
+1. The exact tag `v<VERSION>` points to the reviewed release commit containing
+   consistent canonical version fields and the target changelog entry.
+2. The corresponding exact-version GitHub Release is published and is not a
+   draft.
+3. A public `EasyMDE.zip` can be downloaded from that GitHub Release, and its
+   SHA-256 exactly matches the candidate artifact that passed validation.
+4. The source archives disposition is recorded, and changelog and release-note
+   dispositions are recorded separately. Each of those two dispositions must
+   independently be included with the exact section, bullet, or location;
+   omitted as non-user-visible with the reason; or deferred with the destination
+   Issue or version.
+
+A prerelease completes only its exact prerelease target; it does not complete a
+later stable target. Publication is therefore not proved by the merge, CI,
+Actions artifact, tag, draft, release candidate, or candidate state alone.
+Record the exact tag, reviewed commit SHA, channel URL, artifact name and
+SHA-256, and publication time so the release identity can be checked
+independently.
+
 ## Release ZIP Build
 
 The release job builds the installable plugin ZIP from runtime files:

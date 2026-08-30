@@ -2,7 +2,7 @@
 
 This index points to the current technical docs. The root [Simplified Chinese README](../README.md) and [English README](../README.en.md) are GitHub entry points, while this directory is the canonical technical documentation for now.
 
-Each subject has one source-of-truth owner: repository invariants are in [AGENTS.md](../AGENTS.md), contribution and review evidence workflow is in [CONTRIBUTING.md](../CONTRIBUTING.md), current implementation is in [Architecture](ARCHITECTURE.md), durable React rationale is in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md), executable browser contracts are in the [EasyMDE Skill](../.agents/skills/easymde/SKILL.md) and its [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md), test and release execution is in [Testing and Release](TESTING_AND_RELEASE.md), and WeChat decision rationale is in [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
+Each subject has one source-of-truth owner: repository invariants are in [AGENTS.md](../AGENTS.md), contribution and review evidence workflow is in [CONTRIBUTING.md](../CONTRIBUTING.md), current implementation is in [Architecture](ARCHITECTURE.md), durable design rationale is in [Design](DESIGN.md), executable browser contracts are in the [EasyMDE Skill](../.agents/skills/easymde/SKILL.md) and its [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md), test and release execution is in [Testing and Release](TESTING_AND_RELEASE.md), and WeChat decision rationale is in [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
 
 ## Reading Paths
 
@@ -22,7 +22,7 @@ Each subject has one source-of-truth owner: repository invariants are in [AGENTS
 5. [Pull Request Body Template](templates/PULL_REQUEST.md) for pull request bodies.
 6. [Agent Instructions](../AGENTS.md) for binding repository-wide invariants.
 7. [Architecture](ARCHITECTURE.md) for the current implementation boundaries.
-8. [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md) for approved React target architecture and interface-design decisions.
+8. [Design](DESIGN.md) for approved React target architecture and interface-design decisions.
 9. [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md) for the executable Clipboard serialization and browser integration contract.
 10. [ADR-001: Portable WeChat Clipboard Serialization](decisions/ADR-001-wechat-clipboard-serialization.md) for the copy boundary and rejected alternatives.
 11. [Development](DEVELOPMENT.md) for Composer, npm assets, Docker, `.env`, and WordPress test-suite setup.
@@ -47,7 +47,7 @@ Each subject has one source-of-truth owner: repository invariants are in [AGENTS
 - [Contributing](../CONTRIBUTING.md)
 - [WordPress package readme](../readme.txt)
 - [Architecture](ARCHITECTURE.md)
-- [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md)
+- [Design](DESIGN.md)
 - [EasyMDE Browser Skill](../.agents/skills/easymde/SKILL.md)
 - [WeChat export reference](../.agents/skills/easymde/references/wechat-export.md)
 - [Testing and Release](TESTING_AND_RELEASE.md)

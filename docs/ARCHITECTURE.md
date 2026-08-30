@@ -2,7 +2,7 @@
 
 EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\Plugin`. The global `EasyMDE_Plugin` class remains as a compatibility facade for existing extension code.
 
-This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [React Design Philosophy](REACT_DESIGN_PHILOSOPHY.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
+This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [Design](DESIGN.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
 
 ## Issue #91 Direct React Cutover
 
@@ -33,23 +33,111 @@ Legacy admin Browser Runtime files and Focus Mode assets have no ordinary
 Editor consumer and are excluded from the release package. Historical data and
 public PHP compatibility contracts remain preserved as described below.
 
-## Directory Boundaries
+## Repository Structure
 
-- `src/Admin/`: editor screen rendering, per-post editor gating, admin settings, admin assets, and save handling.
-- `src/Content/`: Markdown rendering, TOC generation, theme markup transforms, post document state, and revision restore coordination.
-- `src/Theme/`: article/code theme registries, theme state, font state, custom CSS library access, and custom CSS policy.
-- `src/Rest/`: `easymde/v1` REST controllers.
-- `src/Frontend/`: frontend content filtering and conditional frontend asset loading.
-- `src/Support/`: shared helpers, capabilities, options, lazy migration helpers, toolbar registry, and legacy facade support.
-- `templates/admin/`: admin templates that render prepared data.
-- `assets/themes/article/`: EasyMDE-owned article themes.
-- `assets/themes/code/`: EasyMDE-owned code themes.
-- `assets/vendor/`: committed third-party runtime assets prepared from locked npm packages or verified upstream repository sources; compiled TypeScript bundles have their own manifest-backed `assets/build/` roots.
-- `frontend/`: strict TypeScript, React, CodeMirror, and Vite source for the production normal-editor Toolbar, document session, Preview Surface, synchronized scrolling, Font controls, Appearance controls, Media-picker session, pasted/dropped image upload session, Local Draft session, WeChat export, the independent Settings Center, public code-copy enhancement, shared public code/math enhancement runtime, and the on-demand Mermaid package runtime, plus the test-only WordPress React build-contract fixture.
-- `scripts/`: local asset preparation, i18n/notices, test setup, Plugin Check, clean WordPress install, and release package assembly scripts.
-- `tests/Unit/` and `tests/Integration/`: PHPUnit coverage for rendering, CSS policy, frontend assets, REST permissions, revisions, migration, editor gating, and compatibility facade behavior.
-- `tests/Node/`: Node tests for release packaging, CI invariants, i18n/notices, Plugin Check parsing, and destructive-script safety.
-- `tests/e2e/`: Chromium Playwright coverage for installed release ZIP author workflows.
+```text
+.
+|-- easymde.php                         # Root plugin bootstrap, metadata, and version declaration.
+|-- uninstall.php                       # WordPress uninstall entry point and cleanup handling.
+|-- readme.txt                          # WordPress plugin-directory metadata and readme content.
+|-- README.md                           # Primary project documentation entry point.
+|-- README.en.md                        # English project documentation entry point.
+|-- AGENTS.md                           # Owner of repository-wide invariants and guidance ownership.
+|-- CONTRIBUTING.md                     # Public contribution workflow and review guidance.
+|-- SECURITY.md                         # Vulnerability reporting and security guidance.
+|-- UPGRADING.md                        # User-facing upgrade and rollback guidance.
+|-- THIRD-PARTY-NOTICES.md              # Notices for bundled runtime dependencies and assets.
+|-- LICENSE                              # Project license.
+|-- includes/                            # Legacy global compatibility classes and standalone helpers.
+|-- src/                                 # Namespaced PHP implementation modules.
+|   |-- Plugin.php                       # Service wiring and module registration.
+|   |-- Admin/                           # Admin screens, post gating, settings, assets, and save handling.
+|   |-- Content/                         # Markdown rendering, document state, TOC, transforms, and revisions.
+|   |-- Frontend/                        # Public content filtering and conditional frontend asset loading.
+|   |-- ImageHosting/                    # Image-hosting providers, signing, upload orchestration, and runtime policy.
+|   |-- Rest/                            # `easymde/v1` REST controllers and request boundaries.
+|   |-- Support/                         # Shared capabilities, options, migration, assets, toolbar, and facade support.
+|   `-- Theme/                           # Article/code theme registries, fonts, state, and Custom CSS policy.
+|-- templates/                           # PHP-rendered templates.
+|   `-- admin/                           # Prepared-data admin templates without business rules.
+|-- frontend/                            # TypeScript, React, CodeMirror, Vite, and frontend test-contract sources.
+|   |-- src/                             # Browser application source organized by architectural layer.
+|   |   |-- app/                         # React roots, error boundaries, and top-level composition.
+|   |   |   |-- editor/                  # Ordinary Editor Root composition.
+|   |   |   `-- settings/                # Independent Settings Center Root composition.
+|   |   |-- contracts/                   # Bootstrap data, Ports, Results, and runtime contracts.
+|   |   |   |-- bootstrap/               # WordPress-to-browser bootstrap schemas and fixtures.
+|   |   |   `-- ports/                   # Feature and integration interfaces.
+|   |   |-- domain/                      # Pure editor rules without React, DOM, WordPress, network, or storage access.
+|   |   |-- entrypoints/                 # Screen/runtime discovery, mounting, readiness, and teardown boundaries.
+|   |   |-- features/                    # User-recognizable editor and administration capabilities.
+|   |   |-- generated/                   # Checked-in generated browser source produced by local tooling.
+|   |   |-- integrations/                # Concrete WordPress, browser, and preview-runtime adapters.
+|   |   |   |-- browser/                 # Clipboard, Storage, DOM, and other browser adapters.
+|   |   |   |-- preview-runtime/         # Preview enhancement runtime adapters.
+|   |   |   `-- wordpress/               # WordPress, REST, media, and native-form adapters.
+|   |   |-- shared/                      # Stable cross-feature utilities and UI primitives.
+|   |   |   |-- keyboard/                # Shared keyboard and shortcut utilities.
+|   |   |   `-- ui/                      # Shared UI primitives.
+|   |   |-- test/                        # Frontend-only setup and fixtures.
+|   |   |   `-- fixtures/                # Frontend contract fixtures.
+|   |   `-- types/                       # TypeScript declarations for integration boundaries.
+|   |-- test/                            # Test-only frontend inputs outside production source.
+|   |   `-- build-contract/             # WordPress React/Vite build-contract fixture and verification input.
+|   `-- tsconfig.json                   # Strict frontend TypeScript configuration.
+|-- assets/                              # Committed styles, images, themes, vendor assets, and browser runtimes.
+|   |-- build/                           # Committed manifest-backed production browser runtime bundles.
+|   |-- css/                             # Admin and public content styles.
+|   |   |-- admin/                       # Admin/editor styles.
+|   |   `-- frontend/                    # Public content styles.
+|   |-- images/                          # Local UI, support, and theme images.
+|   |-- themes/                          # EasyMDE-maintained theme styles.
+|   |   |-- article/                     # Article theme styles.
+|   |   `-- code/                        # Code theme styles.
+|   `-- vendor/                          # Locally bundled third-party runtime assets and licenses.
+|       |-- fonts/                       # Bundled font files and licenses.
+|       |-- highlight/                   # Bundled Highlight.js runtime and styles.
+|       `-- katex/                       # Bundled KaTeX runtime, styles, and fonts.
+|-- languages/                           # Translation catalogs and compiled language assets.
+|-- scripts/                             # Asset, i18n, notice, test, CI, and release tooling.
+|   |-- lib/                             # Shared shell safety helpers.
+|   `-- vendor-licenses/                 # Tracked third-party license source material.
+|-- tests/                               # PHP, Node, and browser verification suites.
+|   |-- Unit/                            # Isolated PHP behavior tests.
+|   |-- Integration/                     # WordPress, service, and REST integration tests.
+|   |-- Node/                            # Node-based release, CI, asset, i18n, and safety tests.
+|   |-- e2e/                             # Chromium Playwright author-workflow tests.
+|   |-- fixtures/                        # Shared synthetic test inputs.
+|   `-- phpunit/                         # PHPUnit bootstrap and test support.
+|-- docs/                                # Architecture, product, development, release, and contributor documentation.
+|   |-- assets/                          # Documentation-only images and assets.
+|   |-- decisions/                       # Architectural decision records.
+|   |-- examples/                        # Documentation examples.
+|   `-- templates/                       # Canonical contribution and review templates.
+|-- docker/                              # Containerized development and CI support.
+|   `-- ci/                              # Reproducible CI image and WordPress test configuration.
+|-- .agents/                             # Repository-scoped agent guidance.
+|   `-- skills/                          # EasyMDE and internationalization execution skills.
+|-- .github/                             # GitHub repository automation.
+|   `-- workflows/                       # GitHub Actions workflow definitions.
+|-- composer.json                        # PHP runtime and development dependency manifest.
+|-- composer.lock                        # Locked PHP dependency graph.
+|-- package.json                         # Node scripts and dependency manifest.
+|-- package-lock.json                    # Locked Node dependency graph.
+|-- biome.json                           # JavaScript and TypeScript lint configuration.
+|-- phpcs.xml.dist                       # PHP coding-standard configuration.
+|-- phpunit.xml.dist                     # PHPUnit configuration.
+|-- playwright.config.mjs                # Playwright end-to-end configuration.
+`-- docker-compose.yml                   # Local and CI service orchestration configuration.
+```
+
+The repository tree describes tracked source and committed runtime boundaries, not the contents of an installable plugin ZIP.
+
+`assets/build/` contains committed manifest-backed production bundles and metadata, so generated filenames and hashes are intentionally omitted.
+
+The installable ZIP adds Composer runtime `vendor/` after dependency installation and excludes `frontend/`, tests, development metadata, and repository-only documentation; source archives are separate artifacts.
+
+Ignored dependency, cache, distribution, coverage, report, task, and machine-local paths are intentionally omitted, and `.gitignore` remains authoritative for those paths.
 
 ## Frontend Build Foundation
 

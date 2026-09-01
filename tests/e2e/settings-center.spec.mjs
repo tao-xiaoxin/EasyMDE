@@ -1043,6 +1043,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await login(page);
 	const verificationPayloads = [];
+	let originalImageHostingEnabled;
 	let releaseFirstVerification;
 	const firstVerificationGate = new Promise((resolve) => {
 		releaseFirstVerification = resolve;
@@ -1065,192 +1066,207 @@ test("runs the image-hosting interaction contract without exposing credentials",
 			});
 		},
 	);
-	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
-	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	await page.locator('button[data-nav-id="images"]').click();
+	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
+		await setImageHostingEnabled(page, false);
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
 
-	const images = page.locator('[data-settings-section="images"]');
-	await expect(
-		images.getByRole("switch", {
-			name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
-		}),
-	).toHaveCount(0);
-	await expect(
-		images.getByRole("combobox", {
-			name: /图片标题展示|Image Title Display/u,
-		}),
-	).toBeEnabled();
-	for (const name of [
-		/Alt 文本来源|Alt Text Source/u,
-		/复制图片 URL 到剪贴板|Copy Image URL to Clipboard/u,
-		/默认插入格式|Default Insert Format/u,
-	]) {
-		await expect(images.getByLabel(name)).toHaveCount(0);
-	}
-	const maximumSize = images.getByRole("spinbutton", {
-		name: /最大支持图片大小|Maximum Supported Image Size/u,
-	});
-	await expect(maximumSize).toHaveAttribute("min", "1");
-	await expect(maximumSize).toHaveAttribute("max", "10");
-	await expect(
-		images.getByRole("combobox", {
-			name: /上传失败时重试|Retry Failed Upload/u,
-		}),
-	).toHaveCount(0);
-	const primary = images.locator(".is-host-service");
-	const verification = primary.locator(
-		".easymde-settings-center__verification-row",
-	);
-	const uploadVerificationStatus = verification.locator(
-		".easymde-settings-center__verification-status",
-	);
-	const verificationButton = verification.locator("> button");
-	const verificationStrings = await page.evaluate(() => ({
-		close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
-		success:
-			window.EasyMDESettingsCenterBootstrap.strings.uploadVerificationSucceeded,
-		verifying: window.EasyMDESettingsCenterBootstrap.strings.verifyingUpload,
-		warning:
-			window.EasyMDESettingsCenterBootstrap.strings
-				.insecureViewingDomainWarning,
-	}));
-	await primary
-		.getByRole("textbox", {
-			name: /查看图片域名|Viewing Image Domain/u,
-		})
-		.fill("http://images.example.test");
-	await verificationButton.click();
-	await expect(verificationButton).toBeDisabled();
-	await expect(verificationButton).toHaveText(verificationStrings.verifying);
-	releaseFirstVerification();
-	await expect(uploadVerificationStatus).toHaveAttribute(
-		"data-state",
-		"verified",
-	);
-	await expect(verificationButton).toBeEnabled();
-	const successDialog = page.getByRole("dialog", {
-		name: verificationStrings.success,
-	});
-	await expect(successDialog).toBeVisible();
-	await expect(
-		successDialog.getByText(verificationStrings.warning),
-	).toBeVisible();
-	const footerClose = successDialog.locator("footer button");
-	await expect(footerClose).toHaveText(verificationStrings.close);
-	await expect(footerClose).toBeFocused();
-	await page.setViewportSize({ width: 390, height: 844 });
-	await expect(successDialog).toHaveCSS("box-sizing", "border-box");
-	const dialogGeometry = await successDialog.boundingBox();
-	expect(dialogGeometry).not.toBeNull();
-	expect(dialogGeometry.x).toBeGreaterThanOrEqual(12);
-	expect(dialogGeometry.x + dialogGeometry.width).toBeLessThanOrEqual(378);
-	await expect(footerClose).toHaveCSS("height", "44px");
-	expect(
-		await page.evaluate(
-			() => document.documentElement.scrollWidth <= window.innerWidth,
-		),
-	).toBe(true);
-	await footerClose.click();
-	await expect(verificationButton).toBeFocused();
-	await page.setViewportSize({ width: 1440, height: 900 });
-	expect(verificationPayloads[0]).toMatchObject({
-		revision: expect.any(Number),
-		settings: expect.objectContaining({ service: "cloudflare-r2" }),
-		target: "primary",
-	});
+		const images = page.locator('[data-settings-section="images"]');
+		await expect(
+			images.getByRole("switch", {
+				name: /上传后插入 Markdown 链接|Insert Markdown Link After Upload/u,
+			}),
+		).toHaveCount(0);
+		await expect(
+			images.getByRole("combobox", {
+				name: /图片标题展示|Image Title Display/u,
+			}),
+		).toBeEnabled();
+		for (const name of [
+			/Alt 文本来源|Alt Text Source/u,
+			/复制图片 URL 到剪贴板|Copy Image URL to Clipboard/u,
+			/默认插入格式|Default Insert Format/u,
+		]) {
+			await expect(images.getByLabel(name)).toHaveCount(0);
+		}
+		const maximumSize = images.getByRole("spinbutton", {
+			name: /最大支持图片大小|Maximum Supported Image Size/u,
+		});
+		await expect(maximumSize).toHaveAttribute("min", "1");
+		await expect(maximumSize).toHaveAttribute("max", "10");
+		await expect(
+			images.getByRole("combobox", {
+				name: /上传失败时重试|Retry Failed Upload/u,
+			}),
+		).toHaveCount(0);
+		await setImageHostingEnabled(page, true);
+		const primary = images.locator(".is-host-service");
+		const verification = primary.locator(
+			".easymde-settings-center__verification-row",
+		);
+		const uploadVerificationStatus = verification.locator(
+			".easymde-settings-center__verification-status",
+		);
+		const verificationButton = verification.locator("> button");
+		const verificationStrings = await page.evaluate(() => ({
+			close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
+			success:
+				window.EasyMDESettingsCenterBootstrap.strings
+					.uploadVerificationSucceeded,
+			verifying: window.EasyMDESettingsCenterBootstrap.strings.verifyingUpload,
+			warning:
+				window.EasyMDESettingsCenterBootstrap.strings
+					.insecureViewingDomainWarning,
+		}));
+		await primary
+			.getByRole("textbox", {
+				name: /查看图片域名|Viewing Image Domain/u,
+			})
+			.fill("http://images.example.test");
+		await verificationButton.click();
+		await expect(verificationButton).toBeDisabled();
+		await expect(verificationButton).toHaveText(verificationStrings.verifying);
+		releaseFirstVerification();
+		await expect(uploadVerificationStatus).toHaveAttribute(
+			"data-state",
+			"verified",
+		);
+		await expect(verificationButton).toBeEnabled();
+		const successDialog = page.getByRole("dialog", {
+			name: verificationStrings.success,
+		});
+		await expect(successDialog).toBeVisible();
+		await expect(
+			successDialog.getByText(verificationStrings.warning),
+		).toBeVisible();
+		const footerClose = successDialog.locator("footer button");
+		await expect(footerClose).toHaveText(verificationStrings.close);
+		await expect(footerClose).toBeFocused();
+		await page.setViewportSize({ width: 390, height: 844 });
+		await expect(successDialog).toHaveCSS("box-sizing", "border-box");
+		const dialogGeometry = await successDialog.boundingBox();
+		expect(dialogGeometry).not.toBeNull();
+		expect(dialogGeometry.x).toBeGreaterThanOrEqual(12);
+		expect(dialogGeometry.x + dialogGeometry.width).toBeLessThanOrEqual(378);
+		await expect(footerClose).toHaveCSS("height", "44px");
+		expect(
+			await page.evaluate(
+				() => document.documentElement.scrollWidth <= window.innerWidth,
+			),
+		).toBe(true);
+		await footerClose.click();
+		await expect(verificationButton).toBeFocused();
+		await page.setViewportSize({ width: 1440, height: 900 });
+		expect(verificationPayloads[0]).toMatchObject({
+			revision: expect.any(Number),
+			settings: expect.objectContaining({ service: "cloudflare-r2" }),
+			target: "primary",
+		});
 
-	const bucket = primary.locator("input").nth(1);
-	await bucket.fill(`${await bucket.inputValue()}-draft`);
-	await expect(uploadVerificationStatus).toHaveAttribute("data-state", "stale");
-	await expect(verificationButton).toBeEnabled();
-	await verificationButton.click();
-	await expect(uploadVerificationStatus).toHaveAttribute(
-		"data-state",
-		"verified",
-	);
-	await page
-		.getByRole("dialog", { name: verificationStrings.success })
-		.locator("footer button")
-		.click();
-	expect(verificationPayloads).toHaveLength(2);
-	expect(verificationPayloads[1].settings.bucket).toBe(
-		await bucket.inputValue(),
-	);
-	await expect(
-		primary.getByRole("textbox", {
-			name: /自定义 Endpoint|Custom Endpoint/u,
-		}),
-	).toHaveCount(1);
-	await expect(
-		primary.getByRole("textbox", {
-			name: /查看图片域名|Viewing Image Domain/u,
-		}),
-	).toHaveCount(1);
+		const bucket = primary.locator("input").nth(1);
+		await bucket.fill(`${await bucket.inputValue()}-draft`);
+		await expect(uploadVerificationStatus).toHaveAttribute(
+			"data-state",
+			"stale",
+		);
+		await expect(verificationButton).toBeEnabled();
+		await verificationButton.click();
+		await expect(uploadVerificationStatus).toHaveAttribute(
+			"data-state",
+			"verified",
+		);
+		await page
+			.getByRole("dialog", { name: verificationStrings.success })
+			.locator("footer button")
+			.click();
+		expect(verificationPayloads).toHaveLength(2);
+		expect(verificationPayloads[1].settings.bucket).toBe(
+			await bucket.inputValue(),
+		);
+		await expect(
+			primary.getByRole("textbox", {
+				name: /自定义 Endpoint|Custom Endpoint/u,
+			}),
+		).toHaveCount(1);
+		await expect(
+			primary.getByRole("textbox", {
+				name: /查看图片域名|Viewing Image Domain/u,
+			}),
+		).toHaveCount(1);
 
-	const accessKey = primary
-		.locator(".easymde-settings-center__secret-input")
-		.first();
-	const accessInput = accessKey.locator("input");
-	const revealButton = accessKey.locator("button");
-	await expect(accessInput).toHaveAttribute("type", "password");
-	await expect(revealButton).toHaveCount(0);
-	await accessInput.fill("synthetic-browser-only-key");
-	await expect(accessInput).toHaveAttribute("type", "password");
-	await expect(revealButton).toHaveCount(0);
+		const accessKey = primary
+			.locator(".easymde-settings-center__secret-input")
+			.first();
+		const accessInput = accessKey.locator("input");
+		const revealButton = accessKey.locator("button");
+		await expect(accessInput).toHaveAttribute("type", "password");
+		await expect(revealButton).toHaveCount(0);
+		await accessInput.fill("synthetic-browser-only-key");
+		await expect(accessInput).toHaveAttribute("type", "password");
+		await expect(revealButton).toHaveCount(0);
 
-	const rule = primary.locator(".easymde-settings-center__file-name-input");
-	await primary
-		.locator(
-			'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
-		)
-		.click();
-	await expect(rule).toHaveValue("{year}/{month}/{md5}.{ext}");
-	await rule.fill("assets/.");
-	await primary
-		.locator(".easymde-settings-center__file-name-variables button")
-		.last()
-		.click();
-	await expect(rule).toHaveValue("assets/.{ext}");
+		const rule = primary.locator(".easymde-settings-center__file-name-input");
+		await primary
+			.locator(
+				'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
+			)
+			.click();
+		await expect(rule).toHaveValue("{year}/{month}/{md5}.{ext}");
+		await rule.fill("assets/.");
+		await primary
+			.locator(".easymde-settings-center__file-name-variables button")
+			.last()
+			.click();
+		await expect(rule).toHaveValue("assets/.{ext}");
 
-	const backup = images.locator(".is-backup-host");
-	const backupToggle = backup.locator('[role="switch"]').first();
-	if ((await backupToggle.getAttribute("aria-checked")) !== "true") {
+		const backup = images.locator(".is-backup-host");
+		const backupToggle = backup.locator('[role="switch"]').first();
+		if ((await backupToggle.getAttribute("aria-checked")) !== "true") {
+			await backupToggle.click();
+		}
+		await expect(
+			backup.locator(".easymde-settings-center__backup-fields"),
+		).toHaveCount(1);
 		await backupToggle.click();
-	}
-	await expect(
-		backup.locator(".easymde-settings-center__backup-fields"),
-	).toHaveCount(1);
-	await backupToggle.click();
-	await expect(
-		backup.locator(".easymde-settings-center__backup-fields"),
-	).toHaveCount(0);
-	await backupToggle.click();
-	await expect(
-		backup.locator(".easymde-settings-center__backup-fields"),
-	).toHaveCount(1);
-	await expect(
-		backup.getByRole("switch", {
-			name: /保持.*对象路径|Keep.*Object Path/u,
-		}),
-	).toHaveCount(0);
+		await expect(
+			backup.locator(".easymde-settings-center__backup-fields"),
+		).toHaveCount(0);
+		await backupToggle.click();
+		await expect(
+			backup.locator(".easymde-settings-center__backup-fields"),
+		).toHaveCount(1);
+		await expect(
+			backup.getByRole("switch", {
+				name: /保持.*对象路径|Keep.*Object Path/u,
+			}),
+		).toHaveCount(0);
 
-	const formats = images.locator(
-		".easymde-settings-center__upload-formats input",
-	);
-	for (let index = 0; index < 4; index += 1) {
-		const format = formats.nth(index);
-		if (!(await format.isChecked())) await format.check();
-	}
-	for (let index = 0; index < 3; index += 1) await formats.nth(index).uncheck();
-	await formats.nth(3).click();
-	await expect(formats.nth(3)).toBeChecked();
-	const uploadFormatRequired = await page.evaluate(
-		() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
-	);
-	await expect(page.getByText(uploadFormatRequired)).toBeVisible();
+		const formats = images.locator(
+			".easymde-settings-center__upload-formats input",
+		);
+		for (let index = 0; index < 4; index += 1) {
+			const format = formats.nth(index);
+			if (!(await format.isChecked())) await format.check();
+		}
+		for (let index = 0; index < 3; index += 1)
+			await formats.nth(index).uncheck();
+		await formats.nth(3).click();
+		await expect(formats.nth(3)).toBeChecked();
+		const uploadFormatRequired = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
+		);
+		await expect(page.getByText(uploadFormatRequired)).toBeVisible();
 
-	await page.reload();
-	await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+	} finally {
+		releaseFirstVerification();
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
+		}
+	}
 });
 
 test("persists the bounded upload retry count across a settings-center refresh", async ({
@@ -1258,77 +1274,87 @@ test("persists the bounded upload retry count across a settings-center refresh",
 }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await login(page);
-	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
-	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	await page.locator('button[data-nav-id="images"]').click();
-	const retryLabel = await page.evaluate(
-		() => window.EasyMDESettingsCenterBootstrap.strings.uploadRetryCount,
-	);
-	const retryInput = page.getByRole("spinbutton", { name: retryLabel });
-	const decrement = page.getByRole("button", { name: `${retryLabel} - 1` });
-	const increment = page.getByRole("button", { name: `${retryLabel} + 1` });
-	const originalRetryCount = await retryInput.inputValue();
-	const testRetryCount = originalRetryCount === "5" ? "4" : "5";
-	await expect(retryInput).toHaveAttribute("min", "0");
-	await expect(retryInput).toHaveAttribute("max", "5");
-	await expect(
-		retryInput.locator("xpath=..").locator(":scope > span"),
-	).toHaveCount(0);
-	const geometry = await Promise.all([
-		decrement.boundingBox(),
-		retryInput.boundingBox(),
-		increment.boundingBox(),
-	]);
-	expect(geometry.every(Boolean)).toBe(true);
-	expect(geometry[0].x).toBeLessThan(geometry[1].x);
-	expect(geometry[1].x).toBeLessThan(geometry[2].x);
-	expect(geometry[2].x + geometry[2].width).toBeLessThanOrEqual(390);
-	expect(Math.abs(geometry[0].y - geometry[1].y)).toBeLessThan(1);
-	expect(Math.abs(geometry[1].y - geometry[2].y)).toBeLessThan(1);
+	let originalImageHostingEnabled;
+	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
+		await setImageHostingEnabled(page, true);
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		const retryLabel = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings.uploadRetryCount,
+		);
+		const retryInput = page.getByRole("spinbutton", { name: retryLabel });
+		const decrement = page.getByRole("button", { name: `${retryLabel} - 1` });
+		const increment = page.getByRole("button", { name: `${retryLabel} + 1` });
+		const originalRetryCount = await retryInput.inputValue();
+		const testRetryCount = originalRetryCount === "5" ? "4" : "5";
+		await expect(retryInput).toHaveAttribute("min", "0");
+		await expect(retryInput).toHaveAttribute("max", "5");
+		await expect(
+			retryInput.locator("xpath=..").locator(":scope > span"),
+		).toHaveCount(0);
+		const geometry = await Promise.all([
+			decrement.boundingBox(),
+			retryInput.boundingBox(),
+			increment.boundingBox(),
+		]);
+		expect(geometry.every(Boolean)).toBe(true);
+		expect(geometry[0].x).toBeLessThan(geometry[1].x);
+		expect(geometry[1].x).toBeLessThan(geometry[2].x);
+		expect(geometry[2].x + geometry[2].width).toBeLessThanOrEqual(390);
+		expect(Math.abs(geometry[0].y - geometry[1].y)).toBeLessThan(1);
+		expect(Math.abs(geometry[1].y - geometry[2].y)).toBeLessThan(1);
 
-	await retryInput.fill("0");
-	await expect(decrement).toBeDisabled();
-	await expect(increment).toBeEnabled();
-	await increment.click();
-	await expect(retryInput).toHaveValue("1");
-	await retryInput.fill("5");
-	await expect(increment).toBeDisabled();
-	await expect(decrement).toBeEnabled();
-	await decrement.click();
-	await expect(retryInput).toHaveValue("4");
-	await retryInput.fill(testRetryCount);
-	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
-	const saveFeedbackStrings = await page.evaluate(() => ({
-		close: window.EasyMDESettingsCenterBootstrap.strings.closeSettingsFeedback,
-		saved: window.EasyMDESettingsCenterBootstrap.strings.settingsSaved,
-	}));
-	const saveFeedback = page
-		.getByRole("status")
-		.filter({ hasText: saveFeedbackStrings.saved });
-	await expect(saveFeedback).toBeVisible();
-	await expect(
-		saveFeedback.getByRole("button", { name: saveFeedbackStrings.close }),
-	).toBeVisible();
-	await expect(page.locator("[data-save-status]")).toHaveAttribute(
-		"data-save-status",
-		"saved",
-	);
+		await retryInput.fill("0");
+		await expect(decrement).toBeDisabled();
+		await expect(increment).toBeEnabled();
+		await increment.click();
+		await expect(retryInput).toHaveValue("1");
+		await retryInput.fill("5");
+		await expect(increment).toBeDisabled();
+		await expect(decrement).toBeEnabled();
+		await decrement.click();
+		await expect(retryInput).toHaveValue("4");
+		await retryInput.fill(testRetryCount);
+		await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
+		const saveFeedbackStrings = await page.evaluate(() => ({
+			close:
+				window.EasyMDESettingsCenterBootstrap.strings.closeSettingsFeedback,
+			saved: window.EasyMDESettingsCenterBootstrap.strings.settingsSaved,
+		}));
+		const saveFeedback = page
+			.getByRole("status")
+			.filter({ hasText: saveFeedbackStrings.saved });
+		await expect(saveFeedback).toBeVisible();
+		await expect(
+			saveFeedback.getByRole("button", { name: saveFeedbackStrings.close }),
+		).toBeVisible();
+		await expect(page.locator("[data-save-status]")).toHaveAttribute(
+			"data-save-status",
+			"saved",
+		);
 
-	await page.reload();
-	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	await page.locator('button[data-nav-id="images"]').click();
-	await expect(page.getByRole("spinbutton", { name: retryLabel })).toHaveValue(
-		testRetryCount,
-	);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		await expect(
+			page.getByRole("spinbutton", { name: retryLabel }),
+		).toHaveValue(testRetryCount);
 
-	await page
-		.getByRole("spinbutton", { name: retryLabel })
-		.fill(originalRetryCount);
-	await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
-	await expect(page.locator("[data-save-status]")).toHaveAttribute(
-		"data-save-status",
-		"saved",
-	);
+		await page
+			.getByRole("spinbutton", { name: retryLabel })
+			.fill(originalRetryCount);
+		await page.getByRole("button", { name: /保存设置|Save Settings/u }).click();
+		await expect(page.locator("[data-save-status]")).toHaveAttribute(
+			"data-save-status",
+			"saved",
+		);
+	} finally {
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
+		}
+	}
 });
 
 test("reports a real settings save network failure in the shared message popup", async ({
@@ -2117,6 +2143,7 @@ test("persists all remote image import modes and resets the documented defaults"
 		}
 
 		await resetSettingsCenterDefaults(page);
+		await setImageHostingEnabled(page, true);
 		await openSettingsSection(page, "images");
 		await expect(
 			page.getByRole("combobox", {
@@ -2510,14 +2537,12 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 			page.getByRole("alert").filter({ hasText: pasteFailed }),
 		).toBeVisible();
 	} finally {
-		if (typeof originalImageHostingEnabled === "boolean") {
-			await setImageHostingEnabled(page, originalImageHostingEnabled);
-		}
 		if (
 			originalDomain !== null &&
 			originalMode !== null &&
 			settingsStrings !== null
 		) {
+			await setImageHostingEnabled(page, true);
 			await openSettingsSection(page, "images");
 			const primary = page.locator(
 				'[data-settings-section="images"] .is-host-service',
@@ -2549,6 +2574,9 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 					exact: true,
 				}),
 			).toHaveValue(originalDomain);
+		}
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
 		}
 	}
 });
@@ -3448,194 +3476,205 @@ test("keeps reference Help geometry stable while compact content stays inside it
 }) => {
 	await page.setViewportSize({ width: 1200, height: 753 });
 	await login(page);
-	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+	let originalImageHostingEnabled;
+	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
+		await setImageHostingEnabled(page, true);
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 
-	const settingsCenter = page.locator(".easymde-settings-center");
-	const sidebar = settingsCenter.locator(".easymde-settings-center__sidebar");
-	const nav = sidebar.locator("nav");
-	const help = sidebar.locator(".easymde-settings-center__help");
-	const uploadFormats = settingsCenter.locator(
-		".easymde-settings-center__upload-formats",
-	);
-	const primaryVerification = settingsCenter
-		.locator(
-			'[data-settings-section="images"] .easymde-settings-center__verification-row',
-		)
-		.first();
+		const settingsCenter = page.locator(".easymde-settings-center");
+		const sidebar = settingsCenter.locator(".easymde-settings-center__sidebar");
+		const nav = sidebar.locator("nav");
+		const help = sidebar.locator(".easymde-settings-center__help");
+		const uploadFormats = settingsCenter.locator(
+			".easymde-settings-center__upload-formats",
+		);
+		const primaryVerification = settingsCenter
+			.locator(
+				'[data-settings-section="images"] .easymde-settings-center__verification-row',
+			)
+			.first();
 
-	await expect(settingsCenter).toBeVisible();
+		await expect(settingsCenter).toBeVisible();
 
-	const expectReferenceSidebar = async () => {
-		const geometry = await Promise.all([
+		const expectReferenceSidebar = async () => {
+			const geometry = await Promise.all([
+				sidebar.boundingBox(),
+				help.boundingBox(),
+			]);
+			const [sidebarBox, helpBox] = geometry;
+			if (!sidebarBox || !helpBox)
+				throw new Error("settings-center-reference-help-bounds-missing");
+
+			expect(Math.abs(sidebarBox.width - 260)).toBeLessThanOrEqual(0.5);
+			expect(Math.abs(helpBox.x - 16.5)).toBeLessThanOrEqual(0.5);
+			expect(Math.abs(helpBox.width - 217.92)).toBeLessThanOrEqual(0.5);
+			expect(
+				Math.abs(
+					sidebarBox.x + sidebarBox.width - helpBox.x - helpBox.width - 25.58,
+				),
+			).toBeLessThanOrEqual(0.75);
+		};
+
+		const expectUploadFormatsContained = async () => {
+			const overflow = await uploadFormats.evaluate((element) => {
+				const section = element.closest(
+					".easymde-settings-center__settings-section",
+				);
+				if (!section)
+					throw new Error("settings-center-upload-formats-section-missing");
+				const elementBounds = element.getBoundingClientRect();
+				const sectionBounds = section.getBoundingClientRect();
+				return elementBounds.right - sectionBounds.right;
+			});
+			expect(overflow).toBeLessThanOrEqual(0.75);
+		};
+
+		const expectPrimaryVerificationContained = async () => {
+			const containment = await primaryVerification.evaluate((element) => {
+				const section = element.closest(
+					".easymde-settings-center__settings-section",
+				);
+				if (!section)
+					throw new Error("settings-center-verification-section-missing");
+				const elementBounds = element.getBoundingClientRect();
+				const sectionBounds = section.getBoundingClientRect();
+				const rightmost = [element, ...element.querySelectorAll("*")].reduce(
+					(current, descendant) => {
+						const bounds = descendant.getBoundingClientRect();
+						return bounds.right > current.bounds.right
+							? { bounds, descendant }
+							: current;
+					},
+					{ bounds: elementBounds, descendant: element },
+				);
+				return {
+					contents: rightmost.bounds.right - sectionBounds.right,
+					offender: `${rightmost.descendant.tagName.toLowerCase()}.${rightmost.descendant.className}`,
+					owner: elementBounds.right - sectionBounds.right,
+				};
+			});
+			expect(containment.owner).toBeLessThanOrEqual(0.75);
+			expect(containment.contents, containment.offender).toBeLessThanOrEqual(
+				0.75,
+			);
+		};
+
+		const expectEverySectionContained = async () => {
+			const measurements = await settingsCenter
+				.locator("[data-settings-section]")
+				.evaluateAll((sections) =>
+					sections.map((section) => {
+						const sectionBounds = section.getBoundingClientRect();
+						const descendants = Array.from(section.querySelectorAll("*")).map(
+							(element) => ({
+								className:
+									typeof element.className === "string"
+										? element.className
+										: "",
+								right: element.getBoundingClientRect().right,
+								tagName: element.tagName.toLowerCase(),
+							}),
+						);
+						const rightmost = descendants.reduce(
+							(current, candidate) =>
+								candidate.right > current.right ? candidate : current,
+							{
+								className: "",
+								right: sectionBounds.right,
+								tagName: section.tagName.toLowerCase(),
+							},
+						);
+						return {
+							descendantOverflow: rightmost.right - sectionBounds.right,
+							id: section.getAttribute("data-settings-section"),
+							offender: `${rightmost.tagName}.${rightmost.className}`,
+							scrollOverflow: section.scrollWidth - section.clientWidth,
+						};
+					}),
+				);
+			const overflowing = measurements.filter(
+				(measurement) => measurement.scrollOverflow > 1,
+			);
+			expect(overflowing, JSON.stringify(measurements)).toEqual([]);
+		};
+
+		for (const width of [1200, 1100, 1099, 900, 841]) {
+			await page.setViewportSize({ width, height: 753 });
+			await expectReferenceSidebar();
+			await expectUploadFormatsContained();
+			await expectPrimaryVerificationContained();
+			await expectEverySectionContained();
+			await expect
+				.poll(async () =>
+					settingsCenter.evaluate(
+						(element) => element.scrollWidth - element.clientWidth,
+					),
+				)
+				.toBeLessThanOrEqual(1);
+		}
+
+		await page.setViewportSize({ width: 1099, height: 753 });
+		const helpBeforeReload = await help.boundingBox();
+		await page.reload();
+		await expect(settingsCenter).toBeVisible();
+		await expectReferenceSidebar();
+		const helpAfterReload = await help.boundingBox();
+		if (!helpBeforeReload || !helpAfterReload)
+			throw new Error("settings-center-reloaded-help-bounds-missing");
+		for (const coordinate of ["x", "y", "width", "height"]) {
+			expect(
+				Math.abs(helpAfterReload[coordinate] - helpBeforeReload[coordinate]),
+			).toBeLessThanOrEqual(0.5);
+		}
+
+		await page.setViewportSize({ width: 841, height: 500 });
+		await expectReferenceSidebar();
+		const shortDesktopOverlap = await Promise.all([
+			nav.boundingBox(),
+			help.boundingBox(),
+		]).then(([navBox, helpBox]) => {
+			if (!navBox || !helpBox)
+				throw new Error("settings-center-short-desktop-bounds-missing");
+			return navBox.y + navBox.height - helpBox.y;
+		});
+		expect(shortDesktopOverlap).toBeLessThanOrEqual(0.5);
+		await settingsCenter.evaluate((element) => {
+			element.scrollTop = element.scrollHeight;
+			element.dispatchEvent(new Event("scroll"));
+		});
+		const aboutNav = nav.locator('button[data-nav-id="about"]');
+		await expect(aboutNav).toHaveAttribute("aria-current", "page");
+		const activeNavOverflow = await Promise.all([
+			nav.boundingBox(),
+			aboutNav.boundingBox(),
+		]).then(([navBox, activeBox]) => {
+			if (!navBox || !activeBox)
+				throw new Error("settings-center-short-active-nav-bounds-missing");
+			return activeBox.y + activeBox.height - (navBox.y + navBox.height);
+		});
+		expect(activeNavOverflow).toBeLessThanOrEqual(0.5);
+
+		await page.setViewportSize({ width: 740, height: 360 });
+		const shortMobileOverflow = await Promise.all([
 			sidebar.boundingBox(),
 			help.boundingBox(),
-		]);
-		const [sidebarBox, helpBox] = geometry;
-		if (!sidebarBox || !helpBox)
-			throw new Error("settings-center-reference-help-bounds-missing");
-
-		expect(Math.abs(sidebarBox.width - 260)).toBeLessThanOrEqual(0.5);
-		expect(Math.abs(helpBox.x - 16.5)).toBeLessThanOrEqual(0.5);
-		expect(Math.abs(helpBox.width - 217.92)).toBeLessThanOrEqual(0.5);
-		expect(
-			Math.abs(
-				sidebarBox.x + sidebarBox.width - helpBox.x - helpBox.width - 25.58,
+			sidebar.evaluate((element) =>
+				Number.parseFloat(getComputedStyle(element).paddingRight),
 			),
-		).toBeLessThanOrEqual(0.75);
-	};
-
-	const expectUploadFormatsContained = async () => {
-		const overflow = await uploadFormats.evaluate((element) => {
-			const section = element.closest(
-				".easymde-settings-center__settings-section",
+		]).then(([sidebarBox, helpBox, paddingRight]) => {
+			if (!sidebarBox || !helpBox)
+				throw new Error("settings-center-short-mobile-bounds-missing");
+			return (
+				helpBox.x +
+				helpBox.width -
+				(sidebarBox.x + sidebarBox.width - paddingRight)
 			);
-			if (!section)
-				throw new Error("settings-center-upload-formats-section-missing");
-			const elementBounds = element.getBoundingClientRect();
-			const sectionBounds = section.getBoundingClientRect();
-			return elementBounds.right - sectionBounds.right;
 		});
-		expect(overflow).toBeLessThanOrEqual(0.75);
-	};
-
-	const expectPrimaryVerificationContained = async () => {
-		const containment = await primaryVerification.evaluate((element) => {
-			const section = element.closest(
-				".easymde-settings-center__settings-section",
-			);
-			if (!section)
-				throw new Error("settings-center-verification-section-missing");
-			const elementBounds = element.getBoundingClientRect();
-			const sectionBounds = section.getBoundingClientRect();
-			const rightmost = [element, ...element.querySelectorAll("*")].reduce(
-				(current, descendant) => {
-					const bounds = descendant.getBoundingClientRect();
-					return bounds.right > current.bounds.right
-						? { bounds, descendant }
-						: current;
-				},
-				{ bounds: elementBounds, descendant: element },
-			);
-			return {
-				contents: rightmost.bounds.right - sectionBounds.right,
-				offender: `${rightmost.descendant.tagName.toLowerCase()}.${rightmost.descendant.className}`,
-				owner: elementBounds.right - sectionBounds.right,
-			};
-		});
-		expect(containment.owner).toBeLessThanOrEqual(0.75);
-		expect(containment.contents, containment.offender).toBeLessThanOrEqual(
-			0.75,
-		);
-	};
-
-	const expectEverySectionContained = async () => {
-		const measurements = await settingsCenter
-			.locator("[data-settings-section]")
-			.evaluateAll((sections) =>
-				sections.map((section) => {
-					const sectionBounds = section.getBoundingClientRect();
-					const descendants = Array.from(section.querySelectorAll("*")).map(
-						(element) => ({
-							className:
-								typeof element.className === "string" ? element.className : "",
-							right: element.getBoundingClientRect().right,
-							tagName: element.tagName.toLowerCase(),
-						}),
-					);
-					const rightmost = descendants.reduce(
-						(current, candidate) =>
-							candidate.right > current.right ? candidate : current,
-						{
-							className: "",
-							right: sectionBounds.right,
-							tagName: section.tagName.toLowerCase(),
-						},
-					);
-					return {
-						descendantOverflow: rightmost.right - sectionBounds.right,
-						id: section.getAttribute("data-settings-section"),
-						offender: `${rightmost.tagName}.${rightmost.className}`,
-						scrollOverflow: section.scrollWidth - section.clientWidth,
-					};
-				}),
-			);
-		const overflowing = measurements.filter(
-			(measurement) => measurement.scrollOverflow > 1,
-		);
-		expect(overflowing, JSON.stringify(measurements)).toEqual([]);
-	};
-
-	for (const width of [1200, 1100, 1099, 900, 841]) {
-		await page.setViewportSize({ width, height: 753 });
-		await expectReferenceSidebar();
-		await expectUploadFormatsContained();
-		await expectPrimaryVerificationContained();
-		await expectEverySectionContained();
-		await expect
-			.poll(async () =>
-				settingsCenter.evaluate(
-					(element) => element.scrollWidth - element.clientWidth,
-				),
-			)
-			.toBeLessThanOrEqual(1);
+		expect(shortMobileOverflow).toBeLessThanOrEqual(0.5);
+	} finally {
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
+		}
 	}
-
-	await page.setViewportSize({ width: 1099, height: 753 });
-	const helpBeforeReload = await help.boundingBox();
-	await page.reload();
-	await expect(settingsCenter).toBeVisible();
-	await expectReferenceSidebar();
-	const helpAfterReload = await help.boundingBox();
-	if (!helpBeforeReload || !helpAfterReload)
-		throw new Error("settings-center-reloaded-help-bounds-missing");
-	for (const coordinate of ["x", "y", "width", "height"]) {
-		expect(
-			Math.abs(helpAfterReload[coordinate] - helpBeforeReload[coordinate]),
-		).toBeLessThanOrEqual(0.5);
-	}
-
-	await page.setViewportSize({ width: 841, height: 500 });
-	await expectReferenceSidebar();
-	const shortDesktopOverlap = await Promise.all([
-		nav.boundingBox(),
-		help.boundingBox(),
-	]).then(([navBox, helpBox]) => {
-		if (!navBox || !helpBox)
-			throw new Error("settings-center-short-desktop-bounds-missing");
-		return navBox.y + navBox.height - helpBox.y;
-	});
-	expect(shortDesktopOverlap).toBeLessThanOrEqual(0.5);
-	await settingsCenter.evaluate((element) => {
-		element.scrollTop = element.scrollHeight;
-		element.dispatchEvent(new Event("scroll"));
-	});
-	const aboutNav = nav.locator('button[data-nav-id="about"]');
-	await expect(aboutNav).toHaveAttribute("aria-current", "page");
-	const activeNavOverflow = await Promise.all([
-		nav.boundingBox(),
-		aboutNav.boundingBox(),
-	]).then(([navBox, activeBox]) => {
-		if (!navBox || !activeBox)
-			throw new Error("settings-center-short-active-nav-bounds-missing");
-		return activeBox.y + activeBox.height - (navBox.y + navBox.height);
-	});
-	expect(activeNavOverflow).toBeLessThanOrEqual(0.5);
-
-	await page.setViewportSize({ width: 740, height: 360 });
-	const shortMobileOverflow = await Promise.all([
-		sidebar.boundingBox(),
-		help.boundingBox(),
-		sidebar.evaluate((element) =>
-			Number.parseFloat(getComputedStyle(element).paddingRight),
-		),
-	]).then(([sidebarBox, helpBox, paddingRight]) => {
-		if (!sidebarBox || !helpBox)
-			throw new Error("settings-center-short-mobile-bounds-missing");
-		return (
-			helpBox.x +
-			helpBox.width -
-			(sidebarBox.x + sidebarBox.width - paddingRight)
-		);
-	});
-	expect(shortMobileOverflow).toBeLessThanOrEqual(0.5);
 });

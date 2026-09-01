@@ -99,16 +99,23 @@ Non-negotiable product and authority rules:
   feature matrix, including editing semantics, Preview enhancements,
   appearance, media, recovery, export, native-form compatibility, failure
   states, responsive behavior, RTL, and accessibility. Publishing, taxonomies,
-  featured media, and revisions remain available through WordPress-native
-  screens and Meta Boxes rather than duplicate React surfaces.
+  featured media, and revisions remain WordPress-owned. An ordinary or
+  same-root immersive React surface may provide focused controls that delegate
+  to those WordPress owners when implemented, but it must not create a second
+  canonical store, authorization path, or persistence authority.
 - Focus Mode / immersive writing is excluded from the ordinary editor's default
   surface. Issue #126 is an approved same-root exception: it may be opened from
   React while reusing the existing document, Preview, native form, and
   WordPress capability owners without a second root or persistence path.
-- React integration uses focused Ports and Adapters rather than scattering
-  WordPress DOM, browser globals, or REST access through Components. Async
-  owners handle cancellation where meaningful, stale results, authoritative
-  completion, repeated lifecycle, and teardown.
+- Ordinary Editor integration uses focused Ports and Adapters rather than
+  scattering WordPress DOM, browser globals, or REST access through Components.
+  This boundary covers the ordinary Editor Root and its protected document,
+  Preview, media, recovery, Save, Publish, and Revision operations. The
+  independent Settings Center may own narrowly scoped browser APIs for its
+  transfer and settings features; that separate surface is not evidence that
+  ordinary Editor components may bypass their adapters. Async owners handle
+  cancellation where meaningful, stale results, authoritative completion,
+  repeated lifecycle, and teardown.
 - React and TypeScript, built with Vite and the WordPress-provided React 18
   runtime, are the approved browser architecture. Normal focused Feature work
   does not need a separate architecture-only Issue.
@@ -226,7 +233,10 @@ Naming and compatibility baselines:
 - PHP namespace: `EasyMDE\`.
 - New namespaced PHP classes and matching filenames use `PascalCase`.
 - PHP variables and internal array keys use `snake_case`.
-- JavaScript properties may use `camelCase` only at the serialization boundary.
+- TypeScript and React internal identifiers use the `camelCase` baseline defined
+  by the EasyMDE Skill. Explicit PHP-to-JavaScript serialized fields may also
+  use `camelCase` at that boundary; camelCase is not restricted to serialization
+  objects.
 - WordPress hooks, options, metadata, Nonces, Script Handles, and CSS classes
   use the appropriate `easymde_` or `easymde-` prefix.
 - The fixed REST namespace is `easymde/v1`; do not rewrite it with underscores
@@ -475,10 +485,12 @@ belong to `CONTRIBUTING.md`.
 
 For UI work, real behavior, accessibility, protected surfaces, lifecycle
 cleanup, privacy-safe evidence, and an honest unverified scope are mandatory.
-The complete seven-stage fidelity workflow belongs to
-`.agents/skills/easymde/SKILL.md`; do not recreate it here. A supplied or
-discoverable design source, reference implementation, screenshot, app capture,
-prototype, or rendered reference automatically activates that workflow;
+The executable UI fidelity and accessibility workflow belongs to the
+[EasyMDE UI fidelity reference](.agents/skills/easymde/references/ui-fidelity-and-accessibility.md)
+and is routed by `.agents/skills/easymde/SKILL.md`; do not recreate a numbered
+workflow here. A supplied or discoverable design source, reference
+implementation, screenshot, app capture, prototype, or rendered reference
+automatically activates that reference;
 agents inventory the available evidence without requiring the maintainer to
 repeat the checklist. Discovery does not authorize dereferencing a URL or
 accessing a local, private, authenticated, or administrator surface. A current
@@ -505,9 +517,15 @@ completion reporting belong to `CONTRIBUTING.md`.
   changelog-only change, or correction that realigns an already declared target
   is not a new bump; update the existing target record.
 - Each exact version string and declared release-channel set has exactly one
-  long-running tracking Issue. Its GitHub `createdAt` must precede the earliest
-  commit containing that version change. The Issue is an audit index, not an
-  implementation scope or merge authority.
+  long-running tracking Issue. For an authoritative bump introduced by a
+  version-changing commit on or after policy adoption commit `d756c1bc`
+  (2026-08-30), its GitHub `createdAt` must precede the earliest commit
+  containing that version change. A target whose earliest version-changing
+  commit predates that policy is a historical exception: retain the existing
+  record, record its actual creation time and earliest commit, and mark the
+  ordering as pre-policy. Never fabricate timestamps, rewrite history, or
+  create a duplicate Issue. The Issue is an audit index, not an implementation
+  scope or merge authority.
 - The complete creation, record, linkage, lifecycle, retarget, and human
   closure procedure is owned by [Contributing](CONTRIBUTING.md#authoritative-version-tracking-issues).
   Candidate and formal-release status, channel evidence, and artifact/commit
@@ -616,6 +634,10 @@ Repository workflow hard boundaries:
 - Every substantive change and pull request is linked to a focused relevant
   Issue. Use a closing keyword only when the pull request fully satisfies the
   Issue; use a non-closing relation for partial or staged work.
+- Public Issues and pull requests use the canonical bodies in `docs/templates/`;
+  after creation or material editing, open the actual GitHub-rendered page and
+  verify it before continuing, and do not continue with unverified or defective
+  rendering. The complete workflow is owned by `CONTRIBUTING.md`.
 - Preserve unrelated and pre-existing local changes. Stage only explicitly
   reviewed task paths and inspect the exact staged diff.
 - Do not reset, rebase, amend, rewrite history, force-push, or perform another

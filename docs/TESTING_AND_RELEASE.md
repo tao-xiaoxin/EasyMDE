@@ -300,11 +300,26 @@ license, and notice destination with its declared local source;
 npm-backed sources must also exist in the root dependency and lockfile
 metadata. Validation fails on missing, changed, or unexpected managed files.
 
-The build verifies version consistency across `easymde.php`, `EASYMDE_VERSION`, `readme.txt`, and `package.json`. It also fails if required runtime dependencies, local runtime assets, registered theme assets, any of the eight production Frontend manifest pairs, any manifest-referenced production entry script or matching `.asset.php` artifact, translation files, or third-party notices are missing, or if the generated third-party notice content is stale. CodeMirror and its compiled runtime dependencies are listed with their full license notices in `THIRD-PARTY-NOTICES.md`.
+The build verifies version consistency across all six canonical release identity
+fields: the plugin header and `EASYMDE_VERSION` in `easymde.php`, the `readme.txt`
+Stable tag, the root `package.json` version, the top-level `package-lock.json`
+`version`, and `package-lock.json` `packages[""].version`. Both lockfile fields
+must be present non-empty strings; invalid JSON, missing fields, empty strings,
+and non-string values fail with the field named in the error. It also fails if
+required runtime dependencies, local runtime assets, registered theme assets,
+any of the eight production Frontend manifest pairs, any manifest-referenced
+production entry script or matching `.asset.php` artifact, translation files,
+or third-party notices are missing, or if the generated third-party notice
+content is stale. CodeMirror and its compiled runtime dependencies are listed
+with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
 The release build requires Composer runtime dependencies only. If Composer development packages are installed under `vendor/`, rebuild with Composer `--no-dev` before packaging.
 
-The CI release package job also creates source snapshots from the checked-out tracked Git tree:
+The CI release package job also creates source snapshots from the checked-out
+tracked Git tree. Source-archive metadata reads all six canonical version fields
+from that exact commit with `git show <commit>:<path>` before creating the
+archive, including both `package-lock.json` fields; uncommitted worktree files
+cannot change the source archive identity:
 
 - `dist/EasyMDE-<version>-source.zip`
 - `dist/EasyMDE-<version>-source.tar.gz`

@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -45,6 +52,25 @@ define('EASYMDE_VERSION', '${version}');
   );
   writeText(root, 'readme.txt', `=== EasyMDE ===\nStable tag: ${version}\n`);
   writeText(root, 'package.json', JSON.stringify({ version }));
+  writeText(
+    root,
+    'package-lock.json',
+    JSON.stringify({
+      name: 'easymde',
+      version,
+      packages: {
+        '': {
+          version,
+          dependencies: {
+            'fixture-package': '1.0.0'
+          }
+        },
+        'node_modules/fixture-package': {
+          version: '1.0.0'
+        }
+      }
+    })
+  );
 }
 
 function createGitFixture(root) {
@@ -65,6 +91,7 @@ function createGitFixture(root) {
     'easymde.php',
     'readme.txt',
     'package.json',
+    'package-lock.json',
     'src/Plugin.php',
     'frontend/tsconfig.json',
     'frontend/vite.config.ts',
@@ -73,6 +100,20 @@ function createGitFixture(root) {
     '.github/workflows/ci.yml'
   ]);
   run(root, 'git', ['commit', '--quiet', '-m', 'Initial source fixture']);
+}
+
+function updatePackageLock(root, update) {
+  const packageLockPath = join(root, 'package-lock.json');
+  const packageLock = JSON.parse(readFileSync(packageLockPath, 'utf8'));
+
+  update(packageLock);
+  writeFileSync(packageLockPath, JSON.stringify(packageLock));
+}
+
+function commitPackageLockChange(root, update, message) {
+  updatePackageLock(root, update);
+  run(root, 'git', ['add', 'package-lock.json']);
+  run(root, 'git', ['commit', '--quiet', '-m', message]);
 }
 
 function createUntrackedWorkspaceNoise(root) {
@@ -171,16 +212,76 @@ test('source archive metadata uses version fields from the archived commit', () 
     const expectedCommit = run(root, 'git', ['rev-parse', 'HEAD']);
     const metadata = buildSourceArchives({ root });
     const archivedMainFile = zipText(metadata.sourceZip, 'EasyMDE-0.1.7/easymde.php');
+    const archivedPackageLock = JSON.parse(
+      zipText(metadata.sourceZip, 'EasyMDE-0.1.7/package-lock.json')
+    );
 
     assert.equal(metadata.commit, expectedCommit);
     assert.equal(metadata.version, '0.1.7');
     assert.equal(metadata.archiveRoot, 'EasyMDE-0.1.7');
     assert.match(archivedMainFile, /Version: 0\.1\.7/);
     assert.doesNotMatch(archivedMainFile, /9\.9\.9/);
+    assert.equal(archivedPackageLock.version, '0.1.7');
+    assert.equal(archivedPackageLock.packages[''].version, '0.1.7');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('source archive metadata validates both package-lock version fields from the committed tree', () => {
+  const root = makeTempRoot();
+
+  try {
+    createGitFixture(root);
+    const validPackageLock = readFileSync(join(root, 'package-lock.json'), 'utf8');
+
+    commitPackageLockChange(
+      root,
+      (packageLock) => {
+        packageLock.version = '9.9.9';
+        packageLock.packages[''].version = '8.8.8';
+      },
+      'Mismatch committed package-lock versions'
+    );
+    writeFileSync(join(root, 'package-lock.json'), validPackageLock);
+
+    assert.throws(
+      () => resolveSourceArchiveMetadata({ root }),
+      /package-lock\.json version: 9\.9\.9; expected 0\.1\.7[\s\S]*package-lock\.json packages\[""\]\.version: 8\.8\.8; expected 0\.1\.7/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [label, update, expectedError] of [
+  [
+    'missing committed top-level version',
+    (packageLock) => delete packageLock.version,
+    /package-lock\.json version is required/
+  ],
+  [
+    'missing committed packages root version',
+    (packageLock) => delete packageLock.packages[''].version,
+    /package-lock\.json packages\[""\]\.version is required/
+  ]
+]) {
+  test(`source archive metadata rejects ${label}`, () => {
+    const root = makeTempRoot();
+
+    try {
+      createGitFixture(root);
+      const validPackageLock = readFileSync(join(root, 'package-lock.json'), 'utf8');
+
+      commitPackageLockChange(root, update, `Remove ${label}`);
+      writeFileSync(join(root, 'package-lock.json'), validPackageLock);
+
+      assert.throws(() => resolveSourceArchiveMetadata({ root }), expectedError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('source archive metadata resolves the same checkout commit and release version without writing files', () => {
   const root = makeTempRoot();

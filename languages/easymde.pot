@@ -1236,7 +1236,7 @@ msgstr ""
 #: src/ImageHosting/RemoteImageDownloader.php:95
 #: src/Rest/ImageHostingController.php:449
 #: src/Rest/ImageHostingController.php:528 src/Rest/MediaController.php:131
-#: src/Rest/MediaController.php:259
+#: src/Rest/MediaController.php:260
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
@@ -2973,11 +2973,11 @@ msgstr ""
 msgid "The image could not be uploaded."
 msgstr ""
 
-#: src/Rest/MediaController.php:211
+#: src/Rest/MediaController.php:212
 msgid "The uploaded image URL is unavailable."
 msgstr ""
 
-#: src/Rest/MediaController.php:249 src/Rest/MediaController.php:311
+#: src/Rest/MediaController.php:250 src/Rest/MediaController.php:312
 msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 

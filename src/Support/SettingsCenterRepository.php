@@ -450,7 +450,7 @@ final class SettingsCenterRepository {
 				'summaryMode'                 => 'auto-55',
 			),
 			'images'    => array(
-				'imageHostingEnabled'   => false,
+				'imageHostingEnabled'    => false,
 				'service'                => 'cloudflare-r2',
 				'endpoint'               => '',
 				'bucket'                 => 'easymde-assets',

@@ -179,7 +179,9 @@ const versionSources = {
   pluginHeader: { file: 'easymde.php', label: 'plugin header Version' },
   constant: { file: 'easymde.php', label: 'EASYMDE_VERSION' },
   stableTag: { file: 'readme.txt', label: 'Stable tag' },
-  packageJson: { file: 'package.json', label: 'version' }
+  packageJson: { file: 'package.json', label: 'version' },
+  packageLock: { file: 'package-lock.json', label: 'version' },
+  packageLockRoot: { file: 'package-lock.json', label: 'packages[""].version' }
 };
 const composerDevPackagePathCache = new Map();
 
@@ -342,14 +344,69 @@ function readPluginHeaderVersion(source) {
   return matchVersion(pluginHeaders[0], /^\s*\*\s*Version:\s*(.+)$/m, 'easymde.php', 'plugin header');
 }
 
-export function readReleaseVersionsFromSources({ mainFile, readme, packageJson }) {
+function parseJsonObject(source, path) {
+  let parsed = source;
+
+  if ('string' === typeof source) {
+    try {
+      parsed = JSON.parse(source);
+    } catch {
+      throw new Error(`Could not parse ${path} as valid JSON.`);
+    }
+  }
+
+  if (!parsed || 'object' !== typeof parsed || Array.isArray(parsed)) {
+    throw new Error(`Could not read ${path}: expected a JSON object.`);
+  }
+
+  return parsed;
+}
+
+function readRequiredPackageLockVersion(value, label) {
+  if ('undefined' === typeof value) {
+    throw new Error(`package-lock.json ${label} is required.`);
+  }
+
+  if ('string' !== typeof value || 0 === value.trim().length) {
+    throw new Error(`package-lock.json ${label} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function readPackageLockVersions(source) {
+  const packageLock = parseJsonObject(source, 'package-lock.json');
+  const packageLockRoot = packageLock.packages && packageLock.packages[''];
+  const packageLockVersion = readRequiredPackageLockVersion(
+    packageLock.version,
+    'version'
+  );
+
+  if (!packageLockRoot || 'object' !== typeof packageLockRoot || Array.isArray(packageLockRoot)) {
+    throw new Error('package-lock.json packages[""].version is required.');
+  }
+
+  const packageLockRootVersion = readRequiredPackageLockVersion(
+    packageLockRoot.version,
+    'packages[""].version'
+  );
+
+  return {
+    packageLock: packageLockVersion,
+    packageLockRoot: packageLockRootVersion
+  };
+}
+
+export function readReleaseVersionsFromSources({ mainFile, readme, packageJson, packageLock }) {
   const parsedPackageJson = typeof packageJson === 'string' ? JSON.parse(packageJson) : packageJson;
+  const packageLockVersions = readPackageLockVersions(packageLock);
 
   return {
     pluginHeader: readPluginHeaderVersion(mainFile),
     constant: matchVersion(mainFile, /define\(\s*['"]EASYMDE_VERSION['"]\s*,\s*['"]([^'"]+)['"]\s*\)/, 'easymde.php', 'EASYMDE_VERSION'),
     stableTag: matchVersion(readme, /^Stable tag:\s*(.+)$/m, 'readme.txt', 'Stable tag'),
-    packageJson: String(parsedPackageJson.version || '').trim()
+    packageJson: String(parsedPackageJson.version || '').trim(),
+    ...packageLockVersions
   };
 }
 
@@ -357,7 +414,8 @@ export function readReleaseVersions(root = defaultRoot) {
   return readReleaseVersionsFromSources({
     mainFile: readText(root, 'easymde.php'),
     readme: readText(root, 'readme.txt'),
-    packageJson: readText(root, 'package.json')
+    packageJson: readText(root, 'package.json'),
+    packageLock: readText(root, 'package-lock.json')
   });
 }
 

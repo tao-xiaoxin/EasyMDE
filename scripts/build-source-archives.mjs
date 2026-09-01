@@ -66,7 +66,8 @@ function readReleaseVersionsAtCommit(root, commit) {
   return readReleaseVersionsFromSources({
     mainFile: readGitText(root, commit, 'easymde.php'),
     readme: readGitText(root, commit, 'readme.txt'),
-    packageJson: readGitText(root, commit, 'package.json')
+    packageJson: readGitText(root, commit, 'package.json'),
+    packageLock: readGitText(root, commit, 'package-lock.json')
   });
 }
 

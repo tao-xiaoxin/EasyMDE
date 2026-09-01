@@ -25,6 +25,7 @@ import {
   findMissingReleaseRequirements,
   findVersionMismatches,
   readReleaseVersions,
+  readReleaseVersionsFromSources,
   releaseZipPath,
   shouldCopyReleaseFile
 } from '../../scripts/build-release.mjs';
@@ -130,6 +131,19 @@ function createVersionFiles(root, version = '0.1.7') {
   );
   writeText(root, 'readme.txt', `=== EasyMDE ===\nStable tag: ${version}\n`);
   writeText(root, 'package.json', JSON.stringify({ version }));
+  writeText(
+    root,
+    'package-lock.json',
+    JSON.stringify({
+      name: 'easymde',
+      version,
+      packages: {
+        '': {
+          version
+        }
+      }
+    })
+  );
 }
 
 function createFrontendAssetSources(root) {
@@ -138,6 +152,7 @@ function createFrontendAssetSources(root) {
   const dependencies = {};
   const packages = {
     '': {
+      version: packageJson.version,
       dependencies
     }
   };
@@ -221,7 +236,15 @@ function createFrontendAssetSources(root) {
     'MIT License\n\nCopyright fixture for mermaid\n'
   );
   writeFileSync(packageJsonPath, JSON.stringify(packageJson));
-  writeText(root, 'package-lock.json', JSON.stringify({ packages }));
+  writeText(
+    root,
+    'package-lock.json',
+    JSON.stringify({
+      name: packageJson.name || 'easymde',
+      version: packageJson.version,
+      packages
+    })
+  );
   prepareFrontendAssets(root);
 }
 
@@ -496,6 +519,141 @@ function zipEntries(root) {
 
   return result.stdout.trim().split(/\r?\n/).filter(Boolean);
 }
+
+function updatePackageLock(root, update) {
+  const packageLockPath = join(root, 'package-lock.json');
+  const packageLock = JSON.parse(readFileSync(packageLockPath, 'utf8'));
+
+  update(packageLock);
+  writeFileSync(packageLockPath, JSON.stringify(packageLock));
+}
+
+test('release version parser returns all six canonical release identity fields', () => {
+  const root = makeTempRoot();
+
+  try {
+    createVersionFiles(root);
+
+    const versions = readReleaseVersionsFromSources({
+      mainFile: readFileSync(join(root, 'easymde.php'), 'utf8'),
+      readme: readFileSync(join(root, 'readme.txt'), 'utf8'),
+      packageJson: readFileSync(join(root, 'package.json'), 'utf8'),
+      packageLock: readFileSync(join(root, 'package-lock.json'), 'utf8')
+    });
+
+    assert.deepEqual(versions, {
+      pluginHeader: '0.1.7',
+      constant: '0.1.7',
+      stableTag: '0.1.7',
+      packageJson: '0.1.7',
+      packageLock: '0.1.7',
+      packageLockRoot: '0.1.7'
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build reports both package-lock version fields when they drift', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    updatePackageLock(root, (packageLock) => {
+      packageLock.version = '9.9.9';
+      packageLock.packages[''].version = '8.8.8';
+    });
+
+    assert.deepEqual(findVersionMismatches(root), [
+      {
+        field: 'packageLock',
+        file: 'package-lock.json',
+        label: 'version',
+        value: '9.9.9',
+        expected: '0.1.7'
+      },
+      {
+        field: 'packageLockRoot',
+        file: 'package-lock.json',
+        label: 'packages[""].version',
+        value: '8.8.8',
+        expected: '0.1.7'
+      }
+    ]);
+
+    const result = spawnSync(process.execPath, [scriptPath, '--root', root], {
+      encoding: 'utf8'
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /package-lock\.json version: 9\.9\.9; expected 0\.1\.7/);
+    assert.match(result.stderr, /package-lock\.json packages\[""\]\.version: 8\.8\.8; expected 0\.1\.7/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const [label, update, expectedError] of [
+  [
+    'missing top-level version',
+    (packageLock) => delete packageLock.version,
+    /package-lock\.json version is required/
+  ],
+  [
+    'missing packages root version',
+    (packageLock) => delete packageLock.packages[''].version,
+    /package-lock\.json packages\[""\]\.version is required/
+  ],
+  [
+    'empty top-level version',
+    (packageLock) => { packageLock.version = ''; },
+    /package-lock\.json version must be a non-empty string/
+  ],
+  [
+    'empty packages root version',
+    (packageLock) => { packageLock.packages[''].version = ''; },
+    /package-lock\.json packages\[""\]\.version must be a non-empty string/
+  ],
+  [
+    'non-string top-level version',
+    (packageLock) => { packageLock.version = 1; },
+    /package-lock\.json version must be a non-empty string/
+  ],
+  [
+    'non-string packages root version',
+    (packageLock) => { packageLock.packages[''].version = false; },
+    /package-lock\.json packages\[""\]\.version must be a non-empty string/
+  ]
+]) {
+  test(`release version parser rejects ${label}`, () => {
+    const root = makeTempRoot();
+
+    try {
+      createVersionFiles(root);
+      updatePackageLock(root, update);
+
+      assert.throws(() => readReleaseVersions(root), expectedError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('release version parser names invalid package-lock JSON', () => {
+  const root = makeTempRoot();
+
+  try {
+    createVersionFiles(root);
+    writeFileSync(join(root, 'package-lock.json'), '{"version":');
+
+    assert.throws(
+      () => readReleaseVersions(root),
+      /package-lock\.json.*valid JSON/i
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('release build succeeds for a complete runtime fixture', () => {
   const root = makeTempRoot();

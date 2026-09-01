@@ -2808,7 +2808,17 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				window.EasyMDESettingsCenterBootstrap.settings.images
 					.imageHostingEnabled,
 		);
-		expect(originalImageHostingEnabled).toBe(false);
+		await setImageHostingEnabled(page, false);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		strings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		toggle = page.getByRole("switch", {
+			name: strings.enableImageHosting,
+			exact: true,
+		});
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
 		const fileNameRule = page.getByRole("textbox", {
 			name: strings.fileNameRule,

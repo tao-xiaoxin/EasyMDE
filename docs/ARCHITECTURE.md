@@ -9,8 +9,10 @@ This document describes the current implementation boundaries. Approved target d
 The maintainer-approved target for the ordinary WordPress Editor is one React 18 Editor Root, with PHP enqueuing a Vite loader that dynamically loads its hashed main entry. This is a direct cutover, not another sequence of Legacy-to-React runtime handoffs. The final ordinary Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or Focus Mode / immersive-writing assets.
 
 The React Root preserves the ordinary editing capability matrix from Issues
-#91 and #86 while WordPress-native surfaces continue to own publishing and
-revisions:
+#91 and #86 while PHP and WordPress remain the final owners of publishing and
+revisions. A same-root React surface may expose focused controls that delegate
+to those owners; delegation is not a second persistence, authorization, or
+document authority:
 
 - title and Markdown editing, Selection, IME, Undo/Redo, shortcuts, and every
   registered Toolbar command;
@@ -20,8 +22,9 @@ revisions:
   export, and the fixed Source/Preview workspace;
 - the native WordPress form and unknown extension fields, permissions, Nonces,
   locks, failure states, responsive layouts, RTL, and accessibility;
-- WordPress-native Publish, category, tag, excerpt, featured-image, and Revision
-  Meta Boxes and screens outside the React Root.
+- WordPress Publish, category, tag, excerpt, featured-image, and Revision
+  owners, including native Meta Boxes and screens plus any same-root React
+  controls that delegate to them.
 
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
@@ -191,8 +194,11 @@ teardown. The Root composes Toolbar/commands, CodeMirror document and title
 sessions, server Preview and local post-response enhancements, Appearance and
 Custom CSS, Fonts, Media and image upload, Local Drafts, WeChat export,
 the fixed Source/Preview layout, and WordPress session state.
-Components depend on typed Ports; WordPress DOM, `wp.media`, REST, Storage, and
-Clipboard access remain in focused Integration Adapters.
+Ordinary Editor Components depend on typed Ports; WordPress DOM, `wp.media`,
+REST, Storage, and Clipboard access for the ordinary document and protected
+operations remain in focused Integration Adapters. The independent Settings
+Center Root is outside this ordinary-Editor inventory and may own narrowly
+scoped browser APIs for its transfer and settings features.
 
 CodeMirror owns the in-page Markdown value, Selection, Focus, Undo history, and
 source scrolling. The native title and React-owned hidden Markdown fields are

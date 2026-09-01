@@ -231,8 +231,13 @@ back into alignment with an already declared target does not create another
 version Issue; update the existing target Issue instead.
 
 For each exact version string and declared release-channel set, maintain exactly
-one tracking Issue. The Issue's GitHub `createdAt` timestamp must be earlier than
-the earliest commit that contains the version change. The tracking Issue is an
+one tracking Issue. For a version-changing commit created on or after policy
+adoption commit `d756c1bc` (2026-08-30), the Issue's GitHub `createdAt` timestamp
+must be earlier than the earliest commit that contains the version change. A
+target whose earliest version-changing commit predates that policy is a
+historical exception: keep the existing record, record the actual Issue date and
+earliest commit, and mark the ordering as pre-policy. Do not fabricate an earlier
+timestamp, rewrite history, or create a duplicate Issue. The tracking Issue is an
 auditable release index; it is not an umbrella implementation scope, a substitute
 for focused Issue gates, or merge authority. Every material implementation or
 correction still needs its own focused Issue and linkage.

@@ -91,12 +91,11 @@ Non-negotiable product and authority rules:
   hidden document, settings, or server write. Native-field synchronization is
   a submission bridge, not persistence proof.
 - The ordinary WordPress Editor is delivered by one React Editor Root composed
-  from focused Features, Ports, and Adapters. Its final runtime does not load
+  from focused Features, Ports, and Adapters. Its runtime does not load
   `assets/js/admin/bootstrap.js`, jQuery, Legacy Toolbar, Preview, Theme, Draft,
   Media, Focus Mode, dual-DOM handoff, or Legacy fallback implementations.
-- Direct React cutover removes Legacy runtime ownership, not ordinary Editor
-  capability. The React Root must retain the full Issue #91/#86 ordinary Editor
-  feature matrix, including editing semantics, Preview enhancements,
+- The React Root retains the complete ordinary Editor feature matrix, including
+  editing semantics, Preview enhancements,
   appearance, media, recovery, export, native-form compatibility, failure
   states, responsive behavior, RTL, and accessibility. Publishing, taxonomies,
   featured media, and revisions remain WordPress-owned. An ordinary or
@@ -104,9 +103,9 @@ Non-negotiable product and authority rules:
   to those WordPress owners when implemented, but it must not create a second
   canonical store, authorization path, or persistence authority.
 - Focus Mode / immersive writing is excluded from the ordinary editor's default
-  surface. Issue #126 is an approved same-root exception: it may be opened from
-  React while reusing the existing document, Preview, native form, and
-  WordPress capability owners without a second root or persistence path.
+  surface. The immersive presentation is a same-root exception: it reuses the
+  existing document, Preview, native form, and WordPress capability owners
+  without a second root or persistence path.
 - Ordinary Editor integration uses focused Ports and Adapters rather than
   scattering WordPress DOM, browser globals, or REST access through Components.
   This boundary covers the ordinary Editor Root and its protected document,
@@ -129,7 +128,7 @@ Non-negotiable product and authority rules:
   scope, or authorize unrelated refactors.
 - One root `package.json` and one root Lockfile define the only approved npm
   project for local vendor preparation, Node and Playwright tests, i18n,
-  notices, release/source packaging, and future React/TypeScript/Vite work.
+  notices, release/source packaging, and current React/TypeScript/Vite work.
   Inspect the live `package.json` before claiming or invoking a script;
   approved direction is not proof that a tool currently exists.
 - Public visitor pages remain PHP-rendered and must not load an admin React
@@ -141,8 +140,9 @@ Non-negotiable product and authority rules:
 An installable plugin ZIP contains every required runtime file, including
 compiled JavaScript and CSS, static runtime assets, Composer runtime
 dependencies, licenses, translations, and third-party notices. It excludes
-development source, tests, caches, private or machine-specific data, and
-unrelated development artifacts, and remains self-contained and privacy-safe.
+frontend source, repository-only development files, tests, caches, private or
+machine-specific data, and unrelated development artifacts, and remains
+self-contained and privacy-safe.
 
 The installable ZIP and source archives are different products. Exact current
 inclusion, exclusion, build, and validation behavior belongs to
@@ -297,8 +297,8 @@ assets/vendor/           # Third-party libraries and upstream assets.
   area, and responsive overflow.
 - Article Themes own article typography/content styling and code Themes own
   token colors. Neither may hide, replace, reposition, or restyle the shared
-  Mac frame. Existing Theme-specific overrides are legacy Issue #58 cleanup,
-  not precedent.
+  Mac frame. Existing Theme-specific overrides are historical compatibility
+  exceptions, not precedent.
 - Do not copy Code Theme or shared-frame CSS into an Article Theme, or Article
   Theme CSS into a Code Theme. Remove obsolete conflicting implementations
   physically instead of retaining dead selectors, overrides, or hidden paths.
@@ -341,11 +341,8 @@ State-changing operations:
   requests, and recursive Save/render paths.
 - Save, Publish, Upload, Restore, and Settings operations never
   report success until the real WordPress or browser owner succeeds.
-- Clipboard operations must originate from an explicit user activation.
-- Clipboard operations report success only after the real browser owner completes.
-- Clipboard failures remain explicit and never become fake or partial success.
-- Clipboard operations never change article state.
-- The complete Clipboard serializer and browser-path implementation contract is owned by [the WeChat export Skill reference](.agents/skills/easymde/references/wechat-export.md).
+- Clipboard operations are user-activated, report the real browser owner's
+  result, and keep failures explicit; they never change article state.
 - Protected Mutations do not retry automatically unless a focused approved
   external-service contract below defines a persisted administrator-controlled
   bound. The only current exception is the bounded Image Hosting primary- and
@@ -392,12 +389,17 @@ Markdown and HTML:
 - Sanitize final rendered HTML before output and use one Preview-owned Safe
   HTML sink.
 
-WeChat Clipboard is a user-initiated compatibility export, not a persistence, publication, or second-rendering authority.
-
-- It reads only the current stable, sanitized, locally enhanced Preview from the Preview-owned Safe HTML sink and never copies Markdown, editor DOM, or a separately rendered document.
-- Copy success or failure comes from the real browser Clipboard owner, and a copy attempt never changes article state.
-- The complete serializer, ordinary and immersive surface, lifecycle, asynchronous, sanitization, and browser execution contract is owned by [the WeChat export Skill reference](.agents/skills/easymde/references/wechat-export.md).
-- The WeChat architectural rationale is owned by [ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md), focused execution checks by [Testing and Release](docs/TESTING_AND_RELEASE.md), and review evidence by [CONTRIBUTING.md](CONTRIBUTING.md).
+WeChat Clipboard is user-initiated compatibility output, not a persistence,
+publication, or second-rendering authority. It reads only the current stable,
+sanitized, locally enhanced Preview from the Preview-owned Safe HTML sink and
+never copies Markdown, editor DOM, or a separately rendered document. Copy uses
+the real browser Clipboard result, keeps failure explicit, and never writes
+article state. The complete ordinary/immersive serializer, lifecycle,
+asynchronous, sanitization, and browser contract is owned by [the WeChat export
+reference](.agents/skills/easymde/references/wechat-export.md); rationale is in
+[ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md), execution
+in [Testing and Release](docs/TESTING_AND_RELEASE.md), and review evidence in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Privacy:
 
@@ -478,10 +480,14 @@ belong to `CONTRIBUTING.md`.
   not exercise.
 - Do not confuse a plan, mock, static file-presence check, or plausible output
   with proof of correctness.
+- After every code change, audit affected documentation against the live
+  implementation, update its authoritative owner, remove stale or ambiguous
+  copies, and use the fewest words that preserve every required invariant.
+  Follow the detailed mapping and evidence workflow in `CONTRIBUTING.md`.
 - Before delivery, inspect the exact change skeptically for logic/data-flow,
   contract, scope/simplicity, test-validity, privacy, artifact, and release
-  failures. Identify the three to five most likely failures and test them, fix
-  the root cause, or report them as unverified.
+  failures. Identify material failure modes and test them, fix the root cause,
+  or report them as unverified.
 
 For UI work, real behavior, accessibility, protected surfaces, lifecycle
 cleanup, privacy-safe evidence, and an honest unverified scope are mandatory.
@@ -497,9 +503,9 @@ accessing a local, private, authenticated, or administrator surface. A current
 repository rule may approve the exact origin of a public reference; access to
 any local, private, authenticated, or administrator surface and required
 session always needs explicit authorization in the current human task and
-follows the Skill's isolation and privacy rules. For Issue #91's approved direct
-React cutover, use the EasyMDE Skill's browser owner inventory and removal
-evidence; do not introduce runtime handoff, fallback, or dual-owner architecture.
+follows the Skill's isolation and privacy rules. For the direct React cutover,
+use the EasyMDE Skill's browser owner inventory and removal evidence; do not
+introduce runtime handoff, fallback, or dual-owner architecture.
 
 Use live, scope-relevant commands only. Detailed current commands and release
 execution belong to `docs/TESTING_AND_RELEASE.md`; browser test selection and
@@ -567,61 +573,16 @@ binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
 Review Team when service classification or channel acceptance is unclear.
 
 The browser runtime and redistributable assets remain local. The only approved
-external-service feature is administrator-configured image hosting. Cloudflare
-R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are the supported
-providers; any one may be the primary or the optional backup. Primary and
-backup writes always use the same generated object key; this is a runtime
-invariant rather than a configurable setting. WordPress owns provider API
-requests and stored credentials; ordinary browser bootstrap, settings reads,
-exports, and diagnostics receive only same-origin REST URLs, capability
-presentation, the authoritative public image URL, and redacted status. A
-provider Endpoint is the HTTPS upload API origin. The separately configured
-primary Viewing Image Domain accepts HTTP or HTTPS and is the public URL base
-that produces the one authoritative URL returned after upload. An HTTP image
-URL may be blocked as mixed content when an article is viewed over HTTPS; that
-display restriction does not turn an authoritative provider upload success
-into an upload failure. The
-editor's local image paste and drag-and-drop path always uses the protected
-same-origin Image Hosting proxy; there is no destination setting or WordPress
-media fallback. The toolbar media picker remains a separate explicit
-WordPress-native insertion entry point. Primary and backup configurations that
-identify the same physical destination are rejected with HTTP 409. The
-single persisted `uploadRetryCount` setting appears in the primary settings
-section, is a strict integer from `0` through `5`, defaults to `0`, and means
-the maximum number of extra attempts after the first failed write. The same
-configured `N` applies independently to the primary and, when enabled, backup
-destination. Each destination's attempts run serially with the exact same
-prepared bytes, object key, and provider, and stop immediately on success. No attempt switches
-providers. Exhausting the primary attempts, or exhausting the backup attempts
-when backup is enabled, fails the whole article upload: the REST response must
-not return an image URL and the editor must not insert one. The editor opens an
-accessible redacted failure message that asks the user to retry manually. A
-provider may already have stored an object because there is no reliable
-cross-provider compensating delete. Image hosting must never be silently
-substituted or reported successful before every required provider result is
-authoritative. Stored
-credentials remain server-side by default. An administrator's explicit
-password-field eye action may retrieve exactly one saved credential through a
-dedicated `manage_options`-protected POST with both the WordPress REST Nonce
-and an action-specific Nonce. That response is `no-store`, the revealed value
-exists only in current browser memory, and it must not enter persistence,
-browser Storage, exports, HTML bootstrap, logs, diagnostics, or public
-evidence. The Image Hosting verification action performs a real upload: it
-writes one plugin-owned synthetic PNG to the selected provider using the
-current `fileNameRule`, with one attempt and no provider switch, then
-reports the authoritative object path and public URL in the Settings Center
-dialog. Rules containing time or UUID variables may create a new object on
-each verification. The `{md5}` filename variable is the hexadecimal MD5 digest of
-the final bytes sent to the provider, after any enabled image processing.
-The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`.
-EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
-to the provider and derives the extension from the verified MIME type.
-This approval does not change CSP, Enqueue behavior, local runtime assets, or
-package/build ownership. The complete external-service Decision Record and
-official-policy sources belong to
-`.agents/skills/easymde/SKILL.md`; durable rationale belongs to
-`docs/DESIGN.md`; current facts remain in
-`docs/ARCHITECTURE.md`.
+external-service feature is administrator-configured image hosting through
+Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS. WordPress
+owns provider API requests and credentials; the browser receives only
+same-origin REST URLs, capability presentation, the authoritative public image
+URL, and redacted status. Primary and backup writes use the same generated key;
+the bounded serial retry is no-switch, and exhausting any required destination
+fails the upload. Verify Upload is single-attempt. Secret reveal is explicit and
+protected, `no-store`, and memory-only. Current image facts are in
+`docs/ARCHITECTURE.md`; the executable contract and policy sources are in
+`.agents/skills/easymde/SKILL.md`; rationale is in `docs/DESIGN.md`.
 
 ## Repository Workflow and Authorization
 

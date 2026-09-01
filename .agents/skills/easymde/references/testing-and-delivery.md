@@ -82,7 +82,8 @@ artifact cleanup evidence from the UI reference.
 
 The installable plugin ZIP contains required compiled runtime, CSS, static
 assets, Composer dependencies, licenses, translations, and notices; it excludes
-development source, tests, caches, private data, and unrelated artifacts.
+frontend source, repository-only development files, tests, caches, private data,
+and unrelated artifacts.
 Source archives are a different product and may include intentionally tracked
 `frontend/` source. Do not apply one allowlist to the other. Exact inclusion,
 exclusion, build, and validation belong to the release document and scripts.

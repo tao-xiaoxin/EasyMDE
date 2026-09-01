@@ -2055,8 +2055,11 @@ test("persists all remote image import modes and resets the documented defaults"
 	page,
 }) => {
 	await login(page);
+	let originalImageHostingEnabled;
 	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
 		await resetSettingsCenterDefaults(page);
+		await setImageHostingEnabled(page, true);
 		await openSettingsSection(page, "general");
 		const generalDefaults = await page.evaluate(() => ({
 			autoSaveInterval:
@@ -2128,7 +2131,10 @@ test("persists all remote image import modes and resets the documented defaults"
 			}),
 		).toHaveValue("0");
 	} finally {
-		await resetSettingsCenterDefaults(page);
+		await resetSettingsAndRestoreImageHosting(
+			page,
+			originalImageHostingEnabled,
+		);
 	}
 });
 
@@ -2774,9 +2780,64 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		);
 		expect(originalImageHostingEnabled).toBe(false);
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.selectImageHostService,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("button", {
+				name: strings.verifyPrimaryUpload,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("heading", {
+				name: strings.backupImageHost,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.remoteImageUploadMode,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("switch", {
+				name: strings.compressImages,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("switch", {
+				name: strings.autoUploadPastedImages,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.imageTitleDisplay,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("spinbutton", {
+				name: strings.maximumImageSize,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("checkbox", {
+				name: strings.allowUploadPng,
+				exact: true,
+			}),
+		).toBeVisible();
 
 		await toggle.focus();
 		await page.keyboard.press("Space");
+		await expect(toggle).toBeFocused();
 		await expect(toggle).toHaveAttribute("aria-checked", "true");
 		await saveSettingsCenter(page);
 		await page.reload();
@@ -2790,6 +2851,36 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 			exact: true,
 		});
 		await expect(toggle).toHaveAttribute("aria-checked", "true");
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.selectImageHostService,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("button", {
+				name: strings.verifyPrimaryUpload,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("heading", {
+				name: strings.backupImageHost,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.remoteImageUploadMode,
+				exact: true,
+			}),
+		).toBeVisible();
+		await expect(
+			page.getByRole("switch", {
+				name: strings.compressImages,
+				exact: true,
+			}),
+		).toBeVisible();
 		expect(
 			await page.evaluate(
 				() =>
@@ -2798,9 +2889,70 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 			),
 		).toBe(true);
 
+		const backupToggle = page.getByRole("switch", {
+			name: strings.enableBackupImageHost,
+			exact: true,
+		});
+		const originalBackupEnabled =
+			await backupToggle.getAttribute("aria-checked");
+		if (originalBackupEnabled !== "true" && originalBackupEnabled !== "false") {
+			throw new Error("settings-center-backup-hosting-state-missing");
+		}
+		if (originalBackupEnabled === "false") {
+			await backupToggle.focus();
+			await page.keyboard.press("Space");
+			await expect(backupToggle).toHaveAttribute("aria-checked", "true");
+		}
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.backupBucket,
+				exact: true,
+			}),
+		).toBeVisible();
+		await backupToggle.focus();
+		await page.keyboard.press("Space");
+		await expect(backupToggle).toBeFocused();
+		await expect(backupToggle).toHaveAttribute("aria-checked", "false");
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.backupBucket,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		if (originalBackupEnabled === "true") {
+			await backupToggle.focus();
+			await page.keyboard.press("Space");
+			await expect(backupToggle).toHaveAttribute("aria-checked", "true");
+		}
+
 		await toggle.focus();
 		await page.keyboard.press("Space");
+		await expect(toggle).toBeFocused();
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.selectImageHostService,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("heading", {
+				name: strings.backupImageHost,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("combobox", {
+				name: strings.remoteImageUploadMode,
+				exact: true,
+			}),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("switch", {
+				name: strings.compressImages,
+				exact: true,
+			}),
+		).toHaveCount(0);
 		await saveSettingsCenter(page);
 		await page.reload();
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();

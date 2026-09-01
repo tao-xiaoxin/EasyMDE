@@ -1,6 +1,8 @@
 import {
 	createElement,
 	createPortal,
+	Fragment,
+	useCallback,
 	useEffect,
 	useRef,
 	useState,
@@ -231,7 +233,7 @@ export function DuplicateImageHostDialog({
 		ownerDocument.addEventListener("keydown", closeOnEscape);
 		return () => {
 			ownerDocument.removeEventListener("keydown", closeOnEscape);
-			returnFocus.focus();
+			if (returnFocus.isConnected) returnFocus.focus();
 		};
 	}, [returnFocus]);
 
@@ -305,7 +307,7 @@ function UploadVerificationFeedbackDialog({
 		ownerDocument.addEventListener("keydown", closeOnEscape);
 		return () => {
 			ownerDocument.removeEventListener("keydown", closeOnEscape);
-			feedback.returnFocus.focus();
+			if (feedback.returnFocus.isConnected) feedback.returnFocus.focus();
 		};
 	}, [feedback.returnFocus]);
 	const success = feedback.kind === "success";
@@ -994,6 +996,7 @@ export function ImagesSettingsPage({
 	const verificationAbortRef = useRef<
 		Partial<Record<ImageHostingTarget, AbortController>>
 	>({});
+	const verificationGenerationRef = useRef(0);
 	const verificationInvalidationTokensRef = useRef(
 		verificationInvalidationTokens,
 	);
@@ -1002,6 +1005,24 @@ export function ImagesSettingsPage({
 	const settings = rawSettings;
 	const settingsRef = useRef(settings);
 	settingsRef.current = settings;
+	const clearImageHostingTransientState = useCallback(() => {
+		verificationGenerationRef.current += 1;
+		verificationAbortRef.current.primary?.abort();
+		verificationAbortRef.current.backup?.abort();
+		verificationAbortRef.current = {};
+		setPrimaryVerification({ status: "pending" });
+		setBackupVerification({ status: "pending" });
+		setVerificationFeedback(null);
+		setDuplicateTrigger(null);
+	}, []);
+	const previousImageHostingEnabledRef = useRef(settings.imageHostingEnabled);
+	useEffect(() => {
+		const previous = previousImageHostingEnabledRef.current;
+		previousImageHostingEnabledRef.current = settings.imageHostingEnabled;
+		if (previous && !settings.imageHostingEnabled) {
+			clearImageHostingTransientState();
+		}
+	}, [clearImageHostingTransientState, settings.imageHostingEnabled]);
 	useEffect(
 		() => () => {
 			verificationAbortRef.current.primary?.abort();
@@ -1074,6 +1095,7 @@ export function ImagesSettingsPage({
 		const controller = new AbortController();
 		verificationAbortRef.current[target] = controller;
 		const snapshot = settingsRef.current;
+		const verificationGeneration = verificationGenerationRef.current;
 		const verifiedFingerprint = verificationFingerprint(snapshot, target);
 		const verifiedInvalidationToken =
 			verificationInvalidationTokensRef.current[target];
@@ -1091,7 +1113,12 @@ export function ImagesSettingsPage({
 				settings: snapshot,
 				signal: controller.signal,
 			});
-			if (controller.signal.aborted) return;
+			if (
+				controller.signal.aborted ||
+				verificationGenerationRef.current !== verificationGeneration ||
+				!settingsRef.current.imageHostingEnabled
+			)
+				return;
 			setState({
 				status:
 					verificationFingerprint(settingsRef.current, target) ===
@@ -1109,7 +1136,12 @@ export function ImagesSettingsPage({
 				returnFocus: trigger,
 			});
 		} catch {
-			if (controller.signal.aborted) return;
+			if (
+				controller.signal.aborted ||
+				verificationGenerationRef.current !== verificationGeneration ||
+				!settingsRef.current.imageHostingEnabled
+			)
+				return;
 			console.error("[EasyMDE settings] Image upload verification failed", {
 				target,
 				reason: "upload-verification-rejected",
@@ -1186,229 +1218,240 @@ export function ImagesSettingsPage({
 							}
 						/>
 					</ImageBehaviorRow>
-					<div>
-						<div>
-							<ImageField label={strings.selectImageHostService}>
-								<CompactSelect
-									label={strings.selectImageHostService}
-									value={settings.service}
-									options={imageHostOptions}
-									onChange={(value) => {
-										if (!isImageHostProvider(value)) {
-											throw new Error("settings-center-image-provider-invalid");
-										}
-										setValues({
-											service: value,
-											endpoint: "",
-										});
-									}}
-								/>
-							</ImageField>
-							{settings.service !== "qiniu-kodo" ? (
-								<ImageField label={strings.customDomain}>
-									<ImageTextInput
-										label={strings.customDomain}
-										value={settings.endpoint}
-										onChange={(value) => setValue("endpoint", value)}
-									/>
-								</ImageField>
-							) : null}
-							<ImageField label={strings.bucket}>
+					{settings.imageHostingEnabled ? (
+						<Fragment>
+							<div>
 								<div>
-									<ImageTextInput
-										label={strings.bucket}
-										value={settings.bucket}
-										onChange={(value) => setValue("bucket", value)}
-									/>
-									{settings.service === "tencent-cos" ? (
-										<small>{strings.cosBucketHint}</small>
+									<ImageField label={strings.selectImageHostService}>
+										<CompactSelect
+											label={strings.selectImageHostService}
+											value={settings.service}
+											options={imageHostOptions}
+											onChange={(value) => {
+												if (!isImageHostProvider(value)) {
+													throw new Error(
+														"settings-center-image-provider-invalid",
+													);
+												}
+												setValues({
+													service: value,
+													endpoint: "",
+												});
+											}}
+										/>
+									</ImageField>
+									{settings.service !== "qiniu-kodo" ? (
+										<ImageField label={strings.customDomain}>
+											<ImageTextInput
+												label={strings.customDomain}
+												value={settings.endpoint}
+												onChange={(value) => setValue("endpoint", value)}
+											/>
+										</ImageField>
 									) : null}
-								</div>
-							</ImageField>
-							<ImageField label={strings.imageFallbackDomain}>
-								<ImageTextInput
-									label={strings.imageFallbackDomain}
-									value={settings.domain}
-									onChange={(value) => setValue("domain", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.accessKey}>
-								<SecretInput
-									configured={draft.primaryCredentialsConfigured}
-									field="accessKey"
-									label={strings.accessKey}
-									value={settings.accessKey}
-									showLabel={strings.showSecret}
-									hideLabel={strings.hideSecret}
-									onChange={(value) => setValue("accessKey", value)}
-									revealFailedLabel={strings.secretRevealFailed}
-									revealPort={secretRevealPort}
-									revealingLabel={strings.revealingSecret}
-									revision={settingsRevision}
-									target="primary"
-								/>
-							</ImageField>
-							<ImageField label={strings.secretKey}>
-								<SecretInput
-									configured={draft.primaryCredentialsConfigured}
-									field="secretKey"
-									label={strings.secretKey}
-									value={settings.secretKey}
-									showLabel={strings.showSecret}
-									hideLabel={strings.hideSecret}
-									onChange={(value) => setValue("secretKey", value)}
-									revealFailedLabel={strings.secretRevealFailed}
-									revealPort={secretRevealPort}
-									revealingLabel={strings.revealingSecret}
-									revision={settingsRevision}
-									target="primary"
-								/>
-							</ImageField>
-							<FileNameRuleEditor
-								strings={strings}
-								value={settings.fileNameRule}
-								onChange={(value) => setValue("fileNameRule", value)}
-							/>
-							<ImageField
-								label={strings.uploadRetryCount}
-								description={strings.uploadRetryCountDescription}
-							>
-								<ImageNumberInput
-									label={strings.uploadRetryCount}
-									min={0}
-									max={5}
-									value={settings.uploadRetryCount}
-									onChange={(value) => setValue("uploadRetryCount", value)}
-								/>
-							</ImageField>
-						</div>
-					</div>
-					{uploadVerificationPort ? (
-						<VerificationRow
-							disabled={uploadVerificationDisabled}
-							target="primary"
-							strings={strings}
-							state={effectiveVerificationState(primaryVerification, "primary")}
-							onVerify={(trigger) => void verifyUpload("primary", trigger)}
-						/>
-					) : null}
-				</section>
-
-				<section className="easymde-settings-center__image-group is-backup-host">
-					<h2>
-						<Copy size={25} />
-						{strings.backupImageHost}
-					</h2>
-					<p className="easymde-settings-center__backup-description">
-						{strings.backupImageHostDescription}
-					</p>
-					<ImageBehaviorRow
-						label={strings.enableBackupImageHost}
-						description={strings.enableBackupImageHostDescription}
-					>
-						<SettingsToggle
-							label={strings.enableBackupImageHost}
-							checked={settings.backupEnabled}
-							onChange={() =>
-								setValue("backupEnabled", !settings.backupEnabled)
-							}
-						/>
-					</ImageBehaviorRow>
-					{settings.backupEnabled ? (
-						<div className="easymde-settings-center__backup-fields">
-							<ImageField label={strings.backupImageHostService}>
-								<CompactSelect
-									label={strings.backupImageHostService}
-									value={settings.backupService}
-									options={backupHostOptions}
-									onChange={(value) => {
-										if (!isImageHostProvider(value)) {
-											throw new Error(
-												"settings-center-backup-image-provider-invalid",
-											);
-										}
-										setValues({
-											backupService: value,
-											backupEndpoint: "",
-										});
-									}}
-								/>
-							</ImageField>
-							{settings.backupService !== "qiniu-kodo" ? (
-								<ImageField label={strings.customDomain}>
-									<ImageTextInput
-										label={strings.customDomain}
-										value={settings.backupEndpoint}
-										onChange={(value) => setValue("backupEndpoint", value)}
+									<ImageField label={strings.bucket}>
+										<div>
+											<ImageTextInput
+												label={strings.bucket}
+												value={settings.bucket}
+												onChange={(value) => setValue("bucket", value)}
+											/>
+											{settings.service === "tencent-cos" ? (
+												<small>{strings.cosBucketHint}</small>
+											) : null}
+										</div>
+									</ImageField>
+									<ImageField label={strings.imageFallbackDomain}>
+										<ImageTextInput
+											label={strings.imageFallbackDomain}
+											value={settings.domain}
+											onChange={(value) => setValue("domain", value)}
+										/>
+									</ImageField>
+									<ImageField label={strings.accessKey}>
+										<SecretInput
+											configured={draft.primaryCredentialsConfigured}
+											field="accessKey"
+											label={strings.accessKey}
+											value={settings.accessKey}
+											showLabel={strings.showSecret}
+											hideLabel={strings.hideSecret}
+											onChange={(value) => setValue("accessKey", value)}
+											revealFailedLabel={strings.secretRevealFailed}
+											revealPort={secretRevealPort}
+											revealingLabel={strings.revealingSecret}
+											revision={settingsRevision}
+											target="primary"
+										/>
+									</ImageField>
+									<ImageField label={strings.secretKey}>
+										<SecretInput
+											configured={draft.primaryCredentialsConfigured}
+											field="secretKey"
+											label={strings.secretKey}
+											value={settings.secretKey}
+											showLabel={strings.showSecret}
+											hideLabel={strings.hideSecret}
+											onChange={(value) => setValue("secretKey", value)}
+											revealFailedLabel={strings.secretRevealFailed}
+											revealPort={secretRevealPort}
+											revealingLabel={strings.revealingSecret}
+											revision={settingsRevision}
+											target="primary"
+										/>
+									</ImageField>
+									<FileNameRuleEditor
+										strings={strings}
+										value={settings.fileNameRule}
+										onChange={(value) => setValue("fileNameRule", value)}
 									/>
-								</ImageField>
-							) : null}
-							<ImageField label={strings.backupBucket}>
-								<div>
-									<ImageTextInput
-										label={strings.backupBucket}
-										value={settings.backupBucket}
-										onChange={(value) => setValue("backupBucket", value)}
-									/>
-									{settings.backupService === "tencent-cos" ? (
-										<small>{strings.cosBucketHint}</small>
-									) : null}
+									<ImageField
+										label={strings.uploadRetryCount}
+										description={strings.uploadRetryCountDescription}
+									>
+										<ImageNumberInput
+											label={strings.uploadRetryCount}
+											min={0}
+											max={5}
+											value={settings.uploadRetryCount}
+											onChange={(value) => setValue("uploadRetryCount", value)}
+										/>
+									</ImageField>
 								</div>
-							</ImageField>
-							<ImageField label={strings.backupDomain}>
-								<ImageTextInput
-									label={strings.backupDomain}
-									value={settings.backupDomain}
-									onChange={(value) => setValue("backupDomain", value)}
-								/>
-							</ImageField>
-							<ImageField label={strings.backupAccessKey}>
-								<SecretInput
-									configured={draft.backupCredentialsConfigured}
-									field="accessKey"
-									label={strings.backupAccessKey}
-									value={settings.backupAccessKey}
-									showLabel={strings.showBackupAccessKey}
-									hideLabel={strings.hideBackupAccessKey}
-									onChange={(value) => setValue("backupAccessKey", value)}
-									revealFailedLabel={strings.secretRevealFailed}
-									revealPort={secretRevealPort}
-									revealingLabel={strings.revealingSecret}
-									revision={settingsRevision}
-									target="backup"
-								/>
-							</ImageField>
-							<ImageField label={strings.backupSecretKey}>
-								<SecretInput
-									configured={draft.backupCredentialsConfigured}
-									field="secretKey"
-									label={strings.backupSecretKey}
-									value={settings.backupSecretKey}
-									showLabel={strings.showBackupSecretKey}
-									hideLabel={strings.hideBackupSecretKey}
-									onChange={(value) => setValue("backupSecretKey", value)}
-									revealFailedLabel={strings.secretRevealFailed}
-									revealPort={secretRevealPort}
-									revealingLabel={strings.revealingSecret}
-									revision={settingsRevision}
-									target="backup"
-								/>
-							</ImageField>
+							</div>
 							{uploadVerificationPort ? (
 								<VerificationRow
 									disabled={uploadVerificationDisabled}
-									target="backup"
+									target="primary"
 									strings={strings}
 									state={effectiveVerificationState(
-										backupVerification,
-										"backup",
+										primaryVerification,
+										"primary",
 									)}
-									onVerify={(trigger) => void verifyUpload("backup", trigger)}
+									onVerify={(trigger) => void verifyUpload("primary", trigger)}
 								/>
 							) : null}
-						</div>
+						</Fragment>
 					) : null}
 				</section>
+
+				{settings.imageHostingEnabled ? (
+					<section className="easymde-settings-center__image-group is-backup-host">
+						<h2>
+							<Copy size={25} />
+							{strings.backupImageHost}
+						</h2>
+						<p className="easymde-settings-center__backup-description">
+							{strings.backupImageHostDescription}
+						</p>
+						<ImageBehaviorRow
+							label={strings.enableBackupImageHost}
+							description={strings.enableBackupImageHostDescription}
+						>
+							<SettingsToggle
+								label={strings.enableBackupImageHost}
+								checked={settings.backupEnabled}
+								onChange={() =>
+									setValue("backupEnabled", !settings.backupEnabled)
+								}
+							/>
+						</ImageBehaviorRow>
+						{settings.backupEnabled ? (
+							<div className="easymde-settings-center__backup-fields">
+								<ImageField label={strings.backupImageHostService}>
+									<CompactSelect
+										label={strings.backupImageHostService}
+										value={settings.backupService}
+										options={backupHostOptions}
+										onChange={(value) => {
+											if (!isImageHostProvider(value)) {
+												throw new Error(
+													"settings-center-backup-image-provider-invalid",
+												);
+											}
+											setValues({
+												backupService: value,
+												backupEndpoint: "",
+											});
+										}}
+									/>
+								</ImageField>
+								{settings.backupService !== "qiniu-kodo" ? (
+									<ImageField label={strings.customDomain}>
+										<ImageTextInput
+											label={strings.customDomain}
+											value={settings.backupEndpoint}
+											onChange={(value) => setValue("backupEndpoint", value)}
+										/>
+									</ImageField>
+								) : null}
+								<ImageField label={strings.backupBucket}>
+									<div>
+										<ImageTextInput
+											label={strings.backupBucket}
+											value={settings.backupBucket}
+											onChange={(value) => setValue("backupBucket", value)}
+										/>
+										{settings.backupService === "tencent-cos" ? (
+											<small>{strings.cosBucketHint}</small>
+										) : null}
+									</div>
+								</ImageField>
+								<ImageField label={strings.backupDomain}>
+									<ImageTextInput
+										label={strings.backupDomain}
+										value={settings.backupDomain}
+										onChange={(value) => setValue("backupDomain", value)}
+									/>
+								</ImageField>
+								<ImageField label={strings.backupAccessKey}>
+									<SecretInput
+										configured={draft.backupCredentialsConfigured}
+										field="accessKey"
+										label={strings.backupAccessKey}
+										value={settings.backupAccessKey}
+										showLabel={strings.showBackupAccessKey}
+										hideLabel={strings.hideBackupAccessKey}
+										onChange={(value) => setValue("backupAccessKey", value)}
+										revealFailedLabel={strings.secretRevealFailed}
+										revealPort={secretRevealPort}
+										revealingLabel={strings.revealingSecret}
+										revision={settingsRevision}
+										target="backup"
+									/>
+								</ImageField>
+								<ImageField label={strings.backupSecretKey}>
+									<SecretInput
+										configured={draft.backupCredentialsConfigured}
+										field="secretKey"
+										label={strings.backupSecretKey}
+										value={settings.backupSecretKey}
+										showLabel={strings.showBackupSecretKey}
+										hideLabel={strings.hideBackupSecretKey}
+										onChange={(value) => setValue("backupSecretKey", value)}
+										revealFailedLabel={strings.secretRevealFailed}
+										revealPort={secretRevealPort}
+										revealingLabel={strings.revealingSecret}
+										revision={settingsRevision}
+										target="backup"
+									/>
+								</ImageField>
+								{uploadVerificationPort ? (
+									<VerificationRow
+										disabled={uploadVerificationDisabled}
+										target="backup"
+										strings={strings}
+										state={effectiveVerificationState(
+											backupVerification,
+											"backup",
+										)}
+										onVerify={(trigger) => void verifyUpload("backup", trigger)}
+									/>
+								) : null}
+							</div>
+						) : null}
+					</section>
+				) : null}
 
 				<div className="easymde-settings-center__image-secondary-groups">
 					<section className="easymde-settings-center__image-group is-upload-behavior">
@@ -1431,51 +1474,55 @@ export function ImagesSettingsPage({
 								}
 							/>
 						</ImageBehaviorRow>
-						<ImageBehaviorRow
-							label={strings.remoteImageUploadMode}
-							description={strings.remoteImageUploadModeDescription}
-						>
-							<CompactSelect
-								label={strings.remoteImageUploadMode}
-								value={settings.remoteImageUploadMode}
-								options={remoteImageUploadModeOptions}
-								onChange={(value) => {
-									if (
-										value !== "both" &&
-										value !== "visual" &&
-										value !== "source" &&
-										value !== "off"
-									) {
-										throw new Error(
-											"settings-center-remote-image-upload-mode-invalid",
-										);
+						{settings.imageHostingEnabled ? (
+							<Fragment>
+								<ImageBehaviorRow
+									label={strings.remoteImageUploadMode}
+									description={strings.remoteImageUploadModeDescription}
+								>
+									<CompactSelect
+										label={strings.remoteImageUploadMode}
+										value={settings.remoteImageUploadMode}
+										options={remoteImageUploadModeOptions}
+										onChange={(value) => {
+											if (
+												value !== "both" &&
+												value !== "visual" &&
+												value !== "source" &&
+												value !== "off"
+											) {
+												throw new Error(
+													"settings-center-remote-image-upload-mode-invalid",
+												);
+											}
+											setValue("remoteImageUploadMode", value);
+										}}
+									/>
+								</ImageBehaviorRow>
+								<fieldset
+									disabled={!runtimeCapabilities?.compressImages}
+									title={
+										runtimeCapabilities?.compressImages
+											? undefined
+											: strings.settingsUnavailableDescription
 									}
-									setValue("remoteImageUploadMode", value);
-								}}
-							/>
-						</ImageBehaviorRow>
-						<fieldset
-							disabled={!runtimeCapabilities?.compressImages}
-							title={
-								runtimeCapabilities?.compressImages
-									? undefined
-									: strings.settingsUnavailableDescription
-							}
-							className="easymde-settings-center__unavailable-fields"
-						>
-							<ImageBehaviorRow
-								label={strings.compressImages}
-								description={strings.compressImagesDescription}
-							>
-								<SettingsToggle
-									label={strings.compressImages}
-									checked={settings.compressImages}
-									onChange={() =>
-										setValue("compressImages", !settings.compressImages)
-									}
-								/>
-							</ImageBehaviorRow>
-						</fieldset>
+									className="easymde-settings-center__unavailable-fields"
+								>
+									<ImageBehaviorRow
+										label={strings.compressImages}
+										description={strings.compressImagesDescription}
+									>
+										<SettingsToggle
+											label={strings.compressImages}
+											checked={settings.compressImages}
+											onChange={() =>
+												setValue("compressImages", !settings.compressImages)
+											}
+										/>
+									</ImageBehaviorRow>
+								</fieldset>
+							</Fragment>
+						) : null}
 						<ImageBehaviorRow label={strings.imageTitleDisplay}>
 							<CompactSelect
 								label={strings.imageTitleDisplay}

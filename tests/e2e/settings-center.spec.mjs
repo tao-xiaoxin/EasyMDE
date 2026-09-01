@@ -2787,6 +2787,7 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 	);
 
 	let originalImageHostingEnabled;
+	let originalFileNameRule;
 	let restNonce;
 	let testError;
 	try {
@@ -2794,6 +2795,7 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		await page.goto(settingsPath);
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
 		await page.locator('button[data-nav-id="images"]').click();
+		const images = page.locator('[data-settings-section="images"]');
 		let strings = await page.evaluate(
 			() => window.EasyMDESettingsCenterBootstrap.strings,
 		);
@@ -2808,6 +2810,33 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		);
 		expect(originalImageHostingEnabled).toBe(false);
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		const fileNameRule = page.getByRole("textbox", {
+			name: strings.fileNameRule,
+			exact: true,
+		});
+		originalFileNameRule = await fileNameRule.inputValue();
+		await expect(fileNameRule).toBeEnabled();
+		await expect(
+			images.getByText(strings.fileNameRuleDescription, { exact: true }),
+		).toBeVisible();
+		await expect(
+			images.locator(
+				".easymde-settings-center__file-name-presets > button",
+			),
+		).toHaveCount(6);
+		await expect(
+			images.locator(
+				".easymde-settings-center__file-name-variables button",
+			),
+		).toHaveCount(10);
+		await expect(
+			images.locator(
+				".easymde-settings-center__file-name-preview code",
+			),
+		).toHaveText("2026/07/a8f4c2d1.webp");
+		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		await fileNameRule.fill(editedFileNameRule);
+		await expect(fileNameRule).toHaveValue(editedFileNameRule);
 		await expect(
 			page.getByRole("combobox", {
 				name: strings.selectImageHostService,
@@ -2891,6 +2920,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				exact: true,
 			}),
 		).toBeVisible();
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.fileNameRule,
+				exact: true,
+			}),
+		).toHaveValue(editedFileNameRule);
 		await expect(
 			page.getByRole("heading", {
 				name: strings.backupImageHost,
@@ -2981,6 +3016,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				exact: true,
 			}),
 		).toHaveCount(0);
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.fileNameRule,
+				exact: true,
+			}),
+		).toHaveValue(editedFileNameRule);
 		await saveSettingsCenter(page);
 		await page.reload();
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -2993,6 +3034,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 			exact: true,
 		});
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.fileNameRule,
+				exact: true,
+			}),
+		).toHaveValue(editedFileNameRule);
 
 		await page.goto("/wp-admin/post-new.php");
 		await expect(page.locator("#easymde-editor")).toBeVisible();
@@ -3080,6 +3127,16 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				await toggle.focus();
 				await page.keyboard.press("Space");
 				await saveSettingsCenter(page);
+			}
+			if (typeof originalFileNameRule === "string") {
+				const fileNameRule = page.getByRole("textbox", {
+					name: strings.fileNameRule,
+					exact: true,
+				});
+				if ((await fileNameRule.inputValue()) !== originalFileNameRule) {
+					await fileNameRule.fill(originalFileNameRule);
+					await saveSettingsCenter(page);
+				}
 			}
 		} catch (error) {
 			cleanupFailures.push(error);

@@ -575,20 +575,40 @@ describe("SettingsCenterRoot global search", () => {
 
 	it("adds and removes hosting settings from search as the feature is toggled", async () => {
 		const user = userEvent.setup();
-		render(
+		const { container } = render(
 			<SettingsCenterRoot
 				bootstrap={bootstrap({ imageHostingEnabled: false })}
 			/>,
 		);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
 		const search = screen.getByRole("searchbox", { name: "searchSettings" });
 		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
 
-		await user.type(search, "selectImageHostService");
+		await user.type(search, "fileNameRule");
 		expect(
-			await screen.findByRole("heading", { name: "noSearchResults" }),
+			await screen.findByRole("button", { name: /^fileNameRule/u }),
 		).not.toBeNull();
+		await user.click(screen.getByRole("button", { name: /^fileNameRule/u }));
+		await waitFor(() =>
+			expect(document.activeElement).toBe(
+				screen.getByRole("textbox", { name: "fileNameRule" }),
+			),
+		);
 
-		await user.click(screen.getByRole("button", { name: "clearSearch" }));
+		for (const query of ["selectImageHostService", "uploadRetryCount"]) {
+			await user.type(search, query);
+			expect(
+				await screen.findByRole("heading", { name: "noSearchResults" }),
+			).not.toBeNull();
+			await user.click(screen.getByRole("button", { name: "clearSearch" }));
+		}
+
 		await user.click(toggle);
 		await user.type(search, "selectImageHostService");
 		expect(
@@ -1037,6 +1057,75 @@ describe("SettingsCenterRoot images section", () => {
 				.imageHostingEnabled,
 		).toBe(true);
 		fetch.mockRestore();
+	});
+
+	it("edits the disabled filename rule without requests and saves false with the rule", async () => {
+		const user = userEvent.setup();
+		const initialBootstrap = bootstrap({ imageHostingEnabled: false });
+		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const savedSettings = {
+			...initialBootstrap.settings,
+			revision: initialBootstrap.settings.revision + 1,
+			images: {
+				...initialBootstrap.settings.images,
+				imageHostingEnabled: false,
+				fileNameRule: editedFileNameRule,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+
+		try {
+			render(<SettingsCenterRoot bootstrap={initialBootstrap} />);
+			const rule = screen.getByRole<HTMLInputElement>("textbox", {
+				name: "fileNameRule",
+			});
+			fireEvent.change(rule, { target: { value: editedFileNameRule } });
+			expect(fetch).not.toHaveBeenCalled();
+
+			const toggle = screen.getByRole("switch", {
+				name: "enableImageHosting",
+			});
+			await user.click(toggle);
+			await user.click(toggle);
+			expect(toggle.getAttribute("aria-checked")).toBe("false");
+			expect(rule.value).toBe(editedFileNameRule);
+			expect(fetch).not.toHaveBeenCalled();
+
+			const save = screen.getByRole<HTMLButtonElement>("button", {
+				name: "saveSettings",
+			});
+			expect(save.disabled).toBe(false);
+			await user.click(save);
+			await waitFor(() =>
+				expect(screen.getByText("settingsSaved")).not.toBeNull(),
+			);
+			if (!savedPayload.current)
+				throw new Error("settings-save-payload-missing");
+			const payloadSettings = savedPayload.current
+				.settings as SettingsCenterSettings;
+			expect(payloadSettings.images.imageHostingEnabled).toBe(false);
+			expect(payloadSettings.images.fileNameRule).toBe(editedFileNameRule);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("exposes real server-backed image-host upload verification", () => {

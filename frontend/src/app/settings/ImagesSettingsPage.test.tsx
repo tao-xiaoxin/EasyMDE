@@ -150,9 +150,9 @@ describe("ImagesSettingsPage", () => {
 		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
 
 		expect(
-			section?.querySelector("h2")?.nextElementSibling?.getAttribute(
-				"data-setting-label",
-			),
+			section
+				?.querySelector("h2")
+				?.nextElementSibling?.getAttribute("data-setting-label"),
 		).toBe("enableImageHosting");
 		expect(
 			section?.querySelector('[data-setting-label="selectImageHostService"]'),
@@ -193,7 +193,6 @@ describe("ImagesSettingsPage", () => {
 			"imageFallbackDomain",
 			"accessKey",
 			"secretKey",
-			"fileNameRule",
 			"uploadRetryCount",
 			"backupImageHostService",
 			"backupBucket",
@@ -224,6 +223,23 @@ describe("ImagesSettingsPage", () => {
 			screen.getByRole("checkbox", { name: "allowUploadPng" }),
 		).not.toBeNull();
 
+		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		expect(fileNameRule.value).toBe(draft.fileNameRule);
+		expect(screen.getByText("fileNameRuleDescription")).not.toBeNull();
+		expect(
+			screen.getAllByRole("button", { name: /^fileNamePreset/u }),
+		).toHaveLength(6);
+		expect(
+			screen.getAllByRole("button", { name: /^insertFileNameVariable/u }),
+		).toHaveLength(10);
+		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
+		fireEvent.change(fileNameRule, {
+			target: { value: "disabled/{date}/{uuid}.{ext}" },
+		});
+		expect(fileNameRule.value).toBe("disabled/{date}/{uuid}.{ext}");
+
 		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
 		await user.click(toggle);
 		expect(
@@ -243,6 +259,10 @@ describe("ImagesSettingsPage", () => {
 			}).value,
 		).toBe("4");
 		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
+		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
 		).toContain("remoteImageUploadSource");
@@ -256,6 +276,10 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.queryByRole("combobox", { name: "selectImageHostService" }),
 		).toBeNull();
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
 		await user.click(toggle);
 		expect(
 			screen.getByRole("combobox", { name: "selectImageHostService" })
@@ -267,9 +291,46 @@ describe("ImagesSettingsPage", () => {
 			}).value,
 		).toBe("4");
 		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
+		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
 		).toContain("remoteImageUploadSource");
+	});
+
+	it("keeps the filename rule between primary provider fields and retry verification", () => {
+		const { container } = render(
+			<Harness
+				uploadVerificationPort={{
+					verifyUpload: async () => ({
+						path: "verification/easymde.ico",
+						url: "https://images.example.test/verification/easymde.ico",
+					}),
+				}}
+			/>,
+		);
+		const section = container.querySelector(".is-host-service");
+		if (!(section instanceof HTMLElement))
+			throw new Error("settings-center-primary-host-section-missing");
+		const labels = Array.from(
+			section.querySelectorAll<HTMLElement>("[data-setting-label]"),
+			(element) => element.dataset.settingLabel,
+		);
+
+		expect(labels).toEqual([
+			"enableImageHosting",
+			"selectImageHostService",
+			"customDomain",
+			"bucket",
+			"imageFallbackDomain",
+			"accessKey",
+			"secretKey",
+			"fileNameRule",
+			"uploadRetryCount",
+			"uploadVerificationStatus",
+		]);
 	});
 
 	it("aborts both verifications and ignores late results after hosting is disabled", async () => {

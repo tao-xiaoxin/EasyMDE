@@ -1218,8 +1218,8 @@ export function ImagesSettingsPage({
 							}
 						/>
 					</ImageBehaviorRow>
-					{settings.imageHostingEnabled ? (
-						<Fragment>
+					<Fragment>
+						{settings.imageHostingEnabled ? (
 							<div>
 								<div>
 									<ImageField label={strings.selectImageHostService}>
@@ -1300,39 +1300,45 @@ export function ImagesSettingsPage({
 											target="primary"
 										/>
 									</ImageField>
-									<FileNameRuleEditor
-										strings={strings}
-										value={settings.fileNameRule}
-										onChange={(value) => setValue("fileNameRule", value)}
-									/>
-									<ImageField
-										label={strings.uploadRetryCount}
-										description={strings.uploadRetryCountDescription}
-									>
-										<ImageNumberInput
-											label={strings.uploadRetryCount}
-											min={0}
-											max={5}
-											value={settings.uploadRetryCount}
-											onChange={(value) => setValue("uploadRetryCount", value)}
-										/>
-									</ImageField>
 								</div>
 							</div>
-							{uploadVerificationPort ? (
-								<VerificationRow
-									disabled={uploadVerificationDisabled}
-									target="primary"
-									strings={strings}
-									state={effectiveVerificationState(
-										primaryVerification,
-										"primary",
-									)}
-									onVerify={(trigger) => void verifyUpload("primary", trigger)}
-								/>
-							) : null}
-						</Fragment>
-					) : null}
+						) : null}
+						<FileNameRuleEditor
+							strings={strings}
+							value={settings.fileNameRule}
+							onChange={(value) => setValue("fileNameRule", value)}
+						/>
+						{settings.imageHostingEnabled ? (
+							<Fragment>
+								<ImageField
+									label={strings.uploadRetryCount}
+									description={strings.uploadRetryCountDescription}
+								>
+									<ImageNumberInput
+										label={strings.uploadRetryCount}
+										min={0}
+										max={5}
+										value={settings.uploadRetryCount}
+										onChange={(value) => setValue("uploadRetryCount", value)}
+									/>
+								</ImageField>
+								{uploadVerificationPort ? (
+									<VerificationRow
+										disabled={uploadVerificationDisabled}
+										target="primary"
+										strings={strings}
+										state={effectiveVerificationState(
+											primaryVerification,
+											"primary",
+										)}
+										onVerify={(trigger) =>
+											void verifyUpload("primary", trigger)
+										}
+									/>
+								) : null}
+							</Fragment>
+						) : null}
+					</Fragment>
 				</section>
 
 				{settings.imageHostingEnabled ? (

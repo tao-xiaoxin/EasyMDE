@@ -1,6 +1,6 @@
 # EasyMDE Design
 
-This document records the long-term design rationale and stable target boundaries for EasyMDE's React, TypeScript, and Vite applications in WordPress administration.
+This document records the long-term design rationale and stable boundaries for EasyMDE's React, TypeScript, and Vite applications in WordPress administration.
 It answers only why EasyMDE divides responsibilities this way and which boundaries short-term implementation must not replace; it does not define the current implementation inventory, browser execution contract, testing steps, or release checklist.
 
 Authoritative routes:
@@ -11,7 +11,7 @@ Authoritative routes:
 - PHP and React string ownership, extraction, catalogs, locale, RTL, and language assets: `.agents/skills/i18n/SKILL.md`.
 - WeChat decisions, alternatives, and consequences: [ADR-001](decisions/ADR-001-wechat-clipboard-serialization.md).
 
-When this document conflicts with code or current work, current human decisions, `AGENTS.md`, the live repository, and committed public compatibility contracts take precedence; do not mistake target descriptions for evidence of current implementation.
+When this document conflicts with code or current work, current human decisions, `AGENTS.md`, the live repository, and committed public compatibility contracts take precedence; do not mistake design rationale for implementation evidence.
 
 ## 1. Product Boundaries
 
@@ -34,12 +34,16 @@ Synchronizing to hidden fields is only a Submission Bridge, not a persistence su
 
 ## 2. Ordinary Editor and Root
 
-The ordinary WordPress Editor targets one React Editor Root that covers the editing, Preview, Appearance, Fonts, Custom CSS, Media, Local Draft, WeChat, and fixed Source/Preview workspace capabilities required by the historical editor.
+The ordinary WordPress Editor uses one React Editor Root that covers the editing, Preview, Appearance, Fonts, Custom CSS, Media, Local Draft, WeChat, and fixed Source/Preview workspace capabilities required by the historical editor.
 The Root can compose multiple focused Features, but each external responsibility has one owner.
 
 Focus Mode and immersive writing do not belong to the default ordinary-editor surface.
-Issue #126 permits immersive presentation within the same Root; it reuses the ordinary editor's document, Preview, native form, media, revision, and WordPress session owners, and it does not create a second Root, editor, Renderer, save path, or persistence model.
-Publish, History, Outline, statistics, and view interactions in the immersive interface may only be temporary projections of existing WordPress capabilities; final submission and restoration return to their native owners.
+The immersive presentation stays within the same Root; it reuses the ordinary
+editor's document, Preview, native form, media, revision, and WordPress session
+owners, and it does not create a second Root, editor, Renderer, save path, or
+persistence model. Publish, History, Outline, statistics, and view interactions
+may only project existing WordPress capabilities; submission and restoration
+return to their native owners.
 
 The Settings Center is an independent React Root because it is an independent WordPress administration screen.
 It does not share mutable Stores, Contexts, caches, or lifecycle owners with the Editor Root.

@@ -2,17 +2,25 @@
 
 EasyMDE is a standalone WordPress plugin wired from `easymde.php` into `EasyMDE\Plugin`. The global `EasyMDE_Plugin` class remains as a compatibility facade for existing extension code.
 
-This document describes the current implementation boundaries. Approved target decisions for the React, TypeScript, and Vite admin applications live in [Design](DESIGN.md); that document does not claim that target paths already exist. Development setup lives in [Development](DEVELOPMENT.md), and release validation lives in [Testing and Release](TESTING_AND_RELEASE.md).
+This document describes the current implementation boundaries. Durable design
+rationale for the React, TypeScript, and Vite admin applications lives in
+[Design](DESIGN.md); it does not replace this current inventory. Development
+setup lives in [Development](DEVELOPMENT.md), and release validation lives in
+[Testing and Release](TESTING_AND_RELEASE.md).
 
-## Issue #91 Direct React Cutover
+## React Editor Root
 
-The maintainer-approved target for the ordinary WordPress Editor is one React 18 Editor Root, with PHP enqueuing a Vite loader that dynamically loads its hashed main entry. This is a direct cutover, not another sequence of Legacy-to-React runtime handoffs. The final ordinary Editor does not enqueue or execute `assets/js/admin/bootstrap.js`, jQuery, the Legacy Toolbar, Preview, Theme, Draft, Media runtimes, Legacy fallback DOM, or Focus Mode / immersive-writing assets.
+The ordinary WordPress Editor is one React 18 Editor Root. PHP enqueues a Vite
+loader that dynamically loads its hashed main entry. This direct cutover has no
+Legacy-to-React runtime handoff. The runtime does not enqueue or execute
+`assets/js/admin/bootstrap.js`, jQuery, the Legacy Toolbar, Preview, Theme,
+Draft, Media runtimes, Legacy fallback DOM, or Focus Mode / immersive-writing
+assets.
 
-The React Root preserves the ordinary editing capability matrix from Issues
-#91 and #86 while PHP and WordPress remain the final owners of publishing and
-revisions. A same-root React surface may expose focused controls that delegate
-to those owners; delegation is not a second persistence, authorization, or
-document authority:
+The React Root preserves the complete ordinary editing capability matrix while
+PHP and WordPress remain the owners of publishing and revisions. A same-root
+React surface may expose focused controls that delegate to those owners;
+delegation is not a second persistence, authorization, or document authority:
 
 - title and Markdown editing, Selection, IME, Undo/Redo, shortcuts, and every
   registered Toolbar command;
@@ -29,7 +37,14 @@ document authority:
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
-Focus Mode is not part of the default ordinary-editor surface, and the ordinary toolbar provides the entry into Issue #126's immersive presentation within the same Root. The immersive presentation reuses the ordinary CodeMirror, Preview, native form, and WordPress capability owners. The ordinary workspace has one restrained footer for the live Markdown character count and WordPress-owned last-editor timestamp. Immersive Outline, expanded writing statistics, and view switching remain scoped to the immersive presentation; Publish and Revision controls delegate to the existing WordPress owners.
+Focus Mode is not part of the default ordinary-editor surface, and the ordinary
+toolbar provides the entry into the same-root immersive presentation. That
+presentation reuses the ordinary CodeMirror, Preview, native form, and
+WordPress capability owners. The ordinary workspace has one restrained footer
+for the live Markdown character count and WordPress-owned last-editor
+timestamp. Immersive Outline, expanded writing statistics, and view switching
+remain scoped to the immersive presentation; Publish and Revision controls
+delegate to the existing WordPress owners.
 
 The ordinary Editor now follows this single-Root boundary in the live branch.
 Legacy admin Browser Runtime files and Focus Mode assets have no ordinary

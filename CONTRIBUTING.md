@@ -57,6 +57,27 @@ deletion.
   or operator guidance changes.
 - Update `README.md` for user-visible behavior changes.
 
+## Post-Change Documentation Audit
+
+After every code change, audit affected documentation against the live
+implementation and map each changed contract to one owner:
+
+- repository invariants: `AGENTS.md`;
+- contribution, review, and public evidence: `CONTRIBUTING.md`;
+- current implementation: `docs/ARCHITECTURE.md`;
+- durable rationale: `docs/DESIGN.md`;
+- implemented data or compatibility transitions: `docs/MIGRATION.md`;
+- test, CI, packaging, and release execution: `docs/TESTING_AND_RELEASE.md`;
+- executable browser contract: the applicable EasyMDE Skill reference; and
+- navigation or user-observable behavior: `docs/README.md` or `docs/USER_GUIDE.md`.
+
+Use live code, tests, manifests, and scripts as evidence; old Issues and plans
+are context only. Update the owner first, verify its route is discoverable, then
+remove stale or ambiguous copies. For a material move or deletion, record the
+old semantics, new owner and anchor, live evidence, and retained or clarified
+meaning in `tasks/SEMANTIC_MATRIX_<issue>.md`. The completion report lists
+audited unchanged docs and any unresolved uncertainty.
+
 ## Branches and Pull Requests
 
 - Branch from the current `main`.
@@ -180,11 +201,11 @@ task complete, review the exact current change as a skeptical maintainer:
   data, private content, local-environment details, and unnecessary embedded
   metadata.
 
-List the three to five most likely ways the change could fail. For each
-relevant risk, reproduce or test it, fix the root cause and rerun affected
-checks, or record why it remains unverified. Report only commands, environments,
-and evidence actually used; “looks correct,” “should work,” one happy-path
-test, or an old-SHA result is not completion evidence.
+Identify the material ways the change could fail. For each relevant failure
+mode, reproduce or test it, fix the root cause and rerun affected checks, or
+record why it remains unverified. Report only commands, environments, and
+evidence actually used; “looks correct,” “should work,” one happy-path test, or
+an old-SHA result is not completion evidence.
 
 ## Issue and Pull Request Workflow
 
@@ -645,8 +666,7 @@ Report:
    voluntarily used it, the Local `codex-review` scope, exact-state verdict,
    confirmed findings fixed, and rejected findings with concise evidence.
 5. CI and remote review status for the exact current Head.
-6. The three to five most likely failure modes and how each was tested, fixed,
-   or left unverified.
+6. Material failure modes and how each was tested, fixed, or left unverified.
 7. Files intentionally audited but unchanged.
 8. Remaining risks, assumptions, skipped checks, unavailable environments, and
    unverified behavior.

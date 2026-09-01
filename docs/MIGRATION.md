@@ -1,12 +1,11 @@
 # EasyMDE Data And Compatibility Migration
 
 This document records implemented data-model and compatibility transitions.
-Browser ownership for the ordinary WordPress Editor is no longer a staged
-migration: Issue #91 uses one React Editor Root with no Legacy handoff,
-fallback, parallel DOM, or Focus Mode runtime. Browser ownership inventories,
-characterization, deprecation, and removal evidence are maintained by the
-long-term EasyMDE Skill; this document records only implemented data and
-compatibility facts.
+Browser ownership for the ordinary WordPress Editor is one React Editor Root
+with no Legacy handoff, fallback, parallel DOM, or Focus Mode runtime. Browser
+ownership inventories, characterization, deprecation, and removal evidence are
+maintained by the EasyMDE Skill; this document records only implemented data
+and compatibility facts.
 
 ## Editor Enablement
 

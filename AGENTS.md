@@ -612,6 +612,10 @@ Repository workflow hard boundaries:
 - Every substantive change and pull request is linked to a focused relevant
   Issue. Use a closing keyword only when the pull request fully satisfies the
   Issue; use a non-closing relation for partial or staged work.
+- Public Issues and pull requests use the canonical bodies in `docs/templates/`;
+  after creation or material editing, open the actual GitHub-rendered page and
+  verify it before continuing, and do not continue with unverified or defective
+  rendering. The complete workflow is owned by `CONTRIBUTING.md`.
 - Preserve unrelated and pre-existing local changes. Stage only explicitly
   reviewed task paths and inspect the exact staged diff.
 - Do not reset, rebase, amend, rewrite history, force-push, or perform another

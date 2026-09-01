@@ -206,16 +206,27 @@ test, or an old-SHA result is not completion evidence.
   expands the current scope.
 - Issue linkage does not prove mergeability. Validation, compatibility,
   privacy, CI, and review requirements still apply.
-- Keep every complete sentence in a public Issue or pull request body on one
-  source line. Do not insert hard line breaks inside a sentence only to wrap
-  Markdown at a preferred column; let GitHub wrap rendered prose. Break lines
-  only at paragraph, list-item, code-block, or other intentional semantic
-  boundaries, and verify the rendered body before continuing the workflow.
 
 For security-sensitive work, use GitHub private vulnerability reporting, a
 private security advisory, or another maintainer-approved private channel. If a
 public reference is required, use a sanitized tracking Issue with no exploit
 details, secrets, private endpoints, or affected-user data.
+
+### Canonical Templates and Rendered-Page Verification
+
+Create every public Issue from the [Issue Body Template](docs/templates/ISSUE.md) and every pull request from the [Pull Request Body Template](docs/templates/PULL_REQUEST.md). Retain every applicable required section. For material Issues, do not remove `Scope`, `Acceptance criteria`, or `Privacy and public artifact check`. For pull requests, retain every template section and honestly explain non-applicable items in `Validation` or `Remaining risks and follow-up`. Set every checkbox truthfully, replace every placeholder, remove visible HTML helper comments, and put the correct closing or non-closing linkage on the PR's first line.
+
+After creating or materially editing an Issue, and before implementation or any subsequent workflow step, open its actual public GitHub-rendered page. After creating or materially editing a pull request, open its actual public GitHub-rendered page immediately and before continuing CI or Bot review.
+
+On the rendered page, inspect the title and, for a pull request, the first-line linkage; headings; paragraphs; lists; task checkbox state; links (label and destination); fenced code blocks; and each table or `details` element that is present. Confirm there are no incorrect hard line breaks, accidental nesting, truncation, visible placeholders, or visible HTML helper comments. Keep every complete sentence in a public Issue or pull request body on one source line. Do not insert hard line breaks inside a sentence only to wrap Markdown at a preferred column; let GitHub wrap rendered prose. Break lines only at paragraph, list-item, code-block, or other intentional semantic boundaries; this authoring rule does not replace rendered-page inspection.
+
+`gh` CLI/API output, raw Markdown, and successful creation calls may assist, but none is rendering evidence. If a defect or omission is found, edit the public body, reload or reopen the actual page, and repeat the full check; do not continue while rendering is unverified or defective.
+
+Rendered evidence becomes invalid after a material change to title or body semantics or structure, linkage, checklist state, links, or public evidence, and the page must be fully rechecked. A body-only edit does not by itself change the PR Head or require CI; existing exact-Head rules still apply.
+
+Record the public URL, a timestamp with timezone, and item-by-item results. Screenshots are optional. Public read-only rendering must not depend on login; do not record login/session details, cookies, local paths, or machine details.
+
+Bot review for agent-authored or automated pull requests remains governed by the existing exact-Head CI and complete CodeRabbit template workflow; an Issue itself does not require CodeRabbit.
 
 ### Authoritative Version Tracking Issues
 

@@ -3097,8 +3097,22 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		expect(response.status()).toBe(200);
 		const result = await response.json();
 		expect(result.id).toEqual(expect.any(Number));
-		expect(result.url).toMatch(/\/wp-content\/uploads\//u);
 		uploadedAttachmentIds.push(result.id);
+		expect(result.url).toMatch(
+			/\/wp-content\/uploads\/disabled\/\d{8}\/[a-f0-9-]{36}\.png$/u,
+		);
+		const attachmentResponse = await page.request.get(
+			`/wp-json/wp/v2/media/${result.id}`,
+			{ headers: { "X-WP-Nonce": restNonce } },
+		);
+		expect(attachmentResponse.status()).toBe(200);
+		const attachment = await attachmentResponse.json();
+		expect(attachment.source_url).toBe(result.url);
+		expect(attachment.media_details.file).toMatch(
+			/^disabled\/\d{8}\/[a-f0-9-]{36}\.png$/u,
+		);
+		const uploadedFileResponse = await page.request.get(result.url);
+		expect(uploadedFileResponse.status()).toBe(200);
 		await expect(source).toHaveValue(
 			`Local upload baseline![synthetic png](${result.url})`,
 		);

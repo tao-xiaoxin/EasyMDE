@@ -100,6 +100,18 @@ PHP suite is:
 scripts/run-ci-image.sh --filter 'ImageHost|ImageHosting'
 ```
 
+The shared File Name Rule and WordPress Media owner gate is covered by
+`MediaControllerTest`, `SettingsCenterRepositoryTest`, and
+`ImageHostObjectKeyBuilderTest`. It exercises deterministic rule variables,
+credential-free settings snapshots, bounded exact bytes, Core unique filenames,
+attachment metadata and sub-sizes, original-name response/title semantics,
+scope token matching, one-shot filter cleanup, nested isolation, and fail-closed
+scope/rule errors. Run it with the same disposable CI database:
+
+```bash
+scripts/run-ci-image.sh --filter 'MediaControllerTest|SettingsCenterRepositoryTest|ImageHostObjectKeyBuilderTest'
+```
+
 TypeScript contract and feature coverage must prove strict
 `imageHostingEnabled` parsing, the bootstrap owner projection (`media` versus
 `image-hosting`), local paste/drop dispatch to the selected owner, remote mode
@@ -390,6 +402,14 @@ AI controls absent, exposes only the two browser-owned presentation preferences,
 and leaves auto-save, status display, and synchronized scrolling under their global Settings Center owners,
 loads no Legacy Focus assets, and remains zero-write until the user invokes a
 legitimate WordPress mutation.
+
+The installed-ZIP Settings Center workflow also saves a synthetic File Name
+Rule while Image Hosting is disabled, performs an EasyMDE local drop through
+`/easymde/v1/media`, verifies the resulting URL and WordPress relative path
+with a successful GET, and confirms that provider, remote-import, and verify
+routes were not used. Its `finally` cleanup restores the original rule and
+toggle and deletes the synthetic attachment; settings, attachment, and route
+cleanup failures are aggregated with the test failure.
 
 ## Release Script Safety Guards
 

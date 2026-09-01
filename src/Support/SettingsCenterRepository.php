@@ -140,7 +140,19 @@ final class SettingsCenterRepository {
 	}
 
 	public function get_allowed_image_mime_types() {
-		$settings             = $this->get_settings();
+		return $this->get_media_upload_settings()['mime_types'];
+	}
+
+	/**
+	 * Return the non-secret settings required by the WordPress Media endpoint.
+	 *
+	 * The option is read once so MIME, size, filename rule, and title behavior
+	 * stay on one settings snapshot for the complete upload operation.
+	 *
+	 * @return array{file_name_rule: string, max_bytes: int, mime_types: string[], title_display: string}
+	 */
+	public function get_media_upload_settings() {
+		$settings             = $this->settings_from_stored( $this->options->get_editor_settings() );
 		$formats              = $settings['images']['uploadFormats'];
 		$mime_types_by_format = array(
 			'jpg'  => 'image/jpeg',
@@ -156,13 +168,16 @@ final class SettingsCenterRepository {
 			}
 		}
 
-		return $mime_types;
+		return array(
+			'file_name_rule' => $settings['images']['fileNameRule'],
+			'max_bytes'      => min( $settings['images']['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ),
+			'mime_types'     => $mime_types,
+			'title_display'  => $settings['images']['titleDisplay'],
+		);
 	}
 
 	public function get_effective_image_upload_max_bytes() {
-		$settings = $this->get_settings();
-
-		return min( $settings['images']['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES );
+		return $this->get_media_upload_settings()['max_bytes'];
 	}
 
 	/**

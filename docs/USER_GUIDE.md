@@ -61,12 +61,18 @@ toolbar entry point; it does not own image paste or drag-and-drop uploads.
 **Automatically upload pasted images** is enabled by default in **EasyMDE >
 Image Hosting > Upload Behavior**. When enabled, pasting a local JPEG, PNG,
 GIF, or WebP image file into either the ordinary Markdown source or immersive
-editor uploads it through the protected same-origin Image Hosting path and
+editor sends it through the selected protected same-origin upload owner and
 inserts the configured Markdown or URL form only after the upload succeeds.
-When disabled, image-file paste does not call the upload endpoint and does not
-insert a Base64 replacement. Ordinary text or HTML paste, the toolbar media
-picker, and drag-and-drop upload are unaffected. There is no destination
-selector or WordPress media-library fallback for pasted or dropped files.
+With Image Hosting enabled, that owner is Image Hosting; with it disabled, the
+WordPress Media Library `/media` owner handles the upload. The saved File Name
+Rule is used by both owners for future EasyMDE paste/drop uploads, so it remains
+visible and configurable even while Image Hosting is disabled.
+When **Automatically upload pasted images** is disabled, image-file paste does
+not call the upload endpoint and does not insert a Base64 replacement. Ordinary
+text or HTML paste and the toolbar media picker are unaffected. Drag-and-drop
+retains its existing upload behavior and uses the selected owner and File Name
+Rule. The rule does not move historical attachments or change the explicit
+native media-picker insertion path.
 
 **Remote image import** defaults to **Visual and source editors**. It applies
 only to remote images contained in the current paste: the visual editor accepts
@@ -152,13 +158,16 @@ EasyMDE
 does not offer an all-or-nothing mode because these providers do not expose a
 reliable cross-provider rollback transaction.
 
-The `{md5}` filename variable is the lowercase hexadecimal MD5 digest of the
-final bytes sent to the provider, after any enabled image processing. This
-matches PicFast PicGo's content-MD5 algorithm; EasyMDE derives the extension
-from the verified MIME type rather than trusting the original filename. The
-default file-name rule is `{year}/{month}/{md5}.{ext}`, and the default image
-title setting is **Leave Empty**, so inserted Markdown has no title unless the
-administrator changes it.
+The File Name Rule supports `{year}`, `{month}`, `{day}`, `{date}`, `{time}`,
+`{post_id}`, `{md5}`, `{uuid}`, `{name}`, and `{ext}`. Date and time variables
+use UTC; `{post_id}` is the associated post ID (or `0` when there is no post),
+`{uuid}` is generated for the upload, `{name}` is the sanitized original file
+stem, and `{ext}` comes from the verified MIME type. `{md5}` is the lowercase
+hexadecimal digest of the exact bytes used by the selected upload owner. The
+default rule is `{year}/{month}/{md5}.{ext}`, and the default image title
+setting is **Leave Empty**, so inserted Markdown has no title unless the
+administrator changes it. WordPress remains responsible for final unique
+filenames, attachment metadata, sub-sizes, and URLs in its Media Library.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

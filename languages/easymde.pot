@@ -1235,15 +1235,16 @@ msgstr ""
 #: src/Admin/EditorMediaUploadPolicy.php:45
 #: src/ImageHosting/RemoteImageDownloader.php:95
 #: src/Rest/ImageHostingController.php:449
-#: src/Rest/ImageHostingController.php:528 src/Rest/MediaController.php:75
-#: src/Rest/MediaController.php:155
+#: src/Rest/ImageHostingController.php:528 src/Rest/MediaController.php:131
+#: src/Rest/MediaController.php:259
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
 #: src/Admin/EditorMediaUploadPolicy.php:52
 #: src/ImageHosting/RemoteImageDownloader.php:78
 #: src/Rest/ImageHostingController.php:448
-#: src/Rest/ImageHostingController.php:504 src/Rest/MediaController.php:83
+#: src/Rest/ImageHostingController.php:504 src/Rest/MediaController.php:140
+#: src/Rest/MediaController.php:156
 msgid "The image is larger than the allowed upload size."
 msgstr ""
 
@@ -1718,8 +1719,8 @@ msgid "Close Settings Feedback"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:387
-#: src/Support/SettingsCenterRepository.php:395
+#: src/Support/SettingsCenterRepository.php:402
+#: src/Support/SettingsCenterRepository.php:410
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -2874,7 +2875,7 @@ msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:479
 #: src/Rest/ImageHostingController.php:880
-#: src/Support/SettingsCenterRepository.php:684
+#: src/Support/SettingsCenterRepository.php:699
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
@@ -2922,7 +2923,7 @@ msgstr ""
 
 #: src/Rest/ImageHostingController.php:471
 #: src/Rest/ImageHostingController.php:872
-#: src/Support/SettingsCenterRepository.php:411
+#: src/Support/SettingsCenterRepository.php:426
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
@@ -2964,19 +2965,19 @@ msgstr ""
 msgid "The image-hosting service returned an invalid result."
 msgstr ""
 
-#: src/Rest/MediaController.php:56
+#: src/Rest/MediaController.php:94
 msgid "No image file was provided for upload."
 msgstr ""
 
-#: src/Rest/MediaController.php:65
+#: src/Rest/MediaController.php:103
 msgid "The image could not be uploaded."
 msgstr ""
 
-#: src/Rest/MediaController.php:106
+#: src/Rest/MediaController.php:211
 msgid "The uploaded image URL is unavailable."
 msgstr ""
 
-#: src/Rest/MediaController.php:145
+#: src/Rest/MediaController.php:249 src/Rest/MediaController.php:311
 msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 
@@ -3010,18 +3011,18 @@ msgid "The settings payload is too large."
 msgstr ""
 
 #: src/Rest/SettingsController.php:117 src/Rest/SettingsController.php:369
-#: src/Support/SettingsCenterRepository.php:319
-#: src/Support/SettingsCenterRepository.php:403
-#: src/Support/SettingsCenterRepository.php:570
-#: src/Support/SettingsCenterRepository.php:611
+#: src/Support/SettingsCenterRepository.php:334
+#: src/Support/SettingsCenterRepository.php:418
+#: src/Support/SettingsCenterRepository.php:585
+#: src/Support/SettingsCenterRepository.php:626
 msgid "The settings payload is invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:654
+#: src/Support/SettingsCenterRepository.php:669
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:665
+#: src/Support/SettingsCenterRepository.php:680
 msgid "One or more shortcut values conflict."
 msgstr ""
 

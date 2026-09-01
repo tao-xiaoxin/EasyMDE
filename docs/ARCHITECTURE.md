@@ -500,6 +500,35 @@ Posts and administration surfaces unchanged. The Editor bootstrap uses that
 same effective limit for direct-upload validation and the featured-image
 guidance shown in the immersive Publish dialog.
 
+The saved `images.fileNameRule` is shared by the Image Hosting owner and
+future EasyMDE local paste/drop uploads through `/easymde/v1/media`, including
+when Image Hosting is disabled. `Plugin` constructs one
+`ImageHosting\ObjectKeyBuilder` and injects it into both runtimes. The Media
+controller reads one credential-free `file_name_rule`/`max_bytes`/`mime_types`/
+`title_display` snapshot, validates the real MIME and declared size, reads
+bounded exact bytes, and expands the rule with UTC time, UUID, `post_id`, MD5,
+date/time, sanitized name, and the verified extension. Original sanitized names
+remain separate from the generated storage key and drive default alt text,
+response filename/title, and the attachment title stem.
+
+`MediaUploadPathScope` adds a one-time internal token to the exact temporary
+file. Its final-priority `wp_handle_sideload_prefilter` restores only the
+generated basename. The matching final `wp_handle_sideload_overrides` callback
+registers an exact-file final `wp_check_filetype_and_ext` callback; only that
+final MIME boundary arms the one-shot `upload_dir` projection, so directory
+reads from earlier overrides or MIME callbacks remain ordinary. `finally`
+removes the prefilter, overrides, MIME, and upload-directory callbacks. The
+projection uses the filtered `basedir`, `baseurl`, and `error`, replaces the
+path/URL/subdirectory with the rule directory without appending WordPress's
+date folders, and never falls back to the ordinary upload directory. WordPress
+Core remains authoritative for MIME handling, `wp_unique_filename()`, the
+attachment, metadata, sub-sizes, URL, permissions, and native media picker
+behavior. A successful Core attachment is rejected and deleted if its scope
+was not consumed.
+
+This is a future-upload path only: historical attachments are not migrated,
+and the explicit native media-picker insertion path is unchanged.
+
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.
 Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are supported

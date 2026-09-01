@@ -620,6 +620,22 @@ the final bytes sent to the provider, after any enabled image processing.
 The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`.
 EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
 to the provider and derives the extension from the verified MIME type.
+
+The saved `images.fileNameRule` is a shared naming contract for Image Hosting
+and future EasyMDE-owned local paste/drop uploads sent to `/easymde/v1/media`;
+it remains configurable while Image Hosting is disabled. `ObjectKeyBuilder`
+owns the shared expansion, and the Media owner projects one generated key
+through a request-scoped `MediaUploadPathScope` without falling back to an
+ordinary upload path. WordPress Core remains authoritative for verified MIME,
+unique filenames, attachments, metadata, sub-sizes, URLs, permissions, and
+the native media picker. This contract applies only to future EasyMDE
+paste/drop uploads; it never migrates historical attachments or changes the
+native picker insertion path. Executable checks belong to the
+[EasyMDE Skill](.agents/skills/easymde/SKILL.md); current implementation facts
+belong to [Architecture](docs/ARCHITECTURE.md), test gates to
+[Testing and Release](docs/TESTING_AND_RELEASE.md), and user/upgrade semantics
+to [User Guide](docs/USER_GUIDE.md) and [Upgrading](UPGRADING.md).
+
 This approval does not change CSP, Enqueue behavior, local runtime assets, or
 package/build ownership. The complete external-service Decision Record and
 official-policy sources belong to

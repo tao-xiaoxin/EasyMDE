@@ -58,6 +58,19 @@ commands documented in `docs/TESTING_AND_RELEASE.md`. Do not claim those gates
 without running them. If a command is unavailable or fails, inspect the real
 step and report its cause; never label it flaky without evidence.
 
+For Settings Center first-paint work, inspect the compositor boundary. Capture
+CDP screencast frames from navigation commit, decode the actual frame payload,
+and classify every nonblank frame through semantic readiness before reading the
+settled DOM. Exercise cold and warm cache at desktop and narrow viewports. Match
+each frame to the stable pre-navigation Settings pixel fingerprint, and prove
+the same classifier rejects a real native wp-admin page capture. Accept a
+no-frame reload only when the visible Settings pixels are retained exactly.
+Then separately assert the dedicated document has no ordinary wp-admin shell
+IDs. Block the Settings script, stylesheet, and scripts through CSP to verify
+the accessible dedicated failure. DOM mutation plus `requestAnimationFrame`, a
+final screenshot, a body pseudo-element, broad Core selector hiding, and fixed
+sleeps are not first-paint proof.
+
 ## Evidence
 
 For a focused Feature, report:

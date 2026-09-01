@@ -2846,6 +2846,7 @@ msgstr ""
 
 #: src/Admin/SettingsPage.php:35 src/Admin/SettingsPage.php:45
 #: src/Admin/SettingsPage.php:128
+#: templates/admin/settings-center-document.php:18
 msgid "EasyMDE Settings Center"
 msgstr ""
 
@@ -3442,14 +3443,14 @@ msgstr ""
 msgid "EasyMDE requires JavaScript to edit Markdown on this screen."
 msgstr ""
 
-#: templates/admin/settings-center.php:12
+#: templates/admin/settings-center.php:13
 msgid ""
 "The EasyMDE settings center could not start. WordPress settings remain "
 "available."
 msgstr ""
 
-#: templates/admin/settings-center.php:20
-#: templates/admin/settings-center.php:28
+#: templates/admin/settings-center.php:21
+#: templates/admin/settings-center.php:29
 msgid "Return to WordPress settings"
 msgstr ""
 

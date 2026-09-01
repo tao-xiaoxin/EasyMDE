@@ -245,6 +245,14 @@ test("keeps the EasyMDE menu logo inside the native icon slot", async ({
 		"src",
 		/assets\/images\/easymde-editor-icon\.png$/u,
 	);
+	await expect(page.locator("#wpwrap")).toBeVisible();
+	await expect(page.locator("#easymde-settings-center-root")).toHaveCount(0);
+	await expect(
+		page.locator('script[src*="/assets/build/settings-center/"]'),
+	).toHaveCount(0);
+	await expect(
+		page.locator('link[href*="/assets/css/admin/settings-center.css"]'),
+	).toHaveCount(0);
 	await expect
 		.poll(async () => {
 			const slot = await iconSlot.boundingBox();
@@ -447,140 +455,19 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	await expect(trigger).toContainText(/实时预览|Live Preview/u);
 });
 
-test("does not paint a blank EasyMDE shell before the Settings Center bundle mounts", async ({
-	page,
-}) => {
-	await page.setViewportSize({ width: 1440, height: 900 });
-	await login(page);
-	await page.addInitScript(() => {
-		window.__easymdeFirstVisibleStates = [];
-		const isVisible = (element) =>
-			element instanceof HTMLElement &&
-			element.getClientRects().length > 0 &&
-			getComputedStyle(element).display !== "none" &&
-			getComputedStyle(element).visibility !== "hidden";
-		const sample = () => {
-			const application = document.querySelector(".easymde-settings-center");
-			const fallback = document.querySelector(
-				"[data-settings-center-server-fallback]",
-			);
-			const startup = document.querySelector("[data-settings-center-startup]");
-			if (
-				!isVisible(application) &&
-				!isVisible(fallback) &&
-				!isVisible(startup)
-			) {
-				return;
-			}
-			window.__easymdeFirstVisibleStates.push({
-				hasCompleteApplication:
-					isVisible(application) &&
-					Boolean(
-						document.querySelector(".easymde-settings-center__sidebar nav"),
-					) &&
-					Boolean(
-						document.querySelector(
-							".easymde-settings-center__sticky-header h1",
-						),
-					) &&
-					Boolean(document.querySelector('input[type="search"]')),
-				hasVisibleFallback: isVisible(fallback),
-				hasVisibleStartup: isVisible(startup),
-				hasBrandOnlyShell: Boolean(
-					document.querySelector(
-						"[data-settings-center-startup] .easymde-settings-center__brand",
-					),
-				),
-			});
-		};
-		let sampleScheduled = false;
-		const schedulePaintSample = () => {
-			if (sampleScheduled) return;
-			sampleScheduled = true;
-			requestAnimationFrame(() => {
-				sampleScheduled = false;
-				sample();
-			});
-		};
-		new MutationObserver(schedulePaintSample).observe(document, {
-			childList: true,
-			subtree: true,
-		});
-	});
-	const settingsBundle = (url) =>
-		url.pathname.includes(
-			"/assets/build/settings-center/assets/settings-center-",
-		) && url.pathname.endsWith(".js");
+const SETTINGS_CENTER_FIRST_PAINT_PATH =
+	"/wp-admin/admin.php?page=easymde&route=/general_setting";
+const SETTINGS_CENTER_FIRST_PAINT_RUNS = 5;
+const SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE = 20;
+const SETTINGS_CENTER_FIRST_PAINT_CASES = [
+	{ name: "desktop-cold", width: 1440, height: 900, cacheDisabled: true },
+	{ name: "desktop-warm", width: 1440, height: 900, cacheDisabled: false },
+	{ name: "mobile-cold", width: 390, height: 844, cacheDisabled: true },
+	{ name: "mobile-warm", width: 390, height: 844, cacheDisabled: false },
+];
 
-	let releaseBundle = () => undefined;
-	const bundleGate = new Promise((resolve) => {
-		releaseBundle = resolve;
-	});
-	let reportBundleIntercepted = () => undefined;
-	const bundleIntercepted = new Promise((resolve) => {
-		reportBundleIntercepted = resolve;
-	});
-	await page.route(settingsBundle, async (route) => {
-		reportBundleIntercepted();
-		const response = await route.fetch();
-		await bundleGate;
-		await route.fulfill({ response });
-	});
-
-	let navigation;
-	try {
-		navigation = page.goto(
-			"/wp-admin/admin.php?page=easymde&route=/general_setting",
-		);
-		await bundleIntercepted;
-		const preMount = await page.evaluate(() => {
-			const body = document.body;
-			const host = document.querySelector("#easymde-settings-center-root");
-			const startup = document.querySelector("[data-settings-center-startup]");
-			const fallback = document.querySelector(
-				"[data-settings-center-server-fallback]",
-			);
-			const bodyVeil = body ? getComputedStyle(body, "::before") : null;
-			return {
-				hasBody: Boolean(body),
-				hasHost: Boolean(host),
-				hasStartup: Boolean(startup),
-				hasFallback: Boolean(fallback),
-				hasOpaquePseudoVeil:
-					bodyVeil !== null &&
-					bodyVeil.content !== "none" &&
-					bodyVeil.display !== "none" &&
-					bodyVeil.backgroundColor !== "rgba(0, 0, 0, 0)",
-			};
-		});
-		expect(preMount).toEqual({
-			hasBody: false,
-			hasHost: false,
-			hasStartup: false,
-			hasFallback: false,
-			hasOpaquePseudoVeil: false,
-		});
-	} finally {
-		releaseBundle();
-		if (navigation) await navigation;
-		await page.unroute(settingsBundle);
-	}
-
-	const firstVisibleStates = await page.evaluate(
-		() => window.__easymdeFirstVisibleStates,
-	);
-	expect(firstVisibleStates.length).toBeGreaterThan(0);
-	expect(firstVisibleStates[0]).toEqual({
-		hasCompleteApplication: true,
-		hasVisibleFallback: false,
-		hasVisibleStartup: false,
-		hasBrandOnlyShell: false,
-	});
+async function waitForSettingsCenterReady(page) {
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
-	await expect(
-		page.locator("[data-settings-center-server-fallback]"),
-	).toHaveCount(0);
 	await expect(
 		page.locator(".easymde-settings-center__sidebar nav"),
 	).toBeVisible();
@@ -588,6 +475,373 @@ test("does not paint a blank EasyMDE shell before the Settings Center bundle mou
 		page.locator(".easymde-settings-center__sticky-header h1"),
 	).toBeVisible();
 	await expect(page.getByRole("searchbox")).toBeVisible();
+	await page.evaluate(async () => {
+		await document.fonts.ready;
+		await new Promise((resolve) => {
+			requestAnimationFrame(() => requestAnimationFrame(resolve));
+		});
+	});
+}
+
+async function assertSettingsCenterShellAbsent(page) {
+	for (const shellId of [
+		"wpwrap",
+		"wpadminbar",
+		"adminmenu",
+		"wpcontent",
+		"wpbody",
+		"wpfooter",
+	]) {
+		await expect(page.locator(`#${shellId}`)).toHaveCount(0);
+	}
+	const hasOpaqueBodyPseudoVeil = await page.evaluate(() => {
+		const style = getComputedStyle(document.body, "::before");
+		return (
+			style.content !== "none" &&
+			style.display !== "none" &&
+			style.backgroundColor !== "rgba(0, 0, 0, 0)"
+		);
+	});
+	expect(hasOpaqueBodyPseudoVeil).toBe(false);
+}
+
+async function decodeSettingsCenterPng(decoder, data, expectedSize) {
+	return decoder.evaluate(
+		async ({ png, expectedWidth, expectedHeight }) => {
+			const image = new Image();
+			image.src = `data:image/png;base64,${png}`;
+			await image.decode();
+			if (
+				image.naturalWidth !== expectedWidth ||
+				image.naturalHeight !== expectedHeight
+			) {
+				throw new Error("settings-frame-size-mismatch");
+			}
+			const canvas = document.createElement("canvas");
+			canvas.width = image.naturalWidth;
+			canvas.height = image.naturalHeight;
+			const context = canvas.getContext("2d", { willReadFrequently: true });
+			if (!context) throw new Error("settings-frame-canvas-unavailable");
+			context.drawImage(image, 0, 0);
+			const pixels = context.getImageData(
+				0,
+				0,
+				canvas.width,
+				canvas.height,
+			).data;
+			let topSamples = 0;
+			let darkTopSamples = 0;
+			let allSamples = 0;
+			let whiteSamples = 0;
+			let pixelHash = 2166136261;
+			const fingerprint = [];
+			for (let y = 0; y < canvas.height; y += 8) {
+				for (let x = 0; x < canvas.width; x += 8) {
+					const index = (y * canvas.width + x) * 4;
+					const red = pixels[index];
+					const green = pixels[index + 1];
+					const blue = pixels[index + 2];
+					const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+					allSamples += 1;
+					if (red > 246 && green > 246 && blue > 246) whiteSamples += 1;
+					if (y < 56) {
+						topSamples += 1;
+						if (luminance < 85) darkTopSamples += 1;
+					}
+					if (y % 16 === 0 && x % 16 === 0) {
+						fingerprint.push(red, green, blue);
+					}
+				}
+			}
+			for (let index = 0; index < pixels.length; index += 4) {
+				pixelHash = Math.imul(pixelHash ^ pixels[index], 16777619);
+				pixelHash = Math.imul(pixelHash ^ pixels[index + 1], 16777619);
+				pixelHash = Math.imul(pixelHash ^ pixels[index + 2], 16777619);
+			}
+			return {
+				width: image.naturalWidth,
+				height: image.naturalHeight,
+				darkTopRatio: darkTopSamples / topSamples,
+				whiteRatio: whiteSamples / allSamples,
+				pixelHash: pixelHash >>> 0,
+				fingerprint,
+			};
+		},
+		{
+			png: data,
+			expectedWidth: expectedSize.width,
+			expectedHeight: expectedSize.height,
+		},
+	);
+}
+
+function settingsCenterFingerprintDistance(frame, reference) {
+	if (frame.fingerprint.length !== reference.fingerprint.length) {
+		throw new Error("settings-frame-fingerprint-size-mismatch");
+	}
+	let absoluteDifference = 0;
+	for (let index = 0; index < frame.fingerprint.length; index += 1) {
+		absoluteDifference += Math.abs(
+			frame.fingerprint[index] - reference.fingerprint[index],
+		);
+	}
+
+	return absoluteDifference / frame.fingerprint.length;
+}
+
+function matchesSettingsCenterFrame(frame, reference) {
+	return (
+		frame.whiteRatio < 0.995 &&
+		frame.darkTopRatio < 0.35 &&
+		settingsCenterFingerprintDistance(frame, reference) <=
+			SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE
+	);
+}
+
+async function captureSettingsCenterNavigationEvidence(
+	page,
+	cdp,
+	decoder,
+	expectedSize,
+) {
+	const settingsApplication = page.locator(".easymde-settings-center");
+	const beforeVisible = await settingsApplication.isVisible();
+	if (!beforeVisible) throw new Error("settings-before-reload-not-visible");
+	const beforeScreenshot = await cdp.send("Page.captureScreenshot", {
+		format: "png",
+		fromSurface: true,
+		captureBeyondViewport: false,
+	});
+	const beforeAnalysis = await decodeSettingsCenterPng(
+		decoder,
+		beforeScreenshot.data,
+		expectedSize,
+	);
+	if (!matchesSettingsCenterFrame(beforeAnalysis, beforeAnalysis)) {
+		throw new Error("settings-reference-frame-invalid");
+	}
+	let committed = false;
+	const frames = [];
+	const pendingAcks = new Set();
+	const ackErrors = [];
+	const handleFrameNavigated = ({ frame }) => {
+		if (!frame.parentId) committed = true;
+	};
+	const handleScreencastFrame = ({ data, sessionId }) => {
+		const ack = cdp.send("Page.screencastFrameAck", { sessionId });
+		pendingAcks.add(ack);
+		ack.then(
+			() => pendingAcks.delete(ack),
+			(error) => {
+				ackErrors.push(error);
+				pendingAcks.delete(ack);
+			},
+		);
+		if (committed) frames.push(data);
+	};
+	cdp.on("Page.frameNavigated", handleFrameNavigated);
+	cdp.on("Page.screencastFrame", handleScreencastFrame);
+	let screencastStarted = false;
+	try {
+		await cdp.send("Page.startScreencast", {
+			format: "png",
+			maxWidth: expectedSize.width,
+			maxHeight: expectedSize.height,
+			everyNthFrame: 1,
+		});
+		screencastStarted = true;
+		await page.reload({ waitUntil: "domcontentloaded" });
+		await waitForSettingsCenterReady(page);
+		if (!committed) throw new Error("settings-main-frame-commit-missing");
+		await assertSettingsCenterShellAbsent(page);
+	} finally {
+		try {
+			if (screencastStarted) await cdp.send("Page.stopScreencast");
+		} finally {
+			cdp.off("Page.frameNavigated", handleFrameNavigated);
+			cdp.off("Page.screencastFrame", handleScreencastFrame);
+			await Promise.all(pendingAcks);
+		}
+	}
+	if (ackErrors.length > 0) throw ackErrors[0];
+
+	const afterVisible = await settingsApplication.isVisible();
+	if (!afterVisible) throw new Error("settings-after-reload-not-visible");
+	const afterScreenshot = await cdp.send("Page.captureScreenshot", {
+		format: "png",
+		fromSurface: true,
+		captureBeyondViewport: false,
+	});
+	if (frames.length > 0) {
+		const frameAnalyses = await Promise.all(
+			frames.map((frame) =>
+				decodeSettingsCenterPng(decoder, frame, expectedSize),
+			),
+		);
+		const nonblankFrameAnalyses = frameAnalyses.filter(
+			(analysis) => analysis.whiteRatio < 0.995,
+		);
+		if (nonblankFrameAnalyses.length === 0) {
+			throw new Error("settings-nonblank-frame-missing");
+		}
+		const frameFingerprintDistances = nonblankFrameAnalyses.map((analysis) =>
+			settingsCenterFingerprintDistance(analysis, beforeAnalysis),
+		);
+		return {
+			beforeVisible,
+			afterVisible,
+			frameBytes: Buffer.byteLength(frames[0], "base64"),
+			nonblankFrameCount: nonblankFrameAnalyses.length,
+			retainedPixels: false,
+			allNonblankFramesMatch: nonblankFrameAnalyses.every((analysis) =>
+				matchesSettingsCenterFrame(analysis, beforeAnalysis),
+			),
+			maxDarkTopRatio: Math.max(
+				...nonblankFrameAnalyses.map((analysis) => analysis.darkTopRatio),
+			),
+			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
+			analysis: nonblankFrameAnalyses[0],
+		};
+	}
+
+	const afterAnalysis = await decodeSettingsCenterPng(
+		decoder,
+		afterScreenshot.data,
+		expectedSize,
+	);
+	if (beforeAnalysis.pixelHash !== afterAnalysis.pixelHash) {
+		throw new Error("settings-retained-pixels-changed");
+	}
+	return {
+		beforeVisible,
+		afterVisible,
+		frameBytes: 0,
+		retainedPixels: true,
+		allNonblankFramesMatch: true,
+		analysis: afterAnalysis,
+		retainedPixelHash: afterAnalysis.pixelHash,
+	};
+}
+
+test("does not paint the WordPress shell across compositor first-paint quadrants", async ({
+	page,
+}) => {
+	await login(page);
+	const decoder = await page.context().newPage();
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send("Page.enable");
+	await cdp.send("Network.enable");
+	const evidence = [];
+	try {
+		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
+			await page.setViewportSize({
+				width: scenario.width,
+				height: scenario.height,
+			});
+			await cdp.send("Network.setCacheDisabled", {
+				cacheDisabled: scenario.cacheDisabled,
+			});
+			await cdp.send("Network.clearBrowserCache");
+			await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+			await waitForSettingsCenterReady(page);
+			const settingsReference = await decodeSettingsCenterPng(
+				decoder,
+				(
+					await cdp.send("Page.captureScreenshot", {
+						format: "png",
+						fromSurface: true,
+						captureBeyondViewport: false,
+					})
+				).data,
+				{ width: scenario.width, height: scenario.height },
+			);
+			await page.goto("/wp-admin/profile.php");
+			await expect(page.locator("#wpwrap")).toBeVisible();
+			const nativeWordPressFrame = await decodeSettingsCenterPng(
+				decoder,
+				(
+					await cdp.send("Page.captureScreenshot", {
+						format: "png",
+						fromSurface: true,
+						captureBeyondViewport: false,
+					})
+				).data,
+				{ width: scenario.width, height: scenario.height },
+			);
+			expect(
+				matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+			).toBe(false);
+			await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+			await waitForSettingsCenterReady(page);
+
+			for (
+				let iteration = 0;
+				iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
+				iteration += 1
+			) {
+				const result = await captureSettingsCenterNavigationEvidence(
+					page,
+					cdp,
+					decoder,
+					{ width: scenario.width, height: scenario.height },
+				);
+				evidence.push({
+					scenario: scenario.name,
+					iteration,
+					...result,
+				});
+			}
+		}
+	} finally {
+		await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
+		await cdp.detach();
+		await decoder.close();
+	}
+
+	expect(evidence).toHaveLength(
+		SETTINGS_CENTER_FIRST_PAINT_CASES.length * SETTINGS_CENTER_FIRST_PAINT_RUNS,
+	);
+	for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
+		const scenarioEvidence = evidence.filter(
+			(entry) => entry.scenario === scenario.name,
+		);
+		expect(scenarioEvidence).toHaveLength(SETTINGS_CENTER_FIRST_PAINT_RUNS);
+		for (const entry of scenarioEvidence) {
+			expect(entry.beforeVisible).toBe(true);
+			expect(entry.afterVisible).toBe(true);
+			expect(entry.analysis).toMatchObject({
+				width: scenario.width,
+				height: scenario.height,
+			});
+			expect(entry.analysis.darkTopRatio).toBeLessThan(0.35);
+			expect(entry.analysis.whiteRatio).toBeLessThan(0.995);
+			expect(entry.allNonblankFramesMatch).toBe(true);
+			if (entry.retainedPixels) {
+				expect(entry.frameBytes).toBe(0);
+				expect(entry.retainedPixelHash).toBe(entry.analysis.pixelHash);
+			} else {
+				expect(entry.frameBytes).toBeGreaterThan(0);
+				expect(entry.nonblankFrameCount).toBeGreaterThan(0);
+				expect(entry.maxDarkTopRatio).toBeLessThan(0.35);
+				expect(entry.maxFingerprintDistance).toBeLessThanOrEqual(
+					SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE,
+				);
+			}
+		}
+	}
+	await waitForSettingsCenterReady(page);
+	await expect(page.locator("body")).toHaveClass(
+		/easymde-settings-center-document/u,
+	);
+	await expect(
+		page.locator('link[data-easymde-settings-favicon="true"]'),
+	).toHaveCount(1);
+	await expect(page.locator("#easymde-settings-center-root")).toHaveCount(1);
+	await assertSettingsCenterShellAbsent(page);
+	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+	await expect(
+		page.locator("[data-settings-center-server-fallback]"),
+	).toHaveCount(0);
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({
@@ -604,6 +858,9 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
 		const fallback = page.locator("[data-settings-center-server-fallback]");
 		await expect(fallback).toBeVisible();
 		await expect(fallback).toHaveAttribute("role", "alert");
@@ -616,6 +873,35 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 		await expect(page.locator("#wpwrap")).toBeVisible();
 	} finally {
 		await page.unroute(settingsBundle);
+	}
+});
+
+test("keeps a dedicated exit when the Settings Center stylesheet cannot load", async ({
+	page,
+}) => {
+	await login(page);
+	const settingsStylesheet = (url) =>
+		url.pathname.endsWith("/assets/css/admin/settings-center.css");
+
+	await page.route(settingsStylesheet, (route) => route.abort("failed"));
+	try {
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
+		const error = page.locator(
+			'#easymde-settings-center-root [role="alert"]',
+		);
+		await expect(error).toBeVisible();
+		await expect(error).toContainText(/could not start|无法启动/iu);
+		const exit = error.locator("a");
+		await expect(exit).toBeVisible();
+		await exit.click();
+		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
+		await expect(page.locator("#wpwrap")).toBeVisible();
+	} finally {
+		await page.unroute(settingsStylesheet);
 	}
 });
 
@@ -642,6 +928,9 @@ test("keeps a neutral exit surface when Content Security Policy blocks scripts",
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
 		const fallback = page.locator("[data-settings-center-server-fallback]");
 		await expect(fallback).toBeVisible();
 		await expect(fallback).toHaveAttribute("role", "alert");

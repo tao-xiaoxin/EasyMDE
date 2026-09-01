@@ -79,6 +79,7 @@ function validBootstrap() {
       nonce: 'synthetic-nonce',
       postId: 7,
       remoteImageUploadMode: 'both',
+      uploadOwner: 'image-hosting',
       strings: {
         defaultAlt: 'image',
         dropFailed: 'Drop failed',

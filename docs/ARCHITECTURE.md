@@ -461,22 +461,26 @@ Current routes:
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. `/image-hosting/import` requires a positive `post_id`, `upload_files`, target-specific `edit_post`, the WordPress REST Nonce, and the image-upload action Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings, local pasted-image automatic-upload preference, and four-state remote-image paste preference. The current development defaults are a 30-second autosave interval, no automatic retry after a failed provider write, no Markdown image title, and `{year}/{month}/{md5}.{ext}` object paths. The new `remoteImageUploadMode` contract has no legacy parser, migration, compatibility alias, or schema-version branch. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings, the explicit `imageHostingEnabled` owner choice (default `false`), local pasted-image automatic-upload preference, and four-state remote-image paste preference. The current development defaults are a 30-second autosave interval, no automatic retry after a failed provider write, no Markdown image title, and `{year}/{month}/{md5}.{ext}` object paths. The new `remoteImageUploadMode` contract has no legacy parser, migration, compatibility alias, or schema-version branch. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
 
-Preview Markdown payloads are capped at 1 MiB. The Image Hosting setting
-`autoUploadPastedImages` defaults to enabled and controls image-file paste in
-both the ordinary source editor and immersive editor. When enabled, a pasted
-local JPEG, PNG, GIF, or WebP follows the existing protected same-origin
-`/image-hosting/upload` path and inserts Markdown only after the upload
-succeeds. When disabled, image paste performs no upload and inserts no Base64
-replacement; ordinary text/HTML paste, the toolbar media command, and
-drag-and-drop remain under their existing owners. Supported drop uploads use
-the same protected proxy independently of this preference. The Image Hosting
-settings are the provider configuration owner; there is no persisted or
-client-side destination switch and no fallback to `/media`. PHP validates the current
-capability, action Nonce, real MIME, extension, byte size, configured format,
-and optional post authority before it reads server-only credentials or
-contacts a provider.
+Preview Markdown payloads are capped at 1 MiB. The persisted
+`imageHostingEnabled` setting is the explicit owner choice for local image-file
+paste and drop, and defaults to `false`. The
+`autoUploadPastedImages` setting defaults to enabled and controls whether a
+pasted local JPEG, PNG, GIF, or WebP is uploaded in both the ordinary source
+editor and immersive editor. When automatic upload is enabled and
+`imageHostingEnabled` is false, the existing protected same-origin `/media`
+WordPress Media Library owner handles the local file; when it is true, the
+protected same-origin `/image-hosting/upload` Image Hosting owner handles it.
+Supported drop uploads use the selected owner. When automatic upload is
+disabled, image paste performs no upload and inserts no Base64 replacement;
+ordinary text/HTML paste and the toolbar media command remain under their
+existing owners. Remote image import is forced off while Image Hosting is
+disabled. This is an explicit owner selection, not a failure fallback: a
+selected owner failure remains explicit and never switches to the other owner.
+PHP validates the current capability, action Nonce, real MIME, extension, byte
+size, configured format, and optional post authority before it reads server-only
+credentials or contacts a provider.
 
 `remoteImageUploadMode` controls only remote images discovered in the current
 paste and defaults to `both`. Its exact values are `both` (visual and source),
@@ -503,13 +507,42 @@ Only an authoritative result may update the current paste; cancellation, stale c
 The toolbar media command is a separate explicit entry point. It opens the
 WordPress-native media frame and inserts the selected attachment without
 changing the paste/drop upload owner. `/media` remains the protected WordPress
-media-library upload route, but it is not the editor's paste/drop default or
-fallback. `EditorMediaUploadPolicy` applies the same effective configured image
+Media Library upload route and is the selected paste/drop owner when
+`imageHostingEnabled` is false; it is not a failure fallback. `EditorMediaUploadPolicy` applies the same effective configured image
 size limit to WordPress-native uploads only when the request names an editable
 Post whose Post Type is supported by EasyMDE. It leaves uploads for unrelated
 Posts and administration surfaces unchanged. The Editor bootstrap uses that
 same effective limit for direct-upload validation and the featured-image
 guidance shown in the immersive Publish dialog.
+
+The saved `images.fileNameRule` is shared by the Image Hosting owner and
+future EasyMDE local paste/drop uploads through `/easymde/v1/media`, including
+when Image Hosting is disabled. `Plugin` constructs one
+`ImageHosting\ObjectKeyBuilder` and injects it into both runtimes. The Media
+controller reads one credential-free `file_name_rule`/`max_bytes`/`mime_types`/
+`title_display` snapshot, validates the real MIME and declared size, reads
+bounded exact bytes, and expands the rule with UTC time, UUID, `post_id`, MD5,
+date/time, sanitized name, and the verified extension. Original sanitized names
+remain separate from the generated storage key and drive default alt text,
+response filename/title, and the attachment title stem.
+
+`MediaUploadPathScope` adds a one-time internal token to the exact temporary
+file. Its final-priority `wp_handle_sideload_prefilter` restores only the
+generated basename. The matching final `wp_handle_sideload_overrides` callback
+registers an exact-file final `wp_check_filetype_and_ext` callback; only that
+final MIME boundary arms the one-shot `upload_dir` projection, so directory
+reads from earlier overrides or MIME callbacks remain ordinary. `finally`
+removes the prefilter, overrides, MIME, and upload-directory callbacks. The
+projection uses the filtered `basedir`, `baseurl`, and `error`, replaces the
+path/URL/subdirectory with the rule directory without appending WordPress's
+date folders, and never falls back to the ordinary upload directory. WordPress
+Core remains authoritative for MIME handling, `wp_unique_filename()`, the
+attachment, metadata, sub-sizes, URL, permissions, and native media picker
+behavior. A successful Core attachment is rejected and deleted if its scope
+was not consumed.
+
+This is a future-upload path only: historical attachments are not migrated,
+and the explicit native media-picker insertion path is unchanged.
 
 `EasyMDE\ImageHosting\ImageHostingRuntime` owns remote image preparation,
 object-key construction, provider selection, and backup orchestration.

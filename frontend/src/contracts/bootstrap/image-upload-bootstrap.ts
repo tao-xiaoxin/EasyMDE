@@ -15,6 +15,8 @@ export type ImageUploadStrings = Readonly<{
 
 export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
+export type ImageUploadOwner = 'media' | 'image-hosting';
+
 export type RemoteImageUploadMode = 'both' | 'visual' | 'source' | 'off';
 
 export type ImageUploadInsertion = Readonly<{
@@ -34,6 +36,7 @@ export type ImageUploadBootstrap = Readonly<{
   postId: number;
   remoteImageUploadMode: RemoteImageUploadMode;
   strings: ImageUploadStrings;
+  uploadOwner: ImageUploadOwner;
 }>;
 
 const IMAGE_UPLOAD_MIME_TYPES: ReadonlyArray<ImageUploadMimeType> = [
@@ -101,7 +104,8 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
     'nonce',
     'postId',
     'remoteImageUploadMode',
-    'strings'
+    'strings',
+    'uploadOwner'
   ];
   if (
     Object.keys(bootstrap).length !== expectedKeys.length ||
@@ -130,6 +134,12 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   ) {
     throw new Error('image-upload-remote-paste-mode-invalid');
   }
+  if (
+    'string' !== typeof bootstrap.uploadOwner ||
+    !['media', 'image-hosting'].includes(bootstrap.uploadOwner)
+  ) {
+    throw new Error('image-upload-owner-invalid');
+  }
 
   return {
     actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
@@ -157,5 +167,6 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
       pasteUploaded: stringValue(messages.pasteUploaded, 'image-upload-string-invalid'),
       pasteUploading: stringValue(messages.pasteUploading, 'image-upload-string-invalid'),
     },
+    uploadOwner: bootstrap.uploadOwner as ImageUploadOwner,
   };
 }

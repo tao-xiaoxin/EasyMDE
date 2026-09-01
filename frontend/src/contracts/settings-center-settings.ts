@@ -26,6 +26,7 @@ export type ImageHostProvider =
 	| "tencent-cos";
 
 export type ImageSettings = Readonly<{
+	imageHostingEnabled: boolean;
 	service: ImageHostProvider;
 	endpoint: string;
 	bucket: string;

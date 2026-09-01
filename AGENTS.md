@@ -573,16 +573,81 @@ binding; maintainer approval cannot waive them. Ask the WordPress.org Plugin
 Review Team when service classification or channel acceptance is unclear.
 
 The browser runtime and redistributable assets remain local. The only approved
-external-service feature is administrator-configured image hosting through
-Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS. WordPress
-owns provider API requests and credentials; the browser receives only
-same-origin REST URLs, capability presentation, the authoritative public image
-URL, and redacted status. Primary and backup writes use the same generated key;
-the bounded serial retry is no-switch, and exhausting any required destination
-fails the upload. Verify Upload is single-attempt. Secret reveal is explicit and
-protected, `no-store`, and memory-only. Current image facts are in
-`docs/ARCHITECTURE.md`; the executable contract and policy sources are in
-`.agents/skills/easymde/SKILL.md`; rationale is in `docs/DESIGN.md`.
+external-service feature is administrator-configured image hosting. Cloudflare
+R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are the supported
+providers; any one may be the primary or the optional backup. Primary and
+backup writes always use the same generated object key; this is a runtime
+invariant rather than a configurable setting. WordPress owns provider API
+requests and stored credentials; ordinary browser bootstrap, settings reads,
+exports, and diagnostics receive only same-origin REST URLs, capability
+presentation, the authoritative public image URL, and redacted status. A
+provider Endpoint is the HTTPS upload API origin. The separately configured
+primary Viewing Image Domain accepts HTTP or HTTPS and is the public URL base
+that produces the one authoritative URL returned after upload. An HTTP image
+URL may be blocked as mixed content when an article is viewed over HTTPS; that
+display restriction does not turn an authoritative provider upload success
+into an upload failure. The persisted `imageHostingEnabled` setting is an
+explicit upload-owner choice and defaults to `false`. With it disabled,
+eligible local image paste and drag-and-drop use the protected same-origin
+WordPress Media Library `/media` owner, and remote image import is off. With it
+enabled, those local file operations use the protected same-origin Image
+Hosting proxy and the configured remote-image mode applies. This is an owner
+selection, not a failure fallback: a selected owner failure remains explicit
+and never switches to the other owner. The toolbar media picker remains a
+separate explicit WordPress-native insertion entry point. Primary and backup configurations that
+identify the same physical destination are rejected with HTTP 409. The
+single persisted `uploadRetryCount` setting appears in the primary settings
+section, is a strict integer from `0` through `5`, defaults to `0`, and means
+the maximum number of extra attempts after the first failed write. The same
+configured `N` applies independently to the primary and, when enabled, backup
+destination. Each destination's attempts run serially with the exact same
+prepared bytes, object key, and provider, and stop immediately on success. No attempt switches
+providers. Exhausting the primary attempts, or exhausting the backup attempts
+when backup is enabled, fails the whole article upload: the REST response must
+not return an image URL and the editor must not insert one. The editor opens an
+accessible redacted failure message that asks the user to retry manually. A
+provider may already have stored an object because there is no reliable
+cross-provider compensating delete. Image hosting must never be silently
+substituted or reported successful before every required provider result is
+authoritative. Stored
+credentials remain server-side by default. An administrator's explicit
+password-field eye action may retrieve exactly one saved credential through a
+dedicated `manage_options`-protected POST with both the WordPress REST Nonce
+and an action-specific Nonce. That response is `no-store`, the revealed value
+exists only in current browser memory, and it must not enter persistence,
+browser Storage, exports, HTML bootstrap, logs, diagnostics, or public
+evidence. The Image Hosting verification action performs a real upload: it
+writes one plugin-owned synthetic PNG to the selected provider using the
+current `fileNameRule`, with one attempt and no provider switch, then
+reports the authoritative object path and public URL in the Settings Center
+dialog. Rules containing time or UUID variables may create a new object on
+each verification. The `{md5}` filename variable is the hexadecimal MD5 digest of
+the final bytes sent to the provider, after any enabled image processing.
+The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`.
+EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
+to the provider and derives the extension from the verified MIME type.
+
+The saved `images.fileNameRule` is a shared naming contract for Image Hosting
+and future EasyMDE-owned local paste/drop uploads sent to `/easymde/v1/media`;
+it remains configurable while Image Hosting is disabled. `ObjectKeyBuilder`
+owns the shared expansion, and the Media owner projects one generated key
+through a request-scoped `MediaUploadPathScope` without falling back to an
+ordinary upload path. WordPress Core remains authoritative for verified MIME,
+unique filenames, attachments, metadata, sub-sizes, URLs, permissions, and
+the native media picker. This contract applies only to future EasyMDE
+paste/drop uploads; it never migrates historical attachments or changes the
+native picker insertion path. Executable checks belong to the
+[EasyMDE Skill](.agents/skills/easymde/SKILL.md); current implementation facts
+belong to [Architecture](docs/ARCHITECTURE.md), test gates to
+[Testing and Release](docs/TESTING_AND_RELEASE.md), and user/upgrade semantics
+to [User Guide](docs/USER_GUIDE.md) and [Upgrading](UPGRADING.md).
+
+This approval does not change CSP, Enqueue behavior, local runtime assets, or
+package/build ownership. The complete external-service Decision Record and
+official-policy sources belong to
+`.agents/skills/easymde/SKILL.md`; durable rationale belongs to
+`docs/DESIGN.md`; current facts remain in
+`docs/ARCHITECTURE.md`.
 
 ## Repository Workflow and Authorization
 

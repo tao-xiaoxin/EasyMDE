@@ -20,6 +20,54 @@ touches user-visible strings, load the repository-local `easymde-i18n` Skill at
 `docs/TESTING_AND_RELEASE.md`.
 Focused maintainer decisions and Issue scope apply within those boundaries.
 
+## Image Hosting Owner Contract
+
+The approved Image Hosting service is an explicit upload-owner choice, not a
+fallback path. The persisted `imageHostingEnabled` value is a strict boolean
+and defaults to `false`:
+
+- `false`: eligible local image paste and drop use the existing protected
+  WordPress Media Library `/media` owner, and remote image import is off;
+- `true`: eligible local image paste and drop use the protected Image Hosting
+  owner, with remote import governed by its configured mode; and
+- a selected owner failure remains explicit and never switches to the other
+  owner.
+
+When Image Hosting is disabled, article `/image-hosting/upload` and
+`/image-hosting/import` reject with HTTP 409 before provider access. Image
+Hosting settings, Verify Upload, and the explicit secret-reveal action remain
+available under their own administrator, Nonce, and transient-memory
+contracts.
+
+### Shared File Name Rule
+
+The saved `fileNameRule` remains configurable and visible while Image Hosting
+is disabled. `ObjectKeyBuilder` is the single expansion owner for provider
+uploads and future EasyMDE local paste/drop uploads sent to `/easymde/v1/media`.
+The Media controller takes one credential-free settings snapshot, validates the
+real MIME and size, then reads bounded exact bytes before expanding UTC, UUID,
+`post_id`, digest, date/time, name, and verified-extension variables. Its
+`MediaUploadPathScope` matches the exact temporary file plus a one-time internal
+token. Its final-priority sideload prefilter restores the generated basename;
+the matching final overrides hook only registers an exact-file final
+`wp_check_filetype_and_ext` callback. That final MIME callback arms the one-shot
+`upload_dir` projection, so upload-directory reads from earlier overrides or
+MIME callbacks remain ordinary. Every operation removes the prefilter,
+overrides, MIME, and upload-directory hooks in `finally`.
+WordPress Core remains authoritative for MIME handling, `wp_unique_filename()`,
+attachment creation, metadata, sub-sizes, URLs, permissions, and the native
+media picker. Original sanitized client names supply the response filename,
+alt text, title response, and attachment title stem; generated hash/UUID values
+must not leak into those human fields. A scope or rule failure is explicit and
+must never fall back to an ordinary upload path.
+
+This behavior covers future EasyMDE paste/drop uploads only. It does not move
+historical attachments or change the explicit native media-picker insertion
+entry point. Current ownership and implementation facts are routed to
+[`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), while the executable PHP
+and installed-ZIP browser checks are routed to
+[`docs/TESTING_AND_RELEASE.md`](../../../docs/TESTING_AND_RELEASE.md).
+
 Choose references by task:
 
 - [current editor contract](references/current-editor-contract.md) for roots,

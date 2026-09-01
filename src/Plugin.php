@@ -15,6 +15,7 @@ use EasyMDE\Content\RevisionManager;
 use EasyMDE\Frontend\ContentFilter;
 use EasyMDE\Frontend\FrontendAssets;
 use EasyMDE\ImageHosting\ImageHostingRuntime;
+use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\ImageHosting\WordPressHttpTransport;
 use EasyMDE\Rest\CustomCssController;
 use EasyMDE\Rest\ImageHostingController;
@@ -102,7 +103,8 @@ final class Plugin {
 		$settings_center_repository = new SettingsCenterRepository( $options, $this->toolbar_registry );
 		$settings_page              = new SettingsPage( $settings_center_repository );
 		$frontend_assets            = new FrontendAssets( $post_document, $theme_state_repository, $feature_detector, $settings_center_repository );
-		$image_hosting_runtime      = new ImageHostingRuntime( new WordPressHttpTransport() );
+		$object_key_builder         = new ObjectKeyBuilder();
+		$image_hosting_runtime      = new ImageHostingRuntime( new WordPressHttpTransport(), $object_key_builder );
 
 		$modules = array(
 			$settings_page,
@@ -126,7 +128,7 @@ final class Plugin {
 		$this->rest_controllers = array(
 			new PreviewController( $capabilities, $theme_state_repository, $feature_detector ),
 			new RevisionController( $capabilities, $post_document, $feature_detector ),
-			new MediaController( $capabilities, $settings_center_repository ),
+			new MediaController( $capabilities, $settings_center_repository, $object_key_builder ),
 			new ThemeController( $capabilities, $theme_state_repository ),
 			new CustomCssController( $capabilities, $theme_state_repository, $custom_css_policy ),
 			new SettingsController( $capabilities, $settings_center_repository ),

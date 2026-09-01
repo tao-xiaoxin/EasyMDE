@@ -26,9 +26,11 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			public $title_display = 'filename';
 			public $remote_image_upload_mode = 'both';
 			public $include_remote_image_upload_mode = true;
+			public $enabled = true;
 
 			public function get_image_hosting_settings() {
 				$settings = array(
+					'enabled'     => $this->enabled,
 					'revision'    => 7,
 					'primary'     => array(
 						'retryCount' => 2,
@@ -301,6 +303,20 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'remoteImageUploadMode', $this->runtime->validation_calls[0][0] );
 	}
 
+	public function test_verification_accepts_both_image_hosting_enablement_values_without_projecting_the_flag() {
+		foreach ( array( false, true ) as $enabled ) {
+			$payload = $this->verification_payload( 'primary' );
+			$payload['settings']['imageHostingEnabled'] = $enabled;
+
+			$response = rest_do_request( $this->verification_request( $payload ) );
+
+			$this->assertSame( 200, $response->get_status(), var_export( $enabled, true ) );
+			$this->assertArrayNotHasKey( 'imageHostingEnabled', $this->runtime->validation_calls[0][0], var_export( $enabled, true ) );
+			$this->assertSame( 'synthetic-primary', $this->runtime->validation_calls[0][0]['primary']['bucket'], var_export( $enabled, true ) );
+			array_shift( $this->runtime->validation_calls );
+		}
+	}
+
 	public function test_verification_rejects_missing_invalid_or_extra_image_settings_without_calling_the_runtime() {
 		$missing_auto_upload = $this->verification_payload( 'primary' );
 		unset( $missing_auto_upload['settings']['autoUploadPastedImages'] );
@@ -308,12 +324,14 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		unset( $missing_remote_mode['settings']['remoteImageUploadMode'] );
 		$invalid_auto_upload = $this->verification_payload( 'primary' );
 		$invalid_auto_upload['settings']['autoUploadPastedImages'] = 'true';
+		$invalid_image_hosting = $this->verification_payload( 'primary' );
+		$invalid_image_hosting['settings']['imageHostingEnabled'] = 'true';
 		$invalid_remote_mode = $this->verification_payload( 'primary' );
 		$invalid_remote_mode['settings']['remoteImageUploadMode'] = 'enabled';
 		$extra_field = $this->verification_payload( 'primary' );
 		$extra_field['settings']['editorOnly'] = true;
 
-		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_remote_mode, $extra_field ) as $payload ) {
+		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $invalid_remote_mode, $extra_field ) as $payload ) {
 			$response = rest_do_request( $this->verification_request( $payload ) );
 
 			$this->assertSame( 400, $response->get_status() );
@@ -754,6 +772,21 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertCount( 0, $this->runtime->upload_calls );
 	}
 
+	public function test_upload_rejects_when_image_hosting_is_disabled_before_runtime_validation_or_upload() {
+		$this->settings_provider->enabled = false;
+		$file     = $this->png_file();
+		$response = rest_do_request( $this->upload_request( $file ) );
+
+		try {
+			$this->assertSame( 409, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_disabled', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->validation_calls );
+			$this->assertCount( 0, $this->runtime->upload_calls );
+		} finally {
+			unlink( $file['tmp_name'] );
+		}
+	}
+
 	public function test_remote_import_rejects_when_remote_upload_mode_is_off_before_download_or_upload_including_same_primary_origin() {
 		$this->settings_provider->remote_image_upload_mode = 'off';
 		$urls = array(
@@ -778,6 +811,44 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 
 		$this->assertCount( 0, $this->remote_downloader->calls );
 		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_remote_import_rejects_when_image_hosting_is_disabled_before_download_or_upload_including_same_primary_origin() {
+		$this->settings_provider->enabled = false;
+		$urls = array(
+			'https://cdn.example.test/path/source.png',
+			'https://images.example.test/path/source.png',
+		);
+
+		foreach ( $urls as $url ) {
+			$response = rest_do_request(
+				$this->import_request(
+					array(
+						'post_id'  => $this->post_id,
+						'url'      => $url,
+						'alt_text' => '',
+					)
+				)
+			);
+
+			$this->assertSame( 409, $response->get_status(), $url );
+			$this->assertSame( 'easymde_image_hosting_disabled', $response->as_error()->get_error_code(), $url );
+		}
+
+		$this->assertCount( 0, $this->remote_downloader->calls );
+		$this->assertCount( 0, $this->runtime->upload_calls );
+	}
+
+	public function test_verification_and_secret_reveal_remain_available_when_image_hosting_is_disabled() {
+		$this->settings_provider->enabled = false;
+
+		$verification = rest_do_request( $this->verification_request( array( 'target' => 'primary' ) ) );
+		$secret       = rest_do_request( $this->secret_request( 'primary', 'secretKey', 7 ) );
+
+		$this->assertSame( 200, $verification->get_status() );
+		$this->assertSame( 200, $secret->get_status() );
+		$this->assertSame( 'synthetic-secret', $secret->get_data()['value'] );
+		$this->assertCount( 1, $this->runtime->validation_calls );
 	}
 
 	public function test_remote_import_rejects_missing_or_invalid_remote_upload_mode_before_download_or_upload() {
@@ -1020,6 +1091,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			'revision' => 7,
 			'settings' => array(
 				'service'             => 'cloudflare-r2',
+				'imageHostingEnabled' => false,
 				'endpoint'            => 'https://synthetic-account.r2.cloudflarestorage.com',
 				'bucket'              => 'synthetic-primary',
 				'domain'              => 'https://images.example.test',

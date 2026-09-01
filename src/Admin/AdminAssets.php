@@ -279,6 +279,7 @@ final class AdminAssets {
 		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
 		$settings                 = $this->settings_center_repository->get_settings();
 		$image_upload_config      = $this->get_image_upload_config();
+		$image_hosting_enabled    = isset( $settings['images']['imageHostingEnabled'] ) && true === $settings['images']['imageHostingEnabled'];
 		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types();
 		$code_themes              = array_map(
 			static function ( $theme ) {
@@ -345,13 +346,14 @@ final class AdminAssets {
 				'allowedMimeTypes'       => $allowed_image_mime_types,
 				'autoUploadPastedImages' => $settings['images']['autoUploadPastedImages'],
 				'enabled'                => $image_upload_config['enabled'] && ! empty( $allowed_image_mime_types ),
-				'endpoint'               => esc_url_raw( rest_url( 'easymde/v1/image-hosting/upload' ) ),
+				'endpoint'               => esc_url_raw( rest_url( $image_hosting_enabled ? 'easymde/v1/image-hosting/upload' : 'easymde/v1/media' ) ),
 				'importEndpoint'         => esc_url_raw( rest_url( 'easymde/v1/image-hosting/import' ) ),
 				'insertion'              => array(
 					'titleDisplay' => $settings['images']['titleDisplay'],
 				),
 				'maxBytes'               => $image_upload_config['maxBytes'],
-				'remoteImageUploadMode'  => $settings['images']['remoteImageUploadMode'],
+				'remoteImageUploadMode'  => $image_hosting_enabled ? $settings['images']['remoteImageUploadMode'] : 'off',
+				'uploadOwner'            => $image_hosting_enabled ? 'image-hosting' : 'media',
 				'nonce'                  => $nonce,
 				'actionNonce'            => wp_create_nonce( 'easymde_upload_image_hosting' ),
 				'postId'                 => absint( $post_id ),

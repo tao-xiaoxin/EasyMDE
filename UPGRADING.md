@@ -23,6 +23,22 @@ EasyMDE metadata now describes document state, not editor admission. Existing po
 
 Opening an ordinary existing supported post imports current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
 
+## File Name Rule And Media Uploads
+
+The saved File Name Rule is shared by Image Hosting and future EasyMDE local
+paste/drop uploads. It remains configurable while Image Hosting is disabled;
+in that state, the protected WordPress Media Library `/easymde/v1/media` owner
+uses the rule for new EasyMDE paste/drop uploads. WordPress Core still chooses
+the verified MIME, unique filename, attachment, metadata, sub-sizes, URL, and
+permissions. Image Hosting continues to use the same rule for its provider
+object key when enabled.
+
+This is not a data migration. Existing attachment files and paths are not
+renamed or moved, and the explicit native WordPress media picker is unchanged.
+After upgrading, test one synthetic EasyMDE paste/drop upload if the rule is
+important to your workflow; do not expect historical attachments to follow a
+new rule.
+
 ## Before Upgrading
 
 - Confirm the release ZIP includes Composer runtime dependencies and local runtime assets.

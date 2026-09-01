@@ -76,6 +76,56 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertTrue($settings['images']['autoUploadPastedImages']);
     }
 
+    public function test_image_hosting_enablement_defaults_to_false_without_read_write_and_requires_a_strict_boolean_on_save()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['imageHostingEnabled']);
+        $this->assertFalse(get_option(Options::EDITOR_SETTINGS, false));
+
+        $settings['images']['imageHostingEnabled'] = true;
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertTrue($saved['images']['imageHostingEnabled']);
+        $this->assertTrue(get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['imageHostingEnabled']);
+
+        foreach (array('true', 1, 1.0, null) as $invalid) {
+            $settings = $repository->get_settings();
+            $settings['images']['imageHostingEnabled'] = $invalid;
+
+            $result = $repository->update_settings($settings);
+
+            $this->assertWPError($result, gettype($invalid));
+            $this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), gettype($invalid));
+        }
+    }
+
+    public function test_legacy_image_hosting_configuration_is_read_as_disabled_without_writing_the_missing_field()
+    {
+        $stored = array(
+            'settings_center' => array(
+                'images' => array(
+                    'endpoint'  => 'https://synthetic.r2.cloudflarestorage.com',
+                    'domain'    => 'https://images.example.test',
+                    'accessKey' => 'synthetic-access',
+                    'secretKey' => 'synthetic-secret',
+                ),
+            ),
+        );
+        update_option(Options::EDITOR_SETTINGS, $stored, false);
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['imageHostingEnabled']);
+        $after_read = get_option(Options::EDITOR_SETTINGS);
+        $this->assertSame($stored, $after_read);
+        $this->assertArrayNotHasKey('imageHostingEnabled', $after_read['settings_center']['images']);
+    }
+
     public function test_update_persists_the_paste_upload_policy()
     {
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
@@ -101,8 +151,83 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         );
 
         $this->assertIsArray($repository->update_settings($settings));
-        $this->assertSame(array('image/png'), $repository->get_allowed_image_mime_types());
+		$this->assertSame(array('image/png'), $repository->get_allowed_image_mime_types());
     }
+
+	public function test_media_upload_settings_reads_one_credential_free_snapshot_without_writing()
+	{
+		$stored = array(
+			'settings_center_revision' => 19,
+			'settings_center'          => array(
+				'images' => array(
+					'fileNameRule'  => 'media/{post_id}/{name}.{ext}',
+					'maxImageSizeMb' => 2,
+					'uploadFormats' => array(
+						'jpg'  => false,
+						'png'  => true,
+						'webp' => false,
+						'gif'  => false,
+					),
+					'titleDisplay' => 'filename',
+					'accessKey'    => 'synthetic-access-key',
+					'secretKey'    => 'synthetic-secret-key',
+				),
+			),
+		);
+		update_option(Options::EDITOR_SETTINGS, $stored, false);
+		$reads       = 0;
+		$read_filter = static function () use (&$reads, $stored) {
+			$reads++;
+
+			return $stored;
+		};
+		add_filter('pre_option_' . Options::EDITOR_SETTINGS, $read_filter);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		try {
+			$settings = $repository->get_media_upload_settings();
+		} finally {
+			remove_filter('pre_option_' . Options::EDITOR_SETTINGS, $read_filter);
+		}
+
+		$this->assertSame(1, $reads);
+		$this->assertSame(
+			array(
+				'file_name_rule' => 'media/{post_id}/{name}.{ext}',
+				'max_bytes'     => 2 * MB_IN_BYTES,
+				'mime_types'    => array('image/png'),
+				'title_display' => 'filename',
+			),
+			$settings
+		);
+		$this->assertArrayNotHasKey('accessKey', $settings);
+		$this->assertArrayNotHasKey('secretKey', $settings);
+		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+	}
+
+	public function test_media_upload_settings_uses_the_default_rule_for_legacy_invalid_data_without_writing()
+	{
+		$stored = array(
+			'settings_center' => array(
+				'images' => array(
+					'fileNameRule' => '../unsafe/{ext}',
+				),
+			),
+		);
+		update_option(Options::EDITOR_SETTINGS, $stored, false);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$settings = $repository->get_media_upload_settings();
+
+		$this->assertSame('{year}/{month}/{md5}.{ext}', $settings['file_name_rule']);
+		$this->assertSame( min( 5 * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ), $settings['max_bytes'] );
+		$this->assertSame(
+			array('image/jpeg', 'image/png', 'image/webp', 'image/gif'),
+			$settings['mime_types']
+		);
+		$this->assertSame('none', $settings['title_display']);
+		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+	}
 
 	public function test_image_upload_runtime_snapshot_keeps_credentials_server_side()
 	{

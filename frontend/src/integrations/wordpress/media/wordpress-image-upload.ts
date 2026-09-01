@@ -1,3 +1,4 @@
+import type { ImageUploadOwner } from '../../../contracts/bootstrap/image-upload-bootstrap';
 import type {
   ImageUploadPort,
   ImageUploadResult
@@ -21,6 +22,7 @@ type CreateWordPressImageUploadPortOptions = Readonly<{
   formData: unknown;
   nonce: string;
   siteUrl: string;
+  uploadOwner: ImageUploadOwner;
 }>;
 
 function uploadFileName(file: File): string {
@@ -43,69 +45,135 @@ function hasExplicitUrlPort(value: string): boolean {
   }
   return authority.includes(':');
 }
-export function parseUploadedImageResult(value: unknown): ImageUploadResult {
-  if (!value || 'object' !== typeof value || Array.isArray(value)) {
-    throw new Error('image-upload-response-invalid');
-  }
-  const response = value as Record<string, unknown>;
-  const responseKeys = Object.keys(response);
+
+function invalidResponse(): never {
+  throw new Error('image-upload-response-invalid');
+}
+
+function exactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: ReadonlyArray<string>
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    keys.length === expectedKeys.length &&
+    expectedKeys.every((key) => keys.includes(key))
+  );
+}
+
+function responseString(
+  value: unknown,
+  maxLength: number,
+  requireNonEmpty = false
+): string {
   if (
-    4 !== responseKeys.length ||
-    !['alt', 'backup', 'title', 'url'].every((key) =>
-      responseKeys.includes(key)
-    )
+    'string' !== typeof value ||
+    value.length > maxLength ||
+    (requireNonEmpty && '' === value.trim())
   ) {
-    throw new Error('image-upload-response-invalid');
+    return invalidResponse();
   }
-  if (
-    'string' !== typeof response.url ||
-    '' === response.url.trim() ||
-    response.url.length > 2048 ||
-    'string' !== typeof response.alt ||
-    response.alt.length > 4096 ||
-    'string' !== typeof response.title ||
-    response.title.length > 4096
-  ) {
-    throw new Error('image-upload-response-invalid');
-  }
+  return value;
+}
+
+function responseUrl(value: unknown): string {
+  const responseUrlValue = responseString(value, 2048, true);
   let url: URL;
   try {
-    url = new URL(response.url);
+    url = new URL(responseUrlValue);
   } catch {
-    throw new Error('image-upload-response-invalid');
+    return invalidResponse();
   }
   if (
     !['http:', 'https:'].includes(url.protocol) ||
     '' !== url.username ||
     '' !== url.password ||
     '' !== url.port ||
-    hasExplicitUrlPort(response.url) ||
+    hasExplicitUrlPort(responseUrlValue) ||
     '' !== url.search ||
     '' !== url.hash
   ) {
-    throw new Error('image-upload-response-invalid');
+    return invalidResponse();
   }
-  const backup = response.backup;
-  if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
-    throw new Error('image-upload-response-invalid');
+  return responseUrlValue;
+}
+
+function mediaResponseUrl(value: unknown): string {
+  const responseUrlValue = responseString(value, 4096, true);
+  let url: URL;
+  try {
+    url = new URL(responseUrlValue);
+  } catch {
+    return invalidResponse();
   }
-  const backupResult = backup as Record<string, unknown>;
-  const backupKeys = Object.keys(backupResult);
   if (
-    !['disabled', 'uploaded'].includes(String(backupResult.status))
+    !['http:', 'https:'].includes(url.protocol) ||
+    '' !== url.username ||
+    '' !== url.password ||
+    '' === url.hostname
   ) {
-    throw new Error('image-upload-response-invalid');
+    return invalidResponse();
   }
-  if (1 !== backupKeys.length || 'status' !== backupKeys[0]) {
-    throw new Error('image-upload-response-invalid');
+  return responseUrlValue;
+}
+
+export function parseMediaUploadResult(
+  value: unknown
+): ImageUploadResult {
+  if (!value || 'object' !== typeof value || Array.isArray(value)) {
+    return invalidResponse();
   }
+  const response = value as Record<string, unknown>;
+  if (!exactKeys(response, ['id', 'url', 'alt', 'filename', 'title'])) {
+    return invalidResponse();
+  }
+  if (!Number.isSafeInteger(response.id) || (response.id as number) < 1) {
+    return invalidResponse();
+  }
+  const url = mediaResponseUrl(response.url);
+  const alt = responseString(response.alt, 4096);
+  responseString(response.filename, 512, true);
+  const title = responseString(response.title, 4096);
   return {
-    alt: response.alt,
+    alt,
     status: 'uploaded',
-    title: response.title,
-    url: response.url
+    title,
+    url
   };
 }
+
+export function parseImageHostingUploadResult(value: unknown): ImageUploadResult {
+  if (!value || 'object' !== typeof value || Array.isArray(value)) {
+    return invalidResponse();
+  }
+  const response = value as Record<string, unknown>;
+  if (!exactKeys(response, ['url', 'alt', 'title', 'backup'])) {
+    return invalidResponse();
+  }
+  const url = responseUrl(response.url);
+  const alt = responseString(response.alt, 4096);
+  const title = responseString(response.title, 4096);
+  const backup = response.backup;
+  if (!backup || 'object' !== typeof backup || Array.isArray(backup)) {
+    return invalidResponse();
+  }
+  const backupResult = backup as Record<string, unknown>;
+  if (
+    !exactKeys(backupResult, ['status']) ||
+    'string' !== typeof backupResult.status ||
+    !['disabled', 'uploaded'].includes(backupResult.status)
+  ) {
+    return invalidResponse();
+  }
+  return {
+    alt,
+    status: 'uploaded',
+    title,
+    url
+  };
+}
+
+export const parseUploadedImageResult = parseImageHostingUploadResult;
 
 function isAbortError(error: unknown): boolean {
   return Boolean(
@@ -121,10 +189,14 @@ export function createWordPressImageUploadPort({
   endpoint,
   formData,
   nonce,
-  siteUrl
+  siteUrl,
+  uploadOwner
 }: CreateWordPressImageUploadPortOptions): ImageUploadPort {
   if ('function' !== typeof apiFetch || 'function' !== typeof formData) {
     throw new Error('image-upload-wordpress-runtime-unavailable');
+  }
+  if (!['media', 'image-hosting'].includes(uploadOwner)) {
+    throw new Error('image-upload-owner-invalid');
   }
   const request = apiFetch as ApiFetch;
   const FormDataConstructor = formData as typeof FormData;
@@ -133,7 +205,10 @@ export function createWordPressImageUploadPort({
     siteUrl,
     'image-upload-url-invalid'
   ).toString();
-  if (!actionNonce || '' === actionNonce.trim()) {
+  if (
+    'image-hosting' === uploadOwner &&
+    (!actionNonce || '' === actionNonce.trim())
+  ) {
     throw new Error('image-upload-action-nonce-invalid');
   }
 
@@ -149,17 +224,25 @@ export function createWordPressImageUploadPort({
       body.append('post_id', String(postId));
       body.append('alt_text', altText);
       try {
-        return parseUploadedImageResult(
-          await request({
-            body,
-            headers: {
-              'X-WP-Nonce': nonce,
-              'X-EasyMDE-Image-Hosting-Nonce': actionNonce
-            },
-            method: 'POST',
-            signal,
-            url: uploadUrl
-          })
+        const result = await request({
+          body,
+          headers:
+            'media' === uploadOwner
+              ? {
+                  'X-WP-Nonce': nonce
+                }
+              : {
+                  'X-EasyMDE-Image-Hosting-Nonce': actionNonce,
+                  'X-WP-Nonce': nonce
+                },
+          method: 'POST',
+          signal,
+          url: uploadUrl
+        });
+        return (
+          'media' === uploadOwner
+            ? parseMediaUploadResult(result)
+            : parseImageHostingUploadResult(result)
         );
       } catch (error) {
         if (

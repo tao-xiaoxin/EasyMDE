@@ -31,6 +31,7 @@ const strings = Object.fromEntries(
 function settings(overrides: Partial<ImageSettings> = {}): ImageSettings {
 	return {
 		...SETTINGS_CENTER_TEST_SETTINGS.images,
+		imageHostingEnabled: true,
 		...overrides,
 	};
 }
@@ -134,6 +135,317 @@ describe("ImagesSettingsPage", () => {
 			expect.objectContaining({ autoUploadPastedImages: false }),
 		);
 		expect(toggle.getAttribute("aria-checked")).toBe("false");
+	});
+
+	it("renders the image-hosting toggle below the primary heading and supports keyboard changes", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		const { container } = render(
+			<Harness
+				initialSettings={settings({ imageHostingEnabled: false })}
+				onSettingsChange={onSettingsChange}
+			/>,
+		);
+		const section = container.querySelector(".is-host-service");
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+
+		expect(
+			section
+				?.querySelector("h2")
+				?.nextElementSibling?.getAttribute("data-setting-label"),
+		).toBe("enableImageHosting");
+		expect(
+			section?.querySelector('[data-setting-label="selectImageHostService"]'),
+		).toBeNull();
+		expect(screen.getByText("enableImageHostingDescription")).not.toBeNull();
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+		toggle.focus();
+		await user.keyboard(" ");
+
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ imageHostingEnabled: true }),
+		);
+		expect(
+			section?.querySelector('[data-setting-label="selectImageHostService"]'),
+		).not.toBeNull();
+	});
+
+	it("hides hosting-only settings while disabled and restores the draft after re-enabling", async () => {
+		const user = userEvent.setup();
+		const draft = settings({
+			imageHostingEnabled: false,
+			service: "aliyun-oss",
+			endpoint: "https://oss-cn-hangzhou.aliyuncs.com",
+			bucket: "draft-bucket",
+			backupEnabled: true,
+			uploadRetryCount: 4,
+			remoteImageUploadMode: "source",
+			compressImages: false,
+		});
+		render(<Harness initialSettings={draft} />);
+
+		for (const label of [
+			"selectImageHostService",
+			"customDomain",
+			"bucket",
+			"imageFallbackDomain",
+			"accessKey",
+			"secretKey",
+			"uploadRetryCount",
+			"backupImageHostService",
+			"backupBucket",
+			"backupDomain",
+			"backupAccessKey",
+			"backupSecretKey",
+			"remoteImageUploadMode",
+			"compressImages",
+		]) {
+			expect(screen.queryByLabelText(label)).toBeNull();
+		}
+		expect(
+			screen.queryByRole("button", { name: "verifyPrimaryUpload" }),
+		).toBeNull();
+		expect(
+			screen.queryByRole("heading", { name: "backupImageHost" }),
+		).toBeNull();
+		expect(
+			screen.getByRole("switch", { name: "autoUploadPastedImages" }),
+		).not.toBeNull();
+		expect(
+			screen.getByRole("combobox", { name: "imageTitleDisplay" }),
+		).not.toBeNull();
+		expect(
+			screen.getByRole("spinbutton", { name: "maximumImageSize" }),
+		).not.toBeNull();
+		expect(
+			screen.getByRole("checkbox", { name: "allowUploadPng" }),
+		).not.toBeNull();
+
+		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		expect(fileNameRule.value).toBe(draft.fileNameRule);
+		expect(screen.getByText("fileNameRuleDescription")).not.toBeNull();
+		expect(
+			screen.getAllByRole("button", { name: /^fileNamePreset/u }),
+		).toHaveLength(6);
+		expect(
+			screen.getAllByRole("button", { name: /^insertFileNameVariable/u }),
+		).toHaveLength(10);
+		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
+		fireEvent.change(fileNameRule, {
+			target: { value: "disabled/{date}/{uuid}.{ext}" },
+		});
+		expect(fileNameRule.value).toBe("disabled/{date}/{uuid}.{ext}");
+
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+		await user.click(toggle);
+		expect(
+			screen.getByRole("combobox", { name: "selectImageHostService" })
+				.textContent,
+		).toContain("aliyunOss");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "customDomain" })
+				.value,
+		).toBe(draft.endpoint);
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "bucket" }).value,
+		).toBe(draft.bucket);
+		expect(
+			screen.getByRole<HTMLInputElement>("spinbutton", {
+				name: "uploadRetryCount",
+			}).value,
+		).toBe("4");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
+		expect(
+			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
+				.textContent,
+		).toContain("remoteImageUploadSource");
+		expect(
+			screen
+				.getByRole("switch", { name: "compressImages" })
+				.getAttribute("aria-checked"),
+		).toBe("false");
+
+		await user.click(toggle);
+		expect(
+			screen.queryByRole("combobox", { name: "selectImageHostService" }),
+		).toBeNull();
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
+		await user.click(toggle);
+		expect(
+			screen.getByRole("combobox", { name: "selectImageHostService" })
+				.textContent,
+		).toContain("aliyunOss");
+		expect(
+			screen.getByRole<HTMLInputElement>("spinbutton", {
+				name: "uploadRetryCount",
+			}).value,
+		).toBe("4");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
+				.value,
+		).toBe("disabled/{date}/{uuid}.{ext}");
+		expect(
+			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
+				.textContent,
+		).toContain("remoteImageUploadSource");
+	});
+
+	it("keeps the filename rule between primary provider fields and retry verification", () => {
+		const { container } = render(
+			<Harness
+				uploadVerificationPort={{
+					verifyUpload: async () => ({
+						path: "verification/easymde.ico",
+						url: "https://images.example.test/verification/easymde.ico",
+					}),
+				}}
+			/>,
+		);
+		const section = container.querySelector(".is-host-service");
+		if (!(section instanceof HTMLElement))
+			throw new Error("settings-center-primary-host-section-missing");
+		const labels = Array.from(
+			section.querySelectorAll<HTMLElement>("[data-setting-label]"),
+			(element) => element.dataset.settingLabel,
+		);
+
+		expect(labels).toEqual([
+			"enableImageHosting",
+			"selectImageHostService",
+			"customDomain",
+			"bucket",
+			"imageFallbackDomain",
+			"accessKey",
+			"secretKey",
+			"fileNameRule",
+			"uploadRetryCount",
+			"uploadVerificationStatus",
+		]);
+	});
+
+	it("aborts both verifications and ignores late results after hosting is disabled", async () => {
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const requests = {
+			primary: deferred<Readonly<{ path: string; url: string }>>(),
+			backup: deferred<Readonly<{ path: string; url: string }>>(),
+		};
+		const signals: Partial<Record<"primary" | "backup", AbortSignal>> = {};
+		const verifyUpload = vi.fn(
+			({
+				target,
+				signal,
+			}: {
+				target: "primary" | "backup";
+				signal: AbortSignal;
+			}) => {
+				signals[target] = signal;
+				return requests[target].promise;
+			},
+		);
+		const user = userEvent.setup();
+		render(
+			<Harness
+				overlayRoot={overlayRoot}
+				uploadVerificationPort={{ verifyUpload }}
+			/>,
+		);
+
+		const primaryTrigger = screen.getByRole("button", {
+			name: "verifyPrimaryUpload",
+		});
+		const backupTrigger = screen.getByRole("button", {
+			name: "verifyBackupUpload",
+		});
+		await user.click(primaryTrigger);
+		await user.click(backupTrigger);
+		expect(
+			screen.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["verifyingUpload", "verifyingUpload"]);
+
+		const primaryFocus = vi.spyOn(primaryTrigger, "focus");
+		const backupFocus = vi.spyOn(backupTrigger, "focus");
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+		toggle.focus();
+		await user.keyboard(" ");
+
+		expect(signals.primary?.aborted).toBe(true);
+		expect(signals.backup?.aborted).toBe(true);
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+		expect(screen.queryByText("verifyingUpload")).toBeNull();
+		expect(overlayRoot.childElementCount).toBe(0);
+
+		await act(async () => {
+			requests.primary.resolve({
+				path: "verification/primary.png",
+				url: "https://images.example.test/verification/primary.png",
+			});
+			requests.backup.resolve({
+				path: "verification/backup.png",
+				url: "https://images.example.test/verification/backup.png",
+			});
+			await Promise.all([requests.primary.promise, requests.backup.promise]);
+		});
+
+		expect(screen.queryByText("uploadVerified")).toBeNull();
+		expect(screen.queryByText("uploadVerificationFailed")).toBeNull();
+		expect(overlayRoot.childElementCount).toBe(0);
+		expect(primaryFocus).not.toHaveBeenCalled();
+		expect(backupFocus).not.toHaveBeenCalled();
+
+		await user.keyboard(" ");
+		expect(
+			screen.getAllByRole("status").map((status) => status.textContent),
+		).toEqual(["uploadVerificationPending", "uploadVerificationPending"]);
+		overlayRoot.remove();
+	});
+
+	it("clears duplicate feedback without focusing a removed verification trigger", async () => {
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const user = userEvent.setup();
+		const verifyUpload = vi.fn(async () => ({
+			path: "verification/easymde.ico",
+			url: "https://images.example.test/verification/easymde.ico",
+		}));
+		render(
+			<Harness
+				overlayRoot={overlayRoot}
+				uploadVerificationPort={{ verifyUpload }}
+				initialSettings={settings({
+					backupService: "cloudflare-r2",
+					backupEndpoint: SETTINGS_CENTER_TEST_SETTINGS.images.endpoint,
+					backupBucket: SETTINGS_CENTER_TEST_SETTINGS.images.bucket,
+				})}
+			/>,
+		);
+
+		const trigger = screen.getByRole("button", { name: "verifyPrimaryUpload" });
+		await user.click(trigger);
+		expect(
+			within(overlayRoot).getByRole("alertdialog", {
+				name: "duplicateImageHostTitle",
+			}),
+		).not.toBeNull();
+		const triggerFocus = vi.spyOn(trigger, "focus");
+		fireEvent.click(screen.getByRole("switch", { name: "enableImageHosting" }));
+
+		expect(overlayRoot.childElementCount).toBe(0);
+		expect(triggerFocus).not.toHaveBeenCalled();
+		expect(
+			screen.queryByRole("heading", { name: "backupImageHost" }),
+		).toBeNull();
+		overlayRoot.remove();
 	});
 
 	it("does not render an upload destination control that is absent from the reference UI", () => {

@@ -295,7 +295,8 @@ export function mountAdminEditor(
       endpoint: bootstrap.imageUpload.endpoint,
       formData: FormData,
       nonce: bootstrap.imageUpload.nonce,
-      siteUrl: windowRef.location.href
+      siteUrl: windowRef.location.href,
+      uploadOwner: bootstrap.imageUpload.uploadOwner
     }),
     remoteImageImportPort: createWordPressRemoteImageImportPort({
       actionNonce: bootstrap.imageUpload.actionNonce,

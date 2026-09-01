@@ -158,6 +158,7 @@ final class SettingsPageTest extends WP_UnitTestCase
 			'returnToShortcutSettings',
 			'maximumImageSize', 'maximumImageSizeDescription', 'maximumImageSizeSystemLimitExceeded', 'imageTitleDisplay',
 			'autoUploadPastedImages', 'autoUploadPastedImagesDescription',
+			'enableImageHosting', 'enableImageHostingDescription',
 			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
 			'uploadRetryCount', 'uploadRetryCountDescription',
 			'duplicateImageHostTitle', 'duplicateImageHostDescription',

@@ -23,9 +23,35 @@ import { SettingsCenterRoot } from "./SettingsCenterRoot";
 
 function bootstrap({
 	configuredImageDomains = false,
+	imageHostingEnabled = true,
 }: {
 	configuredImageDomains?: boolean;
+	imageHostingEnabled?: boolean;
 } = {}): SettingsCenterBootstrap {
+	const settings = configuredImageDomains
+		? {
+				...SETTINGS_CENTER_TEST_SETTINGS,
+				images: {
+					...SETTINGS_CENTER_TEST_SETTINGS.images,
+					domain: "https://img.example.test",
+					backupDomain: "https://backup.example.test",
+					imageHostingEnabled,
+				},
+			}
+		: {
+				...SETTINGS_CENTER_TEST_SETTINGS,
+				images: {
+					...SETTINGS_CENTER_TEST_SETTINGS.images,
+					imageHostingEnabled,
+				},
+			};
+	const defaultSettings: SettingsCenterSettings = {
+		...SETTINGS_CENTER_DEFAULT_SETTINGS,
+		images: {
+			...SETTINGS_CENTER_DEFAULT_SETTINGS.images,
+			imageHostingEnabled,
+		},
+	};
 	return {
 		schemaVersion: 2,
 		closeUrl: "/wp-admin/options-general.php",
@@ -62,17 +88,8 @@ function bootstrap({
 			},
 		},
 		reservedShortcuts: [],
-		settings: configuredImageDomains
-			? {
-					...SETTINGS_CENTER_TEST_SETTINGS,
-					images: {
-						...SETTINGS_CENTER_TEST_SETTINGS.images,
-						domain: "https://img.example.test",
-						backupDomain: "https://backup.example.test",
-					},
-				}
-			: SETTINGS_CENTER_TEST_SETTINGS,
-		defaultSettings: SETTINGS_CENTER_DEFAULT_SETTINGS,
+		settings,
+		defaultSettings,
 		strings: {
 			...Object.fromEntries(
 				SETTINGS_CENTER_STRING_KEYS.map((key) => [key, key]),
@@ -556,6 +573,59 @@ describe("SettingsCenterRoot global search", () => {
 		await waitFor(() => expect(document.activeElement).toBe(target));
 	});
 
+	it("adds and removes hosting settings from search as the feature is toggled", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<SettingsCenterRoot
+				bootstrap={bootstrap({ imageHostingEnabled: false })}
+			/>,
+		);
+		const settingsRoot = container.firstElementChild;
+		if (!(settingsRoot instanceof HTMLDivElement))
+			throw new Error("settings-search-root-missing");
+		Object.defineProperty(settingsRoot, "scrollTo", {
+			configurable: true,
+			value: vi.fn(),
+		});
+		const search = screen.getByRole("searchbox", { name: "searchSettings" });
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+
+		await user.type(search, "fileNameRule");
+		expect(
+			await screen.findByRole("button", { name: /^fileNameRule/u }),
+		).not.toBeNull();
+		await user.click(screen.getByRole("button", { name: /^fileNameRule/u }));
+		await waitFor(() =>
+			expect(document.activeElement).toBe(
+				screen.getByRole("textbox", { name: "fileNameRule" }),
+			),
+		);
+
+		for (const query of ["selectImageHostService", "uploadRetryCount"]) {
+			await user.type(search, query);
+			expect(
+				await screen.findByRole("heading", { name: "noSearchResults" }),
+			).not.toBeNull();
+			await user.click(screen.getByRole("button", { name: "clearSearch" }));
+		}
+
+		await user.click(toggle);
+		await user.type(search, "selectImageHostService");
+		expect(
+			await screen.findByRole("button", { name: "selectImageHostService" }),
+		).not.toBeNull();
+
+		await user.click(toggle);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: "selectImageHostService" }),
+			).toBeNull(),
+		);
+		expect(
+			await screen.findByRole("heading", { name: "noSearchResults" }),
+		).not.toBeNull();
+	});
+
 	it("enables only owner-backed upload formats and keeps one format selected", async () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
@@ -927,6 +997,135 @@ describe("SettingsCenterRoot images section", () => {
 		expect(backup.matches(":disabled")).toBe(false);
 		await user.click(backup);
 		expect(screen.queryByRole("textbox", { name: "backupBucket" })).toBeNull();
+	});
+
+	it("marks image-hosting changes dirty and saves the strict boolean", async () => {
+		const user = userEvent.setup();
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const initialSettings = bootstrap().settings;
+		const savedSettings = {
+			...initialSettings,
+			revision: initialSettings.revision + 1,
+			images: {
+				...initialSettings.images,
+				imageHostingEnabled: true,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+
+		render(
+			<SettingsCenterRoot
+				bootstrap={bootstrap({ imageHostingEnabled: false })}
+			/>,
+		);
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+		const save = screen.getByRole<HTMLButtonElement>("button", {
+			name: "saveSettings",
+		});
+
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+		await user.click(toggle);
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(save.disabled).toBe(false);
+		expect(screen.getByText("settingsUnsavedChanges")).not.toBeNull();
+
+		await user.click(save);
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
+		if (!savedPayload.current)
+			throw new Error("settings-save-payload-missing");
+		expect(
+			(savedPayload.current.settings as SettingsCenterSettings).images
+				.imageHostingEnabled,
+		).toBe(true);
+		fetch.mockRestore();
+	});
+
+	it("edits the disabled filename rule without requests and saves false with the rule", async () => {
+		const user = userEvent.setup();
+		const initialBootstrap = bootstrap({ imageHostingEnabled: false });
+		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const savedSettings = {
+			...initialBootstrap.settings,
+			revision: initialBootstrap.settings.revision + 1,
+			images: {
+				...initialBootstrap.settings.images,
+				imageHostingEnabled: false,
+				fileNameRule: editedFileNameRule,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+
+		try {
+			render(<SettingsCenterRoot bootstrap={initialBootstrap} />);
+			const rule = screen.getByRole<HTMLInputElement>("textbox", {
+				name: "fileNameRule",
+			});
+			fireEvent.change(rule, { target: { value: editedFileNameRule } });
+			expect(fetch).not.toHaveBeenCalled();
+
+			const toggle = screen.getByRole("switch", {
+				name: "enableImageHosting",
+			});
+			await user.click(toggle);
+			await user.click(toggle);
+			expect(toggle.getAttribute("aria-checked")).toBe("false");
+			expect(rule.value).toBe(editedFileNameRule);
+			expect(fetch).not.toHaveBeenCalled();
+
+			const save = screen.getByRole<HTMLButtonElement>("button", {
+				name: "saveSettings",
+			});
+			expect(save.disabled).toBe(false);
+			await user.click(save);
+			await waitFor(() =>
+				expect(screen.getByText("settingsSaved")).not.toBeNull(),
+			);
+			if (!savedPayload.current)
+				throw new Error("settings-save-payload-missing");
+			const payloadSettings = savedPayload.current
+				.settings as SettingsCenterSettings;
+			expect(payloadSettings.images.imageHostingEnabled).toBe(false);
+			expect(payloadSettings.images.fileNameRule).toBe(editedFileNameRule);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("exposes real server-backed image-host upload verification", () => {
@@ -2240,7 +2439,7 @@ describe("SettingsCenterRoot persistence", () => {
 					target: "primary",
 					revision: SETTINGS_CENTER_TEST_SETTINGS.revision,
 					settings: {
-						...SETTINGS_CENTER_TEST_SETTINGS.images,
+						...configuredBootstrap.settings.images,
 						bucket: "draft-bucket",
 						domain: "https://img.example.test",
 						backupDomain: "https://backup.example.test",

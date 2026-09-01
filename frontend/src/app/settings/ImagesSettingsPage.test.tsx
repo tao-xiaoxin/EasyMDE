@@ -137,6 +137,31 @@ describe("ImagesSettingsPage", () => {
 		expect(toggle.getAttribute("aria-checked")).toBe("false");
 	});
 
+	it("renders and updates the WeChat PNG conversion toggle", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		render(
+			<Harness
+				initialSettings={settings({ wechatPngExportEnabled: false })}
+				onSettingsChange={onSettingsChange}
+			/>,
+		);
+		const toggle = screen.getByRole("switch", {
+			name: "convertDiagramsAndFormulasToPng",
+		});
+
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+		expect(
+			screen.getByText("convertDiagramsAndFormulasToPngDescription"),
+		).not.toBeNull();
+		await user.click(toggle);
+
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ wechatPngExportEnabled: true }),
+		);
+	});
+
 	it("renders the image-hosting toggle below the primary heading and supports keyboard changes", async () => {
 		const user = userEvent.setup();
 		const onSettingsChange = vi.fn();

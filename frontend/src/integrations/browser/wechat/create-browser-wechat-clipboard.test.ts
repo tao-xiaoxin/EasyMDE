@@ -2,9 +2,13 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { WechatClipboardPreparationOptions } from '../../../contracts/ports/wechat-clipboard-port';
+import type {
+  WechatClipboardCopyOptions,
+  WechatClipboardPreparationOptions
+} from '../../../contracts/ports/wechat-clipboard-port';
 import {
   CLIPBOARD_COMMIT_TIMEOUT_MS,
+  WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
   createBrowserWechatClipboard
 } from './create-browser-wechat-clipboard';
 
@@ -47,6 +51,22 @@ function prepareClipboard(
   return prepare(preview, options);
 }
 
+function pngOptions(
+  rasterize: NonNullable<WechatClipboardCopyOptions['visualRasterizationPort']>,
+  upload: NonNullable<WechatClipboardCopyOptions['imageUploadPort']>,
+  overrides: Partial<WechatClipboardCopyOptions> = {}
+): WechatClipboardCopyOptions {
+  return {
+    imageUploadPort: upload,
+    maxBytes: 1024,
+    pngConversionEnabled: true,
+    postId: 17,
+    signal: new AbortController().signal,
+    visualRasterizationPort: rasterize,
+    ...overrides
+  };
+}
+
 describe('createBrowserWechatClipboard', () => {
   const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
 
@@ -58,6 +78,531 @@ describe('createBrowserWechatClipboard', () => {
       Object.defineProperty(document, 'execCommand', originalExecCommand);
     } else {
       delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('starts PNG rasterization only after modern Clipboard write invocation', async () => {
+    const writes: unknown[] = [];
+    let writeReturned = false;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"><path d="M0 0"></path></svg></div><table><tbody><tr><td>Keep HTML</td></tr></tbody></table>';
+    const liveMermaid = preview.querySelector('.easymde-mermaid');
+    if (!liveMermaid) throw new Error('live Mermaid missing');
+    Object.defineProperty(liveMermaid, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 10, width: 20 })
+    });
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Keep HTML' });
+    const rasterize = vi.fn(async () => {
+      expect(writeReturned).toBe(true);
+      return {
+        file: new File(['png'], 'wechat-mermaid.png', { type: 'image/png' }),
+        height: 10,
+        pixelCount: 200,
+        width: 20
+      };
+    });
+    const upload = vi.fn(async ({ file, postId }: { file: File; postId: number }) => {
+      expect(file.type).toBe('image/png');
+      expect(postId).toBe(17);
+      return {
+        alt: '',
+        status: 'uploaded' as const,
+        title: '',
+        url: 'https://example.test/wechat-mermaid.png'
+      };
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writeReturned = true;
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+
+    await expect(clipboard.copy(preview, {
+      imageUploadPort: { upload },
+      isCurrent: () => true,
+      maxBytes: 1024,
+      pngConversionEnabled: true,
+      postId: 17,
+      signal: new AbortController().signal,
+      visualRasterizationPort: { rasterize }
+    })).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+
+    expect(rasterize).toHaveBeenCalledWith(expect.objectContaining({
+      height: 10,
+      kind: 'mermaid',
+      width: 20
+    }));
+    expect(upload).toHaveBeenCalledOnce();
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelector('img[src="https://example.test/wechat-mermaid.png"]')).not.toBeNull();
+    expect(holder.querySelector('table')).not.toBeNull();
+    expect(preview.querySelector('svg')).not.toBeNull();
+  });
+
+  it('fails explicitly without modern Clipboard support and never enters legacy copy', async () => {
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    await expect(clipboard.copy(
+      readyPreview(),
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({
+      code: 'wechat-png-clipboard-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it('fails synchronously when ClipboardItem construction throws without legacy fallback', async () => {
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('clipboard-item-constructor-failed');
+      }
+    }
+    const write = vi.fn();
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+
+    await expect(clipboard.copy(
+      readyPreview(),
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({
+      code: 'wechat-png-clipboard-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it('reports conversion failure without publishing a partial Clipboard payload', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const rasterize = vi.fn(async () => {
+      throw new Error('native-rasterizer-failed');
+    });
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+    const preview = readyPreview();
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>';
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({
+      code: 'wechat-png-rasterization-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(writes).toHaveLength(1);
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('rasterizes only outermost visual roots in DOM order and preserves tables', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const rasterize = vi.fn(async ({ kind }: { kind: string }) => ({
+      file: new File(['png'], 'visual.png', { type: 'image/png' }),
+      height: 10,
+      pixelCount: 200,
+      width: 20,
+      kind
+    }));
+    const upload = vi.fn(async ({ file }: { file: File }) => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: file.name,
+      url: `https://example.test/${file.name}`
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+    const preview = readyPreview();
+    preview.innerHTML = [
+      '<div class="easymde-mermaid"><svg width="20" height="10"></svg>',
+      '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div></div>',
+      '<div class="easymde-math"><span class="katex"><span>x</span></span></div>',
+      '<table><tbody><tr><td>Keep HTML</td></tr></tbody></table>'
+    ].join('');
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(rasterize).toHaveBeenCalledTimes(2);
+    expect(rasterize.mock.calls.map(([value]) => value.kind)).toEqual(['mermaid', 'math']);
+    expect(upload).toHaveBeenCalledTimes(2);
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelectorAll('img[src^="https://example.test/"]')).toHaveLength(2);
+    expect(holder.querySelector('table')).not.toBeNull();
+    expect(holder.querySelectorAll('svg')).toHaveLength(0);
+  });
+
+  it('rejects more than eight candidates before rasterization or upload', async () => {
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+    const preview = readyPreview();
+    preview.innerHTML = Array.from({ length: 9 }, () =>
+      '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>'
+    ).join('');
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({
+      code: 'wechat-png-limit-exceeded',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('reports uploads that may remain when a later visual fails', async () => {
+    const rasterize = vi.fn()
+      .mockResolvedValueOnce({
+        file: new File(['png'], 'first.png', { type: 'image/png' }),
+        height: 10,
+        pixelCount: 200,
+        width: 20
+      })
+      .mockRejectedValueOnce(new Error('second-rasterizer-failed'));
+    const upload = vi.fn().mockResolvedValue({
+      alt: '',
+      status: 'uploaded' as const,
+      title: '',
+      url: 'https://example.test/first.png'
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+    const preview = readyPreview();
+    preview.innerHTML = [
+      '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>',
+      '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>'
+    ].join('');
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({
+      code: 'wechat-png-rasterization-failed',
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    expect(upload).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a changed live Preview before uploading its stale raster', async () => {
+    const pendingRasterization = deferred<{
+      file: File;
+      height: number;
+      pixelCount: number;
+      width: number;
+    }>();
+    const rasterize = vi.fn(() => pendingRasterization.promise);
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+    const preview = readyPreview();
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>';
+    const visual = preview.querySelector('.easymde-mermaid');
+    if (!visual) throw new Error('visual missing');
+    Object.defineProperty(visual, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 10, width: 20 })
+    });
+
+    const copy = clipboard.copy(
+      preview,
+      pngOptions({ rasterize }, { upload } as never)
+    );
+    await vi.waitFor(() => expect(rasterize).toHaveBeenCalledOnce());
+    preview.innerHTML = '<p>New Preview</p>';
+    pendingRasterization.resolve({
+      file: new File(['png'], 'stale.png', { type: 'image/png' }),
+      height: 10,
+      pixelCount: 200,
+      width: 20
+    });
+
+    await expect(copy).resolves.toEqual({
+      code: 'wechat-png-rasterization-cancelled',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale no-candidate markup after asynchronous theme preparation', async () => {
+    const imageUrl = new URL(
+      '/assets/images/fullstack-blue-h2.png',
+      document.baseURI
+    ).href;
+    const pendingFetch = deferred<Response>();
+    const fetch = vi.fn(() => pendingFetch.promise);
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('P' === element.tagName) {
+          return declaration({
+            'background-image': `url("${imageUrl}")`,
+            display: 'block'
+          });
+        }
+        return computedStyle(element);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+    const preview = readyPreview();
+    preview.innerHTML = '<p>Original</p><table><tbody><tr><td>Keep HTML</td></tr></tbody></table>';
+
+    const copy = clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    preview.innerHTML = '<p>Replacement</p>';
+    pendingFetch.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as Response);
+
+    await expect(copy).resolves.toEqual({
+      code: 'wechat-png-rasterization-cancelled',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('rejects an aborted no-candidate copy after asynchronous theme preparation', async () => {
+    const imageUrl = new URL(
+      '/assets/images/fullstack-blue-h3.png',
+      document.baseURI
+    ).href;
+    const pendingFetch = deferred<Response>();
+    const fetch = vi.fn(() => pendingFetch.promise);
+    const rasterize = vi.fn();
+    const upload = vi.fn();
+    const controller = new AbortController();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('P' === element.tagName) {
+          return declaration({
+            'background-image': `url("${imageUrl}")`,
+            display: 'block'
+          });
+        }
+        return computedStyle(element);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.resolve())
+    });
+    const preview = readyPreview();
+    preview.innerHTML = '<p>Original</p><table><tbody><tr><td>Keep HTML</td></tr></tbody></table>';
+
+    const copy = clipboard.copy(
+      preview,
+      pngOptions(
+        { rasterize } as never,
+        { upload } as never,
+        { signal: controller.signal }
+      )
+    );
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    controller.abort();
+    pendingFetch.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as Response);
+
+    await expect(copy).resolves.toEqual({
+      code: 'wechat-png-rasterization-cancelled',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it('reports the stable transaction timeout after an upload has started', async () => {
+    vi.useFakeTimers();
+    try {
+      const pendingUpload = deferred<never>();
+      const rasterize = vi.fn(async () => ({
+        file: new File(['png'], 'pending.png', { type: 'image/png' }),
+        height: 10,
+        pixelCount: 200,
+        width: 20
+      }));
+      const uploadSignals: AbortSignal[] = [];
+      const upload = vi.fn(({ signal }: { signal: AbortSignal }) => {
+        uploadSignals.push(signal);
+        return pendingUpload.promise;
+      });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+        document,
+        getComputedStyle: computedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: vi.fn(() => Promise.resolve())
+      });
+      const preview = readyPreview();
+      preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>';
+      const visual = preview.querySelector('.easymde-mermaid');
+      if (!visual) throw new Error('visual missing');
+      Object.defineProperty(visual, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ height: 10, width: 20 })
+      });
+
+      const copy = clipboard.copy(
+        preview,
+        pngOptions({ rasterize }, { upload } as never)
+      );
+      await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+      expect(uploadSignals[0]?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(WECHAT_PNG_TRANSACTION_TIMEOUT_MS);
+
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-transaction-timeout',
+        sideEffects: 'uploads-may-remain',
+        status: 'failed'
+      });
+      expect(uploadSignals[0]?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

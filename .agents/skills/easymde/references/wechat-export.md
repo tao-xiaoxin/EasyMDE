@@ -4,6 +4,7 @@
 
 - [Source and session owner](#source-and-session-owner)
 - [Activation and preparation](#activation-and-preparation)
+- [Optional PNG conversion](#optional-png-conversion)
 - [Portable serialization](#portable-serialization)
 - [Layout and special content](#layout-and-special-content)
 - [Failure and evidence](#failure-and-evidence)
@@ -79,6 +80,53 @@ payload; dimensions and computed wrapping styles invalidate it. Full sink
 markup, root `class`/`style`, viewport, computed export styles, pseudo-element
 styles, and geometry participate in freshness.
 
+## Optional PNG conversion
+
+`images.wechatPngExportEnabled` is a persisted strict boolean that defaults to
+`false`; a missing stored value reads as `false` without writing. Settings
+transfer schema 10 requires the field, while schemas 1 through 9 import it as
+`false`. Editor bootstrap exposes the effective value only as
+`wechatExport.pngConversionEnabled`.
+
+When disabled, Copy follows the existing portable-HTML path unchanged. When
+enabled, conversion runs only during an explicit ordinary or immersive Copy
+from the current stable Preview. Background preparation performs no
+rasterization or upload. The only candidates are the outermost rendered
+`.easymde-mermaid` root containing SVG and outermost rendered
+`.easymde-math`, `.easymde-math-block`, or `.easymde-math-inline` root
+containing KaTeX. Nested candidate descendants are part of their outer root and
+are not converted or uploaded separately. Ordinary tables, existing `<img>`,
+ordinary SVG, code, other media, and unknown content remain on the existing
+portable-HTML path.
+
+PNG Copy requires the modern Clipboard path. Construct deferred HTML and plain
+text payloads and call `navigator.clipboard.write()` in the originating click
+task before beginning serial rasterization and upload. Legacy Clipboard and a
+synchronous modern setup failure perform no PNG upload and fail explicitly;
+an asynchronous write or deferred-payload failure never falls back to legacy.
+Clipboard success requires every conversion, selected-owner upload, deferred
+payload, and browser write to succeed.
+
+Rasterize and upload candidates serially, with at most 8 candidates. Use the
+current device pixel ratio clamped to `1..2`; each source edge is `1..4096`
+CSS pixels, each PNG is at most 16,777,216 output pixels, and the transaction
+is at most 33,554,432 output pixels. Each PNG must be non-empty verified
+`image/png`, no larger than the authoritative image-upload `maxBytes`; all PNGs
+together are at most 33,554,432 bytes. Each rasterization has a 10,000 ms bound
+and the conversion transaction has a 60,000 ms bound. Cancellation, stale
+Preview markup, invalid dimensions or MIME, limit exhaustion, timeout,
+rasterization failure, upload failure, and Clipboard failure remain distinct,
+explicit failures.
+
+Upload each generated PNG through the Editor's already selected
+`ImageUploadPort`: Image Hosting when `imageHostingEnabled` is true, or the
+protected WordPress Media Library owner when it is false. A selected-owner
+failure never switches owner or publishes a partial Clipboard payload. There
+is no compensating delete; PNGs uploaded before a later conversion, upload, or
+Clipboard failure may remain under that owner's retention rules and the failure
+must report that possibility. Copy never changes Markdown, `post_content`, the
+live Preview, metadata, revisions, or publication state.
+
 ## Portable serialization
 
 Clone only the received Preview surface. Remove scripts, styles, controls,
@@ -145,5 +193,9 @@ payload is published. Tests must cover modern/legacy HTML parity, activation
 timing, deferred failure, unsafe URL/style removal, theme-image timeout and
 retry, Mermaid non-ASCII labels, KaTeX/SVG preservation, table/formula overflow,
 hidden-surface behavior, concurrent requests, active-surface changes, and
-teardown. Use semantic readiness, not fixed sleeps, and record unverified
-browsers or destination behavior honestly.
+teardown. PNG-conversion tests additionally cover strict configuration and
+transfer migration, exact candidate classification, no-upload background and
+legacy paths, write-before-work activation timing, selected-owner dispatch,
+limits, serial order, stale/cancel/timeout/failure behavior, residual-upload
+reporting, and ordinary/immersive invocation. Use semantic readiness, not fixed
+sleeps, and record unverified browsers or destination behavior honestly.

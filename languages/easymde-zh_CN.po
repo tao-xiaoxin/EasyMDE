@@ -2147,6 +2147,20 @@ msgid ""
 msgstr "上传粘贴到编辑器的图片文件，并插入其 Markdown 链接。"
 
 #: src/Admin/SettingsCenterStrings.php:224
+msgid "Convert diagrams and formulas to PNG"
+msgstr "将流程图和公式转换为 PNG"
+
+#: src/Admin/SettingsCenterStrings.php:225
+msgid ""
+"During Copy to WeChat, convert supported Mermaid diagrams and formulas to "
+"PNG. Tables and existing images stay unchanged. Generated PNG images use "
+"Image Hosting when enabled, or the WordPress Media Library when Image "
+"Hosting is disabled."
+msgstr ""
+"复制到公众号时，将支持的 Mermaid 流程图和公式转换为 PNG。表格和现有图片保持不变。"
+"启用图床时生成的 PNG 使用图床；禁用图床时上传到 WordPress 媒体库。"
+
+#: src/Admin/SettingsCenterStrings.php:226
 msgid "Remote image import"
 msgstr "远程图片导入"
 

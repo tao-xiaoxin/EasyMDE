@@ -217,6 +217,21 @@ The table of contents is generated from rendered headings and is inserted where 
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
 
+**Convert diagrams and formulas to PNG** is disabled by default under
+**EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy
+converts the outermost rendered Mermaid diagrams and inline or block formulas
+to PNG. Normal tables remain editable HTML; existing images, ordinary SVG,
+code, other media, and unknown content keep their existing rich-text form.
+EasyMDE does not upload during Preview or background preparation.
+
+Generated PNGs use the same upload owner already selected for editor images:
+Image Hosting when enabled, or the WordPress Media Library when disabled. A
+failure does not switch owners and no partial Clipboard content is reported as
+success. PNGs uploaded before a later conversion, upload, or Clipboard failure
+may remain in the selected storage. Copy never changes Markdown, saved content,
+or the live Preview. PNG conversion requires the modern browser Clipboard API;
+unsupported or legacy-only paths fail explicitly without uploading.
+
 - **Ready:** The action copies the current rendered Preview and reports success only after the browser confirms the copy.
 - **Empty, loading, or error:** The action does not copy and shows that the Preview is unavailable; wait until the Preview is ready and try again.
 - **Unsupported:** If the browser cannot provide clipboard support, EasyMDE reports that the action is unsupported.

@@ -221,6 +221,8 @@ final class SettingsCenterStrings {
 			'enableImageHostingDescription'                => __( 'When disabled, local uploads use the WordPress Media Library.', 'easymde' ),
 			'autoUploadPastedImages'                       => __( 'Automatically upload pasted images', 'easymde' ),
 			'autoUploadPastedImagesDescription'            => __( 'Upload image files pasted into the editor and insert their Markdown links.', 'easymde' ),
+			'convertDiagramsAndFormulasToPng'              => __( 'Convert diagrams and formulas to PNG', 'easymde' ),
+			'convertDiagramsAndFormulasToPngDescription'   => __( 'During Copy to WeChat, convert supported Mermaid diagrams and formulas to PNG. Tables and existing images stay unchanged. Generated PNG images use Image Hosting when enabled, or the WordPress Media Library when Image Hosting is disabled.', 'easymde' ),
 			'remoteImageUploadMode'                        => __( 'Remote image import', 'easymde' ),
 			'remoteImageUploadModeDescription'             => __( 'Import absolute HTTP or HTTPS images pasted as HTML or Markdown into the configured image host.', 'easymde' ),
 			'remoteImageUploadBoth'                        => __( 'Visual and source editors', 'easymde' ),

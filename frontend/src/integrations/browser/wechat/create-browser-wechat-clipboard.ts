@@ -1,8 +1,15 @@
 import type {
+  WechatClipboardCopyOptions,
   WechatClipboardPort,
   WechatClipboardPreparationOptions,
   WechatClipboardResult
 } from '../../../contracts/ports/wechat-clipboard-port';
+import type {
+  WechatVisualRasterizationKind,
+  WechatVisualRasterizationPort,
+  WechatVisualRasterizationResult
+} from '../../../contracts/ports/wechat-visual-rasterization-port';
+import type { ImageUploadPort } from '../../../contracts/ports/image-upload-port';
 
 const COPY_STYLE_PROPERTIES = [
   'display', 'flex-direction', 'flex-wrap', 'flex-flow', 'justify-content',
@@ -57,6 +64,13 @@ const MERMAID_LABEL_WIDTH_SCALE = 1.5;
 const MERMAID_LABEL_WIDTH_GUTTER = 32;
 const BACKGROUND_PREPARATION_QUIET_DELAY_MS = 120;
 const BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS = 8;
+export const MAX_WECHAT_PNG_VISUALS = 8;
+export const MAX_WECHAT_PNG_DIMENSION = 4096;
+export const MAX_WECHAT_PNG_PIXELS = 16_777_216;
+export const MAX_WECHAT_PNG_TOTAL_PIXELS = 33_554_432;
+export const MAX_WECHAT_PNG_TOTAL_BYTES = 33_554_432;
+export const WECHAT_PNG_RASTERIZATION_TIMEOUT_MS = 10_000;
+export const WECHAT_PNG_TRANSACTION_TIMEOUT_MS = 60_000;
 
 const SAFE_DISPLAY_VALUES: Record<string, true> = {
   block: true,
@@ -134,6 +148,10 @@ const FULL_WIDTH_TABLE_CLONES = new WeakSet<Element>();
 const FULL_WIDTH_TABLE_SOURCE_LAYOUT = new WeakMap<Element, boolean>();
 const FULL_WIDTH_TABLE_ROOT_LAYOUT = new WeakMap<HTMLElement, Map<number, boolean>>();
 const PREVIEW_MEASUREMENT_WIDTHS = new WeakMap<HTMLElement, number>();
+const WECHAT_PNG_VISUAL_CLONES = new WeakMap<Element, Readonly<{
+  kind: WechatVisualRasterizationKind;
+  source: Element;
+}>>();
 
 const PREPARED_STYLE_PROPERTIES = [...new Set([
   ...COPY_STYLE_PROPERTIES,
@@ -175,6 +193,39 @@ type SerializedClipboardPayload = Readonly<{
   text: string;
 }>;
 
+type WechatPngConversionState = {
+  uploadsMayRemain: boolean;
+};
+
+type WechatPngConversionContext = Readonly<{
+  imageUploadPort: ImageUploadPort;
+  isCurrent?: () => boolean;
+  maxBytes: number;
+  postId: number;
+  rasterizationPort: WechatVisualRasterizationPort;
+  scale: number;
+  signal: AbortSignal;
+  state: WechatPngConversionState;
+}>;
+
+class WechatPngConversionError extends Error {
+  readonly code:
+    | 'wechat-png-limit-exceeded'
+    | 'wechat-png-rasterization-cancelled'
+    | 'wechat-png-rasterization-failed'
+    | 'wechat-png-rasterization-timeout'
+    | 'wechat-png-transaction-timeout'
+    | 'wechat-png-upload-failed';
+
+  constructor(
+    code: WechatPngConversionError['code']
+  ) {
+    super(code);
+    this.name = 'WechatPngConversionError';
+    this.code = code;
+  }
+}
+
 type PreparedClipboardFallback = Readonly<{
   layoutSignature: string;
   payload: SerializedClipboardPayload;
@@ -205,11 +256,15 @@ type BackgroundPreparationState = {
 type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
 type SerializationYield = () => Promise<void>;
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutCode = 'wechat-clipboard-commit-timeout'
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new Error('wechat-clipboard-commit-timeout'));
+      reject(new Error(timeoutCode));
     }, timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => {
@@ -899,6 +954,40 @@ function isKaTeXVisualNode(source: Element): boolean {
   return source.matches('.katex') || Boolean(source.closest('.katex-html'));
 }
 
+function visualRasterizationKind(
+  source: Element
+): WechatVisualRasterizationKind | null {
+  if (
+    source.matches('.easymde-mermaid')
+    && source.querySelector('svg')
+  ) {
+    return 'mermaid';
+  }
+  if (
+    source.matches('.easymde-math, .easymde-math-block, .easymde-math-inline')
+    && (source.matches('.katex') || Boolean(source.querySelector('.katex')))
+  ) {
+    return 'math';
+  }
+  return null;
+}
+
+function hasVisualRasterizationAncestor(source: Element): boolean {
+  let ancestor = source.parentElement;
+  while (ancestor) {
+    if (null !== visualRasterizationKind(ancestor)) return true;
+    ancestor = ancestor.parentElement;
+  }
+  return false;
+}
+
+function markVisualRasterizationClone(source: Element, clone: Element): void {
+  const kind = visualRasterizationKind(source);
+  if (kind && !hasVisualRasterizationAncestor(source)) {
+    WECHAT_PNG_VISUAL_CLONES.set(clone, { kind, source });
+  }
+}
+
 function isKaTeXVisualClone(element: Element): boolean {
   let current: Element | null = element;
   while (current) {
@@ -1253,6 +1342,7 @@ async function inlineStyles(
   ) {
     FULL_WIDTH_TABLE_CLONES.add(clone);
   }
+  markVisualRasterizationClone(source, clone);
   if (isKaTeXVisualNode(source)) {
     KATEX_VISUAL_NODES.add(clone);
     // WeChat applies `white-space:pre-wrap` and `overflow-wrap:break-word`
@@ -1353,6 +1443,7 @@ function inlineStylesSynchronously(
   ) {
     FULL_WIDTH_TABLE_CLONES.add(clone);
   }
+  markVisualRasterizationClone(source, clone);
   if (isKaTeXVisualNode(source)) {
     KATEX_VISUAL_NODES.add(clone);
     appendDeclarations(clone, [...KATEX_VISUAL_LAYOUT_DECLARATIONS], true);
@@ -1811,6 +1902,153 @@ function wrapTextLeaves(root: HTMLElement): void {
   });
 }
 
+function pngScale(preview: HTMLElement): number {
+  const value = preview.ownerDocument.defaultView?.devicePixelRatio ?? 1;
+  return Number.isFinite(value) ? Math.min(2, Math.max(1, value)) : 1;
+}
+
+function pngConversionErrorCode(error: unknown): WechatPngConversionError['code'] {
+  const code = error && 'object' === typeof error
+    ? (error as { code?: unknown }).code ?? (error instanceof Error ? error.message : null)
+    : error instanceof Error ? error.message : null;
+  if ('wechat-png-size-invalid' === code) return 'wechat-png-limit-exceeded';
+  if ('wechat-png-rasterization-cancelled' === code) return 'wechat-png-rasterization-cancelled';
+  if ('wechat-png-rasterization-timeout' === code) return 'wechat-png-rasterization-timeout';
+  if ('wechat-png-transaction-timeout' === code) return 'wechat-png-transaction-timeout';
+  if ('wechat-png-upload-failed' === code) return 'wechat-png-upload-failed';
+  return 'wechat-png-rasterization-failed';
+}
+
+function assertPngConversionCurrent(context: WechatPngConversionContext): void {
+  if (context.signal.aborted || context.isCurrent && !context.isCurrent()) {
+    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+  }
+}
+
+function safeUploadedImageUrl(value: unknown): string | null {
+  if ('string' !== typeof value || '' === value.trim()) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    return null;
+  }
+  return value;
+}
+
+function validRasterizationResult(
+  value: WechatVisualRasterizationResult
+): boolean {
+  const file = value?.file;
+  return Boolean(
+    value
+    && file
+    && 'object' === typeof file
+    && 'string' === typeof file.type
+    && 'image/png' === file.type.toLowerCase()
+    && Number.isSafeInteger(file.size)
+    && file.size >= 1
+    && Number.isFinite(value.width)
+    && Number.isFinite(value.height)
+    && value.width >= 1
+    && value.width <= MAX_WECHAT_PNG_DIMENSION
+    && value.height >= 1
+    && value.height <= MAX_WECHAT_PNG_DIMENSION
+    && Number.isSafeInteger(value.pixelCount)
+    && value.pixelCount >= 1
+    && value.pixelCount <= MAX_WECHAT_PNG_PIXELS
+  );
+}
+
+async function replaceVisualObjects(
+  root: HTMLElement,
+  context: WechatPngConversionContext
+): Promise<void> {
+  const candidates: Array<Readonly<{
+    element: Element;
+    kind: WechatVisualRasterizationKind;
+    source: Element;
+  }>> = [];
+  const elements = [root, ...Array.from(root.querySelectorAll('*'))];
+  for (const element of elements) {
+    const registration = WECHAT_PNG_VISUAL_CLONES.get(element);
+    if (registration) candidates.push({ element, ...registration });
+  }
+  if (candidates.length > MAX_WECHAT_PNG_VISUALS) {
+    throw new WechatPngConversionError('wechat-png-limit-exceeded');
+  }
+  if (!candidates.length) return;
+  if (!Number.isSafeInteger(context.maxBytes) || context.maxBytes < 1) {
+    throw new WechatPngConversionError('wechat-png-limit-exceeded');
+  }
+
+  let totalPixels = 0;
+  let totalBytes = 0;
+  for (const candidate of candidates) {
+    assertPngConversionCurrent(context);
+    const sourceRect = candidate.source.getBoundingClientRect();
+    let rasterized: WechatVisualRasterizationResult;
+    try {
+      rasterized = await withTimeout(
+        context.rasterizationPort.rasterize({
+          kind: candidate.kind,
+          height: sourceRect.height,
+          maxPixels: MAX_WECHAT_PNG_PIXELS,
+          scale: context.scale,
+          signal: context.signal,
+          source: candidate.element,
+          width: sourceRect.width
+        }),
+        WECHAT_PNG_RASTERIZATION_TIMEOUT_MS,
+        'wechat-png-rasterization-timeout'
+      );
+    } catch (error: unknown) {
+      throw new WechatPngConversionError(pngConversionErrorCode(error));
+    }
+    if (!validRasterizationResult(rasterized)) {
+      throw new WechatPngConversionError('wechat-png-rasterization-failed');
+    }
+    totalPixels += rasterized.pixelCount;
+    totalBytes += rasterized.file.size;
+    if (
+      rasterized.file.size > context.maxBytes
+      || totalPixels > MAX_WECHAT_PNG_TOTAL_PIXELS
+      || totalBytes > MAX_WECHAT_PNG_TOTAL_BYTES
+    ) {
+      throw new WechatPngConversionError('wechat-png-limit-exceeded');
+    }
+
+    assertPngConversionCurrent(context);
+    context.state.uploadsMayRemain = true;
+    let uploaded: Awaited<ReturnType<ImageUploadPort['upload']>>;
+    try {
+      uploaded = await context.imageUploadPort.upload({
+        altText: '',
+        file: rasterized.file,
+        postId: context.postId,
+        signal: context.signal
+      });
+    } catch {
+      throw new WechatPngConversionError('wechat-png-upload-failed');
+    }
+    if ('failed' === uploaded.status) {
+      throw new WechatPngConversionError('wechat-png-upload-failed');
+    }
+    const url = safeUploadedImageUrl(uploaded.url);
+    if (!url) throw new WechatPngConversionError('wechat-png-upload-failed');
+    assertPngConversionCurrent(context);
+    const image = root.ownerDocument.createElement('img');
+    image.setAttribute('src', url);
+    image.setAttribute('alt', '');
+    image.setAttribute('width', String(Math.round(rasterized.width)));
+    image.setAttribute('height', String(Math.round(rasterized.height)));
+    candidate.element.replaceWith(image);
+  }
+}
+
 function previewReady(preview: HTMLElement): boolean {
   return '' !== preview.innerHTML.trim()
     && !preview.querySelector(
@@ -1948,8 +2186,10 @@ async function createMarkup(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  yieldToBrowser: SerializationYield | null = null
+  yieldToBrowser: SerializationYield | null = null,
+  conversion?: WechatPngConversionContext
 ): Promise<HTMLElement> {
+  if (conversion) assertPngConversionCurrent(conversion);
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
   const mathMlNodes = findKaTeXMathMl(clone);
@@ -1963,6 +2203,11 @@ async function createMarkup(
     preview,
     yieldToBrowser
   );
+  if (conversion) {
+    assertPngConversionCurrent(conversion);
+    await replaceVisualObjects(clone, conversion);
+    assertPngConversionCurrent(conversion);
+  }
   return finalizeMarkup(clone, fragmentIds, mathMlNodes);
 }
 
@@ -2062,9 +2307,16 @@ async function serializeClipboardPayload(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  yieldToBrowser: SerializationYield | null = null
+  yieldToBrowser: SerializationYield | null = null,
+  conversion?: WechatPngConversionContext
 ): Promise<SerializedClipboardPayload> {
-  const clone = await createMarkup(preview, runtime, cache, yieldToBrowser);
+  const clone = await createMarkup(
+    preview,
+    runtime,
+    cache,
+    yieldToBrowser,
+    conversion
+  );
   return {
     html: clone.outerHTML,
     text: connectedPlainText(clone, preview)
@@ -2457,50 +2709,138 @@ export function createBrowserWechatClipboard(
         true
       ).promise;
     },
-    async copy(preview: HTMLElement): Promise<WechatClipboardResult> {
+    async copy(
+      preview: HTMLElement,
+      options: WechatClipboardCopyOptions = {}
+    ): Promise<WechatClipboardResult> {
       if (!previewReady(preview)) {
         return { code: 'wechat-preview-unavailable', status: 'failed' };
       }
 
+      const pngConversionEnabled = true === options.pngConversionEnabled;
+      if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
+        return {
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
+      }
+      if (pngConversionEnabled && (
+        !options.visualRasterizationPort
+        || !options.imageUploadPort
+        || !Number.isSafeInteger(options.postId)
+        || (options.postId as number) < 0
+        || !Number.isSafeInteger(options.maxBytes)
+        || (options.maxBytes as number) < 1
+      )) {
+        return {
+          code: 'wechat-png-rasterization-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
+      }
+
       if (runtime.write && runtime.clipboardItem) {
-        const prepared = preparedClipboardPayload(
-          preview,
-          runtime,
-          backgroundAssetCache,
-          preparedPayloads,
-          nextPreparationSequence
-        );
-        const payload = prepared.promise;
-        const htmlBlob = prepared.payload
-          ? new runtime.blob([prepared.payload.html], { type: 'text/html' })
-          : payload.then(({ html }) =>
-            new runtime.blob([html], { type: 'text/html' })
+        const prepared = pngConversionEnabled
+          ? null
+          : preparedClipboardPayload(
+            preview,
+            runtime,
+            backgroundAssetCache,
+            preparedPayloads,
+            nextPreparationSequence
           );
-        const textBlob = prepared.payload
-          ? new runtime.blob([prepared.payload.text], { type: 'text/plain' })
-          : payload.then(({ text }) =>
-            new runtime.blob([text], { type: 'text/plain' })
+        const nonPngPrepared = prepared as PreparedClipboardPayload | null;
+        const conversionState: WechatPngConversionState = {
+          uploadsMayRemain: false
+        };
+        const conversionController = pngConversionEnabled
+          ? new AbortController()
+          : null;
+        const propagateConversionAbort = () => conversionController?.abort();
+        if (conversionController && options.signal) {
+          if (options.signal.aborted) {
+            conversionController.abort();
+          } else {
+            options.signal.addEventListener('abort', propagateConversionAbort, {
+              once: true
+            });
+          }
+        }
+        const detachConversionAbort = () => {
+          options.signal?.removeEventListener('abort', propagateConversionAbort);
+        };
+        const conversionSignal = conversionController?.signal
+          ?? options.signal
+          ?? new AbortController().signal;
+        const conversionRasterizationPort = options.visualRasterizationPort as WechatVisualRasterizationPort | undefined;
+        const conversionImageUploadPort = options.imageUploadPort as ImageUploadPort | undefined;
+        const conversionSourceMarkup = preview.outerHTML;
+        const conversionIsCurrent = () => (
+          (!options.isCurrent || options.isCurrent())
+          && preview.outerHTML === conversionSourceMarkup
         );
+        let startConversion: () => void = () => undefined;
+        const payload = pngConversionEnabled
+          ? new Promise<SerializedClipboardPayload>((resolve, reject) => {
+            startConversion = () => {
+              void serializeClipboardPayload(
+                preview,
+                runtime,
+                backgroundAssetCache,
+                null,
+                {
+                  isCurrent: conversionIsCurrent,
+                  imageUploadPort: conversionImageUploadPort as ImageUploadPort,
+                  maxBytes: options.maxBytes as number,
+                  postId: options.postId as number,
+                  rasterizationPort: conversionRasterizationPort as WechatVisualRasterizationPort,
+                  scale: pngScale(preview),
+                  signal: conversionSignal,
+                  state: conversionState
+                }
+              ).then(resolve, reject);
+            };
+          })
+          : (prepared as PreparedClipboardPayload).promise;
+        const htmlBlob = pngConversionEnabled
+          ? payload.then(({ html }) => new runtime.blob([html], { type: 'text/html' }))
+          : nonPngPrepared?.payload
+            ? new runtime.blob([nonPngPrepared.payload.html], { type: 'text/html' })
+            : payload.then(({ html }) => new runtime.blob([html], { type: 'text/html' }));
+        const textBlob = pngConversionEnabled
+          ? payload.then(({ text }) => new runtime.blob([text], { type: 'text/plain' }))
+          : nonPngPrepared?.payload
+            ? new runtime.blob([nonPngPrepared.payload.text], { type: 'text/plain' })
+            : payload.then(({ text }) => new runtime.blob([text], { type: 'text/plain' }));
         const observeBlobRejections = (): void => {
           if (htmlBlob instanceof Promise) void htmlBlob.catch(() => undefined);
           if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
         };
         const fallbackAfterSynchronousModernFailure = (): WechatClipboardResult => {
+          if (pngConversionEnabled) {
+            return {
+              code: 'wechat-png-clipboard-failed',
+              sideEffects: 'none',
+              status: 'failed'
+            };
+          }
           // ClipboardItem construction and write invocation still happen in
           // the originating click task. A payload prepared before that task
           // may therefore use the activation-safe compatibility path.
+          if (!nonPngPrepared) return { code: 'wechat-copy-failed', status: 'failed' };
           const currentMarkup = preview.outerHTML;
           const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
-          const preparedFallback = prepared.payload
-            && prepared.sourceMarkup === currentMarkup
-            && prepared.layoutSignature === currentLayoutSignature
-            ? prepared.payload
-            : prepared.payload
-              && prepared.recoveredAtLayoutSignature === currentLayoutSignature
-              && prepared.fallback?.sourceMarkup === currentMarkup
-              ? prepared.payload
-            : !prepared.payload && prepared.fallback?.sourceMarkup === currentMarkup
-              ? prepared.fallback.payload
+          const preparedFallback = nonPngPrepared.payload
+            && nonPngPrepared.sourceMarkup === currentMarkup
+            && nonPngPrepared.layoutSignature === currentLayoutSignature
+            ? nonPngPrepared.payload
+            : nonPngPrepared.payload
+              && nonPngPrepared.recoveredAtLayoutSignature === currentLayoutSignature
+              && nonPngPrepared.fallback?.sourceMarkup === currentMarkup
+              ? nonPngPrepared.payload
+            : !nonPngPrepared.payload && nonPngPrepared.fallback?.sourceMarkup === currentMarkup
+              ? nonPngPrepared.fallback.payload
               : null;
           // If no background payload has completed yet, the compatibility
           // path gets one synchronous attempt in the click task. A remote
@@ -2522,30 +2862,72 @@ export function createBrowserWechatClipboard(
             'text/html': htmlBlob,
             'text/plain': textBlob
           } as unknown as Record<string, Blob>);
-          writePromise = runtime.write([item]);
+          writePromise = Promise.resolve(runtime.write([item]));
         } catch {
+          conversionController?.abort();
+          detachConversionAbort();
           observeBlobRejections();
           return fallbackAfterSynchronousModernFailure();
         }
+        if (pngConversionEnabled) startConversion?.();
         try {
           const writeOutcome = writePromise.then(
             () => ({ error: null }),
             (error: unknown) => ({ error })
           );
-          await Promise.all([payload, htmlBlob, textBlob]);
+          if (pngConversionEnabled) {
+            await withTimeout(
+              Promise.all([payload, htmlBlob, textBlob]),
+              WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
+              'wechat-png-transaction-timeout'
+            );
+          } else {
+            await Promise.all([payload, htmlBlob, textBlob]);
+          }
           const { error } = await withTimeout(
             writeOutcome,
             CLIPBOARD_COMMIT_TIMEOUT_MS
           );
           if (null !== error) throw error;
           return { method: 'clipboard', status: 'copied' };
-        } catch {
+        } catch (error: unknown) {
           // A rejected modern write resumes after an await and cannot safely
           // enter the activation-sensitive legacy path. Report the failure
           // instead of attempting an asynchronous compatibility fallback.
           observeBlobRejections();
+          if (pngConversionEnabled) {
+            conversionController?.abort();
+            if (
+              error instanceof Error
+              && 'wechat-png-transaction-timeout' === error.message
+            ) {
+              conversionState.uploadsMayRemain = true;
+            }
+            return {
+              code: error instanceof WechatPngConversionError
+                ? error.code
+                : error instanceof Error
+                  && 'wechat-png-transaction-timeout' === error.message
+                  ? 'wechat-png-transaction-timeout'
+                : 'wechat-png-clipboard-failed',
+              sideEffects: conversionState.uploadsMayRemain
+                ? 'uploads-may-remain'
+                : 'none',
+              status: 'failed'
+            };
+          }
           return { code: 'wechat-copy-failed', status: 'failed' };
+        } finally {
+          detachConversionAbort();
         }
+      }
+
+      if (pngConversionEnabled) {
+        return {
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
       }
 
       // Legacy execCommand must run synchronously in the originating click

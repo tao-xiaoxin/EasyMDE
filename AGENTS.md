@@ -394,9 +394,14 @@ publication, or second-rendering authority. It reads only the current stable,
 sanitized, locally enhanced Preview from the Preview-owned Safe HTML sink and
 never copies Markdown, editor DOM, or a separately rendered document. Copy uses
 the real browser Clipboard result, keeps failure explicit, and never writes
-article state. The complete ordinary/immersive serializer, lifecycle,
-asynchronous, sanitization, and browser contract is owned by [the WeChat export
-reference](.agents/skills/easymde/references/wechat-export.md); rationale is in
+article state. The strict-boolean `images.wechatPngExportEnabled` setting
+defaults to `false`. When enabled, only an explicit ordinary or immersive Copy
+may convert the outermost rendered Mermaid and math roots to PNG and upload
+them through the already selected Image Upload owner; background preparation
+never uploads, and ordinary tables and all other content retain the existing
+portable-HTML path. The complete ordinary/immersive serializer, conversion,
+lifecycle, asynchronous, sanitization, limit, failure, and browser contract is
+owned by [the WeChat export reference](.agents/skills/easymde/references/wechat-export.md); rationale is in
 [ADR-001](docs/decisions/ADR-001-wechat-clipboard-serialization.md), execution
 in [Testing and Release](docs/TESTING_AND_RELEASE.md), and review evidence in
 [CONTRIBUTING.md](CONTRIBUTING.md).

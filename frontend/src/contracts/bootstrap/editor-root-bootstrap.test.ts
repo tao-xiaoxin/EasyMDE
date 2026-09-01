@@ -289,6 +289,7 @@ function validBootstrap() {
     },
     wechatExport: {
       enabled: true,
+      pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed',
         success: 'Copied',

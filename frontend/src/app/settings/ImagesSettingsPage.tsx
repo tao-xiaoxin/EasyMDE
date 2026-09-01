@@ -954,6 +954,7 @@ export function ImagesSettingsPage({
 	];
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
+			imageHostingEnabled: false,
 			service: "cloudflare-r2",
 			endpoint: "",
 			bucket: "easymde-assets",
@@ -1173,6 +1174,18 @@ export function ImagesSettingsPage({
 						<ImageLibraryIcon size={25} />
 						{strings.imageHostService}
 					</h2>
+					<ImageBehaviorRow
+						label={strings.enableImageHosting}
+						description={strings.enableImageHostingDescription}
+					>
+						<SettingsToggle
+							label={strings.enableImageHosting}
+							checked={settings.imageHostingEnabled}
+							onChange={() =>
+								setValue("imageHostingEnabled", !settings.imageHostingEnabled)
+							}
+						/>
+					</ImageBehaviorRow>
 					<div>
 						<div>
 							<ImageField label={strings.selectImageHostService}>

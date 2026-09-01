@@ -562,11 +562,15 @@ primary Viewing Image Domain accepts HTTP or HTTPS and is the public URL base
 that produces the one authoritative URL returned after upload. An HTTP image
 URL may be blocked as mixed content when an article is viewed over HTTPS; that
 display restriction does not turn an authoritative provider upload success
-into an upload failure. The
-editor's local image paste and drag-and-drop path always uses the protected
-same-origin Image Hosting proxy; there is no destination setting or WordPress
-media fallback. The toolbar media picker remains a separate explicit
-WordPress-native insertion entry point. Primary and backup configurations that
+into an upload failure. The persisted `imageHostingEnabled` setting is an
+explicit upload-owner choice and defaults to `false`. With it disabled,
+eligible local image paste and drag-and-drop use the protected same-origin
+WordPress Media Library `/media` owner, and remote image import is off. With it
+enabled, those local file operations use the protected same-origin Image
+Hosting proxy and the configured remote-image mode applies. This is an owner
+selection, not a failure fallback: a selected owner failure remains explicit
+and never switches to the other owner. The toolbar media picker remains a
+separate explicit WordPress-native insertion entry point. Primary and backup configurations that
 identify the same physical destination are rejected with HTTP 409. The
 single persisted `uploadRetryCount` setting appears in the primary settings
 section, is a strict integer from `0` through `5`, defaults to `0`, and means

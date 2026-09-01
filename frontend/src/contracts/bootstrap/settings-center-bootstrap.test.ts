@@ -117,6 +117,35 @@ describe("parseSettingsCenterBootstrap", () => {
 		).toBe(true);
 	});
 
+	it("accepts the explicit image-hosting enablement flag", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.imageHostingEnabled = true;
+
+		expect(parseSettingsCenterSettings(settings).images.imageHostingEnabled).toBe(
+			true,
+		);
+	});
+
+	it("requires image-hosting enablement to be a strict boolean", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		delete settings.images.imageHostingEnabled;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-imageHostingEnabled-invalid",
+		);
+
+		for (const value of ["true", 1, null]) {
+			settings.images.imageHostingEnabled = value;
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-images-imageHostingEnabled-invalid",
+			);
+		}
+	});
+
 	it.each(["detailed", "compact", "hidden"])(
 		"accepts the canonical status-bar mode %s",
 		(statusBarMode) => {

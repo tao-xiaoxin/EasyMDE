@@ -76,6 +76,56 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         $this->assertTrue($settings['images']['autoUploadPastedImages']);
     }
 
+    public function test_image_hosting_enablement_defaults_to_false_without_read_write_and_requires_a_strict_boolean_on_save()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['imageHostingEnabled']);
+        $this->assertFalse(get_option(Options::EDITOR_SETTINGS, false));
+
+        $settings['images']['imageHostingEnabled'] = true;
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertTrue($saved['images']['imageHostingEnabled']);
+        $this->assertTrue(get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['imageHostingEnabled']);
+
+        foreach (array('true', 1, 1.0, null) as $invalid) {
+            $settings = $repository->get_settings();
+            $settings['images']['imageHostingEnabled'] = $invalid;
+
+            $result = $repository->update_settings($settings);
+
+            $this->assertWPError($result, gettype($invalid));
+            $this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), gettype($invalid));
+        }
+    }
+
+    public function test_legacy_image_hosting_configuration_is_read_as_disabled_without_writing_the_missing_field()
+    {
+        $stored = array(
+            'settings_center' => array(
+                'images' => array(
+                    'endpoint'  => 'https://synthetic.r2.cloudflarestorage.com',
+                    'domain'    => 'https://images.example.test',
+                    'accessKey' => 'synthetic-access',
+                    'secretKey' => 'synthetic-secret',
+                ),
+            ),
+        );
+        update_option(Options::EDITOR_SETTINGS, $stored, false);
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['imageHostingEnabled']);
+        $after_read = get_option(Options::EDITOR_SETTINGS);
+        $this->assertSame($stored, $after_read);
+        $this->assertArrayNotHasKey('imageHostingEnabled', $after_read['settings_center']['images']);
+    }
+
     public function test_update_persists_the_paste_upload_policy()
     {
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());

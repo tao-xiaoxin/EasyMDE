@@ -20,6 +20,25 @@ touches user-visible strings, load the repository-local `easymde-i18n` Skill at
 `docs/TESTING_AND_RELEASE.md`.
 Focused maintainer decisions and Issue scope apply within those boundaries.
 
+## Image Hosting Owner Contract
+
+The approved Image Hosting service is an explicit upload-owner choice, not a
+fallback path. The persisted `imageHostingEnabled` value is a strict boolean
+and defaults to `false`:
+
+- `false`: eligible local image paste and drop use the existing protected
+  WordPress Media Library `/media` owner, and remote image import is off;
+- `true`: eligible local image paste and drop use the protected Image Hosting
+  owner, with remote import governed by its configured mode; and
+- a selected owner failure remains explicit and never switches to the other
+  owner.
+
+When Image Hosting is disabled, article `/image-hosting/upload` and
+`/image-hosting/import` reject with HTTP 409 before provider access. Image
+Hosting settings, Verify Upload, and the explicit secret-reveal action remain
+available under their own administrator, Nonce, and transient-memory
+contracts.
+
 Choose references by task:
 
 - [current editor contract](references/current-editor-contract.md) for roots,

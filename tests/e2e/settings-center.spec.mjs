@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { expect, test } from "@playwright/test";
 
 const adminUser = requiredEnvironment("WORDPRESS_ADMIN_USER");
@@ -2607,6 +2608,251 @@ test("persists the pasted-image upload switch and restores its prior value", asy
 			"aria-checked",
 			initialValue,
 		);
+	}
+});
+
+test("image hosting is opt-in and disabled local uploads use WordPress media", async ({
+	page,
+}) => {
+	const browserFailures = [];
+	const mediaRequests = [];
+	const imageHostingRequests = [];
+	const uploadedAttachmentIds = [];
+	const settingsPath = "/wp-admin/admin.php?page=easymde&route=/general_setting";
+	const gravatarPattern = /^https:\/\/secure\.gravatar\.com\//u;
+	const routeMatches = (value, routePath) => {
+		const url = new URL(String(value));
+		return url.pathname.endsWith(routePath)
+			|| (url.searchParams.get("rest_route") || "").endsWith(
+				routePath.replace("/wp-json", ""),
+			);
+	};
+	const blockImageHosting = (url) =>
+		routeMatches(url, "/wp-json/easymde/v1/image-hosting/upload")
+		|| routeMatches(url, "/wp-json/easymde/v1/image-hosting/import");
+
+	page.on("console", (message) => {
+		if (["error", "warning"].includes(message.type())) {
+			browserFailures.push(
+				`${message.type()}:${message.location().url}:${message.text()}`,
+			);
+		}
+	});
+	page.on("pageerror", (error) =>
+		browserFailures.push(`pageerror:${error.message}`),
+	);
+	page.on("request", (request) => {
+		if (
+			request.method() === "POST" &&
+			routeMatches(request.url(), "/wp-json/easymde/v1/media")
+		) {
+			mediaRequests.push(request);
+		}
+		if (blockImageHosting(request.url())) imageHostingRequests.push(request);
+	});
+	await page.route(blockImageHosting, (route) =>
+		route.abort("blockedbyclient"),
+	);
+	await page.route(gravatarPattern, (route) =>
+		route.fulfill({
+			body: Buffer.from(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+				"base64",
+			),
+			contentType: "image/png",
+			status: 200,
+		}),
+	);
+
+	let originalImageHostingEnabled;
+	let restNonce;
+	let testError;
+	try {
+		await login(page);
+		await page.goto(settingsPath);
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		let strings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		let toggle = page.getByRole("switch", {
+			name: strings.enableImageHosting,
+			exact: true,
+		});
+		originalImageHostingEnabled = await page.evaluate(
+			() =>
+				window.EasyMDESettingsCenterBootstrap.settings.images
+					.imageHostingEnabled,
+		);
+		expect(originalImageHostingEnabled).toBe(false);
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		await toggle.focus();
+		await page.keyboard.press("Space");
+		await expect(toggle).toHaveAttribute("aria-checked", "true");
+		await saveSettingsCenter(page);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		strings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		toggle = page.getByRole("switch", {
+			name: strings.enableImageHosting,
+			exact: true,
+		});
+		await expect(toggle).toHaveAttribute("aria-checked", "true");
+		expect(
+			await page.evaluate(
+				() =>
+					window.EasyMDESettingsCenterBootstrap.settings.images
+						.imageHostingEnabled,
+			),
+		).toBe(true);
+
+		await toggle.focus();
+		await page.keyboard.press("Space");
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await saveSettingsCenter(page);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		await page.locator('button[data-nav-id="images"]').click();
+		strings = await page.evaluate(
+			() => window.EasyMDESettingsCenterBootstrap.strings,
+		);
+		toggle = page.getByRole("switch", {
+			name: strings.enableImageHosting,
+			exact: true,
+		});
+		await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		await page.goto("/wp-admin/post-new.php");
+		await expect(page.locator("#easymde-editor")).toBeVisible();
+		const bootstrap = await page.evaluate(() => ({
+			endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
+			importEndpoint:
+				window.EasyMDEEditorRootBootstrap.imageUpload.importEndpoint,
+			nonce: window.EasyMDEEditorRootBootstrap.imageUpload.nonce,
+			remoteImageUploadMode:
+				window.EasyMDEEditorRootBootstrap.imageUpload.remoteImageUploadMode,
+			uploadOwner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner,
+		}));
+		restNonce = bootstrap.nonce;
+		expect(bootstrap.uploadOwner).toBe("media");
+		expect(
+			routeMatches(bootstrap.endpoint, "/wp-json/easymde/v1/media"),
+		).toBe(true);
+		expect(
+			routeMatches(
+				bootstrap.importEndpoint,
+				"/wp-json/easymde/v1/image-hosting/import",
+			),
+		).toBe(true);
+		expect(bootstrap.remoteImageUploadMode).toBe("off");
+
+		const source = page.locator("#easymde-source");
+		const sourceEditor = page.locator(".easymde-source-react .cm-content");
+		await sourceEditor.fill("Local upload baseline");
+		await sourceEditor.focus();
+		await sourceEditor.press("End");
+		const mediaResponse = page.waitForResponse((response) =>
+			response.request().method() === "POST"
+				&& routeMatches(response.url(), "/wp-json/easymde/v1/media"),
+		);
+		await sourceEditor.evaluate((editor) => {
+			const binary = atob(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			);
+			const bytes = Uint8Array.from(binary, (character) =>
+				character.charCodeAt(0),
+			);
+			const transfer = new DataTransfer();
+			transfer.items.add(
+				new File([bytes], "synthetic-png.png", { type: "image/png" }),
+			);
+			editor.dispatchEvent(
+				new DragEvent("drop", {
+					bubbles: true,
+					cancelable: true,
+					dataTransfer: transfer,
+				}),
+			);
+		});
+		const response = await mediaResponse;
+		expect(response.status()).toBe(200);
+		const result = await response.json();
+		expect(result.id).toEqual(expect.any(Number));
+		expect(result.url).toMatch(/\/wp-content\/uploads\//u);
+		uploadedAttachmentIds.push(result.id);
+		await expect(source).toHaveValue(
+			`Local upload baseline![synthetic png](${result.url})`,
+		);
+		expect(mediaRequests).toHaveLength(1);
+		expect(imageHostingRequests).toHaveLength(0);
+		expect(browserFailures).toEqual([]);
+	} catch (error) {
+		testError = error;
+	}
+
+	const cleanupFailures = [];
+	if (originalImageHostingEnabled !== undefined) {
+		try {
+			await openSettingsSection(page, "images");
+			const strings = await page.evaluate(
+				() => window.EasyMDESettingsCenterBootstrap.strings,
+			);
+			const toggle = page.getByRole("switch", {
+				name: strings.enableImageHosting,
+				exact: true,
+			});
+			if (
+				(await toggle.getAttribute("aria-checked")) !==
+				String(originalImageHostingEnabled)
+			) {
+				await toggle.focus();
+				await page.keyboard.press("Space");
+				await saveSettingsCenter(page);
+			}
+		} catch (error) {
+			cleanupFailures.push(error);
+		}
+	}
+	for (const attachmentId of uploadedAttachmentIds) {
+		try {
+			const response = await page.request.delete(
+				`/wp-json/wp/v2/media/${attachmentId}?force=true`,
+				{ headers: { "X-WP-Nonce": restNonce } },
+			);
+			if (!response.ok()) {
+				cleanupFailures.push(
+					new Error(`e2e-media-cleanup-http-${response.status()}`),
+				);
+			}
+		} catch (error) {
+			cleanupFailures.push(error);
+		}
+	}
+	try {
+		await page.unroute(blockImageHosting);
+	} catch (error) {
+		cleanupFailures.push(error);
+	}
+	try {
+		await page.unroute(gravatarPattern);
+	} catch (error) {
+		cleanupFailures.push(error);
+	}
+	if (testError) {
+		if (cleanupFailures.length) {
+			throw new AggregateError(
+				[testError, ...cleanupFailures],
+				"Image hosting E2E test and cleanup failed.",
+			);
+		}
+		throw testError;
+	}
+	if (cleanupFailures.length) {
+		throw new AggregateError(cleanupFailures, "Image hosting E2E cleanup failed.");
 	}
 });
 

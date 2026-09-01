@@ -11,7 +11,7 @@ final class Options {
 	private $last_compare_and_swap_status = 'none';
 
 	const EDITOR_SETTINGS         = 'easymde_editor_settings';
-	const EDITOR_SETTINGS_VERSION = '0.1.8';
+	const EDITOR_SETTINGS_VERSION = '0.1.9';
 
 	public function editor_settings_key() {
 		return self::EDITOR_SETTINGS;

@@ -2,7 +2,7 @@
 # This file is distributed under the Apache-2.0 license.
 msgid ""
 msgstr ""
-"Project-Id-Version: EasyMDE 0.1.8\n"
+"Project-Id-Version: EasyMDE 0.1.9\n"
 "Report-Msgid-Bugs-To: https://github.com/tao-xiaoxin/EasyMDE/issues\n"
 "PO-Revision-Date: 2026-07-02 00:00+0000\n"
 "Last-Translator: EasyMDE contributors <noreply@example.com>\n"
@@ -2130,38 +2130,46 @@ msgid "Upload Behavior"
 msgstr "上传行为"
 
 #: src/Admin/SettingsCenterStrings.php:220
+msgid "Enable Image Hosting"
+msgstr "启用图床"
+
+#: src/Admin/SettingsCenterStrings.php:221
+msgid "When disabled, local uploads use the WordPress Media Library."
+msgstr "禁用后，本地上传使用 WordPress 媒体库。"
+
+#: src/Admin/SettingsCenterStrings.php:222
 msgid "Automatically upload pasted images"
 msgstr "自动上传粘贴的图片"
 
-#: src/Admin/SettingsCenterStrings.php:221
+#: src/Admin/SettingsCenterStrings.php:223
 msgid ""
 "Upload image files pasted into the editor and insert their Markdown links."
 msgstr "上传粘贴到编辑器的图片文件，并插入其 Markdown 链接。"
 
-#: src/Admin/SettingsCenterStrings.php:222
+#: src/Admin/SettingsCenterStrings.php:224
 msgid "Remote image import"
 msgstr "远程图片导入"
 
-#: src/Admin/SettingsCenterStrings.php:223
+#: src/Admin/SettingsCenterStrings.php:225
 msgid ""
 "Import absolute HTTP or HTTPS images pasted as HTML or Markdown into the "
 "configured image host."
 msgstr ""
 "将以 HTML 或 Markdown 形式粘贴的绝对 HTTP 或 HTTPS 图片导入已配置的图床。"
 
-#: src/Admin/SettingsCenterStrings.php:224
+#: src/Admin/SettingsCenterStrings.php:226
 msgid "Visual and source editors"
 msgstr "可视化和源码编辑器"
 
-#: src/Admin/SettingsCenterStrings.php:225
+#: src/Admin/SettingsCenterStrings.php:227
 msgid "Visual editor only"
 msgstr "仅可视化编辑器"
 
-#: src/Admin/SettingsCenterStrings.php:226
+#: src/Admin/SettingsCenterStrings.php:228
 msgid "Source editor only"
 msgstr "仅源码编辑器"
 
-#: src/Admin/SettingsCenterStrings.php:227
+#: src/Admin/SettingsCenterStrings.php:229
 msgid "Do not import"
 msgstr "不导入"
 
@@ -2949,17 +2957,21 @@ msgstr "图床请求无效。"
 msgid "Remote image import is disabled by the current settings."
 msgstr "当前设置已禁用远程图片导入。"
 
-#: src/Rest/ImageHostingController.php:830
+#: src/Rest/ImageHostingController.php:840
+msgid "Image hosting is disabled by the current settings."
+msgstr "当前设置已禁用图床。"
+
+#: src/Rest/ImageHostingController.php:848
 msgid ""
 "Enter both credentials for the changed image-hosting target before testing "
 "it."
 msgstr "图床目标已更改，请同时输入 Access Key 和 Secret Key 后再测试。"
 
-#: src/Rest/ImageHostingController.php:838
+#: src/Rest/ImageHostingController.php:856
 msgid "The image upload is invalid."
 msgstr "图片上传请求无效。"
 
-#: src/Rest/ImageHostingController.php:846
+#: src/Rest/ImageHostingController.php:864
 msgid "The image-hosting validation image could not be uploaded."
 msgstr "无法上传图床验证图片。"
 

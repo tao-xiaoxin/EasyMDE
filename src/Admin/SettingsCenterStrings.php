@@ -217,6 +217,8 @@ final class SettingsCenterStrings {
 			'showBackupSecretKey'                          => __( 'Show Backup Secret Key', 'easymde' ),
 			'hideBackupSecretKey'                          => __( 'Hide Backup Secret Key', 'easymde' ),
 			'uploadBehavior'                               => __( 'Upload Behavior', 'easymde' ),
+			'enableImageHosting'                            => __( 'Enable Image Hosting', 'easymde' ),
+			'enableImageHostingDescription'                 => __( 'When disabled, local uploads use the WordPress Media Library.', 'easymde' ),
 			'autoUploadPastedImages'                       => __( 'Automatically upload pasted images', 'easymde' ),
 			'autoUploadPastedImagesDescription'            => __( 'Upload image files pasted into the editor and insert their Markdown links.', 'easymde' ),
 			'remoteImageUploadMode'                        => __( 'Remote image import', 'easymde' ),

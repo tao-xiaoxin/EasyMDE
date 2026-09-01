@@ -136,6 +136,33 @@ describe("ImagesSettingsPage", () => {
 		expect(toggle.getAttribute("aria-checked")).toBe("false");
 	});
 
+	it("renders the image-hosting toggle below the primary heading and supports keyboard changes", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		const { container } = render(<Harness onSettingsChange={onSettingsChange} />);
+		const section = container.querySelector(".is-host-service");
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+
+		expect(
+			section?.querySelector("h2")?.nextElementSibling?.getAttribute(
+				"data-setting-label",
+			),
+		).toBe("enableImageHosting");
+		expect(
+			section?.querySelector('[data-setting-label="selectImageHostService"]'),
+		).not.toBeNull();
+		expect(screen.getByText("enableImageHostingDescription")).not.toBeNull();
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+		toggle.focus();
+		await user.keyboard(" ");
+
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(onSettingsChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({ imageHostingEnabled: true }),
+		);
+	});
+
 	it("does not render an upload destination control that is absent from the reference UI", () => {
 		render(<Harness />);
 

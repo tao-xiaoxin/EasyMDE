@@ -17,6 +17,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 		summaryMode: "auto-55",
 	},
 	images: {
+		imageHostingEnabled: false,
 		service: "cloudflare-r2",
 		endpoint:
 			"https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",

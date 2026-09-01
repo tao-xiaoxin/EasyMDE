@@ -359,6 +359,30 @@ function setImageSizeSettingMb(value) {
   ]);
 }
 
+function imageHostingEnabledSetting() {
+  const value = JSON.parse(runWp([
+    'eval',
+    '$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); echo wp_json_encode( $settings["images"]["imageHostingEnabled"] );'
+  ]));
+
+  if ('boolean' !== typeof value) {
+    throw new Error('image-hosting-enabled-setting-invalid');
+  }
+
+  return value;
+}
+
+function setImageHostingEnabledSetting(value) {
+  if ('boolean' !== typeof value) {
+    throw new Error('image-hosting-enabled-setting-invalid');
+  }
+
+  runWp([
+    'eval',
+    `$repository = new \\EasyMDE\\Support\\SettingsCenterRepository( new \\EasyMDE\\Support\\Options(), new \\EasyMDE\\Support\\ToolbarRegistry() ); $settings = $repository->get_settings(); $settings["images"]["imageHostingEnabled"] = ${value ? 'true' : 'false'}; $result = $repository->update_settings( $settings ); if ( is_wp_error( $result ) ) { fwrite( STDERR, $result->get_error_code() ); exit( 1 ); }`
+  ]);
+}
+
 const summaryModes = new Set(['auto-55', 'auto-100', 'manual']);
 
 function summaryModeSetting() {
@@ -1388,6 +1412,9 @@ test.describe('EasyMDE editor workflows', () => {
     }
     try {
       runCleanupSteps([
+        ...('boolean' === typeof testInfo.easymdeOriginalImageHostingEnabled
+          ? [() => setImageHostingEnabledSetting(testInfo.easymdeOriginalImageHostingEnabled)]
+          : []),
         ...(Number.isSafeInteger(testInfo.easymdeOriginalImageSizeMb)
           ? [() => setImageSizeSettingMb(testInfo.easymdeOriginalImageSizeMb)]
           : []),
@@ -2061,6 +2088,9 @@ test.describe('EasyMDE editor workflows', () => {
     const failedRequests = [];
     const cancelledPreviewRequests = [];
 
+    testInfo.easymdeOriginalImageHostingEnabled = imageHostingEnabledSetting();
+    setImageHostingEnabledSetting(true);
+
     page.on('console', (message) => {
       if (['error', 'warning'].includes(message.type())) browserErrors.push(message.text());
     });
@@ -2187,8 +2217,11 @@ test.describe('EasyMDE editor workflows', () => {
     const imageUploadBootstrap = await page.evaluate(() => ({
       actionNonce: window.EasyMDEEditorRootBootstrap.imageUpload.actionNonce,
       endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
-      nonce: window.EasyMDEEditorRootBootstrap.imageUpload.nonce
+      nonce: window.EasyMDEEditorRootBootstrap.imageUpload.nonce,
+      uploadOwner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner
     }));
+    expect(imageUploadBootstrap.uploadOwner).toBe('image-hosting');
+    expect(new URL(imageUploadBootstrap.endpoint).pathname.endsWith(imageHostingUploadPath)).toBe(true);
     const rejectedControllerResponse = await page.request.post(
       imageUploadBootstrap.endpoint,
       {
@@ -2209,6 +2242,8 @@ test.describe('EasyMDE editor workflows', () => {
         }
       }
     );
+    const rejectedControllerPayload = await rejectedControllerResponse.json();
+    expect(rejectedControllerPayload.code).toBe('easymde_image_hosting_unsupported_media_type');
     expect(rejectedControllerResponse.status()).toBe(415);
     await sourceEditor.evaluate((editor) => {
       const transfer = new DataTransfer();

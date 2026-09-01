@@ -242,6 +242,7 @@ final class SettingsCenterRepository {
 		}
 
 		return array(
+			'enabled'          => $images['imageHostingEnabled'],
 			'revision'         => $this->revision_from_stored( $stored ),
 			'primary'          => array(
 				'retryCount' => $images['uploadRetryCount'],
@@ -449,6 +450,7 @@ final class SettingsCenterRepository {
 				'summaryMode'                 => 'auto-55',
 			),
 			'images'    => array(
+				'imageHostingEnabled'   => false,
 				'service'                => 'cloudflare-r2',
 				'endpoint'               => '',
 				'bucket'                 => 'easymde-assets',
@@ -551,6 +553,9 @@ final class SettingsCenterRepository {
 			}
 		}
 		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
+			if ( array_key_exists( 'imageHostingEnabled', $input['images'] ) && ! is_bool( $input['images']['imageHostingEnabled'] ) ) {
+				return $this->invalid_payload_error();
+			}
 			foreach ( array( 'uploadRetryCount' ) as $retry_field ) {
 				if (
 					array_key_exists( $retry_field, $input['images'] ) &&

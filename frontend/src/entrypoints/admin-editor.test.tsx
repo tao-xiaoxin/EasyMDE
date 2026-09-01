@@ -87,7 +87,8 @@ const bootstrap = {
     importEndpoint: '/image-hosting/import',
     nonce: 'nonce',
     postId: 7,
-    remoteImageUploadMode: 'both'
+    remoteImageUploadMode: 'both',
+    uploadOwner: 'image-hosting'
   },
   immersiveStrings: {
     autoSave: 'Auto save',
@@ -283,7 +284,8 @@ describe('mountAdminEditor', () => {
       expect.objectContaining({
         actionNonce: 'image-hosting-nonce',
         endpoint: '/image-hosting/upload',
-        nonce: 'nonce'
+        nonce: 'nonce',
+        uploadOwner: 'image-hosting'
       })
     );
     expect(

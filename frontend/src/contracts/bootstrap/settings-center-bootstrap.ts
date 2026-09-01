@@ -125,6 +125,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"settingsUnavailable",
 	"settingsUnavailableDescription",
 	"imageHostService",
+	"enableImageHosting",
+	"enableImageHostingDescription",
 	"selectImageHostService",
 	"cloudflareR2",
 	"aliyunOss",
@@ -711,6 +713,7 @@ export function parseSettingsCenterSettings(
 		titleDisplay: 16,
 	};
 	const imageBooleans = [
+		"imageHostingEnabled",
 		"backupEnabled",
 		"compressImages",
 		"autoUploadPastedImages",

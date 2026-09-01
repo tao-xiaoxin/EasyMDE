@@ -64,6 +64,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
 		update_post_meta( $post_id, '_edit_last', $user_id );
 		wp_set_current_user( $user_id );
+		$this->enable_image_hosting();
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
@@ -201,6 +202,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
 		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
 		wp_set_current_user( $user_id );
+		$this->enable_image_hosting();
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
 		$this->assertArrayNotHasKey( 'destination', $bootstrap['imageUpload'] );
@@ -216,6 +218,37 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertNotEmpty( $bootstrap['imageUpload']['actionNonce'] );
 		$this->assertArrayNotHasKey( 'credentials', $bootstrap['imageUpload'] );
 		$this->assertArrayNotHasKey( 'providerEndpoint', $bootstrap['imageUpload'] );
+	}
+
+	public function test_editor_root_bootstrap_projects_the_saved_image_upload_owner_and_effective_remote_mode() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+		$this->assertSame( 'media', $bootstrap['imageUpload']['uploadOwner'] );
+		$this->assertSame( rest_url( 'easymde/v1/media' ), $bootstrap['imageUpload']['endpoint'] );
+		$this->assertSame( 'off', $bootstrap['imageUpload']['remoteImageUploadMode'] );
+		$this->assertTrue( $bootstrap['imageUpload']['enabled'] );
+
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings = $repository->get_settings();
+		$settings['images']['imageHostingEnabled'] = true;
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+		$this->assertSame( 'image-hosting', $bootstrap['imageUpload']['uploadOwner'] );
+		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
+		$this->assertSame( 'both', $bootstrap['imageUpload']['remoteImageUploadMode'] );
+		$this->assertTrue( $bootstrap['imageUpload']['enabled'] );
+	}
+
+	private function enable_image_hosting() {
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings   = $repository->get_settings();
+		$settings['images']['imageHostingEnabled'] = true;
+
+		$this->assertIsArray( $repository->update_settings( $settings ) );
 	}
 
 	public function test_editor_root_bootstrap_consumes_saved_settings_center_shortcuts() {

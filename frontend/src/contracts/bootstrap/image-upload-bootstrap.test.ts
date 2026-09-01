@@ -29,10 +29,26 @@ const validBootstrap = {
     pasteTooLarge: 'Paste too large',
     pasteUploaded: 'Paste uploaded',
     pasteUploading: 'Paste uploading'
-  }
+  },
+  uploadOwner: 'image-hosting'
 };
 
 describe('parseImageUploadBootstrap', () => {
+  it('requires the explicit upload owner and owner endpoint contract', () => {
+    expect(parseImageUploadBootstrap({
+      ...validBootstrap,
+      uploadOwner: 'media',
+      endpoint: '/wp-json/easymde/v1/media',
+      importEndpoint: '/wp-json/easymde/v1/media',
+      remoteImageUploadMode: 'off'
+    })).toMatchObject({
+      uploadOwner: 'media',
+      endpoint: '/wp-json/easymde/v1/media',
+      importEndpoint: '/wp-json/easymde/v1/media',
+      remoteImageUploadMode: 'off'
+    });
+  });
+
   it('parses only the PHP-owned remote proxy contract', () => {
     expect(parseImageUploadBootstrap(validBootstrap)).toEqual(validBootstrap);
     expect(parseImageUploadBootstrap(validBootstrap)).not.toHaveProperty('destination');
@@ -97,5 +113,13 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       remoteImageUploadMode: 'enabled'
     })).toThrow('image-upload-remote-paste-mode-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      uploadOwner: 'wordpress-media'
+    })).toThrow('image-upload-owner-invalid');
+    expect(() => parseImageUploadBootstrap({
+      ...validBootstrap,
+      uploadOwner: undefined
+    })).toThrow('image-upload-owner-invalid');
   });
 });

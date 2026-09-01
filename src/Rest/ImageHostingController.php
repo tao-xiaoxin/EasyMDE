@@ -283,6 +283,9 @@ final class ImageHostingController {
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
 		}
+		if ( ! $this->is_image_hosting_enabled( $settings ) ) {
+			return $this->image_hosting_disabled_error();
+		}
 		$file = $this->validate_file( $file, $settings );
 		if ( is_wp_error( $file ) ) {
 			return $file;
@@ -318,6 +321,9 @@ final class ImageHostingController {
 		$settings = $this->get_runtime_settings();
 		if ( is_wp_error( $settings ) ) {
 			return $settings;
+		}
+		if ( ! $this->is_image_hosting_enabled( $settings ) ) {
+			return $this->image_hosting_disabled_error();
 		}
 		$remote_image_upload_mode = isset( $settings['behaviors']['remoteImageUploadMode'] ) && is_string( $settings['behaviors']['remoteImageUploadMode'] )
 			? $settings['behaviors']['remoteImageUploadMode']
@@ -467,6 +473,10 @@ final class ImageHostingController {
 			);
 	}
 
+	private function is_image_hosting_enabled( array $settings ) {
+		return isset( $settings['enabled'] ) && true === $settings['enabled'];
+	}
+
 	private function validate_file( $file, array $settings ) {
 		$base_keys      = array( 'name', 'type', 'tmp_name', 'error', 'size' );
 		$full_path_keys = array_merge( $base_keys, array( 'full_path' ) );
@@ -571,12 +581,12 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
+		$keys = array( 'imageHostingEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
+		foreach ( array( 'imageHostingEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}
@@ -820,6 +830,14 @@ final class ImageHostingController {
 		return new WP_Error(
 			'easymde_image_hosting_remote_import_disabled',
 			__( 'Remote image import is disabled by the current settings.', 'easymde' ),
+			array( 'status' => 409 )
+		);
+	}
+
+	private function image_hosting_disabled_error() {
+		return new WP_Error(
+			'easymde_image_hosting_disabled',
+			__( 'Image hosting is disabled by the current settings.', 'easymde' ),
 			array( 'status' => 409 )
 		);
 	}

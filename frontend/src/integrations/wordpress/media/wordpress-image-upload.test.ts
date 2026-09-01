@@ -1,8 +1,201 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createWordPressImageUploadPort } from './wordpress-image-upload';
+import {
+  createWordPressImageUploadPort,
+  parseImageHostingUploadResult,
+  parseMediaUploadResult
+} from './wordpress-image-upload';
+
+const validMediaResponse = {
+  alt: 'image',
+  filename: 'image.png',
+  id: 7,
+  title: '',
+  url: 'https://images.example.test/image.png'
+};
+
+const validImageHostingResponse = {
+  alt: 'image',
+  backup: { status: 'disabled' },
+  title: '',
+  url: 'https://images.example.test/image.png'
+};
+
+describe('image upload response parsers', () => {
+  it.each([
+    ['missing id', { ...validMediaResponse, id: undefined }],
+    ['invalid id', { ...validMediaResponse, id: 0 }],
+    ['missing filename', { ...validMediaResponse, filename: undefined }],
+    ['empty filename', { ...validMediaResponse, filename: '' }],
+    ['unexpected field', { ...validMediaResponse, backup: { status: 'disabled' } }]
+  ])('rejects invalid WordPress media schemas: %s', (_label, response) => {
+    expect(() => parseMediaUploadResult(response)).toThrow(
+      'image-upload-response-invalid'
+    );
+  });
+
+  it.each([
+    ['missing backup', { ...validImageHostingResponse, backup: undefined }],
+    ['invalid backup status', { ...validImageHostingResponse, backup: { status: 'failed' } }],
+    ['coercible backup status', { ...validImageHostingResponse, backup: { status: new String('disabled') } }],
+    ['unexpected field', { ...validImageHostingResponse, id: 7 }],
+    ['media response', validMediaResponse]
+  ])('rejects invalid Image Hosting schemas: %s', (_label, response) => {
+    expect(() => parseImageHostingUploadResult(response)).toThrow(
+      'image-upload-response-invalid'
+    );
+  });
+});
 
 describe('createWordPressImageUploadPort', () => {
+  it('accepts a filtered CDN media URL with a query and fragment', async () => {
+    const url =
+      'https://cdn.example.test/wp-content/uploads/image.png?ver=20260901#preview';
+    const apiFetch = vi.fn().mockResolvedValue({
+      ...validMediaResponse,
+      url
+    });
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch,
+      endpoint: '/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'media'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).resolves.toMatchObject({ url });
+  });
+
+  it('accepts a WordPress media URL on the same origin with a non-default port', async () => {
+    const apiFetch = vi.fn().mockResolvedValue({
+      ...validMediaResponse,
+      url: 'http://127.0.0.1:8089/wp-content/uploads/image.png'
+    });
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch,
+      endpoint: '/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'http://127.0.0.1:8089/wp-admin/post.php',
+      uploadOwner: 'media'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).resolves.toEqual({
+      alt: 'image',
+      status: 'uploaded',
+      title: '',
+      url: 'http://127.0.0.1:8089/wp-content/uploads/image.png'
+    });
+  });
+
+  it.each([
+    ['javascript scheme', 'javascript:alert(1)'],
+    ['invalid scheme', 'ftp://127.0.0.1:8089/wp-content/uploads/image.png'],
+    ['credentials', 'http://user:pass@127.0.0.1:8089/wp-content/uploads/image.png'],
+    ['malformed', 'not a URL'],
+    ['empty', ''],
+    ['overlong', `https://cdn.example.test/${'a'.repeat(4096)}`]
+  ])('rejects an unsafe WordPress media URL: %s', async (_label, url) => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({ ...validMediaResponse, url }),
+      endpoint: '/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'http://127.0.0.1:8089/wp-admin/post.php',
+      uploadOwner: 'media'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
+  it('posts through the WordPress media owner with only the WordPress nonce', async () => {
+    const apiFetch = vi.fn().mockResolvedValue({
+      alt: 'screen shot',
+      filename: 'screen-shot.png',
+      id: 42,
+      title: 'Uploaded title',
+      url: 'https://example.test/uploads/screen-shot.png'
+    });
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch,
+      endpoint: '/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'media'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'screen shot',
+        file: new File(['image'], 'screen-shot', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).resolves.toEqual({
+      alt: 'screen shot',
+      status: 'uploaded',
+      title: 'Uploaded title',
+      url: 'https://example.test/uploads/screen-shot.png'
+    });
+
+    expect(apiFetch.mock.calls[0]?.[0].headers).toEqual({
+      'X-WP-Nonce': 'synthetic-nonce'
+    });
+  });
+
+  it('rejects a WordPress media response that does not match the exact controller schema', async () => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch: vi.fn().mockResolvedValue({
+        alt: 'image',
+        backup: { status: 'disabled' },
+        title: '',
+        url: 'https://images.example.test/image.png'
+      }),
+      endpoint: '/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'media'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 0,
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('image-upload-response-invalid');
+  });
+
   it('posts a bounded remote image-host request through the same-origin proxy', async () => {
     const apiFetch = vi.fn().mockResolvedValue({
       alt: 'screen shot',
@@ -16,7 +209,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/wp-json/easymde/v1/image-hosting/upload',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
     const file = new File(['image'], 'screen-shot', { type: 'image/png' });
 
@@ -62,7 +256,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -87,7 +282,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -125,7 +321,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -158,7 +355,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -187,7 +385,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/wp-json/easymde/v1/image-hosting/upload',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -216,7 +415,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/wp-json/easymde/v1/image-hosting/upload',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -243,7 +443,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
     await expect(
       rejected.upload({
@@ -263,7 +464,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
     await expect(
       invalid.upload({
@@ -283,7 +485,8 @@ describe('createWordPressImageUploadPort', () => {
       endpoint: '/media',
       formData: FormData,
       nonce: 'synthetic-nonce',
-      siteUrl: 'https://example.test/wp-admin/post.php'
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
     });
 
     await expect(
@@ -304,7 +507,8 @@ describe('createWordPressImageUploadPort', () => {
         endpoint: 'https://remote.example/wp-json/easymde/v1/media',
         formData: FormData,
         nonce: 'synthetic-nonce',
-        siteUrl: 'https://example.test/wp-admin/post.php'
+        siteUrl: 'https://example.test/wp-admin/post.php',
+        uploadOwner: 'media'
       })
     ).toThrow('image-upload-url-invalid');
   });
@@ -317,7 +521,8 @@ describe('createWordPressImageUploadPort', () => {
         endpoint: '/wp-json/easymde/v1/image-hosting/upload',
         formData: FormData,
         nonce: 'synthetic-nonce',
-        siteUrl: 'https://example.test/wp-admin/post.php'
+        siteUrl: 'https://example.test/wp-admin/post.php',
+        uploadOwner: 'image-hosting'
       })
     ).toThrow('image-upload-action-nonce-invalid');
   });

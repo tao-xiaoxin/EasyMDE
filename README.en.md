@@ -7,7 +7,7 @@
 <p align="center">A Markdown editor plugin for WordPress writers, technical bloggers, and WeChat content creators, with split-pane live preview.</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
-    <img src="https://img.shields.io/badge/version-0.1.8-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.8" />
+    <img src="https://img.shields.io/badge/version-0.1.9-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.9" />
   </a>
   <img src="https://img.shields.io/badge/WordPress-6.7%2B-21759b?style=flat-square&logo=wordpress&logoColor=white" alt="Requires WordPress 6.7+" />
   <img src="https://img.shields.io/badge/PHP-7.4%2B-777BB4?style=flat-square&logo=php&logoColor=white" alt="Requires PHP 7.4+" />

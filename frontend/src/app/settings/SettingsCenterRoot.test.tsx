@@ -929,6 +929,62 @@ describe("SettingsCenterRoot images section", () => {
 		expect(screen.queryByRole("textbox", { name: "backupBucket" })).toBeNull();
 	});
 
+	it("marks image-hosting changes dirty and saves the strict boolean", async () => {
+		const user = userEvent.setup();
+		const savedPayload = { current: null as Record<string, unknown> | null };
+		const initialSettings = bootstrap().settings;
+		const savedSettings = {
+			...initialSettings,
+			revision: initialSettings.revision + 1,
+			images: {
+				...initialSettings.images,
+				imageHostingEnabled: true,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				savedPayload.current = JSON.parse(String(init?.body)) as Record<
+					string,
+					unknown
+				>;
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+
+		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
+		const save = screen.getByRole<HTMLButtonElement>("button", {
+			name: "saveSettings",
+		});
+
+		expect(toggle.getAttribute("aria-checked")).toBe("false");
+		await user.click(toggle);
+		expect(toggle.getAttribute("aria-checked")).toBe("true");
+		expect(save.disabled).toBe(false);
+		expect(screen.getByText("settingsUnsavedChanges")).not.toBeNull();
+
+		await user.click(save);
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
+		if (!savedPayload.current)
+			throw new Error("settings-save-payload-missing");
+		expect(
+			(savedPayload.current.settings as SettingsCenterSettings).images
+				.imageHostingEnabled,
+		).toBe(true);
+		fetch.mockRestore();
+	});
+
 	it("exposes real server-backed image-host upload verification", () => {
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const imagesSection = screen

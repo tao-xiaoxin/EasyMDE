@@ -8,6 +8,7 @@ use EasyMDE\Support\ToolbarRegistry;
 final class SettingsPageTest extends WP_UnitTestCase
 {
     private $previous_pagenow;
+    private $previous_get;
 
     public function set_up()
     {
@@ -19,6 +20,8 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->previous_pagenow = array_key_exists('pagenow', $GLOBALS) ? $GLOBALS['pagenow'] : null;
         $GLOBALS['pagenow'] = 'admin.php';
+        $this->previous_get = $_GET;
+		$this->reset_settings_center_asset_state();
     }
 
     public function tear_down()
@@ -34,11 +37,10 @@ final class SettingsPageTest extends WP_UnitTestCase
             $GLOBALS['pagenow'] = $this->previous_pagenow;
         }
 
+        $_GET = $this->previous_get;
+
         delete_option(Options::EDITOR_SETTINGS);
-        wp_dequeue_style('easymde-admin-menu');
-        wp_dequeue_script('easymde-admin-settings-center');
-        wp_dequeue_style('easymde-admin-message-alert');
-        wp_dequeue_style('easymde-admin-settings-center');
+		$this->reset_settings_center_asset_state();
         wp_set_current_user(0);
 
         parent::tear_down();
@@ -87,6 +89,123 @@ final class SettingsPageTest extends WP_UnitTestCase
         $output = ob_get_clean();
 
         $this->assertSame('', $output);
+    }
+
+    public function test_settings_center_registers_an_early_document_dispatcher()
+    {
+        $settings_page = $this->settings_page();
+        $settings_page->register_hooks();
+
+        $this->assertSame(
+            10,
+            has_action(
+                'load-toplevel_page_easymde',
+                array($settings_page, 'enforce_settings_center_route')
+            )
+        );
+        $this->assertSame(
+            20,
+            has_action(
+                'load-toplevel_page_easymde',
+                array($settings_page, 'dispatch_settings_center_document')
+            )
+        );
+    }
+
+    public function test_settings_center_document_has_no_wordpress_shell_and_prints_assets_before_the_root()
+    {
+        $stored = array(
+            'version' => '0.1.8',
+            'toolbar_layout' => 'hybrid-icons',
+        );
+        update_option(Options::EDITOR_SETTINGS, $stored);
+        wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
+        $_GET['page']  = 'easymde';
+        $_GET['route'] = '/general_setting';
+
+        ob_start();
+        $this->settings_page()->render_settings_center_document();
+        $output = ob_get_clean();
+
+        $this->assertStringStartsWith('<!DOCTYPE html>', $output);
+        foreach (array('wpwrap', 'wpadminbar', 'adminmenu', 'wpcontent', 'wpbody', 'wpfooter') as $shell_id) {
+            $this->assertStringNotContainsString('id="' . $shell_id . '"', $output);
+        }
+        $this->assertStringContainsString('id="easymde-settings-center-root"', $output);
+		$this->assertStringContainsString('data-easymde-settings-favicon="true"', $output);
+        $this->assertStringContainsString('data-settings-center-server-fallback', $output);
+        $style_position  = strpos($output, 'settings-center.css');
+        $script_position = strpos($output, 'settings-center-', $style_position + 1);
+        $this->assertNotFalse($style_position);
+        $this->assertNotFalse($script_position);
+        $this->assertLessThan(
+            $script_position,
+            $style_position
+        );
+        $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+    }
+
+    public function test_settings_center_document_is_zero_output_for_an_unsupported_route_or_missing_capability()
+    {
+        wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
+        $_GET['page']  = 'easymde';
+        $_GET['route'] = '/removed';
+
+        ob_start();
+        $this->settings_page()->render_settings_center_document();
+        $unsupported_route_output = ob_get_clean();
+
+        wp_set_current_user(self::factory()->user->create(array('role' => 'subscriber')));
+        $_GET['route'] = '/general_setting';
+
+        ob_start();
+        $this->settings_page()->render_settings_center_document();
+        $unauthorized_output = ob_get_clean();
+
+        $this->assertSame('', $unsupported_route_output);
+        $this->assertSame('', $unauthorized_output);
+    }
+
+    public function test_settings_center_document_keeps_a_dedicated_accessible_error_when_bootstrap_fails()
+    {
+        wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
+        $_GET['page']  = 'easymde';
+        $_GET['route'] = '/general_setting';
+        $filter = static function () {
+            throw new RuntimeException('synthetic-settings-bootstrap-failure');
+        };
+        add_filter('pre_option_' . Options::EDITOR_SETTINGS, $filter);
+		$status_code = null;
+		$status_filter = static function ($status_header, $header_code) use (&$status_code) {
+			$status_code = $header_code;
+
+			return $status_header;
+		};
+		add_filter('status_header', $status_filter, 10, 2);
+		$previous_display_errors = ini_get('display_errors');
+		$previous_status_code    = http_response_code();
+		ini_set('display_errors', '1');
+
+        try {
+            ob_start();
+            $this->settings_page()->render_settings_center_document();
+            $output = ob_get_clean();
+        } finally {
+			ini_set('display_errors', false === $previous_display_errors ? '0' : $previous_display_errors);
+			remove_filter('status_header', $status_filter, 10);
+            remove_filter('pre_option_' . Options::EDITOR_SETTINGS, $filter);
+        }
+
+		$this->assertSame(500, $status_code);
+		$this->assertSame($previous_status_code, http_response_code());
+		$this->assertStringStartsWith('<!DOCTYPE html>', $output);
+        $this->assertStringContainsString('data-settings-center-server-fallback', $output);
+		$this->assertStringContainsString('data-error-code="settings-center-document-asset-invalid"', $output);
+        $this->assertStringContainsString('role="alert"', $output);
+        $this->assertStringContainsString(esc_url(admin_url('options-general.php')), $output);
+        $this->assertStringNotContainsString('id="wpwrap"', $output);
+        $this->assertStringNotContainsString('settings-center.css', $output);
+        $this->assertStringNotContainsString('assets/build/settings-center/', $output);
     }
 
     public function test_settings_center_bootstrap_uses_local_assets_and_translated_php_strings()
@@ -372,61 +491,27 @@ final class SettingsPageTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('snapshot-secret', wp_json_encode($bootstrap));
     }
 
-    public function test_settings_center_assets_load_only_on_the_canonical_screen()
+    public function test_admin_enqueue_loads_only_the_shared_menu_style()
     {
         wp_set_current_user(self::factory()->user->create(array('role' => 'administrator')));
         $settings_page = $this->settings_page();
+		$settings_asset_state = array(
+			'script'        => wp_script_is('easymde-admin-settings-center', 'enqueued'),
+			'message_style' => wp_style_is('easymde-admin-message-alert', 'enqueued'),
+			'app_style'     => wp_style_is('easymde-admin-settings-center', 'enqueued'),
+		);
 
-        $settings_page->enqueue_assets('profile.php');
+		$settings_page->enqueue_assets();
         $this->assertTrue(wp_style_is('easymde-admin-menu', 'enqueued'));
-
-        $settings_page->enqueue_assets('settings_page_unregistered');
-        $this->assertFalse(wp_script_is('easymde-admin-settings-center', 'enqueued'));
-
-        $settings_page->enqueue_assets('toplevel_page_easymde');
-
-        $this->assertTrue(wp_script_is('easymde-admin-settings-center', 'enqueued'));
-        $this->assertTrue(wp_style_is('easymde-admin-message-alert', 'enqueued'));
-        $this->assertTrue(wp_style_is('easymde-admin-settings-center', 'enqueued'));
-        $this->assertSame(
-            array('easymde-admin-message-alert'),
-            wp_styles()->registered['easymde-admin-settings-center']->deps
-        );
-        $this->assertNotEmpty(
-            wp_scripts()->get_data('easymde-admin-settings-center', 'before')
-        );
-        $this->assertNotEmpty(
-            wp_scripts()->get_data('easymde-admin-settings-center', 'after')
-        );
-    }
-
-    public function test_settings_center_uses_the_immersive_editor_logo_as_its_favicon()
-    {
-        $settings_page = $this->settings_page();
-        $settings_page->register_hooks();
-
-        $this->assertSame(
-            10,
-            has_action(
-                'admin_head-toplevel_page_easymde',
-                array($settings_page, 'render_settings_center_favicon')
-            )
-        );
-
-        ob_start();
-        $settings_page->render_settings_center_favicon();
-        $output = ob_get_clean();
-
-        $this->assertStringContainsString('data-easymde-settings-favicon="true"', $output);
-        $this->assertStringContainsString('rel="icon"', $output);
-        $this->assertStringContainsString('type="image/png"', $output);
-        $this->assertStringContainsString('/assets/images/easymde-editor-icon.png', $output);
-
-        remove_action(
-            'admin_head-toplevel_page_easymde',
-            array($settings_page, 'render_settings_center_favicon')
-        );
-    }
+		$this->assertSame(
+			$settings_asset_state,
+			array(
+				'script'        => wp_script_is('easymde-admin-settings-center', 'enqueued'),
+				'message_style' => wp_style_is('easymde-admin-message-alert', 'enqueued'),
+				'app_style'     => wp_style_is('easymde-admin-settings-center', 'enqueued'),
+			)
+		);
+	}
 
     public function test_admin_menu_uses_the_general_settings_route_local_logo_and_native_plugin_updates_page()
     {
@@ -474,6 +559,23 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $this->fail( 'Expected WordPress admin menu item was not registered.' );
     }
+
+	private function reset_settings_center_asset_state()
+	{
+		$styles = wp_styles();
+		foreach (array('easymde-admin-menu', 'easymde-admin-message-alert', 'easymde-admin-settings-center') as $handle) {
+			wp_dequeue_style($handle);
+			$styles->queue = array_values(array_diff($styles->queue, array($handle)));
+			$styles->to_do = array_values(array_diff($styles->to_do, array($handle)));
+			$styles->done  = array_values(array_diff($styles->done, array($handle)));
+		}
+
+		$scripts = wp_scripts();
+		wp_dequeue_script('easymde-admin-settings-center');
+		$scripts->queue = array_values(array_diff($scripts->queue, array('easymde-admin-settings-center')));
+		$scripts->to_do = array_values(array_diff($scripts->to_do, array('easymde-admin-settings-center')));
+		$scripts->done  = array_values(array_diff($scripts->done, array('easymde-admin-settings-center')));
+	}
 
     private function settings_page()
     {

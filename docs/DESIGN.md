@@ -48,6 +48,15 @@ return to their native owners.
 The Settings Center is an independent React Root because it is an independent WordPress administration screen.
 It does not share mutable Stores, Contexts, caches, or lifecycle owners with the Editor Root.
 The ordinary editor and Settings Center must both use the React 18 runtime provided by WordPress, but this does not authorize another React runtime, an admin SPA, a Router, or a Hydration model.
+The canonical Settings route also has an independent presentation document.
+WordPress performs authentication, screen resolution, and capability admission,
+then the page load hook emits the Settings document before the ordinary admin
+header can become a competing paint owner. This boundary is necessary for a
+stable first frame: a body veil, duplicated PHP application shell, broad
+wp-admin hiding, delayed mount, or larger z-index would preserve two owners and
+only mask their race. Other admin routes remain native WordPress documents, and
+the dedicated Settings document continues to use WordPress's registered React
+runtime, Nonces, REST APIs, and settings persistence.
 
 The existence of a Root is not a resource-admission condition.
 PHP first decides whether to output an entrypoint based on the admin Screen, Supported Post Type, Capability, and actual resource contract; the entrypoint then validates Bootstrap, DOM, WordPress runtime, and Manifest.

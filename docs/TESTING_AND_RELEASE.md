@@ -411,6 +411,24 @@ routes were not used. Its `finally` cleanup restores the original rule and
 toggle and deletes the synthetic attachment; settings, attachment, and route
 cleanup failures are aggregated with the test failure.
 
+The Settings Center first-paint gate uses a Chromium CDP screencast rather than
+a DOM-mutation screenshot. It reloads the installed ZIP five times in each
+desktop/narrow and cold/warm-cache case, captures every compositor frame from
+main-frame commit through semantic readiness, and decodes every nonblank PNG.
+Each such frame must reject the native dark WordPress admin bar and remain
+within a mean channel distance of `20` from the stable pre-reload Settings
+fingerprint sampled every `16px`. A reload that emits no new frame is accepted
+only when the Settings application is visible before and after and the retained
+pixels have the exact same hash. The same classifier must reject a real Profile
+page capture as a native wp-admin negative sample. The settled document must
+contain one Settings application and none of the ordinary wp-admin shell IDs.
+Focused failure cases block the Settings bundle, block the Settings stylesheet,
+and apply a script-blocking CSP; each must keep a dedicated accessible error and
+same-origin exit without exposing the Core canvas. Protected Profile and other
+non-Settings admin pages continue to require their native shell and must not
+load Settings assets. Do not replace this gate with fixed sleeps, a
+MutationObserver-only sample, or a final screenshot.
+
 ## Release Script Safety Guards
 
 Release-test scripts are destructive by design because they reset disposable WordPress installs and databases. They guard against common accidents:

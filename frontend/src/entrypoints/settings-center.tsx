@@ -52,6 +52,26 @@ function assertEmptyRoot(container: HTMLElement): void {
 	}
 }
 
+function assertSettingsCenterStylesheet(
+	documentRef: Document,
+	windowRef: Window,
+): void {
+	const stylesheet = documentRef.querySelector<HTMLLinkElement>(
+		"#easymde-admin-settings-center-css",
+	);
+	if (
+		stylesheet === null ||
+		stylesheet.tagName !== "LINK" ||
+		stylesheet.sheet === null ||
+		windowRef
+			.getComputedStyle(documentRef.documentElement)
+			.getPropertyValue("--easymde-settings-center-styles-ready")
+			.trim() !== "1"
+	) {
+		throw new Error("settings-center-stylesheet-unavailable");
+	}
+}
+
 export function mountSettingsCenter(
 	rawBootstrap: unknown,
 	runtime: SettingsCenterBrowserRuntime,
@@ -63,6 +83,7 @@ export function mountSettingsCenter(
 
 	const bootstrap = parseSettingsCenterBootstrap(rawBootstrap);
 	assertSameOriginUrl(bootstrap.closeUrl, runtime.window);
+	assertSettingsCenterStylesheet(runtime.document, runtime.window);
 	assertEmptyRoot(container);
 
 	const root = createRoot(container);

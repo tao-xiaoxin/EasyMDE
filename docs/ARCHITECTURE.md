@@ -194,9 +194,17 @@ runtime on ordinary pages.
 `frontend/src/entrypoints/settings-center.tsx` is the separate React entry for
 the dedicated EasyMDE administration screen. `SettingsPage` requires
 `manage_options`, validates the manifest-backed
-`assets/build/settings-center/wordpress-manifest.json` contract, enqueues the
-stable `easymde-admin-settings-center` handle only on that screen, and emits a
-same-origin presentation Bootstrap contract. The Settings Center has its own
+`assets/build/settings-center/wordpress-manifest.json` contract, and dispatches
+the canonical route from `load-toplevel_page_easymde` before WordPress prints
+`admin-header.php`. The resulting authenticated document prints only the exact
+Settings styles, WordPress-provided React dependencies, the stable
+`easymde-admin-settings-center` handle, a same-origin presentation Bootstrap,
+and one empty mount root; it does not emit the ordinary `#wpwrap`, admin bar,
+menu, content canvas, notices-before-root, or footer presentation shell. The
+entrypoint requires both the exact stylesheet link and its computed readiness
+sentinel before mounting. Missing server assets, a blocked stylesheet or
+script, invalid Bootstrap, and Content Security Policy failure keep a dedicated
+accessible error and same-origin exit instead of falling back to wp-admin. The Settings Center has its own
 Root and does not share mutable State with the Editor Root. A setting is shown
 only when a real PHP/WordPress owner and browser Adapter exist; presentation
 controls never claim persistence until the authoritative Settings API result
@@ -294,6 +302,12 @@ the shortcut contract has no historical-field import or migration path. The old
 Settings screen without EasyMDE injection, and
 `admin.php?page=easymde/settings/general` is no longer an active screen. The
 canonical General route is the sole Settings Center entry.
+The load-hook document owner is limited to that exact authorized route; direct
+no-route requests still redirect, unsupported routes still fail explicitly,
+and every other WordPress admin screen retains its native document and assets.
+The dedicated response does not create a new authentication or settings owner:
+WordPress completes login and capability admission before the load hook and
+continues to own Nonces, REST mutations, and persistence.
 
 The supported General runtime settings are passed from `AdminAssets` through
 the validated Editor Root bootstrap and consumed by the Editor Root's

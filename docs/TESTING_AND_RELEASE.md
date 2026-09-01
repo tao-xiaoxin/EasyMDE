@@ -385,7 +385,7 @@ npm run test:e2e
 
 Use the exact canonical WordPress origin configured for the test site; changing
 `localhost` to `127.0.0.1` or vice versa can invalidate WordPress login cookies.
-The suite covers the complete ordinary Editor Root and the Issue #126 immersive
+The suite covers the complete ordinary Editor Root and its immersive
 composition: absence of Legacy Focus assets, CodeMirror/IME/Undo/synchronized
 scrolling/uploads, Preview stale results and enhancements, Local Draft recovery
 and native Save, Appearance and Custom CSS, the fixed 50/50 desktop split and

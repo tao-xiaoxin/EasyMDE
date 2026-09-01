@@ -66,6 +66,43 @@ async function openSettingsSection(page, section) {
 	await page.locator(`button[data-nav-id="${section}"]`).click();
 }
 
+async function readImageHostingEnabled(page) {
+	await openSettingsSection(page, "images");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const toggle = page.getByRole("switch", {
+		name: strings.enableImageHosting,
+		exact: true,
+	});
+	const value = await toggle.getAttribute("aria-checked");
+	if (value !== "true" && value !== "false") {
+		throw new Error("settings-center-image-hosting-state-missing");
+	}
+
+	return value === "true";
+}
+
+async function setImageHostingEnabled(page, enabled) {
+	if (typeof enabled !== "boolean") {
+		throw new Error("settings-center-image-hosting-value-invalid");
+	}
+
+	await openSettingsSection(page, "images");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const toggle = page.getByRole("switch", {
+		name: strings.enableImageHosting,
+		exact: true,
+	});
+	if ((await toggle.getAttribute("aria-checked")) === String(enabled)) return;
+	await toggle.focus();
+	await page.keyboard.press("Space");
+	await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+	await saveSettingsCenter(page);
+}
+
 async function selectSettingsOption(page, label, optionLabel) {
 	const trigger = page.getByRole("combobox", { name: label, exact: true });
 	if ((await trigger.textContent())?.trim() === optionLabel) return;
@@ -96,6 +133,33 @@ async function resetSettingsCenterDefaults(page) {
 		.getByRole("button", { name: strings.transferConfirmReset, exact: true })
 		.click();
 	await saveSettingsCenter(page);
+}
+
+async function resetSettingsAndRestoreImageHosting(page, originalEnabled) {
+	let resetError;
+	try {
+		await resetSettingsCenterDefaults(page);
+	} catch (error) {
+		resetError = error;
+	}
+
+	let restoreError;
+	if (typeof originalEnabled === "boolean") {
+		try {
+			await setImageHostingEnabled(page, originalEnabled);
+		} catch (error) {
+			restoreError = error;
+		}
+	}
+
+	if (resetError && restoreError) {
+		throw new AggregateError(
+			[resetError, restoreError],
+			"Settings reset and image-hosting restoration failed.",
+		);
+	}
+	if (resetError) throw resetError;
+	if (restoreError) throw restoreError;
 }
 
 async function setRemoteImageUploadMode(page, mode) {
@@ -2073,6 +2137,7 @@ test("imports source Markdown images only for source-enabled modes", async ({
 }) => {
 	await login(page);
 	const importRequests = [];
+	let originalImageHostingEnabled;
 	await page.route(
 		"**/wp-json/easymde/v1/image-hosting/import*",
 		async (route) => {
@@ -2093,7 +2158,9 @@ test("imports source Markdown images only for source-enabled modes", async ({
 		},
 	);
 	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
 		await resetSettingsCenterDefaults(page);
+		await setImageHostingEnabled(page, true);
 		for (const mode of ["source", "both"]) {
 			await setRemoteImageUploadMode(page, mode);
 			await page.goto("/wp-admin/post-new.php");
@@ -2144,7 +2211,10 @@ test("imports source Markdown images only for source-enabled modes", async ({
 			expect(importRequests).toHaveLength(previousRequestCount);
 		}
 	} finally {
-		await resetSettingsCenterDefaults(page);
+		await resetSettingsAndRestoreImageHosting(
+			page,
+			originalImageHostingEnabled,
+		);
 	}
 });
 
@@ -2153,6 +2223,7 @@ test("imports a single visual HTML image only for visual-enabled modes", async (
 }) => {
 	await login(page);
 	const importRequests = [];
+	let originalImageHostingEnabled;
 	await page.route(
 		"**/wp-json/easymde/v1/image-hosting/import*",
 		async (route) => {
@@ -2208,7 +2279,9 @@ test("imports a single visual HTML image only for visual-enabled modes", async (
 		return visualEditor;
 	};
 	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
 		await resetSettingsCenterDefaults(page);
+		await setImageHostingEnabled(page, true);
 		await setRemoteImageUploadMode(page, "visual");
 		const visualEditor = await openVisualEditor();
 		const postId = Number(await page.locator("#post_ID").inputValue());
@@ -2239,7 +2312,10 @@ test("imports a single visual HTML image only for visual-enabled modes", async (
 		await page.waitForTimeout(300);
 		expect(importRequests).toHaveLength(previousRequestCount);
 	} finally {
-		await resetSettingsCenterDefaults(page);
+		await resetSettingsAndRestoreImageHosting(
+			page,
+			originalImageHostingEnabled,
+		);
 	}
 });
 
@@ -2249,6 +2325,7 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 	await login(page);
 	let originalDomain = null;
 	let originalMode = null;
+	let originalImageHostingEnabled;
 	let settingsStrings = null;
 	const primaryOrigin = "https://images.example.test";
 	const sourceImageUrl = `${primaryOrigin}/already-source.png`;
@@ -2314,6 +2391,8 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 		return visualEditor;
 	};
 	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
+		await setImageHostingEnabled(page, true);
 		await openSettingsSection(page, "images");
 		settingsStrings = await page.evaluate(
 			() => window.EasyMDESettingsCenterBootstrap.strings,
@@ -2425,6 +2504,9 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 			page.getByRole("alert").filter({ hasText: pasteFailed }),
 		).toBeVisible();
 	} finally {
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
+		}
 		if (
 			originalDomain !== null &&
 			originalMode !== null &&
@@ -2480,6 +2562,7 @@ test("persists the pasted-image upload switch and restores its prior value", asy
 		".easymde-settings-center__save-bar > button",
 	);
 	const saveStatus = page.locator("[data-save-status]");
+	let originalImageHostingEnabled;
 	const pastedImageUpload = () =>
 		page.getByRole("switch", {
 			name: strings.autoUploadPastedImages,
@@ -2523,6 +2606,8 @@ test("persists the pasted-image upload switch and restores its prior value", asy
 	};
 
 	try {
+		originalImageHostingEnabled = await readImageHostingEnabled(page);
+		await setImageHostingEnabled(page, true);
 		await pastedImageUpload().click();
 		await expect(pastedImageUpload()).toHaveAttribute(
 			"aria-checked",
@@ -2592,6 +2677,9 @@ test("persists the pasted-image upload switch and restores its prior value", asy
 		).toBeVisible();
 		await expect(enabledSource).toHaveValue("Paste enabled guard");
 	} finally {
+		if (typeof originalImageHostingEnabled === "boolean") {
+			await setImageHostingEnabled(page, originalImageHostingEnabled);
+		}
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toBeVisible();
 		await page.locator('button[data-nav-id="images"]').click();

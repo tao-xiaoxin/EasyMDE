@@ -107,7 +107,7 @@ an asynchronous write or deferred-payload failure never falls back to legacy.
 Clipboard success requires every conversion, selected-owner upload, deferred
 payload, and browser write to succeed.
 
-Rasterize and upload candidates serially, with at most 8 candidates. Use the
+Rasterize and upload candidates serially, with at most 32 candidates. Use the
 current device pixel ratio clamped to `1..2`; each source edge is `1..4096`
 CSS pixels, each PNG is at most 16,777,216 output pixels, and the transaction
 is at most 33,554,432 output pixels. Each PNG must be non-empty verified

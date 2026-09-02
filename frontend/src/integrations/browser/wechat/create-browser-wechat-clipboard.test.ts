@@ -8,6 +8,7 @@ import type {
 } from '../../../contracts/ports/wechat-clipboard-port';
 import {
   CLIPBOARD_COMMIT_TIMEOUT_MS,
+  MAX_WECHAT_PNG_VISUALS,
   WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
   createBrowserWechatClipboard
 } from './create-browser-wechat-clipboard';
@@ -321,7 +322,123 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelectorAll('svg')).toHaveLength(0);
   });
 
-  it('rejects more than eight candidates before rasterization or upload', async () => {
+  it('converts and uploads 10 rendered Mermaid roots in the category fixture', async () => {
+    // Parser/category execution is covered by the authorized browser fixture;
+    // this unit test verifies the resulting rendered-root upload path.
+    const mermaidCategories = [
+      'flowchart',
+      'sequenceDiagram',
+      'pie',
+      'gantt',
+      'classDiagram',
+      'stateDiagram-v2',
+      'erDiagram',
+      'mindmap',
+      'timeline',
+      'xychart-beta'
+    ];
+    const writes: unknown[] = [];
+    const rasterize = vi.fn(async () => ({
+      file: new File(['png'], 'mermaid.png', { type: 'image/png' }),
+      height: 10,
+      pixelCount: 200,
+      width: 20
+    }));
+    let uploadIndex = 0;
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: '',
+      url: `https://example.test/mermaid-${++uploadIndex}.png`
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+    const preview = readyPreview();
+    preview.innerHTML = mermaidCategories.map((category) =>
+      `<div class="easymde-mermaid" data-category="${category}"><svg width="20" height="10"></svg></div>`
+    ).join('');
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(rasterize).toHaveBeenCalledTimes(mermaidCategories.length);
+    expect(upload).toHaveBeenCalledTimes(mermaidCategories.length);
+    const item = (writes[0] as { payload: Record<string, Blob> }[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelectorAll('img[src^="https://example.test/mermaid-"]')).toHaveLength(
+      mermaidCategories.length
+    );
+    expect(holder.querySelectorAll('.easymde-mermaid, svg')).toHaveLength(0);
+  });
+
+  it('accepts exactly 32 rendered Mermaid roots in one conversion transaction', async () => {
+    const renderedRootCount = 32;
+    expect(MAX_WECHAT_PNG_VISUALS).toBe(renderedRootCount);
+    const writes: unknown[] = [];
+    const rasterize = vi.fn(async () => ({
+      file: new File(['png'], 'mermaid.png', { type: 'image/png' }),
+      height: 10,
+      pixelCount: 200,
+      width: 20
+    }));
+    let uploadIndex = 0;
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: '',
+      url: `https://example.test/mermaid-${++uploadIndex}.png`
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+    const preview = readyPreview();
+    preview.innerHTML = Array.from({ length: renderedRootCount }, (_, index) =>
+      `<div class="easymde-mermaid"><svg width="20" height="10"><title>Root ${index + 1}</title></svg></div>`
+    ).join('');
+
+    await expect(clipboard.copy(
+      preview,
+      pngOptions({ rasterize } as never, { upload } as never)
+    )).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(rasterize).toHaveBeenCalledTimes(renderedRootCount);
+    expect(upload).toHaveBeenCalledTimes(renderedRootCount);
+    const item = (writes[0] as { payload: Record<string, Blob> }[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelectorAll('img[src^="https://example.test/mermaid-"]')).toHaveLength(
+      renderedRootCount
+    );
+    expect(holder.querySelectorAll('.easymde-mermaid, svg')).toHaveLength(0);
+  });
+
+  it('rejects more than the maximum candidates before rasterization or upload', async () => {
     const rasterize = vi.fn();
     const upload = vi.fn();
     const clipboard = createBrowserWechatClipboard({
@@ -335,7 +452,7 @@ describe('createBrowserWechatClipboard', () => {
       write: vi.fn(() => Promise.resolve())
     });
     const preview = readyPreview();
-    preview.innerHTML = Array.from({ length: 9 }, () =>
+    preview.innerHTML = Array.from({ length: MAX_WECHAT_PNG_VISUALS + 1 }, () =>
       '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>'
     ).join('');
 

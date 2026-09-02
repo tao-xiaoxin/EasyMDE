@@ -446,8 +446,9 @@ final class AdminAssets {
 				),
 			),
 			'wechatExport'       => array(
-				'enabled' => true,
-				'strings' => array(
+				'enabled'              => true,
+				'pngConversionEnabled' => $settings['images']['wechatPngExportEnabled'],
+				'strings'              => array(
 					'failed'      => $strings['copyWechatFailed'],
 					'success'     => $strings['copyWechatSuccess'],
 					'unsupported' => $strings['copyWechatUnsupported'],

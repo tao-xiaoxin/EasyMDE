@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/settings-center.tsx": {
       "handle": "easymde-admin-settings-center",
-      "file": "assets/settings-center-BIx7cAVw.js",
-      "asset": "assets/settings-center-BIx7cAVw.asset.php",
+      "file": "assets/settings-center-ng00I9Op.js",
+      "asset": "assets/settings-center-ng00I9Op.asset.php",
       "dependencies": [
         "wp-element"
       ],

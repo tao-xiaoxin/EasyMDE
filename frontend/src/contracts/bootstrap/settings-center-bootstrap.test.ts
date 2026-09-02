@@ -128,6 +128,35 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("accepts the explicit WeChat PNG export enablement flag", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.wechatPngExportEnabled = true;
+
+		expect(
+			parseSettingsCenterSettings(settings).images.wechatPngExportEnabled,
+		).toBe(true);
+	});
+
+	it("requires WeChat PNG export enablement to be a strict boolean", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		delete settings.images.wechatPngExportEnabled;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-wechatPngExportEnabled-invalid",
+		);
+
+		for (const value of ["true", 1, null]) {
+			settings.images.wechatPngExportEnabled = value;
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-images-wechatPngExportEnabled-invalid",
+			);
+		}
+	});
+
 	it("requires image-hosting enablement to be a strict boolean", () => {
 		const settings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,

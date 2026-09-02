@@ -585,6 +585,7 @@ function fixture(): EditorRootProps &
     },
     wechatExport: {
       enabled: true,
+      pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed',
         success: 'Copied',
@@ -2701,7 +2702,14 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.wechatClipboard.copy).toHaveBeenCalledOnce()
     );
-    expect(props.wechatClipboard.copy).toHaveBeenCalledWith(visualEditor);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledWith(
+      visualEditor,
+      expect.objectContaining({
+        pngConversionEnabled: false,
+        postId: props.imageUpload.postId,
+        maxBytes: props.imageUpload.maxBytes
+      })
+    );
     await waitFor(() =>
       expect(
         preparation.mock.calls.slice(preparationCallsBeforeEdit)
@@ -5670,13 +5678,56 @@ describe('EditorRoot', () => {
         .querySelectorAll('.easymde-wechat-glyph path')
     ).toHaveLength(3);
     expect(props.wechatClipboard.copy).toHaveBeenCalledWith(
-      view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      view.container.querySelector('[data-easymde-preview-html-sink="1"]'),
+      expect.objectContaining({
+        pngConversionEnabled: false,
+        postId: props.imageUpload.postId,
+        maxBytes: props.imageUpload.maxBytes
+      })
     );
     expect(view.getByText('Copied')).not.toBeNull();
     expect(props.executeExternalCommand).not.toHaveBeenCalledWith(
       'copywechat',
       expect.anything()
     );
+  });
+
+  it('passes PNG export through the protected image upload owner', async () => {
+    const props = fixture();
+    const rasterizationPort = {
+      rasterize: vi.fn()
+    };
+    const view = render(
+      <EditorRoot
+        {...props}
+        wechatExport={{ ...props.wechatExport, pngConversionEnabled: true }}
+        wechatVisualRasterizationPort={rasterizationPort}
+      />
+    );
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-easymde-preview-html-sink="1"]')).not.toBeNull()
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+    await waitFor(() => expect(props.wechatClipboard.copy).toHaveBeenCalledOnce());
+
+    const options = vi.mocked(props.wechatClipboard.copy).mock.calls[0]?.[1];
+    expect(options?.pngConversionEnabled).toBe(true);
+    expect(options?.postId).toBe(props.imageUpload.postId);
+    expect(options?.maxBytes).toBe(props.imageUpload.maxBytes);
+    expect(options?.visualRasterizationPort).toBe(rasterizationPort);
+    expect(options?.imageUploadPort).toBeDefined();
+
+    const rawUpload = vi.mocked(props.imageUploadPort.upload);
+    const uploadResult = await options?.imageUploadPort?.upload({
+      altText: '',
+      file: new File(['png'], 'wechat.png', { type: 'image/png' }),
+      postId: props.imageUpload.postId,
+      signal: new AbortController().signal
+    });
+    expect(uploadResult?.status).toBe('uploaded');
+    expect(rawUpload).toHaveBeenCalledOnce();
+    view.unmount();
   });
 
   it('re-prepares the WeChat payload after a browser resize', async () => {

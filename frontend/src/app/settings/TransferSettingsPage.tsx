@@ -117,7 +117,8 @@ async function readImportedSettings(
 		payload.schemaVersion !== 6 &&
 		payload.schemaVersion !== 7 &&
 		payload.schemaVersion !== 8 &&
-		payload.schemaVersion !== 9
+		payload.schemaVersion !== 9 &&
+		payload.schemaVersion !== 10
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
@@ -189,6 +190,25 @@ async function readImportedSettings(
 			}
 		}
 		importedSettings = legacy;
+	}
+	if (payload.schemaVersion < 10) {
+		if (
+			!importedSettings ||
+			typeof importedSettings !== "object" ||
+			Array.isArray(importedSettings)
+		) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		const migrated = structuredClone(importedSettings) as Record<
+			string,
+			unknown
+		>;
+		const images = migrated.images;
+		if (!images || typeof images !== "object" || Array.isArray(images)) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		(images as Record<string, unknown>).wechatPngExportEnabled = false;
+		importedSettings = migrated;
 	}
 	return redactImageSecrets(parseSettingsCenterSettings(importedSettings));
 }
@@ -419,7 +439,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 9, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 10, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

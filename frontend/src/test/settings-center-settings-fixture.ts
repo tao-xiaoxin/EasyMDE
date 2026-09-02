@@ -18,6 +18,7 @@ export const SETTINGS_CENTER_TEST_SETTINGS: SettingsCenterSettings = {
 	},
 	images: {
 		imageHostingEnabled: false,
+		wechatPngExportEnabled: false,
 		service: "cloudflare-r2",
 		endpoint:
 			"https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com",

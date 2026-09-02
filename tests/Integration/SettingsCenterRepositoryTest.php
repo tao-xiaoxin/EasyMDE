@@ -103,6 +103,54 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         }
     }
 
+    public function test_wechat_png_export_defaults_to_false_without_read_write_and_requires_a_strict_boolean_on_save()
+    {
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['wechatPngExportEnabled']);
+        $this->assertFalse(get_option(Options::EDITOR_SETTINGS, false));
+
+        $settings['images']['wechatPngExportEnabled'] = true;
+        $saved = $repository->update_settings($settings);
+
+        $this->assertIsArray($saved);
+        $this->assertTrue($saved['images']['wechatPngExportEnabled']);
+        $this->assertTrue(get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['wechatPngExportEnabled']);
+
+        foreach (array('true', 1, 1.0, null) as $invalid) {
+            $settings = $repository->get_settings();
+            $settings['images']['wechatPngExportEnabled'] = $invalid;
+
+            $result = $repository->update_settings($settings);
+
+            $this->assertWPError($result, gettype($invalid));
+            $this->assertSame('easymde_settings_invalid_payload', $result->get_error_code(), gettype($invalid));
+        }
+    }
+
+    public function test_legacy_wechat_png_export_configuration_is_read_as_disabled_without_writing_the_missing_field()
+    {
+        $stored = array(
+            'settings_center' => array(
+                'images' => array(
+                    'imageHostingEnabled' => true,
+                    'domain'               => 'https://images.example.test',
+                ),
+            ),
+        );
+        update_option(Options::EDITOR_SETTINGS, $stored, false);
+        $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+        $settings = $repository->get_settings();
+
+        $this->assertFalse($settings['images']['wechatPngExportEnabled']);
+        $after_read = get_option(Options::EDITOR_SETTINGS);
+        $this->assertSame($stored, $after_read);
+        $this->assertArrayNotHasKey('wechatPngExportEnabled', $after_read['settings_center']['images']);
+    }
+
     public function test_legacy_image_hosting_configuration_is_read_as_disabled_without_writing_the_missing_field()
     {
         $stored = array(

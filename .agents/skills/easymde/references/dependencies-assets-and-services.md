@@ -91,6 +91,19 @@ selected provider, uses synthetic data, returns no article URL on failure, and
 reveals no credentials except the explicit one-field administrator action with
 capability, both Nonces, exact target, `no-store`, and transient memory.
 
+The optional WeChat PNG conversion does not add a service or an upload
+fallback. When an administrator enables both PNG conversion and Image Hosting,
+an author's explicit ordinary or immersive Copy may send generated PNG bytes,
+verified `image/png`, the generated object key, and the minimum signed request
+metadata to the selected provider through the existing protected WordPress
+owner. It does not send Markdown, article HTML, or article text. Background
+preparation, a disabled conversion setting, legacy Clipboard, and synchronous
+modern setup failure send no generated PNG. When Image Hosting is disabled,
+the same explicit conversion uses WordPress Media Library instead and contacts
+no provider. A selected-owner failure never switches owner; completed objects
+may remain after a later transaction failure because there is no compensating
+delete.
+
 Re-review service identity, endpoint, data, terms, retention, auth, consent,
 failure, owning Feature, or distribution channel changes. Real-account checks
 are authorized operator actions, never CI inputs.

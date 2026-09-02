@@ -214,14 +214,20 @@ The session boundary has a separate focused command:
 npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
 ```
 
+The browser rasterizer has a separate focused command:
+
+```bash
+npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.test.ts
+```
+
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
-The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown.
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
 
-The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources.
+The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
-Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas.
+Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.
 Verify Preview readiness, task-list state, removal of editor-only or unsafe content, and absence of exporter-created article-wide vertical scrolling.
 Keep the article synthetic and do not publish or send it.
 

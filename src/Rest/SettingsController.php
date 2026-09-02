@@ -127,7 +127,7 @@ final class SettingsController {
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
-			'images'    => array( 'imageHostingEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
+			'images'    => array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
 			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values' ),
 		);
@@ -175,7 +175,7 @@ final class SettingsController {
 		);
 		$boolean_fields = array(
 			'general'  => array( 'showLineNumbers', 'autoSave', 'syncScroll', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton' ),
-			'images'   => array( 'imageHostingEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ),
+			'images'   => array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ),
 			'markdown' => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'pasteAsMarkdown' ),
 		);
 

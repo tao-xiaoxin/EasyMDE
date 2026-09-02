@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
+import type {
+  WechatClipboardPort,
+  WechatClipboardResult
+} from '../../contracts/ports/wechat-clipboard-port';
 import { createWechatExportSession } from './wechat-export-session';
 
 function deferred<T>() {
@@ -115,5 +118,61 @@ describe('createWechatExportSession', () => {
     expect(onStatus).not.toHaveBeenCalled();
     expect(onDiagnostic).toHaveBeenCalledWith('wechat-export-completed-after-teardown');
     await expect(session.copy()).resolves.toEqual({ code: 'wechat-export-inactive', status: 'failed' });
+  });
+
+  it('passes one cancellable PNG conversion transaction to the Clipboard owner', async () => {
+    const clipboard: WechatClipboardPort = {
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })
+    };
+    const rasterizationPort = { rasterize: vi.fn() };
+    const imageUploadPort = { upload: vi.fn() };
+    const preview = {} as HTMLElement;
+    const session = createWechatExportSession({
+      clipboard,
+      copyOptions: {
+        imageUploadPort,
+        maxBytes: 1024,
+        pngConversionEnabled: true,
+        postId: 17,
+        visualRasterizationPort: rasterizationPort
+      },
+      enabled: true,
+      getPreview: () => preview,
+      onDiagnostic: vi.fn(),
+      onStatus: vi.fn(),
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const options = vi.mocked(clipboard.copy).mock.calls[0]?.[1];
+    expect(options?.pngConversionEnabled).toBe(true);
+    expect(options?.postId).toBe(17);
+    expect(options?.maxBytes).toBe(1024);
+    expect(options?.visualRasterizationPort).toBe(rasterizationPort);
+    expect(options?.imageUploadPort).toBe(imageUploadPort);
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(options?.isCurrent?.()).toBe(true);
+  });
+
+  it('aborts a pending conversion transaction during teardown', async () => {
+    const operation = deferred<WechatClipboardResult>();
+    const clipboard: WechatClipboardPort = { copy: vi.fn(() => operation.promise) };
+    const session = createWechatExportSession({
+      clipboard,
+      copyOptions: { pngConversionEnabled: true },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic: vi.fn(),
+      onStatus: vi.fn(),
+      strings
+    });
+
+    const copy = session.copy();
+    const signal = vi.mocked(clipboard.copy).mock.calls[0]?.[1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    session.dispose();
+    expect(signal?.aborted).toBe(true);
+    operation.resolve({ method: 'clipboard', status: 'copied' });
+    await copy;
   });
 });

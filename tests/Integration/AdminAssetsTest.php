@@ -117,6 +117,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'toolbar', $bootstrap );
 		$this->assertSame( 'Undo', $bootstrap['toolbar']['strings']['undo'] );
 		$this->assertArrayHasKey( 'wechatExport', $bootstrap );
+		$this->assertFalse( $bootstrap['wechatExport']['pngConversionEnabled'] );
 		$this->assertArrayHasKey( 'wordpress', $bootstrap );
 		$this->assertArrayHasKey( 'publishCategories', $bootstrap['wordpress'] );
 		$this->assertFalse( $bootstrap['wordpress']['isNewPost'] );
@@ -126,6 +127,20 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_editor_root_bootstrap_projects_the_saved_wechat_png_conversion_setting() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings = $repository->get_settings();
+		$settings['images']['wechatPngExportEnabled'] = true;
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
+
+		$this->assertSame( array( 'enabled' => true, 'pngConversionEnabled' => true, 'strings' => $bootstrap['wechatExport']['strings'] ), $bootstrap['wechatExport'] );
 	}
 
 	public function test_new_post_bootstrap_exposes_a_media_picker_frame_without_a_post_id() {

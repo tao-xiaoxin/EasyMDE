@@ -216,6 +216,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"compressImagesDescription",
 	"autoUploadPastedImages",
 	"autoUploadPastedImagesDescription",
+	"convertDiagramsAndFormulasToPng",
+	"convertDiagramsAndFormulasToPngDescription",
 	"remoteImageUploadMode",
 	"remoteImageUploadModeDescription",
 	"remoteImageUploadBoth",
@@ -714,6 +716,7 @@ export function parseSettingsCenterSettings(
 	};
 	const imageBooleans = [
 		"imageHostingEnabled",
+		"wechatPngExportEnabled",
 		"backupEnabled",
 		"compressImages",
 		"autoUploadPastedImages",

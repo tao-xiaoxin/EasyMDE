@@ -1,4 +1,5 @@
 import type {
+  WechatClipboardCopyOptions,
   WechatClipboardPort,
   WechatClipboardResult
 } from '../../contracts/ports/wechat-clipboard-port';
@@ -24,6 +25,7 @@ type CreateWechatExportSessionOptions = Readonly<{
   onDiagnostic: (code: string) => void;
   onStatus: (status: WechatExportStatus) => void;
   strings: WechatExportStrings;
+  copyOptions?: Omit<WechatClipboardCopyOptions, 'isCurrent' | 'signal'>;
 }>;
 
 export function createWechatExportSession({
@@ -32,10 +34,13 @@ export function createWechatExportSession({
   getPreview,
   onDiagnostic,
   onStatus,
-  strings
+  strings,
+  copyOptions = {}
 }: CreateWechatExportSessionOptions): WechatExportSession {
   let active = true;
   let pending: ReturnType<WechatExportSession['copy']> | null = null;
+  let operationSequence = 0;
+  let operationController: AbortController | null = null;
 
   return {
     copy() {
@@ -55,12 +60,29 @@ export function createWechatExportSession({
         return pending;
       }
 
-      const operation = clipboard.copy(preview).catch((): WechatClipboardResult => ({
+      const sequence = ++operationSequence;
+      const controller = new AbortController();
+      operationController = controller;
+      const operationOptions: WechatClipboardCopyOptions = {
+        ...copyOptions,
+        isCurrent: () => active && operationSequence === sequence && getPreview() === preview,
+        signal: controller.signal
+      };
+      let operation: Promise<WechatClipboardResult>;
+      try {
+        operation = clipboard.copy(preview, operationOptions);
+      } catch {
+        operation = Promise.resolve({
+          code: 'wechat-copy-failed',
+          status: 'failed'
+        });
+      }
+      operation = operation.catch((): WechatClipboardResult => ({
         code: 'wechat-copy-failed',
         status: 'failed'
       }));
       pending = operation.then((result) => {
-        if (!active) {
+        if (!active || operationSequence !== sequence) {
           onDiagnostic('wechat-export-completed-after-teardown');
           return result;
         }
@@ -75,12 +97,16 @@ export function createWechatExportSession({
         onStatus({ message: strings.success, type: 'success' });
         return result;
       }).finally(() => {
+        if (operationController === controller) operationController = null;
         pending = null;
       });
       return pending;
     },
     dispose() {
       active = false;
+      operationSequence += 1;
+      operationController?.abort();
+      operationController = null;
     }
   };
 }

@@ -64,7 +64,11 @@ import type {
 import type { RevisionPort } from '../../contracts/ports/revision-port';
 import type { ScrollSyncPort } from '../../contracts/ports/scroll-sync-port';
 import type { ToolbarShortcutsPort } from '../../contracts/ports/toolbar-shortcuts-port';
-import type { WechatClipboardPort } from '../../contracts/ports/wechat-clipboard-port';
+import type {
+  WechatClipboardCopyOptions,
+  WechatClipboardPort
+} from '../../contracts/ports/wechat-clipboard-port';
+import type { WechatVisualRasterizationPort } from '../../contracts/ports/wechat-visual-rasterization-port';
 import { buildFontStack } from '../../domain/font-stack';
 import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
 import {
@@ -202,6 +206,7 @@ export type EditorRootProps = Readonly<{
   toolbar: ToolbarBootstrap;
   wechatClipboard: WechatClipboardPort;
   wechatExport: WechatExportBootstrap;
+  wechatVisualRasterizationPort?: WechatVisualRasterizationPort | null;
 }>;
 
 type ActiveToolbarProps = Readonly<{
@@ -691,27 +696,6 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [props.onFailure, props.sessionPort]
   );
-  const wechatSession = useMemo(
-    () =>
-      createWechatExportSession({
-        clipboard: props.wechatClipboard,
-        enabled: props.wechatExport.enabled,
-        getPreview: () =>
-          visualEditorRuntimeRef.current?.surface
-          ?? previewRuntimeRef.current?.surface
-          ?? null,
-        onDiagnostic: props.onFailure,
-        onStatus: setWechatStatus,
-        strings: props.wechatExport.strings
-      }),
-    [
-      props.onFailure,
-      props.wechatClipboard,
-      props.wechatExport,
-      setWechatStatus
-    ]
-  );
-
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
     session.registerSubmissionState(initialSubmissionStateRef.current);
     setDocumentSession(session);
@@ -1252,6 +1236,41 @@ export function EditorRoot(props: EditorRootProps) {
       }
     }),
     [props.imageUploadPort, protectedOperationError]
+  );
+  const wechatSession = useMemo(
+    () => {
+      const copyOptions: WechatClipboardCopyOptions = {
+        ...(props.wechatVisualRasterizationPort
+          ? { visualRasterizationPort: props.wechatVisualRasterizationPort }
+          : {}),
+        imageUploadPort,
+        maxBytes: props.imageUpload.maxBytes,
+        pngConversionEnabled: props.wechatExport.pngConversionEnabled,
+        postId: props.imageUpload.postId
+      };
+      return createWechatExportSession({
+        clipboard: props.wechatClipboard,
+        copyOptions,
+        enabled: props.wechatExport.enabled,
+        getPreview: () =>
+          visualEditorRuntimeRef.current?.surface
+          ?? previewRuntimeRef.current?.surface
+          ?? null,
+        onDiagnostic: props.onFailure,
+        onStatus: setWechatStatus,
+        strings: props.wechatExport.strings
+      });
+    },
+    [
+      imageUploadPort,
+      props.imageUpload.maxBytes,
+      props.imageUpload.postId,
+      props.onFailure,
+      props.wechatClipboard,
+      props.wechatExport,
+      props.wechatVisualRasterizationPort,
+      setWechatStatus
+    ]
   );
   const remoteImageImportPort = useMemo<RemoteImageImportPort>(
     () => ({

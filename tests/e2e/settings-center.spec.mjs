@@ -103,6 +103,43 @@ async function setImageHostingEnabled(page, enabled) {
 	await saveSettingsCenter(page);
 }
 
+async function readWechatPngExportEnabled(page) {
+	await openSettingsSection(page, "images");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const toggle = page.getByRole("switch", {
+		name: strings.convertDiagramsAndFormulasToPng,
+		exact: true,
+	});
+	const value = await toggle.getAttribute("aria-checked");
+	if (value !== "true" && value !== "false") {
+		throw new Error("settings-center-wechat-png-export-state-missing");
+	}
+
+	return value === "true";
+}
+
+async function setWechatPngExportEnabled(page, enabled) {
+	if (typeof enabled !== "boolean") {
+		throw new Error("settings-center-wechat-png-export-value-invalid");
+	}
+
+	await openSettingsSection(page, "images");
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
+	);
+	const toggle = page.getByRole("switch", {
+		name: strings.convertDiagramsAndFormulasToPng,
+		exact: true,
+	});
+	if ((await toggle.getAttribute("aria-checked")) === String(enabled)) return;
+	await toggle.focus();
+	await page.keyboard.press("Space");
+	await expect(toggle).toHaveAttribute("aria-checked", String(enabled));
+	await saveSettingsCenter(page);
+}
+
 async function selectSettingsOption(page, label, optionLabel) {
 	const trigger = page.getByRole("combobox", { name: label, exact: true });
 	if ((await trigger.textContent())?.trim() === optionLabel) return;
@@ -2730,6 +2767,23 @@ test("persists the pasted-image upload switch and restores its prior value", asy
 			"aria-checked",
 			initialValue,
 		);
+	}
+});
+
+test("persists the WeChat PNG conversion switch and restores its prior value", async ({
+	page,
+}) => {
+	await login(page);
+	const initialValue = await readWechatPngExportEnabled(page);
+	const changedValue = !initialValue;
+
+	try {
+		await setWechatPngExportEnabled(page, changedValue);
+		await page.reload();
+		await expect(page.locator(".easymde-settings-center")).toBeVisible();
+		expect(await readWechatPngExportEnabled(page)).toBe(changedValue);
+	} finally {
+		await setWechatPngExportEnabled(page, initialValue);
 	}
 });
 

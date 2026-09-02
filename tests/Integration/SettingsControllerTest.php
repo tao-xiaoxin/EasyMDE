@@ -59,6 +59,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		}
 		$this->assertTrue( $data['settings']['general']['applyEditorThemeToFrontend'] );
 		$this->assertTrue( $data['settings']['general']['showPublishedCodeCopyButton'] );
+		$this->assertFalse( $data['settings']['images']['wechatPngExportEnabled'] );
 		$this->assertSame(
 			array(
 				'wordWrap',
@@ -71,6 +72,26 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			array_keys( $data['settings']['markdown'] )
 		);
     }
+
+	public function test_post_persists_wechat_png_export_enablement_and_rejects_non_boolean_values() {
+		$settings = $this->current_settings();
+		$settings['images']['wechatPngExportEnabled'] = true;
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertTrue( $response->get_data()['settings']['images']['wechatPngExportEnabled'] );
+		$this->assertTrue( get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['wechatPngExportEnabled'] );
+
+		foreach ( array( 'true', 1, 1.0, null ) as $invalid ) {
+			$settings = $this->current_settings();
+			$settings['images']['wechatPngExportEnabled'] = $invalid;
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), gettype( $invalid ) );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), gettype( $invalid ) );
+		}
+	}
 
 	public function test_post_rejects_removed_markdown_fields_as_unknown_contract_keys() {
 		foreach ( array( 'editorTheme', 'htmlRendering', 'editorFontSize', 'editorFont', 'codeTheme', 'toc', 'livePreview', 'fixedToolbar', 'taskLists', 'emoji', 'math', 'tableExtension', 'footnotes', 'definitionLists', 'imageSizeSyntax', 'lineEnding', 'unorderedMarker', 'orderedStart', 'blockquoteStyle' ) as $removed_key ) {

@@ -116,6 +116,8 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
         $this->assertSame('EasyMDE', $bootstrap['strings']['brandName']);
         $this->assertSame('General Settings', $bootstrap['strings']['general']);
+			$this->assertSame('Convert and upload images for WeChat copy', $bootstrap['strings']['convertDiagramsAndFormulasToPng']);
+			$this->assertSame('During Copy to WeChat, convert supported Mermaid diagrams and formulas to PNG. Tables and existing images stay unchanged. Generated PNG images use Image Hosting when enabled, or the WordPress Media Library when Image Hosting is disabled.', $bootstrap['strings']['convertDiagramsAndFormulasToPngDescription']);
 		$this->assertSame('', $bootstrap['drafts']['images']['domain']);
 		$this->assertSame(wp_max_upload_size(), $bootstrap['uploadLimits']['systemMaxBytes']);
 		$this->assertFalse( $bootstrap['drafts']['images']['primaryCredentialsConfigured'] );
@@ -158,6 +160,7 @@ final class SettingsPageTest extends WP_UnitTestCase
 			'returnToShortcutSettings',
 			'maximumImageSize', 'maximumImageSizeDescription', 'maximumImageSizeSystemLimitExceeded', 'imageTitleDisplay',
 			'autoUploadPastedImages', 'autoUploadPastedImagesDescription',
+			'convertDiagramsAndFormulasToPng', 'convertDiagramsAndFormulasToPngDescription',
 			'enableImageHosting', 'enableImageHostingDescription',
 			'imageFallbackDomain', 'imageFallbackDomainDescription', 'cosBucketHint',
 			'uploadRetryCount', 'uploadRetryCountDescription',

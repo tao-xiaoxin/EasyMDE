@@ -17,6 +17,7 @@ import {
   createBrowserWechatClipboard,
   type ClipboardItemConstructor
 } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import { createBrowserWechatVisualRasterizer } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
 import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
@@ -417,7 +418,14 @@ export function mountAdminEditor(
             windowRef.navigator.clipboard.write(items as ClipboardItems)
         : null
     }),
-    wechatExport: bootstrap.wechatExport
+    wechatExport: bootstrap.wechatExport,
+    wechatVisualRasterizationPort: createBrowserWechatVisualRasterizer({
+      blob: Blob,
+      document: documentRef,
+      file: File,
+      image: Image,
+      xmlSerializer: XMLSerializer
+    })
   };
 
   root.render(

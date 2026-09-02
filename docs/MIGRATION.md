@@ -114,3 +114,12 @@ live under `assets/vendor/highlight/styles/`. The EasyMDE-owned
 Existing active theme IDs are unchanged, so stored article theme, code theme,
 and Custom CSS snapshot selections continue to resolve. Historical Mac-frame
 values remain stored but do not affect rendering.
+
+## Settings Center PNG Export
+
+`images.wechatPngExportEnabled` is a strict boolean and defaults to `false`.
+Reading settings that predate the field returns `false` in memory without
+writing or normalizing the stored option. Settings transfer schemas 1 through
+9 import the field as `false`; schema 10 requires an explicit boolean. The next
+authorized complete Settings Save establishes the field through the normal
+Settings Center persistence path.

@@ -4928,6 +4928,11 @@ test.describe('EasyMDE editor workflows', () => {
       });
     });
     await openEasyMdeNewPost(page);
+    expect(
+      await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.wechatExport.pngConversionEnabled
+      )
+    ).toBe(false);
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');

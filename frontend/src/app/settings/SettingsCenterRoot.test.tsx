@@ -1593,17 +1593,24 @@ describe("SettingsCenterRoot Transfer section", () => {
 	it("imports the schema 9 five-second auto-save interval", async () => {
 		const user = userEvent.setup();
 		const currentSettings = bootstrap().settings;
-		const settings = {
-			...currentSettings,
-			general: {
-				...currentSettings.general,
-				autoSaveInterval: "5",
-			},
+		const settings = structuredClone(currentSettings) as unknown as {
+			images: Record<string, unknown>;
+			general: SettingsCenterSettings["general"];
+			revision: number;
+		};
+		delete settings.images.wechatPngExportEnabled;
+		settings.general = {
+			...currentSettings.general,
+			autoSaveInterval: "5",
 		};
 		const fetch = vi.spyOn(window, "fetch").mockResolvedValue({
 			ok: true,
 			json: async () => ({
-				settings: { ...settings, revision: settings.revision + 1 },
+				settings: {
+					...currentSettings,
+					general: settings.general,
+					revision: settings.revision + 1,
+				},
 				credentialStatus: {
 					primaryConfigured: false,
 					backupConfigured: false,
@@ -1639,6 +1646,48 @@ describe("SettingsCenterRoot Transfer section", () => {
 			settings: SettingsCenterSettings;
 		};
 		expect(body.settings.general.autoSaveInterval).toBe("5");
+		expect(body.settings.images.wechatPngExportEnabled).toBe(false);
+		fetch.mockRestore();
+	});
+
+	it("rejects schema 10 imports with a missing or non-boolean PNG conversion flag", async () => {
+		const user = userEvent.setup();
+		const fetch = vi.spyOn(window, "fetch");
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
+		const transferSection = container.querySelector(
+			'[data-settings-section="transfer"]',
+		);
+		if (!(transferSection instanceof HTMLElement))
+			throw new Error("settings-center-transfer-section-missing");
+		const transfer = within(transferSection);
+
+		for (const value of [undefined, "false", 0, null]) {
+			const settings = structuredClone(bootstrap().settings) as unknown as {
+				images: Record<string, unknown>;
+			};
+			if (value === undefined) {
+				delete settings.images.wechatPngExportEnabled;
+			} else {
+				settings.images.wechatPngExportEnabled = value;
+			}
+			await user.upload(
+				transfer.getByLabelText<HTMLInputElement>(
+					"transferChooseConfigurationFile",
+				),
+				new File(
+					[JSON.stringify({ schemaVersion: 10, settings })],
+					"settings.json",
+					{ type: "application/json" },
+				),
+			);
+			await user.click(
+				transfer.getByRole("button", { name: "transferConfirmImport" }),
+			);
+			expect(screen.getByText("transferImportInvalid")).not.toBeNull();
+		}
+		expect(fetch).not.toHaveBeenCalled();
 		fetch.mockRestore();
 	});
 
@@ -1686,7 +1735,8 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(9);
+			expect(exported.schemaVersion).toBe(10);
+			expect(exported.settings.images.wechatPngExportEnabled).toBe(false);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
 			expect(exported.settings.images.secretKey).toBe("");

@@ -27,6 +27,7 @@ export type ImageHostProvider =
 
 export type ImageSettings = Readonly<{
 	imageHostingEnabled: boolean;
+	wechatPngExportEnabled: boolean;
 	service: ImageHostProvider;
 	endpoint: string;
 	bucket: string;

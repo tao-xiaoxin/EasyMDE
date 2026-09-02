@@ -957,6 +957,7 @@ export function ImagesSettingsPage({
 	const [localSettings, setLocalSettings] = useState<ImageSettingsDraft>(
 		() => ({
 			imageHostingEnabled: false,
+			wechatPngExportEnabled: false,
 			service: "cloudflare-r2",
 			endpoint: "",
 			bucket: "easymde-assets",
@@ -1476,6 +1477,21 @@ export function ImagesSettingsPage({
 									setValue(
 										"autoUploadPastedImages",
 										!settings.autoUploadPastedImages,
+									)
+								}
+							/>
+						</ImageBehaviorRow>
+						<ImageBehaviorRow
+							label={strings.convertDiagramsAndFormulasToPng}
+							description={strings.convertDiagramsAndFormulasToPngDescription}
+						>
+							<SettingsToggle
+								label={strings.convertDiagramsAndFormulasToPng}
+								checked={settings.wechatPngExportEnabled}
+								onChange={() =>
+									setValue(
+										"wechatPngExportEnabled",
+										!settings.wechatPngExportEnabled,
 									)
 								}
 							/>

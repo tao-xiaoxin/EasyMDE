@@ -2147,8 +2147,8 @@ msgid ""
 msgstr "上传粘贴到编辑器的图片文件，并插入其 Markdown 链接。"
 
 #: src/Admin/SettingsCenterStrings.php:224
-msgid "Convert diagrams and formulas to PNG"
-msgstr "将流程图和公式转换为 PNG"
+msgid "Convert and upload images for WeChat copy"
+msgstr "微信复制转换图片上传"
 
 #: src/Admin/SettingsCenterStrings.php:225
 msgid ""

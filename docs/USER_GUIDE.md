@@ -217,7 +217,7 @@ The table of contents is generated from rendered headings and is inserted where 
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
 
-**Convert diagrams and formulas to PNG** is disabled by default under
+**Convert and upload images for WeChat copy** is disabled by default under
 **EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy
 converts the outermost rendered Mermaid diagrams and inline or block formulas
 to PNG. Normal tables remain editable HTML; existing images, ordinary SVG,

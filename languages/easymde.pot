@@ -2138,7 +2138,7 @@ msgid ""
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:224
-msgid "Convert diagrams and formulas to PNG"
+msgid "Convert and upload images for WeChat copy"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:225

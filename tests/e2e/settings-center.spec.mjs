@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { performance } from "node:perf_hooks";
 import { expect, test } from "@playwright/test";
 
 const adminUser = requiredEnvironment("WORDPRESS_ADMIN_USER");
@@ -958,7 +959,7 @@ async function captureSettingsCenterNavigationEvidence(
 
 test("does not paint the WordPress shell across desktop/mobile, cold/warm, normal/hard, and baseline/throttled compositor combinations", async ({
 	page,
-}) => {
+}, testInfo) => {
 	test.setTimeout(SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS);
 	await login(page);
 	const decoder = await page.context().newPage();
@@ -1001,6 +1002,7 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 						iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
 						iteration += 1
 					) {
+						const startedAt = performance.now();
 						const result = await captureSettingsCenterNavigationEvidence(
 							page,
 							cdp,
@@ -1008,6 +1010,10 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 							expectedSize,
 							scenario.refreshMode,
 						);
+						const durationMs = Math.round(performance.now() - startedAt);
+						const stableState = result.retainedPixels
+							? "settings-retained"
+							: "settings-painted";
 						evidence.push({
 							caseName: scenario.name,
 							viewportMode: scenario.viewport.name,
@@ -1015,6 +1021,8 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 							refreshMode: scenario.refreshMode.name,
 							profileMode: scenario.profile.name,
 							iteration,
+							durationMs,
+							stableState,
 							...result,
 						});
 					}
@@ -1050,6 +1058,11 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 				refreshMode: scenario.refreshMode.name,
 				profileMode: scenario.profile.name,
 			});
+			expect(Number.isFinite(entry.durationMs)).toBe(true);
+			expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+			expect(entry.stableState).toBe(
+				entry.retainedPixels ? "settings-retained" : "settings-painted",
+			);
 			expect(entry.beforeVisible).toBe(true);
 			expect(entry.afterVisible).toBe(true);
 			expect(entry.analysis).toMatchObject({
@@ -1085,6 +1098,17 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	await expect(
 		page.locator("[data-settings-center-server-fallback]"),
 	).toHaveCount(0);
+	await testInfo.attach("settings-center-first-paint-evidence.json", {
+		body: JSON.stringify(
+			evidence.map(({ caseName, iteration, stableState, durationMs }) => ({
+				caseName,
+				iteration,
+				stableState,
+				durationMs,
+			})),
+		),
+		contentType: "application/json",
+	});
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({

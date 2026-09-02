@@ -494,14 +494,209 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 
 const SETTINGS_CENTER_FIRST_PAINT_PATH =
 	"/wp-admin/admin.php?page=easymde&route=/general_setting";
-const SETTINGS_CENTER_FIRST_PAINT_RUNS = 5;
+function readPositiveIntegerEnvironment(name, fallback) {
+	const value = process.env[name];
+	if (value === undefined) return fallback;
+	if (!/^[1-9]\d*$/u.test(value)) {
+		throw new Error(`${name} must be a strict positive integer.`);
+	}
+
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < 1) {
+		throw new Error(`${name} must be a strict positive integer.`);
+	}
+
+	return parsed;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_RUNS = readPositiveIntegerEnvironment(
+	"EASYMDE_FIRST_PAINT_RUNS",
+	1,
+);
 const SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE = 20;
-const SETTINGS_CENTER_FIRST_PAINT_CASES = [
-	{ name: "desktop-cold", width: 1440, height: 900, cacheDisabled: true },
-	{ name: "desktop-warm", width: 1440, height: 900, cacheDisabled: false },
-	{ name: "mobile-cold", width: 390, height: 844, cacheDisabled: true },
-	{ name: "mobile-warm", width: 390, height: 844, cacheDisabled: false },
+const SETTINGS_CENTER_FIRST_PAINT_VIEWPORTS = [
+	{ name: "desktop", width: 1440, height: 900 },
+	{ name: "mobile", width: 390, height: 844 },
 ];
+const SETTINGS_CENTER_FIRST_PAINT_CACHE_MODES = [
+	{ name: "cold", cacheDisabled: true, clearBeforeSetup: true },
+	{ name: "warm", cacheDisabled: false, clearBeforeSetup: false },
+];
+const SETTINGS_CENTER_FIRST_PAINT_REFRESH_MODES = [
+	{ name: "normal", hardRefresh: false },
+	{ name: "hard", hardRefresh: true },
+];
+const SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE = {
+	name: "baseline",
+	cpuThrottlingRate: 1,
+	networkConditions: {
+		offline: false,
+		latency: 0,
+		downloadThroughput: -1,
+		uploadThroughput: -1,
+		connectionType: "none",
+	},
+};
+const SETTINGS_CENTER_FIRST_PAINT_PROFILES = [
+	SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE,
+	{
+		name: "throttled",
+		cpuThrottlingRate: 4,
+		networkConditions: {
+			offline: false,
+			latency: 150,
+			downloadThroughput: 200 * 1024,
+			uploadThroughput: 750 * 1024 / 8,
+			connectionType: "cellular3g",
+		},
+	},
+];
+
+function buildSettingsCenterFirstPaintCases() {
+	const cases = [];
+	for (const viewport of SETTINGS_CENTER_FIRST_PAINT_VIEWPORTS) {
+		for (const cacheMode of SETTINGS_CENTER_FIRST_PAINT_CACHE_MODES) {
+			for (const refreshMode of SETTINGS_CENTER_FIRST_PAINT_REFRESH_MODES) {
+				for (const profile of SETTINGS_CENTER_FIRST_PAINT_PROFILES) {
+					cases.push({
+						name: [
+							viewport.name,
+							cacheMode.name,
+							refreshMode.name,
+							profile.name,
+						].join("-"),
+						viewport,
+						cacheMode,
+						refreshMode,
+						profile,
+					});
+				}
+			}
+		}
+	}
+	return cases;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_CASES = buildSettingsCenterFirstPaintCases();
+const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_PER_CASE_MS = 60_000;
+const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS = Math.max(
+	600_000,
+	SETTINGS_CENTER_FIRST_PAINT_CASES.length *
+		SETTINGS_CENTER_FIRST_PAINT_RUNS *
+		SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_PER_CASE_MS,
+);
+
+async function applySettingsCenterBrowserConditions(cdp, profile, cacheMode) {
+	await cdp.send("Emulation.setCPUThrottlingRate", {
+		rate: profile.cpuThrottlingRate,
+	});
+	await cdp.send("Network.emulateNetworkConditions", profile.networkConditions);
+	await cdp.send("Network.setCacheDisabled", {
+		cacheDisabled: cacheMode.cacheDisabled,
+	});
+}
+
+async function restoreSettingsCenterBrowserConditions(cdp) {
+	const errors = [];
+	for (const [method, params] of [
+		[
+			"Emulation.setCPUThrottlingRate",
+			{ rate: SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE.cpuThrottlingRate },
+		],
+		[
+			"Network.emulateNetworkConditions",
+			SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE.networkConditions,
+		],
+		["Network.setCacheDisabled", { cacheDisabled: false }],
+	]) {
+		try {
+			await cdp.send(method, params);
+		} catch (error) {
+			errors.push(error);
+		}
+	}
+	if (errors.length === 1) throw errors[0];
+	if (errors.length > 1) {
+		throw new AggregateError(
+			errors,
+			"Settings Center browser condition restoration failed.",
+		);
+	}
+}
+
+async function withSettingsCenterBrowserConditions(
+	cdp,
+	profile,
+	cacheMode,
+	callback,
+) {
+	let operationError;
+	let restoreError;
+	let result;
+	try {
+		try {
+			await applySettingsCenterBrowserConditions(cdp, profile, cacheMode);
+			result = await callback();
+		} catch (error) {
+			operationError = error;
+		}
+	} finally {
+		try {
+			await restoreSettingsCenterBrowserConditions(cdp);
+		} catch (error) {
+			restoreError = error;
+		}
+	}
+	if (operationError && restoreError) {
+		throw new AggregateError(
+			[operationError, restoreError],
+			"Settings Center browser conditions and restoration failed.",
+		);
+	}
+	if (operationError) throw operationError;
+	if (restoreError) throw restoreError;
+	return result;
+}
+
+async function prepareSettingsCenterFirstPaintCase(page, cdp, scenario) {
+	await page.setViewportSize({
+		width: scenario.viewport.width,
+		height: scenario.viewport.height,
+	});
+	if (scenario.cacheMode.clearBeforeSetup) {
+		await cdp.send("Network.clearBrowserCache");
+	}
+	await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+	await waitForSettingsCenterReady(page);
+}
+
+async function reloadSettingsCenterForFirstPaint(page, cdp, refreshMode) {
+	if (refreshMode.hardRefresh) {
+		const mainFrameNavigation = page.waitForEvent("framenavigated", {
+			predicate: (frame) => frame === page.mainFrame(),
+		});
+		await Promise.all([
+			mainFrameNavigation,
+			cdp.send("Page.reload", { ignoreCache: true }),
+		]);
+		return;
+	}
+	await page.reload({ waitUntil: "domcontentloaded" });
+}
+
+async function captureSettingsCenterScreenshot(cdp, decoder, expectedSize) {
+	return decodeSettingsCenterPng(
+		decoder,
+		(
+			await cdp.send("Page.captureScreenshot", {
+				format: "png",
+				fromSurface: true,
+				captureBeyondViewport: false,
+			})
+		).data,
+		expectedSize,
+	);
+}
 
 async function waitForSettingsCenterReady(page) {
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
@@ -640,6 +835,7 @@ async function captureSettingsCenterNavigationEvidence(
 	cdp,
 	decoder,
 	expectedSize,
+	refreshMode,
 ) {
 	const settingsApplication = page.locator(".easymde-settings-center");
 	const beforeVisible = await settingsApplication.isVisible();
@@ -687,7 +883,7 @@ async function captureSettingsCenterNavigationEvidence(
 			everyNthFrame: 1,
 		});
 		screencastStarted = true;
-		await page.reload({ waitUntil: "domcontentloaded" });
+		await reloadSettingsCenterForFirstPaint(page, cdp, refreshMode);
 		await waitForSettingsCenterReady(page);
 		if (!committed) throw new Error("settings-main-frame-commit-missing");
 		await assertSettingsCenterShellAbsent(page);
@@ -760,9 +956,10 @@ async function captureSettingsCenterNavigationEvidence(
 	};
 }
 
-test("does not paint the WordPress shell across compositor first-paint quadrants", async ({
+test("does not paint the WordPress shell across desktop/mobile, cold/warm, normal/hard, and baseline/throttled compositor combinations", async ({
 	page,
 }) => {
+	test.setTimeout(SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS);
 	await login(page);
 	const decoder = await page.context().newPage();
 	const cdp = await page.context().newCDPSession(page);
@@ -771,84 +968,93 @@ test("does not paint the WordPress shell across compositor first-paint quadrants
 	const evidence = [];
 	try {
 		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
-			await page.setViewportSize({
-				width: scenario.width,
-				height: scenario.height,
-			});
-			await cdp.send("Network.setCacheDisabled", {
-				cacheDisabled: scenario.cacheDisabled,
-			});
-			await cdp.send("Network.clearBrowserCache");
-			await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
-			await waitForSettingsCenterReady(page);
-			const settingsReference = await decodeSettingsCenterPng(
-				decoder,
-				(
-					await cdp.send("Page.captureScreenshot", {
-						format: "png",
-						fromSurface: true,
-						captureBeyondViewport: false,
-					})
-				).data,
-				{ width: scenario.width, height: scenario.height },
-			);
-			await page.goto("/wp-admin/profile.php");
-			await expect(page.locator("#wpwrap")).toBeVisible();
-			const nativeWordPressFrame = await decodeSettingsCenterPng(
-				decoder,
-				(
-					await cdp.send("Page.captureScreenshot", {
-						format: "png",
-						fromSurface: true,
-						captureBeyondViewport: false,
-					})
-				).data,
-				{ width: scenario.width, height: scenario.height },
-			);
-			expect(
-				matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
-			).toBe(false);
-			await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
-			await waitForSettingsCenterReady(page);
+			await withSettingsCenterBrowserConditions(
+				cdp,
+				scenario.profile,
+				scenario.cacheMode,
+				async () => {
+					await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
+					const expectedSize = {
+						width: scenario.viewport.width,
+						height: scenario.viewport.height,
+					};
+					const settingsReference = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					await page.goto("/wp-admin/profile.php");
+					await expect(page.locator("#wpwrap")).toBeVisible();
+					const nativeWordPressFrame = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					expect(
+						matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+					).toBe(false);
+					await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+					await waitForSettingsCenterReady(page);
 
-			for (
-				let iteration = 0;
-				iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
-				iteration += 1
-			) {
-				const result = await captureSettingsCenterNavigationEvidence(
-					page,
-					cdp,
-					decoder,
-					{ width: scenario.width, height: scenario.height },
-				);
-				evidence.push({
-					scenario: scenario.name,
-					iteration,
-					...result,
-				});
-			}
+					for (
+						let iteration = 0;
+						iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
+						iteration += 1
+					) {
+						const result = await captureSettingsCenterNavigationEvidence(
+							page,
+							cdp,
+							decoder,
+							expectedSize,
+							scenario.refreshMode,
+						);
+						evidence.push({
+							caseName: scenario.name,
+							viewportMode: scenario.viewport.name,
+							cacheMode: scenario.cacheMode.name,
+							refreshMode: scenario.refreshMode.name,
+							profileMode: scenario.profile.name,
+							iteration,
+							...result,
+						});
+					}
+				},
+			);
 		}
 	} finally {
-		await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
-		await cdp.detach();
-		await decoder.close();
+		try {
+			await restoreSettingsCenterBrowserConditions(cdp);
+		} finally {
+			try {
+				await cdp.detach();
+			} finally {
+				await decoder.close();
+			}
+		}
 	}
 
 	expect(evidence).toHaveLength(
 		SETTINGS_CENTER_FIRST_PAINT_CASES.length * SETTINGS_CENTER_FIRST_PAINT_RUNS,
 	);
+	expect(SETTINGS_CENTER_FIRST_PAINT_CASES).toHaveLength(16);
 	for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
 		const scenarioEvidence = evidence.filter(
-			(entry) => entry.scenario === scenario.name,
+			(entry) => entry.caseName === scenario.name,
 		);
 		expect(scenarioEvidence).toHaveLength(SETTINGS_CENTER_FIRST_PAINT_RUNS);
 		for (const entry of scenarioEvidence) {
+			expect(entry).toMatchObject({
+				caseName: scenario.name,
+				viewportMode: scenario.viewport.name,
+				cacheMode: scenario.cacheMode.name,
+				refreshMode: scenario.refreshMode.name,
+				profileMode: scenario.profile.name,
+			});
 			expect(entry.beforeVisible).toBe(true);
 			expect(entry.afterVisible).toBe(true);
 			expect(entry.analysis).toMatchObject({
-				width: scenario.width,
-				height: scenario.height,
+				width: scenario.viewport.width,
+				height: scenario.viewport.height,
 			});
 			expect(entry.analysis.darkTopRatio).toBeLessThan(0.35);
 			expect(entry.analysis.whiteRatio).toBeLessThan(0.995);

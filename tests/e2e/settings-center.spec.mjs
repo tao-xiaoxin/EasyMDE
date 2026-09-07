@@ -578,7 +578,38 @@ function buildSettingsCenterFirstPaintCases() {
 	return cases;
 }
 
-const SETTINGS_CENTER_FIRST_PAINT_CASES = buildSettingsCenterFirstPaintCases();
+const SETTINGS_CENTER_FIRST_PAINT_ALL_CASES =
+	buildSettingsCenterFirstPaintCases();
+const SETTINGS_CENTER_FIRST_PAINT_CASE_NAME =
+	process.env.EASYMDE_FIRST_PAINT_CASE;
+
+function selectSettingsCenterFirstPaintCases(allCases, requestedCaseName) {
+	if (requestedCaseName === undefined) return allCases;
+
+	const selectedCases = allCases.filter(
+		(scenario) => scenario.name === requestedCaseName,
+	);
+	if (selectedCases.length !== 1) {
+		throw new Error(
+			[
+				"EASYMDE_FIRST_PAINT_CASE must exactly match one generated caseName.",
+				`Received ${JSON.stringify(requestedCaseName)}.`,
+				`Expected one of: ${allCases.map((scenario) => scenario.name).join(", ")}.`,
+			].join(" "),
+		);
+	}
+
+	return selectedCases;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_CASES = selectSettingsCenterFirstPaintCases(
+	SETTINGS_CENTER_FIRST_PAINT_ALL_CASES,
+	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME,
+);
+const SETTINGS_CENTER_FIRST_PAINT_EXPECTED_CASE_COUNT =
+	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME === undefined
+		? SETTINGS_CENTER_FIRST_PAINT_ALL_CASES.length
+		: 1;
 const SETTINGS_CENTER_FIRST_PAINT_PUBLIC_EVIDENCE_KEYS = Object.freeze([
 	"caseName",
 	"iteration",
@@ -1063,7 +1094,10 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	expect(evidence).toHaveLength(
 		SETTINGS_CENTER_FIRST_PAINT_CASES.length * SETTINGS_CENTER_FIRST_PAINT_RUNS,
 	);
-	expect(SETTINGS_CENTER_FIRST_PAINT_CASES).toHaveLength(16);
+	expect(SETTINGS_CENTER_FIRST_PAINT_ALL_CASES).toHaveLength(16);
+	expect(SETTINGS_CENTER_FIRST_PAINT_CASES).toHaveLength(
+		SETTINGS_CENTER_FIRST_PAINT_EXPECTED_CASE_COUNT,
+	);
 	for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
 		const scenarioEvidence = evidence.filter(
 			(entry) => entry.caseName === scenario.name,

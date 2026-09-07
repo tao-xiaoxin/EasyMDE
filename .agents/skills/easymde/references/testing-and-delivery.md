@@ -71,11 +71,63 @@ prove the same classifier rejects a real native wp-admin page capture. Accept a
 no-frame reload only when the visible Settings pixels are retained exactly. Then
 separately assert the dedicated document has
 no ordinary wp-admin shell IDs. Block the Settings script, stylesheet, and
-scripts through CSP to verify the accessible dedicated failure. The CI default
-is one real run per combination; use the strict positive
-`EASYMDE_FIRST_PAINT_RUNS` override for repeated acceptance runs. DOM mutation
-plus `requestAnimationFrame`, a final screenshot, a body pseudo-element, broad
-Core selector hiding, and fixed sleeps are not first-paint proof.
+scripts through CSP to verify the accessible dedicated failure. The generated
+case names are:
+
+```text
+desktop-cold-normal-baseline
+desktop-cold-normal-throttled
+desktop-cold-hard-baseline
+desktop-cold-hard-throttled
+desktop-warm-normal-baseline
+desktop-warm-normal-throttled
+desktop-warm-hard-baseline
+desktop-warm-hard-throttled
+mobile-cold-normal-baseline
+mobile-cold-normal-throttled
+mobile-cold-hard-baseline
+mobile-cold-hard-throttled
+mobile-warm-normal-baseline
+mobile-warm-normal-throttled
+mobile-warm-hard-baseline
+mobile-warm-hard-throttled
+```
+
+With no `EASYMDE_FIRST_PAINT_CASE`, the test runs all 16 cases. When it is set,
+the value must exactly match one generated case name; an empty or unknown value
+fails before the browser starts and selects exactly one case. The strict
+positive `EASYMDE_FIRST_PAINT_RUNS` override defaults to `1`. The stdout line
+and JSON attachment intentionally expose only `caseName`, `iteration`,
+`stableState`, and `durationMs` so sharded evidence can be audited without
+including browser or page data. DOM mutation plus `requestAnimationFrame`, a
+final screenshot, a body pseudo-element, broad Core selector hiding, and fixed
+sleeps are not first-paint proof.
+
+Run the default 16-case smoke and one filtered two-run smoke before a long
+acceptance run:
+
+```bash
+# EASYMDE_FIRST_PAINT_RUNS defaults to 1 and runs all 16 cases.
+EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
+EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
+EASYMDE_E2E_WP_CLI=<wp_cli_path> \
+npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
+
+EASYMDE_FIRST_PAINT_RUNS=2 \
+EASYMDE_FIRST_PAINT_CASE=desktop-cold-normal-baseline \
+EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
+EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
+EASYMDE_E2E_WP_CLI=<wp_cli_path> \
+npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
+```
+
+For Issue #222 acceptance, run `EASYMDE_FIRST_PAINT_RUNS=50` once per case,
+save each stdout/attachment log separately, and aggregate exactly 16 files,
+800 evidence rows, 50 rows per case, and exactly the four public fields above.
+Do not treat one unsharded 800-run process as equivalent evidence: each case
+must be independently named and auditable.
 
 ## Evidence
 

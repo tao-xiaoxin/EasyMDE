@@ -440,20 +440,146 @@ admin pages continue to require their native shell and must not load Settings
 assets. Do not replace this gate with fixed sleeps, a MutationObserver-only
 sample, or a final screenshot.
 
-The regular E2E gate remains `npm run test:e2e`. For Issue #222 acceptance, run
-the focused compositor test with 50 runs per combination:
+The generated first-paint case names are stable and are derived from the
+viewport, cache, refresh, and profile dimensions:
+
+```text
+desktop-cold-normal-baseline
+desktop-cold-normal-throttled
+desktop-cold-hard-baseline
+desktop-cold-hard-throttled
+desktop-warm-normal-baseline
+desktop-warm-normal-throttled
+desktop-warm-hard-baseline
+desktop-warm-hard-throttled
+mobile-cold-normal-baseline
+mobile-cold-normal-throttled
+mobile-cold-hard-baseline
+mobile-cold-hard-throttled
+mobile-warm-normal-baseline
+mobile-warm-normal-throttled
+mobile-warm-hard-baseline
+mobile-warm-hard-throttled
+```
+
+The regular E2E gate remains `npm run test:e2e`. With
+`EASYMDE_FIRST_PAINT_CASE` unset, `EASYMDE_FIRST_PAINT_RUNS` defaults to `1`
+and the focused compositor test runs all 16 cases. When the case variable is
+set, it must exactly match one generated name; an empty or unknown value fails
+before the browser starts and the test asserts that exactly one case is active.
+Both the stdout evidence line and its JSON attachment contain only
+`caseName`, `iteration`, `stableState`, and `durationMs`.
+
+Run the default full-matrix smoke and at least one filtered two-run smoke:
 
 ```bash
-EASYMDE_FIRST_PAINT_RUNS=50 \
-EASYMDE_E2E_BASE_URL=<wordpress_test_url> \
-EASYMDE_E2E_WP_PATH=<wordpress_test_path> \
-EASYMDE_E2E_WP_CLI=<wp_cli_path> \
+# EASYMDE_FIRST_PAINT_RUNS defaults to 1 and runs all 16 cases.
+EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
+EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
+EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
+npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
+
+EASYMDE_FIRST_PAINT_RUNS=2 \
+EASYMDE_FIRST_PAINT_CASE=desktop-cold-normal-baseline \
+EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
+EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
+EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
 npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
   -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
 ```
 
+For Issue #222 acceptance, run `EASYMDE_FIRST_PAINT_RUNS=50` once per case so
+the 800-run matrix is auditable and does not depend on one long-lived process:
+
+```bash
+set -euo pipefail
+EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/easymde-first-paint.XXXXXX")"
+export EASYMDE_E2E_BASE_URL="<wordpress_test_url>"
+export EASYMDE_E2E_WP_PATH="<wordpress_test_path>"
+export EASYMDE_E2E_WP_CLI="<wp_cli_path>"
+
+for case_name in \
+  desktop-cold-normal-baseline \
+  desktop-cold-normal-throttled \
+  desktop-cold-hard-baseline \
+  desktop-cold-hard-throttled \
+  desktop-warm-normal-baseline \
+  desktop-warm-normal-throttled \
+  desktop-warm-hard-baseline \
+  desktop-warm-hard-throttled \
+  mobile-cold-normal-baseline \
+  mobile-cold-normal-throttled \
+  mobile-cold-hard-baseline \
+  mobile-cold-hard-throttled \
+  mobile-warm-normal-baseline \
+  mobile-warm-normal-throttled \
+  mobile-warm-hard-baseline \
+  mobile-warm-hard-throttled; do
+  EASYMDE_FIRST_PAINT_RUNS=50 \
+  EASYMDE_FIRST_PAINT_CASE="$case_name" \
+  npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+    -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled" \
+    2>&1 | tee "$EVIDENCE_DIR/$case_name.log"
+done
+```
+
+The stdout lines and JSON attachments are the public evidence surface. Aggregate
+the 16 logs only after all commands succeed, requiring exactly one evidence
+line per log, 50 rows per case, 800 rows total, every row's `caseName` equal to
+its log's case, and exactly the four public fields above. Keep the per-case log
+and attachment together so a failed shard can be rerun without losing case
+identity; do not substitute one unsharded 800-run log.
+
+This read-only aggregation check validates the stdout projection and row counts:
+
+```bash
+node - "$EVIDENCE_DIR" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const directory = process.argv[2];
+const prefix = "EASYMDE_SETTINGS_CENTER_FIRST_PAINT_EVIDENCE:";
+const cases = [
+  "desktop-cold-normal-baseline", "desktop-cold-normal-throttled",
+  "desktop-cold-hard-baseline", "desktop-cold-hard-throttled",
+  "desktop-warm-normal-baseline", "desktop-warm-normal-throttled",
+  "desktop-warm-hard-baseline", "desktop-warm-hard-throttled",
+  "mobile-cold-normal-baseline", "mobile-cold-normal-throttled",
+  "mobile-cold-hard-baseline", "mobile-cold-hard-throttled",
+  "mobile-warm-normal-baseline", "mobile-warm-normal-throttled",
+  "mobile-warm-hard-baseline", "mobile-warm-hard-throttled",
+];
+const expectedKeys = [
+  "caseName", "durationMs", "iteration", "stableState",
+].sort();
+const rows = [];
+
+for (const caseName of cases) {
+  const file = path.join(directory, `${caseName}.log`);
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix));
+  if (lines.length !== 1) throw new Error(`${caseName}: expected one evidence line`);
+  const payload = JSON.parse(lines[0].slice(prefix.length));
+  if (!Array.isArray(payload) || payload.length !== 50) {
+    throw new Error(`${caseName}: expected 50 evidence rows`);
+  }
+  for (const row of payload) {
+    if (row.caseName !== caseName) throw new Error(`${caseName}: case mismatch`);
+    if (JSON.stringify(Object.keys(row).sort()) !== JSON.stringify(expectedKeys)) {
+      throw new Error(`${caseName}: public evidence fields changed`);
+    }
+  }
+  rows.push(...payload);
+}
+if (rows.length !== 800) throw new Error(`expected 800 rows, got ${rows.length}`);
+console.log(`verified ${cases.length} cases and ${rows.length} rows`);
+NODE
+```
+
 `EASYMDE_FIRST_PAINT_RUNS` accepts only strict positive integer text; invalid
-values fail before the browser starts.
+values fail before the browser starts. `EASYMDE_FIRST_PAINT_CASE` accepts only
+an exact generated case name and fails before the browser starts otherwise.
 
 ## Release Script Safety Guards
 

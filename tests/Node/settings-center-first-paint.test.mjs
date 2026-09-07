@@ -49,9 +49,4 @@ test("first-paint screencast collection stops at semantic readiness", () => {
 		stopIndex > disableIndex,
 		"screencast must stop after collection closes",
 	);
-
-	assert.match(
-		firstPaintSource,
-		/test\.step\(`settings-center-first-paint:\$\{scenario\.name\}/u,
-	);
 });

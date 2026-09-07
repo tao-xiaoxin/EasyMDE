@@ -1049,68 +1049,66 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	const evidence = [];
 	try {
 		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
-			await test.step(`settings-center-first-paint:${scenario.name}`, async () => {
-				await withSettingsCenterBrowserConditions(
-					cdp,
-					scenario.profile,
-					scenario.cacheMode,
-					async () => {
-						await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
-						const expectedSize = {
-							width: scenario.viewport.width,
-							height: scenario.viewport.height,
-						};
-						const settingsReference = await captureSettingsCenterScreenshot(
-							cdp,
-							decoder,
-							expectedSize,
-						);
-						await page.goto("/wp-admin/profile.php");
-						await expect(page.locator("#wpwrap")).toBeVisible();
-						const nativeWordPressFrame = await captureSettingsCenterScreenshot(
-							cdp,
-							decoder,
-							expectedSize,
-						);
-						expect(
-							matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
-						).toBe(false);
-						await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
-						await waitForSettingsCenterReady(page);
+			await withSettingsCenterBrowserConditions(
+				cdp,
+				scenario.profile,
+				scenario.cacheMode,
+				async () => {
+					await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
+					const expectedSize = {
+						width: scenario.viewport.width,
+						height: scenario.viewport.height,
+					};
+					const settingsReference = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					await page.goto("/wp-admin/profile.php");
+					await expect(page.locator("#wpwrap")).toBeVisible();
+					const nativeWordPressFrame = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					expect(
+						matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+					).toBe(false);
+					await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+					await waitForSettingsCenterReady(page);
 
-						for (
-							let iteration = 0;
-							iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
-							iteration += 1
-						) {
-							const startedAt = performance.now();
-							const result = await captureSettingsCenterNavigationEvidence(
-								page,
-								cdp,
-								decoder,
-								expectedSize,
-								scenario.refreshMode,
-								scenario,
-							);
-							const durationMs = Math.round(performance.now() - startedAt);
-							const stableState = result.retainedPixels
-								? "settings-retained"
-								: "settings-painted";
-							evidence.push({
-								caseName: scenario.name,
-								viewportMode: scenario.viewport.name,
-								cacheMode: scenario.cacheMode.name,
-								refreshMode: scenario.refreshMode.name,
-								profileMode: scenario.profile.name,
-								iteration,
-								durationMs,
-								stableState,
-								...result,
-							});
-						}
-					},
-				);
-			});
+					for (
+						let iteration = 0;
+						iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
+						iteration += 1
+					) {
+						const startedAt = performance.now();
+						const result = await captureSettingsCenterNavigationEvidence(
+							page,
+							cdp,
+							decoder,
+							expectedSize,
+							scenario.refreshMode,
+							scenario,
+						);
+						const durationMs = Math.round(performance.now() - startedAt);
+						const stableState = result.retainedPixels
+							? "settings-retained"
+							: "settings-painted";
+						evidence.push({
+							caseName: scenario.name,
+							viewportMode: scenario.viewport.name,
+							cacheMode: scenario.cacheMode.name,
+							refreshMode: scenario.refreshMode.name,
+							profileMode: scenario.profile.name,
+							iteration,
+							durationMs,
+							stableState,
+							...result,
+						});
+					}
+				},
+			);
 		}
 	} finally {
 		try {

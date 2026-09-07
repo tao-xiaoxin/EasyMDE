@@ -112,7 +112,7 @@ final class SettingsPageTest extends WP_UnitTestCase
         );
     }
 
-    public function test_settings_center_document_has_no_wordpress_shell_and_prints_assets_before_the_root()
+    public function test_settings_center_document_has_no_wordpress_shell_and_prints_styles_in_head_and_scripts_after_the_root()
     {
         $stored = array(
             'version' => '0.1.8',
@@ -135,13 +135,21 @@ final class SettingsPageTest extends WP_UnitTestCase
 		$this->assertStringContainsString('data-easymde-settings-favicon="true"', $output);
         $this->assertStringContainsString('data-settings-center-server-fallback', $output);
         $style_position  = strpos($output, 'settings-center.css');
-        $script_position = strpos($output, 'settings-center-', $style_position + 1);
+        $head_end         = strpos($output, '</head>');
+        $body_start       = strpos($output, '<body');
+        $root_position    = strpos($output, 'id="easymde-settings-center-root"');
+        $script_position  = strpos($output, 'assets/build/settings-center/');
+        $body_end         = strpos($output, '</body>');
         $this->assertNotFalse($style_position);
+        $this->assertNotFalse($head_end);
+        $this->assertNotFalse($body_start);
+        $this->assertNotFalse($root_position);
         $this->assertNotFalse($script_position);
-        $this->assertLessThan(
-            $script_position,
-            $style_position
-        );
+        $this->assertNotFalse($body_end);
+        $this->assertLessThan($head_end, $style_position);
+        $this->assertLessThan($root_position, $body_start);
+        $this->assertLessThan($script_position, $root_position);
+        $this->assertLessThan($body_end, $script_position);
         $this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
     }
 

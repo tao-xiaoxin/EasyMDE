@@ -197,14 +197,17 @@ the dedicated EasyMDE administration screen. `SettingsPage` requires
 `assets/build/settings-center/wordpress-manifest.json` contract, and dispatches
 the canonical route from `load-toplevel_page_easymde` before WordPress prints
 `admin-header.php`. The resulting authenticated document prints only the exact
-Settings styles, WordPress-provided React dependencies, the stable
-`easymde-admin-settings-center` handle, a same-origin presentation Bootstrap,
-and one empty mount root; it does not emit the ordinary `#wpwrap`, admin bar,
-menu, content canvas, notices-before-root, or footer presentation shell. The
-entrypoint requires both the exact stylesheet link and its computed readiness
-sentinel before mounting. Missing server assets, a blocked stylesheet or
-script, invalid Bootstrap, and Content Security Policy failure keep a dedicated
-accessible error and same-origin exit instead of falling back to wp-admin. The Settings Center has its own
+Settings styles in `<head>`, then the body fallback and one empty mount root,
+and only after that body content the classic
+`easymde-admin-settings-center` script handle. This ordering leaves the root
+present before synchronous script execution and prevents a parser/compositor
+interval from emitting a blank first-paint frame. It does not emit the ordinary
+`#wpwrap`, admin bar, menu, content canvas, notices-before-root, or footer
+presentation shell. The entrypoint requires both the exact stylesheet link and
+its computed readiness sentinel before mounting. Missing server assets, a
+blocked stylesheet or script, invalid Bootstrap, and Content Security Policy
+failure keep a dedicated accessible error and same-origin exit instead of
+falling back to wp-admin. The Settings Center has its own
 Root and does not share mutable State with the Editor Root. A setting is shown
 only when a real PHP/WordPress owner and browser Adapter exist; presentation
 controls never claim persistence until the authoritative Settings API result

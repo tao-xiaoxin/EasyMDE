@@ -425,9 +425,10 @@ ordinary reload; hard uses CDP `Page.reload({ ignoreCache: true })` immediately
 before every reload while preserving the cache state established by the case
 setup.
 The test captures every compositor frame from main-frame commit through
-semantic readiness and decodes every nonblank PNG. Each such frame must reject
-the native dark WordPress admin bar and remain within a mean channel distance
-of `20` from the stable pre-reload Settings fingerprint sampled every `16px`.
+semantic readiness and decodes every captured PNG. If any frame is blank, the
+case fails immediately; every received frame must reject the native dark
+WordPress admin bar and remain within a mean channel distance of `20` from the
+stable pre-reload Settings fingerprint sampled every `16px`.
 A reload that emits no new frame is accepted only when the Settings application
 is visible before and after and the retained pixels have the exact same hash.
 The same classifier must reject a real Profile page capture as a native

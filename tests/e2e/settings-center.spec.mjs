@@ -962,29 +962,31 @@ async function captureSettingsCenterNavigationEvidence(
 				decodeSettingsCenterPng(decoder, frame, expectedSize),
 			),
 		);
-		const nonblankFrameAnalyses = frameAnalyses.filter(
-			(analysis) => analysis.whiteRatio < 0.995,
-		);
-		if (nonblankFrameAnalyses.length === 0) {
-			throw new Error("settings-nonblank-frame-missing");
+		if (frameAnalyses.some((analysis) => analysis.whiteRatio >= 0.995)) {
+			throw new Error("settings-blank-frame-emitted");
 		}
-		const frameFingerprintDistances = nonblankFrameAnalyses.map((analysis) =>
+		if (
+			frameAnalyses.some(
+				(analysis) => !matchesSettingsCenterFrame(analysis, beforeAnalysis),
+			)
+		) {
+			throw new Error("settings-frame-mismatch");
+		}
+		const frameFingerprintDistances = frameAnalyses.map((analysis) =>
 			settingsCenterFingerprintDistance(analysis, beforeAnalysis),
 		);
 		return {
 			beforeVisible,
 			afterVisible,
 			frameBytes: Buffer.byteLength(frames[0], "base64"),
-			nonblankFrameCount: nonblankFrameAnalyses.length,
+			nonblankFrameCount: frameAnalyses.length,
 			retainedPixels: false,
-			allNonblankFramesMatch: nonblankFrameAnalyses.every((analysis) =>
-				matchesSettingsCenterFrame(analysis, beforeAnalysis),
-			),
+			allFramesMatch: true,
 			maxDarkTopRatio: Math.max(
-				...nonblankFrameAnalyses.map((analysis) => analysis.darkTopRatio),
+				...frameAnalyses.map((analysis) => analysis.darkTopRatio),
 			),
 			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
-			analysis: nonblankFrameAnalyses[0],
+			analysis: frameAnalyses[0],
 		};
 	}
 
@@ -1001,7 +1003,7 @@ async function captureSettingsCenterNavigationEvidence(
 		afterVisible,
 		frameBytes: 0,
 		retainedPixels: true,
-		allNonblankFramesMatch: true,
+		allFramesMatch: true,
 		analysis: afterAnalysis,
 		retainedPixelHash: afterAnalysis.pixelHash,
 	};
@@ -1124,7 +1126,7 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 			});
 			expect(entry.analysis.darkTopRatio).toBeLessThan(0.35);
 			expect(entry.analysis.whiteRatio).toBeLessThan(0.995);
-			expect(entry.allNonblankFramesMatch).toBe(true);
+			expect(entry.allFramesMatch).toBe(true);
 			if (entry.retainedPixels) {
 				expect(entry.frameBytes).toBe(0);
 				expect(entry.retainedPixelHash).toBe(entry.analysis.pixelHash);

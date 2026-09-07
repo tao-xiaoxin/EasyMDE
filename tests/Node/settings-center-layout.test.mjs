@@ -140,9 +140,25 @@ test("Settings Center dispatches a dedicated document before the WordPress heade
 		settingsPageSource,
 		/public function dispatch_settings_center_document\(\)[\s\S]*?render_settings_center_document\(\)[\s\S]*?exit;/s,
 	);
-	assert.match(
+	const stylesIndex = settingsDocumentTemplateSource.indexOf(
+		"wp_styles()->do_items",
+	);
+	const scriptsIndex = settingsDocumentTemplateSource.indexOf(
+		"wp_scripts()->do_items",
+	);
+	const headEndIndex = settingsDocumentTemplateSource.indexOf("</head>");
+	const bodyStartIndex = settingsDocumentTemplateSource.indexOf("<body");
+	const rootTemplateIndex = settingsDocumentTemplateSource.indexOf(
+		"templates/admin/settings-center.php",
+	);
+	const bodyEndIndex = settingsDocumentTemplateSource.indexOf("</body>");
+	assert.ok(stylesIndex >= 0 && stylesIndex < headEndIndex);
+	assert.ok(bodyStartIndex < rootTemplateIndex);
+	assert.ok(rootTemplateIndex < scriptsIndex);
+	assert.ok(scriptsIndex < bodyEndIndex);
+	assert.doesNotMatch(
 		settingsDocumentTemplateSource,
-		/<!DOCTYPE html>[\s\S]*wp_styles\(\)->do_items\([\s\S]*easymde-admin-settings-center[\s\S]*wp_scripts\(\)->do_items\([\s\S]*easymde-admin-settings-center[\s\S]*templates\/admin\/settings-center\.php/s,
+		/wp_scripts\(\)->do_items[\s\S]*<\/head>/s,
 	);
 	assert.doesNotMatch(
 		settingsDocumentTemplateSource,

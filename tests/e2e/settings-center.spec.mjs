@@ -579,6 +579,14 @@ function buildSettingsCenterFirstPaintCases() {
 }
 
 const SETTINGS_CENTER_FIRST_PAINT_CASES = buildSettingsCenterFirstPaintCases();
+const SETTINGS_CENTER_FIRST_PAINT_PUBLIC_EVIDENCE_KEYS = Object.freeze([
+	"caseName",
+	"iteration",
+	"stableState",
+	"durationMs",
+]);
+const SETTINGS_CENTER_FIRST_PAINT_STDOUT_PREFIX =
+	"EASYMDE_SETTINGS_CENTER_FIRST_PAINT_EVIDENCE:";
 const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_PER_CASE_MS = 60_000;
 const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS = Math.max(
 	600_000,
@@ -828,6 +836,17 @@ function matchesSettingsCenterFrame(frame, reference) {
 		frame.darkTopRatio < 0.35 &&
 		settingsCenterFingerprintDistance(frame, reference) <=
 			SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE
+	);
+}
+
+function selectSettingsCenterFirstPaintPublicEvidence(evidence) {
+	return evidence.map((entry) =>
+		Object.fromEntries(
+			SETTINGS_CENTER_FIRST_PAINT_PUBLIC_EVIDENCE_KEYS.map((key) => [
+				key,
+				entry[key],
+			]),
+		),
 	);
 }
 
@@ -1098,17 +1117,14 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	await expect(
 		page.locator("[data-settings-center-server-fallback]"),
 	).toHaveCount(0);
+	const publicEvidence = selectSettingsCenterFirstPaintPublicEvidence(evidence);
 	await testInfo.attach("settings-center-first-paint-evidence.json", {
-		body: JSON.stringify(
-			evidence.map(({ caseName, iteration, stableState, durationMs }) => ({
-				caseName,
-				iteration,
-				stableState,
-				durationMs,
-			})),
-		),
+		body: JSON.stringify(publicEvidence),
 		contentType: "application/json",
 	});
+	process.stdout.write(
+		`${SETTINGS_CENTER_FIRST_PAINT_STDOUT_PREFIX}${JSON.stringify(publicEvidence)}\n`,
+	);
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({

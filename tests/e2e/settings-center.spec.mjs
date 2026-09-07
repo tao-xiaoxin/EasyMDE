@@ -891,10 +891,13 @@ async function captureSettingsCenterNavigationEvidence(
 	decoder,
 	expectedSize,
 	refreshMode,
+	scenario,
 ) {
+	const fail = (reason) =>
+		new Error(`settings-center-first-paint:${scenario.name}:${reason}`);
 	const settingsApplication = page.locator(".easymde-settings-center");
 	const beforeVisible = await settingsApplication.isVisible();
-	if (!beforeVisible) throw new Error("settings-before-reload-not-visible");
+	if (!beforeVisible) throw fail("settings-before-reload-not-visible");
 	const beforeScreenshot = await cdp.send("Page.captureScreenshot", {
 		format: "png",
 		fromSurface: true,
@@ -906,9 +909,10 @@ async function captureSettingsCenterNavigationEvidence(
 		expectedSize,
 	);
 	if (!matchesSettingsCenterFrame(beforeAnalysis, beforeAnalysis)) {
-		throw new Error("settings-reference-frame-invalid");
+		throw fail("settings-reference-frame-invalid");
 	}
 	let committed = false;
+	let collectFrames = true;
 	const frames = [];
 	const pendingAcks = new Set();
 	const ackErrors = [];
@@ -925,7 +929,7 @@ async function captureSettingsCenterNavigationEvidence(
 				pendingAcks.delete(ack);
 			},
 		);
-		if (committed) frames.push(data);
+		if (committed && collectFrames) frames.push(data);
 	};
 	cdp.on("Page.frameNavigated", handleFrameNavigated);
 	cdp.on("Page.screencastFrame", handleScreencastFrame);
@@ -940,7 +944,8 @@ async function captureSettingsCenterNavigationEvidence(
 		screencastStarted = true;
 		await reloadSettingsCenterForFirstPaint(page, cdp, refreshMode);
 		await waitForSettingsCenterReady(page);
-		if (!committed) throw new Error("settings-main-frame-commit-missing");
+		collectFrames = false;
+		if (!committed) throw fail("settings-main-frame-commit-missing");
 		await assertSettingsCenterShellAbsent(page);
 	} finally {
 		try {
@@ -954,7 +959,7 @@ async function captureSettingsCenterNavigationEvidence(
 	if (ackErrors.length > 0) throw ackErrors[0];
 
 	const afterVisible = await settingsApplication.isVisible();
-	if (!afterVisible) throw new Error("settings-after-reload-not-visible");
+	if (!afterVisible) throw fail("settings-after-reload-not-visible");
 	const afterScreenshot = await cdp.send("Page.captureScreenshot", {
 		format: "png",
 		fromSurface: true,
@@ -970,7 +975,7 @@ async function captureSettingsCenterNavigationEvidence(
 			(analysis) => !isSettingsCenterBlankFrame(analysis),
 		);
 		if (firstNonblankIndex < 0) {
-			throw new Error("settings-nonblank-frame-missing");
+			throw fail("settings-nonblank-frame-missing");
 		}
 		const leadingBlankFrameCount = firstNonblankIndex;
 		const postFirstNonblankFrameAnalyses = frameAnalyses.slice(
@@ -981,14 +986,14 @@ async function captureSettingsCenterNavigationEvidence(
 				isSettingsCenterBlankFrame(analysis),
 			)
 		) {
-			throw new Error("settings-blank-frame-emitted");
+			throw fail("settings-blank-frame-emitted");
 		}
 		if (
 			postFirstNonblankFrameAnalyses.some(
 				(analysis) => !matchesSettingsCenterFrame(analysis, beforeAnalysis),
 			)
 		) {
-			throw new Error("settings-frame-mismatch");
+			throw fail("settings-frame-mismatch");
 		}
 		const frameFingerprintDistances = postFirstNonblankFrameAnalyses.map(
 			(analysis) =>
@@ -1018,7 +1023,7 @@ async function captureSettingsCenterNavigationEvidence(
 		expectedSize,
 	);
 	if (beforeAnalysis.pixelHash !== afterAnalysis.pixelHash) {
-		throw new Error("settings-retained-pixels-changed");
+		throw fail("settings-retained-pixels-changed");
 	}
 	return {
 		beforeVisible,
@@ -1044,65 +1049,68 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 	const evidence = [];
 	try {
 		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
-			await withSettingsCenterBrowserConditions(
-				cdp,
-				scenario.profile,
-				scenario.cacheMode,
-				async () => {
-					await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
-					const expectedSize = {
-						width: scenario.viewport.width,
-						height: scenario.viewport.height,
-					};
-					const settingsReference = await captureSettingsCenterScreenshot(
-						cdp,
-						decoder,
-						expectedSize,
-					);
-					await page.goto("/wp-admin/profile.php");
-					await expect(page.locator("#wpwrap")).toBeVisible();
-					const nativeWordPressFrame = await captureSettingsCenterScreenshot(
-						cdp,
-						decoder,
-						expectedSize,
-					);
-					expect(
-						matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
-					).toBe(false);
-					await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
-					await waitForSettingsCenterReady(page);
-
-					for (
-						let iteration = 0;
-						iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
-						iteration += 1
-					) {
-						const startedAt = performance.now();
-						const result = await captureSettingsCenterNavigationEvidence(
-							page,
+			await test.step(`settings-center-first-paint:${scenario.name}`, async () => {
+				await withSettingsCenterBrowserConditions(
+					cdp,
+					scenario.profile,
+					scenario.cacheMode,
+					async () => {
+						await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
+						const expectedSize = {
+							width: scenario.viewport.width,
+							height: scenario.viewport.height,
+						};
+						const settingsReference = await captureSettingsCenterScreenshot(
 							cdp,
 							decoder,
 							expectedSize,
-							scenario.refreshMode,
 						);
-						const durationMs = Math.round(performance.now() - startedAt);
-						const stableState = result.retainedPixels
-							? "settings-retained"
-							: "settings-painted";
-						evidence.push({
-							caseName: scenario.name,
-							viewportMode: scenario.viewport.name,
-							cacheMode: scenario.cacheMode.name,
-							refreshMode: scenario.refreshMode.name,
-							profileMode: scenario.profile.name,
-							iteration,
-							durationMs,
-							stableState,
-							...result,
-						});
-					}
-				},
-			);
+						await page.goto("/wp-admin/profile.php");
+						await expect(page.locator("#wpwrap")).toBeVisible();
+						const nativeWordPressFrame = await captureSettingsCenterScreenshot(
+							cdp,
+							decoder,
+							expectedSize,
+						);
+						expect(
+							matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+						).toBe(false);
+						await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+						await waitForSettingsCenterReady(page);
+
+						for (
+							let iteration = 0;
+							iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
+							iteration += 1
+						) {
+							const startedAt = performance.now();
+							const result = await captureSettingsCenterNavigationEvidence(
+								page,
+								cdp,
+								decoder,
+								expectedSize,
+								scenario.refreshMode,
+								scenario,
+							);
+							const durationMs = Math.round(performance.now() - startedAt);
+							const stableState = result.retainedPixels
+								? "settings-retained"
+								: "settings-painted";
+							evidence.push({
+								caseName: scenario.name,
+								viewportMode: scenario.viewport.name,
+								cacheMode: scenario.cacheMode.name,
+								refreshMode: scenario.refreshMode.name,
+								profileMode: scenario.profile.name,
+								iteration,
+								durationMs,
+								stableState,
+								...result,
+							});
+						}
+					},
+				);
+			});
 		}
 	} finally {
 		try {

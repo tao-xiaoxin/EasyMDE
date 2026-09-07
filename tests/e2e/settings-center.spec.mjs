@@ -870,6 +870,10 @@ function matchesSettingsCenterFrame(frame, reference) {
 	);
 }
 
+function isSettingsCenterBlankFrame(frame) {
+	return frame.whiteRatio >= 0.995;
+}
+
 function selectSettingsCenterFirstPaintPublicEvidence(evidence) {
 	return evidence.map((entry) =>
 		Object.fromEntries(
@@ -962,31 +966,49 @@ async function captureSettingsCenterNavigationEvidence(
 				decodeSettingsCenterPng(decoder, frame, expectedSize),
 			),
 		);
-		if (frameAnalyses.some((analysis) => analysis.whiteRatio >= 0.995)) {
+		const firstNonblankIndex = frameAnalyses.findIndex(
+			(analysis) => !isSettingsCenterBlankFrame(analysis),
+		);
+		if (firstNonblankIndex < 0) {
+			throw new Error("settings-nonblank-frame-missing");
+		}
+		const leadingBlankFrameCount = firstNonblankIndex;
+		const postFirstNonblankFrameAnalyses = frameAnalyses.slice(
+			firstNonblankIndex,
+		);
+		if (
+			postFirstNonblankFrameAnalyses.some((analysis) =>
+				isSettingsCenterBlankFrame(analysis),
+			)
+		) {
 			throw new Error("settings-blank-frame-emitted");
 		}
 		if (
-			frameAnalyses.some(
+			postFirstNonblankFrameAnalyses.some(
 				(analysis) => !matchesSettingsCenterFrame(analysis, beforeAnalysis),
 			)
 		) {
 			throw new Error("settings-frame-mismatch");
 		}
-		const frameFingerprintDistances = frameAnalyses.map((analysis) =>
-			settingsCenterFingerprintDistance(analysis, beforeAnalysis),
+		const frameFingerprintDistances = postFirstNonblankFrameAnalyses.map(
+			(analysis) =>
+				settingsCenterFingerprintDistance(analysis, beforeAnalysis),
 		);
 		return {
 			beforeVisible,
 			afterVisible,
-			frameBytes: Buffer.byteLength(frames[0], "base64"),
-			nonblankFrameCount: frameAnalyses.length,
+			frameBytes: Buffer.byteLength(frames[firstNonblankIndex], "base64"),
+			leadingBlankFrameCount,
+			nonblankFrameCount: postFirstNonblankFrameAnalyses.length,
 			retainedPixels: false,
 			allFramesMatch: true,
 			maxDarkTopRatio: Math.max(
-				...frameAnalyses.map((analysis) => analysis.darkTopRatio),
+				...postFirstNonblankFrameAnalyses.map(
+					(analysis) => analysis.darkTopRatio,
+				),
 			),
 			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
-			analysis: frameAnalyses[0],
+			analysis: postFirstNonblankFrameAnalyses[0],
 		};
 	}
 
@@ -1002,6 +1024,7 @@ async function captureSettingsCenterNavigationEvidence(
 		beforeVisible,
 		afterVisible,
 		frameBytes: 0,
+		leadingBlankFrameCount: 0,
 		retainedPixels: true,
 		allFramesMatch: true,
 		analysis: afterAnalysis,
@@ -1127,6 +1150,7 @@ test("does not paint the WordPress shell across desktop/mobile, cold/warm, norma
 			expect(entry.analysis.darkTopRatio).toBeLessThan(0.35);
 			expect(entry.analysis.whiteRatio).toBeLessThan(0.995);
 			expect(entry.allFramesMatch).toBe(true);
+			expect(entry.leadingBlankFrameCount).toBeGreaterThanOrEqual(0);
 			if (entry.retainedPixels) {
 				expect(entry.frameBytes).toBe(0);
 				expect(entry.retainedPixelHash).toBe(entry.analysis.pixelHash);

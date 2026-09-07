@@ -61,9 +61,13 @@ step and report its cause; never label it flaky without evidence.
 For Settings Center first-paint work, inspect the compositor boundary. The E2E
 gate covers desktop/mobile viewport, cold/warm cache, normal/hard refresh, and
 baseline/throttled CPU-plus-network profile, for 16 combinations. Capture CDP
-screencast frames from navigation commit, decode the actual frame payload, and
-classify every nonblank frame through semantic readiness before reading the
-settled DOM. Normal uses an ordinary reload; hard uses CDP
+screencast frames from navigation commit through semantic readiness, decode the
+actual frame payload, and find the first nonblank frame before reading the
+settled DOM. Only a contiguous leading prefix of blank frames may precede that
+frame; if no nonblank frame exists, the case fails. From the first nonblank
+frame through readiness, every frame must be nonblank and match the stable
+Settings pixel fingerprint; any later blank or mismatch fails. Normal uses an
+ordinary reload; hard uses CDP
 `Page.reload({ ignoreCache: true })` immediately before every reload while
 preserving the cache state established by the case setup. Match each frame to
 the stable pre-navigation Settings pixel fingerprint, and

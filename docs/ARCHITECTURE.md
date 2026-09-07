@@ -214,6 +214,15 @@ controls never claim persistence until the authoritative Settings API result
 succeeds. The comment-AI and article-sync surfaces are intentionally absent
 from the current navigation and DOM.
 
+The first-paint compositor evidence uses an ordered-frame contract: it finds
+the first nonblank frame, allows only a contiguous leading prefix of blank
+frames before it, and fails when no nonblank frame exists. From that first
+nonblank frame through semantic readiness, every captured frame must be
+nonblank and match the stable Settings fingerprint; any later blank or
+mismatched frame fails. A reload that emits zero new frames is accepted only
+when the visible Settings pixels before and after the reload have the exact
+same hash.
+
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
 teardown. The Root composes Toolbar/commands, CodeMirror document and title

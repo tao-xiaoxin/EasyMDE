@@ -238,7 +238,7 @@ msgid "Split preview"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:509
-msgid "Show live preview by default"
+msgid "Live preview editing area (what you see is what you get)"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:510

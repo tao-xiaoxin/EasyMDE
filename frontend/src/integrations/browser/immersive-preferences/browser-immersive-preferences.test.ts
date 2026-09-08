@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createBrowserImmersivePreferencesPort } from './browser-immersive-preferences';
 
 const preferences = {
-  outline: true,
-  splitPreview: false
+  outline: true
 } as const;
 
 describe('browser immersive preferences', () => {
@@ -31,16 +30,14 @@ describe('browser immersive preferences', () => {
     expect(createBrowserImmersivePreferencesPort({ siteKey: 'site-a', storage: adapter, userId: 7 }).read()).toEqual({ code: 'immersive-preferences-invalid', status: 'failed' });
   });
 
-  it('accepts retired v1 fields and removes them on the next write', () => {
+  it('ignores retired split preview state without reading or writing it', () => {
     const key = 'easymde:immersive-preferences:v1:site-a:7';
     const storage = new Map<string, string>([
       [
         key,
         JSON.stringify({
           ...preferences,
-          autoSave: false,
-          syncScroll: true,
-          wordCount: false
+          splitPreview: false
         })
       ]
     ]);
@@ -61,16 +58,10 @@ describe('browser immersive preferences', () => {
     expect(port.read()).toEqual({ preferences, status: 'loaded' });
     expect(JSON.parse(storage.get(key) ?? '')).toEqual({
       ...preferences,
-      autoSave: false,
-      syncScroll: true,
-      wordCount: false
+      splitPreview: false
     });
-    expect(
-      port.write(
-        preferences as unknown as Parameters<typeof port.write>[0]
-      )
-    ).toEqual({ status: 'saved' });
-    expect(JSON.parse(storage.get(key) ?? '')).toEqual(preferences);
+    expect(port.write({ outline: false })).toEqual({ status: 'saved' });
+    expect(JSON.parse(storage.get(key) ?? '')).toEqual({ outline: false });
   });
 
   it('reports storage read failures instead of treating them as missing', () => {

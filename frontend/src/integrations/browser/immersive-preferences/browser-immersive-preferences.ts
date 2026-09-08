@@ -14,15 +14,9 @@ type Options = Readonly<{
 const normalizePreferences = (value: unknown): ImmersivePreferences | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
-  if (
-    'boolean' !== typeof candidate.outline ||
-    'boolean' !== typeof candidate.splitPreview
-  ) {
-    return null;
-  }
+  if ('boolean' !== typeof candidate.outline) return null;
   return {
-    outline: candidate.outline,
-    splitPreview: candidate.splitPreview
+    outline: candidate.outline
   };
 };
 

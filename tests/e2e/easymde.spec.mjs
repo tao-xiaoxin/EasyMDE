@@ -1884,6 +1884,120 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(sourceEditor).toBeFocused();
   });
 
+  test('keeps immersive split preview session-only across re-entry and restores Settings Center mode after reloads', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    page.on('pageerror', (error) => {
+      browserFailures.push(`pageerror:${error.name || 'Error'}`);
+    });
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const url = message.location().url;
+      let pathname = 'unknown';
+      if (url) {
+        try {
+          pathname = new URL(url).pathname;
+        } catch {
+          pathname = 'invalid-url';
+        }
+      }
+      browserFailures.push(`console:error:${pathname}`);
+    });
+    await page.route('**/avatar/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+
+    const labels = await page.evaluate(() => ({
+      editingMode: window.EasyMDEEditorRootBootstrap.settings.general.editingMode,
+      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive
+    }));
+    const expectedModeClass = {
+      'live-preview': 'is-immersive-split',
+      source: 'is-immersive-source',
+      preview: 'is-immersive-preview'
+    }[labels.editingMode];
+    if (!expectedModeClass) {
+      throw new Error(`editing-mode-unmapped:${labels.editingMode}`);
+    }
+    const temporaryModeClass = 'live-preview' === labels.editingMode
+      ? 'is-immersive-source'
+      : 'is-immersive-split';
+    const preferenceSnapshot = () => page.evaluate(() => Object.fromEntries(
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith('easymde:immersive-preferences:v1:'))
+        .map((key) => [key, localStorage.getItem(key)])
+    ));
+    const editorOwner = page.locator(
+      '#easymde-editor-root [data-easymde-editor-owner="react"]'
+    );
+
+    await page.getByRole('button', { name: labels.immersive.immersive }).click();
+    await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
+    const settingsTrigger = page.getByRole('button', {
+      name: labels.immersive.editorSettings
+    });
+    await settingsTrigger.click();
+    const settingsDialog = page.getByRole('dialog', {
+      name: labels.immersive.editorSettings
+    });
+    const splitPreview = settingsDialog.getByRole('checkbox', {
+      name: labels.immersive.splitPreview
+    });
+    await expect(splitPreview).toHaveAttribute(
+      'aria-checked',
+      'live-preview' === labels.editingMode ? 'true' : 'false'
+    );
+    const storageBefore = await preferenceSnapshot();
+
+    await splitPreview.click();
+    await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
+    expect(await preferenceSnapshot()).toEqual(storageBefore);
+    await page.keyboard.press('Escape');
+    await expect(settingsDialog).toHaveCount(0);
+    await page.getByRole('button', { name: labels.immersive.exit }).click();
+    await expect(page.getByRole('region', { name: labels.immersive.immersive }))
+      .toHaveCount(0);
+
+    await page.getByRole('button', { name: labels.immersive.immersive }).click();
+    await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
+    await page.keyboard.press('Escape');
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#easymde-editor-root')).toBeVisible();
+    await page.getByRole('button', { name: labels.immersive.immersive }).click();
+    await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
+
+    await page.getByRole('button', {
+      name: labels.immersive.editorSettings
+    }).click();
+    const refreshedSettingsDialog = page.getByRole('dialog', {
+      name: labels.immersive.editorSettings
+    });
+    await refreshedSettingsDialog.getByRole('checkbox', {
+      name: labels.immersive.splitPreview
+    }).click();
+    await expect(editorOwner).toHaveClass(new RegExp(temporaryModeClass));
+    expect(await preferenceSnapshot()).toEqual(storageBefore);
+    await page.keyboard.press('Escape');
+
+    const cdp = await context.newCDPSession(page);
+    const mainFrameNavigation = page.waitForEvent('framenavigated', {
+      predicate: (frame) => frame === page.mainFrame()
+    });
+    await Promise.all([
+      mainFrameNavigation,
+      cdp.send('Page.reload', { ignoreCache: true })
+    ]);
+    await cdp.detach();
+    await expect(page.locator('#easymde-editor-root')).toBeVisible();
+    await page.getByRole('button', { name: labels.immersive.immersive }).click();
+    await expect(editorOwner).toHaveClass(new RegExp(expectedModeClass));
+    expect(browserFailures).toEqual([]);
+  });
+
   test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {
     const browserFailures = [];
     testInfo.easymdeOriginalEditorDisplaySettings = editorDisplaySettings();

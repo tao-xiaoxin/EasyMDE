@@ -1,6 +1,5 @@
 export type ImmersivePreferences = Readonly<{
   outline: boolean;
-  splitPreview: boolean;
 }>;
 
 export type ImmersivePreferencesWriteResult =

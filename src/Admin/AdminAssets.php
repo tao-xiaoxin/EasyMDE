@@ -506,7 +506,7 @@ final class AdminAssets {
 					'split'                       => __( 'Split', 'easymde' ),
 					'splitMode'                   => __( 'Split mode', 'easymde' ),
 					'splitPreview'                => __( 'Split preview', 'easymde' ),
-					'splitPreviewDescription'     => __( 'Show live preview by default', 'easymde' ),
+					'splitPreviewDescription'     => __( 'Live preview editing area (what you see is what you get)', 'easymde' ),
 					'table'                       => __( 'Table', 'easymde' ),
 					'tableColumns'                => __( 'Columns', 'easymde' ),
 					'tableRows'                   => __( 'Rows', 'easymde' ),

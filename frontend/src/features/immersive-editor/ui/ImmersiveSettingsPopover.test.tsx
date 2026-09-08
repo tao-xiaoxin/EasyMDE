@@ -15,7 +15,7 @@ const strings = {
   outlineDescription: '左侧显示标题层级导航',
   settings: '设置',
   splitPreview: '分屏预览',
-  splitPreviewDescription: '默认显示实时预览区域'
+  splitPreviewDescription: '实时预览编辑区域文本（所见即所得）'
 } as unknown as ImmersiveStrings;
 
 const settings: ImmersiveSettings = {

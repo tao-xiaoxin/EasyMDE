@@ -210,7 +210,7 @@ function validBootstrap() {
         split: 'Split',
         splitMode: 'Split mode',
         splitPreview: 'Split preview',
-        splitPreviewDescription: 'Show live preview by default',
+        splitPreviewDescription: 'Live preview editing area (what you see is what you get)',
         table: 'Table',
         tableColumns: 'Columns',
         tableRows: 'Rows',

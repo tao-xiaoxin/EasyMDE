@@ -10,7 +10,6 @@ import type {
 } from '../../contracts/ports/preview-request';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { RemoteImageImportResult } from '../../contracts/ports/remote-image-import-port';
-import type { ImmersivePreferences } from '../../contracts/ports/immersive-preferences-port';
 import type { LocalDraftStoragePort } from '../../contracts/ports/local-drafts-port';
 import type {
   RevisionPreview,
@@ -260,7 +259,7 @@ function fixture(): EditorRootProps &
       split: '分屏',
       splitMode: '分屏模式',
       splitPreview: '分屏预览',
-      splitPreviewDescription: '默认显示实时预览区域',
+      splitPreviewDescription: '实时预览编辑区域文本（所见即所得）',
       table: '表格',
       tableColumns: '列数',
       tableRows: '行数',
@@ -4367,7 +4366,10 @@ describe('EditorRoot', () => {
     expect(view.getByText('自动保存已开启')).not.toBeNull();
     expect(props.scrollSyncPort.prepareBinding).toHaveBeenCalledTimes(4);
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(3);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
+    expect(props.immersivePreferencesPort.write).toHaveBeenCalledWith({
+      outline: false
+    });
   });
 
   it.each([
@@ -4414,8 +4416,7 @@ describe('EditorRoot', () => {
     const baseProps = fixture();
     vi.mocked(baseProps.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
-        outline: true,
-        splitPreview: true
+        outline: true
       },
       status: 'loaded'
     });
@@ -4443,21 +4444,19 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('checkbox', { name: '文章大纲' }));
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledWith(
-      { outline: false, splitPreview: true }
+      { outline: false }
     );
     expect(baseProps.immersivePreferencesPort.write).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps global auto save authoritative when retired immersive preferences disable it', async () => {
+  it('keeps global auto save authoritative when retired immersive preferences are absent', async () => {
     const props = fixture();
     vi.mocked(props.immersivePreferencesPort.read).mockReturnValue({
       preferences: {
-        autoSave: false,
-        outline: true,
-        splitPreview: true
+        outline: true
       },
       status: 'loaded'
-    } as ReturnType<typeof props.immersivePreferencesPort.read>);
+    });
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
 
@@ -4478,40 +4477,82 @@ describe('EditorRoot', () => {
     expect(props.localDraftStorage.write).toHaveBeenCalled();
   });
 
-  it('reads the latest immersive preferences again on every entry', async () => {
+  it('maps Settings Center editing modes to immersive modes and rereads only outline preferences', async () => {
     const props = fixture();
-    let savedPreferences: ImmersivePreferences | null = null;
-    vi.mocked(props.immersivePreferencesPort.read).mockImplementation(() =>
-      savedPreferences
-        ? { preferences: savedPreferences, status: 'loaded' }
-        : { status: 'missing' }
-    );
-    vi.mocked(props.immersivePreferencesPort.write).mockImplementation(
-      (preferences) => {
-        savedPreferences = preferences;
-        return { status: 'saved' };
-      }
-    );
+    const modes = [
+      ['live-preview', 'is-immersive-split'],
+      ['source', 'is-immersive-source'],
+      ['preview', 'is-immersive-preview']
+    ] as const;
 
+    for (const [editingMode, expectedClass] of modes) {
+      const view = render(
+        <EditorRoot
+          {...props}
+          settings={{
+            ...props.settings,
+            general: { ...props.settings.general, editingMode }
+          }}
+        />
+      );
+
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(expectedClass)
+      ).toBe(true);
+      expect(props.immersivePreferencesPort.read).toHaveBeenCalled();
+      view.unmount();
+    }
+  });
+
+  it('keeps the split preview control synchronized with top mode buttons without persisting it', async () => {
+    const props = fixture();
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
-    fireEvent.click(view.getByRole('checkbox', { name: '分屏预览' }));
-    fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
-    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
 
-    savedPreferences = {
-      outline: false,
-      splitPreview: false
-    };
+    const splitPreview = view.getByRole('checkbox', { name: '分屏预览' });
+    expect(splitPreview.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(view.getByRole('button', { name: /^编辑$/u }));
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-source'
+      )
+    ).toBe(true);
+    expect(splitPreview.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(view.getByRole('button', { name: /^分屏$/u }));
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-split'
+      )
+    ).toBe(true);
+    expect(splitPreview.getAttribute('aria-checked')).toBe('true');
+    expect(props.immersivePreferencesPort.write).not.toHaveBeenCalled();
+  });
+
+  it('retains a temporary immersive mode across same-page exit and re-entry', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: /^预览$/u }));
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-preview'
+      )
+    ).toBe(true);
+
+    fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+    expect(view.queryByRole('region', { name: '沉浸写作' })).toBeNull();
+
     fireEvent.click(view.getByRole('button', { name: '进入沉浸写作' }));
     expect(
-      view.container
-        .querySelector('.easymde-editor')
-        ?.classList.contains('is-immersive-source')
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-preview'
+      )
     ).toBe(true);
-    expect(props.immersivePreferencesPort.write).toHaveBeenCalledTimes(2);
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {

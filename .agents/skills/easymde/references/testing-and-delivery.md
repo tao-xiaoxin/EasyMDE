@@ -61,18 +61,20 @@ step and report its cause; never label it flaky without evidence.
 For Settings Center first-paint work, inspect the compositor boundary. The E2E
 gate covers desktop/mobile viewport, cold/warm cache, normal/hard refresh, and
 baseline/throttled CPU-plus-network profile, for 16 combinations. Capture CDP
-screencast frames from navigation commit through semantic readiness, decode the
-actual frame payload, and find the first nonblank frame before reading the
-settled DOM. Only a contiguous leading prefix of blank frames may precede that
-frame; if no nonblank frame exists, the case fails. From the first nonblank
-frame through readiness, every frame must be nonblank and match the stable
-Settings pixel fingerprint; any later blank or mismatch fails. Normal uses an
-ordinary reload; hard uses CDP
+screencast frames through semantic readiness, bind the main-frame navigation to
+its initialized loader, and decode the actual frame payload. Enforce an ordered
+state machine: an optional contiguous prefix exactly equal to the settled
+pre-navigation Settings analysis, an optional contiguous browser-clear prefix,
+then new Settings frames. From the first new Settings frame through readiness,
+every frame must be nonblank and match the stable Settings pixel fingerprint;
+fallback, wp-admin, partial, unknown, later blank, or mismatch fails. Normal
+uses an ordinary reload; hard uses CDP
 `Page.reload({ ignoreCache: true })` immediately before every reload while
 preserving the cache state established by the case setup. Match each frame to
 the stable pre-navigation Settings pixel fingerprint, and
 prove the same classifier rejects a real native wp-admin page capture. Accept a
-no-frame reload only when the visible Settings pixels are retained exactly. Then
+no-distinguishable-frame reload only when the complete visible Settings pixel
+analysis is retained exactly. Then
 separately assert the dedicated document has
 no ordinary wp-admin shell IDs. Block the Settings script, stylesheet, and
 scripts through CSP to verify the accessible dedicated failure. The generated

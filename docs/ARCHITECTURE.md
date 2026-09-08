@@ -197,11 +197,11 @@ the dedicated EasyMDE administration screen. `SettingsPage` requires
 `assets/build/settings-center/wordpress-manifest.json` contract, and dispatches
 the canonical route from `load-toplevel_page_easymde` before WordPress prints
 `admin-header.php`. The resulting authenticated document prints only the exact
-Settings styles in `<head>`, then the body fallback and one empty mount root,
-and only after that body content the classic
-`easymde-admin-settings-center` script handle. This ordering leaves the root
-present before synchronous script execution and prevents a parser/compositor
-interval from emitting a blank first-paint frame. It does not emit the ordinary
+Settings styles followed by the blocking classic
+`easymde-admin-settings-center` script handle in `<head>`, then the body
+fallback and one empty mount root. The entry registers its root observer before
+body parsing; inserting the root therefore triggers the synchronous React
+commit before the browser paints body content. It does not emit the ordinary
 `#wpwrap`, admin bar, menu, content canvas, notices-before-root, or footer
 presentation shell. The entrypoint requires both the exact stylesheet link and
 its computed readiness sentinel before mounting. Missing server assets, a
@@ -214,14 +214,15 @@ controls never claim persistence until the authoritative Settings API result
 succeeds. The comment-AI and article-sync surfaces are intentionally absent
 from the current navigation and DOM.
 
-The first-paint compositor evidence uses an ordered-frame contract: it finds
-the first nonblank frame, allows only a contiguous leading prefix of blank
-frames before it, and fails when no nonblank frame exists. From that first
-nonblank frame through semantic readiness, every captured frame must be
-nonblank and match the stable Settings fingerprint; any later blank or
-mismatched frame fails. A reload that emits zero new frames is accepted only
-when the visible Settings pixels before and after the reload have the exact
-same hash.
+The first-paint compositor evidence binds the main-frame navigation to its
+initialized loader and uses an ordered three-stage contract. It permits a
+contiguous prefix exactly equal to the settled pre-navigation Settings pixels,
+then a contiguous browser-clear prefix, then the new Settings frames. From the
+first new Settings frame through semantic readiness, every captured frame must
+remain nonblank and match the stable Settings fingerprint; fallback, wp-admin,
+partial, unknown, or later blank frames fail. A reload that emits no
+distinguishable new frame is accepted only when the visible Settings pixels
+before and after are exactly equal across the complete analysis.
 
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent

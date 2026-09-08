@@ -19,12 +19,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 		<link rel="icon" type="image/png" href="<?php echo esc_url( $settings_center_favicon_url ); ?>" data-easymde-settings-favicon="true">
 		<?php if ( $settings_center_assets_ready ) : ?>
 			<?php wp_styles()->do_items( array( 'easymde-admin-message-alert', 'easymde-admin-settings-center' ) ); ?>
+			<?php wp_scripts()->do_items( array( 'easymde-admin-settings-center' ) ); ?>
 		<?php endif; ?>
 </head>
 <body class="easymde-settings-center-document">
 	<?php require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php'; ?>
-	<?php if ( $settings_center_assets_ready ) : ?>
-		<?php wp_scripts()->do_items( array( 'easymde-admin-settings-center' ) ); ?>
-	<?php endif; ?>
 </body>
 </html>

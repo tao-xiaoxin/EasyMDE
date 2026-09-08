@@ -153,12 +153,12 @@ test("Settings Center dispatches a dedicated document before the WordPress heade
 	);
 	const bodyEndIndex = settingsDocumentTemplateSource.indexOf("</body>");
 	assert.ok(stylesIndex >= 0 && stylesIndex < headEndIndex);
+	assert.ok(stylesIndex < scriptsIndex && scriptsIndex < headEndIndex);
 	assert.ok(bodyStartIndex < rootTemplateIndex);
-	assert.ok(rootTemplateIndex < scriptsIndex);
-	assert.ok(scriptsIndex < bodyEndIndex);
+	assert.ok(rootTemplateIndex < bodyEndIndex);
 	assert.doesNotMatch(
 		settingsDocumentTemplateSource,
-		/wp_scripts\(\)->do_items[\s\S]*<\/head>/s,
+		/<body[\s\S]*wp_scripts\(\)->do_items/s,
 	);
 	assert.doesNotMatch(
 		settingsDocumentTemplateSource,

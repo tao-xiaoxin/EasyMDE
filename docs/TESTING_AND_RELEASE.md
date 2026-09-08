@@ -424,16 +424,18 @@ refresh, and baseline/throttled CPU-plus-network profile. Normal uses an
 ordinary reload; hard uses CDP `Page.reload({ ignoreCache: true })` immediately
 before every reload while preserving the cache state established by the case
 setup.
-The test captures every compositor frame from main-frame commit through
-semantic readiness and decodes every captured PNG. It finds the first nonblank
-frame and allows only a contiguous leading prefix of blank frames before it;
-if no nonblank frame exists, the case fails. From that first nonblank frame
-through semantic readiness, every captured frame must be nonblank, reject the
+The test binds main-frame navigation to its `Page.lifecycleEvent` `init`
+loader, captures compositor frames through semantic readiness, and decodes
+every captured PNG. Its ordered state machine permits only a contiguous prefix
+exactly equal to the settled pre-navigation Settings analysis, then a
+contiguous browser-clear prefix, then new Settings frames. From the first new
+Settings frame through readiness, every frame must be nonblank, reject the
 native dark WordPress admin bar, and remain within a mean channel distance of
 `20` from the stable pre-reload Settings fingerprint sampled every `16px`.
-Any later blank or mismatched frame fails.
-A reload that emits no new frame is accepted only when the Settings application
-is visible before and after and the retained pixels have the exact same hash.
+Fallback, partial, unknown, or any later blank frame fails. A reload that emits
+no distinguishable new frame is accepted only when the Settings application is
+visible before and after and its dimensions, full pixel hash, fingerprint, and
+sampled ratios remain exactly equal.
 The same classifier must reject a real Profile page capture as a native
 wp-admin negative sample. The settled document must contain one Settings
 application and none of the ordinary wp-admin shell IDs. Focused failure cases

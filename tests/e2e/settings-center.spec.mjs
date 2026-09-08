@@ -515,6 +515,7 @@ const SETTINGS_CENTER_FIRST_PAINT_RUNS = readPositiveIntegerEnvironment(
 	1,
 );
 const SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE = 20;
+const SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO = 0.98;
 const SETTINGS_CENTER_FIRST_PAINT_VIEWPORTS = [
 	{ name: "desktop", width: 1440, height: 900 },
 	{ name: "mobile", width: 390, height: 844 },
@@ -863,7 +864,7 @@ function settingsCenterFingerprintDistance(frame, reference) {
 
 function matchesSettingsCenterFrame(frame, reference) {
 	return (
-		frame.whiteRatio < 0.995 &&
+		frame.whiteRatio < SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO &&
 		frame.darkTopRatio < 0.35 &&
 		settingsCenterFingerprintDistance(frame, reference) <=
 			SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE
@@ -872,6 +873,24 @@ function matchesSettingsCenterFrame(frame, reference) {
 
 function isSettingsCenterBlankFrame(frame) {
 	return frame.whiteRatio >= 0.995;
+}
+
+function isSettingsCenterFallbackFrame(frame) {
+	return (
+		frame.whiteRatio >= SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO &&
+		!isSettingsCenterBlankFrame(frame)
+	);
+}
+
+function matchesExactSettingsCenterFrame(frame, reference) {
+	return (
+		frame.width === reference.width &&
+		frame.height === reference.height &&
+		frame.pixelHash === reference.pixelHash &&
+		frame.whiteRatio === reference.whiteRatio &&
+		frame.darkTopRatio === reference.darkTopRatio &&
+		settingsCenterFingerprintDistance(frame, reference) === 0
+	);
 }
 
 function selectSettingsCenterFirstPaintPublicEvidence(evidence) {
@@ -916,10 +935,42 @@ async function captureSettingsCenterNavigationEvidence(
 	const frames = [];
 	const pendingAcks = new Set();
 	const ackErrors = [];
+	const lifecycleInitTimestamps = new Map();
+	let navigationLoaderId;
+	let navigationInitTimestamp;
+	let lifecycleError;
+	let captureNavigationEvents = false;
+	const frameTree = await cdp.send("Page.getFrameTree");
+	const mainFrameId = frameTree.frameTree.frame.id;
 	const handleFrameNavigated = ({ frame }) => {
-		if (!frame.parentId) committed = true;
+		if (!frame.parentId && frame.id === mainFrameId) {
+			committed = true;
+			navigationLoaderId = frame.loaderId;
+			navigationInitTimestamp = lifecycleInitTimestamps.get(
+				navigationLoaderId,
+			);
+		}
 	};
-	const handleScreencastFrame = ({ data, sessionId }) => {
+	const handleLifecycleEvent = ({ frameId, loaderId, name, timestamp }) => {
+		if (
+			!captureNavigationEvents ||
+			name !== "init" ||
+			frameId !== mainFrameId
+		) {
+			return;
+		}
+
+		if (typeof loaderId !== "string" || typeof timestamp !== "number") {
+			lifecycleError = fail("settings-lifecycle-init-invalid");
+			return;
+		}
+
+		lifecycleInitTimestamps.set(loaderId, timestamp);
+		if (loaderId === navigationLoaderId) {
+			navigationInitTimestamp = timestamp;
+		}
+	};
+	const handleScreencastFrame = ({ data, metadata, sessionId }) => {
 		const ack = cdp.send("Page.screencastFrameAck", { sessionId });
 		pendingAcks.add(ack);
 		ack.then(
@@ -929,12 +980,24 @@ async function captureSettingsCenterNavigationEvidence(
 				pendingAcks.delete(ack);
 			},
 		);
-		if (committed && collectFrames) frames.push(data);
+		if (
+			committed &&
+			collectFrames &&
+			typeof navigationInitTimestamp === "number" &&
+			typeof metadata?.timestamp === "number" &&
+			metadata.timestamp >= navigationInitTimestamp
+		) {
+			frames.push({ data, timestamp: metadata.timestamp });
+		}
 	};
 	cdp.on("Page.frameNavigated", handleFrameNavigated);
+	cdp.on("Page.lifecycleEvent", handleLifecycleEvent);
 	cdp.on("Page.screencastFrame", handleScreencastFrame);
 	let screencastStarted = false;
+	let lifecycleEventsEnabled = false;
 	try {
+		await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true });
+		lifecycleEventsEnabled = true;
 		await cdp.send("Page.startScreencast", {
 			format: "png",
 			maxWidth: expectedSize.width,
@@ -942,16 +1005,35 @@ async function captureSettingsCenterNavigationEvidence(
 			everyNthFrame: 1,
 		});
 		screencastStarted = true;
+		captureNavigationEvents = true;
 		await reloadSettingsCenterForFirstPaint(page, cdp, refreshMode);
 		await waitForSettingsCenterReady(page);
 		collectFrames = false;
+		if (lifecycleError) {
+			throw lifecycleError;
+		}
+		if (
+			typeof navigationLoaderId !== "string" ||
+			typeof navigationInitTimestamp !== "number"
+		) {
+			throw fail("settings-lifecycle-init-missing");
+		}
 		if (!committed) throw fail("settings-main-frame-commit-missing");
 		await assertSettingsCenterShellAbsent(page);
 	} finally {
 		try {
-			if (screencastStarted) await cdp.send("Page.stopScreencast");
+			try {
+				if (screencastStarted) await cdp.send("Page.stopScreencast");
+			} finally {
+				if (lifecycleEventsEnabled) {
+					await cdp.send("Page.setLifecycleEventsEnabled", {
+						enabled: false,
+					});
+				}
+			}
 		} finally {
 			cdp.off("Page.frameNavigated", handleFrameNavigated);
+			cdp.off("Page.lifecycleEvent", handleLifecycleEvent);
 			cdp.off("Page.screencastFrame", handleScreencastFrame);
 			await Promise.all(pendingAcks);
 		}
@@ -965,64 +1047,118 @@ async function captureSettingsCenterNavigationEvidence(
 		fromSurface: true,
 		captureBeyondViewport: false,
 	});
+	const afterAnalysis = await decodeSettingsCenterPng(
+		decoder,
+		afterScreenshot.data,
+		expectedSize,
+	);
 	if (frames.length > 0) {
 		const frameAnalyses = await Promise.all(
 			frames.map((frame) =>
-				decodeSettingsCenterPng(decoder, frame, expectedSize),
+				decodeSettingsCenterPng(decoder, frame.data, expectedSize),
 			),
 		);
-		const firstNonblankIndex = frameAnalyses.findIndex(
-			(analysis) => !isSettingsCenterBlankFrame(analysis),
-		);
-		if (firstNonblankIndex < 0) {
-			throw fail("settings-nonblank-frame-missing");
-		}
-		const leadingBlankFrameCount = firstNonblankIndex;
-		const postFirstNonblankFrameAnalyses = frameAnalyses.slice(
-			firstNonblankIndex,
-		);
-		if (
-			postFirstNonblankFrameAnalyses.some((analysis) =>
-				isSettingsCenterBlankFrame(analysis),
-			)
-		) {
-			throw fail("settings-blank-frame-emitted");
-		}
-		if (
-			postFirstNonblankFrameAnalyses.some(
-				(analysis) => !matchesSettingsCenterFrame(analysis, beforeAnalysis),
-			)
-		) {
+		let phase = "retained";
+		let blankFrameCount = 0;
+		let firstNewSettingsIndex = -1;
+		for (let index = 0; index < frameAnalyses.length; index += 1) {
+			const analysis = frameAnalyses[index];
+			const exactRetained = matchesExactSettingsCenterFrame(
+				analysis,
+				beforeAnalysis,
+			);
+			const blank = isSettingsCenterBlankFrame(analysis);
+			const fallback = isSettingsCenterFallbackFrame(analysis);
+			const settings = matchesSettingsCenterFrame(analysis, beforeAnalysis);
+
+			if (phase === "retained") {
+				if (exactRetained) continue;
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (blank) {
+					phase = "blank";
+					blankFrameCount += 1;
+					continue;
+				}
+				if (settings) {
+					phase = "settings";
+					firstNewSettingsIndex = index;
+					continue;
+				}
+				throw fail("settings-frame-mismatch");
+			}
+
+			if (phase === "blank") {
+				if (blank) {
+					blankFrameCount += 1;
+					continue;
+				}
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (settings) {
+					phase = "settings";
+					firstNewSettingsIndex = index;
+					continue;
+				}
+				throw fail("settings-frame-mismatch");
+			}
+
+			if (phase === "settings") {
+				if (blank) throw fail("settings-blank-frame-emitted");
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (!settings) throw fail("settings-frame-mismatch");
+				continue;
+			}
 			throw fail("settings-frame-mismatch");
 		}
-		const frameFingerprintDistances = postFirstNonblankFrameAnalyses.map(
+
+		if (firstNewSettingsIndex < 0) {
+			if (phase !== "retained") {
+				throw fail("settings-nonblank-frame-missing");
+			}
+			if (!matchesExactSettingsCenterFrame(afterAnalysis, beforeAnalysis)) {
+				throw fail("settings-retained-pixels-changed");
+			}
+			return {
+				beforeVisible,
+				afterVisible,
+				frameBytes: 0,
+				leadingBlankFrameCount: 0,
+				nonblankFrameCount: 0,
+				retainedPixels: true,
+				allFramesMatch: true,
+				analysis: afterAnalysis,
+				retainedPixelHash: afterAnalysis.pixelHash,
+			};
+		}
+
+		const postSettingsFrameAnalyses = frameAnalyses.slice(
+			firstNewSettingsIndex,
+		);
+		const frameFingerprintDistances = postSettingsFrameAnalyses.map(
 			(analysis) =>
 				settingsCenterFingerprintDistance(analysis, beforeAnalysis),
 		);
 		return {
 			beforeVisible,
 			afterVisible,
-			frameBytes: Buffer.byteLength(frames[firstNonblankIndex], "base64"),
-			leadingBlankFrameCount,
-			nonblankFrameCount: postFirstNonblankFrameAnalyses.length,
+			frameBytes: Buffer.byteLength(
+				frames[firstNewSettingsIndex].data,
+				"base64",
+			),
+			leadingBlankFrameCount: blankFrameCount,
+			nonblankFrameCount: postSettingsFrameAnalyses.length,
 			retainedPixels: false,
 			allFramesMatch: true,
 			maxDarkTopRatio: Math.max(
-				...postFirstNonblankFrameAnalyses.map(
+				...postSettingsFrameAnalyses.map(
 					(analysis) => analysis.darkTopRatio,
 				),
 			),
 			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
-			analysis: postFirstNonblankFrameAnalyses[0],
+			analysis: postSettingsFrameAnalyses[0],
 		};
 	}
 
-	const afterAnalysis = await decodeSettingsCenterPng(
-		decoder,
-		afterScreenshot.data,
-		expectedSize,
-	);
-	if (beforeAnalysis.pixelHash !== afterAnalysis.pixelHash) {
+	if (!matchesExactSettingsCenterFrame(afterAnalysis, beforeAnalysis)) {
 		throw fail("settings-retained-pixels-changed");
 	}
 	return {

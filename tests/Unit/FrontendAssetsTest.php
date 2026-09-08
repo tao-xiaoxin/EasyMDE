@@ -598,7 +598,7 @@ MD);
 printf '$x$'
 ```
 
-        Real $y$
+Real $y$
 MD);
         $tilde_code_only = $detector->detect(<<<'MD'
 ~~~bash

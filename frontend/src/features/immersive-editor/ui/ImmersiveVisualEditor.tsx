@@ -14,11 +14,13 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
   type VisualMarkdownReadOnlySnapshot,
+  type AcceptedPasteDocumentBoundary,
   visualSelectionSourceRange
 } from '../visual-markdown';
 
@@ -54,6 +56,7 @@ type Props = Readonly<{
 }>;
 
 type PendingMarkdownTransfer = Readonly<{
+  acceptedDocumentBoundary: AcceptedPasteDocumentBoundary | null;
   markdown: string;
   phase: 'rendering' | 'requesting';
   selection: Readonly<{
@@ -71,6 +74,7 @@ type VisualSelectionSourceRange = Readonly<{
 }>;
 
 type SynchronizeMarkdownOptions = Readonly<{
+  acceptedDocumentBoundary?: AcceptedPasteDocumentBoundary;
   mapSelectionWhenUnchanged?: boolean;
 }>;
 
@@ -136,6 +140,8 @@ export function ImmersiveVisualEditor({
   const acceptedHtmlRef = useRef<string | null>(null);
   const externalChangeReportedRef = useRef(false);
   const pendingTransferRef = useRef<PendingMarkdownTransfer | null>(null);
+  const acceptedPasteDocumentBoundaryRef =
+    useRef<AcceptedPasteDocumentBoundary | null>(null);
   const lastSelectionRef = useRef<VisualSelectionSourceRange | null>(null);
   const visualInputPendingRef = useRef(false);
   const visualInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -151,6 +157,7 @@ export function ImmersiveVisualEditor({
     protectVisualMarkdownReadOnlyRegions(surface);
     readOnlySnapshotRef.current =
       captureVisualMarkdownReadOnlySnapshot(surface);
+    acceptedPasteDocumentBoundaryRef.current = null;
     lastSelectionRef.current = null;
     sourceMarkdownRef.current = sourceMarkdown;
     visualMarkdownRef.current = serializeVisualMarkdown(surface);
@@ -182,6 +189,7 @@ export function ImmersiveVisualEditor({
       return;
     }
     pendingTransferRef.current = null;
+    acceptedPasteDocumentBoundaryRef.current = null;
     onPendingChange(false);
     onFailure(code);
     onTransferFailure();
@@ -209,7 +217,13 @@ export function ImmersiveVisualEditor({
             surface,
             sourceMarkdown,
             baselineVisualMarkdown,
-            editedVisualMarkdown
+            editedVisualMarkdown,
+            options.acceptedDocumentBoundary
+              ? {
+                  acceptedPasteDocumentBoundary:
+                    options.acceptedDocumentBoundary
+                }
+              : {}
           );
           lastSelectionRef.current = mappedSelection;
           // CodeMirror owns the canonical selection used by delegated
@@ -253,6 +267,9 @@ export function ImmersiveVisualEditor({
       sourceMarkdownRef.current = value;
       visualMarkdownRef.current = editedVisualMarkdown;
       acceptedHtmlRef.current = surface.innerHTML;
+      if (value !== sourceMarkdown) {
+        acceptedPasteDocumentBoundaryRef.current = null;
+      }
       if (value !== sourceMarkdown) onMarkdownChange();
       return true;
     } catch (error) {
@@ -283,12 +300,19 @@ export function ImmersiveVisualEditor({
     }
     try {
       let currentSelection: VisualSelectionSourceRange;
+      const acceptedDocumentBoundary =
+        acceptedPasteDocumentBoundaryRef.current ?? undefined;
       try {
         currentSelection = visualSelectionSourceRange(
           surface,
           sourceMarkdown,
           baselineVisualMarkdown,
-          baselineVisualMarkdown
+          baselineVisualMarkdown,
+          {
+            ...(acceptedDocumentBoundary
+              ? { acceptedPasteDocumentBoundary: acceptedDocumentBoundary }
+              : {})
+          }
         );
         lastSelectionRef.current = currentSelection;
       } catch (error) {
@@ -312,9 +336,16 @@ export function ImmersiveVisualEditor({
         end: caret,
         start: caret
       };
+      const pasteDocumentBoundary =
+        0 === caret
+          ? 'start'
+          : caret === markdown.length
+            ? 'end'
+            : null;
       applyDocumentChange({ selection, value: markdown });
       onMarkdownChange();
       pendingTransferRef.current = {
+        acceptedDocumentBoundary: pasteDocumentBoundary,
         markdown,
         phase: 'requesting',
         selection,
@@ -323,6 +354,7 @@ export function ImmersiveVisualEditor({
       onPendingChange(true);
       const signature = requestPreview(markdown);
       pendingTransferRef.current = {
+        acceptedDocumentBoundary: pasteDocumentBoundary,
         markdown,
         phase: 'rendering',
         selection,
@@ -357,10 +389,12 @@ export function ImmersiveVisualEditor({
     }
   }, [pending, surface]);
 
-  useLayoutEffect(() =>
-    documentSession.document.subscribe(() => {
+  useLayoutEffect(() => {
+    let active = true;
+    const unsubscribe = documentSession.document.subscribe(() => {
       if (
-        selfWriteRef.current
+        !active
+        || selfWriteRef.current
         || externalChangeReportedRef.current
         || documentSession.document.getValue() === sourceMarkdownRef.current
       ) {
@@ -368,7 +402,12 @@ export function ImmersiveVisualEditor({
       }
       externalChangeReportedRef.current = true;
       onCanonicalDocumentChange();
-    }), [documentSession, onCanonicalDocumentChange]);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [documentSession, onCanonicalDocumentChange]);
 
   useLayoutEffect(() => {
     const pending = pendingTransferRef.current;
@@ -398,12 +437,19 @@ export function ImmersiveVisualEditor({
       }
       const visualMarkdown = serializeVisualMarkdown(surface);
       try {
-        placeVisualCaretFromSourceOffset(
-          surface,
-          pending.markdown,
-          visualMarkdown,
-          pending.selection.start
-        );
+        if (pending.acceptedDocumentBoundary) {
+          placeVisualCaretAtAcceptedPasteDocumentBoundary(
+            surface,
+            pending.acceptedDocumentBoundary
+          );
+        } else {
+          placeVisualCaretFromSourceOffset(
+            surface,
+            pending.markdown,
+            visualMarkdown,
+            pending.selection.start
+          );
+        }
       } catch (error) {
         selectionDiagnostic = visualEditorFailureCode(
           error,
@@ -413,6 +459,9 @@ export function ImmersiveVisualEditor({
       }
       pendingTransferRef.current = null;
       captureSnapshot(pending.markdown);
+      acceptedPasteDocumentBoundaryRef.current =
+        pending.acceptedDocumentBoundary;
+      lastSelectionRef.current = pending.selection;
       restoreFocusRef.current = true;
       onPendingChange(false);
     } catch (error) {
@@ -443,7 +492,13 @@ export function ImmersiveVisualEditor({
 
     const commitVisualInput = (): boolean => {
       visualInputPendingRef.current = false;
-      if (!active || pendingTransferRef.current) return false;
+      if (
+        !active
+        || pendingTransferRef.current
+        || externalChangeReportedRef.current
+      ) {
+        return false;
+      }
       applyVisualInlineShortcut(surface);
       return synchronizeMarkdown();
     };

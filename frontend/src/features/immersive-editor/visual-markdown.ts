@@ -893,6 +893,66 @@ function visualSourceBoundaryCandidates(
   return candidates;
 }
 
+function lastEditableVisualBoundary(
+  editor: HTMLElement
+): VisualBoundary | null {
+  const topLevelBlocks = Array.from(editor.children).filter(
+    (child) => !isVisualCaretExcludedElement(child)
+  );
+  const lastBlock = topLevelBlocks[topLevelBlocks.length - 1];
+  return lastBlock
+    ? visualEditableBoundaryAtEdge(lastBlock, 'end')
+    : null;
+}
+
+export type AcceptedPasteDocumentBoundary = 'end' | 'start';
+
+function firstEditableVisualBoundary(
+  editor: HTMLElement
+): VisualBoundary | null {
+  const topLevelBlocks = Array.from(editor.children).filter(
+    (child) => !isVisualCaretExcludedElement(child)
+  );
+  const firstBlock = topLevelBlocks[0];
+  return firstBlock
+    ? visualEditableBoundaryAtEdge(firstBlock, 'start')
+    : null;
+}
+
+function acceptedPasteDocumentBoundary(
+  editor: HTMLElement,
+  boundary: AcceptedPasteDocumentBoundary
+): VisualBoundary | null {
+  return 'start' === boundary
+    ? firstEditableVisualBoundary(editor)
+    : lastEditableVisualBoundary(editor);
+}
+
+export function placeVisualCaretAtAcceptedPasteDocumentBoundary(
+  editor: HTMLElement,
+  boundary: AcceptedPasteDocumentBoundary
+): void {
+  const caretBoundary = acceptedPasteDocumentBoundary(editor, boundary);
+  if (!caretBoundary) throw new Error('visual-editor-selection-map-failed');
+  placeVisualCaretAtBoundary(editor, caretBoundary);
+}
+
+export function isVisualCaretAtAcceptedPasteDocumentBoundary(
+  editor: HTMLElement,
+  boundary: AcceptedPasteDocumentBoundary
+): boolean {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  const caretBoundary = acceptedPasteDocumentBoundary(editor, boundary);
+  if (!caretBoundary) return false;
+  return Boolean(
+    selection?.isCollapsed
+    && selection.anchorNode === caretBoundary.node
+    && selection.focusNode === caretBoundary.node
+    && selection.anchorOffset === caretBoundary.offset
+    && selection.focusOffset === caretBoundary.offset
+  );
+}
+
 function tryPlaceVisualCaretAtSourceBoundary(
   editor: HTMLElement,
   sourceMarkdown: string,
@@ -1067,11 +1127,16 @@ export function placeVisualCaretFromSourceOffset(
   placeVisualCaretAtBoundary(editor, match);
 }
 
+type VisualSelectionSourceRangeOptions = Readonly<{
+  acceptedPasteDocumentBoundary?: AcceptedPasteDocumentBoundary;
+}>;
+
 export function visualSelectionSourceRange(
   editor: HTMLElement,
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
-  currentVisualMarkdown = baselineVisualMarkdown
+  currentVisualMarkdown = baselineVisualMarkdown,
+  options: VisualSelectionSourceRangeOptions = {}
 ): Readonly<{
   direction: 'backward' | 'forward' | 'none';
   end: number;
@@ -1086,6 +1151,19 @@ export function visualSelectionSourceRange(
     || !editor.contains(selection.focusNode)
   ) {
     throw new Error('visual-editor-selection-map-failed');
+  }
+  if (
+    options.acceptedPasteDocumentBoundary
+    && currentVisualMarkdown === baselineVisualMarkdown
+    && isVisualCaretAtAcceptedPasteDocumentBoundary(
+      editor,
+      options.acceptedPasteDocumentBoundary
+    )
+  ) {
+    const offset = 'start' === options.acceptedPasteDocumentBoundary
+      ? 0
+      : sourceMarkdown.length;
+    return { direction: 'none', end: offset, start: offset };
   }
   if (
     currentVisualMarkdown === baselineVisualMarkdown

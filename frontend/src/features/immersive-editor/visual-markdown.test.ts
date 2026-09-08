@@ -7,6 +7,7 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
@@ -759,6 +760,78 @@ A--&gt;B</code></pre>
       start: source.length
     });
   });
+
+  it.each([
+    '\n',
+    '\r\n',
+    '\n\n',
+    '\r\n\n\r\n'
+  ])(
+    'maps a canonical document-end caret across trailing line endings (%j)',
+    (trailingLineEndings) => {
+      const surface = editor('<p>Markdown content</p><div class="footnotes">Generated</div>');
+      const acceptedVisualMarkdown = 'Markdown content';
+      const source = `${acceptedVisualMarkdown}${trailingLineEndings}`;
+      protectVisualMarkdownReadOnlyRegions(surface);
+
+      placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+      expect(
+        visualSelectionSourceRange(
+          surface,
+          source,
+          acceptedVisualMarkdown,
+          acceptedVisualMarkdown,
+          { acceptedPasteDocumentBoundary: 'end' }
+        )
+      ).toEqual({
+        direction: 'none',
+        end: source.length,
+        start: source.length
+      });
+      expect(window.getSelection()?.anchorNode?.parentElement?.tagName).toBe(
+        'P'
+      );
+    }
+  );
+
+  it('maps an accepted paste transaction at canonical offset zero to the first editable boundary', () => {
+    const surface = editor(
+      '<div class="easymde-toc">Generated outline</div><p>Markdown content</p>'
+    );
+    protectVisualMarkdownReadOnlyRegions(surface);
+    placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'start');
+
+    expect(
+      visualSelectionSourceRange(
+        surface,
+        'Markdown content',
+        'Markdown content',
+        'Markdown content',
+        { acceptedPasteDocumentBoundary: 'start' }
+      )
+    ).toEqual({ direction: 'none', end: 0, start: 0 });
+    expect(window.getSelection()?.anchorNode?.textContent).toBe(
+      'Markdown content'
+    );
+  });
+
+  it.each([' ', '\u00a0'])(
+    'does not treat a non-line-ending suffix as a document-end mapping (%j)',
+    (suffix) => {
+      const surface = editor('<p>Markdown content</p>');
+      const source = `Markdown content${suffix}\n`;
+
+      expect(() =>
+        placeVisualCaretFromSourceOffset(
+          surface,
+          source,
+          'Markdown content',
+          source.length
+        )
+      ).toThrow('visual-editor-selection-map-failed');
+    }
+  );
 
   it('restores source-end carets after consecutive paste Preview replacements', () => {
     const generatedTail = Array.from(

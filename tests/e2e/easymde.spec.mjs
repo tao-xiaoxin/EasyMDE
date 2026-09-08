@@ -15,6 +15,14 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const fullCapabilityFixtureEvidence = {
+  sha256: createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'),
+  characters: fullCapabilityMarkdown.length,
+  bytes: Buffer.byteLength(fullCapabilityMarkdown, 'utf8'),
+  endsWithSingleLf: fullCapabilityMarkdown.endsWith('\n')
+    && !fullCapabilityMarkdown.endsWith('\r\n')
+    && !fullCapabilityMarkdown.endsWith('\n\n')
+};
 const fullCapabilityImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
@@ -2001,6 +2009,11 @@ test.describe('EasyMDE editor workflows', () => {
   test('keeps immersive Markdown input responsive and parses consecutive full Markdown pastes', async ({ page, context }, testInfo) => {
     const browserFailures = [];
     const previewRequests = [];
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
     page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
     page.on('console', (message) => {
       if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
@@ -2160,6 +2173,163 @@ test.describe('EasyMDE editor workflows', () => {
     const metrics = await cdp.send('Performance.getMetrics');
     expect(metrics.metrics.some(({ name }) => 'LayoutCount' === name)).toBe(true);
     await cdp.detach();
+  });
+
+  test('parses the exact full-capability fixture after immersive unlock at empty and prefixed document ends', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    const previewRequests = [];
+    const fixtureImageUrl = 'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        previewRequests.push(request.postDataJSON()?.markdown ?? null);
+      }
+    });
+    await page.route(fixtureImageUrl, (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+
+    expect(fullCapabilityFixtureEvidence).toEqual({
+      sha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',
+      characters: 9254,
+      bytes: 11959,
+      endsWithSingleLf: true
+    });
+
+    await login(page, testInfo.easymdeUser);
+
+    const pasteFixtureAtDocumentEnd = async (expectedMarkdown) => {
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.getByRole('button', { name: labels.enter }).click();
+      await page.getByRole('button', { name: labels.preview, exact: true }).click();
+      await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+      await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+      const source = page.locator('#easymde-source');
+      const visualEditor = page.getByRole('textbox', {
+        name: labels.previewEditorLabel
+      });
+      const beforePaste = previewRequests.filter(
+        (markdown) => markdown === expectedMarkdown
+      ).length;
+      await visualEditor.evaluate((surface, value) => {
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-full-fixture-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, fullCapabilityMarkdown);
+
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      const expectedEvidence = {
+        sha256: createHash('sha256').update(expectedMarkdown, 'utf8').digest('hex'),
+        characters: expectedMarkdown.length,
+        bytes: Buffer.byteLength(expectedMarkdown, 'utf8'),
+        endsWithSingleLf: expectedMarkdown.endsWith('\n')
+          && !expectedMarkdown.endsWith('\r\n')
+          && !expectedMarkdown.endsWith('\n\n')
+      };
+      const actualMarkdown = await source.inputValue();
+      const actualEvidence = {
+        sha256: createHash('sha256').update(actualMarkdown, 'utf8').digest('hex'),
+        characters: actualMarkdown.length,
+        bytes: Buffer.byteLength(actualMarkdown, 'utf8'),
+        endsWithSingleLf: actualMarkdown.endsWith('\n')
+          && !actualMarkdown.endsWith('\r\n')
+          && !actualMarkdown.endsWith('\n\n')
+      };
+      expect(actualEvidence).toEqual(expectedEvidence);
+      await expect.poll(
+        () => previewRequests.filter((markdown) => markdown === expectedMarkdown).length,
+        { timeout: 30_000 }
+      ).toBe(beforePaste + 1);
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+
+      const semantics = await visualEditor.evaluate((surface) => ({
+        headings: surface.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+        tables: surface.querySelectorAll('table').length,
+        codeBlocks: surface.querySelectorAll('pre > code:not(.language-mermaid)').length,
+        mermaid: surface.querySelectorAll('.easymde-mermaid').length,
+        math: surface.querySelectorAll('.easymde-math').length,
+        taskItems: surface.querySelectorAll('li.task-list-item').length,
+        fixtureTitle: surface.querySelector('h1')?.textContent ?? ''
+      }));
+      expect(semantics).toEqual({
+        headings: 57,
+        tables: 4,
+        codeBlocks: 8,
+        mermaid: 10,
+        math: 14,
+        taskItems: 19,
+        fixtureTitle: 'Markdown 全量能力测试文档'
+      });
+
+      await visualEditor.evaluate((surface) => {
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-full-fixture-selection-unavailable');
+        const range = surface.ownerDocument.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!surface.ownerDocument.execCommand('insertText', false, ' continuation')) {
+          throw new Error('immersive-full-fixture-follow-up-input-failed');
+        }
+      });
+      await expect.poll(
+        () => source.inputValue(),
+        { timeout: 10_000 }
+      ).toContain('continuation');
+
+      await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+      await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+      await expect(source).toHaveValue(/continuation/);
+      await page.getByRole('button', { name: labels.split, exact: true }).click();
+      await expect(page.locator('.easymde-pane-source')).toBeVisible();
+      await expect(page.locator('.easymde-pane-preview')).toBeVisible();
+      await page.getByRole('button', { name: labels.edit, exact: true }).click();
+      await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+      await page.getByRole('button', { name: labels.exit }).click();
+      await expect(page.getByRole('region', { name: labels.immersive })).toHaveCount(0);
+    };
+
+    await openEasyMdeNewPost(page);
+    await pasteFixtureAtDocumentEnd(fullCapabilityMarkdown);
+
+    await openEasyMdeNewPost(page);
+    const prefix = 'Existing prefix\n\n';
+    await fillMarkdownAndWaitForPreview(page, prefix, 'Existing prefix');
+    await pasteFixtureAtDocumentEnd(`${prefix}${fullCapabilityMarkdown}`);
+
+    expect(previewRequests.filter((markdown) => markdown === fullCapabilityMarkdown)).toHaveLength(1);
+    expect(previewRequests.filter((markdown) => markdown === `${prefix}${fullCapabilityMarkdown}`)).toHaveLength(1);
+    expect(browserFailures).toEqual([]);
   });
 
   test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {

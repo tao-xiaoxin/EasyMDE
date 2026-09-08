@@ -429,6 +429,14 @@ input-performance gates. The same test verifies lock/unlock transitions,
 canonical field synchronization, semantic rendered output, zero Preview
 requests during visual typing, one request per full Markdown paste, and the
 absence of page errors.
+The Chromium test `parses the exact full-capability fixture after immersive
+unlock at empty and prefixed document ends` reads the unchanged
+`docs/examples/markdown-full-capability-test.md` file directly, verifies the
+canonical field byte-for-byte for an empty document and an existing prefix,
+asserts one Preview request per paste, exact source preservation including the
+fixture's footnote syntax, and the rendered heading/table/code, Mermaid, math,
+and task-list semantics, then checks follow-up input, lock, mode changes, and
+immersive teardown without browser errors.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

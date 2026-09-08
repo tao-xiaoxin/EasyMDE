@@ -259,7 +259,7 @@ function fixture(): EditorRootProps &
       split: '分屏',
       splitMode: '分屏模式',
       splitPreview: '分屏预览',
-      splitPreviewDescription: '仅本次会话显示实时预览区域；刷新后恢复设置中心模式',
+      splitPreviewDescription: '实时预览编辑区域文本（所见即所得）',
       table: '表格',
       tableColumns: '列数',
       tableRows: '行数',

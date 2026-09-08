@@ -239,8 +239,8 @@ msgid "Split preview"
 msgstr "分屏预览"
 
 #: src/Admin/AdminAssets.php:439
-msgid "Show live preview for this session; refresh to restore Settings Center mode"
-msgstr "仅本次会话显示实时预览区域；刷新后恢复设置中心模式"
+msgid "Live preview editing area (what you see is what you get)"
+msgstr "实时预览编辑区域文本（所见即所得）"
 
 #: src/Admin/AdminAssets.php:440
 msgid "Table"

@@ -1998,6 +1998,170 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  test('keeps immersive Markdown input responsive and parses consecutive full Markdown pastes', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    const previewRequests = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        previewRequests.push(request.postDataJSON()?.markdown ?? null);
+      }
+    });
+
+    const cdp = await context.newCDPSession(page);
+    await cdp.send('Performance.enable');
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Before', 'Before');
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: immersiveLabels.enter }).click();
+    await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
+    await expect(page.getByText(immersiveLabels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: immersiveLabels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: immersiveLabels.previewEditorLabel
+    });
+    const baselinePreviewRequestCount = previewRequests.length;
+    const metricsBeforeInput = await cdp.send('Performance.getMetrics');
+    const inputPerformanceKey = '__easymdeIssue227InputPerformance';
+    await visualEditor.evaluate((surface, key) => {
+      const longTasks = [];
+      const startedAt = performance.now();
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.startTime >= startedAt && entry.duration > 50) {
+            longTasks.push(entry.duration);
+          }
+        }
+      });
+      observer.observe({ type: 'longtask' });
+      window[key] = { longTasks, observer, startedAt };
+    }, inputPerformanceKey);
+    const dispatchDurations = [];
+    for (let index = 0; index < 30; index += 1) {
+      dispatchDurations.push(await visualEditor.evaluate((surface, transactionIndex) => {
+        surface.innerHTML = `<p>Typed transaction ${transactionIndex}</p>`;
+        const paragraph = surface.querySelector('p');
+        if (!paragraph) throw new Error('immersive-visual-paragraph-missing');
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-visual-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const start = performance.now();
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText'
+        }));
+        return performance.now() - start;
+      }, index));
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(resolve);
+      }));
+    }
+    await expect(source).toHaveValue('Typed transaction 29');
+    await page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(resolve);
+    }));
+    const longTasks = await page.evaluate((key) => {
+      const state = window[key];
+      if (!state) throw new Error('immersive-input-performance-state-missing');
+      for (const entry of state.observer.takeRecords()) {
+        if (entry.startTime >= state.startedAt && entry.duration > 50) {
+          state.longTasks.push(entry.duration);
+        }
+      }
+      state.observer.disconnect();
+      delete window[key];
+      return state.longTasks;
+    }, inputPerformanceKey);
+    const metricsAfterInput = await cdp.send('Performance.getMetrics');
+    const metricValue = (snapshot, name) => {
+      const metric = snapshot.metrics.find((candidate) => candidate.name === name);
+      if (!metric || !Number.isFinite(metric.value) || metric.value < 0) {
+        throw new Error(`immersive-performance-metric-invalid:${name}`);
+      }
+      return metric.value;
+    };
+    const taskDurationBefore = metricValue(metricsBeforeInput, 'TaskDuration');
+    const taskDurationAfter = metricValue(metricsAfterInput, 'TaskDuration');
+    metricValue(metricsBeforeInput, 'JSHeapUsedSize');
+    metricValue(metricsAfterInput, 'JSHeapUsedSize');
+    metricValue(metricsBeforeInput, 'LayoutCount');
+    metricValue(metricsAfterInput, 'LayoutCount');
+    const sortedDispatchDurations = [...dispatchDurations].sort(
+      (left, right) => left - right
+    );
+    const p95Index = Math.ceil(sortedDispatchDurations.length * 0.95) - 1;
+    const p95DispatchDuration = sortedDispatchDurations[p95Index];
+    expect(dispatchDurations).toHaveLength(30);
+    expect(Number.isFinite(p95DispatchDuration)).toBe(true);
+    expect(p95DispatchDuration).toBeLessThanOrEqual(50);
+    expect(longTasks).toEqual([]);
+    const taskDurationDelta = taskDurationAfter - taskDurationBefore;
+    expect(taskDurationDelta).toBeGreaterThanOrEqual(0);
+    expect(taskDurationDelta).toBeLessThan(5);
+    expect(previewRequests.length).toBe(baselinePreviewRequestCount);
+
+    const firstPaste = '\n\n# Pasted heading\n\n**Pasted bold**';
+    const secondPaste = '\n\n- First item\n- Second item\n\n`inline`';
+    const firstMarkdown = `Typed transaction 29${firstPaste}`;
+    const secondMarkdown = `${firstMarkdown}${secondPaste}`;
+    const dispatchMarkdownPaste = async (markdown) => {
+      await visualEditor.evaluate((surface, value) => {
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-visual-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, markdown);
+    };
+
+    await dispatchMarkdownPaste(firstPaste);
+    await expect(source).toHaveValue(firstMarkdown);
+    await expect(visualEditor.locator('h1')).toHaveText('Pasted heading');
+    await expect(visualEditor.locator('strong')).toHaveText('Pasted bold');
+
+    await dispatchMarkdownPaste(secondPaste);
+    await expect(source).toHaveValue(secondMarkdown);
+    await expect(visualEditor.locator('li')).toHaveCount(2);
+    await expect(visualEditor.locator('code')).toHaveText('inline');
+    await expect.poll(() => previewRequests.filter((markdown) => markdown === firstMarkdown).length).toBe(1);
+    await expect.poll(() => previewRequests.filter((markdown) => markdown === secondMarkdown).length).toBe(1);
+
+    await page.getByRole('button', { name: immersiveLabels.previewLockReadOnly }).click();
+    await expect(page.getByRole('textbox', { name: immersiveLabels.previewEditorLabel })).toHaveCount(0);
+    await expect(source).toHaveValue(secondMarkdown);
+    expect(browserFailures).toEqual([]);
+
+    const metrics = await cdp.send('Performance.getMetrics');
+    expect(metrics.metrics.some(({ name }) => 'LayoutCount' === name)).toBe(true);
+    await cdp.detach();
+  });
+
   test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {
     const browserFailures = [];
     testInfo.easymdeOriginalEditorDisplaySettings = editorDisplaySettings();

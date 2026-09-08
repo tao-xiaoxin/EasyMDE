@@ -413,6 +413,23 @@ and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
 
+The immersive visual Markdown regression coverage also exercises the unlocked
+Preview paper, completed block and inline syntax, bounded visual-input
+coalescing, explicit selection-loss failure without end-of-document appends,
+consecutive full Markdown pastes through the server Preview owner, one Preview
+request per paste, and zero Preview requests for ordinary visual keystrokes.
+The Chromium test `keeps immersive Markdown input responsive and parses
+consecutive full Markdown pastes` uses a CDP session alongside the headless
+browser to run 30 synthetic real input transactions, measure dispatch p95
+(`<= 50 ms`), reject any observed `longtask` over 50 ms, and validate finite
+before/after `TaskDuration`, `JSHeapUsedSize`, and `LayoutCount` metrics. The
+TaskDuration delta has a broad five-second bound to avoid making the test
+depend on host scheduling jitter; the p95 and longtask checks are the hard
+input-performance gates. The same test verifies lock/unlock transitions,
+canonical field synchronization, semantic rendered output, zero Preview
+requests during visual typing, one request per full Markdown paste, and the
+absence of page errors.
+
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through
 `/easymde/v1/media`, verifies the resulting URL and WordPress relative path

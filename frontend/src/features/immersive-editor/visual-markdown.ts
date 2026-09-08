@@ -34,7 +34,6 @@ function markShortcutApplied(
     'markdown-block-applied',
     'markdown-inline-applied'
   );
-  void element.offsetWidth;
   element.classList.add(
     'block' === kind
       ? 'markdown-block-applied'
@@ -813,6 +812,126 @@ function neutralVisualCaretBoundary(
   return { node: caret, offset: 1 };
 }
 
+function placeVisualCaretAtBoundary(
+  editor: HTMLElement,
+  boundary: VisualBoundary
+): void {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const caret = neutralVisualCaretBoundary(editor, boundary);
+  const range = editor.ownerDocument.createRange();
+  range.setStart(caret.node, caret.offset);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function visualEditableBoundaryAtEdge(
+  node: Node,
+  edge: 'end' | 'start'
+): VisualBoundary | null {
+  if (Node.TEXT_NODE === node.nodeType) {
+    return {
+      node,
+      offset: 'start' === edge ? 0 : node.textContent?.length ?? 0
+    };
+  }
+  if (!(node instanceof Element) || isVisualCaretExcludedElement(node)) {
+    return null;
+  }
+  const children = Array.from(node.childNodes);
+  const ordered = 'start' === edge ? children : children.reverse();
+  for (const child of ordered) {
+    if (child instanceof Element && isVisualCaretExcludedElement(child)) {
+      continue;
+    }
+    const boundary = visualEditableBoundaryAtEdge(child, edge);
+    if (boundary) return boundary;
+  }
+  return {
+    node,
+    offset: 'start' === edge ? 0 : node.childNodes.length
+  };
+}
+
+function visualSourceBoundaryCandidates(
+  editor: HTMLElement,
+  sourceOffset: number
+): ReadonlyArray<VisualBoundary> {
+  const edge = 0 === sourceOffset ? 'start' : 'end';
+  const candidates: VisualBoundary[] = [];
+  const addCandidate = (boundary: VisualBoundary | null): void => {
+    if (
+      !boundary
+      || candidates.some(
+        (candidate) =>
+          candidate.node === boundary.node
+          && candidate.offset === boundary.offset
+      )
+    ) {
+      return;
+    }
+    candidates.push(boundary);
+  };
+  const topLevelBlocks = Array.from(editor.children).filter(
+    (child) => !isVisualCaretExcludedElement(child)
+  );
+  const topLevelBlock = 'start' === edge
+    ? topLevelBlocks[0]
+    : topLevelBlocks[topLevelBlocks.length - 1];
+  if (topLevelBlock) {
+    addCandidate({
+      node: topLevelBlock,
+      offset: 'start' === edge ? 0 : topLevelBlock.childNodes.length
+    });
+    addCandidate(visualEditableBoundaryAtEdge(topLevelBlock, edge));
+  }
+  addCandidate({
+    node: editor,
+    offset: 'start' === edge ? 0 : editor.childNodes.length
+  });
+  return candidates;
+}
+
+function tryPlaceVisualCaretAtSourceBoundary(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  sourceOffset: number
+): boolean {
+  if (sourceOffset !== 0 && sourceOffset !== sourceMarkdown.length) {
+    return false;
+  }
+  for (const boundary of visualSourceBoundaryCandidates(editor, sourceOffset)) {
+    try {
+      const mappedOffset = visualBoundarySourceOffset(
+        editor,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        boundary.node,
+        boundary.offset
+      );
+      if (mappedOffset === sourceOffset) {
+        placeVisualCaretAtBoundary(editor, boundary);
+        return true;
+      }
+    } catch (error) {
+      if (
+        error instanceof Error
+        && [
+          'visual-editor-markdown-merge-ambiguous',
+          'visual-editor-markdown-merge-failed',
+          'visual-editor-selection-map-failed'
+        ].includes(error.message)
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  return false;
+}
+
 export function placeVisualCaretFromSourceOffset(
   editor: HTMLElement,
   sourceMarkdown: string,
@@ -821,6 +940,16 @@ export function placeVisualCaretFromSourceOffset(
 ): void {
   if (sourceOffset < 0 || sourceOffset > sourceMarkdown.length) {
     throw new Error('visual-editor-selection-map-failed');
+  }
+  if (
+    tryPlaceVisualCaretAtSourceBoundary(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      sourceOffset
+    )
+  ) {
+    return;
   }
   const boundaryIndex = visualBoundaryIndex(editor);
   const mappedOffsets = new Map<number, number | null>();
@@ -935,34 +1064,43 @@ export function placeVisualCaretFromSourceOffset(
   if (!match) {
     throw new Error('visual-editor-selection-map-failed');
   }
-  const selection = editor.ownerDocument.defaultView?.getSelection();
-  if (!selection) throw new Error('visual-editor-selection-unavailable');
-  const caret = neutralVisualCaretBoundary(editor, match);
-  const range = editor.ownerDocument.createRange();
-  range.setStart(caret.node, caret.offset);
-  range.collapse(true);
-  selection.removeAllRanges();
-  selection.addRange(range);
+  placeVisualCaretAtBoundary(editor, match);
 }
 
 export function visualSelectionSourceRange(
   editor: HTMLElement,
   sourceMarkdown: string,
-  baselineVisualMarkdown: string
+  baselineVisualMarkdown: string,
+  currentVisualMarkdown = baselineVisualMarkdown
 ): Readonly<{
   direction: 'backward' | 'forward' | 'none';
   end: number;
   start: number;
 }> {
-  const selection = window.getSelection();
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection?.anchorNode || !selection.focusNode) {
+    throw new Error('visual-editor-selection-unavailable');
+  }
   if (
-    !selection?.anchorNode
-    || !selection.focusNode
-    || !editor.contains(selection.anchorNode)
+    !editor.contains(selection.anchorNode)
     || !editor.contains(selection.focusNode)
   ) {
-    const end = sourceMarkdown.length;
-    return { direction: 'none', end, start: end };
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  if (
+    currentVisualMarkdown === baselineVisualMarkdown
+    && selection.anchorNode === editor
+    && selection.focusNode === editor
+    && selection.anchorOffset === selection.focusOffset
+    && (
+      selection.anchorOffset === 0
+      || selection.anchorOffset === editor.childNodes.length
+    )
+  ) {
+    const offset = selection.anchorOffset === 0
+      ? 0
+      : sourceMarkdown.length;
+    return { direction: 'none', end: offset, start: offset };
   }
   const anchor = visualBoundarySourceOffset(
     editor,

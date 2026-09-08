@@ -1020,7 +1020,7 @@ describe('EditorRoot', () => {
     );
   });
 
-  it('synchronizes visual typing immediately without duplicating the native submission write', async () => {
+  it('synchronizes visual typing within a bounded input window without duplicating the native submission write', async () => {
     const props = fixture();
     vi.mocked(props.previewPort.render).mockResolvedValue({
       features: {},
@@ -1044,18 +1044,24 @@ describe('EditorRoot', () => {
 
     visualEditor.innerHTML = '<p>First visual value</p>';
     fireEvent.input(visualEditor);
-    expect(props.submissionField.value).toBe('First visual value');
-    expect(canonicalInput).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe('First visual value');
+      expect(canonicalInput).toHaveBeenCalledOnce();
+    });
 
     visualEditor.innerHTML = '<p>Final visual value</p>';
     fireEvent.input(visualEditor);
-    expect(props.submissionField.value).toBe('Final visual value');
-    expect(canonicalInput).toHaveBeenCalledTimes(2);
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe('Final visual value');
+      expect(canonicalInput).toHaveBeenCalledTimes(2);
+    });
 
     visualEditor.innerHTML = '<p>Submitted visual value</p>';
     fireEvent.input(visualEditor);
-    expect(props.submissionField.value).toBe('Submitted visual value');
-    expect(canonicalInput).toHaveBeenCalledTimes(3);
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe('Submitted visual value');
+      expect(canonicalInput).toHaveBeenCalledTimes(3);
+    });
 
     const submitEvent = new SubmitEvent('submit', {
       bubbles: true,
@@ -1094,8 +1100,10 @@ describe('EditorRoot', () => {
     visualEditor.innerHTML = '<p>Navigation-safe visual value</p>';
     fireEvent.input(visualEditor);
 
-    expect(props.submissionField.value).toBe('Navigation-safe visual value');
-    expect(canonicalInput).toHaveBeenCalledOnce();
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe('Navigation-safe visual value');
+      expect(canonicalInput).toHaveBeenCalledOnce();
+    });
     props.submissionField.removeEventListener('input', canonicalInput);
   });
 
@@ -1123,7 +1131,7 @@ describe('EditorRoot', () => {
     try {
       visualEditor.innerHTML = '<p>Heartbeat visual value</p>';
       fireEvent.input(visualEditor);
-      expect(props.submissionField.value).toBe('Heartbeat visual value');
+      expect(props.submissionField.value).toBe('selected');
 
       expect(props.sessionAutosave()).toBe('continue');
       expect(props.submissionField.value).toBe('Heartbeat visual value');
@@ -1182,6 +1190,8 @@ describe('EditorRoot', () => {
           act(() => vi.advanceTimersByTime(100));
         }
       }
+
+      act(() => vi.advanceTimersByTime(80));
 
       expect(props.submissionField.value).toBe('Continuous value 6');
       expect(canonicalInput).toHaveBeenCalledTimes(7);
@@ -1699,6 +1709,168 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('parses consecutive full Markdown pastes through one server Preview request each', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = 'Before';
+    baseProps.submissionField.defaultValue = 'Before';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '<p>Before</p>' as SafePreviewHtml
+      }
+    };
+    const firstPaste = '\n\n# Pasted heading\n\n**Pasted bold**';
+    const secondPaste = '\n\n- First item\n- Second item\n\n`inline`';
+    const firstMarkdown = `Before${firstPaste}`;
+    const secondMarkdown = `${firstMarkdown}${secondPaste}`;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (request.markdown === firstMarkdown) {
+        return Promise.resolve({
+          features: {},
+          html: [
+            '<p>Before</p>',
+            '<h1>Pasted heading</h1>',
+            '<p><strong>Pasted bold</strong></p>'
+          ].join('') as SafePreviewHtml
+        });
+      }
+      if (request.markdown === secondMarkdown) {
+        return Promise.resolve({
+          features: {},
+          html: [
+            '<p>Before</p>',
+            '<h1>Pasted heading</h1>',
+            '<p><strong>Pasted bold</strong></p>',
+            '<ul><li>First item</li><li>Second item</li></ul>',
+            '<p><code>inline</code></p>'
+          ].join('') as SafePreviewHtml
+        });
+      }
+      return Promise.resolve({
+        features: {},
+        html: '<p>Before</p>' as SafePreviewHtml
+      });
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const setCaretAtEnd = () => {
+      const range = document.createRange();
+      range.selectNodeContents(visualEditor);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    };
+
+    setCaretAtEnd();
+    fireEvent.paste(visualEditor, {
+      clipboardData: {
+        getData: (type: string) =>
+          'text/plain' === type ? firstPaste : '<h1>unsafe</h1>'
+      }
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(firstMarkdown);
+      expect(visualEditor.querySelector('h1')?.textContent).toBe(
+        'Pasted heading'
+      );
+      expect(visualEditor.querySelector('strong')?.textContent).toBe(
+        'Pasted bold'
+      );
+    });
+
+    setCaretAtEnd();
+    fireEvent.paste(visualEditor, {
+      clipboardData: {
+        getData: (type: string) =>
+          'text/plain' === type ? secondPaste : '<ul><li>unsafe</li></ul>'
+      }
+    });
+    await waitFor(() => {
+      expect(props.submissionField.value).toBe(secondMarkdown);
+      expect(visualEditor.querySelectorAll('li')).toHaveLength(2);
+      expect(visualEditor.querySelector('code')?.textContent).toBe('inline');
+    });
+
+    expect(
+      vi.mocked(props.previewPort.render).mock.calls.filter(
+        ([request]) => request.markdown === firstMarkdown
+      )
+    ).toHaveLength(1);
+    expect(
+      vi.mocked(props.previewPort.render).mock.calls.filter(
+        ([request]) => request.markdown === secondMarkdown
+      )
+    ).toHaveLength(1);
+    expect(visualEditor.textContent).not.toContain('# Pasted heading');
+    expect(visualEditor.textContent).not.toContain('**Pasted bold**');
+  });
+
+  it('keeps visual keystrokes local without a Preview request per input', async () => {
+    const baseProps = fixture();
+    baseProps.submissionField.value = 'Before';
+    baseProps.submissionField.defaultValue = 'Before';
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: '<p>Before</p>' as SafePreviewHtml
+      }
+    };
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Before</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const renderCallsBeforeInput = vi.mocked(props.previewPort.render).mock
+      .calls.length;
+    const selection = window.getSelection();
+
+    for (const value of ['Typed one', 'Typed two', 'Typed three']) {
+      visualEditor.innerHTML = `<p>${value}</p>`;
+      const paragraph = visualEditor.querySelector('p');
+      if (!paragraph) throw new Error('visual-typing-paragraph-missing');
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      range.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      fireEvent.input(visualEditor);
+    }
+
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('Typed three')
+    );
+    expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+      renderCallsBeforeInput
+    );
+    view.unmount();
+  });
+
   it('keeps a committed visual paste editable when caret restoration is unavailable', async () => {
     const pastedPreview = deferred<PreviewResponse>();
     const baseProps = fixture();
@@ -2151,6 +2323,60 @@ describe('EditorRoot', () => {
       within(messageHost as HTMLElement).getByRole('status').textContent
     ).toContain('paste' === source ? 'Paste uploaded' : 'Drop uploaded');
   }
+  );
+
+  it.each(['paste', 'drop'] as const)(
+    'fails visual image %s without a valid selection before starting the Media owner',
+    async (source) => {
+      const props = fixture();
+      props.submissionField.value = 'Before **selected** after';
+      props.submissionField.defaultValue = 'Before **selected** after';
+      vi.mocked(props.previewPort.render).mockResolvedValue({
+        features: {},
+        html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
+      });
+      const view = render(<EditorRoot {...props} />);
+
+      fireEvent.click(
+        await view.findByRole('button', { name: '进入沉浸写作' })
+      );
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      fireEvent.click(
+        view.getByRole('button', { name: '解除锁定并编辑' })
+      );
+      const visualEditor = view.getByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      const getSelection = vi
+        .spyOn(window, 'getSelection')
+        .mockReturnValue(null);
+      const transfer = imageTransferEvent(
+        source,
+        new File(['image'], 'visual.png', { type: 'image/png' })
+      );
+
+      try {
+        visualEditor.dispatchEvent(transfer);
+
+        expect(transfer.defaultPrevented).toBe(true);
+        expect(props.imageUploadPort.upload).not.toHaveBeenCalled();
+        expect(props.submissionField.value).toBe(
+          'Before **selected** after'
+        );
+        expect(view.getByRole('textbox', {
+          name: '可视化文章编辑器'
+        })).toBe(visualEditor);
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(
+            'visual-editor-selection-unavailable'
+          )
+        );
+      } finally {
+        getSelection.mockRestore();
+        view.unmount();
+      }
+    }
   );
 
   it('completes a deferred remote image import after visual editing switches to read-only', async () => {
@@ -2792,7 +3018,7 @@ describe('EditorRoot', () => {
       fireEvent.input(visualEditor);
 
       expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
-      act(() => vi.advanceTimersByTime(179));
+      act(() => vi.advanceTimersByTime(259));
       expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
       act(() => vi.advanceTimersByTime(1));
       expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit + 1);
@@ -2871,7 +3097,7 @@ describe('EditorRoot', () => {
     });
   });
 
-  it('maps the visual caret back to CodeMirror before locking and changing mode', async () => {
+  it('keeps an unchanged visual Preview lock transition independent of selection mapping', async () => {
     const props = fixture();
     props.submissionField.value = 'Before **selected** after';
     props.submissionField.defaultValue = 'Before **selected** after';
@@ -2896,6 +3122,10 @@ describe('EditorRoot', () => {
     if (!selectedText) {
       throw new Error('missing synthetic visual mode selection target');
     }
+    const source =
+      view.container.querySelector<HTMLElement>('.cm-content');
+    const editor = source ? EditorView.findFromDOM(source) : null;
+    const selectionBeforeLock = editor?.state.selection.main;
     const range = document.createRange();
     range.selectNodeContents(selectedText);
     const selection = window.getSelection();
@@ -2907,19 +3137,14 @@ describe('EditorRoot', () => {
     expect(window.getSelection()?.toString()).toBe('selected');
     fireEvent.click(lockPreview);
 
-    const source =
-      view.container.querySelector<HTMLElement>('.cm-content');
-    const editor = source ? EditorView.findFromDOM(source) : null;
-    expect(editor?.state.selection.main.from).toBe(9);
-    expect(editor?.state.selection.main.to).toBe(17);
+    expect(editor?.state.selection.main).toEqual(selectionBeforeLock);
     expect(
       view.queryByRole('textbox', { name: '可视化文章编辑器' })
     ).toBeNull();
 
     fireEvent.click(view.getByRole('button', { name: '编辑' }));
 
-    expect(editor?.state.selection.main.from).toBe(9);
-    expect(editor?.state.selection.main.to).toBe(17);
+    expect(editor?.state.selection.main).toEqual(selectionBeforeLock);
   });
 
   it('keeps publish editing local until confirmation then delegates to the native publisher', async () => {
@@ -3569,7 +3794,7 @@ describe('EditorRoot', () => {
     );
   });
 
-  it('flushes an immediate visual edit before History can restore a revision', async () => {
+  it('flushes a pending visual edit before History can restore a revision', async () => {
     const props = fixture();
     vi.mocked(props.previewPort.render).mockResolvedValue({
       features: {},
@@ -3593,9 +3818,7 @@ describe('EditorRoot', () => {
     try {
       visualEditor.innerHTML = '<p>Immediate visual history edit</p>';
       fireEvent.input(visualEditor);
-      expect(props.submissionField.value).toBe(
-        'Immediate visual history edit'
-      );
+      expect(props.submissionField.value).toBe('selected');
 
       fireEvent.click(view.getByRole('button', { name: '历史记录' }));
 
@@ -5381,6 +5604,48 @@ describe('EditorRoot', () => {
         'Choose **![image](https://example.test/selected.png)** text'
       );
     });
+  });
+
+  it('fails the Image toolbar command when the visual selection is unavailable', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Choose **this** text';
+    props.submissionField.defaultValue = 'Choose **this** text';
+    vi.mocked(props.previewPort.render).mockResolvedValue({
+      features: {},
+      html: '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml
+    });
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const getSelection = vi
+      .spyOn(window, 'getSelection')
+      .mockReturnValue(null);
+
+    try {
+      fireEvent.click(view.getByRole('button', { name: 'Image' }));
+
+      expect(props.mediaPickerFrame?.open).not.toHaveBeenCalled();
+      expect(view.getByRole('textbox', {
+        name: '可视化文章编辑器'
+      })).toBe(visualEditor);
+      expect(props.submissionField.value).toBe('Choose **this** text');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-selection-unavailable'
+      );
+    } finally {
+      getSelection.mockRestore();
+      view.unmount();
+    }
   });
 
   it('reports a stable visible Media failure without mutating Markdown', async () => {

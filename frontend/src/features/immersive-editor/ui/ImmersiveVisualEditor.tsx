@@ -24,6 +24,7 @@ import {
 
 export type ImmersiveVisualEditorRuntime = Readonly<{
   executeCommand: (command: ToolbarCommand) => boolean;
+  prepareMediaSelection: () => boolean;
   prepareToolbarFallback: () => boolean;
   surface: HTMLElement;
 }>;
@@ -62,6 +63,18 @@ type PendingMarkdownTransfer = Readonly<{
   }>;
   signature: string;
 }>;
+
+type VisualSelectionSourceRange = Readonly<{
+  direction: 'backward' | 'forward' | 'none';
+  end: number;
+  start: number;
+}>;
+
+type SynchronizeMarkdownOptions = Readonly<{
+  mapSelectionWhenUnchanged?: boolean;
+}>;
+
+const VISUAL_INPUT_DEBOUNCE_MS = 80;
 
 function hasImageFile(transfer: DataTransfer | null): boolean {
   return Array.from(transfer?.items ?? []).some(
@@ -123,6 +136,10 @@ export function ImmersiveVisualEditor({
   const acceptedHtmlRef = useRef<string | null>(null);
   const externalChangeReportedRef = useRef(false);
   const pendingTransferRef = useRef<PendingMarkdownTransfer | null>(null);
+  const lastSelectionRef = useRef<VisualSelectionSourceRange | null>(null);
+  const visualInputPendingRef = useRef(false);
+  const visualInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushVisualInputRef = useRef<() => boolean>(() => true);
   const restoreFocusRef = useRef(false);
   const selfWriteRef = useRef(false);
   const readOnlySnapshotRef =
@@ -134,6 +151,7 @@ export function ImmersiveVisualEditor({
     protectVisualMarkdownReadOnlyRegions(surface);
     readOnlySnapshotRef.current =
       captureVisualMarkdownReadOnlySnapshot(surface);
+    lastSelectionRef.current = null;
     sourceMarkdownRef.current = sourceMarkdown;
     visualMarkdownRef.current = serializeVisualMarkdown(surface);
     acceptedHtmlRef.current = surface.innerHTML;
@@ -169,7 +187,9 @@ export function ImmersiveVisualEditor({
     onTransferFailure();
   }, [onFailure, onPendingChange, onTransferFailure]);
 
-  const synchronizeMarkdown = useCallback((): boolean => {
+  const synchronizeMarkdown = useCallback((
+    options: SynchronizeMarkdownOptions = {}
+  ): boolean => {
     try {
       if (pendingTransferRef.current) return false;
       const readOnlySnapshot = readOnlySnapshotRef.current;
@@ -183,11 +203,47 @@ export function ImmersiveVisualEditor({
       if (null === sourceMarkdown || null === baselineVisualMarkdown) {
         throw new Error('visual-editor-markdown-snapshot-missing');
       }
-      const selection = visualSelectionSourceRange(
-        surface,
-        sourceMarkdown,
-        baselineVisualMarkdown
-      );
+      if (editedVisualMarkdown === baselineVisualMarkdown) {
+        if (options.mapSelectionWhenUnchanged) {
+          const mappedSelection = visualSelectionSourceRange(
+            surface,
+            sourceMarkdown,
+            baselineVisualMarkdown,
+            editedVisualMarkdown
+          );
+          lastSelectionRef.current = mappedSelection;
+          // CodeMirror owns the canonical selection used by delegated
+          // Media operations. This same-value dispatch changes only that
+          // selection; its document adapter does not write the document.
+          applyDocumentChange({
+            selection: mappedSelection,
+            value: sourceMarkdown
+          });
+        }
+        visualMarkdownRef.current = editedVisualMarkdown;
+        acceptedHtmlRef.current = surface.innerHTML;
+        return true;
+      }
+      let selection: VisualSelectionSourceRange;
+      try {
+        selection = visualSelectionSourceRange(
+          surface,
+          sourceMarkdown,
+          baselineVisualMarkdown,
+          editedVisualMarkdown
+        );
+        lastSelectionRef.current = selection;
+      } catch (error) {
+        if (
+          error instanceof Error
+          && 'visual-editor-selection-unavailable' === error.message
+          && lastSelectionRef.current
+        ) {
+          selection = lastSelectionRef.current;
+        } else {
+          throw error;
+        }
+      }
       const value = mergeVisualMarkdownChange(
         sourceMarkdown,
         baselineVisualMarkdown,
@@ -218,6 +274,7 @@ export function ImmersiveVisualEditor({
 
   const requestMarkdownTransfer = useCallback((value: string) => {
     if (!value || pendingTransferRef.current) return;
+    if (!flushVisualInputRef.current()) return;
     if (!synchronizeMarkdown()) return;
     const sourceMarkdown = sourceMarkdownRef.current;
     const baselineVisualMarkdown = visualMarkdownRef.current;
@@ -225,11 +282,26 @@ export function ImmersiveVisualEditor({
       throw new Error('visual-editor-markdown-snapshot-missing');
     }
     try {
-      const currentSelection = visualSelectionSourceRange(
-        surface,
-        sourceMarkdown,
-        baselineVisualMarkdown
-      );
+      let currentSelection: VisualSelectionSourceRange;
+      try {
+        currentSelection = visualSelectionSourceRange(
+          surface,
+          sourceMarkdown,
+          baselineVisualMarkdown,
+          baselineVisualMarkdown
+        );
+        lastSelectionRef.current = currentSelection;
+      } catch (error) {
+        if (
+          error instanceof Error
+          && 'visual-editor-selection-unavailable' === error.message
+          && lastSelectionRef.current
+        ) {
+          currentSelection = lastSelectionRef.current;
+        } else {
+          throw error;
+        }
+      }
       const markdown =
         sourceMarkdown.slice(0, currentSelection.start)
         + value
@@ -369,11 +441,30 @@ export function ImmersiveVisualEditor({
     let composing = false;
     let compositionCommitScheduled = false;
 
-    const commitVisualInput = () => {
-      if (!active || pendingTransferRef.current) return;
+    const commitVisualInput = (): boolean => {
+      visualInputPendingRef.current = false;
+      if (!active || pendingTransferRef.current) return false;
       applyVisualInlineShortcut(surface);
-      synchronizeMarkdown();
+      return synchronizeMarkdown();
     };
+    const flushVisualInput = (): boolean => {
+      const wasPending = visualInputPendingRef.current;
+      if (null !== visualInputTimerRef.current) {
+        clearTimeout(visualInputTimerRef.current);
+        visualInputTimerRef.current = null;
+      }
+      if (!wasPending) return true;
+      return commitVisualInput();
+    };
+    const scheduleVisualInput = (): void => {
+      visualInputPendingRef.current = true;
+      if (null !== visualInputTimerRef.current) return;
+      visualInputTimerRef.current = setTimeout(() => {
+        visualInputTimerRef.current = null;
+        commitVisualInput();
+      }, VISUAL_INPUT_DEBOUNCE_MS);
+    };
+    flushVisualInputRef.current = flushVisualInput;
 
     const handleDrop = (event: DragEvent) => {
       if (hasImageFile(event.dataTransfer)) {
@@ -405,7 +496,8 @@ export function ImmersiveVisualEditor({
       ) {
         return;
       }
-      commitVisualInput();
+      applyVisualInlineShortcut(surface);
+      scheduleVisualInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (pendingTransferRef.current) {
@@ -414,6 +506,11 @@ export function ImmersiveVisualEditor({
       }
       if (composing || event.isComposing) return;
       if (applyVisualBlockShortcut(surface, event)) {
+        if (null !== visualInputTimerRef.current) {
+          clearTimeout(visualInputTimerRef.current);
+          visualInputTimerRef.current = null;
+        }
+        visualInputPendingRef.current = false;
         synchronizeMarkdown();
       }
     };
@@ -440,12 +537,18 @@ export function ImmersiveVisualEditor({
     const runtime: ImmersiveVisualEditorRuntime = {
       executeCommand(command) {
         if (pendingTransferRef.current) return false;
+        if (!flushVisualInput()) return false;
         if (!applyVisualToolbarCommand(surface, command)) return false;
         synchronizeMarkdown();
         surface.focus();
         return true;
       },
+      prepareMediaSelection() {
+        if (!flushVisualInput()) return false;
+        return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
+      },
       prepareToolbarFallback() {
+        if (!flushVisualInput()) return false;
         const pending = pendingTransferRef.current;
         if (!pending) return synchronizeMarkdown();
         try {
@@ -469,6 +572,7 @@ export function ImmersiveVisualEditor({
     };
     onReady(runtime);
     return () => {
+      flushVisualInput();
       active = false;
       onDispose(runtime);
       surface.removeEventListener('compositionstart', handleCompositionStart);
@@ -477,6 +581,12 @@ export function ImmersiveVisualEditor({
       surface.removeEventListener('input', handleInput);
       surface.removeEventListener('keydown', handleKeyDown);
       surface.removeEventListener('paste', handlePaste);
+      if (null !== visualInputTimerRef.current) {
+        clearTimeout(visualInputTimerRef.current);
+        visualInputTimerRef.current = null;
+      }
+      visualInputPendingRef.current = false;
+      flushVisualInputRef.current = () => true;
       onPendingChange(false);
     };
   }, [

@@ -562,6 +562,91 @@ A--&gt;B</code></pre>
     ).toEqual({ direction: 'none', end: 0, start: 0 });
   });
 
+  it('maps an unchanged root-end selection directly to the canonical source end', () => {
+    const surface = editor('<p>One</p><h1>Two</h1>');
+    const source = 'One\n\n# Two';
+    placeCaret(surface, surface.childNodes.length);
+
+    expect(
+      visualSelectionSourceRange(surface, source, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('keeps a changed root-end selection mapped to the new source position', () => {
+    const surface = editor('<p>Before changed</p>');
+    const source = 'Before';
+    const baselineVisual = 'Before';
+    const currentVisual = 'Before changed';
+    placeCaret(surface, surface.childNodes.length);
+
+    const selection = visualSelectionSourceRange(
+      surface,
+      source,
+      baselineVisual,
+      currentVisual
+    );
+    expect(selection.direction).toBe('none');
+    expect(selection.end).toBeGreaterThan(source.length);
+    expect(selection.start).toBe(selection.end);
+  });
+
+  it('keeps consecutive paste root-end targets within each canonical source length', () => {
+    const firstSource = 'Before\n\n# Heading\n\n**Bold**';
+    const firstSurface = editor(
+      '<p>Before</p><h1>Heading</h1><p><strong>Bold</strong></p>'
+    );
+    placeCaret(firstSurface, firstSurface.childNodes.length);
+    expect(
+      visualSelectionSourceRange(
+        firstSurface,
+        firstSource,
+        firstSource,
+        firstSource
+      ).end
+    ).toBe(firstSource.length);
+
+    const secondSource = `${firstSource}\n\n- One\n- Two\n\n\`inline\``;
+    const secondSurface = editor([
+      '<p>Before</p>',
+      '<h1>Heading</h1>',
+      '<p><strong>Bold</strong></p>',
+      '<ul><li>One</li><li>Two</li></ul>',
+      '<p><code>inline</code></p>'
+    ].join(''));
+    placeCaret(secondSurface, secondSurface.childNodes.length);
+    expect(
+      visualSelectionSourceRange(
+        secondSurface,
+        secondSource,
+        secondSource,
+        secondSource
+      ).end
+    ).toBe(secondSource.length);
+  });
+
+  it('fails explicitly when a changed visual selection is unavailable', () => {
+    const surface = editor('<p>Changed visual text</p>');
+    const getSelection = vi
+      .spyOn(window, 'getSelection')
+      .mockReturnValue(null);
+
+    try {
+      expect(() =>
+        visualSelectionSourceRange(
+          surface,
+          'Original canonical text',
+          'Original canonical text'
+        )
+      ).toThrow('visual-editor-selection-unavailable');
+    } finally {
+      getSelection.mockRestore();
+    }
+  });
+
   it.each([
     {
       html: '',
@@ -634,6 +719,134 @@ A--&gt;B</code></pre>
     caret.insertData(1, '!');
 
     expect(serializeVisualMarkdown(surface)).toBe('**Bold**!');
+  });
+
+  it('restores the exact source-end caret across a multi-block pasted Markdown Preview', () => {
+    const surface = editor([
+      '<p>Typed three</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<ul><li>First item</li><li>Second item</li></ul>',
+      '<p><code>inline</code></p>'
+    ].join(''));
+    const source = serializeVisualMarkdown(surface);
+
+    expect(source).toBe([
+      'Typed three',
+      '',
+      '# Pasted heading',
+      '',
+      '**Pasted bold**',
+      '',
+      '- First item',
+      '- Second item',
+      '',
+      '`inline`'
+    ].join('\n'));
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      source.length
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('restores source-end carets after consecutive paste Preview replacements', () => {
+    const generatedTail = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `<section class="footnotes-sep">References ${index}</section><section class="footnotes"><p>Generated note ${index}</p></section>`
+    ).join('');
+    const firstVisual = [
+      'Before',
+      '',
+      '# Pasted heading',
+      '',
+      '**Pasted bold**'
+    ].join('\n');
+    const firstSource = firstVisual;
+    const firstSurface = editor(`${[
+      '<p>Before</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<section class="footnotes-sep">References</section>',
+      '<section class="footnotes"><p>Generated note</p></section>',
+      generatedTail
+    ].join('')}\n`);
+    protectVisualMarkdownReadOnlyRegions(firstSurface);
+
+    expect(serializeVisualMarkdown(firstSurface)).toBe(firstVisual);
+    placeVisualCaretFromSourceOffset(
+      firstSurface,
+      firstSource,
+      firstVisual,
+      firstSource.length
+    );
+    expect(
+      visualSelectionSourceRange(firstSurface, firstSource, firstVisual)
+    ).toEqual({
+      direction: 'none',
+      end: firstSource.length,
+      start: firstSource.length
+    });
+    const firstCaret = window.getSelection()?.anchorNode;
+    expect(firstCaret).toBeInstanceOf(Text);
+    expect(firstCaret?.parentElement?.tagName).toBe('P');
+    expect(firstCaret?.previousSibling).toBe(
+      firstSurface.querySelector('strong')
+    );
+    expect(firstCaret?.textContent).toBe('\u200b');
+
+    const secondVisual = [
+      firstVisual,
+      '',
+      '- First item',
+      '- Second item',
+      '',
+      '`inline`'
+    ].join('\n');
+    const secondSource = secondVisual;
+    const secondSurface = editor(`${[
+      '<p>Before</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<ul><li>First item</li><li>Second item</li></ul>',
+      '<p><code>inline</code></p>',
+      '<section class="footnotes-sep">References</section>',
+      '<section class="footnotes"><p>Generated note</p></section>',
+      generatedTail
+    ].join('')}\n`);
+    protectVisualMarkdownReadOnlyRegions(secondSurface);
+    expect(serializeVisualMarkdown(secondSurface)).toBe(secondVisual);
+    placeVisualCaretFromSourceOffset(
+      secondSurface,
+      secondSource,
+      secondVisual,
+      secondSource.length
+    );
+    expect(
+      visualSelectionSourceRange(secondSurface, secondSource, secondVisual)
+    ).toEqual({
+      direction: 'none',
+      end: secondSource.length,
+      start: secondSource.length
+    });
+    const secondCaret = window.getSelection()?.anchorNode;
+    expect(secondCaret).toBeInstanceOf(Text);
+    expect(secondCaret?.parentElement?.tagName).toBe('P');
+    expect(secondCaret?.previousSibling).toBe(
+      secondSurface.querySelector('code')
+    );
+    expect(secondCaret?.textContent).toBe('\u200b');
   });
 
   it('restores a block-boundary caret without entering themed or read-only descendants', () => {

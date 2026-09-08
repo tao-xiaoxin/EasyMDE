@@ -1658,7 +1658,7 @@ export function EditorRoot(props: EditorRootProps) {
             },
             focus: canonicalDocument.focus,
             getSnapshot: () => {
-              if (!visualRuntime.prepareToolbarFallback()) {
+              if (!visualRuntime.prepareMediaSelection()) {
                 throw new Error('visual-editor-selection-map-failed');
               }
               return canonicalDocument.getSnapshot();
@@ -1883,7 +1883,10 @@ export function EditorRoot(props: EditorRootProps) {
                             );
                           }
                           if (runtime.executeCommand(command)) return true;
-                          if (!runtime.prepareToolbarFallback()) return true;
+                          const prepared = 'image' === command.action
+                            ? runtime.prepareMediaSelection()
+                            : runtime.prepareToolbarFallback();
+                          if (!prepared) return true;
                           leaveVisualPreview();
                           return false;
                         }

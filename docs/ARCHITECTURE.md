@@ -243,6 +243,20 @@ open form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
+Immersive visual Preview editing serializes the editable surface back to the
+canonical Markdown document. Completed block and inline Markdown shortcuts are
+applied to semantic visual markup before synchronization; pasted plain text is
+inserted as Markdown and rendered only by the authoritative server Preview
+owner. Ordinary visual input is coalesced in an 80-millisecond window, while
+lock, view changes, autosave, publish, toolbar, and teardown flush pending input
+before their owner runs. If the serialized visual Markdown is unchanged, the
+transition flush skips selection mapping and document synchronization entirely.
+A changed transaction requires a current or previously accepted visual
+selection and never silently appends at the end when mapping is unavailable.
+Delegated Media insertion uses a separate selection-preparation capability so
+that Media can preserve its insertion range without making transition flushes
+depend on selection state.
+
 The ordinary toolbar presents one compact heading dropdown containing the
 registered heading-menu command surface except the Paragraph action, including
 the built-in H1 through H6 commands and extension commands in registry order.

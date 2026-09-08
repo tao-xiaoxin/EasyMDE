@@ -115,6 +115,14 @@ Non-negotiable product and authority rules:
   ordinary Editor components may bypass their adapters. Async owners handle
   cancellation where meaningful, stale results, authoritative completion,
   repeated lifecycle, and teardown.
+- The canonical Settings Center route is dispatched from its WordPress
+  `load-*` hook as one dedicated, capability-checked HTML document before Core
+  prints `admin-header.php`. WordPress still owns authentication, capabilities,
+  Nonces, REST, and settings persistence; React owns the one interactive
+  Settings root. The response must not render the ordinary wp-admin shell and
+  then cover or hide it with a pseudo-element, broad Core selectors, delayed
+  JavaScript, or z-index escalation. Other admin routes retain the native shell,
+  and missing Settings assets expose a dedicated accessible failure and exit.
 - React and TypeScript, built with Vite and the WordPress-provided React 18
   runtime, are the approved browser architecture. Normal focused Feature work
   does not need a separate architecture-only Issue.

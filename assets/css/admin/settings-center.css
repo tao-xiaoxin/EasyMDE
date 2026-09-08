@@ -1,3 +1,7 @@
+:root {
+	--easymde-settings-center-styles-ready: 1;
+}
+
 .easymde-settings-center-js [data-settings-center-server-fallback] {
 	display: none;
 }

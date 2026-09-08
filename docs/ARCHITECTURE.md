@@ -194,14 +194,35 @@ runtime on ordinary pages.
 `frontend/src/entrypoints/settings-center.tsx` is the separate React entry for
 the dedicated EasyMDE administration screen. `SettingsPage` requires
 `manage_options`, validates the manifest-backed
-`assets/build/settings-center/wordpress-manifest.json` contract, enqueues the
-stable `easymde-admin-settings-center` handle only on that screen, and emits a
-same-origin presentation Bootstrap contract. The Settings Center has its own
+`assets/build/settings-center/wordpress-manifest.json` contract, and dispatches
+the canonical route from `load-toplevel_page_easymde` before WordPress prints
+`admin-header.php`. The resulting authenticated document prints only the exact
+Settings styles followed by the blocking classic
+`easymde-admin-settings-center` script handle in `<head>`, then the body
+fallback and one empty mount root. The entry registers its root observer before
+body parsing; inserting the root therefore triggers the synchronous React
+commit before the browser paints body content. It does not emit the ordinary
+`#wpwrap`, admin bar, menu, content canvas, notices-before-root, or footer
+presentation shell. The entrypoint requires both the exact stylesheet link and
+its computed readiness sentinel before mounting. Missing server assets, a
+blocked stylesheet or script, invalid Bootstrap, and Content Security Policy
+failure keep a dedicated accessible error and same-origin exit instead of
+falling back to wp-admin. The Settings Center has its own
 Root and does not share mutable State with the Editor Root. A setting is shown
 only when a real PHP/WordPress owner and browser Adapter exist; presentation
 controls never claim persistence until the authoritative Settings API result
 succeeds. The comment-AI and article-sync surfaces are intentionally absent
 from the current navigation and DOM.
+
+The first-paint compositor evidence binds the main-frame navigation to its
+initialized loader and uses an ordered three-stage contract. It permits a
+contiguous prefix exactly equal to the settled pre-navigation Settings pixels,
+then a contiguous browser-clear prefix, then the new Settings frames. From the
+first new Settings frame through semantic readiness, every captured frame must
+remain nonblank and match the stable Settings fingerprint; fallback, wp-admin,
+partial, unknown, or later blank frames fail. A reload that emits no
+distinguishable new frame is accepted only when the visible Settings pixels
+before and after are exactly equal across the complete analysis.
 
 The entrypoint parses external data before mounting, constructs focused
 WordPress and browser Adapters, mounts one `EditorRoot`, and owns idempotent
@@ -308,6 +329,12 @@ the shortcut contract has no historical-field import or migration path. The old
 Settings screen without EasyMDE injection, and
 `admin.php?page=easymde/settings/general` is no longer an active screen. The
 canonical General route is the sole Settings Center entry.
+The load-hook document owner is limited to that exact authorized route; direct
+no-route requests still redirect, unsupported routes still fail explicitly,
+and every other WordPress admin screen retains its native document and assets.
+The dedicated response does not create a new authentication or settings owner:
+WordPress completes login and capability admission before the load hook and
+continues to own Nonces, REST mutations, and persistence.
 
 The supported General runtime settings are passed from `AdminAssets` through
 the validated Editor Root bootstrap and consumed by the Editor Root's

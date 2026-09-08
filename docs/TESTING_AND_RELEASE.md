@@ -417,6 +417,176 @@ routes were not used. Its `finally` cleanup restores the original rule and
 toggle and deletes the synthetic attachment; settings, attachment, and route
 cleanup failures are aggregated with the test failure.
 
+The Settings Center first-paint gate uses a Chromium CDP screencast rather than
+a DOM-mutation screenshot. Its CI default runs the installed ZIP once for each
+of 16 combinations: desktop/mobile viewport, cold/warm cache, normal/hard
+refresh, and baseline/throttled CPU-plus-network profile. Normal uses an
+ordinary reload; hard uses CDP `Page.reload({ ignoreCache: true })` immediately
+before every reload while preserving the cache state established by the case
+setup.
+The test binds main-frame navigation to its `Page.lifecycleEvent` `init`
+loader, captures compositor frames through semantic readiness, and decodes
+every captured PNG. Its ordered state machine permits only a contiguous prefix
+exactly equal to the settled pre-navigation Settings analysis, then a
+contiguous browser-clear prefix, then new Settings frames. From the first new
+Settings frame through readiness, every frame must be nonblank, reject the
+native dark WordPress admin bar, and remain within a mean channel distance of
+`20` from the stable pre-reload Settings fingerprint sampled every `16px`.
+Fallback, partial, unknown, or any later blank frame fails. A reload that emits
+no distinguishable new frame is accepted only when the Settings application is
+visible before and after and its dimensions, full pixel hash, fingerprint, and
+sampled ratios remain exactly equal.
+The same classifier must reject a real Profile page capture as a native
+wp-admin negative sample. The settled document must contain one Settings
+application and none of the ordinary wp-admin shell IDs. Focused failure cases
+block the Settings bundle, block the Settings stylesheet, and apply a
+script-blocking CSP; each must keep a dedicated accessible error and same-origin
+exit without exposing the Core canvas. Protected Profile and other non-Settings
+admin pages continue to require their native shell and must not load Settings
+assets. Do not replace this gate with fixed sleeps, a MutationObserver-only
+sample, or a final screenshot.
+
+The generated first-paint case names are stable and are derived from the
+viewport, cache, refresh, and profile dimensions:
+
+```text
+desktop-cold-normal-baseline
+desktop-cold-normal-throttled
+desktop-cold-hard-baseline
+desktop-cold-hard-throttled
+desktop-warm-normal-baseline
+desktop-warm-normal-throttled
+desktop-warm-hard-baseline
+desktop-warm-hard-throttled
+mobile-cold-normal-baseline
+mobile-cold-normal-throttled
+mobile-cold-hard-baseline
+mobile-cold-hard-throttled
+mobile-warm-normal-baseline
+mobile-warm-normal-throttled
+mobile-warm-hard-baseline
+mobile-warm-hard-throttled
+```
+
+The regular E2E gate remains `npm run test:e2e`. With
+`EASYMDE_FIRST_PAINT_CASE` unset, `EASYMDE_FIRST_PAINT_RUNS` defaults to `1`
+and the focused compositor test runs all 16 cases. When the case variable is
+set, it must exactly match one generated name; an empty or unknown value fails
+before the browser starts and the test asserts that exactly one case is active.
+Both the stdout evidence line and its JSON attachment contain only
+`caseName`, `iteration`, `stableState`, and `durationMs`.
+
+Run the default full-matrix smoke and at least one filtered two-run smoke:
+
+```bash
+# EASYMDE_FIRST_PAINT_RUNS defaults to 1 and runs all 16 cases.
+EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
+EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
+EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
+npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
+
+EASYMDE_FIRST_PAINT_RUNS=2 \
+EASYMDE_FIRST_PAINT_CASE=desktop-cold-normal-baseline \
+EASYMDE_E2E_BASE_URL="<wordpress_test_url>" \
+EASYMDE_E2E_WP_PATH="<wordpress_test_path>" \
+EASYMDE_E2E_WP_CLI="<wp_cli_path>" \
+npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+  -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled"
+```
+
+For Issue #222 acceptance, run `EASYMDE_FIRST_PAINT_RUNS=50` once per case so
+the 800-run matrix is auditable and does not depend on one long-lived process:
+
+```bash
+set -euo pipefail
+EVIDENCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/easymde-first-paint.XXXXXX")"
+export EASYMDE_E2E_BASE_URL="<wordpress_test_url>"
+export EASYMDE_E2E_WP_PATH="<wordpress_test_path>"
+export EASYMDE_E2E_WP_CLI="<wp_cli_path>"
+
+for case_name in \
+  desktop-cold-normal-baseline \
+  desktop-cold-normal-throttled \
+  desktop-cold-hard-baseline \
+  desktop-cold-hard-throttled \
+  desktop-warm-normal-baseline \
+  desktop-warm-normal-throttled \
+  desktop-warm-hard-baseline \
+  desktop-warm-hard-throttled \
+  mobile-cold-normal-baseline \
+  mobile-cold-normal-throttled \
+  mobile-cold-hard-baseline \
+  mobile-cold-hard-throttled \
+  mobile-warm-normal-baseline \
+  mobile-warm-normal-throttled \
+  mobile-warm-hard-baseline \
+  mobile-warm-hard-throttled; do
+  EASYMDE_FIRST_PAINT_RUNS=50 \
+  EASYMDE_FIRST_PAINT_CASE="$case_name" \
+  npm run test:e2e -- tests/e2e/settings-center.spec.mjs \
+    -g "desktop/mobile, cold/warm, normal/hard, and baseline/throttled" \
+    2>&1 | tee "$EVIDENCE_DIR/$case_name.log"
+done
+```
+
+The stdout lines and JSON attachments are the public evidence surface. Aggregate
+the 16 logs only after all commands succeed, requiring exactly one evidence
+line per log, 50 rows per case, 800 rows total, every row's `caseName` equal to
+its log's case, and exactly the four public fields above. Keep the per-case log
+and attachment together so a failed shard can be rerun without losing case
+identity; do not substitute one unsharded 800-run log.
+
+This read-only aggregation check validates the stdout projection and row counts:
+
+```bash
+node - "$EVIDENCE_DIR" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const directory = process.argv[2];
+const prefix = "EASYMDE_SETTINGS_CENTER_FIRST_PAINT_EVIDENCE:";
+const cases = [
+  "desktop-cold-normal-baseline", "desktop-cold-normal-throttled",
+  "desktop-cold-hard-baseline", "desktop-cold-hard-throttled",
+  "desktop-warm-normal-baseline", "desktop-warm-normal-throttled",
+  "desktop-warm-hard-baseline", "desktop-warm-hard-throttled",
+  "mobile-cold-normal-baseline", "mobile-cold-normal-throttled",
+  "mobile-cold-hard-baseline", "mobile-cold-hard-throttled",
+  "mobile-warm-normal-baseline", "mobile-warm-normal-throttled",
+  "mobile-warm-hard-baseline", "mobile-warm-hard-throttled",
+];
+const expectedKeys = [
+  "caseName", "durationMs", "iteration", "stableState",
+].sort();
+const rows = [];
+
+for (const caseName of cases) {
+  const file = path.join(directory, `${caseName}.log`);
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix));
+  if (lines.length !== 1) throw new Error(`${caseName}: expected one evidence line`);
+  const payload = JSON.parse(lines[0].slice(prefix.length));
+  if (!Array.isArray(payload) || payload.length !== 50) {
+    throw new Error(`${caseName}: expected 50 evidence rows`);
+  }
+  for (const row of payload) {
+    if (row.caseName !== caseName) throw new Error(`${caseName}: case mismatch`);
+    if (JSON.stringify(Object.keys(row).sort()) !== JSON.stringify(expectedKeys)) {
+      throw new Error(`${caseName}: public evidence fields changed`);
+    }
+  }
+  rows.push(...payload);
+}
+if (rows.length !== 800) throw new Error(`expected 800 rows, got ${rows.length}`);
+console.log(`verified ${cases.length} cases and ${rows.length} rows`);
+NODE
+```
+
+`EASYMDE_FIRST_PAINT_RUNS` accepts only strict positive integer text; invalid
+values fail before the browser starts. `EASYMDE_FIRST_PAINT_CASE` accepts only
+an exact generated case name and fails before the browser starts otherwise.
+
 ## Release Script Safety Guards
 
 Release-test scripts are destructive by design because they reset disposable WordPress installs and databases. They guard against common accidents:

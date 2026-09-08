@@ -23,8 +23,8 @@ final class SettingsPage {
 	public function register_hooks() {
 		add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
-		add_action( 'admin_head-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'render_settings_center_favicon' ) );
 		add_action( 'load-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'enforce_settings_center_route' ) );
+		add_action( 'load-toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG, array( $this, 'dispatch_settings_center_document' ), 20 );
 		add_filter( 'submenu_file', array( $this, 'filter_settings_center_submenu_file' ), 10, 2 );
 	}
 
@@ -151,7 +151,7 @@ final class SettingsPage {
 		return current_user_can( 'update_plugins' ) ? 'update_plugins' : '';
 	}
 
-	public function enqueue_assets( $hook ) {
+	public function enqueue_assets() {
 		if ( current_user_can( 'manage_options' ) ) {
 			try {
 				$menu_version = $this->get_static_asset_version( 'assets/css/admin/menu.css' );
@@ -169,28 +169,110 @@ final class SettingsPage {
 				);
 			}
 		}
+	}
 
-		if (
-			! $this->is_canonical_settings_screen()
-			|| 'toplevel_page_' . self::SETTINGS_CENTER_PAGE_SLUG !== $hook
-			|| ! current_user_can( 'manage_options' )
-		) {
+	public function render_settings_center() {
+		if ( ! $this->is_canonical_settings_screen() || ! current_user_can( 'manage_options' ) ) {
 			return;
 		}
 
+		$settings_center_close_url = admin_url( 'options-general.php' );
+
+		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
+	}
+
+	/**
+	 * Dispatch the canonical Settings Center request before WordPress prints its
+	 * admin header. The callback remains registered for WordPress compatibility,
+	 * but this document owns the canonical route at the load hook.
+	 */
+	public function dispatch_settings_center_document() {
+		if ( ! $this->is_settings_center_document_request() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$this->render_settings_center_document();
+		exit;
+	}
+
+	/**
+	 * Render the dedicated Settings Center document without the WordPress shell.
+	 * This method is intentionally separate from the terminating dispatcher so
+	 * the document contract can be exercised without exiting a test process.
+	 */
+	public function render_settings_center_document() {
+		if ( ! $this->is_settings_center_document_request() || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		if ( ! headers_sent() ) {
+			header( 'Content-Type: ' . get_option( 'html_type' ) . '; charset=' . get_option( 'blog_charset' ) );
+		}
+
+		$settings_center_assets_ready = true;
 		try {
-			$asset                 = $this->get_settings_center_asset();
-			$css_version           = $this->get_static_asset_version( 'assets/css/admin/settings-center.css' );
-			$message_alert_version = $this->get_static_asset_version( 'assets/css/admin/message-alert.css' );
+			$this->enqueue_settings_center_assets();
 		} catch ( \Throwable $error ) {
-			wp_trigger_error(
-				__METHOD__,
-				'EasyMDE settings center asset contract failed (settings-center-asset-invalid).',
-				E_USER_WARNING
-			);
-
-			return;
+			$settings_center_assets_ready = false;
+			$this->dequeue_settings_center_assets();
+			status_header( 500 );
 		}
+
+		$settings_center_close_url    = admin_url( 'options-general.php' );
+		$settings_center_favicon_url  = Asset::url( 'assets/images/easymde-editor-icon.png' );
+		$settings_center_failure_code = $settings_center_assets_ready
+			? 'settings-center-bundle-unavailable'
+			: 'settings-center-document-asset-invalid';
+
+		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center-document.php';
+	}
+
+	private function is_canonical_settings_screen() {
+		global $pagenow;
+
+		return ! isset( $pagenow ) || 'admin.php' === $pagenow;
+	}
+
+	private function is_settings_center_document_request() {
+		if ( ! $this->is_canonical_settings_screen() ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route selection for an admin screen.
+		$page = isset( $_GET['page'] ) ? wp_unslash( $_GET['page'] ) : null;
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only route selection for an admin screen.
+		$route = isset( $_GET['route'] ) ? wp_unslash( $_GET['route'] ) : null;
+
+		return self::SETTINGS_CENTER_PAGE_SLUG === $page && self::SETTINGS_CENTER_ROUTE === $route;
+	}
+
+	private function get_settings_center_url() {
+		return add_query_arg(
+			array(
+				'page'  => self::SETTINGS_CENTER_PAGE_SLUG,
+				'route' => self::SETTINGS_CENTER_ROUTE,
+			),
+			admin_url( 'admin.php' )
+		);
+	}
+
+	private function get_settings_center_startup_failure_script() {
+		return <<<'JS'
+(function () {
+	if (window.EasyMDESettingsCenterStarted === true) {
+		return;
+	}
+
+	document.documentElement.classList.remove('easymde-settings-center-js');
+	console.error('[EasyMDE] settings-center-bundle-unavailable');
+}());
+JS;
+	}
+
+	private function enqueue_settings_center_assets() {
+		$asset                 = $this->get_settings_center_asset();
+		$css_version           = $this->get_static_asset_version( 'assets/css/admin/settings-center.css' );
+		$message_alert_version = $this->get_static_asset_version( 'assets/css/admin/message-alert.css' );
 
 		wp_enqueue_style(
 			'easymde-admin-message-alert',
@@ -227,54 +309,10 @@ final class SettingsPage {
 		);
 	}
 
-	public function render_settings_center() {
-		if ( ! $this->is_canonical_settings_screen() || ! current_user_can( 'manage_options' ) ) {
-			return;
-		}
-
-		$settings_center_close_url = admin_url( 'options-general.php' );
-
-		require EASYMDE_PLUGIN_DIR . 'templates/admin/settings-center.php';
-	}
-
-	public function render_settings_center_favicon() {
-		?>
-		<link
-			rel="icon"
-			type="image/png"
-			href="<?php echo esc_url( Asset::url( 'assets/images/easymde-editor-icon.png' ) ); ?>"
-			data-easymde-settings-favicon="true"
-		>
-		<?php
-	}
-
-	private function is_canonical_settings_screen() {
-		global $pagenow;
-
-		return ! isset( $pagenow ) || 'admin.php' === $pagenow;
-	}
-
-	private function get_settings_center_url() {
-		return add_query_arg(
-			array(
-				'page'  => self::SETTINGS_CENTER_PAGE_SLUG,
-				'route' => self::SETTINGS_CENTER_ROUTE,
-			),
-			admin_url( 'admin.php' )
-		);
-	}
-
-	private function get_settings_center_startup_failure_script() {
-		return <<<'JS'
-(function () {
-	if (window.EasyMDESettingsCenterStarted === true) {
-		return;
-	}
-
-	document.documentElement.classList.remove('easymde-settings-center-js');
-	console.error('[EasyMDE] settings-center-bundle-unavailable');
-}());
-JS;
+	private function dequeue_settings_center_assets() {
+		wp_dequeue_script( 'easymde-admin-settings-center' );
+		wp_dequeue_style( 'easymde-admin-message-alert' );
+		wp_dequeue_style( 'easymde-admin-settings-center' );
 	}
 
 	private function get_settings_center_bootstrap() {

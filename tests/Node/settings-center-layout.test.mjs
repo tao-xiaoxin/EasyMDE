@@ -29,6 +29,14 @@ const settingsTemplateSource = readFileSync(
 	join(repoRoot, "templates/admin/settings-center.php"),
 	"utf8",
 );
+const settingsDocumentTemplateSource = readFileSync(
+	join(repoRoot, "templates/admin/settings-center-document.php"),
+	"utf8",
+);
+const settingsPageSource = readFileSync(
+	join(repoRoot, "src/Admin/SettingsPage.php"),
+	"utf8",
+);
 
 function frameRuleBody() {
 	const match = settingsCss.match(
@@ -112,6 +120,76 @@ test("Settings Center server fallback does not duplicate a brand-only applicatio
 		1,
 	);
 	assert.match(settingsTemplateSource, /settings_center_close_url/);
+	const fallbackIndex = settingsTemplateSource.indexOf(
+		"data-settings-center-server-fallback",
+	);
+	const rootIndex = settingsTemplateSource.indexOf(
+		'id="easymde-settings-center-root"',
+	);
+	const settingsErrorsIndex = settingsTemplateSource.indexOf("settings_errors()");
+	assert.ok(fallbackIndex >= 0 && fallbackIndex < rootIndex);
+	assert.ok(rootIndex < settingsErrorsIndex);
+});
+
+test("Settings Center dispatches a dedicated document before the WordPress header", () => {
+	assert.match(
+		settingsPageSource,
+		/add_action\(\s*'load-toplevel_page_'[\s\S]*?dispatch_settings_center_document'[\s\S]*?\),\s*20\s*\)/s,
+	);
+	assert.match(
+		settingsPageSource,
+		/public function dispatch_settings_center_document\(\)[\s\S]*?render_settings_center_document\(\)[\s\S]*?exit;/s,
+	);
+	const stylesIndex = settingsDocumentTemplateSource.indexOf(
+		"wp_styles()->do_items",
+	);
+	const scriptsIndex = settingsDocumentTemplateSource.indexOf(
+		"wp_scripts()->do_items",
+	);
+	const headEndIndex = settingsDocumentTemplateSource.indexOf("</head>");
+	const bodyStartIndex = settingsDocumentTemplateSource.indexOf("<body");
+	const rootTemplateIndex = settingsDocumentTemplateSource.indexOf(
+		"templates/admin/settings-center.php",
+	);
+	const bodyEndIndex = settingsDocumentTemplateSource.indexOf("</body>");
+	assert.ok(stylesIndex >= 0 && stylesIndex < headEndIndex);
+	assert.ok(stylesIndex < scriptsIndex && scriptsIndex < headEndIndex);
+	assert.ok(bodyStartIndex < rootTemplateIndex);
+	assert.ok(rootTemplateIndex < bodyEndIndex);
+	assert.doesNotMatch(
+		settingsDocumentTemplateSource,
+		/<body[\s\S]*wp_scripts\(\)->do_items/s,
+	);
+	assert.doesNotMatch(
+		settingsDocumentTemplateSource,
+		/wp_print_(?:styles|head_scripts)\s*\(/,
+	);
+	assert.match(settingsTemplateSource, /easymde-settings-center-root/);
+	for (const shellId of [
+		"wpwrap",
+		"wpadminbar",
+		"adminmenu",
+		"wpcontent",
+		"wpbody",
+		"wpfooter",
+	]) {
+		assert.doesNotMatch(
+			settingsDocumentTemplateSource,
+			new RegExp(`id=[\\"']${shellId}[\\"']`),
+		);
+	}
+});
+
+test("Settings Center first-paint isolation has no shell-hiding or visibility choreography escape hatch", () => {
+	for (const source of [
+		settingsCss,
+		settingsPageSource,
+		settingsTemplateSource,
+		settingsDocumentTemplateSource,
+	]) {
+		assert.doesNotMatch(source, /(?:#wpwrap|#wpadminbar|#adminmenu)[^{]*\{[^}]*\b(?:display|visibility)\s*:/s);
+		assert.doesNotMatch(source, /(?:setTimeout|setInterval|sleep)\s*\(/);
+	}
 });
 
 test("Settings Center frame does not add an outer border, radius, or shadow", () => {

@@ -83,6 +83,18 @@ function bootstrap(): SettingsCenterBootstrap {
 describe("mountSettingsCenter", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		document
+			.querySelector("#easymde-admin-settings-center-css")
+			?.remove();
+		const stylesheet = document.createElement("link");
+		stylesheet.id = "easymde-admin-settings-center-css";
+		stylesheet.rel = "stylesheet";
+		Object.defineProperty(stylesheet, "sheet", { value: {} });
+		document.head.append(stylesheet);
+		document.documentElement.style.setProperty(
+			"--easymde-settings-center-styles-ready",
+			"1",
+		);
 		document.body.innerHTML = '<div id="easymde-settings-center-root"></div>';
 		vi.mocked(parseSettingsCenterBootstrap).mockReturnValue(bootstrap());
 	});
@@ -214,6 +226,24 @@ describe("mountSettingsCenter", () => {
 
 		expect(() => mountSettingsCenter({}, { document, window })).toThrow(
 			"settings-center-url-origin-invalid",
+		);
+		expect(createRoot).not.toHaveBeenCalled();
+	});
+
+	it("rejects a missing Settings stylesheet before creating the root", () => {
+		vi.mocked(createRoot).mockReturnValue({
+			render: vi.fn(),
+			unmount: vi.fn(),
+		} as never);
+		document
+			.querySelector("#easymde-admin-settings-center-css")
+			?.remove();
+		document.documentElement.style.removeProperty(
+			"--easymde-settings-center-styles-ready",
+		);
+
+		expect(() => mountSettingsCenter({}, { document, window })).toThrow(
+			"settings-center-stylesheet-unavailable",
 		);
 		expect(createRoot).not.toHaveBeenCalled();
 	});

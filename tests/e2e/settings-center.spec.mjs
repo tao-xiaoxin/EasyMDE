@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { performance } from "node:perf_hooks";
 import { expect, test } from "@playwright/test";
 
 const adminUser = requiredEnvironment("WORDPRESS_ADMIN_USER");
@@ -282,6 +283,14 @@ test("keeps the EasyMDE menu logo inside the native icon slot", async ({
 		"src",
 		/assets\/images\/easymde-editor-icon\.png$/u,
 	);
+	await expect(page.locator("#wpwrap")).toBeVisible();
+	await expect(page.locator("#easymde-settings-center-root")).toHaveCount(0);
+	await expect(
+		page.locator('script[src*="/assets/build/settings-center/"]'),
+	).toHaveCount(0);
+	await expect(
+		page.locator('link[href*="/assets/css/admin/settings-center.css"]'),
+	).toHaveCount(0);
 	await expect
 		.poll(async () => {
 			const slot = await iconSlot.boundingBox();
@@ -484,140 +493,254 @@ test("anchors every Settings selector to a translucent white shared popup", asyn
 	await expect(trigger).toContainText(/实时预览|Live Preview/u);
 });
 
-test("does not paint a blank EasyMDE shell before the Settings Center bundle mounts", async ({
-	page,
-}) => {
-	await page.setViewportSize({ width: 1440, height: 900 });
-	await login(page);
-	await page.addInitScript(() => {
-		window.__easymdeFirstVisibleStates = [];
-		const isVisible = (element) =>
-			element instanceof HTMLElement &&
-			element.getClientRects().length > 0 &&
-			getComputedStyle(element).display !== "none" &&
-			getComputedStyle(element).visibility !== "hidden";
-		const sample = () => {
-			const application = document.querySelector(".easymde-settings-center");
-			const fallback = document.querySelector(
-				"[data-settings-center-server-fallback]",
-			);
-			const startup = document.querySelector("[data-settings-center-startup]");
-			if (
-				!isVisible(application) &&
-				!isVisible(fallback) &&
-				!isVisible(startup)
-			) {
-				return;
-			}
-			window.__easymdeFirstVisibleStates.push({
-				hasCompleteApplication:
-					isVisible(application) &&
-					Boolean(
-						document.querySelector(".easymde-settings-center__sidebar nav"),
-					) &&
-					Boolean(
-						document.querySelector(
-							".easymde-settings-center__sticky-header h1",
-						),
-					) &&
-					Boolean(document.querySelector('input[type="search"]')),
-				hasVisibleFallback: isVisible(fallback),
-				hasVisibleStartup: isVisible(startup),
-				hasBrandOnlyShell: Boolean(
-					document.querySelector(
-						"[data-settings-center-startup] .easymde-settings-center__brand",
-					),
-				),
-			});
-		};
-		let sampleScheduled = false;
-		const schedulePaintSample = () => {
-			if (sampleScheduled) return;
-			sampleScheduled = true;
-			requestAnimationFrame(() => {
-				sampleScheduled = false;
-				sample();
-			});
-		};
-		new MutationObserver(schedulePaintSample).observe(document, {
-			childList: true,
-			subtree: true,
-		});
-	});
-	const settingsBundle = (url) =>
-		url.pathname.includes(
-			"/assets/build/settings-center/assets/settings-center-",
-		) && url.pathname.endsWith(".js");
-
-	let releaseBundle = () => undefined;
-	const bundleGate = new Promise((resolve) => {
-		releaseBundle = resolve;
-	});
-	let reportBundleIntercepted = () => undefined;
-	const bundleIntercepted = new Promise((resolve) => {
-		reportBundleIntercepted = resolve;
-	});
-	await page.route(settingsBundle, async (route) => {
-		reportBundleIntercepted();
-		const response = await route.fetch();
-		await bundleGate;
-		await route.fulfill({ response });
-	});
-
-	let navigation;
-	try {
-		navigation = page.goto(
-			"/wp-admin/admin.php?page=easymde&route=/general_setting",
-		);
-		await bundleIntercepted;
-		const preMount = await page.evaluate(() => {
-			const body = document.body;
-			const host = document.querySelector("#easymde-settings-center-root");
-			const startup = document.querySelector("[data-settings-center-startup]");
-			const fallback = document.querySelector(
-				"[data-settings-center-server-fallback]",
-			);
-			const bodyVeil = body ? getComputedStyle(body, "::before") : null;
-			return {
-				hasBody: Boolean(body),
-				hasHost: Boolean(host),
-				hasStartup: Boolean(startup),
-				hasFallback: Boolean(fallback),
-				hasOpaquePseudoVeil:
-					bodyVeil !== null &&
-					bodyVeil.content !== "none" &&
-					bodyVeil.display !== "none" &&
-					bodyVeil.backgroundColor !== "rgba(0, 0, 0, 0)",
-			};
-		});
-		expect(preMount).toEqual({
-			hasBody: false,
-			hasHost: false,
-			hasStartup: false,
-			hasFallback: false,
-			hasOpaquePseudoVeil: false,
-		});
-	} finally {
-		releaseBundle();
-		if (navigation) await navigation;
-		await page.unroute(settingsBundle);
+const SETTINGS_CENTER_FIRST_PAINT_PATH =
+	"/wp-admin/admin.php?page=easymde&route=/general_setting";
+function readPositiveIntegerEnvironment(name, fallback) {
+	const value = process.env[name];
+	if (value === undefined) return fallback;
+	if (!/^[1-9]\d*$/u.test(value)) {
+		throw new Error(`${name} must be a strict positive integer.`);
 	}
 
-	const firstVisibleStates = await page.evaluate(
-		() => window.__easymdeFirstVisibleStates,
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < 1) {
+		throw new Error(`${name} must be a strict positive integer.`);
+	}
+
+	return parsed;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_RUNS = readPositiveIntegerEnvironment(
+	"EASYMDE_FIRST_PAINT_RUNS",
+	1,
+);
+const SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE = 20;
+const SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO = 0.98;
+const SETTINGS_CENTER_FIRST_PAINT_VIEWPORTS = [
+	{ name: "desktop", width: 1440, height: 900 },
+	{ name: "mobile", width: 390, height: 844 },
+];
+const SETTINGS_CENTER_FIRST_PAINT_CACHE_MODES = [
+	{ name: "cold", cacheDisabled: true, clearBeforeSetup: true },
+	{ name: "warm", cacheDisabled: false, clearBeforeSetup: false },
+];
+const SETTINGS_CENTER_FIRST_PAINT_REFRESH_MODES = [
+	{ name: "normal", hardRefresh: false },
+	{ name: "hard", hardRefresh: true },
+];
+const SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE = {
+	name: "baseline",
+	cpuThrottlingRate: 1,
+	networkConditions: {
+		offline: false,
+		latency: 0,
+		downloadThroughput: -1,
+		uploadThroughput: -1,
+		connectionType: "none",
+	},
+};
+const SETTINGS_CENTER_FIRST_PAINT_PROFILES = [
+	SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE,
+	{
+		name: "throttled",
+		cpuThrottlingRate: 4,
+		networkConditions: {
+			offline: false,
+			latency: 150,
+			downloadThroughput: 200 * 1024,
+			uploadThroughput: 750 * 1024 / 8,
+			connectionType: "cellular3g",
+		},
+	},
+];
+
+function buildSettingsCenterFirstPaintCases() {
+	const cases = [];
+	for (const viewport of SETTINGS_CENTER_FIRST_PAINT_VIEWPORTS) {
+		for (const cacheMode of SETTINGS_CENTER_FIRST_PAINT_CACHE_MODES) {
+			for (const refreshMode of SETTINGS_CENTER_FIRST_PAINT_REFRESH_MODES) {
+				for (const profile of SETTINGS_CENTER_FIRST_PAINT_PROFILES) {
+					cases.push({
+						name: [
+							viewport.name,
+							cacheMode.name,
+							refreshMode.name,
+							profile.name,
+						].join("-"),
+						viewport,
+						cacheMode,
+						refreshMode,
+						profile,
+					});
+				}
+			}
+		}
+	}
+	return cases;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_ALL_CASES =
+	buildSettingsCenterFirstPaintCases();
+const SETTINGS_CENTER_FIRST_PAINT_CASE_NAME =
+	process.env.EASYMDE_FIRST_PAINT_CASE;
+
+function selectSettingsCenterFirstPaintCases(allCases, requestedCaseName) {
+	if (requestedCaseName === undefined) return allCases;
+
+	const selectedCases = allCases.filter(
+		(scenario) => scenario.name === requestedCaseName,
 	);
-	expect(firstVisibleStates.length).toBeGreaterThan(0);
-	expect(firstVisibleStates[0]).toEqual({
-		hasCompleteApplication: true,
-		hasVisibleFallback: false,
-		hasVisibleStartup: false,
-		hasBrandOnlyShell: false,
+	if (selectedCases.length !== 1) {
+		throw new Error(
+			[
+				"EASYMDE_FIRST_PAINT_CASE must exactly match one generated caseName.",
+				`Received ${JSON.stringify(requestedCaseName)}.`,
+				`Expected one of: ${allCases.map((scenario) => scenario.name).join(", ")}.`,
+			].join(" "),
+		);
+	}
+
+	return selectedCases;
+}
+
+const SETTINGS_CENTER_FIRST_PAINT_CASES = selectSettingsCenterFirstPaintCases(
+	SETTINGS_CENTER_FIRST_PAINT_ALL_CASES,
+	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME,
+);
+const SETTINGS_CENTER_FIRST_PAINT_EXPECTED_CASE_COUNT =
+	SETTINGS_CENTER_FIRST_PAINT_CASE_NAME === undefined
+		? SETTINGS_CENTER_FIRST_PAINT_ALL_CASES.length
+		: 1;
+const SETTINGS_CENTER_FIRST_PAINT_PUBLIC_EVIDENCE_KEYS = Object.freeze([
+	"caseName",
+	"iteration",
+	"stableState",
+	"durationMs",
+]);
+const SETTINGS_CENTER_FIRST_PAINT_STDOUT_PREFIX =
+	"EASYMDE_SETTINGS_CENTER_FIRST_PAINT_EVIDENCE:";
+const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_PER_CASE_MS = 60_000;
+const SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS = Math.max(
+	600_000,
+	SETTINGS_CENTER_FIRST_PAINT_CASES.length *
+		SETTINGS_CENTER_FIRST_PAINT_RUNS *
+		SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_PER_CASE_MS,
+);
+
+async function applySettingsCenterBrowserConditions(cdp, profile, cacheMode) {
+	await cdp.send("Emulation.setCPUThrottlingRate", {
+		rate: profile.cpuThrottlingRate,
 	});
+	await cdp.send("Network.emulateNetworkConditions", profile.networkConditions);
+	await cdp.send("Network.setCacheDisabled", {
+		cacheDisabled: cacheMode.cacheDisabled,
+	});
+}
+
+async function restoreSettingsCenterBrowserConditions(cdp) {
+	const errors = [];
+	for (const [method, params] of [
+		[
+			"Emulation.setCPUThrottlingRate",
+			{ rate: SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE.cpuThrottlingRate },
+		],
+		[
+			"Network.emulateNetworkConditions",
+			SETTINGS_CENTER_FIRST_PAINT_BASELINE_PROFILE.networkConditions,
+		],
+		["Network.setCacheDisabled", { cacheDisabled: false }],
+	]) {
+		try {
+			await cdp.send(method, params);
+		} catch (error) {
+			errors.push(error);
+		}
+	}
+	if (errors.length === 1) throw errors[0];
+	if (errors.length > 1) {
+		throw new AggregateError(
+			errors,
+			"Settings Center browser condition restoration failed.",
+		);
+	}
+}
+
+async function withSettingsCenterBrowserConditions(
+	cdp,
+	profile,
+	cacheMode,
+	callback,
+) {
+	let operationError;
+	let restoreError;
+	let result;
+	try {
+		try {
+			await applySettingsCenterBrowserConditions(cdp, profile, cacheMode);
+			result = await callback();
+		} catch (error) {
+			operationError = error;
+		}
+	} finally {
+		try {
+			await restoreSettingsCenterBrowserConditions(cdp);
+		} catch (error) {
+			restoreError = error;
+		}
+	}
+	if (operationError && restoreError) {
+		throw new AggregateError(
+			[operationError, restoreError],
+			"Settings Center browser conditions and restoration failed.",
+		);
+	}
+	if (operationError) throw operationError;
+	if (restoreError) throw restoreError;
+	return result;
+}
+
+async function prepareSettingsCenterFirstPaintCase(page, cdp, scenario) {
+	await page.setViewportSize({
+		width: scenario.viewport.width,
+		height: scenario.viewport.height,
+	});
+	if (scenario.cacheMode.clearBeforeSetup) {
+		await cdp.send("Network.clearBrowserCache");
+	}
+	await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+	await waitForSettingsCenterReady(page);
+}
+
+async function reloadSettingsCenterForFirstPaint(page, cdp, refreshMode) {
+	if (refreshMode.hardRefresh) {
+		const mainFrameNavigation = page.waitForEvent("framenavigated", {
+			predicate: (frame) => frame === page.mainFrame(),
+		});
+		await Promise.all([
+			mainFrameNavigation,
+			cdp.send("Page.reload", { ignoreCache: true }),
+		]);
+		return;
+	}
+	await page.reload({ waitUntil: "domcontentloaded" });
+}
+
+async function captureSettingsCenterScreenshot(cdp, decoder, expectedSize) {
+	return decodeSettingsCenterPng(
+		decoder,
+		(
+			await cdp.send("Page.captureScreenshot", {
+				format: "png",
+				fromSurface: true,
+				captureBeyondViewport: false,
+			})
+		).data,
+		expectedSize,
+	);
+}
+
+async function waitForSettingsCenterReady(page) {
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
-	await expect(
-		page.locator("[data-settings-center-server-fallback]"),
-	).toHaveCount(0);
 	await expect(
 		page.locator(".easymde-settings-center__sidebar nav"),
 	).toBeVisible();
@@ -625,6 +748,585 @@ test("does not paint a blank EasyMDE shell before the Settings Center bundle mou
 		page.locator(".easymde-settings-center__sticky-header h1"),
 	).toBeVisible();
 	await expect(page.getByRole("searchbox")).toBeVisible();
+	await page.evaluate(async () => {
+		await document.fonts.ready;
+		await new Promise((resolve) => {
+			requestAnimationFrame(() => requestAnimationFrame(resolve));
+		});
+	});
+}
+
+async function assertSettingsCenterShellAbsent(page) {
+	for (const shellId of [
+		"wpwrap",
+		"wpadminbar",
+		"adminmenu",
+		"wpcontent",
+		"wpbody",
+		"wpfooter",
+	]) {
+		await expect(page.locator(`#${shellId}`)).toHaveCount(0);
+	}
+	const hasOpaqueBodyPseudoVeil = await page.evaluate(() => {
+		const style = getComputedStyle(document.body, "::before");
+		return (
+			style.content !== "none" &&
+			style.display !== "none" &&
+			style.backgroundColor !== "rgba(0, 0, 0, 0)"
+		);
+	});
+	expect(hasOpaqueBodyPseudoVeil).toBe(false);
+}
+
+async function decodeSettingsCenterPng(decoder, data, expectedSize) {
+	return decoder.evaluate(
+		async ({ png, expectedWidth, expectedHeight }) => {
+			const image = new Image();
+			image.src = `data:image/png;base64,${png}`;
+			await image.decode();
+			if (
+				image.naturalWidth !== expectedWidth ||
+				image.naturalHeight !== expectedHeight
+			) {
+				throw new Error("settings-frame-size-mismatch");
+			}
+			const canvas = document.createElement("canvas");
+			canvas.width = image.naturalWidth;
+			canvas.height = image.naturalHeight;
+			const context = canvas.getContext("2d", { willReadFrequently: true });
+			if (!context) throw new Error("settings-frame-canvas-unavailable");
+			context.drawImage(image, 0, 0);
+			const pixels = context.getImageData(
+				0,
+				0,
+				canvas.width,
+				canvas.height,
+			).data;
+			let topSamples = 0;
+			let darkTopSamples = 0;
+			let allSamples = 0;
+			let whiteSamples = 0;
+			let pixelHash = 2166136261;
+			const fingerprint = [];
+			for (let y = 0; y < canvas.height; y += 8) {
+				for (let x = 0; x < canvas.width; x += 8) {
+					const index = (y * canvas.width + x) * 4;
+					const red = pixels[index];
+					const green = pixels[index + 1];
+					const blue = pixels[index + 2];
+					const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+					allSamples += 1;
+					if (red > 246 && green > 246 && blue > 246) whiteSamples += 1;
+					if (y < 56) {
+						topSamples += 1;
+						if (luminance < 85) darkTopSamples += 1;
+					}
+					if (y % 16 === 0 && x % 16 === 0) {
+						fingerprint.push(red, green, blue);
+					}
+				}
+			}
+			for (let index = 0; index < pixels.length; index += 4) {
+				pixelHash = Math.imul(pixelHash ^ pixels[index], 16777619);
+				pixelHash = Math.imul(pixelHash ^ pixels[index + 1], 16777619);
+				pixelHash = Math.imul(pixelHash ^ pixels[index + 2], 16777619);
+			}
+			return {
+				width: image.naturalWidth,
+				height: image.naturalHeight,
+				darkTopRatio: darkTopSamples / topSamples,
+				whiteRatio: whiteSamples / allSamples,
+				pixelHash: pixelHash >>> 0,
+				fingerprint,
+			};
+		},
+		{
+			png: data,
+			expectedWidth: expectedSize.width,
+			expectedHeight: expectedSize.height,
+		},
+	);
+}
+
+function settingsCenterFingerprintDistance(frame, reference) {
+	if (frame.fingerprint.length !== reference.fingerprint.length) {
+		throw new Error("settings-frame-fingerprint-size-mismatch");
+	}
+	let absoluteDifference = 0;
+	for (let index = 0; index < frame.fingerprint.length; index += 1) {
+		absoluteDifference += Math.abs(
+			frame.fingerprint[index] - reference.fingerprint[index],
+		);
+	}
+
+	return absoluteDifference / frame.fingerprint.length;
+}
+
+function matchesSettingsCenterFrame(frame, reference) {
+	return (
+		frame.whiteRatio < SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO &&
+		frame.darkTopRatio < 0.35 &&
+		settingsCenterFingerprintDistance(frame, reference) <=
+			SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE
+	);
+}
+
+function isSettingsCenterBlankFrame(frame) {
+	return frame.whiteRatio >= 0.995;
+}
+
+function isSettingsCenterFallbackFrame(frame) {
+	return (
+		frame.whiteRatio >= SETTINGS_CENTER_FRAME_MAX_WHITE_RATIO &&
+		!isSettingsCenterBlankFrame(frame)
+	);
+}
+
+function matchesExactSettingsCenterFrame(frame, reference) {
+	return (
+		frame.width === reference.width &&
+		frame.height === reference.height &&
+		frame.pixelHash === reference.pixelHash &&
+		frame.whiteRatio === reference.whiteRatio &&
+		frame.darkTopRatio === reference.darkTopRatio &&
+		settingsCenterFingerprintDistance(frame, reference) === 0
+	);
+}
+
+function selectSettingsCenterFirstPaintPublicEvidence(evidence) {
+	return evidence.map((entry) =>
+		Object.fromEntries(
+			SETTINGS_CENTER_FIRST_PAINT_PUBLIC_EVIDENCE_KEYS.map((key) => [
+				key,
+				entry[key],
+			]),
+		),
+	);
+}
+
+async function captureSettingsCenterNavigationEvidence(
+	page,
+	cdp,
+	decoder,
+	expectedSize,
+	refreshMode,
+	scenario,
+) {
+	const fail = (reason) =>
+		new Error(`settings-center-first-paint:${scenario.name}:${reason}`);
+	const settingsApplication = page.locator(".easymde-settings-center");
+	const beforeVisible = await settingsApplication.isVisible();
+	if (!beforeVisible) throw fail("settings-before-reload-not-visible");
+	const beforeScreenshot = await cdp.send("Page.captureScreenshot", {
+		format: "png",
+		fromSurface: true,
+		captureBeyondViewport: false,
+	});
+	const beforeAnalysis = await decodeSettingsCenterPng(
+		decoder,
+		beforeScreenshot.data,
+		expectedSize,
+	);
+	if (!matchesSettingsCenterFrame(beforeAnalysis, beforeAnalysis)) {
+		throw fail("settings-reference-frame-invalid");
+	}
+	let committed = false;
+	let collectFrames = true;
+	const frames = [];
+	const pendingAcks = new Set();
+	const ackErrors = [];
+	const lifecycleInitTimestamps = new Map();
+	let navigationLoaderId;
+	let navigationInitTimestamp;
+	let lifecycleError;
+	let captureNavigationEvents = false;
+	const frameTree = await cdp.send("Page.getFrameTree");
+	const mainFrameId = frameTree.frameTree.frame.id;
+	const handleFrameNavigated = ({ frame }) => {
+		if (!frame.parentId && frame.id === mainFrameId) {
+			committed = true;
+			navigationLoaderId = frame.loaderId;
+			navigationInitTimestamp = lifecycleInitTimestamps.get(
+				navigationLoaderId,
+			);
+		}
+	};
+	const handleLifecycleEvent = ({ frameId, loaderId, name, timestamp }) => {
+		if (
+			!captureNavigationEvents ||
+			name !== "init" ||
+			frameId !== mainFrameId
+		) {
+			return;
+		}
+
+		if (typeof loaderId !== "string" || typeof timestamp !== "number") {
+			lifecycleError = fail("settings-lifecycle-init-invalid");
+			return;
+		}
+
+		lifecycleInitTimestamps.set(loaderId, timestamp);
+		if (loaderId === navigationLoaderId) {
+			navigationInitTimestamp = timestamp;
+		}
+	};
+	const handleScreencastFrame = ({ data, metadata, sessionId }) => {
+		const ack = cdp.send("Page.screencastFrameAck", { sessionId });
+		pendingAcks.add(ack);
+		ack.then(
+			() => pendingAcks.delete(ack),
+			(error) => {
+				ackErrors.push(error);
+				pendingAcks.delete(ack);
+			},
+		);
+		if (
+			committed &&
+			collectFrames &&
+			typeof navigationInitTimestamp === "number" &&
+			typeof metadata?.timestamp === "number" &&
+			metadata.timestamp >= navigationInitTimestamp
+		) {
+			frames.push({ data, timestamp: metadata.timestamp });
+		}
+	};
+	cdp.on("Page.frameNavigated", handleFrameNavigated);
+	cdp.on("Page.lifecycleEvent", handleLifecycleEvent);
+	cdp.on("Page.screencastFrame", handleScreencastFrame);
+	let screencastStarted = false;
+	let lifecycleEventsEnabled = false;
+	try {
+		await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true });
+		lifecycleEventsEnabled = true;
+		await cdp.send("Page.startScreencast", {
+			format: "png",
+			maxWidth: expectedSize.width,
+			maxHeight: expectedSize.height,
+			everyNthFrame: 1,
+		});
+		screencastStarted = true;
+		captureNavigationEvents = true;
+		await reloadSettingsCenterForFirstPaint(page, cdp, refreshMode);
+		await waitForSettingsCenterReady(page);
+		collectFrames = false;
+		if (lifecycleError) {
+			throw lifecycleError;
+		}
+		if (
+			typeof navigationLoaderId !== "string" ||
+			typeof navigationInitTimestamp !== "number"
+		) {
+			throw fail("settings-lifecycle-init-missing");
+		}
+		if (!committed) throw fail("settings-main-frame-commit-missing");
+		await assertSettingsCenterShellAbsent(page);
+	} finally {
+		try {
+			try {
+				if (screencastStarted) await cdp.send("Page.stopScreencast");
+			} finally {
+				if (lifecycleEventsEnabled) {
+					await cdp.send("Page.setLifecycleEventsEnabled", {
+						enabled: false,
+					});
+				}
+			}
+		} finally {
+			cdp.off("Page.frameNavigated", handleFrameNavigated);
+			cdp.off("Page.lifecycleEvent", handleLifecycleEvent);
+			cdp.off("Page.screencastFrame", handleScreencastFrame);
+			await Promise.all(pendingAcks);
+		}
+	}
+	if (ackErrors.length > 0) throw ackErrors[0];
+
+	const afterVisible = await settingsApplication.isVisible();
+	if (!afterVisible) throw fail("settings-after-reload-not-visible");
+	const afterScreenshot = await cdp.send("Page.captureScreenshot", {
+		format: "png",
+		fromSurface: true,
+		captureBeyondViewport: false,
+	});
+	const afterAnalysis = await decodeSettingsCenterPng(
+		decoder,
+		afterScreenshot.data,
+		expectedSize,
+	);
+	if (frames.length > 0) {
+		const frameAnalyses = await Promise.all(
+			frames.map((frame) =>
+				decodeSettingsCenterPng(decoder, frame.data, expectedSize),
+			),
+		);
+		let phase = "retained";
+		let blankFrameCount = 0;
+		let firstNewSettingsIndex = -1;
+		for (let index = 0; index < frameAnalyses.length; index += 1) {
+			const analysis = frameAnalyses[index];
+			const exactRetained = matchesExactSettingsCenterFrame(
+				analysis,
+				beforeAnalysis,
+			);
+			const blank = isSettingsCenterBlankFrame(analysis);
+			const fallback = isSettingsCenterFallbackFrame(analysis);
+			const settings = matchesSettingsCenterFrame(analysis, beforeAnalysis);
+
+			if (phase === "retained") {
+				if (exactRetained) continue;
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (blank) {
+					phase = "blank";
+					blankFrameCount += 1;
+					continue;
+				}
+				if (settings) {
+					phase = "settings";
+					firstNewSettingsIndex = index;
+					continue;
+				}
+				throw fail("settings-frame-mismatch");
+			}
+
+			if (phase === "blank") {
+				if (blank) {
+					blankFrameCount += 1;
+					continue;
+				}
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (settings) {
+					phase = "settings";
+					firstNewSettingsIndex = index;
+					continue;
+				}
+				throw fail("settings-frame-mismatch");
+			}
+
+			if (phase === "settings") {
+				if (blank) throw fail("settings-blank-frame-emitted");
+				if (fallback) throw fail("settings-fallback-frame-emitted");
+				if (!settings) throw fail("settings-frame-mismatch");
+				continue;
+			}
+			throw fail("settings-frame-mismatch");
+		}
+
+		if (firstNewSettingsIndex < 0) {
+			if (phase !== "retained") {
+				throw fail("settings-nonblank-frame-missing");
+			}
+			if (!matchesExactSettingsCenterFrame(afterAnalysis, beforeAnalysis)) {
+				throw fail("settings-retained-pixels-changed");
+			}
+			return {
+				beforeVisible,
+				afterVisible,
+				frameBytes: 0,
+				leadingBlankFrameCount: 0,
+				nonblankFrameCount: 0,
+				retainedPixels: true,
+				allFramesMatch: true,
+				analysis: afterAnalysis,
+				retainedPixelHash: afterAnalysis.pixelHash,
+			};
+		}
+
+		const postSettingsFrameAnalyses = frameAnalyses.slice(
+			firstNewSettingsIndex,
+		);
+		const frameFingerprintDistances = postSettingsFrameAnalyses.map(
+			(analysis) =>
+				settingsCenterFingerprintDistance(analysis, beforeAnalysis),
+		);
+		return {
+			beforeVisible,
+			afterVisible,
+			frameBytes: Buffer.byteLength(
+				frames[firstNewSettingsIndex].data,
+				"base64",
+			),
+			leadingBlankFrameCount: blankFrameCount,
+			nonblankFrameCount: postSettingsFrameAnalyses.length,
+			retainedPixels: false,
+			allFramesMatch: true,
+			maxDarkTopRatio: Math.max(
+				...postSettingsFrameAnalyses.map(
+					(analysis) => analysis.darkTopRatio,
+				),
+			),
+			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
+			analysis: postSettingsFrameAnalyses[0],
+		};
+	}
+
+	if (!matchesExactSettingsCenterFrame(afterAnalysis, beforeAnalysis)) {
+		throw fail("settings-retained-pixels-changed");
+	}
+	return {
+		beforeVisible,
+		afterVisible,
+		frameBytes: 0,
+		leadingBlankFrameCount: 0,
+		retainedPixels: true,
+		allFramesMatch: true,
+		analysis: afterAnalysis,
+		retainedPixelHash: afterAnalysis.pixelHash,
+	};
+}
+
+test("does not paint the WordPress shell across desktop/mobile, cold/warm, normal/hard, and baseline/throttled compositor combinations", async ({
+	page,
+}, testInfo) => {
+	test.setTimeout(SETTINGS_CENTER_FIRST_PAINT_TIMEOUT_MS);
+	await login(page);
+	const decoder = await page.context().newPage();
+	const cdp = await page.context().newCDPSession(page);
+	await cdp.send("Page.enable");
+	await cdp.send("Network.enable");
+	const evidence = [];
+	try {
+		for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
+			await withSettingsCenterBrowserConditions(
+				cdp,
+				scenario.profile,
+				scenario.cacheMode,
+				async () => {
+					await prepareSettingsCenterFirstPaintCase(page, cdp, scenario);
+					const expectedSize = {
+						width: scenario.viewport.width,
+						height: scenario.viewport.height,
+					};
+					const settingsReference = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					await page.goto("/wp-admin/profile.php");
+					await expect(page.locator("#wpwrap")).toBeVisible();
+					const nativeWordPressFrame = await captureSettingsCenterScreenshot(
+						cdp,
+						decoder,
+						expectedSize,
+					);
+					expect(
+						matchesSettingsCenterFrame(nativeWordPressFrame, settingsReference),
+					).toBe(false);
+					await page.goto(SETTINGS_CENTER_FIRST_PAINT_PATH);
+					await waitForSettingsCenterReady(page);
+
+					for (
+						let iteration = 0;
+						iteration < SETTINGS_CENTER_FIRST_PAINT_RUNS;
+						iteration += 1
+					) {
+						const startedAt = performance.now();
+						const result = await captureSettingsCenterNavigationEvidence(
+							page,
+							cdp,
+							decoder,
+							expectedSize,
+							scenario.refreshMode,
+							scenario,
+						);
+						const durationMs = Math.round(performance.now() - startedAt);
+						const stableState = result.retainedPixels
+							? "settings-retained"
+							: "settings-painted";
+						evidence.push({
+							caseName: scenario.name,
+							viewportMode: scenario.viewport.name,
+							cacheMode: scenario.cacheMode.name,
+							refreshMode: scenario.refreshMode.name,
+							profileMode: scenario.profile.name,
+							iteration,
+							durationMs,
+							stableState,
+							...result,
+						});
+					}
+				},
+			);
+		}
+	} finally {
+		try {
+			await restoreSettingsCenterBrowserConditions(cdp);
+		} finally {
+			try {
+				await cdp.detach();
+			} finally {
+				await decoder.close();
+			}
+		}
+	}
+
+	expect(evidence).toHaveLength(
+		SETTINGS_CENTER_FIRST_PAINT_CASES.length * SETTINGS_CENTER_FIRST_PAINT_RUNS,
+	);
+	expect(SETTINGS_CENTER_FIRST_PAINT_ALL_CASES).toHaveLength(16);
+	expect(SETTINGS_CENTER_FIRST_PAINT_CASES).toHaveLength(
+		SETTINGS_CENTER_FIRST_PAINT_EXPECTED_CASE_COUNT,
+	);
+	for (const scenario of SETTINGS_CENTER_FIRST_PAINT_CASES) {
+		const scenarioEvidence = evidence.filter(
+			(entry) => entry.caseName === scenario.name,
+		);
+		expect(scenarioEvidence).toHaveLength(SETTINGS_CENTER_FIRST_PAINT_RUNS);
+		for (const entry of scenarioEvidence) {
+			expect(entry).toMatchObject({
+				caseName: scenario.name,
+				viewportMode: scenario.viewport.name,
+				cacheMode: scenario.cacheMode.name,
+				refreshMode: scenario.refreshMode.name,
+				profileMode: scenario.profile.name,
+			});
+			expect(Number.isFinite(entry.durationMs)).toBe(true);
+			expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+			expect(entry.stableState).toBe(
+				entry.retainedPixels ? "settings-retained" : "settings-painted",
+			);
+			expect(entry.beforeVisible).toBe(true);
+			expect(entry.afterVisible).toBe(true);
+			expect(entry.analysis).toMatchObject({
+				width: scenario.viewport.width,
+				height: scenario.viewport.height,
+			});
+			expect(entry.analysis.darkTopRatio).toBeLessThan(0.35);
+			expect(entry.analysis.whiteRatio).toBeLessThan(0.995);
+			expect(entry.allFramesMatch).toBe(true);
+			expect(entry.leadingBlankFrameCount).toBeGreaterThanOrEqual(0);
+			if (entry.retainedPixels) {
+				expect(entry.frameBytes).toBe(0);
+				expect(entry.retainedPixelHash).toBe(entry.analysis.pixelHash);
+			} else {
+				expect(entry.frameBytes).toBeGreaterThan(0);
+				expect(entry.nonblankFrameCount).toBeGreaterThan(0);
+				expect(entry.maxDarkTopRatio).toBeLessThan(0.35);
+				expect(entry.maxFingerprintDistance).toBeLessThanOrEqual(
+					SETTINGS_CENTER_FRAME_FINGERPRINT_TOLERANCE,
+				);
+			}
+		}
+	}
+	await waitForSettingsCenterReady(page);
+	await expect(page.locator("body")).toHaveClass(
+		/easymde-settings-center-document/u,
+	);
+	await expect(
+		page.locator('link[data-easymde-settings-favicon="true"]'),
+	).toHaveCount(1);
+	await expect(page.locator("#easymde-settings-center-root")).toHaveCount(1);
+	await assertSettingsCenterShellAbsent(page);
+	await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+	await expect(
+		page.locator("[data-settings-center-server-fallback]"),
+	).toHaveCount(0);
+	const publicEvidence = selectSettingsCenterFirstPaintPublicEvidence(evidence);
+	await testInfo.attach("settings-center-first-paint-evidence.json", {
+		body: JSON.stringify(publicEvidence),
+		contentType: "application/json",
+	});
+	process.stdout.write(
+		`${SETTINGS_CENTER_FIRST_PAINT_STDOUT_PREFIX}${JSON.stringify(publicEvidence)}\n`,
+	);
 });
 
 test("keeps a visible exit when the Settings Center bundle cannot load", async ({
@@ -641,6 +1343,9 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
 		const fallback = page.locator("[data-settings-center-server-fallback]");
 		await expect(fallback).toBeVisible();
 		await expect(fallback).toHaveAttribute("role", "alert");
@@ -653,6 +1358,35 @@ test("keeps a visible exit when the Settings Center bundle cannot load", async (
 		await expect(page.locator("#wpwrap")).toBeVisible();
 	} finally {
 		await page.unroute(settingsBundle);
+	}
+});
+
+test("keeps a dedicated exit when the Settings Center stylesheet cannot load", async ({
+	page,
+}) => {
+	await login(page);
+	const settingsStylesheet = (url) =>
+		url.pathname.endsWith("/assets/css/admin/settings-center.css");
+
+	await page.route(settingsStylesheet, (route) => route.abort("failed"));
+	try {
+		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
+		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
+		const error = page.locator(
+			'#easymde-settings-center-root [role="alert"]',
+		);
+		await expect(error).toBeVisible();
+		await expect(error).toContainText(/could not start|无法启动/iu);
+		const exit = error.locator("a");
+		await expect(exit).toBeVisible();
+		await exit.click();
+		await expect(page).toHaveURL(/\/wp-admin\/options-general\.php$/u);
+		await expect(page.locator("#wpwrap")).toBeVisible();
+	} finally {
+		await page.unroute(settingsStylesheet);
 	}
 });
 
@@ -679,6 +1413,9 @@ test("keeps a neutral exit surface when Content Security Policy blocks scripts",
 		await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 		await expect(page.locator(".easymde-settings-center")).toHaveCount(0);
 		await expect(page.locator("[data-settings-center-startup]")).toHaveCount(0);
+		await expect(page.locator("#wpwrap")).toHaveCount(0);
+		await expect(page.locator("#wpadminbar")).toHaveCount(0);
+		await expect(page.locator("#adminmenu")).toHaveCount(0);
 		const fallback = page.locator("[data-settings-center-server-fallback]");
 		await expect(fallback).toBeVisible();
 		await expect(fallback).toHaveAttribute("role", "alert");

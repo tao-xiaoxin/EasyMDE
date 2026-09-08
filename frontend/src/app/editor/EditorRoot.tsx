@@ -894,15 +894,8 @@ export function EditorRoot(props: EditorRootProps) {
   const handleVisualFailure = useCallback(
     (code: string) => {
       props.onFailure(code);
-      setPreviewSurfaceStatus('error');
-      publishEditorStatus({
-        id: 'visual-preview',
-        message: props.preview.messages.error,
-        owner: 'editor',
-        type: 'error'
-      });
     },
-    [props.onFailure, props.preview.messages.error, publishEditorStatus]
+    [props.onFailure]
   );
   const handleVisualMarkdownChange = useCallback(
     () => {

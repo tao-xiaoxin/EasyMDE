@@ -437,6 +437,15 @@ asserts one Preview request per paste, exact source preservation including the
 fixture's footnote syntax, and the rendered heading/table/code, Mermaid, math,
 and task-list semantics, then checks follow-up input, lock, mode changes, and
 immersive teardown without browser errors.
+The companion destructive-edit test uses the same tracked fixture for real
+Backspace, Delete, replacement, Cut, Undo, and Redo operations. It verifies the
+canonical field after every operation, keeps generated math and Mermaid nodes
+read-only and structurally stable, and confirms a responsive `390x844` Preview
+has no page-level horizontal overflow while tables and code retain local
+scrolling. It then locks the paper again without converting a local editing
+failure into a formal Preview failure. Private maintainer documents may be used
+only for local timing and digest-equivalence probes; their path, title, content,
+or screenshots must not enter tracked tests or public evidence.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

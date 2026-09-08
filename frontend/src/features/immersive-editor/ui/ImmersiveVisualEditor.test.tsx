@@ -432,6 +432,113 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('preserves a trailing source line ending when formatted accepted paste is edited', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Before</p>';
+      document.body.append(surface);
+      let canonicalValue = 'Before';
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const requestPreview = vi.fn(() => 'accepted');
+      const props = {
+        documentSession,
+        imageUploadEnabled: false,
+        imagePasteUploadEnabled: false,
+        onCanonicalDocumentChange: vi.fn(),
+        onDiagnostic: vi.fn(),
+        onDispose: vi.fn(),
+        onFailure: vi.fn(),
+        onMarkdownChange: vi.fn(),
+        onPendingChange: vi.fn(),
+        onReady: vi.fn(),
+        onTransferFailure: vi.fn(),
+        pending: false,
+        previewSnapshot: { revision: 1, signature: 'initial' },
+        previewStatus: 'ready' as const,
+        requestPreview,
+        surface
+      };
+      const view = render(
+        <ImmersiveVisualEditor
+          {...props}
+        />
+      );
+      const paragraph = surface.querySelector('p');
+      if (!(paragraph?.firstChild instanceof Text)) {
+        throw new Error('visual-accepted-end-paragraph-missing');
+      }
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.setStart(paragraph.firstChild, paragraph.firstChild.length);
+      range.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      fireEvent.paste(surface, {
+        clipboardData: {
+          getData: (type: string) =>
+            'text/plain' === type ? ' **Formatted**\n' : ''
+        }
+      });
+      expect(canonicalValue).toBe('Before **Formatted**\n');
+
+      surface.innerHTML = '<p>Before <strong>Formatted</strong></p>';
+      act(() => {
+        view.rerender(
+          <ImmersiveVisualEditor
+            {...props}
+            previewSnapshot={{ revision: 2, signature: 'accepted' }}
+          />
+        );
+      });
+      const cloneNode = vi.spyOn(surface, 'cloneNode');
+      const formatted = surface.querySelector('strong')?.firstChild;
+      if (!(formatted instanceof Text)) {
+        throw new Error('visual-accepted-end-formatted-text-missing');
+      }
+      const formattedRange = document.createRange();
+      formattedRange.setStart(formatted, formatted.length);
+      formattedRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(formattedRange);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      }));
+      formatted.deleteData(formatted.length - 1, 1);
+      const afterDelete = document.createRange();
+      afterDelete.setStart(formatted, formatted.length);
+      afterDelete.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(afterDelete);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(canonicalValue).toBe('Before **Formatte**\n');
+      expect(applyTextChange).toHaveBeenCalledTimes(2);
+      expect(cloneNode).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('coalesces rapid visual input into one canonical transaction', () => {
     vi.useFakeTimers();
     try {
@@ -500,6 +607,314 @@ describe('ImmersiveVisualEditor', () => {
         selection: { direction: 'none', end: 22, start: 22 },
         value: 'Visual paragraph three'
       });
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets the trailing debounce window after each visual input', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Visual paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => 'Visual paragraph',
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+      const selection = window.getSelection();
+      const setCaretAtEnd = () => {
+        const paragraph = surface.querySelector('p');
+        if (!paragraph) throw new Error('visual-trailing-debounce-paragraph-missing');
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+
+      surface.innerHTML = '<p>First change</p>';
+      setCaretAtEnd();
+      fireEvent.input(surface);
+      act(() => {
+        vi.advanceTimersByTime(79);
+      });
+      surface.innerHTML = '<p>Second change</p>';
+      setCaretAtEnd();
+      fireEvent.input(surface);
+      act(() => {
+        vi.advanceTimersByTime(79);
+      });
+      expect(applyTextChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(applyTextChange).toHaveBeenCalledWith({
+        selection: { direction: 'none', end: 13, start: 13 },
+        value: 'Second change'
+      });
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not clone the visual surface a second time to restore a collapsed text caret', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Visual paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => 'Visual paragraph',
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+      const paragraph = surface.querySelector('p');
+      if (!paragraph) throw new Error('visual-caret-performance-paragraph-missing');
+      const selection = window.getSelection();
+      const initialRange = document.createRange();
+      initialRange.selectNodeContents(paragraph);
+      initialRange.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(initialRange);
+      const cloneNode = vi.spyOn(surface, 'cloneNode');
+
+      paragraph.append(' changed');
+      const changedRange = document.createRange();
+      changedRange.selectNodeContents(paragraph);
+      changedRange.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(changedRange);
+      fireEvent.input(surface);
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(cloneNode).toHaveBeenCalledOnce();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the beforeinput intent path for the next same-text-node edit', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Visual paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => 'Visual paragraph',
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+      const paragraph = surface.querySelector('p');
+      if (!paragraph?.firstChild) {
+        throw new Error('visual-beforeinput-paragraph-missing');
+      }
+      const text = paragraph.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('visual-beforeinput-text-missing');
+      }
+      const selection = window.getSelection();
+      const setCaret = (offset: number) => {
+        const range = document.createRange();
+        range.setStart(text, offset);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      setCaret(text.length);
+
+      text.appendData(' first');
+      setCaret(text.length);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText'
+      }));
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(applyTextChange.mock.lastCall?.[0].value).toBe(
+        'Visual paragraph first'
+      );
+
+      const cloneNode = vi.spyOn(surface, 'cloneNode');
+      setCaret(text.length);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '!',
+        inputType: 'insertText'
+      }));
+      expect(cloneNode).not.toHaveBeenCalled();
+      text.appendData('!');
+      setCaret(text.length);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertText'
+      }));
+      expect(cloneNode).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(applyTextChange).toHaveBeenCalledTimes(2);
+      expect(applyTextChange.mock.lastCall?.[0].value).toBe(
+        'Visual paragraph first!'
+      );
+      expect(cloneNode).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels a pre-composition timer and commits one complete composition', async () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Visual paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => 'Visual paragraph',
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+      const paragraph = surface.querySelector('p');
+      if (!paragraph) throw new Error('visual-composition-paragraph-missing');
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      paragraph.textContent = 'Before composition';
+      fireEvent.input(surface);
+      act(() => {
+        vi.advanceTimersByTime(40);
+      });
+
+      fireEvent.compositionStart(surface);
+      paragraph.textContent = 'Composed text';
+      const composedRange = document.createRange();
+      composedRange.selectNodeContents(paragraph);
+      composedRange.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(composedRange);
+      fireEvent.input(surface, { isComposing: true });
+      fireEvent.compositionEnd(surface);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(applyTextChange).toHaveBeenCalledWith({
+        selection: { direction: 'none', end: 13, start: 13 },
+        value: 'Composed text'
+      });
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+      expect(applyTextChange).toHaveBeenCalledOnce();
       view.unmount();
     } finally {
       vi.useRealTimers();

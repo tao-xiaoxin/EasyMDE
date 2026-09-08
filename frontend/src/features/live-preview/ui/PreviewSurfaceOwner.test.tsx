@@ -535,7 +535,70 @@ describe('PreviewSurfaceOwner', () => {
     expect(visualSourceMarkerCount(current.surface)).toBe(0);
     expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
     expect(current.onDiagnostic).toHaveBeenCalledWith(
-      'preview-enhancement-failed'
+      'preview-enhancement-visual-source-missing'
+    );
+  });
+
+  it('does not bind visual Markdown sources that are nested inside code', async () => {
+    const current = setup({
+      enhance: async (surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!code) throw new Error('preview-enhancement-code-missing');
+        code.innerHTML = '<span class="hljs-string">printf "$x$"</span>';
+        surface.querySelector('.easymde-math:not(pre .easymde-math)')
+          ?.setAttribute('data-easymde-rendered', '1');
+      },
+      initialHtml: ''
+    });
+
+    act(() => {
+      current.session.schedule(request('code and math', 'code-and-math'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true, syntaxHighlight: true },
+        html: safeHtml(
+          '<pre><code class="language-bash"><span class="easymde-math">$x$</span></code></pre>'
+          + '<div class="easymde-math">$$real$$</div>'
+        )
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBeNull();
+    expect(
+      current.surface.querySelector('.easymde-math')
+        ?.getAttribute('data-easymde-visual-markdown-source')
+    ).toBe('$$real$$');
+  });
+
+  it('preserves the stable visual-source diagnostic when enhanced output loses a source node', async () => {
+    const onDiagnostic = vi.fn();
+    const current = setup({
+      initialHtml: '',
+      onDiagnostic,
+      enhance: async (surface) => {
+        surface.querySelector('.easymde-math')?.replaceWith(
+          document.createElement('p')
+        );
+      }
+    });
+
+    act(() => {
+      current.session.schedule(request('$x$', 'visual-source-missing'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        features: { math: true },
+        html: safeHtml('<div class="easymde-math">$x$</div>')
+      });
+      await Promise.resolve();
+    });
+
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      'preview-enhancement-visual-source-missing'
     );
   });
 

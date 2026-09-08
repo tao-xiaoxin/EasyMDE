@@ -13,7 +13,9 @@ import {
   applyVisualToolbarCommand,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
-  mergeVisualMarkdownChange,
+  applyVisualMarkdownEditIntent,
+  createVisualMarkdownSourceIntervalMap,
+  mergeVisualMarkdownChangeDetails,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
@@ -21,6 +23,7 @@ import {
   serializeVisualMarkdown,
   type VisualMarkdownReadOnlySnapshot,
   type AcceptedPasteDocumentBoundary,
+  type VisualMarkdownSourceIntervalMap,
   visualSelectionSourceRange
 } from '../visual-markdown';
 
@@ -78,7 +81,37 @@ type SynchronizeMarkdownOptions = Readonly<{
   mapSelectionWhenUnchanged?: boolean;
 }>;
 
+type CaptureSnapshotOptions = Readonly<{
+  cacheSourceIntervalMap?: boolean;
+}>;
+
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
+
+type VisualSelectionMemory = Readonly<{
+  anchorNode: Text;
+  anchorOffset: number;
+  focusNode: Text;
+  focusOffset: number;
+  sourceAnchor: number;
+  sourceFocus: number;
+  visualAnchor: number;
+  visualFocus: number;
+}>;
+
+type VisualInputIntent = Readonly<{
+  data: string | null;
+  inputType: string;
+  sourceSelection: Readonly<{ end: number; start: number }>;
+  textData: string;
+  textNode: Text;
+  textSelection: Readonly<{ end: number; start: number }>;
+  visualSelection: Readonly<{ end: number; start: number }>;
+}>;
+
+type PendingVisualIntent = Readonly<{
+  memory: VisualSelectionMemory | null;
+  result: NonNullable<ReturnType<typeof applyVisualMarkdownEditIntent>>;
+}>;
 
 function hasImageFile(transfer: DataTransfer | null): boolean {
   return Array.from(transfer?.items ?? []).some(
@@ -117,6 +150,389 @@ function ensureEmptyVisualParagraph(
   placeSurfaceCaretAtEnd(paragraph);
 }
 
+function editableTextNode(surface: HTMLElement, node: Node): node is Text {
+  if (!(node instanceof Text) || !surface.contains(node)) return false;
+  let element = node.parentElement;
+  while (element && element !== surface) {
+    if ('false' === element.getAttribute('contenteditable')) return false;
+    element = element.parentElement;
+  }
+  return true;
+}
+
+function currentTextSelection(surface: HTMLElement): Readonly<{
+  anchorNode: Text;
+  anchorOffset: number;
+  focusNode: Text;
+  focusOffset: number;
+}> | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  const anchorNode = selection?.anchorNode;
+  const focusNode = selection?.focusNode;
+  if (
+    !selection
+    || !anchorNode
+    || !focusNode
+    || !editableTextNode(surface, anchorNode)
+    || !editableTextNode(surface, focusNode)
+  ) {
+    return null;
+  }
+  return {
+    anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode,
+    focusOffset: selection.focusOffset
+  };
+}
+
+function selectionRange(
+  anchor: number,
+  focus: number
+): Readonly<{ end: number; start: number }> {
+  return { end: Math.max(anchor, focus), start: Math.min(anchor, focus) };
+}
+
+function selectionMemoryForCurrentSelection(
+  surface: HTMLElement,
+  sourceSelection: Readonly<{ end: number; start: number }>,
+  visualSelection: Readonly<{ end: number; start: number }>
+): VisualSelectionMemory | null {
+  const current = currentTextSelection(surface);
+  if (!current) return null;
+  return {
+    ...current,
+    sourceAnchor: sourceSelection.start,
+    sourceFocus: sourceSelection.end,
+    visualAnchor: visualSelection.start,
+    visualFocus: visualSelection.end
+  };
+}
+
+const VISUAL_DIRECT_FORMATTING_TAGS = new Set([
+  'A',
+  'CODE',
+  'DEL',
+  'EM',
+  'I',
+  'MARK',
+  'S',
+  'STRONG',
+  'SUB',
+  'SUP',
+  'U'
+]);
+
+function canUseIdentityVisualSelection(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  visualMarkdown: string,
+  sourceSelection: Readonly<{ end: number; start: number }>,
+  visualSelection: Readonly<{ end: number; start: number }>
+): boolean {
+  if (
+    sourceMarkdown !== visualMarkdown
+    || sourceSelection.start !== visualSelection.start
+    || sourceSelection.end !== visualSelection.end
+  ) {
+    return false;
+  }
+  const current = currentTextSelection(surface);
+  if (!current || current.anchorNode !== current.focusNode) return false;
+  let element = current.anchorNode.parentElement;
+  while (element && element !== surface) {
+    if (VISUAL_DIRECT_FORMATTING_TAGS.has(element.tagName)) return false;
+    if (
+      !['DIV', 'P'].includes(element.tagName)
+      || element.childNodes.length !== 1
+      || element.firstChild !== current.anchorNode
+    ) {
+      return false;
+    }
+    element = element.parentElement;
+  }
+  return element === surface;
+}
+
+function mapSelectionFromMemory(
+  memory: VisualSelectionMemory,
+  current: Readonly<{
+    anchorNode: Text;
+    anchorOffset: number;
+    focusNode: Text;
+    focusOffset: number;
+  }>,
+  sourceLength: number,
+  visualLength: number
+): Readonly<{
+  source: Readonly<{ end: number; start: number }>;
+  visual: Readonly<{ end: number; start: number }>;
+}> | null {
+  if (
+    memory.anchorNode !== current.anchorNode
+    || memory.focusNode !== current.focusNode
+  ) {
+    return null;
+  }
+  const sourceAnchor =
+    memory.sourceAnchor + current.anchorOffset - memory.anchorOffset;
+  const sourceFocus =
+    memory.sourceFocus + current.focusOffset - memory.focusOffset;
+  const visualAnchor =
+    memory.visualAnchor + current.anchorOffset - memory.anchorOffset;
+  const visualFocus =
+    memory.visualFocus + current.focusOffset - memory.focusOffset;
+  if (
+    sourceAnchor < 0
+    || sourceFocus < 0
+    || sourceAnchor > sourceLength
+    || sourceFocus > sourceLength
+    || visualAnchor < 0
+    || visualFocus < 0
+    || visualAnchor > visualLength
+    || visualFocus > visualLength
+  ) {
+    return null;
+  }
+  return {
+    source: selectionRange(sourceAnchor, sourceFocus),
+    visual: selectionRange(visualAnchor, visualFocus)
+  };
+}
+
+function uniqueTextProjection(
+  node: Text,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap
+): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
+  if (!node.data) return null;
+  const visualOffset = baselineVisualMarkdown.indexOf(node.data);
+  if (
+    visualOffset < 0
+    || visualOffset !== baselineVisualMarkdown.lastIndexOf(node.data)
+  ) {
+    return null;
+  }
+  const sourceStart = sourceIntervalMap.resolve(visualOffset);
+  const sourceEnd = sourceIntervalMap.resolve(
+    visualOffset + node.data.length
+  );
+  if (
+    null === sourceStart
+    || null === sourceEnd
+    || sourceEnd - sourceStart !== node.data.length
+  ) {
+    return null;
+  }
+  return { sourceOffset: sourceStart, visualOffset };
+}
+
+function mapSelectionFromInterval(
+  current: Readonly<{
+    anchorNode: Text;
+    anchorOffset: number;
+    focusNode: Text;
+    focusOffset: number;
+  }>,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap
+): Readonly<{
+  source: Readonly<{ end: number; start: number }>;
+  visual: Readonly<{ end: number; start: number }>;
+}> | null {
+  const anchor = uniqueTextProjection(
+    current.anchorNode,
+    baselineVisualMarkdown,
+    sourceIntervalMap
+  );
+  const focus = current.anchorNode === current.focusNode
+    ? anchor
+    : uniqueTextProjection(
+        current.focusNode,
+        baselineVisualMarkdown,
+        sourceIntervalMap
+      );
+  if (!anchor || !focus) return null;
+  const visualAnchor = anchor.visualOffset + current.anchorOffset;
+  const visualFocus = focus.visualOffset + current.focusOffset;
+  const sourceAnchor = anchor.sourceOffset + current.anchorOffset;
+  const sourceFocus = focus.sourceOffset + current.focusOffset;
+  return {
+    source: selectionRange(sourceAnchor, sourceFocus),
+    visual: selectionRange(visualAnchor, visualFocus)
+  };
+}
+
+function codePointLengthBefore(text: Text, offset: number): number {
+  if (offset <= 0) return 0;
+  const codePoint = text.data.codePointAt(offset - 1);
+  return codePoint && codePoint > 0xffff ? 2 : 1;
+}
+
+function codePointLengthAfter(text: Text, offset: number): number {
+  if (offset >= text.length) return 0;
+  const codePoint = text.data.codePointAt(offset);
+  return codePoint && codePoint > 0xffff ? 2 : 1;
+}
+
+function replaceTextRange(
+  value: string,
+  range: Readonly<{ end: number; start: number }>,
+  replacement: string
+): string {
+  return value.slice(0, range.start)
+    + replacement
+    + value.slice(range.end);
+}
+
+function visualInputIntent(
+  surface: HTMLElement,
+  event: InputEvent,
+  memory: VisualSelectionMemory | null,
+  sourceLength: number,
+  visualLength: number,
+  baselineVisualMarkdown: string,
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap | null
+): VisualInputIntent | null {
+  const current = currentTextSelection(surface);
+  if (!current) return null;
+  const mapped = memory
+    ? mapSelectionFromMemory(memory, current, sourceLength, visualLength)
+    : null;
+  const intervalMapped = mapped ?? (
+    sourceIntervalMap
+      ? mapSelectionFromInterval(
+          current,
+          baselineVisualMarkdown,
+          sourceIntervalMap
+        )
+      : null
+  );
+  if (!intervalMapped) return null;
+
+  const currentMapped = intervalMapped;
+
+  let visualSelection = currentMapped.visual;
+  let textSelection = selectionRange(
+    current.anchorOffset,
+    current.focusOffset
+  );
+  const targetRange = event.getTargetRanges?.()[0];
+  if (
+    targetRange
+    && targetRange.startContainer === current.anchorNode
+    && targetRange.endContainer === current.anchorNode
+  ) {
+    textSelection = selectionRange(
+      targetRange.startOffset,
+      targetRange.endOffset
+    );
+    const localSelectionStart = Math.min(
+      current.anchorOffset,
+      current.focusOffset
+    );
+    visualSelection = {
+      end: currentMapped.visual.start
+        + textSelection.end - localSelectionStart,
+      start: currentMapped.visual.start
+        + textSelection.start - localSelectionStart
+    };
+    const sourceStart = currentMapped.source.start
+      + textSelection.start - localSelectionStart;
+    const sourceEnd = currentMapped.source.start
+      + textSelection.end - localSelectionStart;
+    if (
+      sourceStart < 0
+      || sourceEnd < sourceStart
+      || sourceEnd > sourceLength
+    ) return null;
+    return {
+      data: event.data,
+      inputType: event.inputType,
+      sourceSelection: { end: sourceEnd, start: sourceStart },
+      textData: current.anchorNode.data,
+      textNode: current.anchorNode,
+      textSelection,
+      visualSelection
+    };
+  }
+
+  if (
+    'deleteContentBackward' === event.inputType
+    && current.anchorOffset === current.focusOffset
+  ) {
+    const start = Math.max(
+      0,
+      current.anchorOffset - codePointLengthBefore(current.anchorNode, current.anchorOffset)
+    );
+    textSelection = { end: current.anchorOffset, start };
+  } else if (
+    'deleteContentForward' === event.inputType
+    && current.anchorOffset === current.focusOffset
+  ) {
+    textSelection = {
+      end: current.anchorOffset + codePointLengthAfter(current.anchorNode, current.anchorOffset),
+      start: current.anchorOffset
+    };
+  } else if (
+    [
+      'deleteByCut',
+      'insertFromComposition',
+      'insertReplacementText',
+      'insertText'
+    ].includes(event.inputType)
+  ) {
+    textSelection = selectionRange(current.anchorOffset, current.focusOffset);
+  } else if (
+    [
+      'deleteWordBackward',
+      'deleteWordForward'
+    ].includes(event.inputType)
+  ) {
+    return null;
+  } else if ('insertLineBreak' !== event.inputType) {
+    return null;
+  }
+
+  const localSelectionStart = Math.min(
+    current.anchorOffset,
+    current.focusOffset
+  );
+  visualSelection = {
+    end: currentMapped.visual.start
+      + textSelection.end - localSelectionStart,
+    start: currentMapped.visual.start
+      + textSelection.start - localSelectionStart
+  };
+  const sourceStart = currentMapped.source.start
+    + textSelection.start - localSelectionStart;
+  const sourceEnd = currentMapped.source.start
+    + textSelection.end - localSelectionStart;
+  if (
+    sourceStart < 0
+    || sourceEnd < sourceStart
+    || sourceEnd > sourceLength
+  ) return null;
+  return {
+    data: event.data,
+    inputType: event.inputType,
+    sourceSelection: { end: sourceEnd, start: sourceStart },
+    textData: current.anchorNode.data,
+    textNode: current.anchorNode,
+    textSelection,
+    visualSelection
+  };
+}
+
+function collapsedVisualSelection(surface: HTMLElement): boolean {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  return Boolean(
+    selection?.isCollapsed
+    && selection.anchorNode
+    && surface.contains(selection.anchorNode)
+  );
+}
+
 export function ImmersiveVisualEditor({
   documentSession,
   imageUploadEnabled,
@@ -145,13 +561,20 @@ export function ImmersiveVisualEditor({
   const lastSelectionRef = useRef<VisualSelectionSourceRange | null>(null);
   const visualInputPendingRef = useRef(false);
   const visualInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visualSelectionMemoryRef = useRef<VisualSelectionMemory | null>(null);
+  const visualSourceIntervalMapRef = useRef<VisualMarkdownSourceIntervalMap | null>(null);
+  const pendingVisualIntentRef = useRef<VisualInputIntent | null>(null);
+  const pendingVisualIntentResultRef = useRef<PendingVisualIntent | null>(null);
   const flushVisualInputRef = useRef<() => boolean>(() => true);
   const restoreFocusRef = useRef(false);
   const selfWriteRef = useRef(false);
   const readOnlySnapshotRef =
     useRef<VisualMarkdownReadOnlySnapshot | null>(null);
 
-  const captureSnapshot = useCallback((sourceMarkdown: string) => {
+  const captureSnapshot = useCallback((
+    sourceMarkdown: string,
+    options: CaptureSnapshotOptions = {}
+  ) => {
     prepareVisualTaskListMarkers(surface);
     ensureEmptyVisualParagraph(surface, sourceMarkdown);
     protectVisualMarkdownReadOnlyRegions(surface);
@@ -159,8 +582,16 @@ export function ImmersiveVisualEditor({
       captureVisualMarkdownReadOnlySnapshot(surface);
     acceptedPasteDocumentBoundaryRef.current = null;
     lastSelectionRef.current = null;
+    visualSelectionMemoryRef.current = null;
+    visualSourceIntervalMapRef.current = null;
+    pendingVisualIntentRef.current = null;
+    pendingVisualIntentResultRef.current = null;
     sourceMarkdownRef.current = sourceMarkdown;
-    visualMarkdownRef.current = serializeVisualMarkdown(surface);
+    const visualMarkdown = serializeVisualMarkdown(surface);
+    visualMarkdownRef.current = visualMarkdown;
+    visualSourceIntervalMapRef.current = options.cacheSourceIntervalMap
+      ? createVisualMarkdownSourceIntervalMap(sourceMarkdown, visualMarkdown)
+      : null;
     acceptedHtmlRef.current = surface.innerHTML;
   }, [surface]);
 
@@ -238,35 +669,66 @@ export function ImmersiveVisualEditor({
         acceptedHtmlRef.current = surface.innerHTML;
         return true;
       }
-      let selection: VisualSelectionSourceRange;
-      try {
-        selection = visualSelectionSourceRange(
-          surface,
-          sourceMarkdown,
-          baselineVisualMarkdown,
-          editedVisualMarkdown
-        );
-        lastSelectionRef.current = selection;
-      } catch (error) {
-        if (
-          error instanceof Error
-          && 'visual-editor-selection-unavailable' === error.message
-          && lastSelectionRef.current
-        ) {
-          selection = lastSelectionRef.current;
-        } else {
-          throw error;
-        }
-      }
-      const value = mergeVisualMarkdownChange(
+      const mergeResult = mergeVisualMarkdownChangeDetails(
         sourceMarkdown,
         baselineVisualMarkdown,
         editedVisualMarkdown
       );
+      let selection: VisualSelectionSourceRange;
+      const inferredEdit = collapsedVisualSelection(surface)
+        && 1 === mergeResult.edits.length
+        ? mergeResult.edits[0]
+        : null;
+      if (inferredEdit) {
+        const caret = inferredEdit.start + inferredEdit.replacement.length;
+        selection = {
+          direction: 'none',
+          end: caret,
+          start: caret
+        };
+        lastSelectionRef.current = selection;
+      } else {
+        try {
+          selection = visualSelectionSourceRange(
+            surface,
+            sourceMarkdown,
+            baselineVisualMarkdown,
+            editedVisualMarkdown
+          );
+          lastSelectionRef.current = selection;
+        } catch (error) {
+          if (
+            error instanceof Error
+            && 'visual-editor-selection-unavailable' === error.message
+            && lastSelectionRef.current
+          ) {
+            selection = lastSelectionRef.current;
+          } else {
+            throw error;
+          }
+        }
+      }
+      const value = mergeResult.value;
       applyDocumentChange({ selection, value });
       sourceMarkdownRef.current = value;
       visualMarkdownRef.current = editedVisualMarkdown;
+      visualSourceIntervalMapRef.current = null;
       acceptedHtmlRef.current = surface.innerHTML;
+      visualSelectionMemoryRef.current =
+        canUseIdentityVisualSelection(
+          surface,
+          value,
+          editedVisualMarkdown,
+          { end: selection.end, start: selection.start },
+          { end: selection.end, start: selection.start }
+        )
+        && 'none' === selection.direction
+        ? selectionMemoryForCurrentSelection(
+            surface,
+            { end: selection.end, start: selection.start },
+            { end: selection.end, start: selection.start }
+          )
+        : null;
       if (value !== sourceMarkdown) {
         acceptedPasteDocumentBoundaryRef.current = null;
       }
@@ -291,8 +753,9 @@ export function ImmersiveVisualEditor({
 
   const requestMarkdownTransfer = useCallback((value: string) => {
     if (!value || pendingTransferRef.current) return;
+    const hadPendingVisualInput = visualInputPendingRef.current;
     if (!flushVisualInputRef.current()) return;
-    if (!synchronizeMarkdown()) return;
+    if (hadPendingVisualInput && !synchronizeMarkdown()) return;
     const sourceMarkdown = sourceMarkdownRef.current;
     const baselineVisualMarkdown = visualMarkdownRef.current;
     if (null === sourceMarkdown || null === baselineVisualMarkdown) {
@@ -435,7 +898,6 @@ export function ImmersiveVisualEditor({
       if (documentSession.document.getValue() !== pending.markdown) {
         throw new Error('visual-editor-markdown-paste-document-stale');
       }
-      const visualMarkdown = serializeVisualMarkdown(surface);
       try {
         if (pending.acceptedDocumentBoundary) {
           placeVisualCaretAtAcceptedPasteDocumentBoundary(
@@ -443,6 +905,7 @@ export function ImmersiveVisualEditor({
             pending.acceptedDocumentBoundary
           );
         } else {
+          const visualMarkdown = serializeVisualMarkdown(surface);
           placeVisualCaretFromSourceOffset(
             surface,
             pending.markdown,
@@ -458,10 +921,38 @@ export function ImmersiveVisualEditor({
         placeSurfaceCaretAtEnd(surface);
       }
       pendingTransferRef.current = null;
-      captureSnapshot(pending.markdown);
+      captureSnapshot(pending.markdown, { cacheSourceIntervalMap: true });
       acceptedPasteDocumentBoundaryRef.current =
         pending.acceptedDocumentBoundary;
       lastSelectionRef.current = pending.selection;
+      if (
+        pending.acceptedDocumentBoundary
+        && visualMarkdownRef.current
+        && canUseIdentityVisualSelection(
+          surface,
+          pending.markdown,
+          visualMarkdownRef.current,
+          { end: pending.selection.end, start: pending.selection.start },
+          {
+            end: 'start' === pending.acceptedDocumentBoundary
+              ? 0
+              : visualMarkdownRef.current.length,
+            start: 'start' === pending.acceptedDocumentBoundary
+              ? 0
+              : visualMarkdownRef.current.length
+          }
+        )
+      ) {
+        const visualOffset = 'start' === pending.acceptedDocumentBoundary
+          ? 0
+          : visualMarkdownRef.current.length;
+        visualSelectionMemoryRef.current =
+          selectionMemoryForCurrentSelection(
+            surface,
+            { end: pending.selection.end, start: pending.selection.start },
+            { end: visualOffset, start: visualOffset }
+          );
+      }
       restoreFocusRef.current = true;
       onPendingChange(false);
     } catch (error) {
@@ -490,8 +981,10 @@ export function ImmersiveVisualEditor({
     let composing = false;
     let compositionCommitScheduled = false;
 
-    const commitVisualInput = (): boolean => {
-      visualInputPendingRef.current = false;
+    const commitPendingVisualIntent = (): boolean => {
+      const pending = pendingVisualIntentResultRef.current;
+      if (!pending) return false;
+      pendingVisualIntentResultRef.current = null;
       if (
         !active
         || pendingTransferRef.current
@@ -499,7 +992,39 @@ export function ImmersiveVisualEditor({
       ) {
         return false;
       }
-      applyVisualInlineShortcut(surface);
+      const previousSource = sourceMarkdownRef.current;
+      applyDocumentChange({
+        selection: pending.result.selection,
+        value: pending.result.sourceMarkdown
+      });
+      sourceMarkdownRef.current = pending.result.sourceMarkdown;
+      visualMarkdownRef.current = pending.result.visualMarkdown;
+      visualSourceIntervalMapRef.current = null;
+      acceptedHtmlRef.current = surface.innerHTML;
+      acceptedPasteDocumentBoundaryRef.current = null;
+      lastSelectionRef.current = pending.result.selection;
+      visualSelectionMemoryRef.current = pending.memory;
+      if (previousSource !== pending.result.sourceMarkdown) {
+        onMarkdownChange();
+      }
+      return true;
+    };
+
+    const commitVisualInput = (): boolean => {
+      if (
+        !active
+        || pendingTransferRef.current
+        || externalChangeReportedRef.current
+      ) {
+        visualInputPendingRef.current = false;
+        pendingVisualIntentResultRef.current = null;
+        return false;
+      }
+      if (commitPendingVisualIntent()) {
+        visualInputPendingRef.current = false;
+        return true;
+      }
+      visualInputPendingRef.current = false;
       return synchronizeMarkdown();
     };
     const flushVisualInput = (): boolean => {
@@ -513,7 +1038,9 @@ export function ImmersiveVisualEditor({
     };
     const scheduleVisualInput = (): void => {
       visualInputPendingRef.current = true;
-      if (null !== visualInputTimerRef.current) return;
+      if (null !== visualInputTimerRef.current) {
+        clearTimeout(visualInputTimerRef.current);
+      }
       visualInputTimerRef.current = setTimeout(() => {
         visualInputTimerRef.current = null;
         commitVisualInput();
@@ -532,6 +1059,10 @@ export function ImmersiveVisualEditor({
     const handleCompositionStart = () => {
       composing = true;
       compositionCommitScheduled = false;
+      if (null !== visualInputTimerRef.current) {
+        clearTimeout(visualInputTimerRef.current);
+        visualInputTimerRef.current = null;
+      }
     };
     const handleCompositionEnd = () => {
       composing = false;
@@ -542,6 +1073,33 @@ export function ImmersiveVisualEditor({
         commitVisualInput();
       });
     };
+    const handleBeforeInput = (event: InputEvent) => {
+      pendingVisualIntentRef.current = null;
+      if (
+        pendingTransferRef.current
+        || composing
+        || event.isComposing
+      ) {
+        return;
+      }
+      const memory = pendingVisualIntentResultRef.current?.memory
+        ?? visualSelectionMemoryRef.current;
+      const sourceIntervalMap = visualSourceIntervalMapRef.current;
+      if (!memory && !sourceIntervalMap) return;
+      const base = pendingVisualIntentResultRef.current?.result;
+      const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
+      const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
+      if (null === sourceMarkdown || null === visualMarkdown) return;
+      pendingVisualIntentRef.current = visualInputIntent(
+        surface,
+        event,
+        memory,
+        sourceMarkdown.length,
+        visualMarkdown.length,
+        visualMarkdown,
+        sourceIntervalMap
+      );
+    };
     const handleInput = (event: InputEvent) => {
       if (
         pendingTransferRef.current
@@ -551,7 +1109,53 @@ export function ImmersiveVisualEditor({
       ) {
         return;
       }
-      applyVisualInlineShortcut(surface);
+      const shortcutApplied = applyVisualInlineShortcut(surface);
+      const intent = pendingVisualIntentRef.current;
+      pendingVisualIntentRef.current = null;
+      if (!shortcutApplied && intent) {
+        const base = pendingVisualIntentResultRef.current?.result;
+        const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
+        const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
+        if (null !== sourceMarkdown && null !== visualMarkdown) {
+          const replacement =
+            'insertLineBreak' === intent.inputType && null === intent.data
+              ? '\n'
+              : intent.data ?? '';
+          const expectedText = replaceTextRange(
+            intent.textData,
+            intent.textSelection,
+            replacement
+          );
+          if (intent.textNode.data === expectedText) {
+            const result = applyVisualMarkdownEditIntent(
+              sourceMarkdown,
+              visualMarkdown,
+              intent.sourceSelection,
+              intent.visualSelection,
+              intent.inputType,
+              intent.data
+            );
+            if (result) {
+              pendingVisualIntentResultRef.current = {
+                memory: selectionMemoryForCurrentSelection(
+                  surface,
+                  {
+                    end: result.selection.end,
+                    start: result.selection.start
+                  },
+                  result.visualSelection
+                ),
+                result
+              };
+              scheduleVisualInput();
+              return;
+            }
+          }
+        }
+      }
+      if (pendingVisualIntentResultRef.current) {
+        commitPendingVisualIntent();
+      }
       scheduleVisualInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -560,6 +1164,7 @@ export function ImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) return;
+      if (!flushVisualInput()) return;
       if (applyVisualBlockShortcut(surface, event)) {
         if (null !== visualInputTimerRef.current) {
           clearTimeout(visualInputTimerRef.current);
@@ -585,6 +1190,7 @@ export function ImmersiveVisualEditor({
     surface.addEventListener('compositionstart', handleCompositionStart);
     surface.addEventListener('compositionend', handleCompositionEnd);
     surface.addEventListener('drop', handleDrop);
+    surface.addEventListener('beforeinput', handleBeforeInput);
     surface.addEventListener('input', handleInput);
     surface.addEventListener('keydown', handleKeyDown);
     surface.addEventListener('paste', handlePaste);
@@ -633,6 +1239,7 @@ export function ImmersiveVisualEditor({
       surface.removeEventListener('compositionstart', handleCompositionStart);
       surface.removeEventListener('compositionend', handleCompositionEnd);
       surface.removeEventListener('drop', handleDrop);
+      surface.removeEventListener('beforeinput', handleBeforeInput);
       surface.removeEventListener('input', handleInput);
       surface.removeEventListener('keydown', handleKeyDown);
       surface.removeEventListener('paste', handlePaste);

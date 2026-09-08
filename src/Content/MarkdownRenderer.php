@@ -51,24 +51,29 @@ final class MarkdownRenderer {
 			'/(?<!\\\\)\$([^\n$]+?)(?<!\\\\)\$/',
 		);
 
-		foreach ( $patterns as $pattern ) {
-			$markdown = preg_replace_callback(
-				$pattern,
-				function ( $matches ) use ( &$math, $pattern ) {
-					$token          = 'EASYMDE_MATH_' . count( $math ) . '_TOKEN';
-					$is_block       = 0 === strpos( $pattern, '/\$\$' ) || 0 === strpos( $pattern, '/\\\\\[' );
-					$math[ $token ] = array(
-						'tex'   => $matches[1],
-						'block' => $is_block,
+		return MarkdownCodeRegionScanner::process_outside_code(
+			$markdown,
+			static function ( $segment ) use ( &$math, $patterns ) {
+				foreach ( $patterns as $pattern ) {
+					$segment = preg_replace_callback(
+						$pattern,
+						function ( $matches ) use ( &$math, $pattern ) {
+							$token          = 'EASYMDE_MATH_' . count( $math ) . '_TOKEN';
+							$is_block       = 0 === strpos( $pattern, '/\$\$' ) || 0 === strpos( $pattern, '/\\\\\[' );
+							$math[ $token ] = array(
+								'tex'   => $matches[1],
+								'block' => $is_block,
+							);
+
+							return $is_block ? "\n\n" . $token . "\n\n" : $token;
+						},
+						$segment
 					);
+				}
 
-					return $is_block ? "\n\n" . $token . "\n\n" : $token;
-				},
-				$markdown
-			);
-		}
-
-		return $markdown;
+				return $segment;
+			}
+		);
 	}
 
 	private static function restore_math( $html, array $math ) {

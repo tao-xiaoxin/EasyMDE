@@ -2181,8 +2181,45 @@ describe('EditorRoot', () => {
     expect(
       view.container.querySelector(
         '.easymde-immersive-preview-status .is-error'
-      )?.textContent
-    ).toBe('Failed');
+      )
+    ).toBeNull();
+  });
+
+  it('reports visual sync failures without changing the authoritative Preview status', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() =>
+      expect(view.getByText('内容已载入')).not.toBeNull()
+    );
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visualEditor = view.getByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+
+    visualEditor.innerHTML = '<p>Unmapped replacement</p>';
+    fireEvent.input(visualEditor);
+
+    await waitFor(() =>
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'visual-editor-markdown-merge-failed'
+      )
+    );
+    expect(
+      view.container.querySelector('.easymde-immersive-preview-status .is-error')
+    ).toBeNull();
+    expect(
+      view.container.querySelector('[data-easymde-preview-error="1"]')
+    ).toBeNull();
+    expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(
+      visualEditor
+    );
   });
 
   it('preserves the plain visual paste path for a remote image when image hosting is disabled', async () => {

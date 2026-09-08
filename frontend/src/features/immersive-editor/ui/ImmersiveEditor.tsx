@@ -1,5 +1,6 @@
 import {
   createElement,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -50,6 +51,20 @@ import type {
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
+
+export function useImmersiveDocumentDerivations(markdown: string) {
+  const deferredMarkdown = useDeferredValue(markdown);
+  const stats = useMemo(
+    () => getDocumentStats(deferredMarkdown),
+    [deferredMarkdown]
+  );
+  const outline = useMemo(
+    () => extractOutline(deferredMarkdown),
+    [deferredMarkdown]
+  );
+
+  return { outline, stats };
+}
 
 type Props = Readonly<{
   direction: 'ltr' | 'rtl';
@@ -527,8 +542,7 @@ export function ImmersiveEditor({
     return environment.subscribeKeydown(handleKeyDown);
   }, [environment, historyOpen, onExit, publishSnapshot, tableOpen]);
 
-  const stats = useMemo(() => getDocumentStats(markdown), [markdown]);
-  const outline = useMemo(() => extractOutline(markdown), [markdown]);
+  const { outline, stats } = useImmersiveDocumentDerivations(markdown);
   const changeMode = (next: ImmersiveViewMode) => {
     onViewModeChange(next);
   };

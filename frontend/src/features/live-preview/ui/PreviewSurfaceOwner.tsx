@@ -144,6 +144,7 @@ function captureVisualMarkdownSources(
 ): ReadonlyArray<VisualMarkdownSourceMarker> {
   const sources: VisualMarkdownSourceMarker[] = [];
   for (const node of surface.querySelectorAll<HTMLElement>('.easymde-math')) {
+    if (node.closest('pre > code')) continue;
     const marker = surface.ownerDocument.createComment(
       'easymde-visual-markdown-source'
     );

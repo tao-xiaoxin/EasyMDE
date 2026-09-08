@@ -4,6 +4,8 @@ import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
+  applyVisualMarkdownEditIntent,
+  createVisualMarkdownSourceIntervalMap,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
@@ -240,6 +242,54 @@ A--&gt;B</code></pre>
     expect(() =>
       assertVisualMarkdownReadOnlySnapshot(surface, snapshot)
     ).toThrow('visual-editor-read-only-region-mutated');
+  });
+
+  it('allows responsive layout to add or remove an empty root style attribute', () => {
+    const surface = editor(`
+      <div
+        class="easymde-math easymde-math-block"
+        data-easymde-rendered="1"
+        data-easymde-visual-markdown-source="$$x^2$$"
+      ><span class="katex">rendered math</span></div>
+    `);
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+    const math = snapshot[0]?.node;
+    if (!math) throw new Error('missing protected test region');
+
+    math.setAttribute('style', '');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+
+    math.setAttribute('style', '  \t\n');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+
+    math.removeAttribute('style');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+  });
+
+  it('rejects non-empty root style and other root attribute mutations', () => {
+    const surface = editor(`
+      <div
+        class="easymde-math easymde-math-block"
+        data-easymde-rendered="1"
+        data-easymde-visual-markdown-source="$$x^2$$"
+      ><span class="katex">rendered math</span></div>
+    `);
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+    const math = snapshot[0]?.node;
+    if (!math) throw new Error('missing protected test region');
+
+    math.setAttribute('style', 'display: block');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).toThrow(
+      'visual-editor-read-only-region-mutated'
+    );
+
+    math.removeAttribute('style');
+    math.setAttribute('data-easymde-probe', '1');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).toThrow(
+      'visual-editor-read-only-region-mutated'
+    );
   });
 
   it('rejects deletion, replacement and mutation of generated read-only regions', () => {
@@ -516,7 +566,7 @@ A--&gt;B</code></pre>
     ).toThrow('visual-editor-markdown-merge-failed');
   });
 
-  it('rejects an edit when hidden Markdown makes its source target ambiguous', () => {
+  it('maps a visible edit even when hidden Markdown repeats the same text', () => {
     const source = [
       'foo',
       '',
@@ -525,10 +575,197 @@ A--&gt;B</code></pre>
       'foo'
     ].join('\n');
 
-    expect(() =>
+    expect(
       mergeVisualMarkdownChange(source, 'foo\n\nfoo', 'foo\n\nbar')
-    ).toThrow('visual-editor-markdown-merge-ambiguous');
+    ).toBe('foo\n\n[//]: # (foo)\n\nbar');
     expect(source).toBe('foo\n\n[//]: # (foo)\n\nfoo');
+  });
+
+  it('deletes the visible duplicate without scanning hidden Markdown text globally', () => {
+    const source = [
+      'foo',
+      '',
+      '[//]: # (foo)',
+      '',
+      'foo'
+    ].join('\n');
+
+    expect(
+      mergeVisualMarkdownChange(source, 'foo\n\nfoo', 'foo\n\n')
+    ).toBe('foo\n\n[//]: # (foo)\n\n');
+  });
+
+  it('keeps a visible repeated block edit attached to its mapped source range', () => {
+    const source = [
+      'Before',
+      '',
+      'repeat',
+      '',
+      'repeat',
+      '',
+      'After'
+    ].join('\n');
+    const baseline = source;
+    const edited = [
+      'Before',
+      '',
+      'repeat',
+      '',
+      '',
+      'After'
+    ].join('\n');
+
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      [
+        'Before',
+        '',
+        'repeat',
+        '',
+        '',
+        'After'
+      ].join('\n')
+    );
+  });
+
+  it('maps source offsets inside formatting without consuming a hidden trailing line ending', () => {
+    const source = 'Before **Formatted**\n';
+    const visual = 'Before **Formatted**';
+    const map = createVisualMarkdownSourceIntervalMap(source, visual);
+    const start = visual.indexOf('Formatted');
+
+    expect(map.resolve(start)).toBe(source.indexOf('Formatted'));
+    expect(map.resolve(start + 'Formatted'.length)).toBe(
+      source.indexOf('Formatted') + 'Formatted'.length
+    );
+    expect(map.resolve(visual.length)).toBe(source.length - 1);
+  });
+
+  it('maps visible text around hidden references and generated math/Mermaid syntax', () => {
+    const source = [
+      'Before **Visible**',
+      '',
+      '[ref]: https://example.test',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      'A-->B',
+      '```',
+      '',
+      '$$',
+      'x^2',
+      '$$',
+      '',
+      'Tail'
+    ].join('\n');
+    const visual = [
+      'Before **Visible**',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      'A-->B',
+      '```',
+      '',
+      '$$',
+      'x^2',
+      '$$',
+      '',
+      'Tail'
+    ].join('\n');
+    const map = createVisualMarkdownSourceIntervalMap(source, visual);
+    const start = visual.indexOf('Tail');
+
+    expect(map.resolve(start)).toBe(source.indexOf('Tail'));
+    expect(map.resolve(start + 'Tail'.length)).toBe(
+      source.indexOf('Tail') + 'Tail'.length
+    );
+  });
+
+  it.each([
+    {
+      data: '!',
+      inputType: 'insertText' as const,
+      sourceSelection: { direction: 'none' as const, end: 6, start: 6 },
+      visualSelection: { end: 6, start: 6 },
+      expected: {
+        visualSelection: { end: 7, start: 7 },
+        sourceMarkdown: 'Before! after',
+        visualMarkdown: 'Before! after',
+        selection: { direction: 'none' as const, end: 7, start: 7 }
+      }
+    },
+    {
+      data: null,
+      inputType: 'deleteContentBackward' as const,
+      sourceSelection: { direction: 'none' as const, end: 7, start: 6 },
+      visualSelection: { end: 7, start: 6 },
+      expected: {
+        visualSelection: { end: 6, start: 6 },
+        sourceMarkdown: 'Beforeafter',
+        visualMarkdown: 'Beforeafter',
+        selection: { direction: 'none' as const, end: 6, start: 6 }
+      }
+    },
+    {
+      data: 'new',
+      inputType: 'insertReplacementText' as const,
+      sourceSelection: { direction: 'forward' as const, end: 12, start: 7 },
+      visualSelection: { end: 12, start: 7 },
+      expected: {
+        visualSelection: { end: 10, start: 10 },
+        sourceMarkdown: 'Before new',
+        visualMarkdown: 'Before new',
+        selection: { direction: 'none' as const, end: 10, start: 10 }
+      }
+    },
+    {
+      data: null,
+      inputType: 'deleteByCut' as const,
+      sourceSelection: { direction: 'forward' as const, end: 12, start: 6 },
+      visualSelection: { end: 12, start: 6 },
+      expected: {
+        visualSelection: { end: 6, start: 6 },
+        sourceMarkdown: 'Before',
+        visualMarkdown: 'Before',
+        selection: { direction: 'none' as const, end: 6, start: 6 }
+      }
+    }
+  ])(
+    'applies a safe $inputType intent to source and visual Markdown once',
+    ({ data, expected, inputType, sourceSelection, visualSelection }) => {
+      expect(
+        applyVisualMarkdownEditIntent(
+          'Before after',
+          'Before after',
+          sourceSelection,
+          visualSelection,
+          inputType,
+          data
+        )
+      ).toEqual(expected);
+    }
+  );
+
+  it('rejects history and paste input intents from the direct editor path', () => {
+    expect(
+      applyVisualMarkdownEditIntent(
+        'Before',
+        'Before',
+        { end: 6, start: 6 },
+        { end: 6, start: 6 },
+        'historyUndo',
+        null
+      )
+    ).toBeNull();
+    expect(
+      applyVisualMarkdownEditIntent(
+        'Before',
+        'Before',
+        { end: 6, start: 6 },
+        { end: 6, start: 6 },
+        'insertFromPaste',
+        'pasted'
+      )
+    ).toBeNull();
   });
 
   it('maps a visual selection back to the canonical Markdown range', () => {

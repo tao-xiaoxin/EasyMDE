@@ -40,8 +40,7 @@ final class MarkdownFeatureDetector {
 			'codeBlocks'      => $has_code_block,
 			'syntaxHighlight' => $has_regular_code_block,
 			'mermaid'         => $fenced_code_blocks['mermaid'],
-			'math'            => $this->might_contain_math( $markdown )
-				&& (bool) preg_match( '/(\$\$[\s\S]+?\$\$|\\\\\[|\\\\\(|(?<!\\\\)\$[^\n$]+?(?<!\\\\)\$)/', $markdown ),
+			'math'            => MarkdownCodeRegionScanner::contains_math_outside_code( $markdown ),
 			'toc'             => false !== stripos( $markdown, '[toc]' )
 				&& (bool) preg_match( '/^\s*\\[toc\\]\s*$/im', $markdown ),
 			'wechatCopy'      => true,
@@ -167,11 +166,5 @@ final class MarkdownFeatureDetector {
 			|| 0 === strpos( $markdown, "\t" )
 			|| false !== strpos( $markdown, "\n    " )
 			|| false !== strpos( $markdown, "\n\t" );
-	}
-
-	private function might_contain_math( $markdown ) {
-		return false !== strpos( $markdown, '$' )
-			|| false !== strpos( $markdown, '\\[' )
-			|| false !== strpos( $markdown, '\\(' );
 	}
 }

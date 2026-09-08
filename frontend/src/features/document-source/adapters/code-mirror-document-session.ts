@@ -109,6 +109,40 @@ function clampPosition(value: number, documentLength: number): number {
   return Math.max(0, Math.min(documentLength, value));
 }
 
+function localTextChange(
+  currentValue: string,
+  nextValue: string
+): Readonly<{ from: number; insert: string; to: number }> | null {
+  if (currentValue === nextValue) return null;
+
+  const currentLength = currentValue.length;
+  const nextLength = nextValue.length;
+  const commonLength = Math.min(currentLength, nextLength);
+  let prefixLength = 0;
+  while (
+    prefixLength < commonLength
+    && currentValue.charCodeAt(prefixLength) === nextValue.charCodeAt(prefixLength)
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    prefixLength + suffixLength < currentLength
+    && prefixLength + suffixLength < nextLength
+    && currentValue.charCodeAt(currentLength - suffixLength - 1)
+      === nextValue.charCodeAt(nextLength - suffixLength - 1)
+  ) {
+    suffixLength += 1;
+  }
+
+  return {
+    from: prefixLength,
+    insert: nextValue.slice(prefixLength, nextLength - suffixLength),
+    to: currentLength - suffixLength
+  };
+}
+
 function editorSelection(selection: DocumentSelection, documentLength: number) {
   const start = clampPosition(selection.start, documentLength);
   const end = clampPosition(selection.end, documentLength);
@@ -320,20 +354,15 @@ export function createCodeMirrorDocumentSession({
       }
       const currentValue = view.state.doc.toString();
       const valueChanged = value !== currentValue;
+      const changes = valueChanged
+        ? localTextChange(currentValue, value)
+        : null;
       view.dispatch({
         annotations: [
           Transaction.addToHistory.of(valueChanged),
           Transaction.userEvent.of('input')
         ],
-        ...(valueChanged
-          ? {
-              changes: {
-                from: 0,
-                to: view.state.doc.length,
-                insert: value
-              }
-            }
-          : {}),
+        ...(changes ? { changes } : {}),
         selection: editorSelection(selection, value.length)
       });
     },

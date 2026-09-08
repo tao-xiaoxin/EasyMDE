@@ -160,6 +160,103 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it.each([
+    {
+      current: 'alpha beta',
+      next: 'Xalpha beta',
+      changes: { from: 0, insert: 'X', to: 0 },
+      selection: { direction: 'none' as const, end: 1, start: 1 }
+    },
+    {
+      current: 'alpha beta',
+      next: 'alpha BIG beta',
+      changes: { from: 6, insert: 'BIG ', to: 6 },
+      selection: { direction: 'none' as const, end: 9, start: 9 }
+    },
+    {
+      current: 'alpha beta',
+      next: 'alpha beta!',
+      changes: { from: 10, insert: '!', to: 10 },
+      selection: { direction: 'none' as const, end: 11, start: 11 }
+    },
+    {
+      current: 'alpha beta',
+      next: 'beta',
+      changes: { from: 0, insert: '', to: 6 },
+      selection: { direction: 'none' as const, end: 4, start: 4 }
+    },
+    {
+      current: 'alpha beta',
+      next: 'alphabeta',
+      changes: { from: 5, insert: '', to: 6 },
+      selection: { direction: 'none' as const, end: 9, start: 9 }
+    },
+    {
+      current: 'alpha beta',
+      next: 'alpha',
+      changes: { from: 5, insert: '', to: 10 },
+      selection: { direction: 'none' as const, end: 5, start: 5 }
+    },
+    {
+      current: 'A😀B',
+      next: 'A😃B',
+      changes: { from: 2, insert: '\ude03', to: 3 },
+      selection: { direction: 'none' as const, end: 3, start: 3 }
+    },
+    {
+      current: 'one\ntwo\nthree',
+      nativeValue: 'one\r\ntwo\r\nthree',
+      next: 'one\nTWO\nthree',
+      changes: { from: 4, insert: 'TWO', to: 7 },
+      selection: { direction: 'none' as const, end: 8, start: 8 }
+    }
+  ])(
+    'dispatches only the changed UTF-16 range for $current -> $next',
+    ({ changes, current, nativeValue, next, selection }) => {
+      const { container, submissionField } = createFixture(nativeValue ?? current);
+      const session = createCodeMirrorDocumentSession({
+        container,
+        label: 'Markdown source',
+        submissionField
+      });
+      const view = EditorView.findFromDOM(session.getInputElement());
+      if (!view) throw new Error('test-editor-view-missing');
+      const dispatch = vi.spyOn(view, 'dispatch');
+
+      session.applyTextChange({ selection, value: next });
+
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ changes })
+      );
+      expect(session.getValue()).toBe(next);
+      expect(session.getSelection()).toEqual(selection);
+      session.destroy();
+    }
+  );
+
+  it('does not dispatch a document change when applyTextChange receives the same value', () => {
+    const { container, submissionField } = createFixture('same value');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const dispatch = vi.spyOn(view, 'dispatch');
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 4, start: 4 },
+      value: 'same value'
+    });
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.not.objectContaining({ changes: expect.anything() })
+    );
+    expect(session.getValue()).toBe('same value');
+    session.destroy();
+  });
+
   it('keeps an externally applied visual edit in its own undo history group', () => {
     const { container, submissionField } = createFixture('# Original');
     const session = createCodeMirrorDocumentSession({

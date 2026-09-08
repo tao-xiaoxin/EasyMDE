@@ -29,6 +29,12 @@ send one Preview request per keystroke; lock, view changes, autosave, publish,
 and other native operations first flush the pending visual input. A missing
 selection or failed Preview is reported explicitly and does not append content
 to the end or discard the canonical Markdown.
+Backspace, Delete, replacement, Cut, Undo, and Redo keep their edit attached to
+the selected visible text even when the document contains repeated text or
+hidden Markdown syntax. A local visual-edit synchronization problem is reported
+as an editor problem and does not change a successful server Preview into the
+Preview failure state. Rendered formulas, diagrams, generated contents, and
+footnotes remain read-only while surrounding article text is edited.
 After a pasted document is accepted by Preview at the start or end of the
 Markdown source, EasyMDE restores the caret to the corresponding safe visual
 edge while preserving the exact canonical Markdown, including invisible line
@@ -50,6 +56,9 @@ It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
 normal or hard refresh restores the Settings Center mode. The immersive
 Outline preference is separate and remains browser-persisted.
+On narrow mobile screens, an open Outline becomes a compact full-height rail so
+the Preview paper keeps the remaining width; wide tables and code blocks scroll
+inside their own content area instead of widening the page.
 
 ## Toolbar And Shortcuts
 

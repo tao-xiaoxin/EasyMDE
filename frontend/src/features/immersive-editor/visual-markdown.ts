@@ -381,7 +381,8 @@ const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
 ].join(', ');
 
 type VisualMarkdownReadOnlyRegion = Readonly<{
-  html: string;
+  attributes: ReadonlyArray<Readonly<{ name: string; value: string }>>;
+  innerHTML: string;
   node: HTMLElement;
 }>;
 
@@ -398,11 +399,35 @@ function visualMarkdownReadOnlyRegions(
   );
 }
 
+function visualMarkdownReadOnlyAttributes(
+  node: HTMLElement
+): ReadonlyArray<Readonly<{ name: string; value: string }>> {
+  return Array.from(node.attributes)
+    .filter(({ name, value }) => 'style' !== name || '' !== value.trim())
+    .map(({ name, value }) => ({ name, value }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function visualMarkdownReadOnlyAttributesEqual(
+  current: ReadonlyArray<Readonly<{ name: string; value: string }>>,
+  expected: ReadonlyArray<Readonly<{ name: string; value: string }>>
+): boolean {
+  return current.length === expected.length
+    && current.every(
+      (attribute, index) => {
+        const expectedAttribute = expected[index];
+        return expectedAttribute?.name === attribute.name
+          && expectedAttribute.value === attribute.value;
+      }
+    );
+}
+
 export function captureVisualMarkdownReadOnlySnapshot(
   editor: HTMLElement
 ): VisualMarkdownReadOnlySnapshot {
   return visualMarkdownReadOnlyRegions(editor).map((node) => ({
-    html: node.outerHTML,
+    attributes: visualMarkdownReadOnlyAttributes(node),
+    innerHTML: node.innerHTML,
     node
   }));
 }
@@ -418,7 +443,11 @@ export function assertVisualMarkdownReadOnlySnapshot(
       (region, index) =>
         current[index] !== region.node
         || !editor.contains(region.node)
-        || region.node.outerHTML !== region.html
+        || region.node.innerHTML !== region.innerHTML
+        || !visualMarkdownReadOnlyAttributesEqual(
+          visualMarkdownReadOnlyAttributes(region.node),
+          region.attributes
+        )
     )
   ) {
     throw new Error('visual-editor-read-only-region-mutated');
@@ -541,6 +570,20 @@ function markdownSerializationRoot(editor: HTMLElement): HTMLElement {
 }
 
 export function serializeVisualMarkdown(editor: HTMLElement): string {
+  const service = visualMarkdownSerializer();
+  return service
+    .turndown(markdownSerializationRoot(editor))
+    .replace(/\u200b/g, '')
+    .replace(/^(\s*)-\s{2,}/gm, '$1- ')
+    .replace(/^(!\[[^\]]*]\([^)]+\))[ \t]+$/gm, '$1')
+    .trim();
+}
+
+let visualMarkdownService: TurndownService | null = null;
+
+function visualMarkdownSerializer(): TurndownService {
+  if (visualMarkdownService) return visualMarkdownService;
+
   const service = new TurndownService({
     bulletListMarker: '-',
     codeBlockStyle: 'fenced',
@@ -573,12 +616,8 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
       return `\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\n`;
     }
   });
-  return service
-    .turndown(markdownSerializationRoot(editor))
-    .replace(/\u200b/g, '')
-    .replace(/^(\s*)-\s{2,}/gm, '$1- ')
-    .replace(/^(!\[[^\]]*]\([^)]+\))[ \t]+$/gm, '$1')
-    .trim();
+  visualMarkdownService = service;
+  return service;
 }
 
 function visualBoundarySourceOffset(
@@ -646,6 +685,146 @@ type VisualBoundaryIndex = Readonly<{
   length: number;
   segments: ReadonlyArray<VisualBoundarySegment>;
 }>;
+
+type BaselineSourceSegment = Readonly<{
+  baselineEnd: number;
+  baselineStart: number;
+  sourceStart: number;
+}>;
+
+export type VisualMarkdownSourceIntervalMap = Readonly<{
+  hiddenSourceRanges: ReadonlyArray<Readonly<{ end: number; start: number }>>;
+  originalOffsetAt: (sourceOffset: number) => number | undefined;
+  resolve: (visualOffset: number) => number | null;
+  source: string;
+  sourceOffsetAt: (visualOffset: number) => number | undefined;
+}>;
+
+export function createVisualMarkdownSourceIntervalMap(
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string
+): VisualMarkdownSourceIntervalMap {
+  const hasCrLf = sourceMarkdown.includes('\r\n');
+  const source = hasCrLf
+    ? sourceMarkdown.replace(/\r\n/g, '\n')
+    : sourceMarkdown;
+  const sourceOffsets = hasCrLf ? [0] : null;
+  if (sourceOffsets) {
+    for (let offset = 0; offset < sourceMarkdown.length;) {
+      offset += '\r' === sourceMarkdown[offset] && '\n' === sourceMarkdown[offset + 1]
+        ? 2
+        : 1;
+      sourceOffsets.push(offset);
+    }
+  }
+  const baselineSourceSegments: BaselineSourceSegment[] = [{
+    baselineEnd: 0,
+    baselineStart: 0,
+    sourceStart: 0
+  }];
+  const hiddenSourceRanges: Array<Readonly<{ end: number; start: number }>> = [];
+  let sourcePosition = 0;
+  let baselinePosition = 0;
+  const mapParts = (parts: ReadonlyArray<Change>): void => {
+    for (const part of parts) {
+      if (part.added) {
+        baselinePosition += part.value.length;
+        continue;
+      }
+      if (part.removed) {
+        hiddenSourceRanges.push({
+          end: sourcePosition + part.value.length,
+          start: sourcePosition
+        });
+        sourcePosition += part.value.length;
+        continue;
+      }
+      baselineSourceSegments.push({
+        baselineEnd: baselinePosition + part.value.length,
+        baselineStart: baselinePosition,
+        sourceStart: sourcePosition
+      });
+      sourcePosition += part.value.length;
+      baselinePosition += part.value.length;
+    }
+  };
+
+  if (source === baselineVisualMarkdown) {
+    mapParts([{
+      added: false,
+      count: baselineVisualMarkdown.length,
+      removed: false,
+      value: baselineVisualMarkdown
+    }]);
+  } else {
+    const lineParts = diffLines(source, baselineVisualMarkdown, {
+      newlineIsToken: true
+    });
+    for (let index = 0; index < lineParts.length; index += 1) {
+      const part = lineParts[index];
+      if (!part) continue;
+      const next = lineParts[index + 1];
+      if (part.removed && next?.added) {
+        mapParts(diffChars(part.value, next.value));
+        index += 1;
+        continue;
+      }
+      if (part.added && next?.removed) {
+        mapParts(diffChars(next.value, part.value));
+        index += 1;
+        continue;
+      }
+      mapParts([part]);
+    }
+  }
+
+  const sourceOffsetAt = (visualOffset: number): number | undefined => {
+    let lower = 0;
+    let upper = baselineSourceSegments.length - 1;
+    let candidateIndex = -1;
+    while (lower <= upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      const segment = baselineSourceSegments[middle];
+      if (!segment) return undefined;
+      if (segment.baselineStart <= visualOffset) {
+        candidateIndex = middle;
+        lower = middle + 1;
+      } else {
+        upper = middle - 1;
+      }
+    }
+    const segment = baselineSourceSegments[candidateIndex];
+    if (
+      !segment
+      || visualOffset < segment.baselineStart
+      || visualOffset > segment.baselineEnd
+    ) {
+      return undefined;
+    }
+    return segment.sourceStart + visualOffset - segment.baselineStart;
+  };
+  const originalOffsetAt = (sourceOffset: number): number | undefined =>
+    sourceOffsets ? sourceOffsets[sourceOffset] : sourceOffset;
+
+  return {
+    hiddenSourceRanges,
+    originalOffsetAt,
+    resolve(visualOffset) {
+      if (
+        !Number.isInteger(visualOffset)
+        || visualOffset < 0
+        || visualOffset > baselineVisualMarkdown.length
+      ) {
+        return null;
+      }
+      const sourceOffset = sourceOffsetAt(visualOffset);
+      if (undefined === sourceOffset) return null;
+      return originalOffsetAt(sourceOffset) ?? null;
+    },
+    source,
+    sourceOffsetAt
+  };
+}
 
 const VISUAL_CARET_MAPPING_ATTEMPT_LIMIT = 32;
 
@@ -1203,81 +1382,118 @@ export function visualSelectionSourceRange(
   };
 }
 
-export function mergeVisualMarkdownChange(
+export type VisualMarkdownEditSelection = Readonly<{
+  direction: 'backward' | 'forward' | 'none';
+  end: number;
+  start: number;
+}>;
+
+export type VisualMarkdownEditIntentResult = Readonly<{
+  selection: VisualMarkdownEditSelection;
+  sourceMarkdown: string;
+  visualMarkdown: string;
+  visualSelection: Readonly<{ end: number; start: number }>;
+}>;
+
+const VISUAL_MARKDOWN_DIRECT_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'deleteByCut',
+  'deleteContentBackward',
+  'deleteContentForward',
+  'deleteWordBackward',
+  'deleteWordForward',
+  'insertFromComposition',
+  'insertLineBreak',
+  'insertReplacementText',
+  'insertText'
+]);
+
+function validEditRange(
+  value: string,
+  range: Readonly<{ end: number; start: number }>
+): boolean {
+  return Number.isInteger(range.start)
+    && Number.isInteger(range.end)
+    && range.start >= 0
+    && range.end >= range.start
+    && range.end <= value.length;
+}
+
+function replaceEditRange(
+  value: string,
+  range: Readonly<{ end: number; start: number }>,
+  replacement: string
+): string {
+  return value.slice(0, range.start)
+    + replacement
+    + value.slice(range.end);
+}
+
+export function applyVisualMarkdownEditIntent(
+  sourceMarkdown: string,
+  visualMarkdown: string,
+  sourceSelection: Readonly<{ end: number; start: number }>,
+  visualSelection: Readonly<{ end: number; start: number }>,
+  inputType: string,
+  data: string | null
+): VisualMarkdownEditIntentResult | null {
+  if (!VISUAL_MARKDOWN_DIRECT_INPUT_TYPES.has(inputType)) return null;
+  if (
+    !validEditRange(sourceMarkdown, sourceSelection)
+    || !validEditRange(visualMarkdown, visualSelection)
+  ) {
+    return null;
+  }
+  const replacement =
+    'insertLineBreak' === inputType && null === data ? '\n' : data ?? '';
+  const sourceResult = replaceEditRange(
+    sourceMarkdown,
+    sourceSelection,
+    replacement
+  );
+  const visualResult = replaceEditRange(
+    visualMarkdown,
+    visualSelection,
+    replacement
+  );
+  const caret = sourceSelection.start + replacement.length;
+  const visualCaret = visualSelection.start + replacement.length;
+
+  return {
+    selection: { direction: 'none', end: caret, start: caret },
+    sourceMarkdown: sourceResult,
+    visualMarkdown: visualResult,
+    visualSelection: { end: visualCaret, start: visualCaret }
+  };
+}
+
+export type VisualMarkdownMergeEdit = Readonly<{
+  end: number;
+  replacement: string;
+  start: number;
+}>;
+
+export type VisualMarkdownMergeResult = Readonly<{
+  edits: ReadonlyArray<VisualMarkdownMergeEdit>;
+  value: string;
+}>;
+
+export function mergeVisualMarkdownChangeDetails(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   editedVisualMarkdown: string
-): string {
-  if (baselineVisualMarkdown === editedVisualMarkdown) return sourceMarkdown;
-
-  let source = '';
-  const sourceOffsets = [0];
-  for (let offset = 0; offset < sourceMarkdown.length;) {
-    if ('\r' === sourceMarkdown[offset] && '\n' === sourceMarkdown[offset + 1]) {
-      source += '\n';
-      offset += 2;
-    } else {
-      source += sourceMarkdown[offset];
-      offset += 1;
-    }
-    sourceOffsets.push(offset);
+): VisualMarkdownMergeResult {
+  if (baselineVisualMarkdown === editedVisualMarkdown) {
+    return { edits: [], value: sourceMarkdown };
   }
-  const baselineToSource = new Map<number, number>();
-  baselineToSource.set(0, 0);
-  const hiddenSourceRanges: Array<Readonly<{ end: number; start: number }>> = [];
-  let sourcePosition = 0;
+
+  const sourceIntervalMap = createVisualMarkdownSourceIntervalMap(
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const { hiddenSourceRanges, source } = sourceIntervalMap;
   let baselinePosition = 0;
 
-  const mapParts = (parts: ReadonlyArray<Change>): void => {
-    for (const part of parts) {
-      if (part.added) {
-        baselinePosition += part.value.length;
-        continue;
-      }
-      if (part.removed) {
-        hiddenSourceRanges.push({
-          end: sourcePosition + part.value.length,
-          start: sourcePosition
-        });
-        sourcePosition += part.value.length;
-        continue;
-      }
-      for (let offset = 0; offset <= part.value.length; offset += 1) {
-        baselineToSource.set(
-          baselinePosition + offset,
-          sourcePosition + offset
-        );
-      }
-      sourcePosition += part.value.length;
-      baselinePosition += part.value.length;
-    }
-  };
-
-  const lineParts = diffLines(source, baselineVisualMarkdown, {
-    newlineIsToken: true
-  });
-  for (let index = 0; index < lineParts.length; index += 1) {
-    const part = lineParts[index];
-    if (!part) continue;
-    const next = lineParts[index + 1];
-    if (part.removed && next?.added) {
-      mapParts(diffChars(part.value, next.value));
-      index += 1;
-      continue;
-    }
-    if (part.added && next?.removed) {
-      mapParts(diffChars(next.value, part.value));
-      index += 1;
-      continue;
-    }
-    mapParts([part]);
-  }
-
-  const edits: Array<Readonly<{
-    end: number;
-    replacement: string;
-    start: number;
-  }>> = [];
+  const edits: VisualMarkdownMergeEdit[] = [];
   const visualChanges = diffChars(
     baselineVisualMarkdown,
     editedVisualMarkdown
@@ -1307,8 +1523,8 @@ export function mergeVisualMarkdownChange(
       replacement = part.value;
     }
 
-    const sourceStart = baselineToSource.get(start);
-    const sourceEnd = baselineToSource.get(end);
+    const sourceStart = sourceIntervalMap.sourceOffsetAt(start);
+    const sourceEnd = sourceIntervalMap.sourceOffsetAt(end);
     if (
       undefined === sourceStart
       || undefined === sourceEnd
@@ -1318,10 +1534,13 @@ export function mergeVisualMarkdownChange(
       throw new Error('visual-editor-markdown-merge-failed');
     }
     const replacedVisualText = baselineVisualMarkdown.slice(start, end);
-    const hiddenTextMatchesEdit = replacedVisualText.length > 0
-      && hiddenSourceRanges.some(({ end: hiddenEnd, start: hiddenStart }) =>
-        source.slice(hiddenStart, hiddenEnd).includes(replacedVisualText)
-      );
+    // Only reject edits whose mapped source range actually overlaps hidden
+    // Markdown. Identical text in an unrelated hidden range is not evidence
+    // that the visible selection is ambiguous.
+    const editOverlapsHiddenSource = hiddenSourceRanges.some(
+      ({ end: hiddenEnd, start: hiddenStart }) =>
+        sourceStart < hiddenEnd && sourceEnd > hiddenStart
+    );
     const insertionTouchesHiddenBoundary = 0 === replacedVisualText.length
       && hiddenSourceRanges.some(({ end: hiddenEnd, start: hiddenStart }) =>
         (sourceStart === hiddenStart || sourceStart === hiddenEnd)
@@ -1331,11 +1550,11 @@ export function mergeVisualMarkdownChange(
           && /^\n+$/.test(source.slice(hiddenStart, hiddenEnd))
         )
       );
-    if (hiddenTextMatchesEdit || insertionTouchesHiddenBoundary) {
+    if (editOverlapsHiddenSource || insertionTouchesHiddenBoundary) {
       throw new Error('visual-editor-markdown-merge-ambiguous');
     }
-    const originalStart = sourceOffsets[sourceStart];
-    const originalEnd = sourceOffsets[sourceEnd];
+    const originalStart = sourceIntervalMap.originalOffsetAt(sourceStart);
+    const originalEnd = sourceIntervalMap.originalOffsetAt(sourceEnd);
     if (undefined === originalStart || undefined === originalEnd) {
       throw new Error('visual-editor-markdown-merge-failed');
     }
@@ -1364,5 +1583,17 @@ export function mergeVisualMarkdownChange(
       + edit.replacement
       + merged.slice(edit.end);
   }
-  return merged;
+  return { edits, value: merged };
+}
+
+export function mergeVisualMarkdownChange(
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  editedVisualMarkdown: string
+): string {
+  return mergeVisualMarkdownChangeDetails(
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    editedVisualMarkdown
+  ).value;
 }

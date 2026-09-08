@@ -73,6 +73,73 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\(x + y\)</span>', $html);
     }
 
+    public function test_preserves_math_delimiters_inside_fenced_code_blocks()
+    {
+        $markdown = <<<'MD'
+```bash
+printf '$x$'
+printf '$$x$$'
+printf '\(x\)'
+printf '\[x\]'
+```
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(0, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('printf \'$$x$$\'', $html);
+        $this->assertStringContainsString('printf \'\(x\)\'', $html);
+        $this->assertStringContainsString('printf \'\[x\]\'', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_tilde_fenced_code_blocks()
+    {
+        $markdown = <<<'MD'
+Real $y$.
+
+~~~bash
+printf '$x$'
+printf '$$x$$'
+printf '\(x\)'
+printf '\[x\]'
+~~~
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\(y\)</span>', $html);
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('printf \'$$x$$\'', $html);
+        $this->assertStringContainsString('printf \'\(x\)\'', $html);
+        $this->assertStringContainsString('printf \'\[x\]\'', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_inline_code_but_renders_real_math()
+    {
+        $html = MarkdownRenderer::render(
+            'Inline ` $x$ ` and `$$x$$` stay literal, while $y$ renders.'
+        );
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('<code>$x$</code>', $html);
+        $this->assertStringContainsString('<code>$$x$$</code>', $html);
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\\(y\\)</span>', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_indented_code_but_renders_following_math()
+    {
+        $markdown = <<<'MD'
+    printf '$x$'
+
+Following $y$.
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\\(y\\)</span>', $html);
+    }
+
     public function test_qingbi_liujin_wraps_tables_and_images_without_mdnice_markup()
     {
         $html = MarkdownRenderer::render(

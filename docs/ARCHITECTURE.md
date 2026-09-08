@@ -243,16 +243,21 @@ open form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
-Immersive visual Preview editing serializes the editable surface back to the
+Immersive visual Preview editing synchronizes the editable surface back to the
 canonical Markdown document. Completed block and inline Markdown shortcuts are
 applied to semantic visual markup before synchronization; pasted plain text is
 inserted as Markdown and rendered only by the authoritative server Preview
-owner. Ordinary visual input is coalesced in an 80-millisecond window, while
-lock, view changes, autosave, publish, toolbar, and teardown flush pending input
-before their owner runs. If the serialized visual Markdown is unchanged, the
-transition flush skips selection mapping and document synchronization entirely.
-A changed transaction requires a current or previously accepted visual
-selection and never silently appends at the end when mapping is unavailable.
+owner. Supported `beforeinput` edits use captured source and visual ranges to
+apply one localized canonical transaction. A cached interval map is allowed
+only when a unique visible text node has an exact one-to-one source range;
+ambiguous edits fall back to the strict serializer and merge path. Ordinary
+visual input uses a trailing 80-millisecond debounce, composition cancels an
+older pending timer, and lock, view changes, autosave, publish, toolbar, and
+teardown flush pending input before their owner runs. If the serialized visual
+Markdown is unchanged, the transition flush skips selection mapping and
+document synchronization entirely. A changed transaction requires a current
+or previously accepted visual selection and never silently appends at the end
+when mapping is unavailable.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
@@ -261,6 +266,22 @@ For a signature-matched visual paste accepted at canonical offset `0` or
 and restores it at the first or last safe editable DOM boundary without running
 the generic DOM search. Internal positions still use the bounded mapper and
 fail explicitly when they cannot be mapped.
+
+Generated TOC, footnote, rendered math, and Mermaid regions remain the same
+read-only DOM nodes while visual editing is active. Their child markup and
+meaningful root attributes are compared exactly before serialization. An empty
+root `style` attribute introduced or removed by responsive browser layout is
+ignored because it has no declaration; non-empty style, content, attribute,
+identity, count, or order changes still fail with the stable visual-editor
+diagnostic. Local visual synchronization failures do not change the formal
+server Preview status or reuse the Preview failure message.
+
+The Markdown feature detector and renderer share `MarkdownCodeRegionScanner`
+so math delimiters inside fenced, indented, or inline code remain literal and
+do not request the KaTeX path. The Preview surface also excludes math nodes
+nested in code when annotating enhanced visual sources. This prevents syntax
+highlighting from invalidating false math markers while CommonMark remains the
+only production renderer.
 
 The ordinary toolbar presents one compact heading dropdown containing the
 registered heading-menu command surface except the Paragraph action, including

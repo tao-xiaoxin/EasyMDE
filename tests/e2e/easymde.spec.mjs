@@ -793,6 +793,38 @@ async function waitForBrowserPaint(page) {
   }));
 }
 
+async function selectVisualText(visualEditor, text, occurrence = 0) {
+  await visualEditor.evaluate((surface, { occurrence: targetOccurrence, text: targetText }) => {
+    const walker = surface.ownerDocument.createTreeWalker(
+      surface,
+      NodeFilter.SHOW_TEXT
+    );
+    let occurrenceIndex = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!(node instanceof Text)) continue;
+      let searchOffset = 0;
+      while (searchOffset <= node.data.length) {
+        const matchOffset = node.data.indexOf(targetText, searchOffset);
+        if (matchOffset < 0) break;
+        if (occurrenceIndex === targetOccurrence) {
+          const range = surface.ownerDocument.createRange();
+          range.setStart(node, matchOffset);
+          range.setEnd(node, matchOffset + targetText.length);
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          if (!selection) throw new Error('immersive-visual-selection-unavailable');
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        occurrenceIndex += 1;
+        searchOffset = matchOffset + Math.max(1, targetText.length);
+      }
+    }
+    throw new Error('immersive-visual-selection-text-missing');
+  }, { occurrence, text });
+}
+
 async function articleVisualFingerprint(preview) {
   return preview.evaluate((root) => {
     const properties = [
@@ -2014,6 +2046,14 @@ test.describe('EasyMDE editor workflows', () => {
       contentType: 'image/png',
       body: fullCapabilityImage
     }));
+    await page.route(
+      'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      })
+    );
     page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
     page.on('console', (message) => {
       if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
@@ -2329,6 +2369,188 @@ test.describe('EasyMDE editor workflows', () => {
 
     expect(previewRequests.filter((markdown) => markdown === fullCapabilityMarkdown)).toHaveLength(1);
     expect(previewRequests.filter((markdown) => markdown === `${prefix}${fullCapabilityMarkdown}`)).toHaveLength(1);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('keeps the public full-capability fixture stable through destructive visual editing', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    await page.route(
+      'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      })
+    );
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(page.url()).origin
+    });
+    await fillMarkdownAndWaitForPreview(
+      page,
+      fullCapabilityMarkdown,
+      'Markdown 全量能力测试文档'
+    );
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    const protectedVisualSelector = [
+      '.easymde-toc',
+      '.footnotes-sep',
+      '.footnotes',
+      '.easymde-math[data-easymde-rendered]',
+      '.easymde-mermaid'
+    ].join(', ');
+    const protectedVisualMarkup = () => visualEditor.locator(
+      protectedVisualSelector
+    ).evaluateAll((nodes) => nodes.map((node) => ({
+      attributes: Array.from(node.attributes)
+        .filter(({ name, value }) => 'style' !== name || '' !== value.trim())
+        .map(({ name, value }) => ({ name, value }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      innerHTML: node.innerHTML
+    })));
+    const protectedMarkup = await protectedVisualMarkup();
+    await visualEditor.evaluate((surface) => {
+      window.__easymdeProtectedVisualNodes = Array.from(surface.querySelectorAll(
+        '.easymde-toc, .footnotes-sep, .footnotes, '
+          + '.easymde-math[data-easymde-rendered], .easymde-mermaid'
+      ));
+    });
+    const expectProtectedMarkup = async () => {
+      expect(await protectedVisualMarkup()).toEqual(protectedMarkup);
+      expect(await visualEditor.evaluate((surface) => {
+        const initial = window.__easymdeProtectedVisualNodes ?? [];
+        const current = Array.from(surface.querySelectorAll(
+          '.easymde-toc, .footnotes-sep, .footnotes, '
+            + '.easymde-math[data-easymde-rendered], .easymde-mermaid'
+        ));
+        return current.length === initial.length
+          && current.every((node, index) => node === initial[index]);
+      })).toBe(true);
+    };
+
+    await selectVisualText(visualEditor, 'Heading 1');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => source.inputValue()).not.toContain('Heading 1');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '下划线文本');
+    await page.keyboard.type('改写文本');
+    await expect.poll(() => source.inputValue()).toContain('<u>改写文本</u>');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '这是一级引用。');
+    await page.keyboard.press('Delete');
+    await expect.poll(() => source.inputValue()).not.toContain('这是一级引用。');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '第二层引用。');
+    const beforeCut = await source.inputValue();
+    await page.keyboard.press('ControlOrMeta+X');
+    await expect.poll(() => source.inputValue()).not.toBe(beforeCut);
+    await expectProtectedMarkup();
+    const afterCut = await source.inputValue();
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect.poll(() => source.inputValue()).toBe(beforeCut);
+    await expectProtectedMarkup();
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await expect.poll(() => source.inputValue()).toBe(afterCut);
+    await expectProtectedMarkup();
+
+    const mermaid = visualEditor.locator('.easymde-mermaid').first();
+    await expect(mermaid).toHaveAttribute('contenteditable', 'false');
+    await expectProtectedMarkup();
+
+    await testInfo.attach('immersive-full-fixture-edit-desktop', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png'
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(visualEditor).toBeVisible();
+    const mobileGeometry = await visualEditor.evaluate((surface) => ({
+      horizontalOverflow: surface.scrollWidth > surface.clientWidth + 1,
+      pageOverflow: Math.max(
+        document.documentElement.scrollWidth,
+        document.body?.scrollWidth ?? 0
+      ) > document.documentElement.clientWidth + 1,
+      visualEditorClientWidth: surface.clientWidth,
+      tableScrollOwners: Array.from(surface.querySelectorAll(
+        '.table-container, .easymde-table-container'
+      )).map((owner) => {
+        const style = getComputedStyle(owner);
+        const originalScrollLeft = owner.scrollLeft;
+        owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        const moved = owner.scrollLeft > originalScrollLeft;
+        owner.scrollLeft = originalScrollLeft;
+        const box = owner.getBoundingClientRect();
+        const surfaceBox = surface.getBoundingClientRect();
+        return {
+          contained: box.left >= surfaceBox.left - 1
+            && box.right <= surfaceBox.right + 1,
+          localWhenNeeded: owner.scrollWidth <= owner.clientWidth + 1 || moved,
+          overflowX: style.overflowX
+        };
+      }),
+      codeScrollOwners: Array.from(surface.querySelectorAll(
+        'pre > code:not(.language-mermaid)'
+      )).map((owner) => {
+        const style = getComputedStyle(owner);
+        const originalScrollLeft = owner.scrollLeft;
+        owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        const moved = owner.scrollLeft > originalScrollLeft;
+        owner.scrollLeft = originalScrollLeft;
+        return {
+          localWhenNeeded: owner.scrollWidth <= owner.clientWidth + 1 || moved,
+          overflowX: style.overflowX
+        };
+      })
+    }));
+    expect(mobileGeometry.horizontalOverflow).toBe(false);
+    expect(mobileGeometry.pageOverflow).toBe(false);
+    expect(mobileGeometry.visualEditorClientWidth).toBeGreaterThanOrEqual(280);
+    expect(mobileGeometry.tableScrollOwners.length).toBeGreaterThan(0);
+    expect(mobileGeometry.tableScrollOwners.every((owner) => (
+      owner.contained
+      && owner.localWhenNeeded
+      && ['auto', 'scroll'].includes(owner.overflowX)
+    ))).toBe(true);
+    expect(mobileGeometry.codeScrollOwners.length).toBeGreaterThan(0);
+    expect(mobileGeometry.codeScrollOwners.every((owner) => (
+      owner.localWhenNeeded
+      && ['auto', 'scroll'].includes(owner.overflowX)
+    ))).toBe(true);
+    await expectProtectedMarkup();
+    await testInfo.attach('immersive-full-fixture-edit-mobile', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png'
+    });
+
+    await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+    await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+    await expect(source).toHaveValue(/改写文本/);
+    await expect(page.locator('.easymde-pane-preview')).toBeVisible();
     expect(browserFailures).toEqual([]);
   });
 

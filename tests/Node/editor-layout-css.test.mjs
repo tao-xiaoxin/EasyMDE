@@ -876,6 +876,54 @@ test('collapsed immersive outline preserves the reference full-height rail', () 
   );
 });
 
+test('mobile immersive outline uses a 42px rail and leaves the workspace flexible', () => {
+  const mobile = cssBlock(
+    css,
+    '@media (max-width: 600px)',
+    css.lastIndexOf('@media (max-width: 600px)')
+  );
+
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive\s*\{[^}]*grid-template-columns:\s*42px minmax\(0, 1fr\);/s,
+    'mobile immersive layout should reserve only one 42px outline rail'
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive \.easymde-immersive-outline\s*\{[^}]*width:\s*42px\s*!important;[^}]*min-width:\s*42px;[^}]*max-width:\s*42px;[^}]*margin:\s*0;/s,
+    'an open outline must fit the mobile rail despite its inline resizer width'
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive \.easymde-immersive-outline-title\s*\{[^}]*width:\s*42px;[^}]*height:\s*42px;[^}]*padding:\s*0;/s
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive \.easymde-immersive-outline-title > span,\s*\.easymde-editor\.is-immersive \.easymde-immersive-outline-tree,\s*\.easymde-editor\.is-immersive \.easymde-immersive-outline-footer,\s*\.easymde-editor\.is-immersive \.easymde-immersive-outline-resizer\s*\{[^}]*display:\s*none;/s,
+    'mobile outline content and resizer should be hidden while the close icon remains'
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive \.easymde-immersive-outline-title \.easymde-immersive-outline-close\s*\{[^}]*margin-inline-start:\s*0;/s,
+    'the mobile close control must remain reachable in the rail'
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive > \.easymde-workspace\s*\{[^}]*grid-column:\s*2;[^}]*min-width:\s*0;/s,
+    'the workspace must occupy the remaining flexible grid track'
+  );
+  assert.match(
+    mobile,
+    /\.easymde-editor\.is-immersive \.easymde-immersive-outline-show\s*\{[^}]*width:\s*42px;[^}]*min-width:\s*42px;[^}]*margin:\s*0;/s,
+    'the closed outline control should use the same mobile rail scale'
+  );
+  assert.match(
+    mobile,
+    /\[dir="rtl"\] \.easymde-editor\.is-immersive \.easymde-immersive-outline,\s*\[dir="rtl"\] \.easymde-editor\.is-immersive \.easymde-immersive-outline-show\s*\{/s,
+    'mobile rail overrides must retain an explicit RTL selector'
+  );
+});
+
 test('all preview modes use one canvas without an additional paper wrapper', () => {
   assert.doesNotMatch(
     css,

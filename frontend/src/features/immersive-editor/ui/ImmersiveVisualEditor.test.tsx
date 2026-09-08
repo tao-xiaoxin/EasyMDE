@@ -354,6 +354,84 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('rejects the delayed visual input after an external canonical update and teardown', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Visual paragraph</p>';
+      document.body.append(surface);
+      let canonicalValue = 'Visual paragraph';
+      const listeners: Array<() => void> = [];
+      const unsubscribe = vi.fn();
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          subscribe: vi.fn((listener: () => void) => {
+            listeners.push(listener);
+            return unsubscribe;
+          })
+        }
+      } as unknown as EditorDocumentSession;
+      const onCanonicalDocumentChange = vi.fn();
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={onCanonicalDocumentChange}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+
+      const paragraph = surface.querySelector('p');
+      if (!paragraph) throw new Error('visual-external-update-paragraph-missing');
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      paragraph.append(' changed');
+      fireEvent.input(surface);
+
+      canonicalValue = 'Externally updated';
+      const notifyExternalChange = listeners[0];
+      if (!notifyExternalChange) {
+        throw new Error('visual-external-update-listener-missing');
+      }
+      notifyExternalChange();
+      expect(onCanonicalDocumentChange).toHaveBeenCalledOnce();
+
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+      expect(applyTextChange).not.toHaveBeenCalled();
+
+      view.unmount();
+      canonicalValue = 'Late external update';
+      notifyExternalChange();
+      expect(onCanonicalDocumentChange).toHaveBeenCalledOnce();
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('coalesces rapid visual input into one canonical transaction', () => {
     vi.useFakeTimers();
     try {

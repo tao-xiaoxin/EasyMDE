@@ -29,6 +29,10 @@ send one Preview request per keystroke; lock, view changes, autosave, publish,
 and other native operations first flush the pending visual input. A missing
 selection or failed Preview is reported explicitly and does not append content
 to the end or discard the canonical Markdown.
+After a pasted document is accepted by Preview at the start or end of the
+Markdown source, EasyMDE restores the caret to the corresponding safe visual
+edge while preserving the exact canonical Markdown, including invisible line
+endings and syntax normalized by the rendered paper.
 
 Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown`, marks the post with `_easymde_enabled = 1`, and writes rendered compatibility HTML to `post_content`. Opening an ordinary existing post without saving does not create EasyMDE metadata, rewrite content, or create a revision.
 

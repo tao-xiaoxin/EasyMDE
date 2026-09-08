@@ -256,6 +256,11 @@ selection and never silently appends at the end when mapping is unavailable.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
+For a signature-matched visual paste accepted at canonical offset `0` or
+`source.length`, the paste transaction owns that known document-edge selection
+and restores it at the first or last safe editable DOM boundary without running
+the generic DOM search. Internal positions still use the bounded mapper and
+fail explicitly when they cannot be mapped.
 
 The ordinary toolbar presents one compact heading dropdown containing the
 registered heading-menu command surface except the Paragraph action, including

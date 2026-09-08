@@ -140,7 +140,7 @@ const bootstrap = {
     split: 'Split',
     splitMode: 'Split mode',
     splitPreview: 'Split preview',
-    splitPreviewDescription: 'Show live preview by default',
+    splitPreviewDescription: 'Show live preview for this session; refresh to restore Settings Center mode',
     table: 'Table',
     tableColumns: 'Columns',
     tableRows: 'Rows',

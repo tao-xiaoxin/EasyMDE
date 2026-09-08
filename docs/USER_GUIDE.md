@@ -24,6 +24,17 @@ The current development default enables autosave every 30 seconds. Autosave
 remains a WordPress-owned save path rather than a second browser persistence
 authority.
 
+## Immersive Writing View
+
+The Settings Center **Default Editing Mode** controls the immersive view used
+when the editor page loads: Live Preview opens split mode, Source opens the
+Markdown source, and Preview opens the rendered article. The immersive
+**Split preview** checkbox is a temporary control for the current page session.
+It does not save a browser preference or update WordPress settings. Its choice
+survives leaving and re-entering immersive writing in the same page, while a
+normal or hard refresh restores the Settings Center mode. The immersive
+Outline preference is separate and remains browser-persisted.
+
 ## Toolbar And Shortcuts
 
 The compact toolbar includes common Markdown actions for formatting, headings,

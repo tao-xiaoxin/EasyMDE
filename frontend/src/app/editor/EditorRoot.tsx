@@ -235,6 +235,19 @@ const WECHAT_ICON_PATHS = [
 ] as const;
 const WECHAT_PREPARATION_DEBOUNCE_MS = 180;
 
+function immersiveModeFromEditingMode(editingMode: string): ImmersiveViewMode {
+  switch (editingMode) {
+    case 'live-preview':
+      return 'split';
+    case 'source':
+      return 'source';
+    case 'preview':
+      return 'preview';
+    default:
+      throw new Error('editor-root-immersive-editing-mode-invalid');
+  }
+}
+
 function WechatIcon() {
   return (
     <span className="easymde-wechat-glyph" aria-hidden="true">
@@ -561,10 +574,7 @@ export function EditorRoot(props: EditorRootProps) {
   immersiveRef.current = immersive;
   const [immersiveMode, setImmersiveMode] =
     useState<ImmersiveViewMode>(() =>
-      'loaded' === immersivePreferences.status &&
-      !immersivePreferences.preferences.splitPreview
-        ? 'source'
-        : 'split'
+      immersiveModeFromEditingMode(props.settings.general.editingMode)
     );
   const immersiveModeRef = useRef(immersiveMode);
   immersiveModeRef.current = immersiveMode;
@@ -1447,11 +1457,6 @@ export function EditorRoot(props: EditorRootProps) {
     restoreImmersiveFocusRef.current = true;
     const preferences = props.immersivePreferencesPort.read();
     setImmersivePreferences(preferences);
-    if ('loaded' === preferences.status) {
-      setImmersiveMode(preferences.preferences.splitPreview ? 'split' : 'source');
-    } else if ('missing' === preferences.status) {
-      setImmersiveMode('split');
-    }
     setEditorStatusState((currentState) => ({
       focused: false,
       status:

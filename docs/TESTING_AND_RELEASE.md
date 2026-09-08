@@ -404,10 +404,14 @@ approved Cupid Busy theme image is delayed. This E2E does not emulate legacy
 or failure Clipboard branches or paste into a real WeChat editor; the
 authorized browser procedure below supplies that evidence. It also verifies that the
 immersive surface reuses the single React document and Preview owners, keeps
-AI controls absent, exposes only the two browser-owned presentation preferences,
-and leaves auto-save, status display, and synchronized scrolling under their global Settings Center owners,
-loads no Legacy Focus assets, and remains zero-write until the user invokes a
-legitimate WordPress mutation.
+AI controls absent; only the Outline preference remains browser-persisted, while
+Split preview is page-session state. Auto-save, status display, and synchronized
+scrolling remain under their global Settings Center owners.
+The suite also verifies that immersive Split preview is session-only, does not
+change browser preference storage, survives same-page immersive exit/re-entry,
+and restores the Settings Center editing mode after both normal and CDP hard
+reloads. It loads no Legacy Focus assets and remains zero-write until the user
+invokes a legitimate WordPress mutation.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

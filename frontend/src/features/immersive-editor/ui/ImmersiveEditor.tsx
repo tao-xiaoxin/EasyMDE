@@ -478,14 +478,13 @@ export function ImmersiveEditor({
   const [publishSnapshot, setPublishSnapshot] =
     useState<NativePublishSnapshot | null>(null);
   const [initialPublishSnapshot] = useState(readPublishSnapshot);
-  const [initialSettings] = useState<ImmersiveSettings>(() => {
-    return {
-      outline: true,
-      splitPreview: true,
-      ...(initialPreferences ?? {})
-    };
-  });
-  const [settings, setSettings] = useState(initialSettings);
+  const [outlineEnabled, setOutlineEnabled] = useState(
+    () => initialPreferences?.outline ?? true
+  );
+  const settings: ImmersiveSettings = {
+    outline: outlineEnabled,
+    splitPreview: 'split' === mode
+  };
 
   useEffect(() => environment.activateFavicon(), [environment]);
 
@@ -534,9 +533,13 @@ export function ImmersiveEditor({
     onViewModeChange(next);
   };
   const changeSettings = (next: ImmersiveSettings) => {
-    setSettings(next);
-    const result = immersivePreferencesPort.write(next);
-    if ('unavailable' === result.status) onFailure(result.code);
+    if (next.outline !== outlineEnabled) {
+      setOutlineEnabled(next.outline);
+      const result = immersivePreferencesPort.write({
+        outline: next.outline
+      });
+      if ('unavailable' === result.status) onFailure(result.code);
+    }
     if (next.splitPreview !== settings.splitPreview) {
       changeMode(next.splitPreview ? 'split' : 'source');
     }

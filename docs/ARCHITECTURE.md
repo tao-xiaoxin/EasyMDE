@@ -341,9 +341,17 @@ the validated Editor Root bootstrap and consumed by the Editor Root's
 document source, workspace layout, Preview feature overrides, focus behavior,
 and local-draft session. The Settings Center auto-save switch and interval are
 the only local-draft configuration for ordinary and immersive editing;
-browser-session immersive preferences own presentation only. Retired
-immersive auto-save values are ignored without a read-time write and disappear
-on the next legitimate immersive preference change. The bootstrap marks both `post-new.php` and nonzero
+browser-session immersive preferences own presentation only. The browser
+preference port persists only the immersive Outline choice. The Editor Root
+maps Settings Center `general.editingMode` from `live-preview` to immersive
+split, `source` to source, and `preview` to Preview when the Root mounts.
+Changing the immersive mode is session-only: it survives exiting and re-entering
+immersive writing while that Root remains mounted, but a normal or hard refresh
+creates a new Root and restores the Settings Center mode. Legacy stored
+`splitPreview` values are ignored without a read-time write and are omitted by
+the next legitimate Outline preference write. Retired immersive auto-save values
+are ignored without a read-time write and disappear on the next legitimate
+immersive preference change. The bootstrap marks both `post-new.php` and nonzero
 `auto-draft` contexts as new documents so the auto-focus preference cannot
 focus an existing post.
 

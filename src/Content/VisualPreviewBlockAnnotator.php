@@ -97,7 +97,10 @@ final class VisualPreviewBlockAnnotator {
 	 * @param array<int, array{source_id:string,startLine:int,endLine:int,editable:bool}> $source_blocks
 	 */
 	public static function mark_document( Document $document, array $source_blocks ) {
-		$nodes = array_values( iterator_to_array( $document->children() ) );
+		$nodes = array();
+		foreach ( $document->children() as $node ) {
+			$nodes[] = $node;
+		}
 		if ( count( $nodes ) !== count( $source_blocks ) ) {
 			throw new RuntimeException( 'Unable to safely migrate Preview source ranges after Markdown normalization.' );
 		}

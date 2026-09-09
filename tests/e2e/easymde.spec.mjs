@@ -697,7 +697,7 @@ function normalizeMarkdown(markdown) {
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
-  const preview = page.locator('.easymde-pane-preview article');
+  const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
   if (expectedText) await expect(preview).toContainText(expectedText);
@@ -705,7 +705,7 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
 
 async function seedMarkdownAndWaitForPreview(page, markdown, expectedText) {
   const field = page.locator('#easymde-source');
-  const preview = page.locator('.easymde-pane-preview article');
+  const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
   const previousSignature = await readyPreviewSignature(preview);
   const response = page.waitForResponse((candidate) => {
     const request = candidate.request();
@@ -950,7 +950,7 @@ async function measureArticleThemeGeometry(
   expectedThemeBackgroundImage = null
 ) {
   const positions = Array.isArray(position) ? position : [position];
-  const results = await page.locator('.easymde-pane-preview article').evaluate(
+  const results = await page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]').evaluate(
     async (root, {
       expectedThemeBackgroundImage,
       longHeadingPrefix,
@@ -2215,6 +2215,259 @@ test.describe('EasyMDE editor workflows', () => {
     await cdp.detach();
   });
 
+  test('keeps the active visual Preview atomic during paste and maps destructive edits locally', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Before', 'Before');
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    const paste = '\n\n# Pasted heading\n\n**Pasted bold**';
+    const pastedMarkdown = `Before${paste}`;
+    const routeState = { started: false };
+    await page.route('**/wp-json/easymde/v1/preview*', async (route) => {
+      let markdown = null;
+      try {
+        markdown = route.request().postDataJSON()?.markdown ?? null;
+      } catch {
+        markdown = null;
+      }
+      if (markdown === pastedMarkdown) {
+        routeState.started = true;
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        await route.fulfill({ response });
+        return;
+      }
+      await route.continue();
+    });
+
+    const activeBeforePaste = await visualEditor.evaluate((surface) => {
+      window.__easymdeIssue232ActiveSurface = surface;
+      return surface.innerHTML;
+    });
+    await visualEditor.evaluate((surface, value) => {
+      const range = document.createRange();
+      range.selectNodeContents(surface);
+      range.collapse(false);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('issue232-selection-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const transfer = new DataTransfer();
+      transfer.setData('text/plain', value);
+      surface.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer
+      }));
+    }, paste);
+
+    await expect(source).toHaveValue(pastedMarkdown);
+    await expect.poll(() => routeState.started, {
+      message: 'pasted Preview request should be in flight before candidate commit'
+    }).toBe(true);
+    await expect.poll(
+      () => visualEditor.evaluate((surface) => surface.innerHTML),
+      { timeout: 200, message: 'active Preview must remain unchanged while candidate renders' }
+    ).toBe(activeBeforePaste);
+    await expect(visualEditor.locator('h1')).toHaveText('Pasted heading');
+    await expect(visualEditor.locator('strong')).toHaveText('Pasted bold');
+    await expect.poll(() => visualEditor.evaluate(
+      (surface) => surface === window.__easymdeIssue232ActiveSurface
+    )).toBe(true);
+
+    await visualEditor.evaluate((surface) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        'innerHTML'
+      );
+      if (!descriptor?.get || !descriptor.set) {
+        throw new Error('issue232-inner-html-descriptor-unavailable');
+      }
+      const originalCloneNode = surface.cloneNode;
+      const counters = { cloneNode: 0, innerHTMLReads: 0 };
+      Object.defineProperty(surface, 'innerHTML', {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        get() {
+          counters.innerHTMLReads += 1;
+          return descriptor.get.call(this);
+        },
+        set(value) {
+          descriptor.set.call(this, value);
+        }
+      });
+      Object.defineProperty(surface, 'cloneNode', {
+        configurable: true,
+        value(deep) {
+          counters.cloneNode += 1;
+          return originalCloneNode.call(this, deep);
+        }
+      });
+      window.__easymdeIssue232Counters = counters;
+    });
+    await selectVisualText(visualEditor, 'Pasted bold');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => source.inputValue()).not.toContain('Pasted bold');
+    const counters = await visualEditor.evaluate((surface) => {
+      const result = { ...window.__easymdeIssue232Counters };
+      delete window.__easymdeIssue232Counters;
+      delete window.__easymdeIssue232ActiveSurface;
+      return result;
+    });
+    expect(counters).toEqual({ cloneNode: 0, innerHTMLReads: 0 });
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('rebuilds the current Preview window after lock refresh and a second unlock', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = Array.from(
+      { length: 220 },
+      (_, index) => `Synthetic window cycle paragraph ${index}.`
+    ).join('\n\n');
+    await fillMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      'Synthetic window cycle paragraph 0.'
+    );
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    expect(await visualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    ).count()).toBeLessThanOrEqual(160);
+
+    await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+    await expect(visualEditor).toHaveCount(0);
+    const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
+    await expect(unlock).toBeEnabled();
+    await unlock.click();
+    const secondVisualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(secondVisualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    expect(await secondVisualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    ).count()).toBeLessThanOrEqual(160);
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('supports representative Typora visual shortcuts and repeated deletion', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await visualEditor.click();
+
+    await page.keyboard.type('# Heading');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('h1')).toHaveText('Heading');
+
+    await page.keyboard.type('Use **bold**');
+    await expect(visualEditor.locator('strong')).toHaveText('bold');
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('```js');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('pre > code.language-js')).toHaveCount(1);
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('-');
+    await page.keyboard.press('Space');
+    await page.keyboard.type('List item');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('ul li')).toHaveCount(2);
+
+    await page.keyboard.type('Undo target');
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect.poll(() => source.inputValue()).not.toContain('Undo target');
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await expect.poll(() => source.inputValue()).toContain('Undo target');
+
+    const deleteText = 'delete '.repeat(24).trim();
+    const deleteParagraph = await visualEditor.locator('p').last();
+    await deleteParagraph.evaluate((paragraph) => {
+      paragraph.textContent = 'delete '.repeat(24).trim();
+      const text = paragraph.firstChild;
+      if (!(text instanceof Text)) throw new Error('issue232-delete-text-missing');
+      const range = document.createRange();
+      range.setStart(text, text.length);
+      range.collapse(true);
+      const selection = document.getSelection();
+      if (!selection) throw new Error('issue232-delete-selection-missing');
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await page.keyboard.press('End');
+    for (let index = 0; index < 24; index += 1) {
+      await page.keyboard.press('Backspace');
+    }
+    await expect.poll(() => source.inputValue()).toContain('delete');
+    await expect.poll(() => visualEditor.locator('p').last().textContent()).not.toBe(deleteText);
+    expect(browserFailures).toEqual([]);
+  });
+
   test('parses the exact full-capability fixture after immersive unlock at empty and prefixed document ends', async ({ page }, testInfo) => {
     const browserFailures = [];
     const previewRequests = [];
@@ -2800,7 +3053,7 @@ test.describe('EasyMDE editor workflows', () => {
     const reactSource = page.locator('.easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
-    const activePreview = page.locator('.easymde-pane-preview article');
+    const activePreview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const activePreviewCanvas = page.locator(
       '.easymde-pane-preview .easymde-immersive-preview-canvas'
     );
@@ -2816,7 +3069,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(activePreviewCanvas).toBeVisible();
     await expect(activePreviewCanvas).toHaveCount(1);
     await expect(
-      page.locator('.easymde-pane-preview article')
+      page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
     ).toHaveCount(1);
 
     await sourceEditor.fill('# React source\n\nBridge value 中文');
@@ -3038,7 +3291,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const firstRequest = page.waitForRequest(/\/wp-json\/easymde\/v1\/preview(?:\?.*)?$/);
     await sourceEditor.fill('first request');
     await firstRequest;
@@ -3187,7 +3440,7 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.editorSettings, exact: true });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const editorOwner = page.locator('[data-easymde-editor-owner="react"]');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const failures = [];
     const matrix = [];
     const visualFingerprints = new Map();
@@ -3639,7 +3892,7 @@ test.describe('EasyMDE editor workflows', () => {
     }));
     const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
       .getByRole('button', { name: labels.editorSettings, exact: true });
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const measurements = [];
     const requestFailures = [];
     const selectedTheme = catalog.articleThemes.find(
@@ -3834,7 +4087,7 @@ test.describe('EasyMDE editor workflows', () => {
       markdown,
       'Markdown 全量能力测试文档'
     );
-    await expectRenderedFixture(page, '.easymde-pane-preview article');
+    await expectRenderedFixture(page, '.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
 
     const labels = await page.evaluate(() => ({
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
@@ -3968,7 +4221,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const codeThemeLink = page.locator('#easymde-highlight-theme-css');
-    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs')
+    const previewCode = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"] pre code.hljs')
       .filter({ hasText: 'const longValue' })
       .first();
     const codeGeometry = () => previewCode.evaluate((code) => {
@@ -4021,9 +4274,9 @@ test.describe('EasyMDE editor workflows', () => {
     for (const { id, label, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
       await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, articleSelect, label);
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-code-theme-' + defaultCodeTheme));
       await expect(page.locator('#easymde-code-theme-field')).toHaveValue(defaultCodeTheme);
       await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
@@ -4061,7 +4314,7 @@ test.describe('EasyMDE editor workflows', () => {
       throw new Error('terminal-noir-theme-unavailable');
     }
     await selectOrdinaryOption(page, codeSelect, terminalNoir.label);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-code-theme-terminal-noir/);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
     const defaultArticleTheme = catalog.articleThemes.find(({ id }) => 'default' === id);
@@ -4069,9 +4322,9 @@ test.describe('EasyMDE editor workflows', () => {
       throw new Error('default-article-theme-unavailable');
     }
     await selectOrdinaryOption(page, articleSelect, defaultArticleTheme.label);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-markdown-theme-default/);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-code-theme-terminal-noir/);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
     await expect.poll(codeGeometry, {
@@ -4080,7 +4333,7 @@ test.describe('EasyMDE editor workflows', () => {
     for (const { id, label, cssUrl } of catalog.codeThemes) {
       await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, codeSelect, label);
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
       await expect.poll(() => codeThemeLink.evaluate((link, expectedUrl) => (
         link instanceof HTMLLinkElement
@@ -4272,7 +4525,7 @@ test.describe('EasyMDE editor workflows', () => {
           return parts.join(', ');
         });
         await expect.poll(() => page
-          .locator('.easymde-pane-preview article')
+          .locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
           .evaluate((article) => article.style.getPropertyValue(
             '--easymde-content-font-family'
           ))).toBe(expectedFontStack);
@@ -5606,13 +5859,13 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     await expect(preview.locator('pre code.hljs').first()).toBeVisible();
     await expect(preview.locator('.katex').first()).toBeVisible();
     await expect(preview.locator('.easymde-mermaid').first()).toBeVisible();
     await expectRenderedFixture(
       page,
-      '.easymde-pane-preview article'
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
     );
 
     const cupidBusy = catalog.articleThemes.find(({ id }) => 'cupid-busy' === id);

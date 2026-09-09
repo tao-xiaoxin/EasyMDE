@@ -240,6 +240,11 @@ CodeMirror owns the in-page Markdown value, Selection, Focus, Undo history, and
 source scrolling. The native title and React-owned hidden Markdown fields are
 synchronous submission bridges and are flushed before WordPress serializes the
 open form.
+Windowed visual edits publish their exact CodeMirror state and internal
+subscribers synchronously. Repeated non-structural edits may coalesce the
+native Markdown-field projection into the next browser task; autosave, native
+submission, mode exit, and teardown synchronously flush that projection before
+WordPress or an extension may serialize the form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
 
@@ -247,17 +252,30 @@ Immersive visual Preview editing synchronizes the editable surface back to the
 canonical Markdown document. Completed block and inline Markdown shortcuts are
 applied to semantic visual markup before synchronization; pasted plain text is
 inserted as Markdown and rendered only by the authoritative server Preview
-owner. Supported `beforeinput` edits use captured source and visual ranges to
-apply one localized canonical transaction. A cached interval map is allowed
-only when a unique visible text node has an exact one-to-one source range;
-ambiguous edits fall back to the strict serializer and merge path. Ordinary
+owner. A Preview response is enhanced in one connected, inert staging article
+with the active Preview's theme and width context, then handed to the active
+Safe HTML sink as one revisioned node transaction. React keeps the accepted
+enhanced HTML in state while the sink remains the sole imperative child owner,
+so a later rerender cannot roll the committed subtree back. The accepted
+enhanced subtree remains visible while the request, math, Mermaid, and
+Highlight.js work is pending.
+Layout-dependent code-frame variables are synchronized once against the active
+surface after that commit. Supported `beforeinput` edits use captured source
+and visual ranges to apply one localized canonical transaction. A cached
+interval map is retained across an accepted paste; a unique visible text node
+with an exact one-to-one source range takes the hot path without cloning,
+serializing, diffing, replacing the Preview root, or requesting Preview.
+Ambiguous edits fall back to the strict serializer and merge path. Ordinary
 visual input uses a trailing 80-millisecond debounce, composition cancels an
 older pending timer, and lock, view changes, autosave, publish, toolbar, and
 teardown flush pending input before their owner runs. If the serialized visual
 Markdown is unchanged, the transition flush skips selection mapping and
 document synchronization entirely. A changed transaction requires a current
 or previously accepted visual selection and never silently appends at the end
-when mapping is unavailable.
+when mapping is unavailable. Focus restoration uses `preventScroll`, and a
+pending paste blocks `beforeinput` without toggling the active surface's
+`contenteditable` state. History and composition input never re-enter the
+shortcut parser.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
@@ -309,9 +327,16 @@ The Preview session debounces Reads, aborts superseded requests, rejects stale
 revisions and Markdown signatures, and renders branded server-sanitized HTML
 through one React Safe HTML sink. `easymde/v1/preview` and PHP
 `MarkdownRenderer` remain the formal rendering authority. Focused TypeScript
-Adapters enhance only the accepted response with local Highlight.js, KaTeX,
-Mermaid, TOC, the selected Code Theme, and the Mac code frame; enhancement failure preserves
-sanitized HTML and is reported without inventing a renderer fallback.
+Adapters enhance only a connected, inert staging candidate for the accepted
+response with local Highlight.js, KaTeX, Mermaid, TOC, the selected Code Theme,
+and the Mac code frame; the candidate is atomically handed to the single Safe
+HTML sink only after enhancement. The sink applies either one safe HTML
+revision or one staged-node revision and does not let React reconcile children.
+The shared enhancement runtime yields between code, math, and diagram nodes and
+checks its typed `isCurrent`/AbortSignal control between slices; Mermaid work
+is serial, so stale candidates stop without starting the remaining diagrams.
+An enhancement failure commits the original sanitized response and reports the
+failure without inventing a renderer fallback.
 
 The WordPress session Adapter observes Heartbeat authentication, REST Nonce,
 Post Lock, capability, and connection state through `wp.hooks`. It blocks new
@@ -334,8 +359,10 @@ KaTeX math roots, then uploads each PNG through the Editor's selected
 `ImageUploadPort`. Image Hosting enabled selects the existing Image Hosting
 owner; disabled selects the existing WordPress Media Library owner. Ordinary
 tables, existing images, ordinary SVG, code, other media, and unknown content
-retain portable HTML. Background preparation, legacy Clipboard, and synchronous
-modern setup failure upload nothing. A failed selected owner never switches;
+retain portable HTML. Background preparation for ordinary Preview remains
+compatibility-only and never runs from visual editing; explicit Copy prepares
+the current stable surface on demand. Legacy Clipboard and synchronous modern
+setup failure upload nothing. A failed selected owner never switches;
 Copy publishes no partial Clipboard payload, though an upload completed before
 a later transaction failure can remain. The live Preview and document remain
 unchanged.

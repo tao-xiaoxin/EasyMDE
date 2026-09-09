@@ -1,11 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type {
+  PreviewEditMap,
+  PreviewEditMapBlock
+} from '../../contracts/ports/preview-request';
+
 import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   applyVisualMarkdownEditIntent,
   createVisualMarkdownSourceIntervalMap,
+  createVisualMarkdownDirectSourceIntervalMap,
+  createVisualMarkdownSourceRangeFromPreviewEditMap,
+  createVisualMarkdownWindowChange,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
@@ -14,6 +22,8 @@ import {
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
+  serializeVisualMarkdownBlockFragment,
+  visualSelectionSourceRangeForBlocks,
   visualSelectionSourceRange
 } from './visual-markdown';
 
@@ -33,7 +43,41 @@ function placeCaret(element: Node, offset: number): void {
   selection?.addRange(range);
 }
 
+function previewEditMap(
+  blocks: ReadonlyArray<PreviewEditMapBlock>
+): PreviewEditMap {
+  return {
+    blocks,
+    coordinate: 'line',
+    signature: 'test-signature',
+    version: 1
+  };
+}
+
+function previewBlock(
+  id: string,
+  startLine: number,
+  endLine: number,
+  editable = true
+): PreviewEditMapBlock {
+  return { editable, endLine, id, startLine };
+}
+
 describe('visual Markdown editing', () => {
+  it('maps a canonical source directly without cloning or diffing the visual surface', () => {
+    const map = createVisualMarkdownDirectSourceIntervalMap(
+      'Before **Visible**\r\n\r\nTail'
+    );
+
+    expect(map.source).toBe('Before **Visible**\n\nTail');
+    expect(map.hiddenSourceRanges).toEqual([]);
+    expect(map.resolve(map.source.indexOf('Visible'))).toBe(
+      'Before **Visible**\r\n\r\nTail'.indexOf('Visible')
+    );
+    expect(map.resolve(map.source.length)).toBe(
+      'Before **Visible**\r\n\r\nTail'.length
+    );
+  });
   it('serializes the supported server HTML back to Markdown without theme markup', () => {
     const surface = editor(`
       <h1 id="heading">Heading</h1>
@@ -74,6 +118,174 @@ A--&gt;B</code></pre>
         '```'
       ].join('\n')
     );
+  });
+
+  it('fails closed when the visual surface contains an incomplete Preview window', () => {
+    const surface = editor(
+      '<p>Visible block</p><div data-easymde-preview-window-spacer="1"></div>'
+    );
+
+    expect(() => serializeVisualMarkdown(surface)).toThrow(
+      'visual-editor-window-incomplete'
+    );
+  });
+
+  it('maps a contiguous editable Preview block range to raw CRLF source offsets', () => {
+    const source = 'First\r\n\r\nSecond\r\nLast';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 3, 4)
+    ]);
+
+    expect(
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        source,
+        map,
+        { end: 3, start: 1 }
+      )
+    ).toEqual({
+      end: source.length,
+      start: 'First\r\n\r\n'.length
+    });
+  });
+
+  it('ignores a zero-length generated block outside the selected editable run', () => {
+    const source = 'Generated\r\n\r\nEditable\r\nTail';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 0, false),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 3, 4)
+    ]);
+
+    expect(
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        source,
+        map,
+        { end: 3, start: 1 }
+      )
+    ).toEqual({
+      end: source.length,
+      start: 'Generated\r\n\r\n'.length
+    });
+  });
+
+  it.each([
+    {
+      name: 'selected range is empty',
+      map: previewEditMap([previewBlock('b0', 0, 1)]),
+      range: { end: 0, start: 0 }
+    },
+    {
+      name: 'selected range exceeds the map',
+      map: previewEditMap([previewBlock('b0', 0, 1)]),
+      range: { end: 2, start: 0 }
+    },
+    {
+      name: 'line range exceeds the source',
+      map: previewEditMap([previewBlock('b0', 0, 4)]),
+      range: { end: 1, start: 0 }
+    },
+    {
+      name: 'selected block is generated',
+      map: previewEditMap([previewBlock('b0', 0, 0, false)]),
+      range: { end: 1, start: 0 }
+    },
+    {
+      name: 'selected blocks overlap',
+      map: previewEditMap([
+        previewBlock('b0', 0, 2),
+        previewBlock('b1', 1, 3)
+      ]),
+      range: { end: 2, start: 0 }
+    },
+    {
+      name: 'selected blocks are out of order',
+      map: previewEditMap([
+        previewBlock('b0', 2, 3),
+        previewBlock('b1', 0, 1)
+      ]),
+      range: { end: 2, start: 0 }
+    }
+  ])('rejects $name while mapping Preview source ranges', ({ map, range }) => {
+    expect(() =>
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        'First\n\nSecond',
+        map,
+        range
+      )
+    ).toThrow('visual-editor-window-source-range-invalid');
+  });
+
+  it('serializes only the selected editable Block fragment', () => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b0">Before</p>'
+      + '<p data-easymde-visual-block-id="b1">Middle <strong>bold</strong></p>'
+      + '<p data-easymde-visual-block-id="b2">After</p>'
+    );
+    const middle = surface.children[1];
+    if (!(middle instanceof HTMLElement)) {
+      throw new Error('visual-window-middle-block-missing');
+    }
+
+    expect(serializeVisualMarkdownBlockFragment([middle])).toBe(
+      'Middle **bold**'
+    );
+  });
+
+  it('merges one edited Block fragment without changing CRLF content outside it', () => {
+    const source = 'Before\r\n\r\nMiddle **bold**\r\n\r\nAfter';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 4, 5)
+    ]);
+
+    expect(
+      createVisualMarkdownWindowChange(
+        source,
+        map,
+        { end: 2, start: 1 },
+        'Middle **bold**',
+        'Middle **bolder**'
+      )
+    ).toEqual({
+      changes: {
+        from: 'Before\r\n\r\n'.length,
+        insert: 'Middle **bolder**\r\n',
+        to: 'Before\r\n\r\nMiddle **bold**\r\n'.length
+      },
+      sourceRange: {
+        end: 'Before\r\n\r\nMiddle **bold**\r\n'.length,
+        start: 'Before\r\n\r\n'.length
+      },
+      value: 'Before\r\n\r\nMiddle **bolder**\r\n\r\nAfter'
+    });
+  });
+
+  it('maps a backward selection inside a Block fragment to its source slice', () => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b1">Middle <strong>bold</strong></p>'
+    );
+    const block = surface.firstElementChild;
+    const text = block?.querySelector('strong')?.firstChild;
+    if (!(block instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-window-selection-fixture-invalid');
+    }
+    const selection = window.getSelection();
+    selection?.setBaseAndExtent(text, 4, text, 0);
+
+    expect(
+      visualSelectionSourceRangeForBlocks(
+        [block],
+        'Middle **bold**\r\n',
+        'Middle **bold**'
+      )
+    ).toEqual({
+      direction: 'backward',
+      end: 'Middle **bold'.length,
+      start: 'Middle **'.length
+    });
   });
 
   it('round-trips static Crimson task markers through the visual editor', () => {
@@ -464,6 +676,53 @@ A--&gt;B</code></pre>
     expect(applyVisualInlineShortcut(surface)).toBe(true);
     expect(surface.querySelector('strong')?.textContent).toBe('bold');
     expect(serializeVisualMarkdown(surface)).toBe('Use **bold**');
+  });
+
+  it('accepts valid emphasis content containing underscores', () => {
+    const strongSurface = editor('<p>Use __bold_value__</p>');
+    const strongText = strongSurface.querySelector('p')?.firstChild;
+    if (!(strongText instanceof Text)) throw new Error('visual-inline-underscore-strong-text-missing');
+    placeCaret(strongText, strongText.length);
+    expect(applyVisualInlineShortcut(strongSurface)).toBe(true);
+    expect(strongSurface.querySelector('strong')?.textContent).toBe('bold_value');
+    expect(serializeVisualMarkdown(strongSurface)).toBe('Use **bold\\_value**');
+
+    const emSurface = editor('<p>Use *italic_value*</p>');
+    const emText = emSurface.querySelector('p')?.firstChild;
+    if (!(emText instanceof Text)) throw new Error('visual-inline-underscore-em-text-missing');
+    placeCaret(emText, emText.length);
+    expect(applyVisualInlineShortcut(emSurface)).toBe(true);
+    expect(emSurface.querySelector('em')?.textContent).toBe('italic_value');
+    expect(serializeVisualMarkdown(emSurface)).toBe('Use *italic\\_value*');
+  });
+
+  it.each([
+    'Use **bold**x',
+    'Use **bold',
+    'Use **bold*',
+    'Use __bold_',
+    'Use ~~deleted~~x',
+    'Use `code`x',
+    'Use [link](https://example.test)x'
+  ])('leaves incomplete or boundary-delimited inline Markdown unchanged: %s', (value) => {
+    const surface = editor(`<p>${value}</p>`);
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-inline-negative-text-missing');
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(false);
+    expect(surface.querySelector('strong, em, del, code, a')).toBeNull();
+    expect(surface.textContent).toBe(value);
+  });
+
+  it('retains the existing shortcut marker class on converted inline elements', () => {
+    const surface = editor('<p>Use **bold**</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-marker-text-missing');
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(true);
+    expect(surface.querySelector('strong.markdown-inline-applied')).not.toBeNull();
   });
 
   it('applies reference heading toolbar commands to the visual document', () => {

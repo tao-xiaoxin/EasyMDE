@@ -14,6 +14,7 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   applyVisualMarkdownEditIntent,
+  createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceIntervalMap,
   mergeVisualMarkdownChangeDetails,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
@@ -39,7 +40,7 @@ export type VisualPreviewSnapshot = Readonly<{
   signature: string;
 }>;
 
-type Props = Readonly<{
+export type ImmersiveVisualEditorProps = Readonly<{
   documentSession: EditorDocumentSession;
   imageUploadEnabled: boolean;
   imagePasteUploadEnabled: boolean;
@@ -100,6 +101,7 @@ type VisualSelectionMemory = Readonly<{
 
 type VisualInputIntent = Readonly<{
   data: string | null;
+  hasTargetRange: boolean;
   inputType: string;
   sourceSelection: Readonly<{ end: number; start: number }>;
   textData: string;
@@ -109,8 +111,14 @@ type VisualInputIntent = Readonly<{
 }>;
 
 type PendingVisualIntent = Readonly<{
+  baseSourceMarkdown: string;
   memory: VisualSelectionMemory | null;
   result: NonNullable<ReturnType<typeof applyVisualMarkdownEditIntent>>;
+  sourceChange: Readonly<{
+    from: number;
+    insert: string;
+    to: number;
+  }>;
 }>;
 
 function hasImageFile(transfer: DataTransfer | null): boolean {
@@ -137,6 +145,10 @@ function placeSurfaceCaretAtEnd(surface: HTMLElement): boolean {
   selection.removeAllRanges();
   selection.addRange(range);
   return true;
+}
+
+function focusVisualSurface(surface: HTMLElement): void {
+  surface.focus({ preventScroll: true });
 }
 
 function ensureEmptyVisualParagraph(
@@ -375,6 +387,21 @@ function codePointLengthAfter(text: Text, offset: number): number {
   return codePoint && codePoint > 0xffff ? 2 : 1;
 }
 
+function wordStartBefore(text: Text, offset: number): number {
+  let start = offset;
+  while (start > 0 && /\s/u.test(text.data[start - 1] ?? '')) start -= 1;
+  while (start > 0 && !/\s/u.test(text.data[start - 1] ?? '')) start -= 1;
+  return start;
+}
+
+function wordEndAfter(text: Text, offset: number): number {
+  let end = offset;
+  while (end < text.length && /\s/u.test(text.data[end] ?? '')) end += 1;
+  while (end < text.length && !/\s/u.test(text.data[end] ?? '')) end += 1;
+  while (end < text.length && /\s/u.test(text.data[end] ?? '')) end += 1;
+  return end;
+}
+
 function replaceTextRange(
   value: string,
   range: Readonly<{ end: number; start: number }>,
@@ -420,6 +447,56 @@ function visualInputIntent(
   const targetRange = event.getTargetRanges?.()[0];
   if (
     targetRange
+    && targetRange.startContainer instanceof Text
+    && targetRange.endContainer instanceof Text
+    && sourceIntervalMap
+  ) {
+    const start = uniqueTextProjection(
+      targetRange.startContainer,
+      baselineVisualMarkdown,
+      sourceIntervalMap
+    );
+    const end = targetRange.startContainer === targetRange.endContainer
+      ? start
+      : uniqueTextProjection(
+          targetRange.endContainer,
+          baselineVisualMarkdown,
+          sourceIntervalMap
+        );
+    if (start && end) {
+      const sourceStart = start.sourceOffset + targetRange.startOffset;
+      const sourceEnd = end.sourceOffset + targetRange.endOffset;
+      const visualStart = start.visualOffset + targetRange.startOffset;
+      const visualEnd = end.visualOffset + targetRange.endOffset;
+      if (
+        sourceStart >= 0
+        && sourceEnd >= sourceStart
+        && sourceEnd <= sourceLength
+        && visualStart >= 0
+        && visualEnd >= visualStart
+        && visualEnd <= visualLength
+      ) {
+        textSelection = selectionRange(
+          targetRange.startOffset,
+          targetRange.startContainer === targetRange.endContainer
+            ? targetRange.endOffset
+            : targetRange.startOffset
+        );
+        return {
+          data: event.data,
+          hasTargetRange: true,
+          inputType: event.inputType,
+          sourceSelection: { end: sourceEnd, start: sourceStart },
+          textData: current.anchorNode.data,
+          textNode: current.anchorNode,
+          textSelection,
+          visualSelection: { end: visualEnd, start: visualStart }
+        };
+      }
+    }
+  }
+  if (
+    targetRange
     && targetRange.startContainer === current.anchorNode
     && targetRange.endContainer === current.anchorNode
   ) {
@@ -448,6 +525,7 @@ function visualInputIntent(
     ) return null;
     return {
       data: event.data,
+      hasTargetRange: true,
       inputType: event.inputType,
       sourceSelection: { end: sourceEnd, start: sourceStart },
       textData: current.anchorNode.data,
@@ -489,7 +567,16 @@ function visualInputIntent(
       'deleteWordForward'
     ].includes(event.inputType)
   ) {
-    return null;
+    if (current.anchorOffset !== current.focusOffset) return null;
+    textSelection = 'deleteWordBackward' === event.inputType
+      ? {
+          end: current.anchorOffset,
+          start: wordStartBefore(current.anchorNode, current.anchorOffset)
+        }
+      : {
+          end: wordEndAfter(current.anchorNode, current.anchorOffset),
+          start: current.anchorOffset
+        };
   } else if ('insertLineBreak' !== event.inputType) {
     return null;
   }
@@ -515,6 +602,7 @@ function visualInputIntent(
   ) return null;
   return {
     data: event.data,
+    hasTargetRange: false,
     inputType: event.inputType,
     sourceSelection: { end: sourceEnd, start: sourceStart },
     textData: current.anchorNode.data,
@@ -550,7 +638,7 @@ export function ImmersiveVisualEditor({
   previewStatus,
   requestPreview,
   surface
-}: Props) {
+}: ImmersiveVisualEditorProps) {
   const sourceMarkdownRef = useRef<string | null>(null);
   const visualMarkdownRef = useRef<string | null>(null);
   const acceptedHtmlRef = useRef<string | null>(null);
@@ -565,6 +653,11 @@ export function ImmersiveVisualEditor({
   const visualSourceIntervalMapRef = useRef<VisualMarkdownSourceIntervalMap | null>(null);
   const pendingVisualIntentRef = useRef<VisualInputIntent | null>(null);
   const pendingVisualIntentResultRef = useRef<PendingVisualIntent | null>(null);
+  const visualBaselineMaterializedRef = useRef(false);
+  const capturedPreviewRevisionRef = useRef<number | null>(null);
+  const previewSnapshotRevisionRef = useRef(previewSnapshot.revision);
+  previewSnapshotRevisionRef.current = previewSnapshot.revision;
+  const visualTransferFailureReportedRef = useRef(false);
   const flushVisualInputRef = useRef<() => boolean>(() => true);
   const restoreFocusRef = useRef(false);
   const selfWriteRef = useRef(false);
@@ -575,6 +668,9 @@ export function ImmersiveVisualEditor({
     sourceMarkdown: string,
     options: CaptureSnapshotOptions = {}
   ) => {
+    const previousSourceMarkdown = sourceMarkdownRef.current;
+    const previousVisualMarkdown = visualMarkdownRef.current;
+    const previousIntervalMap = visualSourceIntervalMapRef.current;
     prepareVisualTaskListMarkers(surface);
     ensureEmptyVisualParagraph(surface, sourceMarkdown);
     protectVisualMarkdownReadOnlyRegions(surface);
@@ -583,22 +679,63 @@ export function ImmersiveVisualEditor({
     acceptedPasteDocumentBoundaryRef.current = null;
     lastSelectionRef.current = null;
     visualSelectionMemoryRef.current = null;
-    visualSourceIntervalMapRef.current = null;
     pendingVisualIntentRef.current = null;
     pendingVisualIntentResultRef.current = null;
     sourceMarkdownRef.current = sourceMarkdown;
     const visualMarkdown = serializeVisualMarkdown(surface);
     visualMarkdownRef.current = visualMarkdown;
-    visualSourceIntervalMapRef.current = options.cacheSourceIntervalMap
-      ? createVisualMarkdownSourceIntervalMap(sourceMarkdown, visualMarkdown)
-      : null;
+    visualSourceIntervalMapRef.current =
+      !options.cacheSourceIntervalMap
+      &&
+      previousSourceMarkdown === sourceMarkdown
+      && previousVisualMarkdown === visualMarkdown
+      && previousIntervalMap
+        ? previousIntervalMap
+        : createVisualMarkdownSourceIntervalMap(sourceMarkdown, visualMarkdown);
     acceptedHtmlRef.current = surface.innerHTML;
+    visualBaselineMaterializedRef.current = true;
+    capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
   }, [surface]);
 
-  const restoreAcceptedSnapshot = useCallback(() => {
-    if (null === acceptedHtmlRef.current) return;
-    surface.innerHTML = acceptedHtmlRef.current;
+  const captureAcceptedPasteSnapshot = useCallback((
+    sourceMarkdown: string
+  ): void => {
+    prepareVisualTaskListMarkers(surface);
+    ensureEmptyVisualParagraph(surface, sourceMarkdown);
+    protectVisualMarkdownReadOnlyRegions(surface);
+    readOnlySnapshotRef.current =
+      captureVisualMarkdownReadOnlySnapshot(surface);
+    acceptedPasteDocumentBoundaryRef.current = null;
+    lastSelectionRef.current = null;
+    visualSelectionMemoryRef.current = null;
+    pendingVisualIntentRef.current = null;
+    pendingVisualIntentResultRef.current = null;
+    sourceMarkdownRef.current = sourceMarkdown;
+    const directMap = createVisualMarkdownDirectSourceIntervalMap(
+      sourceMarkdown
+    );
+    visualMarkdownRef.current = directMap.source;
+    visualSourceIntervalMapRef.current = directMap;
+    acceptedHtmlRef.current = null;
+    visualBaselineMaterializedRef.current = false;
+    capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
+  }, [surface]);
+
+  const materializeVisualBaseline = useCallback((): boolean => {
+    const sourceMarkdown = sourceMarkdownRef.current;
+    if (null === sourceMarkdown) {
+      throw new Error('visual-editor-markdown-snapshot-missing');
+    }
+    captureSnapshot(sourceMarkdown);
+    return true;
+  }, [captureSnapshot]);
+
+  const restoreAcceptedSnapshot = useCallback((): boolean => {
+    const acceptedHtml = acceptedHtmlRef.current;
+    if (null === acceptedHtml) return false;
+    surface.innerHTML = acceptedHtml;
     captureSnapshot(sourceMarkdownRef.current ?? '');
+    return true;
   }, [captureSnapshot, surface]);
 
   const applyDocumentChange = useCallback((
@@ -626,9 +763,25 @@ export function ImmersiveVisualEditor({
     onTransferFailure();
   }, [onFailure, onPendingChange, onTransferFailure]);
 
+  const failVisualSynchronization = useCallback((error: unknown): false => {
+    const code = error instanceof Error
+      ? error.message
+      : 'visual-editor-markdown-sync-failed';
+    if (restoreAcceptedSnapshot()) {
+      onFailure(code);
+      return false;
+    }
+    if (visualTransferFailureReportedRef.current) return false;
+    visualTransferFailureReportedRef.current = true;
+    onFailure(code);
+    onTransferFailure();
+    return false;
+  }, [onFailure, onTransferFailure, restoreAcceptedSnapshot]);
+
   const synchronizeMarkdown = useCallback((
     options: SynchronizeMarkdownOptions = {}
   ): boolean => {
+    if (visualTransferFailureReportedRef.current) return false;
     try {
       if (pendingTransferRef.current) return false;
       const readOnlySnapshot = readOnlySnapshotRef.current;
@@ -712,8 +865,10 @@ export function ImmersiveVisualEditor({
       applyDocumentChange({ selection, value });
       sourceMarkdownRef.current = value;
       visualMarkdownRef.current = editedVisualMarkdown;
-      visualSourceIntervalMapRef.current = null;
+      visualSourceIntervalMapRef.current =
+        createVisualMarkdownSourceIntervalMap(value, editedVisualMarkdown);
       acceptedHtmlRef.current = surface.innerHTML;
+      visualBaselineMaterializedRef.current = true;
       visualSelectionMemoryRef.current =
         canUseIdentityVisualSelection(
           surface,
@@ -735,24 +890,21 @@ export function ImmersiveVisualEditor({
       if (value !== sourceMarkdown) onMarkdownChange();
       return true;
     } catch (error) {
-      restoreAcceptedSnapshot();
-      onFailure(
-        error instanceof Error
-          ? error.message
-          : 'visual-editor-markdown-sync-failed'
-      );
-      return false;
+      return failVisualSynchronization(error);
     }
   }, [
     applyDocumentChange,
-    onFailure,
+    failVisualSynchronization,
     onMarkdownChange,
-    restoreAcceptedSnapshot,
     surface
   ]);
 
   const requestMarkdownTransfer = useCallback((value: string) => {
-    if (!value || pendingTransferRef.current) return;
+    if (
+      !value
+      || pendingTransferRef.current
+      || visualTransferFailureReportedRef.current
+    ) return;
     const hadPendingVisualInput = visualInputPendingRef.current;
     if (!flushVisualInputRef.current()) return;
     if (hadPendingVisualInput && !synchronizeMarkdown()) return;
@@ -848,7 +1000,7 @@ export function ImmersiveVisualEditor({
   useLayoutEffect(() => {
     if (!pending && restoreFocusRef.current) {
       restoreFocusRef.current = false;
-      surface.focus();
+      focusVisualSurface(surface);
     }
   }, [pending, surface]);
 
@@ -886,7 +1038,14 @@ export function ImmersiveVisualEditor({
     if ('ready' !== previewStatus) return;
     const pending = pendingTransferRef.current;
     if (!pending) {
-      captureSnapshot(documentSession.document.getValue());
+      const sourceMarkdown = documentSession.document.getValue();
+      if (
+        sourceMarkdown === sourceMarkdownRef.current
+        && capturedPreviewRevisionRef.current === previewSnapshot.revision
+      ) {
+        return;
+      }
+      captureSnapshot(sourceMarkdown);
       return;
     }
     if (pending.signature !== previewSnapshot.signature) {
@@ -921,7 +1080,7 @@ export function ImmersiveVisualEditor({
         placeSurfaceCaretAtEnd(surface);
       }
       pendingTransferRef.current = null;
-      captureSnapshot(pending.markdown, { cacheSourceIntervalMap: true });
+      captureAcceptedPasteSnapshot(pending.markdown);
       acceptedPasteDocumentBoundaryRef.current =
         pending.acceptedDocumentBoundary;
       lastSelectionRef.current = pending.selection;
@@ -964,6 +1123,7 @@ export function ImmersiveVisualEditor({
     }
     if (selectionDiagnostic) onDiagnostic(selectionDiagnostic);
   }, [
+    captureAcceptedPasteSnapshot,
     captureSnapshot,
     documentSession,
     failPendingTransfer,
@@ -975,8 +1135,9 @@ export function ImmersiveVisualEditor({
   ]);
 
   useLayoutEffect(() => {
+    documentSession.document.setVisualEditingActive(true);
     captureSnapshot(documentSession.document.getValue());
-    surface.focus();
+    focusVisualSurface(surface);
     let active = true;
     let composing = false;
     let compositionCommitScheduled = false;
@@ -989,18 +1150,49 @@ export function ImmersiveVisualEditor({
         !active
         || pendingTransferRef.current
         || externalChangeReportedRef.current
+        || visualTransferFailureReportedRef.current
       ) {
         return false;
       }
+      try {
+        const readOnlySnapshot = readOnlySnapshotRef.current;
+        if (readOnlySnapshot) {
+          assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+        }
+      } catch (error) {
+        return failVisualSynchronization(error);
+      }
       const previousSource = sourceMarkdownRef.current;
+      if (null === previousSource) {
+        throw new Error('visual-editor-markdown-snapshot-missing');
+      }
+      const sourceChange = pending.sourceChange;
+      const expectedSource = replaceTextRange(
+        previousSource,
+        { end: sourceChange.to, start: sourceChange.from },
+        sourceChange.insert
+      );
+      if (
+        pending.baseSourceMarkdown === previousSource
+        && expectedSource !== pending.result.sourceMarkdown
+      ) {
+        throw new Error('visual-editor-local-change-mismatch');
+      }
       applyDocumentChange({
         selection: pending.result.selection,
-        value: pending.result.sourceMarkdown
+        value: pending.result.sourceMarkdown,
+        ...(pending.baseSourceMarkdown === previousSource
+          ? { changes: sourceChange }
+          : {})
       });
       sourceMarkdownRef.current = pending.result.sourceMarkdown;
       visualMarkdownRef.current = pending.result.visualMarkdown;
+      // Selection memory keeps consecutive edits in the same text node O(1).
+      // A direct identity map is no longer valid after editing rendered
+      // Markdown whose source contains hidden delimiters; materialize the
+      // complete map before the next edit in a different node instead.
       visualSourceIntervalMapRef.current = null;
-      acceptedHtmlRef.current = surface.innerHTML;
+      visualBaselineMaterializedRef.current = false;
       acceptedPasteDocumentBoundaryRef.current = null;
       lastSelectionRef.current = pending.result.selection;
       visualSelectionMemoryRef.current = pending.memory;
@@ -1011,6 +1203,11 @@ export function ImmersiveVisualEditor({
     };
 
     const commitVisualInput = (): boolean => {
+      if (visualTransferFailureReportedRef.current) {
+        visualInputPendingRef.current = false;
+        pendingVisualIntentResultRef.current = null;
+        return false;
+      }
       if (
         !active
         || pendingTransferRef.current
@@ -1057,6 +1254,18 @@ export function ImmersiveVisualEditor({
       requestMarkdownTransfer(event.dataTransfer?.getData('text/plain') ?? '');
     };
     const handleCompositionStart = () => {
+      if (!visualBaselineMaterializedRef.current) {
+        try {
+          materializeVisualBaseline();
+        } catch (error) {
+          onFailure(
+            visualEditorFailureCode(
+              error,
+              'visual-editor-markdown-baseline-failed'
+            )
+          );
+        }
+      }
       composing = true;
       compositionCommitScheduled = false;
       if (null !== visualInputTimerRef.current) {
@@ -1075,21 +1284,50 @@ export function ImmersiveVisualEditor({
     };
     const handleBeforeInput = (event: InputEvent) => {
       pendingVisualIntentRef.current = null;
-      if (
-        pendingTransferRef.current
-        || composing
-        || event.isComposing
-      ) {
+      if (visualTransferFailureReportedRef.current) {
+        event.preventDefault();
+        return;
+      }
+      if (pendingTransferRef.current) {
+        event.preventDefault();
+        return;
+      }
+      if (composing || event.isComposing) {
         return;
       }
       const memory = pendingVisualIntentResultRef.current?.memory
         ?? visualSelectionMemoryRef.current;
       const sourceIntervalMap = visualSourceIntervalMapRef.current;
-      if (!memory && !sourceIntervalMap) return;
+      if (!memory && !sourceIntervalMap) {
+        if (!visualBaselineMaterializedRef.current) {
+          try {
+            materializeVisualBaseline();
+          } catch (error) {
+            event.preventDefault();
+            onFailure(
+              visualEditorFailureCode(
+                error,
+                'visual-editor-markdown-baseline-failed'
+              )
+            );
+          }
+        }
+        return;
+      }
       const base = pendingVisualIntentResultRef.current?.result;
       const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
       const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
       if (null === sourceMarkdown || null === visualMarkdown) return;
+      try {
+        const readOnlySnapshot = readOnlySnapshotRef.current;
+        if (readOnlySnapshot) {
+          assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+        }
+      } catch (error) {
+        event.preventDefault();
+        failVisualSynchronization(error);
+        return;
+      }
       pendingVisualIntentRef.current = visualInputIntent(
         surface,
         event,
@@ -1099,9 +1337,27 @@ export function ImmersiveVisualEditor({
         visualMarkdown,
         sourceIntervalMap
       );
+      if (
+        !pendingVisualIntentRef.current
+        && !visualBaselineMaterializedRef.current
+      ) {
+        try {
+          materializeVisualBaseline();
+        } catch (error) {
+          event.preventDefault();
+          onFailure(
+            visualEditorFailureCode(
+              error,
+              'visual-editor-markdown-baseline-failed'
+            )
+          );
+        }
+      }
     };
     const handleInput = (event: InputEvent) => {
       if (
+        visualTransferFailureReportedRef.current
+        ||
         pendingTransferRef.current
         || composing
         || event.isComposing
@@ -1109,10 +1365,15 @@ export function ImmersiveVisualEditor({
       ) {
         return;
       }
-      const shortcutApplied = applyVisualInlineShortcut(surface);
+      const shortcutApplied = [
+        'historyRedo',
+        'historyUndo'
+      ].includes(event.inputType)
+        ? false
+        : applyVisualInlineShortcut(surface);
       const intent = pendingVisualIntentRef.current;
       pendingVisualIntentRef.current = null;
-      if (!shortcutApplied && intent) {
+      if (intent) {
         const base = pendingVisualIntentResultRef.current?.result;
         const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
         const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
@@ -1126,17 +1387,24 @@ export function ImmersiveVisualEditor({
             intent.textSelection,
             replacement
           );
-          if (intent.textNode.data === expectedText) {
-            const result = applyVisualMarkdownEditIntent(
-              sourceMarkdown,
-              visualMarkdown,
-              intent.sourceSelection,
-              intent.visualSelection,
-              intent.inputType,
-              intent.data
-            );
-            if (result) {
+          const detachedDeletion =
+            intent.hasTargetRange
+            && intent.inputType.startsWith('delete')
+            && !intent.textNode.isConnected;
+          const result = applyVisualMarkdownEditIntent(
+            sourceMarkdown,
+            visualMarkdown,
+            intent.sourceSelection,
+            intent.visualSelection,
+            intent.inputType,
+            intent.data
+          );
+          const domMatchesIntent = result && shortcutApplied
+            ? serializeVisualMarkdown(surface) === result.visualMarkdown
+            : intent.textNode.data === expectedText || detachedDeletion;
+          if (result && domMatchesIntent) {
               pendingVisualIntentResultRef.current = {
+                baseSourceMarkdown: sourceMarkdown,
                 memory: selectionMemoryForCurrentSelection(
                   surface,
                   {
@@ -1145,11 +1413,15 @@ export function ImmersiveVisualEditor({
                   },
                   result.visualSelection
                 ),
-                result
+                result,
+                sourceChange: {
+                  from: intent.sourceSelection.start,
+                  insert: replacement,
+                  to: intent.sourceSelection.end
+                }
               };
               scheduleVisualInput();
               return;
-            }
           }
         }
       }
@@ -1159,6 +1431,10 @@ export function ImmersiveVisualEditor({
       scheduleVisualInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (visualTransferFailureReportedRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (pendingTransferRef.current) {
         event.preventDefault();
         return;
@@ -1197,18 +1473,23 @@ export function ImmersiveVisualEditor({
 
     const runtime: ImmersiveVisualEditorRuntime = {
       executeCommand(command) {
-        if (pendingTransferRef.current) return false;
+        if (
+          pendingTransferRef.current
+          || visualTransferFailureReportedRef.current
+        ) return false;
         if (!flushVisualInput()) return false;
         if (!applyVisualToolbarCommand(surface, command)) return false;
         synchronizeMarkdown();
-        surface.focus();
+        focusVisualSurface(surface);
         return true;
       },
       prepareMediaSelection() {
+        if (visualTransferFailureReportedRef.current) return false;
         if (!flushVisualInput()) return false;
         return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
       },
       prepareToolbarFallback() {
+        if (visualTransferFailureReportedRef.current) return false;
         if (!flushVisualInput()) return false;
         const pending = pendingTransferRef.current;
         if (!pending) return synchronizeMarkdown();
@@ -1233,7 +1514,17 @@ export function ImmersiveVisualEditor({
     };
     onReady(runtime);
     return () => {
-      flushVisualInput();
+      let cleanupError: unknown = null;
+      try {
+        flushVisualInput();
+      } catch (error) {
+        cleanupError = error;
+      }
+      try {
+        documentSession.document.setVisualEditingActive(false);
+      } catch (error) {
+        cleanupError ??= error;
+      }
       active = false;
       onDispose(runtime);
       surface.removeEventListener('compositionstart', handleCompositionStart);
@@ -1250,10 +1541,14 @@ export function ImmersiveVisualEditor({
       visualInputPendingRef.current = false;
       flushVisualInputRef.current = () => true;
       onPendingChange(false);
+      if (cleanupError) {
+        throw cleanupError;
+      }
     };
   }, [
     captureSnapshot,
     applyDocumentChange,
+    failVisualSynchronization,
     documentSession,
     imageUploadEnabled,
     imagePasteUploadEnabled,
@@ -1261,6 +1556,7 @@ export function ImmersiveVisualEditor({
     onFailure,
     onPendingChange,
     onReady,
+    materializeVisualBaseline,
     requestMarkdownTransfer,
     surface,
     synchronizeMarkdown

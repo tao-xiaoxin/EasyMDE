@@ -1,7 +1,10 @@
 import {
   Fragment,
   createElement,
+  memo,
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from '@wordpress/element';
@@ -123,7 +126,7 @@ function OutlineNodes({
               </span>
             </button>
             {node.children.length ? (
-              <OutlineNodes
+              <MemoizedOutlineNodes
                 activeIndex={activeIndex}
                 depth={depth + 1}
                 nodes={node.children}
@@ -137,7 +140,9 @@ function OutlineNodes({
   );
 }
 
-export function ImmersiveOutline({
+const MemoizedOutlineNodes = memo(OutlineNodes);
+
+export const ImmersiveOutline = memo(function ImmersiveOutline({
   activeIndex,
   direction,
   items,
@@ -157,6 +162,13 @@ export function ImmersiveOutline({
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const selectItem = useCallback(
+    (item: ImmersiveOutlineItem) => onSelectRef.current(item),
+    []
+  );
+  const outlineTree = useMemo(() => buildOutlineTree(items), [items]);
 
   useEffect(
     () => () => {
@@ -255,11 +267,11 @@ export function ImmersiveOutline({
         </div>
         <div className="easymde-immersive-outline-tree">
           {items.length ? (
-            <OutlineNodes
+            <MemoizedOutlineNodes
               activeIndex={activeIndex}
               depth={0}
-              nodes={buildOutlineTree(items)}
-              onSelect={onSelect}
+              nodes={outlineTree}
+              onSelect={selectItem}
             />
           ) : (
             <p className="easymde-immersive-outline-empty">{strings.noHeadings}</p>
@@ -286,4 +298,4 @@ export function ImmersiveOutline({
       />
     </Fragment>
   );
-}
+});

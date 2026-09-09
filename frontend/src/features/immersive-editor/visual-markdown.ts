@@ -3,6 +3,10 @@ import { gfm } from 'turndown-plugin-gfm';
 import { diffChars, diffLines } from 'diff';
 import type { Change } from 'diff';
 import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
+import type { PreviewEditMap } from '../../contracts/ports/preview-request';
+
+const PREVIEW_WINDOW_SPACER_SELECTOR =
+  '[data-easymde-preview-window-spacer]';
 
 function placeCaretAtEnd(node: Node): void {
   const selection = window.getSelection();
@@ -17,10 +21,8 @@ function placeCaretAtEnd(node: Node): void {
 function placeCaretAfter(node: Node): void {
   const selection = window.getSelection();
   if (!selection || !node.parentNode) return;
-  const caretNode = document.createTextNode('\u200b');
-  node.parentNode.insertBefore(caretNode, node.nextSibling);
   const range = document.createRange();
-  range.setStart(caretNode, 1);
+  range.setStartAfter(node);
   range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
@@ -39,6 +41,14 @@ function markShortcutApplied(
       ? 'markdown-block-applied'
       : 'markdown-inline-applied'
   );
+}
+
+function preserveVisualBlockIdentity(
+  source: HTMLElement,
+  target: HTMLElement
+): void {
+  const id = source.getAttribute('data-easymde-visual-block-id');
+  if (id) target.setAttribute('data-easymde-visual-block-id', id);
 }
 
 function currentVisualBlock(editor: HTMLElement): HTMLElement | null {
@@ -112,6 +122,7 @@ function caretIsAtEnd(block: HTMLElement): boolean {
 function replaceBlock(block: HTMLElement, tagName: string): HTMLElement {
   const replacement = document.createElement(tagName);
   replacement.innerHTML = '<br>';
+  preserveVisualBlockIdentity(block, replacement);
   block.replaceWith(replacement);
   markShortcutApplied(replacement, 'block');
   placeCaretAtEnd(replacement);
@@ -176,6 +187,7 @@ export function applyVisualBlockShortcut(
       content.innerHTML = '<br>';
       item.append(checkbox, content);
       list.append(item);
+      preserveVisualBlockIdentity(block, list);
       block.replaceWith(list);
       markShortcutApplied(list, 'block');
       placeCaretAtEnd(content);
@@ -184,20 +196,28 @@ export function applyVisualBlockShortcut(
 
     if (['-', '*', '+'].includes(text)) {
       event.preventDefault();
+      const id = block.getAttribute('data-easymde-visual-block-id');
       block.textContent = '';
       placeCaretAtEnd(block);
       document.execCommand('insertUnorderedList');
       const list = currentVisualBlock(editor);
-      if (list) markShortcutApplied(list, 'block');
+      if (list) {
+        if (id) list.setAttribute('data-easymde-visual-block-id', id);
+        markShortcutApplied(list, 'block');
+      }
       return true;
     }
     if (/^\d+\.$/.test(text)) {
       event.preventDefault();
+      const id = block.getAttribute('data-easymde-visual-block-id');
       block.textContent = '';
       placeCaretAtEnd(block);
       document.execCommand('insertOrderedList');
       const list = currentVisualBlock(editor);
-      if (list) markShortcutApplied(list, 'block');
+      if (list) {
+        if (id) list.setAttribute('data-easymde-visual-block-id', id);
+        markShortcutApplied(list, 'block');
+      }
       return true;
     }
   }
@@ -221,6 +241,7 @@ export function applyVisualBlockShortcut(
       const rule = document.createElement('hr');
       const paragraph = document.createElement('p');
       paragraph.innerHTML = '<br>';
+      preserveVisualBlockIdentity(block, rule);
       block.replaceWith(rule, paragraph);
       markShortcutApplied(rule, 'block');
       placeCaretAtEnd(paragraph);
@@ -235,6 +256,7 @@ export function applyVisualBlockShortcut(
       code.className = fence[2] ? `language-${fence[2]}` : '';
       code.innerHTML = '<br>';
       pre.append(code);
+      preserveVisualBlockIdentity(block, pre);
       block.replaceWith(pre);
       markShortcutApplied(pre, 'block');
       placeCaretAtEnd(code);
@@ -264,7 +286,7 @@ export function applyVisualInlineShortcut(editor: HTMLElement): boolean {
     tag: 'a' | 'code' | 'del' | 'em' | 'strong';
     textIndex: number;
   }> = [
-    { expression: /(\*\*|__)([^\n*_]+)\1$/, tag: 'strong', textIndex: 2 },
+    { expression: /(\*\*|__)([^\n]+?)\1$/, tag: 'strong', textIndex: 2 },
     { expression: /~~([^\n~]+)~~$/, tag: 'del', textIndex: 1 },
     { expression: /`([^\n`]+)`$/, tag: 'code', textIndex: 1 },
     {
@@ -275,7 +297,7 @@ export function applyVisualInlineShortcut(editor: HTMLElement): boolean {
       textIndex: 1
     },
     {
-      expression: /(^|[\s(])([*_])([^\n*_]+)\2$/,
+      expression: /(^|[\s(])([*_])(?!\2)([^\n]+?)\2$/,
       tag: 'em',
       textIndex: 3
     }
@@ -343,6 +365,7 @@ export function applyVisualToolbarCommand(
       );
       while (block.firstChild) replacement.append(block.firstChild);
       if (!replacement.firstChild) replacement.innerHTML = '<br>';
+      preserveVisualBlockIdentity(block, replacement);
       block.replaceWith(replacement);
       markShortcutApplied(replacement, 'block');
       placeCaretAtEnd(replacement);
@@ -570,6 +593,10 @@ function markdownSerializationRoot(editor: HTMLElement): HTMLElement {
 }
 
 export function serializeVisualMarkdown(editor: HTMLElement): string {
+  if (editor.matches(PREVIEW_WINDOW_SPACER_SELECTOR)
+    || editor.querySelector(PREVIEW_WINDOW_SPACER_SELECTOR)) {
+    throw new Error('visual-editor-window-incomplete');
+  }
   const service = visualMarkdownSerializer();
   return service
     .turndown(markdownSerializationRoot(editor))
@@ -577,6 +604,198 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
     .replace(/^(\s*)-\s{2,}/gm, '$1- ')
     .replace(/^(!\[[^\]]*]\([^)]+\))[ \t]+$/gm, '$1')
     .trim();
+}
+
+export function createVisualMarkdownSourceRangeFromPreviewEditMap(
+  sourceMarkdown: string,
+  editMap: PreviewEditMap,
+  blockRange: Readonly<{ end: number; start: number }>
+): Readonly<{ end: number; start: number }> {
+  const invalid = (): never => {
+    throw new Error('visual-editor-window-source-range-invalid');
+  };
+  if (
+    1 !== editMap.version
+    || 'line' !== editMap.coordinate
+    || !Number.isInteger(blockRange.start)
+    || !Number.isInteger(blockRange.end)
+    || blockRange.start < 0
+    || blockRange.end <= blockRange.start
+    || blockRange.end > editMap.blocks.length
+  ) invalid();
+
+  const lineStarts = [0];
+  for (let offset = 0; offset < sourceMarkdown.length; offset += 1) {
+    if ('\n' === sourceMarkdown[offset]) lineStarts.push(offset + 1);
+  }
+  const selected = editMap.blocks.slice(blockRange.start, blockRange.end);
+  let previousEndLine: number | null = null;
+  for (const block of selected) {
+    if (
+      !block.editable
+      || !Number.isInteger(block.startLine)
+      || !Number.isInteger(block.endLine)
+      || block.startLine < 0
+      || block.endLine <= block.startLine
+      || block.endLine > lineStarts.length
+      || (null !== previousEndLine && block.startLine < previousEndLine)
+    ) invalid();
+    previousEndLine = block.endLine;
+  }
+  const first = selected[0];
+  const last = selected[selected.length - 1];
+  if (!first || !last) return invalid();
+  const start = lineStarts[first.startLine];
+  const end = last.endLine === lineStarts.length
+    ? sourceMarkdown.length
+    : lineStarts[last.endLine];
+  if (undefined === start || undefined === end || end < start) return invalid();
+  return { end, start };
+}
+
+export function serializeVisualMarkdownBlockFragment(
+  blocks: ReadonlyArray<HTMLElement>
+): string {
+  if (0 === blocks.length) {
+    throw new Error('visual-editor-window-block-range-invalid');
+  }
+  const documentRef = blocks[0]?.ownerDocument;
+  if (!documentRef) {
+    throw new Error('visual-editor-window-block-range-invalid');
+  }
+  const fragment = documentRef.createElement('article');
+  for (const block of blocks) {
+    if (
+      block.ownerDocument !== documentRef
+      || block.matches(PREVIEW_WINDOW_SPACER_SELECTOR)
+    ) {
+      throw new Error('visual-editor-window-block-range-invalid');
+    }
+    fragment.append(block.cloneNode(true));
+  }
+  return serializeVisualMarkdown(fragment);
+}
+
+function nodePathWithin(root: Node, node: Node): readonly number[] {
+  const path: number[] = [];
+  let current: Node | null = node;
+  while (current && current !== root) {
+    const parent: ParentNode | null = current.parentNode;
+    if (!parent) throw new Error('visual-editor-window-selection-invalid');
+    const index = Array.prototype.indexOf.call(parent.childNodes, current);
+    if (index < 0) throw new Error('visual-editor-window-selection-invalid');
+    path.unshift(index);
+    current = parent as Node;
+  }
+  if (current !== root) {
+    throw new Error('visual-editor-window-selection-invalid');
+  }
+  return path;
+}
+
+function nodeAtPath(root: Node, path: readonly number[]): Node {
+  let current = root;
+  for (const index of path) {
+    const child = current.childNodes[index];
+    if (!child) throw new Error('visual-editor-window-selection-invalid');
+    current = child;
+  }
+  return current;
+}
+
+export function visualSelectionSourceRangeForBlocks(
+  blocks: ReadonlyArray<HTMLElement>,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string
+): Readonly<{
+  direction: 'backward' | 'forward' | 'none';
+  end: number;
+  start: number;
+}> {
+  const first = blocks[0];
+  if (!first) throw new Error('visual-editor-window-selection-invalid');
+  const selection = first.ownerDocument.defaultView?.getSelection();
+  if (!selection?.anchorNode || !selection.focusNode) {
+    throw new Error('visual-editor-window-selection-invalid');
+  }
+  const locate = (node: Node): Readonly<{ block: number; path: readonly number[] }> => {
+    const block = blocks.findIndex((candidate) => candidate.contains(node));
+    if (block < 0) throw new Error('visual-editor-window-selection-invalid');
+    return { block, path: nodePathWithin(blocks[block] as HTMLElement, node) };
+  };
+  const anchorLocation = locate(selection.anchorNode);
+  const focusLocation = selection.isCollapsed
+    ? anchorLocation
+    : locate(selection.focusNode);
+  const fragment = first.ownerDocument.createElement('article');
+  const clones = blocks.map((block) => block.cloneNode(true) as HTMLElement);
+  fragment.append(...clones);
+  const anchorRoot = clones[anchorLocation.block];
+  const focusRoot = clones[focusLocation.block];
+  if (!anchorRoot || !focusRoot) {
+    throw new Error('visual-editor-window-selection-invalid');
+  }
+  const anchor = visualBoundarySourceOffset(
+    fragment,
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    nodeAtPath(anchorRoot, anchorLocation.path),
+    selection.anchorOffset
+  );
+  const focus = selection.isCollapsed
+    ? anchor
+    : visualBoundarySourceOffset(
+        fragment,
+        sourceMarkdown,
+        baselineVisualMarkdown,
+        nodeAtPath(focusRoot, focusLocation.path),
+        selection.focusOffset
+      );
+  return {
+    direction: anchor === focus
+      ? 'none'
+      : anchor > focus ? 'backward' : 'forward',
+    end: Math.max(anchor, focus),
+    start: Math.min(anchor, focus)
+  };
+}
+
+export type VisualMarkdownWindowChange = Readonly<{
+  changes: Readonly<{ from: number; insert: string; to: number }>;
+  sourceRange: Readonly<{ end: number; start: number }>;
+  value: string;
+}>;
+
+export function createVisualMarkdownWindowChange(
+  sourceMarkdown: string,
+  editMap: PreviewEditMap,
+  blockRange: Readonly<{ end: number; start: number }>,
+  baselineVisualMarkdown: string,
+  editedVisualMarkdown: string
+): VisualMarkdownWindowChange {
+  const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+    sourceMarkdown,
+    editMap,
+    blockRange
+  );
+  const sourceSlice = sourceMarkdown.slice(sourceRange.start, sourceRange.end);
+  const merged = mergeVisualMarkdownChangeDetails(
+    sourceSlice,
+    baselineVisualMarkdown,
+    editedVisualMarkdown
+  );
+  const value = sourceMarkdown.slice(0, sourceRange.start)
+    + merged.value
+    + sourceMarkdown.slice(sourceRange.end);
+  return {
+    changes: {
+      from: sourceRange.start,
+      insert: merged.value,
+      to: sourceRange.end
+    },
+    sourceRange,
+    value
+  };
 }
 
 let visualMarkdownService: TurndownService | null = null;
@@ -820,6 +1039,52 @@ export function createVisualMarkdownSourceIntervalMap(
       const sourceOffset = sourceOffsetAt(visualOffset);
       if (undefined === sourceOffset) return null;
       return originalOffsetAt(sourceOffset) ?? null;
+    },
+    source,
+    sourceOffsetAt
+  };
+}
+
+/**
+ * Build the canonical-only map used immediately after an accepted server
+ * Preview. The rendered DOM may hide Markdown delimiters, but unique text
+ * nodes can still resolve against this normalized source without a full
+ * Turndown/diff pass. The complete visual map is materialized lazily before
+ * an unsupported browser mutation.
+ */
+export function createVisualMarkdownDirectSourceIntervalMap(
+  sourceMarkdown: string
+): VisualMarkdownSourceIntervalMap {
+  const hasCrLf = sourceMarkdown.includes('\r\n');
+  const source = hasCrLf
+    ? sourceMarkdown.replace(/\r\n/g, '\n')
+    : sourceMarkdown;
+  const sourceOffsets = hasCrLf ? [0] : null;
+  if (sourceOffsets) {
+    for (let offset = 0; offset < sourceMarkdown.length;) {
+      offset += '\r' === sourceMarkdown[offset] && '\n' === sourceMarkdown[offset + 1]
+        ? 2
+        : 1;
+      sourceOffsets.push(offset);
+    }
+  }
+  const sourceOffsetAt = (visualOffset: number): number | undefined =>
+    Number.isInteger(visualOffset)
+    && visualOffset >= 0
+    && visualOffset <= source.length
+      ? visualOffset
+      : undefined;
+  const originalOffsetAt = (sourceOffset: number): number | undefined =>
+    sourceOffsets ? sourceOffsets[sourceOffset] : sourceOffset;
+
+  return {
+    hiddenSourceRanges: [],
+    originalOffsetAt,
+    resolve(visualOffset) {
+      const sourceOffset = sourceOffsetAt(visualOffset);
+      return undefined === sourceOffset
+        ? null
+        : originalOffsetAt(sourceOffset) ?? null;
     },
     source,
     sourceOffsetAt

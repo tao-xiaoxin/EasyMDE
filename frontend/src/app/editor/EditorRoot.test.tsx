@@ -5,6 +5,8 @@ import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  PreviewFeatures,
+  PreviewRequest,
   PreviewResponse,
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
@@ -39,6 +41,38 @@ function deferred<T>() {
     reject = fail;
   });
   return { promise, reject, resolve };
+}
+
+function createPreviewResponse(
+  request: PreviewRequest,
+  html: SafePreviewHtml,
+  features: PreviewFeatures
+): PreviewResponse {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  const lineCount = Math.max(1, request.markdown.split(/\r\n|\r|\n/).length);
+  const blocks = Array.from(template.content.children).map((element, index) => {
+    const id = `b${index}`;
+    element.setAttribute('data-easymde-visual-block-id', id);
+    const hasSourceLines = index < lineCount;
+    return {
+      id,
+      startLine: hasSourceLines ? index : lineCount,
+      endLine: hasSourceLines ? index + 1 : lineCount,
+      editable: hasSourceLines
+    } as const;
+  });
+
+  return {
+    features,
+    html: template.innerHTML as SafePreviewHtml,
+    editMap: {
+      version: 1,
+      coordinate: 'line',
+      signature: request.signature,
+      blocks
+    }
+  };
 }
 
 function BrokenEditorRoot(): never {
@@ -476,10 +510,11 @@ function fixture(): EditorRootProps &
       signature: 'initial'
     },
     previewPort: {
-      render: vi.fn().mockResolvedValue({
-        features: {},
-        html: '<p>Rendered</p>' as SafePreviewHtml
-      })
+      render: vi.fn((request: PreviewRequest) =>
+        Promise.resolve(
+          createPreviewResponse(request, '<p>Rendered</p>' as SafePreviewHtml, {})
+        )
+      )
     },
     revisionPort: {
       get: vi.fn().mockResolvedValue({
@@ -679,7 +714,7 @@ describe('EditorRoot', () => {
       expect(
         view.container.querySelector('[data-easymde-preview-html-sink="1"]')
           ?.innerHTML
-      ).toBe('<p>Rendered</p>');
+      ).toBe('<p data-easymde-visual-block-id="b0">Rendered</p>');
     });
     expect(props.shortcutBinding.activate).toHaveBeenCalledTimes(1);
 
@@ -1020,12 +1055,70 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('finishes a large Preview window before enabling visual editing and restores the full Preview on lock', async () => {
+    const props = fixture();
+    const markdown = Array.from(
+      { length: 200 },
+      (_, index) => `Paragraph ${index}`
+    ).join('\n');
+    const html = Array.from(
+      { length: 200 },
+      (_, index) => `<p>Paragraph ${index}</p>`
+    ).join('') as SafePreviewHtml;
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(createPreviewResponse(request, html, {}))
+    );
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const unlock = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    fireEvent.click(unlock);
+
+    expect(view.queryByRole('textbox', {
+      name: '可视化文章编辑器'
+    })).toBeNull();
+    const visualEditor = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    expect(visualEditor.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ).length).toBeLessThanOrEqual(160);
+    expect(visualEditor.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+    await waitFor(() => expect(view.queryByRole('textbox', {
+      name: '可视化文章编辑器'
+    })).toBeNull());
+    const sink = view.container.querySelector(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    await waitFor(() =>
+      expect(sink?.querySelectorAll(
+        '[data-easymde-visual-block-id]'
+      )).toHaveLength(200)
+    );
+    expect(sink?.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
+  });
+
   it('synchronizes visual typing within a bounded input window without duplicating the native submission write', async () => {
     const props = fixture();
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>selected</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>selected</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1077,10 +1170,11 @@ describe('EditorRoot', () => {
 
   it('synchronizes visual input to the canonical field before browser navigation can inspect dirty state', async () => {
     const props = fixture();
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>selected</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>selected</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1109,10 +1203,11 @@ describe('EditorRoot', () => {
 
   it('flushes pending visual Markdown before WordPress autosave without leaving visual editing', async () => {
     const props = fixture();
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>selected</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>selected</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1161,10 +1256,11 @@ describe('EditorRoot', () => {
         markdown: baseProps.settings.markdown
       }
     };
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>selected</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>selected</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1286,10 +1382,11 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Before';
     props.submissionField.defaultValue = 'Before';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1371,12 +1468,15 @@ describe('EditorRoot', () => {
       }
     };
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
-      Promise.resolve({
-        features: {},
-        html: request.markdown === pastedMarkdown
-          ? '<h1>First heading</h1><ul><li>First item</li><li>Second item</li></ul>' as SafePreviewHtml
-          : '' as SafePreviewHtml
-      })
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          request.markdown === pastedMarkdown
+            ? '<h1>First heading</h1><ul><li>First item</li><li>Second item</li></ul>' as SafePreviewHtml
+            : '' as SafePreviewHtml,
+          {}
+        )
+      )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -1439,10 +1539,9 @@ describe('EditorRoot', () => {
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
       request.markdown === pastedMarkdown
         ? pastedPreview.promise
-        : Promise.resolve({
-            features: {},
-            html: '' as SafePreviewHtml
-          })
+        : Promise.resolve(
+            createPreviewResponse(request, '' as SafePreviewHtml, {})
+          )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -1480,7 +1579,7 @@ describe('EditorRoot', () => {
     expect(visualEditor.querySelector('h1')).toBeNull();
     expect(visualEditor.querySelector('[onclick]')).toBeNull();
     expect(visualEditor.getAttribute('aria-busy')).toBe('true');
-    expect(visualEditor.getAttribute('contenteditable')).toBe('false');
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
     expect(
       visualEditor.classList.contains('easymde-markdown-theme-newsprint')
     ).toBe(true);
@@ -1496,13 +1595,18 @@ describe('EditorRoot', () => {
     );
 
     await act(async () => {
-      pastedPreview.resolve({
-        features: {},
-        html: [
-          '<h1>Themed heading</h1>',
-          '<ul><li>First item</li><li>Second item</li></ul>'
-        ].join('') as SafePreviewHtml
-      });
+      const [request] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+      if (!request) throw new Error('missing themed paste preview request');
+      pastedPreview.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<h1>Themed heading</h1>',
+            '<ul><li>First item</li><li>Second item</li></ul>'
+          ].join('') as SafePreviewHtml,
+          {}
+        )
+      );
       await pastedPreview.promise;
     });
 
@@ -1546,10 +1650,9 @@ describe('EditorRoot', () => {
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
       request.markdown === expectedMarkdown
         ? pastedPreview.promise
-        : Promise.resolve({
-            features: {},
-            html: '<p>Before</p>' as SafePreviewHtml
-          })
+        : Promise.resolve(
+            createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+          )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -1600,15 +1703,20 @@ describe('EditorRoot', () => {
     });
 
     await act(async () => {
-      pastedPreview.resolve({
-        features: {},
-        html: [
-          '<p>Before</p>',
-          '<h1>Pasted heading</h1>',
-          '<ul><li>First item</li><li>Second item</li></ul>',
-          '<p><strong>Pasted bold</strong></p>'
-        ].join('') as SafePreviewHtml
-      });
+      const [request] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+      if (!request) throw new Error('missing pasted preview request');
+      pastedPreview.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<p>Before</p>',
+            '<h1>Pasted heading</h1>',
+            '<ul><li>First item</li><li>Second item</li></ul>',
+            '<p><strong>Pasted bold</strong></p>'
+          ].join('') as SafePreviewHtml,
+          {}
+        )
+      );
       await pastedPreview.promise;
     });
 
@@ -1642,10 +1750,13 @@ describe('EditorRoot', () => {
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
       request.markdown === expectedMarkdown
         ? pastedPreview.promise
-        : Promise.resolve({
-            features: {},
-            html: '<p>Before middle after</p>' as SafePreviewHtml
-          })
+        : Promise.resolve(
+            createPreviewResponse(
+              request,
+              '<p>Before middle after</p>' as SafePreviewHtml,
+              {}
+            )
+          )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -1680,10 +1791,15 @@ describe('EditorRoot', () => {
     expect(props.submissionField.value).toBe(expectedMarkdown);
 
     await act(async () => {
-      pastedPreview.resolve({
-        features: {},
-        html: '<p>Before <strong>new</strong> after</p>' as SafePreviewHtml
-      });
+      const [request] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+      if (!request) throw new Error('missing middle paste preview request');
+      pastedPreview.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>new</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      );
       await pastedPreview.promise;
     });
     await waitFor(() =>
@@ -1726,31 +1842,36 @@ describe('EditorRoot', () => {
     const secondMarkdown = `${firstMarkdown}${secondPaste}`;
     vi.mocked(props.previewPort.render).mockImplementation((request) => {
       if (request.markdown === firstMarkdown) {
-        return Promise.resolve({
-          features: {},
-          html: [
-            '<p>Before</p>',
-            '<h1>Pasted heading</h1>',
-            '<p><strong>Pasted bold</strong></p>'
-          ].join('') as SafePreviewHtml
-        });
+        return Promise.resolve(
+          createPreviewResponse(
+            request,
+            [
+              '<p>Before</p>',
+              '<h1>Pasted heading</h1>',
+              '<p><strong>Pasted bold</strong></p>'
+            ].join('') as SafePreviewHtml,
+            {}
+          )
+        );
       }
       if (request.markdown === secondMarkdown) {
-        return Promise.resolve({
-          features: {},
-          html: [
-            '<p>Before</p>',
-            '<h1>Pasted heading</h1>',
-            '<p><strong>Pasted bold</strong></p>',
-            '<ul><li>First item</li><li>Second item</li></ul>',
-            '<p><code>inline</code></p>'
-          ].join('') as SafePreviewHtml
-        });
+        return Promise.resolve(
+          createPreviewResponse(
+            request,
+            [
+              '<p>Before</p>',
+              '<h1>Pasted heading</h1>',
+              '<p><strong>Pasted bold</strong></p>',
+              '<ul><li>First item</li><li>Second item</li></ul>',
+              '<p><code>inline</code></p>'
+            ].join('') as SafePreviewHtml,
+            {}
+          )
+        );
       }
-      return Promise.resolve({
-        features: {},
-        html: '<p>Before</p>' as SafePreviewHtml
-      });
+      return Promise.resolve(
+        createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+      );
     });
     const view = render(<EditorRoot {...props} />);
 
@@ -1829,10 +1950,11 @@ describe('EditorRoot', () => {
         html: '<p>Before</p>' as SafePreviewHtml
       }
     };
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -1888,10 +2010,9 @@ describe('EditorRoot', () => {
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
       request.markdown === expectedMarkdown
         ? pastedPreview.promise
-        : Promise.resolve({
-            features: {},
-            html: '<p>Before</p>' as SafePreviewHtml
-          })
+        : Promise.resolve(
+            createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+          )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -1927,10 +2048,15 @@ describe('EditorRoot', () => {
       .spyOn(window, 'getSelection')
       .mockReturnValue(null);
     await act(async () => {
-      pastedPreview.resolve({
-        features: {},
-        html: '<p>Before <strong>new</strong></p>' as SafePreviewHtml
-      });
+      const [request] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+      if (!request) throw new Error('missing unavailable-caret preview request');
+      pastedPreview.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>new</strong></p>' as SafePreviewHtml,
+          {}
+        )
+      );
       await pastedPreview.promise;
     });
     getSelection.mockRestore();
@@ -1961,18 +2087,20 @@ describe('EditorRoot', () => {
     let pastedPreviewRequests = 0;
     vi.mocked(props.previewPort.render).mockImplementation((request) => {
       if (request.markdown !== expectedMarkdown) {
-        return Promise.resolve({
-          features: {},
-          html: '<p>Before</p>' as SafePreviewHtml
-        });
+        return Promise.resolve(
+          createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+        );
       }
       pastedPreviewRequests += 1;
       return 1 === pastedPreviewRequests
         ? Promise.reject(new Error('synthetic-preview-failure'))
-        : Promise.resolve({
-            features: {},
-            html: '<p>Before <strong>new</strong></p>' as SafePreviewHtml
-          });
+        : Promise.resolve(
+            createPreviewResponse(
+              request,
+              '<p>Before <strong>new</strong></p>' as SafePreviewHtml,
+              {}
+            )
+          );
     });
     const view = render(<EditorRoot {...props} />);
 
@@ -2037,18 +2165,20 @@ describe('EditorRoot', () => {
     let pendingRequestCount = 0;
     vi.mocked(props.previewPort.render).mockImplementation((request) => {
       if (request.markdown !== expectedMarkdown) {
-        return Promise.resolve({
-          features: {},
-          html: '<p>Before</p>' as SafePreviewHtml
-        });
+        return Promise.resolve(
+          createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+        );
       }
       pendingRequestCount += 1;
       return 1 === pendingRequestCount
         ? pendingPreview.promise
-        : Promise.resolve({
-            features: {},
-            html: '<p>Before</p><h1>Pending</h1>' as SafePreviewHtml
-          });
+        : Promise.resolve(
+            createPreviewResponse(
+              request,
+              '<p>Before</p><h1>Pending</h1>' as SafePreviewHtml,
+              {}
+            )
+          );
     });
     const view = render(<EditorRoot {...props} />);
 
@@ -2079,7 +2209,7 @@ describe('EditorRoot', () => {
       }
     });
     expect(props.submissionField.value).toBe(expectedMarkdown);
-    expect(visualEditor.getAttribute('contenteditable')).toBe('false');
+    expect(visualEditor.getAttribute('contenteditable')).toBe('true');
     const lock = view.getByRole('button', { name: '锁定为只读' });
     expect(lock.hasAttribute('disabled')).toBe(false);
     fireEvent.click(lock);
@@ -2098,10 +2228,15 @@ describe('EditorRoot', () => {
     expect(lockedPreview?.getAttribute('spellcheck')).toBeNull();
 
     await act(async () => {
-      pendingPreview.resolve({
-        features: {},
-        html: '<h1>Stale pending response</h1>' as SafePreviewHtml
-      });
+      const [request] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+      if (!request) throw new Error('missing stale pending preview request');
+      pendingPreview.resolve(
+        createPreviewResponse(
+          request,
+          '<h1>Stale pending response</h1>' as SafePreviewHtml,
+          {}
+        )
+      );
       await pendingPreview.promise;
     });
     expect(view.queryByText('Stale pending response')).toBeNull();
@@ -2115,10 +2250,11 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Before';
     props.submissionField.defaultValue = 'Before';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>Before</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -2231,15 +2367,17 @@ describe('EditorRoot', () => {
     props.submissionField.value = 'Before';
     props.submissionField.defaultValue = 'Before';
     vi.mocked(props.previewPort.render).mockImplementation((request) =>
-      Promise.resolve({
-        features: {},
-        html:
+      Promise.resolve(
+        createPreviewResponse(
+          request,
           'Before **safe** dropped' === request.markdown
             ? '<p>Before <strong>safe</strong> dropped</p>' as SafePreviewHtml
             : 'Before **safe**' === request.markdown
               ? '<p>Before <strong>safe</strong></p>' as SafePreviewHtml
-              : '<p>Before</p>' as SafePreviewHtml
-      })
+              : '<p>Before</p>' as SafePreviewHtml,
+          {}
+        )
+      )
     );
     const view = render(<EditorRoot {...props} />);
 
@@ -2309,10 +2447,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Before **selected** after';
     props.submissionField.defaultValue = 'Before **selected** after';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -2368,10 +2511,15 @@ describe('EditorRoot', () => {
       const props = fixture();
       props.submissionField.value = 'Before **selected** after';
       props.submissionField.defaultValue = 'Before **selected** after';
-      vi.mocked(props.previewPort.render).mockResolvedValue({
-        features: {},
-        html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
-      });
+      vi.mocked(props.previewPort.render).mockImplementation((request) =>
+        Promise.resolve(
+          createPreviewResponse(
+            request,
+            '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+            {}
+          )
+        )
+      );
       const view = render(<EditorRoot {...props} />);
 
       fireEvent.click(
@@ -2420,10 +2568,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Before **selected** after';
     props.submissionField.defaultValue = 'Before **selected** after';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     let resolveImport: (result: RemoteImageImportResult) => void = () => undefined;
     vi.mocked(props.remoteImageImportPort.import).mockImplementation(() =>
       new Promise((resolve) => {
@@ -2506,13 +2659,15 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
 
-    expect(props.appearancePort.applyState).toHaveBeenCalledWith(
-      expect.objectContaining({ markdownTheme: 'newsprint' }),
-      false
-    );
-    expect(
-      view.queryByRole('textbox', { name: '可视化文章编辑器' })
-    ).toBeNull();
+    await waitFor(() => {
+      expect(props.appearancePort.applyState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdownTheme: 'newsprint' }),
+        false
+      );
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull();
+    });
     await waitFor(() => {
       expect(renderPreview.mock.calls.length).toBeGreaterThan(renderCount);
       expect(renderPreview).toHaveBeenLastCalledWith(
@@ -2742,8 +2897,12 @@ describe('EditorRoot', () => {
   it('keeps the Preview owner and paper alive when entering Preview mode', async () => {
     const firstPreview = deferred<PreviewResponse>();
     const props = fixture();
+    let firstPreviewRequest: PreviewRequest | null = null;
     vi.mocked(props.previewPort.render)
-      .mockImplementationOnce(() => firstPreview.promise);
+      .mockImplementationOnce((request) => {
+        firstPreviewRequest = request;
+        return firstPreview.promise;
+      });
     const view = render(<EditorRoot {...props} />);
 
     await waitFor(() =>
@@ -2766,10 +2925,14 @@ describe('EditorRoot', () => {
         .hasAttribute('disabled')
     ).toBe(true);
     await act(async () => {
-      firstPreview.resolve({
-        features: {},
-        html: '<p>Current Preview</p>' as SafePreviewHtml
-      });
+      if (!firstPreviewRequest) throw new Error('missing first preview request');
+      firstPreview.resolve(
+        createPreviewResponse(
+          firstPreviewRequest,
+          '<p>Current Preview</p>' as SafePreviewHtml,
+          {}
+        )
+      );
     });
     await waitFor(() => {
       expect(view.getByText('Current Preview')).not.toBeNull();
@@ -2865,16 +3028,21 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = source;
     props.submissionField.defaultValue = source;
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: { math: true, mermaid: true },
-      html: [
-        '<p>Editable paragraph</p>',
-        '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
-        '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>',
-        '<section class="footnotes-sep">References</section>',
-        '<section class="footnotes">Generated footnotes</section>'
-      ].join('') as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<p>Editable paragraph</p>',
+            '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
+            '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>',
+            '<section class="footnotes-sep">References</section>',
+            '<section class="footnotes">Generated footnotes</section>'
+          ].join('') as SafePreviewHtml,
+          { math: true, mermaid: true }
+        )
+      )
+    );
     vi.mocked(props.enhancementPort.enhance).mockImplementation(
       async (surface) => {
         const math = surface.querySelector<HTMLElement>('.easymde-math');
@@ -2933,10 +3101,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Original paragraph';
     props.submissionField.defaultValue = 'Original paragraph';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Original paragraph</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Original paragraph</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -2972,25 +3145,25 @@ describe('EditorRoot', () => {
         maxBytes: props.imageUpload.maxBytes
       })
     );
-    await waitFor(() =>
-      expect(
-        preparation.mock.calls.slice(preparationCallsBeforeEdit)
-          .some(([surface]) => surface === visualEditor)
-      ).toBe(true)
-    );
+    expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
     await waitFor(() =>
       expect(props.submissionField.value).toBe('Edited paragraph')
     );
   });
 
-  it('keeps WeChat preparation bound to the active visual Preview after a render refresh', async () => {
+  it('does not prepare WeChat during an active visual Preview edit', async () => {
     const props = fixture();
     props.submissionField.value = 'Original paragraph';
     props.submissionField.defaultValue = 'Original paragraph';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Original paragraph</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Original paragraph</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -3012,19 +3185,78 @@ describe('EditorRoot', () => {
     visualEditor.innerHTML = '<p>Rendered visual edit</p>';
     fireEvent.input(visualEditor);
 
-    await waitFor(() => expect(preparation).toHaveBeenCalled());
-    expect(preparation.mock.calls.at(-1)?.[0]).toBe(visualEditor);
+    expect(preparation).not.toHaveBeenCalled();
     view.unmount();
   });
 
-  it('coalesces WeChat preparation during rapid immersive visual edits', async () => {
+  it('cancels a queued WeChat layout preparation when visual editing starts', async () => {
+    const baseProps = fixture();
+    const markdown = Array.from(
+      { length: 200 },
+      (_, index) => `Paragraph ${index}`
+    ).join('\n');
+    const html = Array.from(
+      { length: 200 },
+      (_, index) => `<p>Paragraph ${index}</p>`
+    ).join('') as SafePreviewHtml;
+    const scheduled: Array<{ active: boolean; callback: () => void }> = [];
+    const props = {
+      ...baseProps,
+      immersiveEnvironment: {
+        ...baseProps.immersiveEnvironment,
+        schedule: (callback: () => void) => {
+          const task = { active: true, callback };
+          scheduled.push(task);
+          return () => {
+            task.active = false;
+          };
+        }
+      }
+    };
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(createPreviewResponse(request, html, {}))
+    );
+    const view = render(<EditorRoot {...props} />);
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const preparation = vi.mocked(prepare);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+
+    preparation.mockClear();
+    scheduled.length = 0;
+    act(() => props.triggerPreviewLayout());
+    fireEvent.click(
+      view.getByRole('button', { name: '解除锁定并编辑' })
+    );
+    act(() => {
+      scheduled.filter(({ active }) => active).forEach(({ callback }) => {
+        callback();
+      });
+    });
+    expect(preparation).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('does not schedule WeChat preparation during rapid immersive visual edits', async () => {
     const props = fixture();
     props.submissionField.value = 'Original paragraph';
     props.submissionField.defaultValue = 'Original paragraph';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Original paragraph</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Original paragraph</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -3058,8 +3290,7 @@ describe('EditorRoot', () => {
       act(() => vi.advanceTimersByTime(259));
       expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
       act(() => vi.advanceTimersByTime(1));
-      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit + 1);
-      expect(preparation.mock.calls.at(-1)?.[0]).toBe(visualEditor);
+      expect(preparation.mock.calls.length).toBe(preparationCallsBeforeEdit);
     } finally {
       vi.useRealTimers();
     }
@@ -3081,14 +3312,19 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = source;
     props.submissionField.defaultValue = source;
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: { math: true, mermaid: true },
-      html: [
-        '<p>Editable paragraph</p>',
-        '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
-        '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>'
-      ].join('') as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<p>Editable paragraph</p>',
+            '<div class="easymde-math easymde-math-block">$$x^2$$</div>',
+            '<pre><code class="language-mermaid">flowchart TD\nA--&gt;B</code></pre>'
+          ].join('') as SafePreviewHtml,
+          { math: true, mermaid: true }
+        )
+      )
+    );
     vi.mocked(props.enhancementPort.enhance).mockImplementation(
       async (surface) => {
         const math = surface.querySelector<HTMLElement>('.easymde-math');
@@ -3138,10 +3374,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Before **selected** after';
     props.submissionField.defaultValue = 'Before **selected** after';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <strong>selected</strong> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -3175,9 +3416,11 @@ describe('EditorRoot', () => {
     fireEvent.click(lockPreview);
 
     expect(editor?.state.selection.main).toEqual(selectionBeforeLock);
-    expect(
-      view.queryByRole('textbox', { name: '可视化文章编辑器' })
-    ).toBeNull();
+    await waitFor(() =>
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull()
+    );
 
     fireEvent.click(view.getByRole('button', { name: '编辑' }));
 
@@ -3243,10 +3486,15 @@ describe('EditorRoot', () => {
     const edited = 'Latest visual excerpt';
     props.submissionField.value = original;
     props.submissionField.defaultValue = original;
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: `<p>${original}</p>` as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p>${original}</p>` as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
@@ -3283,13 +3531,18 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = source;
     props.submissionField.defaultValue = source;
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: { math: true },
-      html: [
-        '<p>Editable paragraph</p>',
-        '<div class="easymde-math easymde-math-block">$$x^2$$</div>'
-      ].join('') as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          [
+            '<p>Editable paragraph</p>',
+            '<div class="easymde-math easymde-math-block">$$x^2$$</div>'
+          ].join('') as SafePreviewHtml,
+          { math: true }
+        )
+      )
+    );
     vi.mocked(props.enhancementPort.enhance).mockImplementation(
       async (surface) => {
         const math = surface.querySelector<HTMLElement>('.easymde-math');
@@ -3767,10 +4020,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Choose **this** text';
     props.submissionField.defaultValue = 'Choose **this** text';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '预览' }));
@@ -3833,10 +4091,11 @@ describe('EditorRoot', () => {
 
   it('flushes a pending visual edit before History can restore a revision', async () => {
     const props = fixture();
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>selected</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(request, '<p>selected</p>' as SafePreviewHtml, {})
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -5598,10 +5857,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Choose **this** text';
     props.submissionField.defaultValue = 'Choose **this** text';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -5647,10 +5911,15 @@ describe('EditorRoot', () => {
     const props = fixture();
     props.submissionField.value = 'Choose **this** text';
     props.submissionField.defaultValue = 'Choose **this** text';
-    vi.mocked(props.previewPort.render).mockResolvedValue({
-      features: {},
-      html: '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml
-    });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Choose <strong>this</strong> text</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(
@@ -6151,9 +6420,10 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
-  it('re-prepares WeChat after an immersive article theme change', async () => {
+  it('prepares WeChat after an immersive article theme change only once Preview is ready', async () => {
     const pendingPreview = deferred<PreviewResponse>();
     const props = fixture();
+    let pendingPreviewRequest: PreviewRequest | null = null;
     const view = render(<EditorRoot {...props} />);
     const prepare = props.wechatClipboard.prepare;
     if (!prepare) throw new Error('wechat preparation is unavailable');
@@ -6163,14 +6433,14 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
     fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
-    await waitFor(() => expect(preparation).toHaveBeenCalled());
     const callsBeforeThemeChange = preparation.mock.calls.length;
 
     // Keep the refreshed Preview unresolved until explicitly completed. The
     // old ordinary DOM must not be prepared while this request is pending.
-    vi.mocked(props.previewPort.render).mockImplementation(
-      () => pendingPreview.promise
-    );
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      pendingPreviewRequest = request;
+      return pendingPreview.promise;
+    });
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Article theme' }));
     fireEvent.click(view.getByRole('option', { name: 'Newsprint' }));
@@ -6180,10 +6450,14 @@ describe('EditorRoot', () => {
     });
     expect(preparation.mock.calls.length).toBe(callsBeforeThemeChange);
     await act(async () => {
-      pendingPreview.resolve({
-        features: {},
-        html: '<p>Theme Preview</p>' as SafePreviewHtml
-      });
+      if (!pendingPreviewRequest) throw new Error('missing theme preview request');
+      pendingPreview.resolve(
+        createPreviewResponse(
+          pendingPreviewRequest,
+          '<p>Theme Preview</p>' as SafePreviewHtml,
+          {}
+        )
+      );
     });
     await waitFor(() =>
       expect(preparation.mock.calls.length).toBeGreaterThan(
@@ -6196,9 +6470,10 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
-  it('re-prepares WeChat after an immersive Custom CSS save', async () => {
+  it('prepares WeChat after an immersive Custom CSS save only once Preview is ready', async () => {
     const pendingPreview = deferred<PreviewResponse>();
     const props = fixture();
+    let pendingPreviewRequest: PreviewRequest | null = null;
     const savedSnapshot = {
       customCss: [{
         articleThemeName: 'Writer Article',
@@ -6231,12 +6506,12 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
     fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
-    await waitFor(() => expect(preparation).toHaveBeenCalled());
     const callsBeforeSave = preparation.mock.calls.length;
 
-    vi.mocked(props.previewPort.render).mockImplementation(
-      () => pendingPreview.promise
-    );
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      pendingPreviewRequest = request;
+      return pendingPreview.promise;
+    });
     fireEvent.click(view.getByRole('button', { name: '主题' }));
     fireEvent.click(view.getByRole('button', { name: 'Custom CSS theme' }));
     fireEvent.change(view.getByRole('textbox', {
@@ -6256,10 +6531,14 @@ describe('EditorRoot', () => {
     });
     expect(preparation.mock.calls.length).toBe(callsBeforeSave);
     await act(async () => {
-      pendingPreview.resolve({
-        features: {},
-        html: '<p>Custom CSS Preview</p>' as SafePreviewHtml
-      });
+      if (!pendingPreviewRequest) throw new Error('missing custom CSS preview request');
+      pendingPreview.resolve(
+        createPreviewResponse(
+          pendingPreviewRequest,
+          '<p>Custom CSS Preview</p>' as SafePreviewHtml,
+          {}
+        )
+      );
     });
     await waitFor(() =>
       expect(preparation.mock.calls.length).toBeGreaterThan(callsBeforeSave)

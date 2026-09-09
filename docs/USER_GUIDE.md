@@ -24,11 +24,15 @@ prefixes and inline delimiters become their corresponding visual formatting.
 Pasting plain text containing Markdown inserts the complete Markdown at the
 current caret and refreshes the paper through the same server Preview renderer,
 so headings, lists, emphasis, links, code, tables, math, and Mermaid remain
-consistent with normal Preview output. Rapid typing is kept local and does not
-send one Preview request per keystroke; lock, view changes, autosave, publish,
-and other native operations first flush the pending visual input. A missing
-selection or failed Preview is reported explicitly and does not append content
-to the end or discard the canonical Markdown.
+consistent with normal Preview output. The existing rendered paper stays visible
+while the server response and local enhancements finish, then the enhanced
+result commits once without a raw or blank intermediate frame. Rapid typing is
+kept local and does not send one Preview request per keystroke; lock, view
+changes, autosave, publish, and other native operations first flush the pending
+visual input. A missing selection or failed Preview is reported explicitly and
+does not append content to the end or discard the canonical Markdown. Visual
+editing does not start WeChat background preparation; Copy to WeChat prepares
+the current ready Preview only when explicitly requested.
 Backspace, Delete, replacement, Cut, Undo, and Redo keep their edit attached to
 the selected visible text even when the document contains repeated text or
 hidden Markdown syntax. A local visual-edit synchronization problem is reported

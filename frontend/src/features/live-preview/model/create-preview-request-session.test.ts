@@ -30,6 +30,24 @@ function safeHtml(value: string): SafePreviewHtml {
   return value as SafePreviewHtml;
 }
 
+function previewResponse(markdown: string, html: string): PreviewResponse {
+  return {
+    html: safeHtml(html),
+    features: {},
+    editMap: {
+      version: 1,
+      coordinate: 'line',
+      signature: `signature:${markdown}`,
+      blocks: [{
+        id: 'b0',
+        startLine: 0,
+        endLine: Math.max(1, markdown.split(/\r\n|\r|\n/).length),
+        editable: true
+      }]
+    }
+  };
+}
+
 describe('createPreviewRequestSession', () => {
   it('debounces for 180ms and publishes only the latest result', async () => {
     vi.useFakeTimers();
@@ -43,8 +61,8 @@ describe('createPreviewRequestSession', () => {
     await vi.advanceTimersByTimeAsync(180);
     session.schedule(request('second'));
     await vi.advanceTimersByTimeAsync(180);
-    first.resolve({ html: safeHtml('<p>first</p>'), features: {} });
-    second.resolve({ html: safeHtml('<p>second</p>'), features: {} });
+    first.resolve(previewResponse('first', '<p>first</p>'));
+    second.resolve(previewResponse('second', '<p>second</p>'));
     await Promise.resolve();
 
     expect(render).toHaveBeenCalledTimes(2);
@@ -75,10 +93,9 @@ describe('createPreviewRequestSession', () => {
     const clearTimeoutSpy = vi
       .spyOn(globalThis, 'clearTimeout')
       .mockImplementation(() => undefined);
-    const render = vi.fn().mockResolvedValue({
-      html: safeHtml('<p>current</p>'),
-      features: {}
-    });
+    const render = vi.fn().mockResolvedValue(
+      previewResponse('current', '<p>current</p>')
+    );
     const onState = vi.fn();
     const session = createPreviewRequestSession({
       initialRevision: 0,
@@ -126,10 +143,9 @@ describe('createPreviewRequestSession', () => {
     const clearTimeoutSpy = vi
       .spyOn(globalThis, 'clearTimeout')
       .mockImplementation(() => undefined);
-    const render = vi.fn().mockResolvedValue({
-      html: safeHtml('<p>stale</p>'),
-      features: {}
-    });
+    const render = vi.fn().mockResolvedValue(
+      previewResponse('stale', '<p>stale</p>')
+    );
     const session = createPreviewRequestSession({
       initialRevision: 0,
       onState: vi.fn(),
@@ -178,7 +194,7 @@ describe('createPreviewRequestSession', () => {
     session.schedule(request('pending'), true);
     const signal = render.mock.calls[0]?.[1] as AbortSignal;
     session.destroy();
-    pending.resolve({ html: safeHtml('<p>late</p>'), features: {} });
+    pending.resolve(previewResponse('pending', '<p>late</p>'));
     await Promise.resolve();
 
     expect(signal.aborted).toBe(true);

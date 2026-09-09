@@ -1,9 +1,14 @@
 import { undo } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorSelection } from '@codemirror/state';
+import { language } from '@codemirror/language';
+import { markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 
-import { createCodeMirrorDocumentSession } from './code-mirror-document-session';
+import {
+  createCodeMirrorDocumentSession,
+  type DocumentSelection
+} from './code-mirror-document-session';
 
 function createFixture(value = 'alpha beta') {
   const container = document.createElement('div');
@@ -160,6 +165,322 @@ describe('createCodeMirrorDocumentSession', () => {
     session.destroy();
   });
 
+  it('uses a known local change without rescanning the current document', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const documentPrototype = Object.getPrototypeOf(view.state.doc) as {
+      toString: () => string;
+    };
+    const toStringSpy = vi.spyOn(documentPrototype, 'toString');
+    toStringSpy.mockClear();
+
+    (session.applyTextChange as (change: {
+      changes: Readonly<{ from: number; insert: string; to: number }>;
+      selection: DocumentSelection;
+      value: string;
+    }) => void)({
+      changes: { from: 6, insert: 'X ', to: 6 },
+      selection: { direction: 'none', end: 8, start: 8 },
+      value: 'alpha X beta'
+    });
+
+    expect(toStringSpy).toHaveBeenCalledTimes(1);
+    expect(session.getValue()).toBe('alpha X beta');
+    toStringSpy.mockRestore();
+    session.destroy();
+  });
+
+  it('pauses Markdown parsing before freezing the detached CodeMirror view', () => {
+    const { container, submissionField } = createFixture('# Heading');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const dispatch = vi.spyOn(view, 'dispatch');
+    const input = vi.fn();
+    submissionField.addEventListener('input', input);
+    const selection = session.getSelection();
+    session.applyTextChange({
+      selection,
+      value: '# Changed'
+    });
+    input.mockClear();
+    dispatch.mockClear();
+
+    (session as typeof session & {
+      setVisualEditingActive: (active: boolean) => void;
+    }).setVisualEditingActive(true);
+
+    expect(view.state.facet(language)).toBeNull();
+    expect(session.getValue()).toBe('# Changed');
+    expect(session.getSelection()).toEqual(selection);
+    expect(submissionField.value).toBe('# Changed');
+    expect(input).not.toHaveBeenCalled();
+    expect(session.canUndo()).toBe(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    (session as typeof session & {
+      setVisualEditingActive: (active: boolean) => void;
+    }).setVisualEditingActive(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('# Heading');
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(input).toHaveBeenCalledOnce();
+    input.mockClear();
+
+    (session as typeof session & {
+      setVisualEditingActive: (active: boolean) => void;
+    }).setVisualEditingActive(false);
+    expect(view.state.facet(language)).toBe(markdownLanguage);
+    expect(input).not.toHaveBeenCalled();
+    session.destroy();
+  });
+
+  it('publishes visual edits and history without dispatching the detached view', () => {
+    vi.useFakeTimers();
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const dispatch = vi.spyOn(view, 'dispatch');
+    const setState = vi.spyOn(view, 'setState');
+    const documentListener = vi.fn();
+    const selectionListener = vi.fn();
+    const input = vi.fn();
+    session.subscribe(documentListener);
+    session.subscribeSelection(selectionListener);
+    submissionField.addEventListener('input', input);
+
+    session.setVisualEditingActive(true);
+    dispatch.mockClear();
+    session.applyTextChange({
+      changes: { from: 0, insert: 'Edited', to: 8 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 6, start: 6 },
+      value: 'Edited'
+    });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(session.getValue()).toBe('Edited');
+    expect(session.getSnapshot().value).toBe('Edited');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 6,
+      start: 6
+    });
+    expect(submissionField.value).toBe('Original');
+    expect(documentListener).toHaveBeenCalledOnce();
+    expect(selectionListener).toHaveBeenCalledOnce();
+    expect(input).not.toHaveBeenCalled();
+
+    vi.runOnlyPendingTimers();
+    expect(submissionField.value).toBe('Edited');
+    expect(input).toHaveBeenCalledOnce();
+
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('Original');
+    expect(session.redo()).toBe(true);
+    expect(session.getValue()).toBe('Edited');
+    expect(dispatch).not.toHaveBeenCalled();
+
+    session.setVisualEditingActive(false);
+    expect(setState).toHaveBeenCalledOnce();
+    expect(view.state.doc.toString()).toBe('Edited');
+    expect(view.dom.isConnected).toBe(true);
+
+    session.destroy();
+    vi.useRealTimers();
+  });
+
+  it('flushes the latest coalesced visual bridge before submission', () => {
+    vi.useFakeTimers();
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const input = vi.fn();
+    submissionField.addEventListener('input', input);
+    session.setVisualEditingActive(true);
+
+    session.applyTextChange({
+      changes: { from: 0, insert: 'First', to: 8 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: 'First'
+    });
+    session.applyTextChange({
+      changes: { from: 0, insert: 'Final', to: 5 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: 'Final'
+    });
+
+    expect(submissionField.value).toBe('Original');
+    expect(input).not.toHaveBeenCalled();
+    session.flush();
+    expect(submissionField.value).toBe('Final');
+    expect(input).toHaveBeenCalledOnce();
+
+    vi.runOnlyPendingTimers();
+    expect(input).toHaveBeenCalledOnce();
+    session.destroy();
+    vi.useRealTimers();
+  });
+
+  it('cancels a deferred visual bridge when an external native value arrives', () => {
+    vi.useFakeTimers();
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    session.setVisualEditingActive(true);
+    session.applyTextChange({
+      changes: { from: 0, insert: 'Deferred', to: 8 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 8, start: 8 },
+      value: 'Deferred'
+    });
+
+    submissionField.value = 'External';
+    submissionField.setSelectionRange(3, 3, 'none');
+    submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+    vi.runOnlyPendingTimers();
+
+    expect(session.getValue()).toBe('External');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 3,
+      start: 3
+    });
+    expect(submissionField.value).toBe('External');
+    session.destroy();
+    vi.useRealTimers();
+  });
+
+  it('flushes a deferred visual bridge once before destroying the session', () => {
+    vi.useFakeTimers();
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const input = vi.fn();
+    submissionField.addEventListener('input', input);
+    session.setVisualEditingActive(true);
+    session.applyTextChange({
+      changes: { from: 0, insert: 'Final', to: 8 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: 'Final'
+    });
+
+    session.destroy();
+    expect(submissionField.value).toBe('Final');
+    expect(input).toHaveBeenCalledOnce();
+    vi.runOnlyPendingTimers();
+    expect(input).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('moves the hidden CodeMirror view DOM into a DocumentFragment during visual editing', () => {
+    const { container, submissionField } = createFixture('# Heading');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    session.setVisualEditingActive(true);
+
+    expect(view.dom.isConnected).toBe(false);
+    expect(view.dom.parentNode).toBeInstanceOf(DocumentFragment);
+    expect(container.querySelector('.cm-editor')).toBeNull();
+    expect(view.state.facet(language)).toBeNull();
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 9, start: 9 },
+      value: '# Changed'
+    });
+    expect(session.getValue()).toBe('# Changed');
+    expect(submissionField.value).toBe('# Changed');
+
+    session.destroy();
+  });
+
+  it('restores the CodeMirror view at its original parent and next sibling exactly once', () => {
+    const { container, submissionField } = createFixture('# Heading');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    const nextSibling = document.createElement('span');
+    container.append(nextSibling);
+    const dispatch = vi.spyOn(view, 'dispatch');
+    const setState = vi.spyOn(view, 'setState');
+    dispatch.mockClear();
+
+    session.setVisualEditingActive(true);
+    session.setVisualEditingActive(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    session.setVisualEditingActive(false);
+
+    expect(view.dom.parentNode).toBe(container);
+    expect(view.dom.nextSibling).toBe(nextSibling);
+    expect(view.state.facet(language)).toBe(markdownLanguage);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(setState).toHaveBeenCalledOnce();
+
+    session.setVisualEditingActive(false);
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    session.destroy();
+  });
+
+  it('cleans up a temporarily detached CodeMirror view on destroy', () => {
+    const { container, submissionField } = createFixture('# Heading');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    session.setVisualEditingActive(true);
+    session.destroy();
+    session.destroy();
+
+    expect(view.dom.isConnected).toBe(false);
+    expect(container.querySelector('.cm-editor')).toBeNull();
+    expect(() => session.setVisualEditingActive(false)).not.toThrow();
+  });
+
   it.each([
     {
       current: 'alpha beta',
@@ -304,6 +625,29 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(session.getValue()).toBe('Original');
     expect(submissionField.value).toBe('Original');
     expect(session.canUndo()).toBe(false);
+
+    session.destroy();
+  });
+
+  it('exposes CodeMirror redo history for windowed visual editing', () => {
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 6, start: 6 },
+      value: 'Edited'
+    });
+    expect(session.canRedo()).toBe(false);
+    expect(session.undo()).toBe(true);
+    expect(session.canRedo()).toBe(true);
+    expect(session.redo()).toBe(true);
+    expect(session.getValue()).toBe('Edited');
+    expect(submissionField.value).toBe('Edited');
+    expect(session.canRedo()).toBe(false);
 
     session.destroy();
   });

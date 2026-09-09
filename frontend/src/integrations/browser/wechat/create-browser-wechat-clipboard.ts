@@ -2718,6 +2718,10 @@ export function createBrowserWechatClipboard(
       }
 
       const pngConversionEnabled = true === options.pngConversionEnabled;
+      const requiresPreviewResolution = Boolean(
+        options.resolvePreview
+        && preview.querySelector('[data-easymde-preview-window-spacer]')
+      );
       if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
         return {
           code: 'wechat-png-clipboard-failed',
@@ -2741,7 +2745,17 @@ export function createBrowserWechatClipboard(
       }
 
       if (runtime.write && runtime.clipboardItem) {
-        const prepared = pngConversionEnabled
+        const readyPreview = requiresPreviewResolution
+          ? Promise.resolve().then(() => options.resolvePreview?.()).then(
+              (resolved) => {
+                if (!resolved || !previewReady(resolved)) {
+                  throw new Error('wechat-preview-unavailable');
+                }
+                return resolved;
+              }
+            )
+          : Promise.resolve(preview);
+        const prepared = pngConversionEnabled || requiresPreviewResolution
           ? null
           : preparedClipboardPayload(
             preview,
@@ -2775,34 +2789,45 @@ export function createBrowserWechatClipboard(
           ?? new AbortController().signal;
         const conversionRasterizationPort = options.visualRasterizationPort as WechatVisualRasterizationPort | undefined;
         const conversionImageUploadPort = options.imageUploadPort as ImageUploadPort | undefined;
-        const conversionSourceMarkup = preview.outerHTML;
-        const conversionIsCurrent = () => (
-          (!options.isCurrent || options.isCurrent())
-          && preview.outerHTML === conversionSourceMarkup
-        );
         let startConversion: () => void = () => undefined;
         const payload = pngConversionEnabled
           ? new Promise<SerializedClipboardPayload>((resolve, reject) => {
             startConversion = () => {
-              void serializeClipboardPayload(
-                preview,
-                runtime,
-                backgroundAssetCache,
-                null,
-                {
-                  isCurrent: conversionIsCurrent,
-                  imageUploadPort: conversionImageUploadPort as ImageUploadPort,
-                  maxBytes: options.maxBytes as number,
-                  postId: options.postId as number,
-                  rasterizationPort: conversionRasterizationPort as WechatVisualRasterizationPort,
-                  scale: pngScale(preview),
-                  signal: conversionSignal,
-                  state: conversionState
-                }
-              ).then(resolve, reject);
+              void readyPreview.then((resolvedPreview) => {
+                const sourceMarkup = resolvedPreview.outerHTML;
+                return serializeClipboardPayload(
+                  resolvedPreview,
+                  runtime,
+                  backgroundAssetCache,
+                  null,
+                  {
+                    isCurrent: () => (
+                      (!options.isCurrent || options.isCurrent())
+                      && resolvedPreview.outerHTML === sourceMarkup
+                    ),
+                    imageUploadPort: conversionImageUploadPort as ImageUploadPort,
+                    maxBytes: options.maxBytes as number,
+                    postId: options.postId as number,
+                    rasterizationPort: conversionRasterizationPort as WechatVisualRasterizationPort,
+                    scale: pngScale(resolvedPreview),
+                    signal: conversionSignal,
+                    state: conversionState
+                  }
+                );
+              }).then(resolve, reject);
             };
           })
-          : (prepared as PreparedClipboardPayload).promise;
+          : requiresPreviewResolution
+            ? readyPreview.then((resolvedPreview) =>
+                preparedClipboardPayload(
+                  resolvedPreview,
+                  runtime,
+                  backgroundAssetCache,
+                  preparedPayloads,
+                  nextPreparationSequence
+                ).promise
+              )
+            : (prepared as PreparedClipboardPayload).promise;
         const htmlBlob = pngConversionEnabled
           ? payload.then(({ html }) => new runtime.blob([html], { type: 'text/html' }))
           : nonPngPrepared?.payload
@@ -2824,6 +2849,9 @@ export function createBrowserWechatClipboard(
               sideEffects: 'none',
               status: 'failed'
             };
+          }
+          if (requiresPreviewResolution) {
+            return { code: 'wechat-copy-failed', status: 'failed' };
           }
           // ClipboardItem construction and write invocation still happen in
           // the originating click task. A payload prepared before that task
@@ -2928,6 +2956,10 @@ export function createBrowserWechatClipboard(
           sideEffects: 'none',
           status: 'failed'
         };
+      }
+
+      if (requiresPreviewResolution) {
+        return { code: 'wechat-copy-failed', status: 'failed' };
       }
 
       // Legacy execCommand must run synchronously in the originating click

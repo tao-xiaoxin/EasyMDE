@@ -1,5 +1,6 @@
 import {
   createElement,
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -38,6 +39,7 @@ import {
   extractOutline,
   getDocumentStats,
   tableMarkdown,
+  type ImmersiveOutlineItem,
   type ImmersiveViewMode
 } from '../immersive-editor';
 import { ImmersiveHeader } from './ImmersiveHeader';
@@ -543,6 +545,17 @@ export function ImmersiveEditor({
   }, [environment, historyOpen, onExit, publishSnapshot, tableOpen]);
 
   const { outline, stats } = useImmersiveDocumentDerivations(markdown);
+  const handleOutlineOpenChange = useCallback(
+    (open: boolean) => setOutlineOpen(open),
+    []
+  );
+  const handleOutlineSelect = useCallback(
+    (item: ImmersiveOutlineItem) => {
+      setActiveOutline(item.index);
+      documentSession.document.revealPosition(item.position);
+    },
+    [documentSession]
+  );
   const changeMode = (next: ImmersiveViewMode) => {
     onViewModeChange(next);
   };
@@ -675,11 +688,8 @@ export function ImmersiveEditor({
           items={outline}
           open={outlineOpen}
           strings={strings}
-          onOpenChange={setOutlineOpen}
-          onSelect={(item) => {
-            setActiveOutline(item.index);
-            documentSession.document.revealPosition(item.position);
-          }}
+          onOpenChange={handleOutlineOpenChange}
+          onSelect={handleOutlineSelect}
         />
       ) : null}
     </section>

@@ -3,6 +3,7 @@ import { createElement } from '@wordpress/element';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  PreviewEditMap,
   PreviewRequest,
   PreviewResponse,
   SafePreviewHtml
@@ -12,6 +13,7 @@ import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../ports/preview-scroll-port';
 import {
   PreviewSurfaceOwner,
+  type PreviewSurfaceRuntime,
   type PreviewSurfaceStatus
 } from './PreviewSurfaceOwner';
 
@@ -39,8 +41,81 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+type MaterializeScheduler = Readonly<{
+  pending: Array<ReturnType<typeof deferred<void>>>;
+  yield: ReturnType<typeof vi.fn<() => Promise<void>>>;
+}>;
+
 function safeHtml(value: string): SafePreviewHtml {
   return value as SafePreviewHtml;
+}
+
+async function flushAnimationFrames(count = 8): Promise<void> {
+  for (let index = 0; index < count; index += 1) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+}
+
+type PreviewResponseFixture = Omit<PreviewResponse, 'editMap'> &
+  Partial<Pick<PreviewResponse, 'editMap'>>;
+
+type PreviewResponseDeferred = Readonly<{
+  promise: Promise<PreviewResponse>;
+  reject: (reason?: unknown) => void;
+  resolve: (response: PreviewResponseFixture) => void;
+}>;
+
+function normalizePreviewResponse(
+  response: PreviewResponseFixture,
+  previewRequest: PreviewRequest
+): PreviewResponse {
+  return {
+    ...response,
+    editMap: response.editMap ?? {
+      version: 1,
+      coordinate: 'line',
+      signature: previewRequest.signature,
+      blocks: [{
+        id: 'b0',
+        startLine: 0,
+        endLine: Math.max(1, previewRequest.markdown.split(/\r\n|\r|\n/).length),
+        editable: true
+      }]
+    }
+  };
+}
+
+function deferredPreviewResponse(
+  previewRequest: PreviewRequest
+): PreviewResponseDeferred {
+  const pending = deferred<PreviewResponse>();
+  return {
+    promise: pending.promise,
+    reject: pending.reject,
+    resolve: (response) => pending.resolve(
+      normalizePreviewResponse(response, previewRequest)
+    )
+  };
+}
+
+function windowedFixture(count: number, signature: string) {
+  const blocks = Array.from({ length: count }, (_, index) => ({
+    id: `b${index}`,
+    startLine: index * 2,
+    endLine: index * 2 + 1,
+    editable: true as const
+  }));
+  return {
+    editMap: {
+      version: 1 as const,
+      coordinate: 'line' as const,
+      signature,
+      blocks
+    },
+    html: blocks
+      .map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
+      .join('') as SafePreviewHtml
+  };
 }
 
 function visualSourceMarkerCount(surface: HTMLElement): number {
@@ -62,16 +137,22 @@ function setup(options?: {
   emptyMode?: 'message' | 'paper';
   enhance?: PreviewEnhancementPort['enhance'];
   initialHtml?: string;
+  initialEditMap?: PreviewEditMap;
   initialSignature?: string;
   onDiagnostic?: (code: string) => void;
   onHtmlChange?: (html: SafePreviewHtml) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
   scrollPort?: PreviewScrollPort;
+  materializeScheduler?: MaterializeScheduler;
+  stagingScheduler?: Readonly<{ yield: () => Promise<void> }>;
+  windowed?: boolean;
 }) {
+  let windowed = options?.windowed;
   let session!: PreviewRequestSession;
-  const responses: Array<ReturnType<typeof deferred<PreviewResponse>>> = [];
-  const renderPreview = vi.fn(() => {
-    const response = deferred<PreviewResponse>();
+  let runtime!: PreviewSurfaceRuntime;
+  const responses: PreviewResponseDeferred[] = [];
+  const renderPreview = vi.fn((previewRequest: PreviewRequest) => {
+    const response = deferredPreviewResponse(previewRequest);
     responses.push(response);
     return response.promise;
   });
@@ -104,6 +185,9 @@ function setup(options?: {
         enhancementPort={enhancementPort}
         initial={{
           codeTheme: 'github',
+          ...(options?.initialEditMap
+            ? { editMap: options.initialEditMap }
+            : {}),
           features: {},
           html: safeHtml(options?.initialHtml ?? '<p>Initial preview</p>'),
           signature: options?.initialSignature ?? 'initial'
@@ -111,6 +195,15 @@ function setup(options?: {
         initialRevision={0}
         messages={messages}
         {...(emptyMode ? { emptyMode } : {})}
+        {...(options?.stagingScheduler
+          ? { stagingScheduler: options.stagingScheduler }
+          : {})}
+        {...(options?.materializeScheduler
+          ? { materializeScheduler: options.materializeScheduler }
+          : {})}
+        {...(undefined !== windowed
+          ? { windowed }
+          : {})}
         onDiagnostic={onDiagnostic}
         {...(options?.onHtmlChange
           ? { onHtmlChange: options.onHtmlChange }
@@ -119,6 +212,7 @@ function setup(options?: {
           ? { onStatusChange: options.onStatusChange }
           : {})}
         onReady={(readySession) => {
+          runtime = readySession;
           session = readySession.session;
         }}
         port={{ render: renderPreview }}
@@ -138,12 +232,18 @@ function setup(options?: {
     onDiagnostic,
     renderPreview,
     responses,
+    runtime,
     session,
     setEmptyMode: (emptyMode: 'message' | 'paper') =>
       result.rerender(owner(emptyMode)),
     canvas,
     surface,
-    ...result
+    ...result,
+    rerender: () => result.rerender(owner()),
+    setWindowed: (value: boolean) => {
+      windowed = value;
+      result.rerender(owner());
+    }
   };
 }
 
@@ -183,6 +283,376 @@ describe('PreviewSurfaceOwner', () => {
     expect(onHtmlChange).toHaveBeenCalledWith(
       safeHtml('<h2 data-enhanced="1">Server preview</h2>')
     );
+  });
+
+  it('commits only the bounded window on the first windowed ready state', async () => {
+    const fixture = windowedFixture(320, 'windowed');
+    const enhancement = deferred<void>();
+    const stagingYield = vi.fn(() => Promise.resolve());
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      () => enhancement.promise
+    );
+    const current = setup({
+      contentEditable: true,
+      enhance,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'windowed',
+      stagingScheduler: { yield: stagingYield },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledOnce();
+    expect(stagingYield).not.toHaveBeenCalled();
+    expect(enhance.mock.calls[0]?.[0].isConnected).toBe(false);
+    expect(enhance.mock.calls[0]?.[0].style.display).toBe('none');
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    await act(async () => flushAnimationFrames());
+
+    expect(replaceChildren).toHaveBeenCalledOnce();
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ).length).toBeLessThanOrEqual(160);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).toBeNull();
+    expect(current.surface.getAttribute('contenteditable')).toBe('true');
+
+    current.setWindowed(false);
+    await act(async () => flushAnimationFrames(8));
+    expect(replaceChildren).toHaveBeenCalledOnce();
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(320);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
+    replaceChildren.mockRestore();
+  });
+
+  it('materializes the complete Preview asynchronously for a same-activation consumer', async () => {
+    const fixture = windowedFixture(320, 'materialize-now');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'materialize-now',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+
+    let materialization!: Promise<boolean>;
+    act(() => {
+      materialization = current.runtime.materialize();
+    });
+    await act(async () => flushAnimationFrames(8));
+    await expect(materialization).resolves.toBe(true);
+
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(320);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
+  });
+
+  it('materializes a windowed Preview asynchronously in bounded batches and preserves the anchor', async () => {
+    const fixture = windowedFixture(320, 'materialize-async');
+    const pending: Array<ReturnType<typeof deferred<void>>> = [];
+    const materializeScheduler: MaterializeScheduler = {
+      pending,
+      yield: vi.fn(() => {
+        const next = deferred<void>();
+        pending.push(next);
+        return next.promise;
+      })
+    };
+    const current = setup({
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'materialize-async',
+      materializeScheduler,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+
+    const anchor = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!anchor) throw new Error('materialize anchor missing');
+    let anchorReads = 0;
+    vi.spyOn(anchor, 'getBoundingClientRect').mockImplementation(() => ({
+      bottom: 120,
+      height: 20,
+      left: 0,
+      right: 100,
+      top: 100 + (anchorReads++ > 0 ? 18 : 0),
+      width: 100,
+      x: 0,
+      y: 100
+    } as DOMRect));
+    current.canvas.scrollTop = 42;
+
+    let materialization!: Promise<boolean>;
+    act(() => {
+      materialization = current.runtime.materialize();
+    });
+
+    expect(materializeScheduler.yield).toHaveBeenCalledOnce();
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ).length).toBeLessThan(320);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+
+    for (let index = 0; index < 32; index += 1) {
+      const next = pending.shift();
+      if (next) {
+        await act(async () => {
+          next.resolve();
+          await next.promise;
+          await Promise.resolve();
+        });
+        continue;
+      }
+      await act(async () => { await Promise.resolve(); });
+      if (0 === pending.length) break;
+    }
+
+    await act(async () => {
+      while (pending.length > 0) {
+        const next = pending.shift();
+        if (!next) continue;
+        next.resolve();
+        await next.promise;
+        await Promise.resolve();
+      }
+    });
+
+    await expect(materialization).resolves.toBe(true);
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(320);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
+    expect(current.canvas.scrollTop).toBe(60);
+    expect(materializeScheduler.yield.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('cancels pending materialization on owner teardown without publishing completion', async () => {
+    const fixture = windowedFixture(320, 'materialize-teardown');
+    const pending: Array<ReturnType<typeof deferred<void>>> = [];
+    const materializeScheduler: MaterializeScheduler = {
+      pending,
+      yield: vi.fn(() => {
+        const next = deferred<void>();
+        pending.push(next);
+        return next.promise;
+      })
+    };
+    const current = setup({
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'materialize-teardown',
+      materializeScheduler,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+
+    let materialization!: Promise<boolean>;
+    act(() => {
+      materialization = current.runtime.materialize();
+    });
+    expect(materializeScheduler.yield).toHaveBeenCalledOnce();
+
+    current.unmount();
+    await expect(materialization).resolves.toBe(false);
+
+    const next = pending.shift();
+    next?.resolve();
+    await act(async () => {
+      await next?.promise;
+      await Promise.resolve();
+    });
+  });
+
+  it('restores the prior window when a newer Preview supersedes materialization', async () => {
+    const fixture = windowedFixture(320, 'materialize-stale');
+    const pending: Array<ReturnType<typeof deferred<void>>> = [];
+    const materializeScheduler: MaterializeScheduler = {
+      pending,
+      yield: vi.fn(() => {
+        const next = deferred<void>();
+        pending.push(next);
+        return next.promise;
+      })
+    };
+    const current = setup({
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'materialize-stale',
+      materializeScheduler,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+    const initialChildren = Array.from(current.surface.childNodes);
+
+    let materialization!: Promise<boolean>;
+    act(() => {
+      materialization = current.runtime.materialize();
+    });
+    const firstBatch = pending.shift();
+    if (!firstBatch) throw new Error('materialize first batch missing');
+
+    act(() => {
+      current.session.schedule(request('# New Preview', 'new-preview'), true);
+    });
+    await expect(materialization).resolves.toBe(false);
+    await act(async () => {
+      firstBatch.resolve();
+      await firstBatch.promise;
+      await Promise.resolve();
+    });
+    expect(Array.from(current.surface.childNodes)).toEqual(initialChildren);
+  });
+
+  it('builds a fresh window after lock refresh and a second unlock', async () => {
+    const initial = windowedFixture(320, 'first-window');
+    const refreshed = windowedFixture(321, 'second-window');
+    const current = setup({
+      initialEditMap: initial.editMap,
+      initialHtml: initial.html,
+      initialSignature: 'first-window',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+    current.setWindowed(false);
+    await act(async () => flushAnimationFrames(12));
+
+    act(() => {
+      current.session.schedule(request('# Refreshed', 'second-window'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: refreshed.editMap,
+        features: {},
+        html: refreshed.html
+      });
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(321);
+
+    current.setWindowed(true);
+    await act(async () => flushAnimationFrames());
+
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ).length).toBeLessThanOrEqual(160);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+  });
+
+  it('updates a ready Preview window when the canvas scrolls', async () => {
+    const fixture = windowedFixture(320, 'windowed-scroll');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'windowed-scroll',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 240
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+    await act(async () => flushAnimationFrames());
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).toBeNull();
+
+    window.getSelection()?.removeAllRanges();
+    current.canvas.scrollTop = 7_440;
+    current.canvas.dispatchEvent(new Event('scroll'));
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await Promise.resolve();
+    });
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).not.toBeNull();
+  });
+
+  it('fails closed when the server block marker does not match editMap', async () => {
+    const fixture = windowedFixture(2, 'invalid-map');
+    const diagnostics: string[] = [];
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html.replace('b1', 'wrong'),
+      initialSignature: 'invalid-map',
+      onDiagnostic: (code) => diagnostics.push(code),
+      windowed: true
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 8; index += 1) await Promise.resolve();
+    });
+
+    expect(diagnostics).toContain('preview-window-block-map-marker-mismatch');
+    expect(current.surface.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
   });
 
   it('offers an immersive ready empty paper without changing the ordinary empty message', () => {
@@ -336,6 +806,284 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.getAttribute('aria-busy')).toBe('false');
     expect(current.surface.easymdePreviewSignature).toBe('current-signature');
     expect(statuses.at(-1)).toBe('ready');
+  });
+
+  it('enhances a connected staging candidate without mutating the active sink before commit', async () => {
+    const enhancement = deferred<void>();
+    const initialHtml = '<p>Stable enhanced Preview</p>';
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      (candidate) => {
+        if (enhance.mock.calls.length === 1) return Promise.resolve();
+        expect(candidate.isConnected).toBe(true);
+        expect(candidate.getAttribute('aria-hidden')).toBe('true');
+        expect(candidate.hasAttribute('inert')).toBe(true);
+        expect(candidate.hasAttribute('tabindex')).toBe(false);
+        expect(candidate.hasAttribute('contenteditable')).toBe(false);
+        expect(candidate.hasAttribute('role')).toBe(false);
+        expect(candidate.hasAttribute('aria-live')).toBe(false);
+        expect(candidate.innerHTML).toBe('<p>Candidate Preview</p>');
+        return enhancement.promise;
+      }
+    );
+    const current = setup({ enhance, initialHtml });
+    const activeIdentity = current.surface;
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      current.session.schedule(request('# Candidate', 'candidate'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<p>Candidate Preview</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface).toBe(activeIdentity);
+    expect(current.surface.innerHTML).toBe(initialHtml);
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+
+    expect(current.surface).toBe(activeIdentity);
+    expect(current.surface.innerHTML).toBe('<p>Candidate Preview</p>');
+  });
+
+  it('does not let a parent rerender roll back a committed enhanced sink', async () => {
+    const current = setup({
+      initialHtml: '<p>Stable</p>',
+      enhance: async (candidate) => {
+        candidate.querySelector('p')?.setAttribute('data-enhanced', '1');
+      }
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const setInnerHTML = vi.spyOn(current.surface, 'innerHTML', 'set');
+    expect(current.surface.innerHTML).toBe('<p data-enhanced="1">Stable</p>');
+    current.rerender();
+
+    expect(current.surface.innerHTML).toBe('<p data-enhanced="1">Stable</p>');
+    expect(setInnerHTML).not.toHaveBeenCalled();
+    setInnerHTML.mockRestore();
+  });
+
+  it('preheats an inert connected staging surface and commits enhanced nodes without an active HTML setter', async () => {
+    const enhancement = deferred<void>();
+    let enhancementCalls = 0;
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>((candidate) => {
+      enhancementCalls += 1;
+      if (1 === enhancementCalls) return Promise.resolve();
+      expect(candidate.isConnected).toBe(true);
+      expect(candidate.getAttribute('aria-hidden')).toBe('true');
+      expect(candidate.hasAttribute('inert')).toBe(true);
+      expect(candidate.matches('[data-easymde-preview-html-sink]')).toBe(false);
+      return enhancement.promise;
+    });
+    const current = setup({
+      enhance,
+      initialHtml: '<p>Stable</p>'
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const setInnerHTML = vi.spyOn(current.surface, 'innerHTML', 'set');
+    act(() => {
+      current.session.schedule(request('candidate', 'candidate'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<p>Candidate</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.innerHTML).toBe('<p>Stable</p>');
+    expect(setInnerHTML).not.toHaveBeenCalled();
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+
+    expect(current.surface.innerHTML).toBe('<p>Candidate</p>');
+    expect(setInnerHTML).not.toHaveBeenCalled();
+    expect(current.surface.parentElement?.querySelectorAll(
+      '[data-easymde-preview-staging]'
+    )).toHaveLength(0);
+    setInnerHTML.mockRestore();
+  });
+
+  it('moves large server responses into connected staging in bounded batches before enhancement', async () => {
+    const firstYield = deferred<void>();
+    const stagingScheduler = {
+      yield: vi.fn(() => firstYield.promise)
+    };
+    const totalNodes = 130;
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(async (candidate) => {
+      expect(candidate.isConnected).toBe(true);
+      expect(candidate.childElementCount).toBe(totalNodes);
+    });
+    const current = setup({
+      enhance,
+      initialHtml: '<p>Stable</p>',
+      stagingScheduler
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    enhance.mockClear();
+
+    const activeChild = current.surface.firstChild;
+    const setInnerHTML = vi.spyOn(current.surface, 'innerHTML', 'set');
+    act(() => {
+      current.session.schedule(request('large', 'large'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml(Array.from(
+          { length: totalNodes },
+          (_, index) => `<p>node-${index}</p>`
+        ).join('')),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    const staging = current.canvas.querySelector<HTMLElement>(
+      '[data-easymde-preview-staging]'
+    );
+    expect(staging).not.toBeNull();
+    expect(staging?.isConnected).toBe(true);
+    expect(staging?.childElementCount).toBeGreaterThan(0);
+    expect(staging?.childElementCount).toBeLessThan(totalNodes);
+    expect(stagingScheduler.yield).toHaveBeenCalledOnce();
+    expect(enhance).not.toHaveBeenCalled();
+    expect(current.surface.firstChild).toBe(activeChild);
+    expect(setInnerHTML).not.toHaveBeenCalled();
+
+    await act(async () => {
+      firstYield.resolve();
+      await firstYield.promise;
+    });
+
+    expect(enhance).toHaveBeenCalledOnce();
+    expect(current.surface.querySelectorAll('p')).toHaveLength(totalNodes);
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(0);
+    expect(setInnerHTML).not.toHaveBeenCalled();
+    setInnerHTML.mockRestore();
+  });
+
+  it('aborts a staging batch before enhancement and removes its connected candidate', async () => {
+    const firstYield = deferred<void>();
+    let firstBatch = true;
+    const stagingScheduler = {
+      yield: vi.fn(() => {
+        if (firstBatch) {
+          firstBatch = false;
+          return firstYield.promise;
+        }
+        return Promise.resolve();
+      })
+    };
+    let enhancedText = '';
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(async (candidate) => {
+      enhancedText = candidate.textContent ?? '';
+    });
+    const current = setup({
+      enhance,
+      initialHtml: '<p>Stable</p>',
+      stagingScheduler
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    enhance.mockClear();
+
+    act(() => {
+      current.session.schedule(request('stale', 'stale'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml(Array.from(
+          { length: 130 },
+          (_, index) => `<p>stale-${index}</p>`
+        ).join('')),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+    expect(current.canvas.querySelector('[data-easymde-preview-staging]')).not.toBeNull();
+
+    act(() => {
+      current.session.schedule(request('current', 'current'), true);
+    });
+    await act(async () => {
+      current.responses[1]?.resolve({
+        html: safeHtml('<p>Current</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+    firstYield.resolve();
+    await act(async () => {
+      await firstYield.promise;
+      await Promise.resolve();
+    });
+
+    expect(enhance).toHaveBeenCalledOnce();
+    expect(enhancedText).toBe('Current');
+    expect(current.surface.textContent).toBe('Current');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(0);
+  });
+
+  it('synchronizes layout-dependent code-frame styles only after the candidate commits', async () => {
+    const syncSurfaces: HTMLElement[] = [];
+    const phases: string[] = [];
+    const current = setup({
+      initialHtml: '<p>Stable</p>',
+      enhance: async (candidate) => {
+        phases.push('enhance');
+        const code = candidate.ownerDocument.createElement('code');
+        code.className = 'hljs';
+        const pre = candidate.ownerDocument.createElement('pre');
+        pre.append(code);
+        candidate.append(pre);
+      }
+    });
+    vi.mocked(current.enhancementPort.syncCodeFrameBackgrounds).mockImplementation((surface: HTMLElement) => {
+      phases.push('sync');
+      syncSurfaces.push(surface);
+      expect(surface).toBe(current.surface);
+      expect(surface.isConnected).toBe(true);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    syncSurfaces.length = 0;
+    phases.length = 0;
+    act(() => {
+      current.session.schedule(request('code', 'code'), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<pre><code>code</code></pre>'),
+        features: { syntaxHighlight: true }
+      });
+      await Promise.resolve();
+    });
+    expect(phases).toEqual(['enhance', 'sync']);
+    expect(syncSurfaces).toEqual([current.surface]);
   });
 
   it('restores identical server HTML before enhancing a newer response', async () => {
@@ -640,7 +1388,7 @@ describe('PreviewSurfaceOwner', () => {
       });
       await Promise.resolve();
     });
-    expect(visualSourceMarkerCount(current.surface)).toBe(1);
+    expect(visualSourceMarkerCount(current.surface)).toBe(0);
     const firstIsCurrent = enhance.mock.calls[0]?.[2];
     expect(firstIsCurrent?.()).toBe(true);
     act(() => {
@@ -660,6 +1408,7 @@ describe('PreviewSurfaceOwner', () => {
 
     expect(current.surface.textContent).toBe('Second');
     expect(current.surface.easymdePreviewSignature).toBe('second');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(0);
   });
 
   it('captures and restores the canvas scroll position after replacing HTML', async () => {
@@ -720,6 +1469,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
     expect(current.surface.easymdePreviewSignature).toBe('');
     expect(current.onDiagnostic).toHaveBeenCalledWith('preview-enhancement-failed');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(0);
   });
 
   it('reports only sanitized current enhancement failures', async () => {
@@ -744,12 +1494,14 @@ describe('PreviewSurfaceOwner', () => {
       await Promise.resolve();
     });
     expect(current.onDiagnostic).not.toHaveBeenCalled();
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(1);
 
     await act(async () => {
       secondEnhancement.reject(new Error('preview-enhancement-runtime-unavailable'));
       await Promise.resolve();
     });
     expect(current.onDiagnostic).toHaveBeenCalledWith('preview-enhancement-runtime-unavailable');
+    expect(current.canvas.querySelectorAll('[data-easymde-preview-staging]')).toHaveLength(0);
   });
 
   it('does not report a late enhancement failure after teardown', async () => {

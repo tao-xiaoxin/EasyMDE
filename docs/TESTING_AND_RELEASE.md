@@ -224,7 +224,7 @@ The WeChat export implementation contract is owned by the [EasyMDE WeChat export
 
 The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
 
-The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change.
+The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.
@@ -412,6 +412,40 @@ change browser preference storage, survives same-page immersive exit/re-entry,
 and restores the Settings Center editing mode after both normal and CDP hard
 reloads. It loads no Legacy Focus assets and remains zero-write until the user
 invokes a legitimate WordPress mutation.
+
+The immersive visual Markdown regression coverage also exercises the unlocked
+Preview paper, completed block and inline syntax, bounded visual-input
+coalescing, explicit selection-loss failure without end-of-document appends,
+consecutive full Markdown pastes through the server Preview owner, one Preview
+request per paste, and zero Preview requests for ordinary visual keystrokes.
+The Chromium test `keeps immersive Markdown input responsive and parses
+consecutive full Markdown pastes` uses a CDP session alongside the headless
+browser to run 30 synthetic real input transactions, measure dispatch p95
+(`<= 50 ms`), reject any observed `longtask` over 50 ms, and validate finite
+before/after `TaskDuration`, `JSHeapUsedSize`, and `LayoutCount` metrics. The
+TaskDuration delta has a broad five-second bound to avoid making the test
+depend on host scheduling jitter; the p95 and longtask checks are the hard
+input-performance gates. The same test verifies lock/unlock transitions,
+canonical field synchronization, semantic rendered output, zero Preview
+requests during visual typing, one request per full Markdown paste, and the
+absence of page errors.
+The Chromium test `parses the exact full-capability fixture after immersive
+unlock at empty and prefixed document ends` reads the unchanged
+`docs/examples/markdown-full-capability-test.md` file directly, verifies the
+canonical field byte-for-byte for an empty document and an existing prefix,
+asserts one Preview request per paste, exact source preservation including the
+fixture's footnote syntax, and the rendered heading/table/code, Mermaid, math,
+and task-list semantics, then checks follow-up input, lock, mode changes, and
+immersive teardown without browser errors.
+The companion destructive-edit test uses the same tracked fixture for real
+Backspace, Delete, replacement, Cut, Undo, and Redo operations. It verifies the
+canonical field after every operation, keeps generated math and Mermaid nodes
+read-only and structurally stable, and confirms a responsive `390x844` Preview
+has no page-level horizontal overflow while tables and code retain local
+scrolling. It then locks the paper again without converting a local editing
+failure into a formal Preview failure. Private maintainer documents may be used
+only for local timing and digest-equivalence probes; their path, title, content,
+or screenshots must not enter tracked tests or public evidence.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

@@ -6,6 +6,7 @@ use EasyMDE\Content\MarkdownFeatureDetector;
 use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Theme\ThemeStateRepository;
+use RuntimeException;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Server;
@@ -16,7 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class PreviewController {
 
-	const MAX_MARKDOWN_BYTES = 1048576;
+	const MAX_MARKDOWN_BYTES     = 1048576;
+	const PREVIEW_FAILURE_CODE   = 'easymde_preview_failed';
+	const PREVIEW_FAILURE_STATUS = 500;
 
 	private $capabilities;
 	private $theme_state_repository;
@@ -90,11 +93,21 @@ final class PreviewController {
 		}
 
 		$markdown_theme = $this->theme_state_repository->sanitize_markdown_theme_id( $request->get_param( 'markdown_theme' ) );
+		try {
+			$preview = MarkdownRenderer::render_preview( $markdown, $markdown_theme );
+		} catch ( RuntimeException $exception ) {
+			return new WP_Error(
+				self::PREVIEW_FAILURE_CODE,
+				__( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
+				array( 'status' => self::PREVIEW_FAILURE_STATUS )
+			);
+		}
 
 		return rest_ensure_response(
 			array(
-				'html'     => MarkdownRenderer::render( $markdown, $markdown_theme ),
+				'html'     => $preview['html'],
 				'features' => $this->feature_detector->detect( $markdown ),
+				'editMap'  => $preview['editMap'],
 			)
 		);
 	}

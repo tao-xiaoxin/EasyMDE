@@ -1,5 +1,7 @@
 import {
   createElement,
+  useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -37,6 +39,7 @@ import {
   extractOutline,
   getDocumentStats,
   tableMarkdown,
+  type ImmersiveOutlineItem,
   type ImmersiveViewMode
 } from '../immersive-editor';
 import { ImmersiveHeader } from './ImmersiveHeader';
@@ -50,6 +53,20 @@ import type {
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
+
+export function useImmersiveDocumentDerivations(markdown: string) {
+  const deferredMarkdown = useDeferredValue(markdown);
+  const stats = useMemo(
+    () => getDocumentStats(deferredMarkdown),
+    [deferredMarkdown]
+  );
+  const outline = useMemo(
+    () => extractOutline(deferredMarkdown),
+    [deferredMarkdown]
+  );
+
+  return { outline, stats };
+}
 
 type Props = Readonly<{
   direction: 'ltr' | 'rtl';
@@ -527,8 +544,18 @@ export function ImmersiveEditor({
     return environment.subscribeKeydown(handleKeyDown);
   }, [environment, historyOpen, onExit, publishSnapshot, tableOpen]);
 
-  const stats = useMemo(() => getDocumentStats(markdown), [markdown]);
-  const outline = useMemo(() => extractOutline(markdown), [markdown]);
+  const { outline, stats } = useImmersiveDocumentDerivations(markdown);
+  const handleOutlineOpenChange = useCallback(
+    (open: boolean) => setOutlineOpen(open),
+    []
+  );
+  const handleOutlineSelect = useCallback(
+    (item: ImmersiveOutlineItem) => {
+      setActiveOutline(item.index);
+      documentSession.document.revealPosition(item.position);
+    },
+    [documentSession]
+  );
   const changeMode = (next: ImmersiveViewMode) => {
     onViewModeChange(next);
   };
@@ -661,11 +688,8 @@ export function ImmersiveEditor({
           items={outline}
           open={outlineOpen}
           strings={strings}
-          onOpenChange={setOutlineOpen}
-          onSelect={(item) => {
-            setActiveOutline(item.index);
-            documentSession.document.revealPosition(item.position);
-          }}
+          onOpenChange={handleOutlineOpenChange}
+          onSelect={handleOutlineSelect}
         />
       ) : null}
     </section>

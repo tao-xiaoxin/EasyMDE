@@ -2,6 +2,8 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
+  redo as redoCommand,
+  redoDepth,
   undo as undoCommand,
   undoDepth
 } from '@codemirror/commands';
@@ -27,9 +29,17 @@ export type DocumentSelection = Readonly<{
   start: number;
 }>;
 
+export type DocumentTextChangeRange = Readonly<{
+  from: number;
+  insert: string;
+  to: number;
+}>;
+
 export type DocumentTextChange = Readonly<{
+  deferNativeBridge?: boolean;
   selection: DocumentSelection;
   value: string;
+  changes?: DocumentTextChangeRange;
 }>;
 
 export type CodeMirrorDocumentSnapshot = Readonly<{
@@ -44,6 +54,7 @@ export type DocumentCursorPosition = Readonly<{
 
 export type CodeMirrorDocumentSession = Readonly<{
   applyTextChange: (change: DocumentTextChange) => void;
+  canRedo: () => boolean;
   canUndo: () => boolean;
   destroy: () => void;
   flush: () => void;
@@ -55,9 +66,11 @@ export type CodeMirrorDocumentSession = Readonly<{
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
   replaceSavedValue: (value: string) => void;
+  redo: () => boolean;
   revealPosition: (position: number) => void;
   subscribe: (listener: () => void) => () => void;
   subscribeSelection: (listener: () => void) => () => void;
+  setVisualEditingActive: (active: boolean) => void;
   syncFromSubmissionField: () => void;
   undo: () => boolean;
 }>;
@@ -109,6 +122,40 @@ function clampPosition(value: number, documentLength: number): number {
   return Math.max(0, Math.min(documentLength, value));
 }
 
+function localTextChange(
+  currentValue: string,
+  nextValue: string
+): Readonly<{ from: number; insert: string; to: number }> | null {
+  if (currentValue === nextValue) return null;
+
+  const currentLength = currentValue.length;
+  const nextLength = nextValue.length;
+  const commonLength = Math.min(currentLength, nextLength);
+  let prefixLength = 0;
+  while (
+    prefixLength < commonLength
+    && currentValue.charCodeAt(prefixLength) === nextValue.charCodeAt(prefixLength)
+  ) {
+    prefixLength += 1;
+  }
+
+  let suffixLength = 0;
+  while (
+    prefixLength + suffixLength < currentLength
+    && prefixLength + suffixLength < nextLength
+    && currentValue.charCodeAt(currentLength - suffixLength - 1)
+      === nextValue.charCodeAt(nextLength - suffixLength - 1)
+  ) {
+    suffixLength += 1;
+  }
+
+  return {
+    from: prefixLength,
+    insert: nextValue.slice(prefixLength, nextLength - suffixLength),
+    to: currentLength - suffixLength
+  };
+}
+
 function editorSelection(selection: DocumentSelection, documentLength: number) {
   const start = clampPosition(selection.start, documentLength);
   const end = clampPosition(selection.end, documentLength);
@@ -129,7 +176,11 @@ function nativeSelection(field: HTMLTextAreaElement): DocumentSelection {
 }
 
 function sessionSelection(view: EditorView): DocumentSelection {
-  const range = view.state.selection.main;
+  return stateSelection(view.state);
+}
+
+function stateSelection(state: EditorState): DocumentSelection {
+  const range = state.selection.main;
   const direction = range.empty
     ? 'none'
     : range.anchor > range.head
@@ -193,10 +244,25 @@ export function createCodeMirrorDocumentSession({
     }
   };
   const editability = new Compartment();
+  const markdownSyntax = new Compartment();
+  let visualEditingActive = false;
+  let activeVisualState: EditorState | null = null;
+  let visualEditingFragment: DocumentFragment | null = null;
+  let visualEditingParent: Node | null = null;
+  let visualEditingNextSibling: ChildNode | null = null;
+  let visualNativeBridgeTimer: number | null = null;
+  let pendingVisualNativeBridge: Readonly<{
+    emitInput: boolean;
+    selection: DocumentSelection;
+    value: string | null;
+  }> | null = null;
+  const markdownSyntaxExtensions = [
+    markdownLanguage,
+    syntaxHighlighting(markdownHighlightStyle)
+  ];
   const extensions = [
     history(),
-    markdownLanguage,
-    syntaxHighlighting(markdownHighlightStyle),
+    markdownSyntax.of(markdownSyntaxExtensions),
     EditorView.domEventHandlers({
       drop(event) {
         return hasImageFileTransfer(event.dataTransfer);
@@ -231,8 +297,11 @@ export function createCodeMirrorDocumentSession({
       }
 
       const selection = sessionSelection(update.view);
-      if (update.docChanged) {
-        submissionField.value = update.state.doc.toString();
+      const value = update.docChanged
+        ? update.state.doc.toString()
+        : null;
+      if (null !== value) {
+        submissionField.value = value;
       }
       submissionField.setSelectionRange(
         selection.start,
@@ -240,9 +309,14 @@ export function createCodeMirrorDocumentSession({
         selection.direction
       );
 
-      if (update.docChanged) {
-        submissionField.dispatchEvent(new Event('input', { bubbles: true }));
-        publishValue(update.state.doc.toString());
+      if (null !== value) {
+        syncingFromNative = true;
+        try {
+          submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+        } finally {
+          syncingFromNative = false;
+        }
+        publishValue(value);
       }
       if (update.selectionSet) {
         for (const listener of selectionListeners) listener();
@@ -257,14 +331,139 @@ export function createCodeMirrorDocumentSession({
       selection: editorSelection(initialSelection, initialValue.length)
     })
   });
+  const browserWindow = view.dom.ownerDocument.defaultView;
+  if (!browserWindow) {
+    view.destroy();
+    throw new Error('document-editor-window-unavailable');
+  }
+
+  const cancelVisualNativeBridge = (): void => {
+    if (null !== visualNativeBridgeTimer) {
+      browserWindow.clearTimeout(visualNativeBridgeTimer);
+      visualNativeBridgeTimer = null;
+    }
+    pendingVisualNativeBridge = null;
+  };
+  const flushVisualNativeBridge = (): void => {
+    if (null !== visualNativeBridgeTimer) {
+      browserWindow.clearTimeout(visualNativeBridgeTimer);
+      visualNativeBridgeTimer = null;
+    }
+    const pending = pendingVisualNativeBridge;
+    pendingVisualNativeBridge = null;
+    if (!pending || destroyed) return;
+    if (null !== pending.value) submissionField.value = pending.value;
+    submissionField.setSelectionRange(
+      pending.selection.start,
+      pending.selection.end,
+      pending.selection.direction
+    );
+    if (pending.emitInput && null !== pending.value) {
+      syncingFromNative = true;
+      try {
+        submissionField.dispatchEvent(new Event('input', { bubbles: true }));
+      } finally {
+        syncingFromNative = false;
+      }
+    }
+  };
+  const scheduleVisualNativeBridge = (
+    selection: DocumentSelection,
+    value: string | null,
+    emitInput: boolean
+  ): void => {
+    pendingVisualNativeBridge = {
+      emitInput: emitInput || Boolean(pendingVisualNativeBridge?.emitInput),
+      selection,
+      value: value ?? pendingVisualNativeBridge?.value ?? null
+    };
+    if (null !== visualNativeBridgeTimer) return;
+    visualNativeBridgeTimer = browserWindow.setTimeout(() => {
+      visualNativeBridgeTimer = null;
+      flushVisualNativeBridge();
+    }, 0);
+  };
+
+  const assertDetachedViewPlacement = (): void => {
+    const fragment = visualEditingFragment;
+    const parent = visualEditingParent;
+    if (!fragment || !parent) {
+      throw new Error('document-visual-editor-fragment-missing');
+    }
+    if (view.dom.parentNode !== fragment) {
+      throw new Error('document-visual-editor-fragment-changed');
+    }
+    if (
+      visualEditingNextSibling
+      && visualEditingNextSibling.parentNode !== parent
+    ) {
+      throw new Error('document-visual-editor-next-sibling-changed');
+    }
+  };
+
+  const restoreDetachedView = (): void => {
+    assertDetachedViewPlacement();
+    const parent = visualEditingParent;
+    if (!parent) {
+      throw new Error('document-visual-editor-parent-missing');
+    }
+    parent.insertBefore(view.dom, visualEditingNextSibling);
+    visualEditingFragment = null;
+    visualEditingParent = null;
+    visualEditingNextSibling = null;
+  };
+
+  const authoritativeState = (): EditorState =>
+    activeVisualState ?? view.state;
+  const publishVisualTransaction = (
+    transaction: Transaction,
+    emitNativeInput = true,
+    deferNativeBridge = false
+  ): void => {
+    const current = activeVisualState;
+    if (!current || transaction.startState !== current) {
+      throw new Error('document-visual-editor-transaction-stale');
+    }
+    activeVisualState = transaction.state;
+    const selection = stateSelection(transaction.state);
+    const value = transaction.docChanged
+      ? transaction.state.doc.toString()
+      : null;
+    if (null !== value) {
+      publishValue(value);
+    }
+    if (emitNativeInput) {
+      scheduleVisualNativeBridge(selection, value, null !== value);
+      if (!deferNativeBridge) flushVisualNativeBridge();
+    }
+    if (transaction.selection) {
+      for (const listener of selectionListeners) listener();
+    }
+  };
+  const dispatchAuthoritative = (
+    transaction: Transaction,
+    emitNativeInput = true
+  ): void => {
+    if (visualEditingActive) {
+      publishVisualTransaction(transaction, emitNativeInput);
+      return;
+    }
+    view.dispatch(transaction);
+  };
+
   const mutationObserver = new MutationObserver(() => {
     if (destroyed) {
       return;
     }
 
-    view.dispatch({
-      effects: editability.reconfigure(editabilityExtensions(submissionField))
-    });
+    const effects = editability.reconfigure(
+      editabilityExtensions(submissionField)
+    );
+    if (activeVisualState) {
+      dispatchAuthoritative(activeVisualState.update({ effects }));
+    } else {
+      view.dispatch({ effects });
+    }
   });
   mutationObserver.observe(submissionField, {
     attributeFilter: ['disabled', 'readonly'],
@@ -272,14 +471,16 @@ export function createCodeMirrorDocumentSession({
   });
 
   const syncFromNative = () => {
-    if (destroyed) {
+    if (destroyed || syncingFromNative) {
       return;
     }
+    if (activeVisualState) cancelVisualNativeBridge();
 
     const value = submissionField.value;
     const selection = nativeSelection(submissionField);
-    const currentValue = view.state.doc.toString();
-    const currentSelection = sessionSelection(view);
+    const state = authoritativeState();
+    const currentValue = state.doc.toString();
+    const currentSelection = stateSelection(state);
     const valueChanged = value !== currentValue;
     const selectionChanged =
       selection.start !== currentSelection.start
@@ -302,8 +503,12 @@ export function createCodeMirrorDocumentSession({
           ? { changes: { from: 0, to: currentValue.length, insert: value } }
           : {})
       };
-      view.dispatch(transaction);
-      if (valueChanged) {
+      if (visualEditingActive) {
+        dispatchAuthoritative(state.update(transaction), false);
+      } else {
+        view.dispatch(transaction);
+      }
+      if (valueChanged && !visualEditingActive) {
         publishValue(value);
       }
     } finally {
@@ -314,39 +519,82 @@ export function createCodeMirrorDocumentSession({
   submissionField.addEventListener('input', syncFromNative);
 
   return {
-    applyTextChange({ selection, value }: DocumentTextChange) {
+    applyTextChange({
+      changes,
+      deferNativeBridge = false,
+      selection,
+      value
+    }: DocumentTextChange) {
       if (destroyed) {
         return;
       }
-      const currentValue = view.state.doc.toString();
-      const valueChanged = value !== currentValue;
-      view.dispatch({
+      const state = authoritativeState();
+      let valueChanged = false;
+      let resolvedChanges: DocumentTextChangeRange | null = null;
+      if (changes) {
+        const { from, insert, to } = changes;
+        if (
+          !Number.isInteger(from)
+          || !Number.isInteger(to)
+          || from < 0
+          || to < from
+          || to > state.doc.length
+        ) {
+          throw new Error('document-text-change-range-invalid');
+        }
+        const expectedLength =
+          state.doc.length - (to - from) + insert.length;
+        if (value.length !== expectedLength) {
+          throw new Error('document-text-change-value-length-mismatch');
+        }
+        valueChanged =
+          to - from !== insert.length
+          || state.doc.sliceString(from, to) !== insert;
+        resolvedChanges = valueChanged ? changes : null;
+      } else {
+        const currentValue = state.doc.toString();
+        valueChanged = value !== currentValue;
+        if (valueChanged) {
+          resolvedChanges = localTextChange(currentValue, value);
+        }
+      }
+      const transactionSpec = {
         annotations: [
           Transaction.addToHistory.of(valueChanged),
           Transaction.userEvent.of('input')
         ],
-        ...(valueChanged
-          ? {
-              changes: {
-                from: 0,
-                to: view.state.doc.length,
-                insert: value
-              }
-            }
-          : {}),
+        ...(resolvedChanges ? { changes: resolvedChanges } : {}),
         selection: editorSelection(selection, value.length)
-      });
+      };
+      if (activeVisualState) {
+        publishVisualTransaction(
+          activeVisualState.update(transactionSpec),
+          true,
+          deferNativeBridge
+        );
+      } else {
+        view.dispatch(transactionSpec);
+      }
     },
-    canUndo: () => !destroyed && undoDepth(view.state) > 0,
+    canUndo: () => !destroyed && undoDepth(authoritativeState()) > 0,
+    canRedo: () => !destroyed && redoDepth(authoritativeState()) > 0,
     destroy() {
       if (destroyed) {
         return;
       }
+      flushVisualNativeBridge();
       destroyed = true;
+      cancelVisualNativeBridge();
+      visualEditingActive = false;
+      activeVisualState = null;
       listeners.clear();
       selectionListeners.clear();
       mutationObserver.disconnect();
       submissionField.removeEventListener('input', syncFromNative);
+      visualEditingFragment?.replaceChildren();
+      visualEditingFragment = null;
+      visualEditingParent = null;
+      visualEditingNextSibling = null;
       view.destroy();
     },
     flush() {
@@ -354,8 +602,10 @@ export function createCodeMirrorDocumentSession({
         return;
       }
 
-      const selection = sessionSelection(view);
-      submissionField.value = view.state.doc.toString();
+      flushVisualNativeBridge();
+      const state = authoritativeState();
+      const selection = stateSelection(state);
+      submissionField.value = state.doc.toString();
       submissionField.setSelectionRange(
         selection.start,
         selection.end,
@@ -363,14 +613,15 @@ export function createCodeMirrorDocumentSession({
       );
     },
     focus() {
-      if (!destroyed) {
+      if (!destroyed && !activeVisualState) {
         view.focus();
       }
     },
     getCursorPosition() {
-      const selection = sessionSelection(view);
+      const state = authoritativeState();
+      const selection = stateSelection(state);
       const offset = 'backward' === selection.direction ? selection.start : selection.end;
-      const line = view.state.doc.lineAt(offset);
+      const line = state.doc.lineAt(offset);
       return {
         column: offset - line.from + 1,
         line: line.number
@@ -378,9 +629,9 @@ export function createCodeMirrorDocumentSession({
     },
     getInputElement: () => view.contentDOM,
     getScrollElement: () => view.scrollDOM,
-    getSelection: () => sessionSelection(view),
+    getSelection: () => stateSelection(authoritativeState()),
     getSnapshot: () => snapshot,
-    getValue: () => view.state.doc.toString(),
+    getValue: () => authoritativeState().doc.toString(),
     replaceSavedValue(value: string) {
       if (destroyed || value === savedValue) return;
       savedValue = value;
@@ -389,12 +640,20 @@ export function createCodeMirrorDocumentSession({
     },
     revealPosition(position: number) {
       if (destroyed) return;
-      const bounded = clampPosition(position, view.state.doc.length);
-      view.dispatch({
-        effects: EditorView.scrollIntoView(bounded, { y: 'center' }),
-        selection: EditorSelection.cursor(bounded)
-      });
-      view.focus();
+      const state = authoritativeState();
+      const bounded = clampPosition(position, state.doc.length);
+      if (activeVisualState) {
+        dispatchAuthoritative(state.update({
+          effects: EditorView.scrollIntoView(bounded, { y: 'center' }),
+          selection: EditorSelection.cursor(bounded)
+        }));
+      } else {
+        view.dispatch({
+          effects: EditorView.scrollIntoView(bounded, { y: 'center' }),
+          selection: EditorSelection.cursor(bounded)
+        });
+        view.focus();
+      }
     },
     subscribe(listener: () => void) {
       if (destroyed) {
@@ -408,11 +667,66 @@ export function createCodeMirrorDocumentSession({
       selectionListeners.add(listener);
       return () => selectionListeners.delete(listener);
     },
+    setVisualEditingActive(active: boolean) {
+      if (destroyed || active === visualEditingActive) {
+        return;
+      }
+      if (active) {
+        if (activeVisualState) {
+          throw new Error('document-visual-editor-state-already-active');
+        }
+        const parent = view.dom.parentNode;
+        if (!parent) {
+          throw new Error('document-visual-editor-parent-missing');
+        }
+        view.dispatch({
+          effects: markdownSyntax.reconfigure([])
+        });
+        const nextSibling = view.dom.nextSibling;
+        const fragment = view.dom.ownerDocument.createDocumentFragment();
+        fragment.append(view.dom);
+        visualEditingParent = parent;
+        visualEditingNextSibling = nextSibling;
+        visualEditingFragment = fragment;
+        activeVisualState = view.state;
+        visualEditingActive = true;
+        return;
+      }
+
+      if (!visualEditingFragment || !activeVisualState) {
+        throw new Error('document-visual-editor-fragment-missing');
+      }
+      flushVisualNativeBridge();
+      assertDetachedViewPlacement();
+      const restoredState = activeVisualState.update({
+        effects: markdownSyntax.reconfigure(markdownSyntaxExtensions)
+      }).state;
+      view.setState(restoredState);
+      restoreDetachedView();
+      activeVisualState = null;
+      visualEditingActive = false;
+    },
     syncFromSubmissionField: syncFromNative,
+    redo() {
+      if (destroyed) return false;
+      const state = authoritativeState();
+      const changed = redoCommand({
+        dispatch: (transaction: Transaction) =>
+          dispatchAuthoritative(transaction),
+        state
+      });
+      if (changed && !visualEditingActive) view.focus();
+      return changed;
+    },
     undo() {
       if (destroyed) return false;
-      const changed = undoCommand(view);
-      if (changed) view.focus();
+      const state = authoritativeState();
+      const changed = undoCommand({
+        dispatch: (transaction: Transaction) =>
+          dispatchAuthoritative(transaction),
+        state
+      });
+      if (changed && !visualEditingActive) view.focus();
       return changed;
     }
   };

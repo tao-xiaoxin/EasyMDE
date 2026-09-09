@@ -18,6 +18,32 @@ The EasyMDE editor shows Markdown source on the left and a live preview on the r
 
 The preview uses the EasyMDE REST preview endpoint, which renders through the same server-side Markdown renderer used for saves. Loading, empty, and failure states remain visible; EasyMDE does not replace a failed formal Preview with a browser Markdown renderer.
 
+In immersive **Preview** mode, choose **解除锁定并编辑** to edit the rendered
+paper directly. Completed Markdown syntax remains available while typing: block
+prefixes and inline delimiters become their corresponding visual formatting.
+Pasting plain text containing Markdown inserts the complete Markdown at the
+current caret and refreshes the paper through the same server Preview renderer,
+so headings, lists, emphasis, links, code, tables, math, and Mermaid remain
+consistent with normal Preview output. The existing rendered paper stays visible
+while the server response and local enhancements finish, then the enhanced
+result commits once without a raw or blank intermediate frame. Rapid typing is
+kept local and does not send one Preview request per keystroke; lock, view
+changes, autosave, publish, and other native operations first flush the pending
+visual input. A missing selection or failed Preview is reported explicitly and
+does not append content to the end or discard the canonical Markdown. Visual
+editing does not start WeChat background preparation; Copy to WeChat prepares
+the current ready Preview only when explicitly requested.
+Backspace, Delete, replacement, Cut, Undo, and Redo keep their edit attached to
+the selected visible text even when the document contains repeated text or
+hidden Markdown syntax. A local visual-edit synchronization problem is reported
+as an editor problem and does not change a successful server Preview into the
+Preview failure state. Rendered formulas, diagrams, generated contents, and
+footnotes remain read-only while surrounding article text is edited.
+After a pasted document is accepted by Preview at the start or end of the
+Markdown source, EasyMDE restores the caret to the corresponding safe visual
+edge while preserving the exact canonical Markdown, including invisible line
+endings and syntax normalized by the rendered paper.
+
 Saving and publishing still use WordPress. EasyMDE mirrors the Markdown source into hidden post fields and, during a valid WordPress save, stores Markdown in `_easymde_markdown`, marks the post with `_easymde_enabled = 1`, and writes rendered compatibility HTML to `post_content`. Opening an ordinary existing post without saving does not create EasyMDE metadata, rewrite content, or create a revision.
 
 The current development default enables autosave every 30 seconds. Autosave
@@ -34,6 +60,9 @@ It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
 normal or hard refresh restores the Settings Center mode. The immersive
 Outline preference is separate and remains browser-persisted.
+On narrow mobile screens, an open Outline becomes a compact full-height rail so
+the Preview paper keeps the remaining width; wide tables and code blocks scroll
+inside their own content area instead of widening the page.
 
 ## Toolbar And Shortcuts
 

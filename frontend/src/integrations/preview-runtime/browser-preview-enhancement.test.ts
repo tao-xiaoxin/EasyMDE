@@ -87,10 +87,17 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
     expect(enhance).toHaveBeenCalledTimes(2);
-    expect(enhance).toHaveBeenLastCalledWith(surface, {
-      features: { codeBlocks: true, syntaxHighlight: true },
-      strings: { renderingFailed: 'Rendering failed.' }
-    });
+    expect(enhance).toHaveBeenLastCalledWith(
+      surface,
+      {
+        features: { codeBlocks: true, syntaxHighlight: true },
+        strings: { renderingFailed: 'Rendering failed.' }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
+    );
 
     await port.enhance(
       surface,
@@ -930,7 +937,11 @@ describe('createBrowserPreviewEnhancementPort', () => {
         assetErrors: { mermaid: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid' },
         features: { mermaid: false },
         strings: { renderingFailed: 'Rendering failed.' }
-      }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
     );
   });
 
@@ -960,7 +971,11 @@ describe('createBrowserPreviewEnhancementPort', () => {
       {
         features: { syntaxHighlight: true, mermaid: false },
         strings: { renderingFailed: 'Rendering failed.' }
-      }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
     );
   });
 

@@ -1,16 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type {
+  PreviewEditMap,
+  PreviewEditMapBlock
+} from '../../contracts/ports/preview-request';
+
 import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
+  applyVisualMarkdownEditIntent,
+  createVisualMarkdownSourceIntervalMap,
+  createVisualMarkdownDirectSourceIntervalMap,
+  createVisualMarkdownSourceRangeFromPreviewEditMap,
+  createVisualMarkdownWindowChange,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdown,
+  serializeVisualMarkdownBlockFragment,
+  visualSelectionSourceRangeForBlocks,
   visualSelectionSourceRange
 } from './visual-markdown';
 
@@ -30,7 +43,41 @@ function placeCaret(element: Node, offset: number): void {
   selection?.addRange(range);
 }
 
+function previewEditMap(
+  blocks: ReadonlyArray<PreviewEditMapBlock>
+): PreviewEditMap {
+  return {
+    blocks,
+    coordinate: 'line',
+    signature: 'test-signature',
+    version: 1
+  };
+}
+
+function previewBlock(
+  id: string,
+  startLine: number,
+  endLine: number,
+  editable = true
+): PreviewEditMapBlock {
+  return { editable, endLine, id, startLine };
+}
+
 describe('visual Markdown editing', () => {
+  it('maps a canonical source directly without cloning or diffing the visual surface', () => {
+    const map = createVisualMarkdownDirectSourceIntervalMap(
+      'Before **Visible**\r\n\r\nTail'
+    );
+
+    expect(map.source).toBe('Before **Visible**\n\nTail');
+    expect(map.hiddenSourceRanges).toEqual([]);
+    expect(map.resolve(map.source.indexOf('Visible'))).toBe(
+      'Before **Visible**\r\n\r\nTail'.indexOf('Visible')
+    );
+    expect(map.resolve(map.source.length)).toBe(
+      'Before **Visible**\r\n\r\nTail'.length
+    );
+  });
   it('serializes the supported server HTML back to Markdown without theme markup', () => {
     const surface = editor(`
       <h1 id="heading">Heading</h1>
@@ -71,6 +118,174 @@ A--&gt;B</code></pre>
         '```'
       ].join('\n')
     );
+  });
+
+  it('fails closed when the visual surface contains an incomplete Preview window', () => {
+    const surface = editor(
+      '<p>Visible block</p><div data-easymde-preview-window-spacer="1"></div>'
+    );
+
+    expect(() => serializeVisualMarkdown(surface)).toThrow(
+      'visual-editor-window-incomplete'
+    );
+  });
+
+  it('maps a contiguous editable Preview block range to raw CRLF source offsets', () => {
+    const source = 'First\r\n\r\nSecond\r\nLast';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 3, 4)
+    ]);
+
+    expect(
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        source,
+        map,
+        { end: 3, start: 1 }
+      )
+    ).toEqual({
+      end: source.length,
+      start: 'First\r\n\r\n'.length
+    });
+  });
+
+  it('ignores a zero-length generated block outside the selected editable run', () => {
+    const source = 'Generated\r\n\r\nEditable\r\nTail';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 0, false),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 3, 4)
+    ]);
+
+    expect(
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        source,
+        map,
+        { end: 3, start: 1 }
+      )
+    ).toEqual({
+      end: source.length,
+      start: 'Generated\r\n\r\n'.length
+    });
+  });
+
+  it.each([
+    {
+      name: 'selected range is empty',
+      map: previewEditMap([previewBlock('b0', 0, 1)]),
+      range: { end: 0, start: 0 }
+    },
+    {
+      name: 'selected range exceeds the map',
+      map: previewEditMap([previewBlock('b0', 0, 1)]),
+      range: { end: 2, start: 0 }
+    },
+    {
+      name: 'line range exceeds the source',
+      map: previewEditMap([previewBlock('b0', 0, 4)]),
+      range: { end: 1, start: 0 }
+    },
+    {
+      name: 'selected block is generated',
+      map: previewEditMap([previewBlock('b0', 0, 0, false)]),
+      range: { end: 1, start: 0 }
+    },
+    {
+      name: 'selected blocks overlap',
+      map: previewEditMap([
+        previewBlock('b0', 0, 2),
+        previewBlock('b1', 1, 3)
+      ]),
+      range: { end: 2, start: 0 }
+    },
+    {
+      name: 'selected blocks are out of order',
+      map: previewEditMap([
+        previewBlock('b0', 2, 3),
+        previewBlock('b1', 0, 1)
+      ]),
+      range: { end: 2, start: 0 }
+    }
+  ])('rejects $name while mapping Preview source ranges', ({ map, range }) => {
+    expect(() =>
+      createVisualMarkdownSourceRangeFromPreviewEditMap(
+        'First\n\nSecond',
+        map,
+        range
+      )
+    ).toThrow('visual-editor-window-source-range-invalid');
+  });
+
+  it('serializes only the selected editable Block fragment', () => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b0">Before</p>'
+      + '<p data-easymde-visual-block-id="b1">Middle <strong>bold</strong></p>'
+      + '<p data-easymde-visual-block-id="b2">After</p>'
+    );
+    const middle = surface.children[1];
+    if (!(middle instanceof HTMLElement)) {
+      throw new Error('visual-window-middle-block-missing');
+    }
+
+    expect(serializeVisualMarkdownBlockFragment([middle])).toBe(
+      'Middle **bold**'
+    );
+  });
+
+  it('merges one edited Block fragment without changing CRLF content outside it', () => {
+    const source = 'Before\r\n\r\nMiddle **bold**\r\n\r\nAfter';
+    const map = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 3),
+      previewBlock('b2', 4, 5)
+    ]);
+
+    expect(
+      createVisualMarkdownWindowChange(
+        source,
+        map,
+        { end: 2, start: 1 },
+        'Middle **bold**',
+        'Middle **bolder**'
+      )
+    ).toEqual({
+      changes: {
+        from: 'Before\r\n\r\n'.length,
+        insert: 'Middle **bolder**\r\n',
+        to: 'Before\r\n\r\nMiddle **bold**\r\n'.length
+      },
+      sourceRange: {
+        end: 'Before\r\n\r\nMiddle **bold**\r\n'.length,
+        start: 'Before\r\n\r\n'.length
+      },
+      value: 'Before\r\n\r\nMiddle **bolder**\r\n\r\nAfter'
+    });
+  });
+
+  it('maps a backward selection inside a Block fragment to its source slice', () => {
+    const surface = editor(
+      '<p data-easymde-visual-block-id="b1">Middle <strong>bold</strong></p>'
+    );
+    const block = surface.firstElementChild;
+    const text = block?.querySelector('strong')?.firstChild;
+    if (!(block instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-window-selection-fixture-invalid');
+    }
+    const selection = window.getSelection();
+    selection?.setBaseAndExtent(text, 4, text, 0);
+
+    expect(
+      visualSelectionSourceRangeForBlocks(
+        [block],
+        'Middle **bold**\r\n',
+        'Middle **bold**'
+      )
+    ).toEqual({
+      direction: 'backward',
+      end: 'Middle **bold'.length,
+      start: 'Middle **'.length
+    });
   });
 
   it('round-trips static Crimson task markers through the visual editor', () => {
@@ -239,6 +454,54 @@ A--&gt;B</code></pre>
     expect(() =>
       assertVisualMarkdownReadOnlySnapshot(surface, snapshot)
     ).toThrow('visual-editor-read-only-region-mutated');
+  });
+
+  it('allows responsive layout to add or remove an empty root style attribute', () => {
+    const surface = editor(`
+      <div
+        class="easymde-math easymde-math-block"
+        data-easymde-rendered="1"
+        data-easymde-visual-markdown-source="$$x^2$$"
+      ><span class="katex">rendered math</span></div>
+    `);
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+    const math = snapshot[0]?.node;
+    if (!math) throw new Error('missing protected test region');
+
+    math.setAttribute('style', '');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+
+    math.setAttribute('style', '  \t\n');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+
+    math.removeAttribute('style');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).not.toThrow();
+  });
+
+  it('rejects non-empty root style and other root attribute mutations', () => {
+    const surface = editor(`
+      <div
+        class="easymde-math easymde-math-block"
+        data-easymde-rendered="1"
+        data-easymde-visual-markdown-source="$$x^2$$"
+      ><span class="katex">rendered math</span></div>
+    `);
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+    const math = snapshot[0]?.node;
+    if (!math) throw new Error('missing protected test region');
+
+    math.setAttribute('style', 'display: block');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).toThrow(
+      'visual-editor-read-only-region-mutated'
+    );
+
+    math.removeAttribute('style');
+    math.setAttribute('data-easymde-probe', '1');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).toThrow(
+      'visual-editor-read-only-region-mutated'
+    );
   });
 
   it('rejects deletion, replacement and mutation of generated read-only regions', () => {
@@ -415,6 +678,53 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('Use **bold**');
   });
 
+  it('accepts valid emphasis content containing underscores', () => {
+    const strongSurface = editor('<p>Use __bold_value__</p>');
+    const strongText = strongSurface.querySelector('p')?.firstChild;
+    if (!(strongText instanceof Text)) throw new Error('visual-inline-underscore-strong-text-missing');
+    placeCaret(strongText, strongText.length);
+    expect(applyVisualInlineShortcut(strongSurface)).toBe(true);
+    expect(strongSurface.querySelector('strong')?.textContent).toBe('bold_value');
+    expect(serializeVisualMarkdown(strongSurface)).toBe('Use **bold\\_value**');
+
+    const emSurface = editor('<p>Use *italic_value*</p>');
+    const emText = emSurface.querySelector('p')?.firstChild;
+    if (!(emText instanceof Text)) throw new Error('visual-inline-underscore-em-text-missing');
+    placeCaret(emText, emText.length);
+    expect(applyVisualInlineShortcut(emSurface)).toBe(true);
+    expect(emSurface.querySelector('em')?.textContent).toBe('italic_value');
+    expect(serializeVisualMarkdown(emSurface)).toBe('Use *italic\\_value*');
+  });
+
+  it.each([
+    'Use **bold**x',
+    'Use **bold',
+    'Use **bold*',
+    'Use __bold_',
+    'Use ~~deleted~~x',
+    'Use `code`x',
+    'Use [link](https://example.test)x'
+  ])('leaves incomplete or boundary-delimited inline Markdown unchanged: %s', (value) => {
+    const surface = editor(`<p>${value}</p>`);
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-inline-negative-text-missing');
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(false);
+    expect(surface.querySelector('strong, em, del, code, a')).toBeNull();
+    expect(surface.textContent).toBe(value);
+  });
+
+  it('retains the existing shortcut marker class on converted inline elements', () => {
+    const surface = editor('<p>Use **bold**</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-marker-text-missing');
+    placeCaret(text, text.length);
+
+    expect(applyVisualInlineShortcut(surface)).toBe(true);
+    expect(surface.querySelector('strong.markdown-inline-applied')).not.toBeNull();
+  });
+
   it('applies reference heading toolbar commands to the visual document', () => {
     const surface = editor('<p>Toolbar heading</p>');
     const text = surface.querySelector('p')?.firstChild as Text;
@@ -515,7 +825,7 @@ A--&gt;B</code></pre>
     ).toThrow('visual-editor-markdown-merge-failed');
   });
 
-  it('rejects an edit when hidden Markdown makes its source target ambiguous', () => {
+  it('maps a visible edit even when hidden Markdown repeats the same text', () => {
     const source = [
       'foo',
       '',
@@ -524,10 +834,197 @@ A--&gt;B</code></pre>
       'foo'
     ].join('\n');
 
-    expect(() =>
+    expect(
       mergeVisualMarkdownChange(source, 'foo\n\nfoo', 'foo\n\nbar')
-    ).toThrow('visual-editor-markdown-merge-ambiguous');
+    ).toBe('foo\n\n[//]: # (foo)\n\nbar');
     expect(source).toBe('foo\n\n[//]: # (foo)\n\nfoo');
+  });
+
+  it('deletes the visible duplicate without scanning hidden Markdown text globally', () => {
+    const source = [
+      'foo',
+      '',
+      '[//]: # (foo)',
+      '',
+      'foo'
+    ].join('\n');
+
+    expect(
+      mergeVisualMarkdownChange(source, 'foo\n\nfoo', 'foo\n\n')
+    ).toBe('foo\n\n[//]: # (foo)\n\n');
+  });
+
+  it('keeps a visible repeated block edit attached to its mapped source range', () => {
+    const source = [
+      'Before',
+      '',
+      'repeat',
+      '',
+      'repeat',
+      '',
+      'After'
+    ].join('\n');
+    const baseline = source;
+    const edited = [
+      'Before',
+      '',
+      'repeat',
+      '',
+      '',
+      'After'
+    ].join('\n');
+
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      [
+        'Before',
+        '',
+        'repeat',
+        '',
+        '',
+        'After'
+      ].join('\n')
+    );
+  });
+
+  it('maps source offsets inside formatting without consuming a hidden trailing line ending', () => {
+    const source = 'Before **Formatted**\n';
+    const visual = 'Before **Formatted**';
+    const map = createVisualMarkdownSourceIntervalMap(source, visual);
+    const start = visual.indexOf('Formatted');
+
+    expect(map.resolve(start)).toBe(source.indexOf('Formatted'));
+    expect(map.resolve(start + 'Formatted'.length)).toBe(
+      source.indexOf('Formatted') + 'Formatted'.length
+    );
+    expect(map.resolve(visual.length)).toBe(source.length - 1);
+  });
+
+  it('maps visible text around hidden references and generated math/Mermaid syntax', () => {
+    const source = [
+      'Before **Visible**',
+      '',
+      '[ref]: https://example.test',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      'A-->B',
+      '```',
+      '',
+      '$$',
+      'x^2',
+      '$$',
+      '',
+      'Tail'
+    ].join('\n');
+    const visual = [
+      'Before **Visible**',
+      '',
+      '```mermaid',
+      'flowchart TD',
+      'A-->B',
+      '```',
+      '',
+      '$$',
+      'x^2',
+      '$$',
+      '',
+      'Tail'
+    ].join('\n');
+    const map = createVisualMarkdownSourceIntervalMap(source, visual);
+    const start = visual.indexOf('Tail');
+
+    expect(map.resolve(start)).toBe(source.indexOf('Tail'));
+    expect(map.resolve(start + 'Tail'.length)).toBe(
+      source.indexOf('Tail') + 'Tail'.length
+    );
+  });
+
+  it.each([
+    {
+      data: '!',
+      inputType: 'insertText' as const,
+      sourceSelection: { direction: 'none' as const, end: 6, start: 6 },
+      visualSelection: { end: 6, start: 6 },
+      expected: {
+        visualSelection: { end: 7, start: 7 },
+        sourceMarkdown: 'Before! after',
+        visualMarkdown: 'Before! after',
+        selection: { direction: 'none' as const, end: 7, start: 7 }
+      }
+    },
+    {
+      data: null,
+      inputType: 'deleteContentBackward' as const,
+      sourceSelection: { direction: 'none' as const, end: 7, start: 6 },
+      visualSelection: { end: 7, start: 6 },
+      expected: {
+        visualSelection: { end: 6, start: 6 },
+        sourceMarkdown: 'Beforeafter',
+        visualMarkdown: 'Beforeafter',
+        selection: { direction: 'none' as const, end: 6, start: 6 }
+      }
+    },
+    {
+      data: 'new',
+      inputType: 'insertReplacementText' as const,
+      sourceSelection: { direction: 'forward' as const, end: 12, start: 7 },
+      visualSelection: { end: 12, start: 7 },
+      expected: {
+        visualSelection: { end: 10, start: 10 },
+        sourceMarkdown: 'Before new',
+        visualMarkdown: 'Before new',
+        selection: { direction: 'none' as const, end: 10, start: 10 }
+      }
+    },
+    {
+      data: null,
+      inputType: 'deleteByCut' as const,
+      sourceSelection: { direction: 'forward' as const, end: 12, start: 6 },
+      visualSelection: { end: 12, start: 6 },
+      expected: {
+        visualSelection: { end: 6, start: 6 },
+        sourceMarkdown: 'Before',
+        visualMarkdown: 'Before',
+        selection: { direction: 'none' as const, end: 6, start: 6 }
+      }
+    }
+  ])(
+    'applies a safe $inputType intent to source and visual Markdown once',
+    ({ data, expected, inputType, sourceSelection, visualSelection }) => {
+      expect(
+        applyVisualMarkdownEditIntent(
+          'Before after',
+          'Before after',
+          sourceSelection,
+          visualSelection,
+          inputType,
+          data
+        )
+      ).toEqual(expected);
+    }
+  );
+
+  it('rejects history and paste input intents from the direct editor path', () => {
+    expect(
+      applyVisualMarkdownEditIntent(
+        'Before',
+        'Before',
+        { end: 6, start: 6 },
+        { end: 6, start: 6 },
+        'historyUndo',
+        null
+      )
+    ).toBeNull();
+    expect(
+      applyVisualMarkdownEditIntent(
+        'Before',
+        'Before',
+        { end: 6, start: 6 },
+        { end: 6, start: 6 },
+        'insertFromPaste',
+        'pasted'
+      )
+    ).toBeNull();
   });
 
   it('maps a visual selection back to the canonical Markdown range', () => {
@@ -560,6 +1057,91 @@ A--&gt;B</code></pre>
         '# Heading\n\nBody'
       )
     ).toEqual({ direction: 'none', end: 0, start: 0 });
+  });
+
+  it('maps an unchanged root-end selection directly to the canonical source end', () => {
+    const surface = editor('<p>One</p><h1>Two</h1>');
+    const source = 'One\n\n# Two';
+    placeCaret(surface, surface.childNodes.length);
+
+    expect(
+      visualSelectionSourceRange(surface, source, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it('keeps a changed root-end selection mapped to the new source position', () => {
+    const surface = editor('<p>Before changed</p>');
+    const source = 'Before';
+    const baselineVisual = 'Before';
+    const currentVisual = 'Before changed';
+    placeCaret(surface, surface.childNodes.length);
+
+    const selection = visualSelectionSourceRange(
+      surface,
+      source,
+      baselineVisual,
+      currentVisual
+    );
+    expect(selection.direction).toBe('none');
+    expect(selection.end).toBeGreaterThan(source.length);
+    expect(selection.start).toBe(selection.end);
+  });
+
+  it('keeps consecutive paste root-end targets within each canonical source length', () => {
+    const firstSource = 'Before\n\n# Heading\n\n**Bold**';
+    const firstSurface = editor(
+      '<p>Before</p><h1>Heading</h1><p><strong>Bold</strong></p>'
+    );
+    placeCaret(firstSurface, firstSurface.childNodes.length);
+    expect(
+      visualSelectionSourceRange(
+        firstSurface,
+        firstSource,
+        firstSource,
+        firstSource
+      ).end
+    ).toBe(firstSource.length);
+
+    const secondSource = `${firstSource}\n\n- One\n- Two\n\n\`inline\``;
+    const secondSurface = editor([
+      '<p>Before</p>',
+      '<h1>Heading</h1>',
+      '<p><strong>Bold</strong></p>',
+      '<ul><li>One</li><li>Two</li></ul>',
+      '<p><code>inline</code></p>'
+    ].join(''));
+    placeCaret(secondSurface, secondSurface.childNodes.length);
+    expect(
+      visualSelectionSourceRange(
+        secondSurface,
+        secondSource,
+        secondSource,
+        secondSource
+      ).end
+    ).toBe(secondSource.length);
+  });
+
+  it('fails explicitly when a changed visual selection is unavailable', () => {
+    const surface = editor('<p>Changed visual text</p>');
+    const getSelection = vi
+      .spyOn(window, 'getSelection')
+      .mockReturnValue(null);
+
+    try {
+      expect(() =>
+        visualSelectionSourceRange(
+          surface,
+          'Original canonical text',
+          'Original canonical text'
+        )
+      ).toThrow('visual-editor-selection-unavailable');
+    } finally {
+      getSelection.mockRestore();
+    }
   });
 
   it.each([
@@ -634,6 +1216,206 @@ A--&gt;B</code></pre>
     caret.insertData(1, '!');
 
     expect(serializeVisualMarkdown(surface)).toBe('**Bold**!');
+  });
+
+  it('restores the exact source-end caret across a multi-block pasted Markdown Preview', () => {
+    const surface = editor([
+      '<p>Typed three</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<ul><li>First item</li><li>Second item</li></ul>',
+      '<p><code>inline</code></p>'
+    ].join(''));
+    const source = serializeVisualMarkdown(surface);
+
+    expect(source).toBe([
+      'Typed three',
+      '',
+      '# Pasted heading',
+      '',
+      '**Pasted bold**',
+      '',
+      '- First item',
+      '- Second item',
+      '',
+      '`inline`'
+    ].join('\n'));
+
+    placeVisualCaretFromSourceOffset(
+      surface,
+      source,
+      source,
+      source.length
+    );
+
+    expect(
+      visualSelectionSourceRange(surface, source, source)
+    ).toEqual({
+      direction: 'none',
+      end: source.length,
+      start: source.length
+    });
+  });
+
+  it.each([
+    '\n',
+    '\r\n',
+    '\n\n',
+    '\r\n\n\r\n'
+  ])(
+    'maps a canonical document-end caret across trailing line endings (%j)',
+    (trailingLineEndings) => {
+      const surface = editor('<p>Markdown content</p><div class="footnotes">Generated</div>');
+      const acceptedVisualMarkdown = 'Markdown content';
+      const source = `${acceptedVisualMarkdown}${trailingLineEndings}`;
+      protectVisualMarkdownReadOnlyRegions(surface);
+
+      placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+      expect(
+        visualSelectionSourceRange(
+          surface,
+          source,
+          acceptedVisualMarkdown,
+          acceptedVisualMarkdown,
+          { acceptedPasteDocumentBoundary: 'end' }
+        )
+      ).toEqual({
+        direction: 'none',
+        end: source.length,
+        start: source.length
+      });
+      expect(window.getSelection()?.anchorNode?.parentElement?.tagName).toBe(
+        'P'
+      );
+    }
+  );
+
+  it('maps an accepted paste transaction at canonical offset zero to the first editable boundary', () => {
+    const surface = editor(
+      '<div class="easymde-toc">Generated outline</div><p>Markdown content</p>'
+    );
+    protectVisualMarkdownReadOnlyRegions(surface);
+    placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'start');
+
+    expect(
+      visualSelectionSourceRange(
+        surface,
+        'Markdown content',
+        'Markdown content',
+        'Markdown content',
+        { acceptedPasteDocumentBoundary: 'start' }
+      )
+    ).toEqual({ direction: 'none', end: 0, start: 0 });
+    expect(window.getSelection()?.anchorNode?.textContent).toBe(
+      'Markdown content'
+    );
+  });
+
+  it.each([' ', '\u00a0'])(
+    'does not treat a non-line-ending suffix as a document-end mapping (%j)',
+    (suffix) => {
+      const surface = editor('<p>Markdown content</p>');
+      const source = `Markdown content${suffix}\n`;
+
+      expect(() =>
+        placeVisualCaretFromSourceOffset(
+          surface,
+          source,
+          'Markdown content',
+          source.length
+        )
+      ).toThrow('visual-editor-selection-map-failed');
+    }
+  );
+
+  it('restores source-end carets after consecutive paste Preview replacements', () => {
+    const generatedTail = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `<section class="footnotes-sep">References ${index}</section><section class="footnotes"><p>Generated note ${index}</p></section>`
+    ).join('');
+    const firstVisual = [
+      'Before',
+      '',
+      '# Pasted heading',
+      '',
+      '**Pasted bold**'
+    ].join('\n');
+    const firstSource = firstVisual;
+    const firstSurface = editor(`${[
+      '<p>Before</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<section class="footnotes-sep">References</section>',
+      '<section class="footnotes"><p>Generated note</p></section>',
+      generatedTail
+    ].join('')}\n`);
+    protectVisualMarkdownReadOnlyRegions(firstSurface);
+
+    expect(serializeVisualMarkdown(firstSurface)).toBe(firstVisual);
+    placeVisualCaretFromSourceOffset(
+      firstSurface,
+      firstSource,
+      firstVisual,
+      firstSource.length
+    );
+    expect(
+      visualSelectionSourceRange(firstSurface, firstSource, firstVisual)
+    ).toEqual({
+      direction: 'none',
+      end: firstSource.length,
+      start: firstSource.length
+    });
+    const firstCaret = window.getSelection()?.anchorNode;
+    expect(firstCaret).toBeInstanceOf(Text);
+    expect(firstCaret?.parentElement?.tagName).toBe('P');
+    expect(firstCaret?.previousSibling).toBe(
+      firstSurface.querySelector('strong')
+    );
+    expect(firstCaret?.textContent).toBe('\u200b');
+
+    const secondVisual = [
+      firstVisual,
+      '',
+      '- First item',
+      '- Second item',
+      '',
+      '`inline`'
+    ].join('\n');
+    const secondSource = secondVisual;
+    const secondSurface = editor(`${[
+      '<p>Before</p>',
+      '<h1>Pasted heading</h1>',
+      '<p><strong>Pasted bold</strong></p>',
+      '<ul><li>First item</li><li>Second item</li></ul>',
+      '<p><code>inline</code></p>',
+      '<section class="footnotes-sep">References</section>',
+      '<section class="footnotes"><p>Generated note</p></section>',
+      generatedTail
+    ].join('')}\n`);
+    protectVisualMarkdownReadOnlyRegions(secondSurface);
+    expect(serializeVisualMarkdown(secondSurface)).toBe(secondVisual);
+    placeVisualCaretFromSourceOffset(
+      secondSurface,
+      secondSource,
+      secondVisual,
+      secondSource.length
+    );
+    expect(
+      visualSelectionSourceRange(secondSurface, secondSource, secondVisual)
+    ).toEqual({
+      direction: 'none',
+      end: secondSource.length,
+      start: secondSource.length
+    });
+    const secondCaret = window.getSelection()?.anchorNode;
+    expect(secondCaret).toBeInstanceOf(Text);
+    expect(secondCaret?.parentElement?.tagName).toBe('P');
+    expect(secondCaret?.previousSibling).toBe(
+      secondSurface.querySelector('code')
+    );
+    expect(secondCaret?.textContent).toBe('\u200b');
   });
 
   it('restores a block-boundary caret without entering themed or read-only descendants', () => {

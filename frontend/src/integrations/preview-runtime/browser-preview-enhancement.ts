@@ -5,6 +5,7 @@ import type {
   PreviewEnhancementContext,
   PreviewEnhancementPort
 } from '../../features/live-preview/ports/preview-enhancement-port';
+import type { FrontendEnhancementControl } from './frontend-enhancement-runtime';
 
 type SharedEnhancements = Readonly<{
   enhance: (
@@ -13,7 +14,8 @@ type SharedEnhancements = Readonly<{
       assetErrors?: Readonly<{ mermaid?: string }>;
       features: PreviewFeatures;
       strings: Readonly<{ renderingFailed: string }>;
-    }>
+    }>,
+    control?: FrontendEnhancementControl
   ) => Promise<unknown> | unknown;
   syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
 }>;
@@ -738,7 +740,7 @@ export function createBrowserPreviewEnhancementPort(
           : {}),
         features: fallbackFeatures,
         strings: bootstrap.strings
-      });
+      }, { isCurrent, signal: context.signal });
       if (!isCurrent() || context.signal.aborted) return;
       if (surface.querySelector('.easymde-render-error')) {
         throw resourceError('preview-enhancement-render-failed');

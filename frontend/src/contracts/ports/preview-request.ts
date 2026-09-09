@@ -1,5 +1,27 @@
 export type PreviewFeatures = Readonly<Record<string, boolean>>;
 
+/**
+ * Bound the amount of untrusted metadata the browser will retain for one
+ * Preview response. This still leaves room for the supported long-document
+ * editor while preventing an accidentally or maliciously oversized sidecar
+ * from becoming a client-side allocation hazard.
+ */
+export const MAX_PREVIEW_EDIT_MAP_BLOCKS = 50_000;
+
+export type PreviewEditMapBlock = Readonly<{
+  id: string;
+  startLine: number;
+  endLine: number;
+  editable: boolean;
+}>;
+
+export type PreviewEditMap = Readonly<{
+  version: 1;
+  coordinate: 'line';
+  signature: string;
+  blocks: ReadonlyArray<PreviewEditMapBlock>;
+}>;
+
 const PROTOTYPE_RESERVED_FEATURE_KEYS = new Set([
   '__proto__',
   'constructor',
@@ -26,6 +48,7 @@ export type PreviewRequest = Readonly<{
 export type PreviewResponse = Readonly<{
   html: SafePreviewHtml;
   features: PreviewFeatures;
+  editMap?: PreviewEditMap;
 }>;
 
 export type PreviewRequestPort = Readonly<{

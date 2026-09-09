@@ -2573,3 +2573,56 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
 }
+
+@media (max-width: 600px) {
+    /* Keep the narrow immersive workspace usable beside the outline rail. */
+    .easymde-editor.is-immersive {
+        grid-template-columns: 42px minmax(0, 1fr);
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline {
+        width: 42px !important;
+        min-width: 42px;
+        max-width: 42px;
+        margin: 0;
+        align-self: stretch;
+        border-radius: 0;
+        box-shadow: none;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-title {
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        justify-content: center;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-title > span,
+    .easymde-editor.is-immersive .easymde-immersive-outline-tree,
+    .easymde-editor.is-immersive .easymde-immersive-outline-footer,
+    .easymde-editor.is-immersive .easymde-immersive-outline-resizer {
+        display: none;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-title .easymde-immersive-outline-close {
+        margin-inline-start: 0;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-show {
+        width: 42px;
+        min-width: 42px;
+        margin: 0;
+        align-self: stretch;
+        border-radius: 0;
+    }
+
+    [dir="rtl"] .easymde-editor.is-immersive .easymde-immersive-outline,
+    [dir="rtl"] .easymde-editor.is-immersive .easymde-immersive-outline-show {
+        margin: 0;
+    }
+
+    .easymde-editor.is-immersive > .easymde-workspace {
+        grid-column: 2;
+        min-width: 0;
+    }
+}

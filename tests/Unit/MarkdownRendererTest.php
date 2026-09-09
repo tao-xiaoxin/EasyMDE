@@ -4,6 +4,155 @@ use EasyMDE\Content\MarkdownRenderer;
 
 final class MarkdownRendererTest extends WP_UnitTestCase
 {
+	public function test_preview_source_map_join_failure_is_stable_and_does_not_include_document_details()
+	{
+		$method = new ReflectionMethod( MarkdownRenderer::class, 'append_mapped_piece' );
+		$method->setAccessible( true );
+		$output     = 'existing document text';
+		$output_map = array();
+
+		try {
+			$method->invokeArgs(
+				null,
+				array(
+					&$output,
+					&$output_map,
+					'piece containing private article text',
+					array( 1 => array( 'start' => 1, 'end' => 1 ) ),
+				)
+			);
+			$this->fail( 'Expected the source map join to fail.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( 'easymde_preview_source_map_join_failed', $exception->getMessage() );
+			$this->assertStringNotContainsString( 'private article text', $exception->getMessage() );
+			$this->assertStringNotContainsString( 'output=', $exception->getMessage() );
+			$this->assertStringNotContainsString( 'keys=', $exception->getMessage() );
+		}
+	}
+
+	public function test_preview_returns_a_privacy_safe_line_edit_map_for_top_level_blocks()
+    {
+        $markdown = "# Title\r\n\r\n" .
+            "> quoted\r\n> continuation\r\n\r\n" .
+            "- first\r\n- second\r\n\r\n" .
+            "| Name | Value |\r\n| --- | --- |\r\n| One | Two |\r\n\r\n" .
+            "```php\r\necho 'ok';\r\n```\r\n\r\n" .
+            "![Caption](https://example.test/image.png)\r\n";
+
+        $preview = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+        $this->assertArrayHasKey( 'html', $preview );
+        $this->assertArrayHasKey( 'editMap', $preview );
+        $this->assertSame( 1, $preview['editMap']['version'] );
+        $this->assertSame( 'line', $preview['editMap']['coordinate'] );
+        $this->assertNotEmpty( $preview['editMap']['blocks'] );
+
+        $ids = array();
+        foreach ( $preview['editMap']['blocks'] as $block ) {
+            $this->assertSame( array( 'id', 'startLine', 'endLine', 'editable' ), array_keys( $block ) );
+            $this->assertSame( 'b' . count( $ids ), $block['id'] );
+            $this->assertIsInt( $block['startLine'] );
+            $this->assertIsInt( $block['endLine'] );
+            $this->assertGreaterThanOrEqual( $block['startLine'], $block['endLine'] );
+            $this->assertIsBool( $block['editable'] );
+            $this->assertArrayNotHasKey( 'body', $block );
+            $this->assertArrayNotHasKey( 'hash', $block );
+            $this->assertArrayNotHasKey( 'url', $block );
+            $ids[] = $block['id'];
+        }
+
+		$document              = new DOMDocument( '1.0', 'UTF-8' );
+		$previous_libxml_state = libxml_use_internal_errors( true );
+		try {
+			$loaded = $document->loadHTML(
+				'<?xml encoding="UTF-8"><div id="preview-root">' . $preview['html'] . '</div>',
+				LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+			);
+		} finally {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous_libxml_state );
+		}
+		$this->assertTrue( $loaded );
+        $root = $document->getElementById( 'preview-root' );
+        $this->assertNotNull( $root );
+        $root_blocks = array();
+        foreach ( $root->childNodes as $child ) {
+            if ( $child instanceof DOMElement ) {
+                $root_blocks[] = $child;
+            }
+        }
+
+        $this->assertCount( count( $preview['editMap']['blocks'] ), $root_blocks );
+        foreach ( $root_blocks as $root_block ) {
+            $this->assertSame( 1, $root_block->attributes->length > 0 ? 1 : 0 );
+            $id = $root_block->getAttribute( 'data-easymde-visual-block-id' );
+            $this->assertContains( $id, $ids );
+            $this->assertFalse( $root_block->hasAttribute( 'data-easymde-visual-source-id' ) );
+        }
+        $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
+    }
+
+    public function test_preview_marks_generated_top_level_nodes_non_editable()
+    {
+        $preview = MarkdownRenderer::render_preview( "[TOC]\n\n## Heading\n\nBody", 'default' );
+        $blocks  = $preview['editMap']['blocks'];
+
+        $this->assertCount( 3, $blocks );
+        $this->assertFalse( $blocks[0]['editable'] );
+        $this->assertSame( 0, $blocks[0]['startLine'] );
+        $this->assertSame( 0, $blocks[0]['endLine'] );
+        $this->assertTrue( $blocks[1]['editable'] );
+        $this->assertTrue( $blocks[2]['editable'] );
+    }
+
+    public function test_preview_keeps_theme_wrapped_source_blocks_editable()
+    {
+        $preview = MarkdownRenderer::render_preview(
+            "::: block-1\n\n## Heading\n\nBody\n\n:::",
+            'cupid-busy'
+        );
+
+        $this->assertStringContainsString( 'class="block-1"', $preview['html'] );
+        $this->assertCount( 1, $preview['editMap']['blocks'] );
+        $this->assertSame( 2, $preview['editMap']['blocks'][0]['startLine'] );
+        $this->assertSame( 5, $preview['editMap']['blocks'][0]['endLine'] );
+        $this->assertTrue( $preview['editMap']['blocks'][0]['editable'] );
+    }
+
+    public function test_preview_image_figures_and_theme_footnotes_keep_source_ranges_without_leaking_markers()
+    {
+        $preview = MarkdownRenderer::render_preview(
+            "![Caption](https://example.test/image.png)\n\n[Reference](https://example.test/reference)",
+            'rose-purple'
+        );
+
+		$this->assertStringContainsString( '<figure', $preview['html'] );
+        $this->assertStringContainsString( 'class="footnotes"', $preview['html'] );
+        $this->assertNotEmpty( $preview['editMap']['blocks'] );
+        foreach ( $preview['editMap']['blocks'] as $block ) {
+            $this->assertArrayNotHasKey( 'body', $block );
+            $this->assertArrayNotHasKey( 'hash', $block );
+            $this->assertArrayNotHasKey( 'url', $block );
+        }
+        $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
+    }
+
+    public function test_preview_maps_math_after_crlf_blank_lines_without_changing_formal_rendering()
+    {
+        $markdown = "```php\r\n\$x\$\r\n```\r\n\r\nBefore\r\n\r\n\$\$x + y\$\$\r\n\r\nAfter\r\n";
+        $preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+
+        $this->assertSame( 4, count( $preview['editMap']['blocks'] ) );
+        $this->assertSame( array( 'startLine' => 0, 'endLine' => 3 ), array_intersect_key( $preview['editMap']['blocks'][0], array_flip( array( 'startLine', 'endLine' ) ) ) );
+        $this->assertSame( array( 'startLine' => 4, 'endLine' => 5 ), array_intersect_key( $preview['editMap']['blocks'][1], array_flip( array( 'startLine', 'endLine' ) ) ) );
+        $this->assertSame( array( 'startLine' => 6, 'endLine' => 7 ), array_intersect_key( $preview['editMap']['blocks'][2], array_flip( array( 'startLine', 'endLine' ) ) ) );
+        $this->assertSame( array( 'startLine' => 8, 'endLine' => 9 ), array_intersect_key( $preview['editMap']['blocks'][3], array_flip( array( 'startLine', 'endLine' ) ) ) );
+        $this->assertStringContainsString( '<pre data-easymde-visual-block-id="b0">', $preview['html'] );
+        $this->assertStringContainsString( '<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b2">', $preview['html'] );
+        $this->assertStringContainsString( '<p data-easymde-visual-block-id="b3">After</p>', $preview['html'] );
+        $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
+    }
+
     public function test_renders_basic_markdown_with_commonmark()
     {
         $html = MarkdownRenderer::render("# Hello\n\n**World**");
@@ -71,6 +220,73 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString('<table>', $html);
         $this->assertStringContainsString('<input disabled type="checkbox">', $html);
         $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\(x + y\)</span>', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_fenced_code_blocks()
+    {
+        $markdown = <<<'MD'
+```bash
+printf '$x$'
+printf '$$x$$'
+printf '\(x\)'
+printf '\[x\]'
+```
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(0, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('printf \'$$x$$\'', $html);
+        $this->assertStringContainsString('printf \'\(x\)\'', $html);
+        $this->assertStringContainsString('printf \'\[x\]\'', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_tilde_fenced_code_blocks()
+    {
+        $markdown = <<<'MD'
+Real $y$.
+
+~~~bash
+printf '$x$'
+printf '$$x$$'
+printf '\(x\)'
+printf '\[x\]'
+~~~
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\(y\)</span>', $html);
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('printf \'$$x$$\'', $html);
+        $this->assertStringContainsString('printf \'\(x\)\'', $html);
+        $this->assertStringContainsString('printf \'\[x\]\'', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_inline_code_but_renders_real_math()
+    {
+        $html = MarkdownRenderer::render(
+            'Inline ` $x$ ` and `$$x$$` stay literal, while $y$ renders.'
+        );
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('<code>$x$</code>', $html);
+        $this->assertStringContainsString('<code>$$x$$</code>', $html);
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\\(y\\)</span>', $html);
+    }
+
+    public function test_preserves_math_delimiters_inside_indented_code_but_renders_following_math()
+    {
+        $markdown = <<<'MD'
+    printf '$x$'
+
+Following $y$.
+MD;
+        $html = MarkdownRenderer::render($markdown);
+
+        $this->assertSame(1, substr_count($html, 'class="easymde-math'));
+        $this->assertStringContainsString('printf \'$x$\'', $html);
+        $this->assertStringContainsString('<span class="easymde-math easymde-math-inline">\\(y\\)</span>', $html);
     }
 
     public function test_qingbi_liujin_wraps_tables_and_images_without_mdnice_markup()

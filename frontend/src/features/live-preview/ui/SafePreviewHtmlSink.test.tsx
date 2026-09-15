@@ -6,6 +6,49 @@ import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
 import { SafePreviewHtmlSink } from './SafePreviewHtmlSink';
 
 describe('SafePreviewHtmlSink window commits', () => {
+  it('preserves a root-end caret while pinning the document-end Block', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const spacer = document.createElement('div');
+    const last = document.createElement('p');
+    first.textContent = 'first';
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    last.textContent = 'last';
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: [first, spacer], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-root-selection-surface-missing');
+    const range = document.createRange();
+    range.setStart(surface, surface.childNodes.length);
+    range.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 2, nodes: [first, spacer, last], revision: 1 }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(surface.lastChild).toBe(last);
+    expect(selection?.anchorNode).toBe(surface);
+    expect(selection?.anchorOffset).toBe(surface.childNodes.length);
+    expect(selection?.focusNode).toBe(surface);
+    expect(selection?.focusOffset).toBe(surface.childNodes.length);
+  });
+
   it('preserves a live text selection while reconciling the bounded window', () => {
     const surfaceRef = createRef<HTMLElement>();
     const first = document.createElement('p');

@@ -17,6 +17,7 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  normalizeVisualCaretAtDocumentBoundary,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
@@ -64,6 +65,31 @@ function previewBlock(
 }
 
 describe('visual Markdown editing', () => {
+  it.each([
+    { boundary: 'start' as const, offset: 0 },
+    { boundary: 'end' as const, offset: 1 }
+  ])('normalizes a collapsed root $boundary boundary to an editable leaf', ({ boundary, offset }) => {
+    const surface = editor('<p>Before</p>');
+    placeCaret(surface, offset);
+
+    expect(normalizeVisualCaretAtDocumentBoundary(surface)).toBe(boundary);
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBeInstanceOf(Text);
+    expect(selection?.anchorNode?.parentElement?.tagName).toBe('P');
+    expect(selection?.anchorOffset).toBe('start' === boundary ? 0 : 6);
+  });
+
+  it('rejects a root boundary that still ends at an unmounted window spacer', () => {
+    const surface = editor(
+      '<p>Visible</p><div data-easymde-preview-window-spacer="1"></div>'
+    );
+    placeCaret(surface, surface.childNodes.length);
+
+    expect(() => normalizeVisualCaretAtDocumentBoundary(surface)).toThrow(
+      'visual-editor-selection-map-failed'
+    );
+  });
+
   it('maps a canonical source directly without cloning or diffing the visual surface', () => {
     const map = createVisualMarkdownDirectSourceIntervalMap(
       'Before **Visible**\r\n\r\nTail'

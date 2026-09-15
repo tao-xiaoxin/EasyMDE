@@ -170,15 +170,22 @@ final class VisualPreviewBlockAnnotator {
 			}
 		}
 
-		$map = array();
+		$map           = array();
+		$last_end_line = 0;
 		foreach ( $root_blocks as $index => $root_block ) {
 			$source_ids = self::source_ids( $root_block );
 			if ( empty( $source_ids ) && ! self::is_generated_root( $root_block ) ) {
 				throw new RuntimeException( 'Preview HTML contains a root block without source provenance.' );
 			}
 
-			$range    = self::range_for_source_ids( $source_ids, $source_by_id );
-			$editable = ! empty( $source_ids );
+			$range         = empty( $source_ids )
+				? array(
+					'startLine' => $last_end_line,
+					'endLine'   => $last_end_line,
+				)
+					: self::range_for_source_ids( $source_ids, $source_by_id );
+			$editable      = ! empty( $source_ids );
+			$last_end_line = $range['endLine'];
 
 			$block_id = 'b' . (int) $index;
 			$root_block->removeAttribute( self::BLOCK_ATTRIBUTE );

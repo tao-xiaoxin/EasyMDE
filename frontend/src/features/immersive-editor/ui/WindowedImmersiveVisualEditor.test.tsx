@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { createElement } from '@wordpress/element';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -284,6 +284,98 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(requestPreview).toHaveBeenCalledOnce();
     expect(current.surface.querySelector('p')?.textContent).toBe('Line 160');
     expect(onPendingChange).toHaveBeenCalledWith(true);
+    view.unmount();
+  });
+
+  it('commits a root-boundary input after the document-end Block is pinned', () => {
+    vi.useFakeTimers();
+    try {
+      const current = fixture({ mounted: [160, 319] });
+      const requestPreview = vi.fn(() => 'root-boundary');
+      const onFailure = vi.fn();
+      const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+      expect(current.surface.querySelector(
+        '[data-easymde-preview-window-spacer]'
+      )).not.toBeNull();
+      expect(current.surface.lastElementChild?.getAttribute(
+        'data-easymde-visual-block-id'
+      )).toBe('b319');
+      const range = document.createRange();
+      range.setStart(current.surface, current.surface.childNodes.length);
+      range.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+
+      const keyDown = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: ' '
+      });
+      current.surface.dispatchEvent(keyDown);
+      expect(keyDown.defaultPrevented).toBe(false);
+      expect(onFailure).not.toHaveBeenCalled();
+
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: ' continuation',
+        inputType: 'insertText'
+      });
+      current.surface.dispatchEvent(beforeInput);
+      const text = current.surface.querySelector<HTMLElement>(
+        '[data-easymde-visual-block-id="b319"]'
+      )?.firstChild;
+      if (!(text instanceof Text)) throw new Error('windowed-root-boundary-text-missing');
+      text.data += ' continuation';
+      const afterInput = document.createRange();
+      afterInput.setStart(text, text.length);
+      afterInput.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(afterInput);
+      current.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: ' continuation',
+        inputType: 'insertText'
+      }));
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(beforeInput.defaultPrevented).toBe(false);
+      expect(current.canonical()).toBe(
+        `${Array.from({ length: 320 }, (_, index) => `Line ${index}`)
+          .join('\n')} continuation`
+      );
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects a root-end input while the document-end Block is unmounted', () => {
+    const current = fixture();
+    const onFailure = vi.fn();
+    const { view } = renderWindowEditor(current, { onFailure });
+    const range = document.createRange();
+    range.setStart(current.surface, current.surface.childNodes.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: ' misplaced',
+      inputType: 'insertText'
+    });
+    current.surface.dispatchEvent(beforeInput);
+
+    expect(beforeInput.defaultPrevented).toBe(true);
+    expect(current.canonical()).not.toContain('misplaced');
+    expect(onFailure).toHaveBeenCalledWith('visual-editor-selection-map-failed');
     view.unmount();
   });
 

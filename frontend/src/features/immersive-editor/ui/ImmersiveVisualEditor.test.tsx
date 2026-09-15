@@ -167,6 +167,85 @@ describe('ImmersiveVisualEditor', () => {
     focus.mockRestore();
   });
 
+  it('normalizes a root-boundary beforeinput before typing', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Before</p>';
+      document.body.append(surface);
+      let canonicalValue = 'Before';
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'next')}
+          surface={surface}
+        />
+      );
+      const paragraph = surface.querySelector('p');
+      const text = paragraph?.firstChild;
+      if (!(text instanceof Text)) throw new Error('visual-root-end-text-missing');
+      const rootRange = document.createRange();
+      rootRange.setStart(surface, surface.childNodes.length);
+      rootRange.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(rootRange);
+
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: ' ',
+        inputType: 'insertText'
+      }));
+      expect(selection?.anchorNode).toBe(text);
+      expect(selection?.anchorOffset).toBe(text.length);
+      text.data += '\u00a0';
+      const afterInput = document.createRange();
+      afterInput.setStart(text, text.length);
+      afterInput.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(afterInput);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: ' ',
+        inputType: 'insertText'
+      }));
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(canonicalValue).toBe('Before ');
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('prevents beforeinput mutations while an accepted paste is rendering', () => {
     const surface = document.createElement('article');
     surface.innerHTML = '<p>Visual paragraph</p>';
@@ -759,6 +838,9 @@ describe('ImmersiveVisualEditor', () => {
           subscribe: () => vi.fn()
         }
       } as unknown as EditorDocumentSession;
+      const runtimeHolder: {
+        current: ImmersiveVisualEditorRuntime | null;
+      } = { current: null };
       const requestPreview = vi.fn(() => 'accepted');
       const props = {
         documentSession,
@@ -770,7 +852,9 @@ describe('ImmersiveVisualEditor', () => {
         onFailure: vi.fn(),
         onMarkdownChange: vi.fn(),
         onPendingChange: vi.fn(),
-        onReady: vi.fn(),
+        onReady: (runtime: ImmersiveVisualEditorRuntime) => {
+          runtimeHolder.current = runtime;
+        },
         onTransferFailure: vi.fn(),
         pending: false,
         previewSnapshot: { revision: 1, signature: 'initial' },
@@ -811,6 +895,9 @@ describe('ImmersiveVisualEditor', () => {
           />
         );
       });
+      expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
+      expect(canonicalValue).toBe('Before **Formatted**\n');
+      expect(applyTextChange).toHaveBeenCalledOnce();
       const cloneNode = vi.spyOn(surface, 'cloneNode');
       const formatted = surface.querySelector('strong')?.firstChild;
       if (!(formatted instanceof Text)) {

@@ -69,18 +69,29 @@ function normalizePreviewResponse(
   response: PreviewResponseFixture,
   previewRequest: PreviewRequest
 ): PreviewResponse {
+  const template = document.createElement('template');
+  template.innerHTML = response.html;
+  const blocks = Array.from(template.content.children).map((element, index) => {
+    const id = `b${index}`;
+    element.setAttribute('data-easymde-visual-block-id', id);
+    return {
+      editable: true as const,
+      endLine: index + 1,
+      id,
+      startLine: index
+    };
+  });
+  if (!response.editMap) {
+    if (0 === blocks.length) throw new Error('preview-response-fixture-empty');
+  }
   return {
     ...response,
+    html: (response.editMap ? response.html : template.innerHTML) as SafePreviewHtml,
     editMap: response.editMap ?? {
       version: 1,
       coordinate: 'line',
       signature: previewRequest.signature,
-      blocks: [{
-        id: 'b0',
-        startLine: 0,
-        endLine: Math.max(1, previewRequest.markdown.split(/\r\n|\r|\n/).length),
-        editable: true
-      }]
+      blocks
     }
   };
 }
@@ -339,6 +350,146 @@ describe('PreviewSurfaceOwner', () => {
       '[data-easymde-preview-window-spacer]'
     )).toBeNull();
     replaceChildren.mockRestore();
+  });
+
+  it('commits the complete enhanced DOM directly at the window cap', async () => {
+    const fixture = windowedFixture(160, 'windowed-cap');
+    const enhancement = deferred<void>();
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>((candidate) => {
+      candidate.querySelector(
+        '[data-easymde-visual-block-id="b159"]'
+      )?.setAttribute('data-enhanced', '1');
+      return enhancement.promise;
+    });
+    const stagingYield = vi.fn(() => Promise.resolve());
+    const materializeScheduler: MaterializeScheduler = {
+      pending: [],
+      yield: vi.fn(() => Promise.resolve())
+    };
+    const statuses: PreviewSurfaceStatus[] = [];
+    const htmlChanges: SafePreviewHtml[] = [];
+    const current = setup({
+      contentEditable: true,
+      enhance,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'windowed-cap',
+      materializeScheduler,
+      onHtmlChange: (html) => htmlChanges.push(html),
+      onStatusChange: (status) => statuses.push(status),
+      stagingScheduler: { yield: stagingYield },
+      windowed: true
+    });
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    });
+
+    expect(enhance).toHaveBeenCalledOnce();
+    const candidate = enhance.mock.calls[0]?.[0];
+    if (!candidate) throw new Error('enhancement candidate missing');
+    expect(candidate.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(160);
+    expect(candidate.isConnected).toBe(false);
+    expect(candidate.style.display).toBe('none');
+    expect(stagingYield).not.toHaveBeenCalled();
+    expect(materializeScheduler.yield).not.toHaveBeenCalled();
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    await act(async () => flushAnimationFrames());
+
+    expect(replaceChildren).toHaveBeenCalledOnce();
+    expect(current.surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).toHaveLength(160);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).toBeNull();
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b159"]'
+    )?.getAttribute('data-enhanced')).toBe('1');
+    expect(current.surface.easymdePreviewSignature).toBe('windowed-cap');
+    expect(statuses.at(-1)).toBe('ready');
+    expect(htmlChanges).toHaveLength(1);
+    expect(htmlChanges[0]).toContain('data-enhanced="1"');
+    expect(materializeScheduler.yield).not.toHaveBeenCalled();
+    replaceChildren.mockRestore();
+  });
+
+  it('preserves Block markers for windowing after a complete Preview enhancement', async () => {
+    const fixture = windowedFixture(200, 'complete-then-windowed');
+    const current = setup({
+      contentEditable: true,
+      enhance: async (surface) => {
+        const replaced = surface.querySelector(
+          '[data-easymde-visual-block-id="b199"]'
+        );
+        if (!replaced) throw new Error('replacement-target-missing');
+        const enhanced = surface.ownerDocument.createElement('section');
+        enhanced.textContent = 'enhanced final Block';
+        replaced.replaceWith(enhanced);
+      },
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'complete-then-windowed',
+      windowed: false
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b199"]'
+    )?.tagName).toBe('SECTION');
+
+    current.setWindowed(true);
+    await act(async () => flushAnimationFrames(4));
+
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBeNull();
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+  });
+
+  it('pins the document-end block when a windowed root caret reaches the trailing boundary', async () => {
+    const fixture = windowedFixture(320, 'root-boundary');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'root-boundary',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).toBeNull();
+    const range = document.createRange();
+    range.setStart(current.surface, current.surface.childNodes.length);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    await act(async () => flushAnimationFrames(2));
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).not.toBeNull();
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
   });
 
   it('materializes the complete Preview asynchronously for a same-activation consumer', async () => {
@@ -814,6 +965,9 @@ describe('PreviewSurfaceOwner', () => {
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
       (candidate) => {
         if (enhance.mock.calls.length === 1) return Promise.resolve();
+        expect(candidate.tagName).toBe('DIV');
+        expect(candidate.closest('.easymde-immersive-preview-canvas')
+          ?.querySelectorAll('article')).toHaveLength(1);
         expect(candidate.isConnected).toBe(true);
         expect(candidate.getAttribute('aria-hidden')).toBe('true');
         expect(candidate.hasAttribute('inert')).toBe(true);
@@ -821,7 +975,9 @@ describe('PreviewSurfaceOwner', () => {
         expect(candidate.hasAttribute('contenteditable')).toBe(false);
         expect(candidate.hasAttribute('role')).toBe(false);
         expect(candidate.hasAttribute('aria-live')).toBe(false);
-        expect(candidate.innerHTML).toBe('<p>Candidate Preview</p>');
+        expect(candidate.querySelector(
+          '[data-easymde-visual-block-id="b0"]'
+        )?.textContent).toBe('Candidate Preview');
         return enhancement.promise;
       }
     );
@@ -853,7 +1009,9 @@ describe('PreviewSurfaceOwner', () => {
     });
 
     expect(current.surface).toBe(activeIdentity);
-    expect(current.surface.innerHTML).toBe('<p>Candidate Preview</p>');
+    expect(current.surface.innerHTML).toBe(
+      '<p data-easymde-visual-block-id="b0">Candidate Preview</p>'
+    );
   });
 
   it('does not let a parent rerender roll back a committed enhanced sink', async () => {
@@ -915,7 +1073,9 @@ describe('PreviewSurfaceOwner', () => {
       await enhancement.promise;
     });
 
-    expect(current.surface.innerHTML).toBe('<p>Candidate</p>');
+    expect(current.surface.innerHTML).toBe(
+      '<p data-easymde-visual-block-id="b0">Candidate</p>'
+    );
     expect(setInnerHTML).not.toHaveBeenCalled();
     expect(current.surface.parentElement?.querySelectorAll(
       '[data-easymde-preview-staging]'

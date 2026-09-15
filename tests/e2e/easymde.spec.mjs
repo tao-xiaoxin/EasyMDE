@@ -591,10 +591,11 @@ async function canonicalMarkdownForPage(page) {
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, label, cssUrl, markupProfile, swatch }) => ({
+      .map(({ id, label, cssUrl, defaultCodeTheme, markupProfile, swatch }) => ({
         id,
         label,
         cssUrl,
+        defaultCodeTheme,
         markupProfile,
         swatch
       })),
@@ -2564,7 +2565,12 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
       await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
 
-      const semantics = await visualEditor.evaluate((surface) => ({
+      await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+      await expect(visualEditor).toHaveCount(0);
+      const completePreview = page.locator(
+        '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+      );
+      const semantics = await completePreview.evaluate((surface) => ({
         headings: surface.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
         tables: surface.querySelectorAll('table').length,
         codeBlocks: surface.querySelectorAll('pre > code:not(.language-mermaid)').length,
@@ -2582,23 +2588,29 @@ test.describe('EasyMDE editor workflows', () => {
         taskItems: 19,
         fixtureTitle: 'Markdown 全量能力测试文档'
       });
+      expect(browserFailures).toEqual([]);
+      await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
 
-      await visualEditor.evaluate((surface) => {
-        const selection = surface.ownerDocument.defaultView?.getSelection();
-        if (!selection) throw new Error('immersive-full-fixture-selection-unavailable');
-        const range = surface.ownerDocument.createRange();
-        range.selectNodeContents(surface);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        if (!surface.ownerDocument.execCommand('insertText', false, ' continuation')) {
-          throw new Error('immersive-full-fixture-follow-up-input-failed');
-        }
-      });
+      await visualEditor.focus();
+      await expect(visualEditor).toBeFocused();
+      await visualEditor.press('ControlOrMeta+End');
+      await expect.poll(
+        () => visualEditor.evaluate((surface) =>
+          !surface.lastElementChild?.hasAttribute(
+            'data-easymde-preview-window-spacer'
+          )
+        )
+      ).toBe(true);
+      await page.keyboard.type(' continuation');
+      const expectedContinuedMarkdown = expectedMarkdown.endsWith('\n')
+        ? `${expectedMarkdown.slice(0, -1)} continuation\n`
+        : `${expectedMarkdown} continuation`;
       await expect.poll(
         () => source.inputValue(),
         { timeout: 10_000 }
-      ).toContain('continuation');
+      ).toBe(expectedContinuedMarkdown);
 
       await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
       await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
@@ -2620,8 +2632,8 @@ test.describe('EasyMDE editor workflows', () => {
     await fillMarkdownAndWaitForPreview(page, prefix, 'Existing prefix');
     await pasteFixtureAtDocumentEnd(`${prefix}${fullCapabilityMarkdown}`);
 
-    expect(previewRequests.filter((markdown) => markdown === fullCapabilityMarkdown)).toHaveLength(1);
-    expect(previewRequests.filter((markdown) => markdown === `${prefix}${fullCapabilityMarkdown}`)).toHaveLength(1);
+    expect(previewRequests.filter((markdown) => markdown === fullCapabilityMarkdown)).toHaveLength(2);
+    expect(previewRequests.filter((markdown) => markdown === `${prefix}${fullCapabilityMarkdown}`)).toHaveLength(2);
     expect(browserFailures).toEqual([]);
   });
 
@@ -2740,6 +2752,8 @@ test.describe('EasyMDE editor workflows', () => {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png'
     });
+    await page.locator('.easymde-immersive-outline-close').click();
+    await expect(page.locator('.easymde-immersive-outline')).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(visualEditor).toBeVisible();
     const mobileGeometry = await visualEditor.evaluate((surface) => ({
@@ -3275,7 +3289,18 @@ test.describe('EasyMDE editor workflows', () => {
         await route.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({
-            html: `<p>${1 === requestNumber ? 'stale preview' : 'current preview'}</p>`,
+            editMap: {
+              blocks: [{
+                editable: true,
+                endLine: 1,
+                id: 'b0',
+                startLine: 0
+              }],
+              coordinate: 'line',
+              signature: payload.signature,
+              version: 1
+            },
+            html: `<p data-easymde-visual-block-id="b0">${1 === requestNumber ? 'stale preview' : 'current preview'}</p>`,
             features: {}
           })
         });
@@ -4077,8 +4102,7 @@ test.describe('EasyMDE editor workflows', () => {
     const sessionKeepalive = startWordPressSessionKeepalive(page, user);
     testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
-    const fixtureCatalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
+    const markdown = await canonicalMarkdownForPage(page)
       + '\n\n```js\n'
       + `const longValue = "${'x'.repeat(240)}";\n`
       + '```';

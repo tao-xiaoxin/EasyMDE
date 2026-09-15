@@ -105,6 +105,42 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertTrue( $blocks[2]['editable'] );
     }
 
+    public function test_red_crimson_generated_footnotes_follow_source_boundaries()
+    {
+        $markdown = "[TOC]\n\n" .
+            "## Heading\n\n" .
+            "[Reference](https://example.test/reference \"Reference title\")";
+        $preview = MarkdownRenderer::render_preview( $markdown, 'red-crimson' );
+        $blocks  = $preview['editMap']['blocks'];
+
+        $this->assertStringContainsString( 'class="easymde-toc"', $preview['html'] );
+        $this->assertStringContainsString( 'class="footnotes-sep"', $preview['html'] );
+        $this->assertStringContainsString( 'class="footnotes"', $preview['html'] );
+        $this->assertNotEmpty( $blocks );
+        $this->assertFalse( $blocks[0]['editable'] );
+        $this->assertSame( 0, $blocks[0]['startLine'] );
+        $this->assertSame( 0, $blocks[0]['endLine'] );
+
+        $previous_end = 0;
+        $editable     = array();
+        foreach ( $blocks as $block ) {
+            $this->assertGreaterThanOrEqual( $previous_end, $block['startLine'] );
+            $this->assertGreaterThanOrEqual( $block['startLine'], $block['endLine'] );
+            if ( $block['editable'] ) {
+                $editable[] = $block;
+            }
+            $previous_end = $block['endLine'];
+        }
+
+        $last_editable = end( $editable );
+        $last_block    = end( $blocks );
+        $this->assertIsArray( $last_editable );
+        $this->assertIsArray( $last_block );
+        $this->assertFalse( $last_block['editable'] );
+        $this->assertSame( $last_editable['endLine'], $last_block['startLine'] );
+        $this->assertSame( $last_editable['endLine'], $last_block['endLine'] );
+    }
+
     public function test_preview_keeps_theme_wrapped_source_blocks_editable()
     {
         $preview = MarkdownRenderer::render_preview(

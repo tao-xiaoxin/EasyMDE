@@ -252,7 +252,7 @@ Immersive visual Preview editing synchronizes the editable surface back to the
 canonical Markdown document. Completed block and inline Markdown shortcuts are
 applied to semantic visual markup before synchronization; pasted plain text is
 inserted as Markdown and rendered only by the authoritative server Preview
-owner. A Preview response is enhanced in one connected, inert staging article
+owner. A Preview response is enhanced in one connected, inert staging element
 with the active Preview's theme and width context, then handed to the active
 Safe HTML sink as one revisioned node transaction. React keeps the accepted
 enhanced HTML in state while the sink remains the sole imperative child owner,

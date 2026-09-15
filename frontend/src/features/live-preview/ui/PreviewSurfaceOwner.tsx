@@ -15,6 +15,9 @@ import type {
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
 import {
+  DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED
+} from '../model/preview-window-model';
+import {
   createPreviewRequestSession,
   type PreviewRequestSession
 } from '../model/create-preview-request-session';
@@ -46,6 +49,10 @@ function previewFailureCode(error: unknown): string {
   return error instanceof PreviewWindowDomError
     ? error.message
     : previewEnhancementFailureCode(error);
+}
+
+function previewNeedsWindow(editMap: PreviewEditMap | null): boolean {
+  return (editMap?.blocks.length ?? 0) > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
 }
 
 type PreviewMessages = Readonly<{
@@ -226,7 +233,7 @@ function createEnhancementCandidate(
   const documentRef = activeSurface.ownerDocument;
   const template = documentRef.createElement('template');
   template.innerHTML = html;
-  const candidate = documentRef.createElement('article');
+  const candidate = documentRef.createElement('div');
   candidate.className = activeSurface.className;
   candidate.style.cssText = activeSurface.style.cssText;
   candidate.setAttribute('aria-hidden', 'true');
@@ -981,7 +988,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           return;
         }
         if (!isCurrent()) return;
-        if (windowedRef.current && activeCandidate.editMap) {
+        if (activeCandidate.editMap) {
           blockMarkers = capturePreviewBlockMarkers(
             candidateSurface,
             activeCandidate.editMap
@@ -1008,7 +1015,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         let repository: PreviewWindowNodeRepository | null = null;
         let windowedCommit: SafePreviewHtmlSinkWindowCommit | null = null;
         let stagedCommit: SafePreviewHtmlSinkCommit | null = null;
-        if (windowedRef.current) {
+        if (windowedRef.current && previewNeedsWindow(activeCandidate.editMap)) {
           if (!activeCandidate.editMap) {
             throw new Error('preview-window-edit-map-missing');
           }
@@ -1078,7 +1085,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     props.stagingScheduler
   ]);
 
-  const windowedEditing = Boolean(props.windowed);
+  const windowedEditing = Boolean(
+    props.windowed
+    && ('html' !== state.kind || previewNeedsWindow(state.editMap))
+  );
   useLayoutEffect(() => {
     if (!windowedEditing) {
       materializedOverrideRef.current = false;
@@ -1199,6 +1209,20 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         documentRef.activeElement
       );
       if (null !== activeIndex) pins.add(activeIndex);
+      if (
+        selection?.isCollapsed
+        && selection.anchorNode === surface
+        && selection.focusNode === surface
+        && selection.anchorOffset === selection.focusOffset
+      ) {
+        if (0 === selection.anchorOffset) pins.add(0);
+        if (
+          selection.anchorOffset === surface.childNodes.length
+          && activeRepository.nodes.length > 0
+        ) {
+          pins.add(activeRepository.nodes.length - 1);
+        }
+      }
       return [...pins].sort((left, right) => left - right);
     };
 
@@ -1275,6 +1299,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         ? windowRef.setTimeout(commitWindow, 0) as unknown as number
         : setTimeout(commitWindow, 0) as unknown as number;
     };
+
     scheduleWindowRef.current = scheduleWindow;
 
     const onSelectionChange = () => scheduleWindow();

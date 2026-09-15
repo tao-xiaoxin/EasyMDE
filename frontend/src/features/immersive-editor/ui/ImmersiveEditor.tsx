@@ -513,7 +513,7 @@ export function ImmersiveEditor({
   useEffect(
     () =>
       documentSession.document.subscribe(() =>
-        setMarkdown(documentSession.document.getValue())
+        setMarkdown(documentSession.document.getSnapshot().value)
       ),
     [documentSession]
   );

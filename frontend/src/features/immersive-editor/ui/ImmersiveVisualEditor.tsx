@@ -17,6 +17,7 @@ import {
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceIntervalMap,
   mergeVisualMarkdownChangeDetails,
+  normalizeVisualCaretAtDocumentBoundary,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
@@ -410,6 +411,11 @@ function replaceTextRange(
   return value.slice(0, range.start)
     + replacement
     + value.slice(range.end);
+}
+
+function browserTextMatchesExpected(actual: string, expected: string): boolean {
+  return actual === expected
+    || actual.replace(/\u00a0/g, ' ') === expected.replace(/\u00a0/g, ' ');
 }
 
 function visualInputIntent(
@@ -1254,6 +1260,17 @@ export function ImmersiveVisualEditor({
       requestMarkdownTransfer(event.dataTransfer?.getData('text/plain') ?? '');
     };
     const handleCompositionStart = () => {
+      try {
+        normalizeVisualCaretAtDocumentBoundary(surface);
+      } catch (error) {
+        onFailure(
+          visualEditorFailureCode(
+            error,
+            'visual-editor-selection-map-failed'
+          )
+        );
+        return;
+      }
       if (!visualBaselineMaterializedRef.current) {
         try {
           materializeVisualBaseline();
@@ -1293,6 +1310,18 @@ export function ImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) {
+        return;
+      }
+      try {
+        normalizeVisualCaretAtDocumentBoundary(surface);
+      } catch (error) {
+        event.preventDefault();
+        onFailure(
+          visualEditorFailureCode(
+            error,
+            'visual-editor-selection-map-failed'
+          )
+        );
         return;
       }
       const memory = pendingVisualIntentResultRef.current?.memory
@@ -1401,7 +1430,8 @@ export function ImmersiveVisualEditor({
           );
           const domMatchesIntent = result && shortcutApplied
             ? serializeVisualMarkdown(surface) === result.visualMarkdown
-            : intent.textNode.data === expectedText || detachedDeletion;
+            : browserTextMatchesExpected(intent.textNode.data, expectedText)
+              || detachedDeletion;
           if (result && domMatchesIntent) {
               pendingVisualIntentResultRef.current = {
                 baseSourceMarkdown: sourceMarkdown,
@@ -1492,6 +1522,18 @@ export function ImmersiveVisualEditor({
         if (visualTransferFailureReportedRef.current) return false;
         if (!flushVisualInput()) return false;
         const pending = pendingTransferRef.current;
+        if (!pending && !visualBaselineMaterializedRef.current) {
+          try {
+            const readOnlySnapshot = readOnlySnapshotRef.current;
+            if (!readOnlySnapshot) {
+              throw new Error('visual-editor-read-only-snapshot-missing');
+            }
+            assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+            return true;
+          } catch (error) {
+            return failVisualSynchronization(error);
+          }
+        }
         if (!pending) return synchronizeMarkdown();
         try {
           applyDocumentChange({

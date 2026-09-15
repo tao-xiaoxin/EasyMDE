@@ -1134,6 +1134,7 @@ function isVisualCaretExcludedElement(element: Element): boolean {
   if (VISUAL_CARET_OPAQUE_TAGS.has(element.tagName)) return true;
   if (element instanceof SVGElement) return true;
   if ('false' === element.getAttribute('contenteditable')) return true;
+  if (element.hasAttribute('data-easymde-preview-window-spacer')) return true;
   if (element.classList.contains('footnote-ref')) return true;
 
   const parent = element.parentElement;
@@ -1351,6 +1352,25 @@ function lastEditableVisualBoundary(
 
 export type AcceptedPasteDocumentBoundary = 'end' | 'start';
 
+function visualCaretAtDocumentBoundary(
+  editor: HTMLElement
+): AcceptedPasteDocumentBoundary | null {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || selection.anchorNode !== editor
+    || selection.focusNode !== editor
+    || selection.anchorOffset !== selection.focusOffset
+  ) {
+    return null;
+  }
+  return selection.anchorOffset === 0
+    ? 'start'
+    : selection.anchorOffset === editor.childNodes.length
+      ? 'end'
+      : null;
+}
+
 function firstEditableVisualBoundary(
   editor: HTMLElement
 ): VisualBoundary | null {
@@ -1379,6 +1399,21 @@ export function placeVisualCaretAtAcceptedPasteDocumentBoundary(
   const caretBoundary = acceptedPasteDocumentBoundary(editor, boundary);
   if (!caretBoundary) throw new Error('visual-editor-selection-map-failed');
   placeVisualCaretAtBoundary(editor, caretBoundary);
+}
+
+export function normalizeVisualCaretAtDocumentBoundary(
+  editor: HTMLElement
+): AcceptedPasteDocumentBoundary | null {
+  const boundary = visualCaretAtDocumentBoundary(editor);
+  if (!boundary) return null;
+  const edge = 'start' === boundary
+    ? editor.firstElementChild
+    : editor.lastElementChild;
+  if (edge?.hasAttribute('data-easymde-preview-window-spacer')) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  placeVisualCaretAtAcceptedPasteDocumentBoundary(editor, boundary);
+  return boundary;
 }
 
 export function isVisualCaretAtAcceptedPasteDocumentBoundary(

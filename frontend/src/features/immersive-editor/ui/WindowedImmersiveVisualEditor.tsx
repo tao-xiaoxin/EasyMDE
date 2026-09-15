@@ -6,6 +6,7 @@ import {
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   mergeVisualMarkdownChangeDetails,
+  normalizeVisualCaretAtDocumentBoundary,
   protectVisualMarkdownReadOnlyRegions,
   serializeVisualMarkdownBlockFragment,
   visualSelectionSourceRangeForBlocks
@@ -566,6 +567,13 @@ export function WindowedImmersiveVisualEditor({
       }
       if (composing || event.isComposing) return;
       try {
+        normalizeVisualCaretAtDocumentBoundary(surface);
+      } catch (error) {
+        event.preventDefault();
+        report(error);
+        return;
+      }
+      try {
         capture(
           'deleteContentBackward' === event.inputType
             ? 'backward'
@@ -588,6 +596,7 @@ export function WindowedImmersiveVisualEditor({
     const handleCompositionStart = () => {
       if (pendingRef.current) return;
       try {
+        normalizeVisualCaretAtDocumentBoundary(surface);
         capture();
         composing = true;
       } catch (error) {
@@ -615,6 +624,13 @@ export function WindowedImmersiveVisualEditor({
         return;
       }
       if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
+      try {
+        normalizeVisualCaretAtDocumentBoundary(surface);
+      } catch (error) {
+        event.preventDefault();
+        report(error);
+        return;
+      }
       try {
         const region = capture();
         if (!applyVisualBlockShortcut(surface, event)) {

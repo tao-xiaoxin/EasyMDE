@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { createElement } from '@wordpress/element';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -57,5 +57,91 @@ describe('ImmersiveOutline', () => {
     view.rerender(<OutlineHarness tick={1} />);
 
     expect(vi.mocked(buildOutlineTree)).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves heading button identity when only source positions change', () => {
+    const view = render(<ImmersiveOutline
+      activeIndex={null}
+      direction="ltr"
+      items={items}
+      onOpenChange={() => {}}
+      onSelect={() => {}}
+      open
+      strings={strings}
+    />);
+    const buttonsBefore = Array.from(
+      view.container.querySelectorAll('.easymde-immersive-outline-tree button')
+    );
+
+    view.rerender(<ImmersiveOutline
+      activeIndex={null}
+      direction="ltr"
+      items={items.map((item) => ({ ...item, position: item.position + 11 }))}
+      onOpenChange={() => {}}
+      onSelect={() => {}}
+      open
+      strings={strings}
+    />);
+
+    const buttonsAfter = Array.from(
+      view.container.querySelectorAll('.easymde-immersive-outline-tree button')
+    );
+    expect(buttonsAfter).toHaveLength(buttonsBefore.length);
+    buttonsAfter.forEach((button, index) => {
+      expect(button).toBe(buttonsBefore[index]);
+    });
+  });
+
+  it('keeps existing headings stable when a heading is prepended and selects current items', () => {
+    const initialItems: ReadonlyArray<ImmersiveOutlineItem> = [
+      { index: 0, level: 1, line: 0, position: 0, text: 'First' },
+      { index: 1, level: 1, line: 2, position: 8, text: 'Repeated' },
+      { index: 2, level: 1, line: 4, position: 20, text: 'Repeated' }
+    ];
+    const updatedItems: ReadonlyArray<ImmersiveOutlineItem> = [
+      { index: 0, level: 1, line: 0, position: 0, text: 'Repeated' },
+      { index: 1, level: 1, line: 2, position: 19, text: 'First' },
+      { index: 2, level: 1, line: 4, position: 27, text: 'Repeated' },
+      { index: 3, level: 1, line: 6, position: 39, text: 'Repeated' }
+    ];
+    const onSelect = vi.fn();
+    const view = render(<ImmersiveOutline
+      activeIndex={null}
+      direction="ltr"
+      items={initialItems}
+      onOpenChange={() => {}}
+      onSelect={onSelect}
+      open
+      strings={strings}
+    />);
+    const buttonsBefore = Array.from(
+      view.container.querySelectorAll('.easymde-immersive-outline-tree button')
+    );
+
+    view.rerender(<ImmersiveOutline
+      activeIndex={null}
+      direction="ltr"
+      items={updatedItems}
+      onOpenChange={() => {}}
+      onSelect={onSelect}
+      open
+      strings={strings}
+    />);
+
+    const buttonsAfter = Array.from(
+      view.container.querySelectorAll('.easymde-immersive-outline-tree button')
+    );
+    expect(buttonsAfter).toHaveLength(updatedItems.length);
+    expect(buttonsAfter[1]).toBe(buttonsBefore[0]);
+    expect(buttonsAfter[2]).toBe(buttonsBefore[1]);
+    expect(buttonsAfter[3]).toBe(buttonsBefore[2]);
+
+    buttonsAfter.slice(2).forEach((button) => {
+      fireEvent.click(button);
+    });
+    expect(onSelect.mock.calls).toEqual([
+      [updatedItems[2]],
+      [updatedItems[3]]
+    ]);
   });
 });

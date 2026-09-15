@@ -41,6 +41,7 @@ import {
   validatePreviewWindowRepository,
   viewportForCanvas,
   VISUAL_BLOCK_ATTRIBUTE,
+  PREVIEW_WINDOW_SPACER_ATTRIBUTE,
   windowNodes,
   type PreviewWindowNodeRepository
 } from './preview-window-dom';
@@ -120,6 +121,9 @@ type PendingMaterialization = Readonly<{
 
 export type PreviewSurfaceRuntime = Readonly<{
   materialize: () => Promise<boolean>;
+  prepareWindowBlockAdoption: (
+    node: HTMLElement
+  ) => (() => boolean) | null;
   session: PreviewRequestSession;
   surface: HTMLElement;
 }>;
@@ -442,6 +446,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const materializationPendingRef = useRef(false);
   const materializedOverrideRef = useRef(false);
   const ownerActiveRef = useRef(false);
+  const prepareWindowBlockAdoptionRef = useRef<
+    (node: HTMLElement) => (() => boolean) | null
+  >(() => null);
   const materializeRef = useRef<() => Promise<boolean>>(() =>
     Promise.resolve(false)
   );
@@ -452,6 +459,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const emptyModeRef = useRef(props.emptyMode);
   emptyModeRef.current = props.emptyMode;
   const [state, setState] = useState<PreviewSurfaceState>(() => initialState(props));
+  const stateRef = useRef<PreviewSurfaceState>(state);
+  stateRef.current = state;
   const windowStyleSignature = `${props.className ?? ''}:${JSON.stringify(
     props.style ?? {}
   )}`;
@@ -628,6 +637,147 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     return promise;
   }, [props.onDiagnostic]);
   materializeRef.current = materialize;
+
+  const prepareWindowBlockAdoption = (
+    node: HTMLElement
+  ): (() => boolean) | null => {
+    if (!ownerActiveRef.current || !windowedRef.current) return null;
+    const surface = surfaceRef.current;
+    const repository = previewWindowRepositoryRef.current;
+    const current = stateRef.current;
+    if (
+      !surface?.isConnected
+      || !repository
+      || 'html' !== current.kind
+      || 'ready' !== current.phase
+      || current.generation !== repository.context.revision
+      || current.htmlRevision !== repository.context.revision
+      || current.signature !== repository.context.signature
+      || current.editMap?.signature !== repository.context.signature
+      || current.editMap?.blocks.length !== repository.nodes.length
+      || generationRef.current !== repository.context.revision
+      || materializationPendingRef.current
+      || windowCommitPendingRef.current
+      || !(node instanceof HTMLElement)
+      || node.ownerDocument !== surface.ownerDocument
+      || node.parentNode !== surface
+      || node.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)
+    ) return null;
+
+    try {
+      validatePreviewWindowRepository(repository);
+    } catch {
+      return null;
+    }
+
+    const id = node.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+    if (!id) return null;
+    const index = repository.indexById.get(id);
+    if (undefined === index) return null;
+    const block = repository.blocks[index];
+    if (
+      !block
+      || block.index !== index
+      || block.map.id !== id
+      || repository.indexById.size !== repository.nodes.length
+      || repository.blocks.some(
+        (entry) => repository.indexById.get(entry.map.id) !== entry.index
+      )
+    ) return null;
+
+    const mountedIndices = new Set<number>();
+    let previousIndex = -1;
+    const expectedChildren = Array.from(surface.children);
+    for (const child of Array.from(surface.children)) {
+      if (child.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)) continue;
+      const childId = child.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+      if (!childId) return null;
+      const childIndex = repository.indexById.get(childId);
+      if (undefined === childIndex || mountedIndices.has(childIndex)) {
+        return null;
+      }
+      if (childIndex <= previousIndex) return null;
+      previousIndex = childIndex;
+      mountedIndices.add(childIndex);
+      if (child !== node && repository.nodes[childIndex] !== child) {
+        return null;
+      }
+    }
+    if (!mountedIndices.has(index)) return null;
+
+    const previousNode = repository.nodes[index];
+    const expectedContext = repository.context;
+    return () => {
+      if (!ownerActiveRef.current || !windowedRef.current) return false;
+      const currentSurface = surfaceRef.current;
+      const currentRepository = previewWindowRepositoryRef.current;
+      const currentState = stateRef.current;
+      if (
+        currentSurface !== surface
+        || !surface.isConnected
+        || currentRepository !== repository
+        || 'html' !== currentState.kind
+        || 'ready' !== currentState.phase
+        || currentState.generation !== expectedContext.revision
+        || currentState.htmlRevision !== expectedContext.revision
+        || currentState.signature !== expectedContext.signature
+        || currentState.editMap?.signature !== expectedContext.signature
+        || currentState.editMap?.blocks.length !== repository.nodes.length
+        || generationRef.current !== expectedContext.revision
+        || repository.context !== expectedContext
+        || materializationPendingRef.current
+        || windowCommitPendingRef.current
+        || node.ownerDocument !== surface.ownerDocument
+        || node.parentNode !== surface
+        || node.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== id
+        || node.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)
+        || expectedChildren.length !== surface.children.length
+        || expectedChildren.some(
+          (expectedChild, childIndex) => surface.children[childIndex] !== expectedChild
+        )
+      ) return false;
+
+      try {
+        validatePreviewWindowRepository(repository);
+      } catch {
+        return false;
+      }
+
+      const currentBlock = repository.blocks[index];
+      if (
+        !currentBlock
+        || currentBlock.index !== index
+        || currentBlock.map.id !== id
+        || repository.indexById.get(id) !== index
+      ) return false;
+      if (currentBlock.node === node && repository.nodes[index] === node) {
+        return true;
+      }
+      if (
+        currentBlock.node !== previousNode
+        || repository.nodes[index] !== previousNode
+      ) return false;
+
+      const previousNodes = repository.nodes;
+      const previousBlocks = repository.blocks;
+      const nextNodes = [...repository.nodes];
+      nextNodes[index] = node;
+      const nextBlocks = repository.blocks.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, node } : entry
+      );
+      repository.nodes = nextNodes;
+      repository.blocks = nextBlocks;
+      try {
+        validatePreviewWindowRepository(repository);
+      } catch {
+        repository.nodes = previousNodes;
+        repository.blocks = previousBlocks;
+        return false;
+      }
+      return true;
+    };
+  };
+  prepareWindowBlockAdoptionRef.current = prepareWindowBlockAdoption;
 
   useLayoutEffect(() => {
     const pending = materializePendingRef.current;
@@ -807,6 +957,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     });
     const runtime = {
       materialize: () => materializeRef.current(),
+      prepareWindowBlockAdoption: (node: HTMLElement) =>
+        prepareWindowBlockAdoptionRef.current(node),
       session,
       surface
     };

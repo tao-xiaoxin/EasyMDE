@@ -22,6 +22,7 @@ import {
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
+  restoreVisualCodeFenceFamilies,
   serializeVisualMarkdown,
   type VisualMarkdownReadOnlySnapshot,
   type AcceptedPasteDocumentBoundary,
@@ -680,6 +681,7 @@ export function ImmersiveVisualEditor({
     prepareVisualTaskListMarkers(surface);
     ensureEmptyVisualParagraph(surface, sourceMarkdown);
     protectVisualMarkdownReadOnlyRegions(surface);
+    restoreVisualCodeFenceFamilies(surface, sourceMarkdown);
     readOnlySnapshotRef.current =
       captureVisualMarkdownReadOnlySnapshot(surface);
     acceptedPasteDocumentBoundaryRef.current = null;
@@ -709,6 +711,7 @@ export function ImmersiveVisualEditor({
     prepareVisualTaskListMarkers(surface);
     ensureEmptyVisualParagraph(surface, sourceMarkdown);
     protectVisualMarkdownReadOnlyRegions(surface);
+    restoreVisualCodeFenceFamilies(surface, sourceMarkdown);
     readOnlySnapshotRef.current =
       captureVisualMarkdownReadOnlySnapshot(surface);
     acceptedPasteDocumentBoundaryRef.current = null;
@@ -1470,13 +1473,23 @@ export function ImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) return;
-      if (!flushVisualInput()) return;
+      const key = event.key.toLowerCase();
+      const historyShortcut = (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && ('z' === key || 'y' === key);
+      if (historyShortcut) {
+        if (!flushVisualInput()) return;
+        return;
+      }
+      if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
       if (applyVisualBlockShortcut(surface, event)) {
         if (null !== visualInputTimerRef.current) {
           clearTimeout(visualInputTimerRef.current);
           visualInputTimerRef.current = null;
         }
         visualInputPendingRef.current = false;
+        pendingVisualIntentRef.current = null;
+        pendingVisualIntentResultRef.current = null;
         synchronizeMarkdown();
       }
     };
@@ -1505,21 +1518,28 @@ export function ImmersiveVisualEditor({
       executeCommand(command) {
         if (
           pendingTransferRef.current
+          || externalChangeReportedRef.current
           || visualTransferFailureReportedRef.current
         ) return false;
         if (!flushVisualInput()) return false;
         if (!applyVisualToolbarCommand(surface, command)) return false;
-        synchronizeMarkdown();
+        if (!synchronizeMarkdown()) return false;
         focusVisualSurface(surface);
         return true;
       },
       prepareMediaSelection() {
-        if (visualTransferFailureReportedRef.current) return false;
+        if (
+          externalChangeReportedRef.current
+          || visualTransferFailureReportedRef.current
+        ) return false;
         if (!flushVisualInput()) return false;
         return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
       },
       prepareToolbarFallback() {
-        if (visualTransferFailureReportedRef.current) return false;
+        if (
+          externalChangeReportedRef.current
+          || visualTransferFailureReportedRef.current
+        ) return false;
         if (!flushVisualInput()) return false;
         const pending = pendingTransferRef.current;
         if (!pending && !visualBaselineMaterializedRef.current) {
@@ -1529,12 +1549,21 @@ export function ImmersiveVisualEditor({
               throw new Error('visual-editor-read-only-snapshot-missing');
             }
             assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
-            return true;
+            materializeVisualBaseline();
           } catch (error) {
             return failVisualSynchronization(error);
           }
         }
-        if (!pending) return synchronizeMarkdown();
+        if (!pending) {
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          if (
+            !selection?.anchorNode
+            || !selection.focusNode
+            || !surface.contains(selection.anchorNode)
+            || !surface.contains(selection.focusNode)
+          ) return synchronizeMarkdown();
+          return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
+        }
         try {
           applyDocumentChange({
             selection: pending.selection,
@@ -1556,6 +1585,7 @@ export function ImmersiveVisualEditor({
     };
     onReady(runtime);
     return () => {
+      active = false;
       let cleanupError: unknown = null;
       try {
         flushVisualInput();
@@ -1567,7 +1597,6 @@ export function ImmersiveVisualEditor({
       } catch (error) {
         cleanupError ??= error;
       }
-      active = false;
       onDispose(runtime);
       surface.removeEventListener('compositionstart', handleCompositionStart);
       surface.removeEventListener('compositionend', handleCompositionEnd);

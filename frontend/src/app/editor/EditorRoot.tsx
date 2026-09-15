@@ -752,6 +752,14 @@ export function EditorRoot(props: EditorRootProps) {
     previewRuntimeRef.current = runtime;
     setPreviewRuntimeGeneration((generation) => generation + 1);
   }, []);
+  const prepareVisualWindowBlockAdoption = useCallback(
+    (node: HTMLElement): (() => boolean) | null => {
+      const runtime = previewRuntimeRef.current;
+      if (!runtime) return null;
+      return runtime.prepareWindowBlockAdoption(node);
+    },
+    []
+  );
   const cancelScheduledWechatPreparation = useCallback(() => {
     scheduledWechatPreparationRef.current?.();
     scheduledWechatPreparationRef.current = null;
@@ -2322,6 +2330,7 @@ export function EditorRoot(props: EditorRootProps) {
                 pending={visualPreviewPending}
                 previewSnapshot={visualPreviewSnapshot}
                 previewStatus={previewSurfaceStatus}
+                prepareWindowBlockAdoption={prepareVisualWindowBlockAdoption}
                 requestPreview={handleVisualPreviewRequest}
                 surface={previewRuntimeRef.current.surface}
               />

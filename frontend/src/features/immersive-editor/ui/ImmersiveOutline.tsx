@@ -83,14 +83,32 @@ function outlineIcon(title: string): LucideIcon {
   return FileText;
 }
 
+function buildOutlineItemKeys(
+  items: ReadonlyArray<ImmersiveOutlineItem>
+): ReadonlyMap<ImmersiveOutlineItem, string> {
+  const occurrences = new Map<string, number>();
+  const keys = new Map<ImmersiveOutlineItem, string>();
+  for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = items[itemIndex];
+    if (!item) throw new Error('immersive-outline-item-missing');
+    const signature = JSON.stringify([item.level, item.text]);
+    const occurrence = occurrences.get(signature) ?? 0;
+    occurrences.set(signature, occurrence + 1);
+    keys.set(item, `${signature}:${occurrence}`);
+  }
+  return keys;
+}
+
 function OutlineNodes({
   activeIndex,
   depth,
+  itemKeys,
   nodes,
   onSelect
 }: Readonly<{
   activeIndex: number | null;
   depth: number;
+  itemKeys: ReadonlyMap<ImmersiveOutlineItem, string>;
   nodes: ReadonlyArray<ImmersiveOutlineNode>;
   onSelect: (item: ImmersiveOutlineItem) => void;
 }>) {
@@ -103,8 +121,12 @@ function OutlineNodes({
         const numbered = topLevel
           ? /^(\d+\.)\s*(.*)$/u.exec(node.item.text)
           : null;
+        const itemKey = itemKeys.get(node.item);
+        if (undefined === itemKey) {
+          throw new Error('immersive-outline-item-key-missing');
+        }
         return (
-          <div key={`${node.item.position}-${node.item.index}`}>
+          <div key={itemKey}>
             <button
               type="button"
               className={`${active ? 'is-active ' : ''}is-level-${node.item.level}${topLevel ? ' is-top-level' : ''}`}
@@ -129,6 +151,7 @@ function OutlineNodes({
               <MemoizedOutlineNodes
                 activeIndex={activeIndex}
                 depth={depth + 1}
+                itemKeys={itemKeys}
                 nodes={node.children}
                 onSelect={onSelect}
               />
@@ -168,6 +191,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
     (item: ImmersiveOutlineItem) => onSelectRef.current(item),
     []
   );
+  const outlineItemKeys = useMemo(() => buildOutlineItemKeys(items), [items]);
   const outlineTree = useMemo(() => buildOutlineTree(items), [items]);
 
   useEffect(
@@ -270,6 +294,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
             <MemoizedOutlineNodes
               activeIndex={activeIndex}
               depth={0}
+              itemKeys={outlineItemKeys}
               nodes={outlineTree}
               onSelect={selectItem}
             />

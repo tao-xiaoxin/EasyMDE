@@ -7,6 +7,14 @@ import type { PreviewEditMap } from '../../contracts/ports/preview-request';
 
 const PREVIEW_WINDOW_SPACER_SELECTOR =
   '[data-easymde-preview-window-spacer]';
+const VISUAL_FENCE_ATTRIBUTE = 'data-easymde-visual-fence';
+const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
+  '.easymde-toc',
+  '.footnotes-sep',
+  '.footnotes',
+  '.easymde-math[data-easymde-rendered]',
+  '.easymde-mermaid'
+].join(', ');
 
 function placeCaretAtEnd(node: Node): void {
   const selection = window.getSelection();
@@ -51,19 +59,98 @@ function preserveVisualBlockIdentity(
   if (id) target.setAttribute('data-easymde-visual-block-id', id);
 }
 
-function currentVisualBlock(editor: HTMLElement): HTMLElement | null {
-  const selection = window.getSelection();
-  const anchor = selection?.anchorNode;
-  if (!anchor || !editor.contains(anchor)) return null;
+function visualBlockForNode(editor: HTMLElement, node: Node | null): HTMLElement | null {
+  if (!node || !editor.contains(node)) return null;
 
-  let element =
-    Node.ELEMENT_NODE === anchor.nodeType
-      ? (anchor as HTMLElement)
-      : anchor.parentElement;
+  let element = Node.ELEMENT_NODE === node.nodeType
+    ? (node as HTMLElement)
+    : node.parentElement;
   while (element && element.parentElement !== editor) {
     element = element.parentElement;
   }
   return element?.parentElement === editor ? element : null;
+}
+
+function currentVisualBlock(editor: HTMLElement): HTMLElement | null {
+  return visualBlockForNode(editor, window.getSelection()?.anchorNode ?? null);
+}
+
+function currentVisualSelectionBlock(editor: HTMLElement): HTMLElement | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const anchor = visualBlockForNode(editor, selection.anchorNode);
+  const focus = visualBlockForNode(editor, selection.focusNode);
+  return anchor && anchor === focus ? anchor : null;
+}
+
+function visualBlockCanBeTransformed(block: HTMLElement): boolean {
+  return !block.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+    && !block.querySelector(VISUAL_MARKDOWN_READ_ONLY_SELECTOR);
+}
+
+export type VisualSelectionSnapshot = Readonly<{
+  anchorNode: Node;
+  anchorOffset: number;
+  backward: boolean;
+  focusNode: Node;
+  focusOffset: number;
+}>;
+
+export function captureVisualSelection(
+  editor: HTMLElement
+): VisualSelectionSnapshot | null {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.rangeCount
+    || !selection.anchorNode
+    || !selection.focusNode
+    || selection.anchorNode === editor
+    || selection.focusNode === editor
+    || !editor.contains(selection.anchorNode)
+    || !editor.contains(selection.focusNode)
+  ) {
+    return null;
+  }
+  const range = editor.ownerDocument.createRange();
+  range.setStart(selection.anchorNode, selection.anchorOffset);
+  range.setEnd(selection.focusNode, selection.focusOffset);
+  const forward = range.startContainer === selection.anchorNode
+    && range.startOffset === selection.anchorOffset;
+  return {
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    backward: !selection.isCollapsed && !forward,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset
+  };
+}
+
+export function restoreVisualSelection(
+  editor: HTMLElement,
+  snapshot: VisualSelectionSnapshot
+): void {
+  if (
+    !editor.contains(snapshot.anchorNode)
+    || !editor.contains(snapshot.focusNode)
+  ) {
+    throw new Error('visual-editor-selection-restore-failed');
+  }
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-restore-failed');
+  selection.removeAllRanges();
+  const range = editor.ownerDocument.createRange();
+  if (snapshot.backward) {
+    range.setStart(snapshot.focusNode, snapshot.focusOffset);
+    range.setEnd(snapshot.anchorNode, snapshot.anchorOffset);
+  } else {
+    range.setStart(snapshot.anchorNode, snapshot.anchorOffset);
+    range.setEnd(snapshot.focusNode, snapshot.focusOffset);
+  }
+  selection.addRange(range);
+  if (snapshot.backward) {
+    selection.collapse(snapshot.focusNode, snapshot.focusOffset);
+    selection.extend(snapshot.anchorNode, snapshot.anchorOffset);
+  }
 }
 
 export function prepareVisualTaskListMarkers(root: HTMLElement): void {
@@ -91,6 +178,82 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
       if (checked) marker.textContent = '✓';
       input.replaceWith(marker);
     }
+  }
+}
+
+type VisualFenceFamily = Readonly<{
+  family: string;
+  language: string;
+}>;
+
+function markdownFenceFamilies(markdown: string): ReadonlyArray<VisualFenceFamily> {
+  if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
+  const families: VisualFenceFamily[] = [];
+  let active: string | null = null;
+  for (const line of markdown.split(/\r?\n/)) {
+    if (active) {
+      const closing = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+      if (
+        closing
+        && closing[1]?.[0] === active[0]
+        && (closing[1]?.length ?? 0) >= active.length
+      ) {
+        active = null;
+      }
+      continue;
+    }
+    const opening = line.match(
+      /^\s{0,3}(`{3,4}|~{3,4})([a-zA-Z0-9_-]*)\s*$/
+    );
+    if (!opening?.[1]) continue;
+    active = opening[1];
+    families.push({
+      family: opening[1],
+      language: opening[2] ?? ''
+    });
+  }
+  return families;
+}
+
+export function restoreVisualCodeFenceFamilies(
+  root: HTMLElement,
+  markdown: string
+): void {
+  const codeBlocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code'));
+  for (const code of codeBlocks) {
+    code.parentElement?.removeAttribute(VISUAL_FENCE_ATTRIBUTE);
+  }
+  if (!codeBlocks.length) return;
+  const families = markdownFenceFamilies(markdown);
+  if (!families.length) return;
+  const isMermaidCode = (code: HTMLElement | undefined): boolean =>
+    Boolean(
+      code
+      && Array.from(code.classList).some(
+        (className) => 'language-mermaid' === className.toLowerCase()
+      )
+    );
+  let codeIndex = 0;
+  for (const family of families) {
+    const language = family.language.toLowerCase();
+    if ('mermaid' === language) {
+      const code = codeBlocks[codeIndex];
+      if (code && isMermaidCode(code)) {
+        code.parentElement?.setAttribute(
+          VISUAL_FENCE_ATTRIBUTE,
+          family.family
+        );
+        codeIndex += 1;
+      }
+      continue;
+    }
+    while (isMermaidCode(codeBlocks[codeIndex])) {
+      codeIndex += 1;
+    }
+    const code = codeBlocks[codeIndex];
+    if (!code) return;
+    code.parentElement?.setAttribute(VISUAL_FENCE_ATTRIBUTE, family.family);
+    codeIndex += 1;
   }
 }
 
@@ -129,6 +292,37 @@ function replaceBlock(block: HTMLElement, tagName: string): HTMLElement {
   return replacement;
 }
 
+function replaceBlockPreservingContent(
+  block: HTMLElement,
+  tagName: string
+): HTMLElement {
+  const replacement = document.createElement(tagName);
+  while (block.firstChild) replacement.append(block.firstChild);
+  if (!replacement.firstChild) replacement.innerHTML = '<br>';
+  preserveVisualBlockIdentity(block, replacement);
+  block.replaceWith(replacement);
+  markShortcutApplied(replacement, 'block');
+  return replacement;
+}
+
+function replaceBlockWithList(
+  block: HTMLElement,
+  ordered: boolean,
+  preserveContent: boolean
+): HTMLElement {
+  const list = document.createElement(ordered ? 'ol' : 'ul');
+  const item = document.createElement('li');
+  if (preserveContent) {
+    while (block.firstChild) item.append(block.firstChild);
+  }
+  if (!item.firstChild) item.innerHTML = '<br>';
+  list.append(item);
+  preserveVisualBlockIdentity(block, list);
+  block.replaceWith(list);
+  markShortcutApplied(list, 'block');
+  return list;
+}
+
 export function applyVisualBlockShortcut(
   editor: HTMLElement,
   event: KeyboardEvent
@@ -150,9 +344,7 @@ export function applyVisualBlockShortcut(
     }
     if (['UL', 'OL'].includes(block.tagName)) {
       event.preventDefault();
-      document.execCommand(
-        'UL' === block.tagName ? 'insertUnorderedList' : 'insertOrderedList'
-      );
+      replaceBlock(block, 'p');
       return true;
     }
   }
@@ -196,28 +388,14 @@ export function applyVisualBlockShortcut(
 
     if (['-', '*', '+'].includes(text)) {
       event.preventDefault();
-      const id = block.getAttribute('data-easymde-visual-block-id');
-      block.textContent = '';
-      placeCaretAtEnd(block);
-      document.execCommand('insertUnorderedList');
-      const list = currentVisualBlock(editor);
-      if (list) {
-        if (id) list.setAttribute('data-easymde-visual-block-id', id);
-        markShortcutApplied(list, 'block');
-      }
+      const list = replaceBlockWithList(block, false, false);
+      placeCaretAtEnd(list.querySelector('li') ?? list);
       return true;
     }
     if (/^\d+\.$/.test(text)) {
       event.preventDefault();
-      const id = block.getAttribute('data-easymde-visual-block-id');
-      block.textContent = '';
-      placeCaretAtEnd(block);
-      document.execCommand('insertOrderedList');
-      const list = currentVisualBlock(editor);
-      if (list) {
-        if (id) list.setAttribute('data-easymde-visual-block-id', id);
-        markShortcutApplied(list, 'block');
-      }
+      const list = replaceBlockWithList(block, true, false);
+      placeCaretAtEnd(list.querySelector('li') ?? list);
       return true;
     }
   }
@@ -248,14 +426,16 @@ export function applyVisualBlockShortcut(
       return true;
     }
 
-    const fence = text.match(/^(```|~~~)([a-zA-Z0-9_-]*)$/);
-    if (fence) {
+    const fence = text.match(/^(`{3,4}|~{3,4})([a-zA-Z0-9_-]*)$/);
+    const fenceFamily = fence?.[1];
+    if (fenceFamily && caretIsAtEnd(block)) {
       event.preventDefault();
       const pre = document.createElement('pre');
       const code = document.createElement('code');
       code.className = fence[2] ? `language-${fence[2]}` : '';
       code.innerHTML = '<br>';
       pre.append(code);
+      pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, fenceFamily);
       preserveVisualBlockIdentity(block, pre);
       block.replaceWith(pre);
       markShortcutApplied(pre, 'block');
@@ -335,29 +515,68 @@ export function applyVisualToolbarCommand(
 ): boolean {
   switch (command.action) {
     case 'wrap':
-      if ('**' === command.prefix) {
-        document.execCommand('bold');
-      } else if ('*' === command.prefix) {
-        document.execCommand('italic');
-      } else if ('~~' === command.prefix) {
-        document.execCommand('strikeThrough');
-      } else {
-        return false;
-      }
-      return true;
+      // Inline formatting is owned by the canonical toolbar session. Returning
+      // false keeps a failed browser command explicit and lets the caller
+      // project the visual selection before applying that source edit.
+      return false;
     case 'quote':
-      document.execCommand('formatBlock', false, 'blockquote');
-      return true;
+      if (!currentVisualSelectionBlock(editor)) return false;
+      {
+        const selection = captureVisualSelection(editor);
+        const block = currentVisualBlock(editor);
+        if (
+          !selection
+          || !block
+          || !visualBlockCanBeTransformed(block)
+          || !/^(P|DIV|H[1-6])$/.test(block.tagName)
+        ) return false;
+        replaceBlockPreservingContent(block, 'blockquote');
+        restoreVisualSelection(editor, selection);
+        return true;
+      }
     case 'unorderedList':
-      document.execCommand('insertUnorderedList');
-      return true;
+      if (!currentVisualSelectionBlock(editor)) return false;
+      {
+        const selection = captureVisualSelection(editor);
+        const block = currentVisualBlock(editor);
+        if (
+          !selection
+          || !block
+          || !visualBlockCanBeTransformed(block)
+          || !/^(P|DIV|H[1-6])$/.test(block.tagName)
+        ) return false;
+        replaceBlockWithList(block, false, true);
+        restoreVisualSelection(editor, selection);
+        return true;
+      }
     case 'orderedList':
-      document.execCommand('insertOrderedList');
-      return true;
+      if (!currentVisualSelectionBlock(editor)) return false;
+      {
+        const selection = captureVisualSelection(editor);
+        const block = currentVisualBlock(editor);
+        if (
+          !selection
+          || !block
+          || !visualBlockCanBeTransformed(block)
+          || !/^(P|DIV|H[1-6])$/.test(block.tagName)
+        ) return false;
+        replaceBlockWithList(block, true, true);
+        restoreVisualSelection(editor, selection);
+        return true;
+      }
     case 'heading':
     case 'paragraph': {
+      if (!currentVisualSelectionBlock(editor)) return false;
+      const selection = captureVisualSelection(editor);
       const block = currentVisualBlock(editor);
-      if (!block || !/^(P|DIV|H[1-6])$/.test(block.tagName)) return false;
+      if (
+        !selection
+        || !block
+        || selection.anchorNode === block
+        || selection.focusNode === block
+        || !visualBlockCanBeTransformed(block)
+        || !/^(P|DIV|H[1-6])$/.test(block.tagName)
+      ) return false;
       const replacement = document.createElement(
         'heading' === command.action && command.level
           ? `h${command.level}`
@@ -368,7 +587,7 @@ export function applyVisualToolbarCommand(
       preserveVisualBlockIdentity(block, replacement);
       block.replaceWith(replacement);
       markShortcutApplied(replacement, 'block');
-      placeCaretAtEnd(replacement);
+      restoreVisualSelection(editor, selection);
       return true;
     }
     default:
@@ -394,14 +613,6 @@ export function protectVisualMarkdownReadOnlyRegions(
     region.setAttribute('contenteditable', 'false');
   }
 }
-
-const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
-  '.easymde-toc',
-  '.footnotes-sep',
-  '.footnotes',
-  '.easymde-math[data-easymde-rendered]',
-  '.easymde-mermaid'
-].join(', ');
 
 type VisualMarkdownReadOnlyRegion = Readonly<{
   attributes: ReadonlyArray<Readonly<{ name: string; value: string }>>;
@@ -825,6 +1036,32 @@ function visualMarkdownSerializer(): TurndownService {
     replacement: (_content, node) => `$${mathSource(node)
       .replace(/^\\\(/, '')
       .replace(/\\\)$/, '')}$`
+  });
+  service.addRule('easymde-visual-fence-marker', {
+    filter: (node) =>
+      ['P', 'DIV'].includes(node.nodeName)
+      && 0 === node.children.length
+      && /^(?:`{3,4}|~{3,4})[a-zA-Z0-9_-]*$/.test(node.textContent ?? ''),
+    replacement: (_content, node) => node.textContent ?? ''
+  });
+  service.addRule('easymde-visual-code-fence', {
+    filter: (node) =>
+      'PRE' === node.nodeName
+      && node.firstElementChild?.nodeName === 'CODE',
+    replacement: (_content, node) => {
+      const pre = node as HTMLElement;
+      const code = pre.firstElementChild as HTMLElement;
+      const configuredFence = pre.getAttribute(VISUAL_FENCE_ATTRIBUTE) ?? '';
+      const fence = /^(?:`{3,4}|~{3,4})$/.test(configuredFence)
+        ? configuredFence
+        : '```';
+      const language = Array.from(code.classList)
+        .find((className) => className.startsWith('language-'))
+        ?.slice('language-'.length)
+        .match(/^[a-zA-Z0-9_-]+$/)?.[0] ?? '';
+      const source = code.textContent ?? '';
+      return `\n\n${fence}${language}\n${source}\n${fence}\n\n`;
+    }
   });
   service.addRule('easymde-mermaid', {
     filter: (node) => node.classList.contains('easymde-mermaid'),

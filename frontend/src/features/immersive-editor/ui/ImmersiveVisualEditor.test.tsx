@@ -8,6 +8,22 @@ import {
   type ImmersiveVisualEditorRuntime
 } from './ImmersiveVisualEditor';
 
+function placeCaretInText(text: Text): void {
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.setStart(text, text.length);
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function deleteTextRange(text: Text, start: number, end: number): void {
+  const range = document.createRange();
+  range.setStart(text, start);
+  range.setEnd(text, end);
+  range.deleteContents();
+}
+
 describe('ImmersiveVisualEditor', () => {
   it('pauses CodeMirror Markdown parsing for each visual-editing mount', () => {
     const surface = document.createElement('article');
@@ -450,6 +466,135 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it.each(['~~~js', '```js'])(
+    'preserves the %s fence family when Enter follows rapid visual input',
+    (fence) => {
+      vi.useFakeTimers();
+      try {
+        let canonical = '';
+        const surface = document.createElement('article');
+        surface.innerHTML = '<p><br></p>';
+        document.body.append(surface);
+        const applyTextChange = vi.fn((change: { value: string }) => {
+          canonical = change.value;
+          // A staged Preview can replace an unformed marker after an
+          // intermediate canonical write.
+          if (change.value === fence) {
+            surface.innerHTML = '<pre><code class="language-js"><br></code></pre>';
+          }
+        });
+        const documentSession = {
+          document: {
+            applyTextChange,
+            getValue: () => canonical,
+            setVisualEditingActive: vi.fn(),
+            subscribe: () => vi.fn()
+          }
+        } as unknown as EditorDocumentSession;
+        const view = render(
+          <ImmersiveVisualEditor
+            documentSession={documentSession}
+            imageUploadEnabled={false}
+            imagePasteUploadEnabled={false}
+            onCanonicalDocumentChange={vi.fn()}
+            onDiagnostic={vi.fn()}
+            onDispose={vi.fn()}
+            onFailure={vi.fn()}
+            onMarkdownChange={vi.fn()}
+            onPendingChange={vi.fn()}
+            onReady={vi.fn()}
+            onTransferFailure={vi.fn()}
+            pending={false}
+            previewSnapshot={{ revision: 1, signature: 'visual' }}
+            previewStatus="ready"
+            requestPreview={vi.fn(() => 'next')}
+            surface={surface}
+          />
+        );
+        const paragraph = surface.querySelector('p');
+        if (!paragraph) throw new Error('visual-fence-race-paragraph-missing');
+        const text = document.createTextNode('');
+        paragraph.replaceChildren(text);
+        const placeAtEnd = () => {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.setStart(text, text.length);
+          range.collapse(true);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        };
+        for (const character of fence) {
+          placeAtEnd();
+          surface.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: character
+          }));
+          surface.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            data: character,
+            inputType: 'insertText'
+          }));
+          text.data += character;
+          placeAtEnd();
+          surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText'
+          }));
+        }
+
+        placeAtEnd();
+        const enter = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: 'Enter'
+        });
+        surface.dispatchEvent(enter);
+        expect(enter.defaultPrevented).toBe(true);
+
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) {
+          throw new Error('visual-fence-race-code-missing');
+        }
+        const codeText = document.createTextNode('');
+        code.replaceChildren(codeText);
+        for (const character of 'const value = 1;') {
+          placeCaretInText(codeText);
+          surface.dispatchEvent(new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: character
+          }));
+          surface.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            data: character,
+            inputType: 'insertText'
+          }));
+          codeText.data += character;
+          placeCaretInText(codeText);
+          surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText'
+          }));
+        }
+        act(() => {
+          vi.advanceTimersByTime(600);
+        });
+
+        expect(canonical).toContain(
+          `${fence}\nconst value = 1;\n${fence.slice(0, 3)}`
+        );
+        view.unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  );
+
   it('blocks image paste when automatic paste upload is disabled without blocking image drop', () => {
     const surface = document.createElement('article');
     surface.innerHTML = '<p>Visual paragraph</p>';
@@ -501,7 +646,7 @@ describe('ImmersiveVisualEditor', () => {
     view.unmount();
   });
 
-  it('skips selection mapping and document writes when the visual Markdown is unchanged', () => {
+  it('keeps the canonical selection when an unchanged visual fallback has no DOM selection', () => {
     const surface = document.createElement('article');
     surface.innerHTML = '<p>Visual paragraph</p>';
     document.body.append(surface);
@@ -516,6 +661,7 @@ describe('ImmersiveVisualEditor', () => {
     const runtimeHolder: {
       current: ImmersiveVisualEditorRuntime | null;
     } = { current: null };
+    const onFailure = vi.fn();
     const onReady = vi.fn((nextRuntime: ImmersiveVisualEditorRuntime) => {
       runtimeHolder.current = nextRuntime;
     });
@@ -527,7 +673,7 @@ describe('ImmersiveVisualEditor', () => {
         onCanonicalDocumentChange={vi.fn()}
         onDiagnostic={vi.fn()}
         onDispose={vi.fn()}
-        onFailure={vi.fn()}
+        onFailure={onFailure}
         onMarkdownChange={vi.fn()}
         onPendingChange={vi.fn()}
         onReady={onReady}
@@ -546,11 +692,311 @@ describe('ImmersiveVisualEditor', () => {
     try {
       expect(onReady).toHaveBeenCalledOnce();
       expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
-      expect(getSelection).not.toHaveBeenCalled();
+      expect(getSelection).toHaveBeenCalled();
       expect(documentSession.document.applyTextChange).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
     } finally {
       getSelection.mockRestore();
       view.unmount();
+    }
+  });
+
+  it('projects an unchanged short visual selection before the canonical fallback', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Choose this text</p>';
+    document.body.append(surface);
+    const applyTextChange = vi.fn();
+    const documentSession = {
+      document: {
+        setVisualEditingActive: vi.fn(),
+        applyTextChange,
+        getValue: () => 'Choose this text',
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-fallback-text-missing');
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 6);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.executeCommand({
+        action: 'wrap',
+        group: 'format',
+        icon: 'editor-bold',
+        id: 'bold',
+        label: 'Bold',
+        prefix: '**',
+        suffix: '**',
+        surface: 'main'
+      })).toBe(false);
+      expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
+      expect(applyTextChange).toHaveBeenCalledWith({
+        selection: { direction: 'forward', end: 6, start: 0 },
+        value: 'Choose this text'
+      });
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps the visual selection through a local heading command before immediate Backspace', () => {
+    vi.useFakeTimers();
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Visual paragraph</p>';
+    document.body.append(surface);
+    let canonicalValue = 'Visual paragraph';
+    const applyTextChange = vi.fn(({ value }: { value: string }) => {
+      canonicalValue = value;
+    });
+    const documentSession = {
+      document: {
+        applyTextChange,
+        getValue: () => canonicalValue,
+        setVisualEditingActive: vi.fn(),
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const paragraphText = surface.querySelector('p')?.firstChild;
+    if (!(paragraphText instanceof Text)) {
+      throw new Error('visual-menu-text-missing');
+    }
+    placeCaretInText(paragraphText);
+    try {
+      const runtime = runtimeHolder.current;
+      if (!runtime) throw new Error('visual-menu-runtime-missing');
+
+      expect(runtime.executeCommand({
+        action: 'heading',
+        group: 'heading',
+        icon: 'heading',
+        id: 'heading2',
+        label: 'Heading 2',
+        level: 2,
+        surface: 'heading-menu'
+      })).toBe(true);
+
+      const headingText = surface.querySelector('h2')?.firstChild;
+      if (!(headingText instanceof Text)) {
+        throw new Error('visual-menu-heading-missing');
+      }
+      const selection = window.getSelection();
+      expect(selection?.anchorNode).toBe(headingText);
+      expect(selection?.focusNode).toBe(headingText);
+      expect(selection?.anchorOffset).toBe(paragraphText.length);
+      expect(selection?.focusOffset).toBe(paragraphText.length);
+
+      surface.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Backspace'
+      }));
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      }));
+      const deletion = document.createRange();
+      deletion.setStart(headingText, headingText.length - 1);
+      deletion.setEnd(headingText, headingText.length);
+      deletion.deleteContents();
+      const caret = document.createRange();
+      caret.setStart(headingText, headingText.length);
+      caret.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      act(() => vi.runAllTimers());
+
+      expect(canonicalValue).toBe('## Visual paragrap');
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases editing ownership on unmount without deferred selection work', async () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Visual paragraph</p>';
+    document.body.append(surface);
+    const documentSession = {
+      document: {
+        applyTextChange: vi.fn(),
+        getValue: () => 'Visual paragraph',
+        setVisualEditingActive: vi.fn(),
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+
+    try {
+      view.unmount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(documentSession.document.setVisualEditingActive).toHaveBeenLastCalledWith(false);
+    } finally {
+      if (surface.isConnected) surface.remove();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('rejects a visual command after an external canonical change', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Visual paragraph</p>';
+    document.body.append(surface);
+    let canonicalValue = 'Visual paragraph';
+    const listeners = new Set<() => void>();
+    const documentSession = {
+      document: {
+        applyTextChange: vi.fn(({ value }: { value: string }) => {
+          canonicalValue = value;
+          for (const listener of listeners) listener();
+        }),
+        getValue: () => canonicalValue,
+        setVisualEditingActive: vi.fn(),
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        }
+      }
+    } as unknown as EditorDocumentSession;
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(nextRuntime) => {
+          runtime = nextRuntime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const paragraphText = surface.querySelector('p')?.firstChild;
+    if (!(paragraphText instanceof Text)) {
+      throw new Error('visual-stale-text-missing');
+    }
+    try {
+      placeCaretInText(paragraphText);
+      const documentSelection = window.getSelection();
+
+      if (!runtime) throw new Error('visual-stale-runtime-missing');
+      const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+      expect(readyRuntime.executeCommand({
+        action: 'heading',
+        group: 'heading',
+        icon: 'heading',
+        id: 'heading2',
+        label: 'Heading 2',
+        level: 2,
+        surface: 'heading-menu'
+      })).toBe(true);
+
+      canonicalValue = 'External';
+      for (const listener of listeners) listener();
+      expect(readyRuntime.executeCommand({
+        action: 'heading',
+        group: 'heading',
+        icon: 'heading',
+        id: 'heading2',
+        label: 'Heading 2',
+        level: 2,
+        surface: 'heading-menu'
+      })).toBe(false);
+      expect(documentSelection?.anchorNode).not.toBe(surface);
+    } finally {
+      view.unmount();
+      if (surface.isConnected) surface.remove();
+      vi.restoreAllMocks();
     }
   });
 
@@ -897,7 +1343,11 @@ describe('ImmersiveVisualEditor', () => {
       });
       expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
       expect(canonicalValue).toBe('Before **Formatted**\n');
-      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(applyTextChange).toHaveBeenCalledTimes(2);
+      expect(applyTextChange).toHaveBeenLastCalledWith({
+        selection: { direction: 'none', end: 18, start: 18 },
+        value: 'Before **Formatted**\n'
+      });
       const cloneNode = vi.spyOn(surface, 'cloneNode');
       const formatted = surface.querySelector('strong')?.firstChild;
       if (!(formatted instanceof Text)) {
@@ -913,7 +1363,7 @@ describe('ImmersiveVisualEditor', () => {
         cancelable: true,
         inputType: 'deleteContentBackward'
       }));
-      formatted.deleteData(formatted.length - 1, 1);
+      deleteTextRange(formatted, formatted.length - 1, formatted.length);
       const afterDelete = document.createRange();
       afterDelete.setStart(formatted, formatted.length);
       afterDelete.collapse(true);
@@ -928,7 +1378,7 @@ describe('ImmersiveVisualEditor', () => {
       });
 
       expect(canonicalValue).toBe('Before **Formatte**\n');
-      expect(applyTextChange).toHaveBeenCalledTimes(2);
+      expect(applyTextChange).toHaveBeenCalledTimes(3);
       expect(cloneNode).not.toHaveBeenCalled();
       view.unmount();
     } finally {
@@ -1022,7 +1472,7 @@ describe('ImmersiveVisualEditor', () => {
         cancelable: true,
         inputType: 'deleteContentBackward'
       }));
-      formatted.deleteData(formatted.length - 1, 1);
+      deleteTextRange(formatted, formatted.length - 1, formatted.length);
       const afterDelete = document.createRange();
       afterDelete.setStart(formatted, formatted.length);
       afterDelete.collapse(true);
@@ -1111,9 +1561,9 @@ describe('ImmersiveVisualEditor', () => {
         inputType
       }));
       if (inputType === 'deleteWordBackward') {
-        text.deleteData(12, 4);
+        deleteTextRange(text, 12, 16);
       } else {
-        text.deleteData(7, 5);
+        deleteTextRange(text, 7, 12);
       }
       const after = document.createRange();
       after.setStart(text, inputType === 'deleteWordBackward' ? 12 : 7);
@@ -1193,7 +1643,7 @@ describe('ImmersiveVisualEditor', () => {
       const cloneNode = vi.spyOn(surface, 'cloneNode');
       const innerHTML = vi.spyOn(surface, 'innerHTML', 'get');
       surface.dispatchEvent(beforeInput);
-      text.deleteData(7, 9);
+      deleteTextRange(text, 7, 16);
       const after = document.createRange();
       after.setStart(text, 7);
       after.collapse(true);
@@ -1497,7 +1947,7 @@ describe('ImmersiveVisualEditor', () => {
         cancelable: true,
         inputType: 'deleteContentBackward'
       }));
-      formatted.deleteData(formatted.length - 1, 1);
+      deleteTextRange(formatted, formatted.length - 1, formatted.length);
       surface.dispatchEvent(new InputEvent('input', {
         bubbles: true,
         inputType: 'deleteContentBackward'
@@ -2008,5 +2458,60 @@ describe('ImmersiveVisualEditor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('does not write after compositionend when the visual editor unmounts synchronously', async () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Visual paragraph</p>';
+    document.body.append(surface);
+    const applyTextChange = vi.fn();
+    const documentSession = {
+      document: {
+        setVisualEditingActive: vi.fn(),
+        applyTextChange,
+        getValue: () => 'Visual paragraph',
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const paragraph = surface.querySelector('p');
+    if (!(paragraph?.firstChild instanceof Text)) {
+      throw new Error('visual-composition-unmount-text-missing');
+    }
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(paragraph.firstChild, paragraph.firstChild.length);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    fireEvent.compositionStart(surface);
+    paragraph.textContent = 'Composed text';
+    fireEvent.input(surface, { isComposing: true });
+    fireEvent.compositionEnd(surface);
+    view.unmount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(applyTextChange).not.toHaveBeenCalled();
   });
 });

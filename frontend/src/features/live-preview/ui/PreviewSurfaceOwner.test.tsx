@@ -352,6 +352,174 @@ describe('PreviewSurfaceOwner', () => {
     replaceChildren.mockRestore();
   });
 
+  it('adopts a mounted replacement before the next window commit can restore the old node', async () => {
+    const fixture = windowedFixture(320, 'adopt-window-block');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'adopt-window-block',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+
+    const previous = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!previous) throw new Error('adopt-window-block-source-missing');
+    const replacement = document.createElement('h2');
+    replacement.setAttribute('data-easymde-visual-block-id', 'b0');
+    replacement.textContent = 'adopted block';
+    previous.replaceWith(replacement);
+
+    const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
+    expect(finalize).not.toBeNull();
+    expect(finalize?.()).toBe(true);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    await act(async () => flushAnimationFrames(2));
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    )).toBe(replacement);
+    expect(previous.isConnected).toBe(false);
+  });
+
+  it('does not mutate the repository when a prepared adoption fails its final identity check', async () => {
+    const fixture = windowedFixture(320, 'adopt-window-atomic');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'adopt-window-atomic',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+
+    const previous = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!previous) throw new Error('adopt-window-atomic-source-missing');
+    const replacement = document.createElement('h2');
+    replacement.setAttribute('data-easymde-visual-block-id', 'b0');
+    replacement.textContent = 'atomic replacement';
+    previous.replaceWith(replacement);
+    const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
+    if (!finalize) throw new Error('adopt-window-atomic-prepare-missing');
+
+    const duplicate = document.createElement('p');
+    duplicate.setAttribute('data-easymde-visual-block-id', 'b0');
+    current.surface.append(duplicate);
+    expect(finalize()).toBe(false);
+    duplicate.remove();
+
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    await act(async () => flushAnimationFrames(2));
+    expect(current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    )?.tagName).toBe('P');
+    expect(current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    )?.textContent).toBe('b0');
+    expect(replacement.isConnected).toBe(false);
+  });
+
+  it('rejects a prepared adoption after the Preview revision becomes stale', async () => {
+    const fixture = windowedFixture(320, 'adopt-window-stale');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'adopt-window-stale',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+
+    const previous = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!previous) throw new Error('adopt-window-stale-source-missing');
+    const replacement = document.createElement('h2');
+    replacement.setAttribute('data-easymde-visual-block-id', 'b0');
+    replacement.textContent = 'stale replacement';
+    previous.replaceWith(replacement);
+    const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
+    if (!finalize) throw new Error('adopt-window-stale-prepare-missing');
+
+    act(() => current.session.schedule(request('stale', 'stale'), true));
+    expect(finalize()).toBe(false);
+    expect(current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    )?.tagName).toBe('P');
+    expect(current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    )?.textContent).toBe('b0');
+    current.unmount();
+  });
+
+  it('returns null when the owner is not serving a windowed repository', () => {
+    const current = setup();
+    const block = current.surface.firstElementChild;
+    if (!(block instanceof HTMLElement)) {
+      throw new Error('adopt-window-disabled-block-missing');
+    }
+    expect(current.runtime.prepareWindowBlockAdoption(block)).toBeNull();
+  });
+
+  it('rejects unknown, duplicate, detached, stale, and unmounted window blocks', async () => {
+    const fixture = windowedFixture(320, 'adopt-window-reject');
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'adopt-window-reject',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames();
+    });
+
+    const source = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!source) throw new Error('adopt-window-block-reject-source-missing');
+    const unknown = document.createElement('p');
+    unknown.setAttribute('data-easymde-visual-block-id', 'unknown');
+    current.surface.append(unknown);
+    expect(current.runtime.prepareWindowBlockAdoption(unknown)).toBeNull();
+    unknown.remove();
+
+    const duplicate = document.createElement('p');
+    duplicate.setAttribute('data-easymde-visual-block-id', 'b0');
+    current.surface.append(duplicate);
+    expect(current.runtime.prepareWindowBlockAdoption(source)).toBeNull();
+    duplicate.remove();
+
+    const detached = document.createElement('p');
+    detached.setAttribute('data-easymde-visual-block-id', 'b0');
+    expect(current.runtime.prepareWindowBlockAdoption(detached)).toBeNull();
+
+    act(() => current.session.schedule(request('stale', 'stale'), true));
+    expect(current.runtime.prepareWindowBlockAdoption(source)).toBeNull();
+
+    const runtime = current.runtime;
+    current.unmount();
+    expect(runtime.prepareWindowBlockAdoption(source)).toBeNull();
+  });
+
   it('commits the complete enhanced DOM directly at the window cap', async () => {
     const fixture = windowedFixture(160, 'windowed-cap');
     const enhancement = deferred<void>();

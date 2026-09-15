@@ -22,6 +22,7 @@ import {
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
+  restoreVisualCodeFenceFamilies,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
   visualSelectionSourceRangeForBlocks,
@@ -143,6 +144,49 @@ A--&gt;B</code></pre>
         'A-->B',
         '```'
       ].join('\n')
+    );
+  });
+
+  it('restores fenced code families after a rendered Preview replaces the visual DOM', () => {
+    const surface = editor(`
+      <pre><code class="language-js">tilde</code></pre>
+      <pre><code class="language-python">backtick</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '~~~js\ntilde\n~~~\n\n```python\nbacktick\n```'
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual(['~~~', '```']);
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '~~~js\ntilde\n~~~\n\n```python\nbacktick\n```'
+    );
+  });
+
+  it('keeps Mermaid fence alignment when the renderer leaves Mermaid as code', () => {
+    const surface = editor(`
+      <pre><code class="language-Mermaid">flowchart TD
+A--&gt;B</code></pre>
+      <pre><code class="language-js">const value = 1;</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '~~~mermaid\nflowchart TD\nA-->B\n~~~\n\n```js\nconst value = 1;\n```'
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual(['~~~', '```']);
+    expect(serializeVisualMarkdown(surface)).toContain(
+      '~~~Mermaid\nflowchart TD\nA-->B\n~~~'
     );
   });
 
@@ -340,23 +384,106 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('- [x] Done\n- [ ] Todo');
   });
 
-  it('treats a checked empty task marker as empty for block shortcuts', () => {
+  it('treats a checked empty task marker as empty without relying on execCommand', () => {
     const surface = editor('<ul class="task-list"><li class="task-list-item"><span class="easymde-task-checkbox is-checked">✓</span></li></ul>');
     const item = surface.querySelector('li') as HTMLLIElement;
     placeCaret(item, item.childNodes.length);
-    const execCommand = vi.fn(() => true);
+    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => false);
     Object.defineProperty(document, 'execCommand', {
       configurable: true,
       value: execCommand
     });
+
+    try {
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Backspace'
+      });
+
+      expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(surface.querySelector('p')).not.toBeNull();
+    } finally {
+      if (original) {
+        Object.defineProperty(document, 'execCommand', original);
+      } else {
+        Reflect.deleteProperty(document, 'execCommand');
+      }
+    }
+  });
+
+  it.each([
+    '~~~',
+    '~~~js',
+    '~~~~',
+    '````',
+    '```js'
+  ])('forms the supported %s fence only after Enter and preserves its family', (fence) => {
+    const surface = editor(`<p>${fence}</p>`);
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-fence-text-missing');
+    placeCaret(text, text.length);
+
     const event = new KeyboardEvent('keydown', {
       bubbles: true,
       cancelable: true,
-      key: 'Backspace'
+      key: 'Enter'
     });
 
     expect(applyVisualBlockShortcut(surface, event)).toBe(true);
-    expect(execCommand).toHaveBeenCalledWith('insertUnorderedList');
+    expect(surface.querySelector('pre > code')).not.toBeNull();
+    const closingFence = fence.match(/^(`{3,4}|~{3,4})/)?.[1];
+    expect(closingFence).toBeTruthy();
+    expect(serializeVisualMarkdown(surface)).toBe(`${fence}\n\n${closingFence}`);
+  });
+
+  it('does not form a fence when Enter is pressed before the caret reaches block end', () => {
+    const surface = editor('<p>~~~js</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-fence-middle-text-missing');
+    placeCaret(text, 3);
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(surface.innerHTML).toBe('<p>~~~js</p>');
+  });
+
+  it('does not depend on execCommand when converting an unordered list marker', () => {
+    const surface = editor('<p>-</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-list-marker-text-missing');
+    placeCaret(text, text.length);
+    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => false);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+
+    try {
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: ' '
+      });
+
+      expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(surface.querySelector('ul > li')).not.toBeNull();
+    } finally {
+      if (original) {
+        Object.defineProperty(document, 'execCommand', original);
+      } else {
+        Reflect.deleteProperty(document, 'execCommand');
+      }
+    }
   });
 
   it('removes theme presentation wrappers from the Markdown serialization clone', () => {
@@ -768,6 +895,74 @@ A--&gt;B</code></pre>
 
     expect(surface.querySelector('h2')?.textContent).toBe('Toolbar heading');
     expect(serializeVisualMarkdown(surface)).toBe('## Toolbar heading');
+  });
+
+  it('reports an unsupported inline toolbar command without changing the visual selection', () => {
+    const surface = editor('<p>Toolbar bold</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-wrap-text-missing');
+    const range = document.createRange();
+    range.setStart(text, 8);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => false);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+
+    try {
+      expect(applyVisualToolbarCommand(surface, {
+        action: 'wrap',
+        group: 'format',
+        icon: 'editor-bold',
+        id: 'bold',
+        label: 'Bold',
+        prefix: '**',
+        suffix: '**',
+        surface: 'main'
+      })).toBe(false);
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(surface.textContent).toBe('Toolbar bold');
+      expect(selection?.anchorNode).toBe(text);
+      expect(selection?.anchorOffset).toBe(8);
+    } finally {
+      if (original) {
+        Object.defineProperty(document, 'execCommand', original);
+      } else {
+        Reflect.deleteProperty(document, 'execCommand');
+      }
+    }
+  });
+
+  it('fails closed for a cross-block heading selection', () => {
+    const surface = editor('<p>First block</p><p>Second block</p>');
+    const first = surface.children[0]?.firstChild;
+    const second = surface.children[1]?.firstChild;
+    if (!(first instanceof Text) || !(second instanceof Text)) {
+      throw new Error('visual-cross-block-heading-text-missing');
+    }
+    const range = document.createRange();
+    range.setStart(first, 0);
+    range.setEnd(second, second.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'heading',
+      group: 'heading',
+      icon: 'heading',
+      id: 'heading2',
+      label: 'Heading 2',
+      level: 2,
+      surface: 'heading-menu'
+    })).toBe(false);
+    expect(surface.querySelectorAll('h2')).toHaveLength(0);
+    expect(surface.textContent).toBe('First blockSecond block');
   });
 
   it('applies only the visual delta and preserves untouched Markdown syntax', () => {

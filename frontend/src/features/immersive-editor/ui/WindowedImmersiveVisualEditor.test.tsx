@@ -8,6 +8,7 @@ import { WindowedImmersiveVisualEditor } from './WindowedImmersiveVisualEditor';
 import type { ImmersiveVisualEditorRuntime } from './ImmersiveVisualEditor';
 
 function fixture(options: Readonly<{
+  lineOverrides?: Readonly<Record<number, string>>;
   mounted?: ReadonlyArray<number>;
   nonEditable?: ReadonlyArray<number>;
   paragraphBlocks?: boolean;
@@ -16,7 +17,7 @@ function fixture(options: Readonly<{
   const nonEditable = new Set(options.nonEditable ?? []);
   let canonical = Array.from(
     { length: 320 },
-    (_, index) => `Line ${index}`
+    (_, index) => options.lineOverrides?.[index] ?? `Line ${index}`
   ).join(options.paragraphBlocks ? '\n\n' : '\n');
   const editMap: PreviewEditMap = {
     blocks: Array.from({ length: 320 }, (_, index) => {
@@ -44,7 +45,7 @@ function fixture(options: Readonly<{
       ? '<div data-easymde-preview-window-spacer="1"></div>'
       : '',
     mounted.map((index) =>
-      `<p data-easymde-visual-block-id="b${index}">Line ${index}</p>`
+      `<p data-easymde-visual-block-id="b${index}">${options.lineOverrides?.[index] ?? `Line ${index}`}</p>`
     ).join(''),
     lastMounted < 319
       ? '<div data-easymde-preview-window-spacer="1"></div>'
@@ -182,6 +183,416 @@ function mergeMountedBlocks(
 }
 
 describe('WindowedImmersiveVisualEditor', () => {
+  it('keeps a keyboard fence shortcut local and editable in a windowed block', () => {
+    const current = fixture({ lineOverrides: { 160: '~~~bash' } });
+    const requestPreview = vi.fn(() => 'fence-preview');
+    const onPendingChange = vi.fn();
+    const prepareWindowBlockAdoption = vi.fn(() => () => true);
+    const { view } = renderWindowEditor(current, {
+      onPendingChange,
+      prepareWindowBlockAdoption,
+      requestPreview
+    });
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('windowed-fence-text-missing');
+    placeCaret(text, text.length);
+
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+
+    const code = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"] > code'
+    );
+    if (!(code instanceof HTMLElement)) throw new Error('windowed-fence-code-missing');
+    const placeholder = code.firstElementChild;
+    if (
+      !(placeholder instanceof HTMLSpanElement)
+      || !(placeholder.firstChild instanceof Text)
+    ) throw new Error('windowed-fence-placeholder-missing');
+    expect(placeholder.getAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe('');
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(onPendingChange).not.toHaveBeenCalledWith(true);
+    expect(prepareWindowBlockAdoption).toHaveBeenCalledWith(code.parentElement);
+
+    const input = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'echo ready',
+      inputType: 'insertText'
+    });
+    current.surface.dispatchEvent(input);
+    expect(input.defaultPrevented).toBe(false);
+    const codeText = placeholder.firstChild;
+    if (!(codeText instanceof Text)) throw new Error('windowed-fence-code-text-missing');
+    codeText.data = 'echo ready';
+    placeCaret(codeText, codeText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertText'
+    }));
+    expect(current.canonical()).toContain('~~~bash\necho ready\n~~~');
+
+    const beforeDelete = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(beforeDelete);
+    expect(beforeDelete.defaultPrevented).toBe(false);
+    const deleteRange = document.createRange();
+    deleteRange.setStart(codeText, codeText.length - 1);
+    deleteRange.setEnd(codeText, codeText.length);
+    deleteRange.deleteContents();
+    placeCaret(codeText, codeText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+    expect(current.canonical()).toContain('~~~bash\necho read\n~~~');
+
+    placeCaret(codeText, 0);
+    const beforeForwardDelete = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentForward'
+    });
+    current.surface.dispatchEvent(beforeForwardDelete);
+    expect(beforeForwardDelete.defaultPrevented).toBe(false);
+    const forwardDeleteRange = document.createRange();
+    forwardDeleteRange.setStart(codeText, 0);
+    forwardDeleteRange.setEnd(codeText, 1);
+    forwardDeleteRange.deleteContents();
+    placeCaret(codeText, 0);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentForward'
+    }));
+    expect(current.canonical()).toContain('~~~bash\ncho read\n~~~');
+
+    placeCaret(codeText, 0);
+    const beforeEmptyDelete = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentForward'
+    });
+    current.surface.dispatchEvent(beforeEmptyDelete);
+    codeText.data = '';
+    placeCaret(codeText, 0);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentForward'
+    }));
+
+    const restored = code.firstElementChild;
+    expect(restored).toBeInstanceOf(HTMLSpanElement);
+    expect(restored?.getAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe('');
+    expect(restored?.textContent).toBe(' ');
+    expect(current.canonical()).toContain('~~~bash\n\n~~~');
+
+    const restoredText = restored?.firstChild;
+    if (!(restoredText instanceof Text)) throw new Error('windowed-restored-text-missing');
+    const beforeRetype = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'y',
+      inputType: 'insertText'
+    });
+    current.surface.dispatchEvent(beforeRetype);
+    restoredText.data = 'y';
+    placeCaret(restoredText, restoredText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'y',
+      inputType: 'insertText'
+    }));
+    expect(restored?.hasAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe(false);
+    expect(current.canonical()).toContain('~~~bash\ny\n~~~');
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(onPendingChange).not.toHaveBeenCalledWith(true);
+    view.unmount();
+  });
+
+  it('leaves an empty fence on a second Enter in a windowed block', () => {
+    const current = fixture({ lineOverrides: { 160: '```js' } });
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const onPendingChange = vi.fn();
+    const { view } = renderWindowEditor(current, {
+      onPendingChange,
+      requestPreview
+    });
+    const sourceBlock = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const source = sourceBlock?.firstChild;
+    if (!(source instanceof Text)) throw new Error('windowed-second-enter-source-missing');
+    placeCaret(source, source.length);
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+    const firstCode = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"] > code'
+    );
+    if (!(firstCode instanceof HTMLElement)) throw new Error('windowed-second-enter-code-missing');
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(onPendingChange).not.toHaveBeenCalledWith(true);
+
+    const secondEnter = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+    current.surface.dispatchEvent(secondEnter);
+    expect(secondEnter.defaultPrevented).toBe(true);
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    expect(paragraph?.tagName).toBe('P');
+    expect(window.getSelection()?.anchorNode).toBe(paragraph);
+    expect(current.canonical()).not.toContain('```js\n\n```');
+    expect(current.canonical()).toContain('Line 161');
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(onPendingChange).not.toHaveBeenCalledWith(true);
+    view.unmount();
+  });
+
+  it('rebuilds a windowed code child removed by a full-range deletion', () => {
+    const current = fixture({ lineOverrides: { 160: '~~~bash' } });
+    const requestPreview = vi.fn(() => 'full-delete-preview');
+    const { view } = renderWindowEditor(current, { requestPreview });
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const source = paragraph?.firstChild;
+    if (!(source instanceof Text)) throw new Error('windowed-full-delete-source-missing');
+    placeCaret(source, source.length);
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+
+    const pre = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const code = pre?.querySelector(':scope > code');
+    const placeholder = code?.firstElementChild;
+    if (
+      !(pre instanceof HTMLElement)
+      || !(code instanceof HTMLElement)
+      || !(placeholder instanceof HTMLSpanElement)
+      || !(placeholder.firstChild instanceof Text)
+    ) throw new Error('windowed-full-delete-code-missing');
+    const gutter = document.createElement('span');
+    gutter.className = 'easymde-code-line-number-gutter';
+    gutter.textContent = '1';
+    pre.insertBefore(gutter, code);
+    const codeText = placeholder.firstChild;
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'echo hi',
+      inputType: 'insertText'
+    }));
+    codeText.data = 'echo hi';
+    placeCaret(codeText, codeText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'echo hi',
+      inputType: 'insertText'
+    }));
+    expect(current.canonical()).toContain('~~~bash\necho hi\n~~~');
+
+    const selectedCode = document.createRange();
+    selectedCode.selectNodeContents(code);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(selectedCode);
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    }));
+    code.remove();
+    pre.append(document.createElement('br'));
+    const normalizedSelection = document.createRange();
+    normalizedSelection.setStart(pre, 0);
+    normalizedSelection.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(normalizedSelection);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+
+    const restoredCode = pre.querySelector(':scope > code');
+    const restored = restoredCode?.firstElementChild;
+    expect(Array.from(pre.children).map((child) => child.tagName))
+      .toEqual(['SPAN', 'CODE']);
+    expect(pre.querySelector(':scope > .easymde-code-line-number-gutter'))
+      .not.toBeNull();
+    expect(restoredCode?.className).toBe('language-bash');
+    expect(restored).toBeInstanceOf(HTMLSpanElement);
+    expect(restored?.getAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe('');
+    expect(restored?.textContent).toBe(' ');
+    expect(current.canonical()).toContain('~~~bash\n\n~~~');
+    expect(requestPreview).not.toHaveBeenCalled();
+
+    if (!(restored instanceof HTMLSpanElement)
+      || !(restored.firstChild instanceof Text)) {
+      throw new Error('windowed-full-delete-placeholder-missing');
+    }
+    const restoredText = restored.firstChild;
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: 'y',
+      inputType: 'insertText'
+    }));
+    restoredText.data = 'y';
+    placeCaret(restoredText, restoredText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: 'y',
+      inputType: 'insertText'
+    }));
+    expect(restored.hasAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe(false);
+    expect(current.canonical()).toContain('~~~bash\ny\n~~~');
+    expect(requestPreview).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('does not mutate an empty fence while editing an unrelated windowed paragraph', () => {
+    const current = fixture({
+      lineOverrides: { 160: '~~~', 161: 'Paragraph' },
+      mounted: [160, 161]
+    });
+    const { view } = renderWindowEditor(current);
+    const fenceParagraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const fenceText = fenceParagraph?.firstChild;
+    if (!(fenceText instanceof Text)) throw new Error('windowed-unrelated-fence-missing');
+    placeCaret(fenceText, fenceText.length);
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+
+    const pre = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const placeholder = pre?.querySelector(
+      '[data-easymde-visual-code-placeholder]'
+    );
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b161"]'
+    );
+    const paragraphText = paragraph?.firstChild;
+    if (!(pre instanceof HTMLElement)
+      || !(placeholder instanceof HTMLElement)
+      || !(paragraphText instanceof Text)) {
+      throw new Error('windowed-unrelated-paragraph-missing');
+    }
+    const before = current.canonical();
+    placeCaret(paragraphText, paragraphText.length);
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: '!',
+      inputType: 'insertText'
+    }));
+    paragraphText.data = 'Paragraph!';
+    placeCaret(paragraphText, paragraphText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: '!',
+      inputType: 'insertText'
+    }));
+
+    expect(placeholder.getAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe('');
+    expect(current.canonical()).toBe(before.replace('Paragraph', 'Paragraph!'));
+    view.unmount();
+  });
+
+  it('reports an input-phase unsupported windowed PRE shape without committing input', () => {
+    const current = fixture({
+      lineOverrides: { 160: '~~~bash', 161: 'Paragraph' },
+      mounted: [160, 161]
+    });
+    const onFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+    const fenceParagraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const fenceText = fenceParagraph?.firstChild;
+    if (!(fenceText instanceof Text)) throw new Error('windowed-invalid-shape-fence-missing');
+    placeCaret(fenceText, fenceText.length);
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }));
+    const pre = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const code = pre?.querySelector(':scope > code');
+    const codeText = code?.firstElementChild?.firstChild;
+    if (!(pre instanceof HTMLElement)
+      || !(code instanceof HTMLElement)
+      || !(codeText instanceof Text)) {
+      throw new Error('windowed-invalid-shape-fixture-missing');
+    }
+    const unknown = document.createElement('span');
+    unknown.textContent = 'user-visible';
+    const canonicalBefore = current.canonical();
+    const applyCallsBefore = current.applyTextChange.mock.calls.length;
+    placeCaret(codeText, codeText.length);
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: '!',
+      inputType: 'insertText'
+    });
+    current.surface.dispatchEvent(beforeInput);
+    expect(beforeInput.defaultPrevented).toBe(false);
+    pre.insertBefore(unknown, code);
+    const input = new InputEvent('input', {
+      bubbles: true,
+      data: '!',
+      inputType: 'insertText'
+    });
+    expect(() => current.surface.dispatchEvent(input)).not.toThrow();
+
+    expect(onFailure).toHaveBeenCalledWith('visual-editor-code-shape-invalid');
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(current.canonical()).toBe(canonicalBefore);
+    expect(current.applyTextChange.mock.calls.length).toBe(applyCallsBefore);
+    expect(requestPreview).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('keeps a one-block heading toolbar command local so the next Backspace is not blocked by Preview', () => {
     const current = fixture();
     const requestPreview = vi.fn(() => 'heading-preview');
@@ -447,7 +858,7 @@ describe('WindowedImmersiveVisualEditor', () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
-    expect(requestPreview).toHaveBeenCalledOnce();
+    expect(requestPreview).not.toHaveBeenCalled();
     expect(current.canonical()).toContain(`${fence}\n\n${fence.slice(0, 3)}`);
     view.unmount();
   });

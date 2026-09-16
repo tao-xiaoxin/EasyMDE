@@ -595,6 +595,505 @@ describe('ImmersiveVisualEditor', () => {
     }
   );
 
+  it('clears and restores a code placeholder across direct input and deletion', () => {
+    vi.useFakeTimers();
+    try {
+      let canonicalValue = '~~~bash';
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>~~~bash</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const onFailure = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={requestPreview}
+          surface={surface}
+        />
+      );
+      const source = surface.querySelector('p')?.firstChild;
+      if (!(source instanceof Text)) throw new Error('visual-fence-source-missing');
+      placeCaretInText(source);
+
+      const enter = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      });
+      surface.dispatchEvent(enter);
+
+      const code = surface.querySelector('pre > code');
+      const placeholder = code?.firstElementChild;
+      if (
+        !(code instanceof HTMLElement)
+        || !(placeholder instanceof HTMLSpanElement)
+        || !(placeholder.firstChild instanceof Text)
+      ) throw new Error(
+        `visual-fence-placeholder-missing:${onFailure.mock.calls.flat().join(',')}`
+      );
+      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(placeholder.getAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe('');
+
+      const firstText = placeholder.firstChild;
+      const firstInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      surface.dispatchEvent(firstInput);
+      firstText.data = 'x';
+      placeCaretInText(firstText);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'x',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(placeholder.hasAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe(false);
+      expect(canonicalValue).toBe('~~~bash\nx\n~~~');
+
+      placeCaretInText(firstText);
+      const deleteInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      surface.dispatchEvent(deleteInput);
+      firstText.data = '';
+      placeCaretInText(firstText);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      const restored = code.firstElementChild;
+      expect(restored).toBeInstanceOf(HTMLSpanElement);
+      if (!(restored instanceof HTMLSpanElement)) {
+        throw new Error('visual-restored-placeholder-missing');
+      }
+      expect(restored?.getAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe('');
+      expect(restored?.textContent).toBe(' ');
+      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+
+      const restoredText = restored?.firstChild;
+      if (!(restoredText instanceof Text)) throw new Error('visual-restored-text-missing');
+      placeCaretInText(restoredText);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'y',
+        inputType: 'insertText'
+      }));
+      restoredText.data = 'y';
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'y',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(restored.hasAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe(false);
+      expect(canonicalValue).toBe('~~~bash\ny\n~~~');
+      expect(requestPreview).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves an empty fence on a second Enter so the following list marker stays local', () => {
+    vi.useFakeTimers();
+    try {
+      let canonicalValue = '```js';
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>```js</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const onPendingChange = vi.fn();
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={onPendingChange}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={requestPreview}
+          surface={surface}
+        />
+      );
+      const source = surface.querySelector('p')?.firstChild;
+      if (!(source instanceof Text)) throw new Error('visual-owner-second-enter-source-missing');
+      placeCaretInText(source);
+      surface.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      }));
+      expect(canonicalValue).toBe('```js\n\n```');
+      const firstCode = surface.querySelector('pre > code');
+      if (!(firstCode instanceof HTMLElement)) throw new Error('visual-owner-second-enter-code-missing');
+
+      const secondEnter = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      });
+      surface.dispatchEvent(secondEnter);
+      expect(secondEnter.defaultPrevented).toBe(true);
+      expect(surface.querySelector('pre')).toBeNull();
+      const paragraph = surface.querySelector('p');
+      expect(paragraph).not.toBeNull();
+      expect(window.getSelection()?.anchorNode).toBe(paragraph);
+      expect(canonicalValue).toBe('');
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onPendingChange).not.toHaveBeenCalledWith(true);
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rebuilds a deleted direct code child before serializing the empty fence', () => {
+    vi.useFakeTimers();
+    try {
+      let canonicalValue = '~~~bash\necho hi\n~~~';
+      const surface = document.createElement('article');
+      surface.innerHTML = '<pre data-easymde-visual-fence="~~~"><span class="easymde-code-line-number-gutter">1</span><code class="language-bash">echo hi</code></pre>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={requestPreview}
+          surface={surface}
+        />
+      );
+      const pre = surface.querySelector('pre');
+      const code = pre?.querySelector(':scope > code');
+      const codeText = code?.firstChild;
+      if (
+        !(pre instanceof HTMLElement)
+        || !(code instanceof HTMLElement)
+        || !(codeText instanceof Text)
+      ) throw new Error('visual-full-delete-code-missing');
+      const selection = window.getSelection();
+      const selectedCode = document.createRange();
+      selectedCode.selectNodeContents(code);
+      selection?.removeAllRanges();
+      selection?.addRange(selectedCode);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      }));
+      code.remove();
+      pre.append(document.createElement('br'));
+      const normalizedSelection = document.createRange();
+      normalizedSelection.setStart(pre, 0);
+      normalizedSelection.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(normalizedSelection);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      const restoredCode = pre.querySelector(':scope > code');
+      const placeholder = restoredCode?.firstElementChild;
+      expect(Array.from(pre.children).map((child) => child.tagName))
+        .toEqual(['SPAN', 'CODE']);
+      expect(pre.querySelector(':scope > .easymde-code-line-number-gutter'))
+        .not.toBeNull();
+      expect(restoredCode?.className).toBe('language-bash');
+      expect(placeholder).toBeInstanceOf(HTMLSpanElement);
+      expect(placeholder?.getAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe('');
+      expect(placeholder?.textContent).toBe(' ');
+      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(requestPreview).not.toHaveBeenCalled();
+
+      if (!(placeholder instanceof HTMLSpanElement)
+        || !(placeholder.firstChild instanceof Text)) {
+        throw new Error('visual-full-delete-placeholder-missing');
+      }
+      const restoredText = placeholder.firstChild;
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'y',
+        inputType: 'insertText'
+      }));
+      restoredText.data = 'y';
+      placeCaretInText(restoredText);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'y',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+      expect(placeholder.hasAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe(false);
+      expect(canonicalValue).toBe('~~~bash\ny\n~~~');
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not mutate an empty fence while editing an unrelated direct paragraph', () => {
+    vi.useFakeTimers();
+    try {
+      let canonicalValue = '~~~\n\n~~~\n\nParagraph';
+      const surface = document.createElement('article');
+      surface.innerHTML = '<pre data-easymde-visual-fence="~~~"><code><span data-easymde-visual-code-placeholder> </span></code></pre><p>Paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={vi.fn()}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'unexpected-preview')}
+          surface={surface}
+        />
+      );
+      const placeholder = surface.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      );
+      const paragraphText = surface.querySelector('p')?.firstChild;
+      if (!(placeholder instanceof HTMLElement)
+        || !(paragraphText instanceof Text)) {
+        throw new Error('visual-unrelated-paragraph-missing');
+      }
+      placeCaretInText(paragraphText);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '!',
+        inputType: 'insertText'
+      }));
+      paragraphText.data = 'Paragraph!';
+      placeCaretInText(paragraphText);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: '!',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(placeholder.getAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe('');
+      expect(canonicalValue).toBe('~~~\n\n~~~\n\nParagraph!');
+
+      placeCaretInText(paragraphText);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      }));
+      paragraphText.data = 'Paragraph';
+      placeCaretInText(paragraphText);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(placeholder.getAttribute(
+        'data-easymde-visual-code-placeholder'
+      )).toBe('');
+      expect(canonicalValue).toBe('~~~\n\n~~~\n\nParagraph');
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports an input-phase unsupported direct PRE shape without committing input', () => {
+    vi.useFakeTimers();
+    try {
+      const canonicalBefore = '~~~bash\nbody\n~~~\n\nParagraph';
+      let canonicalValue = canonicalBefore;
+      const surface = document.createElement('article');
+      surface.innerHTML = '<pre data-easymde-visual-fence="~~~"><code class="language-bash">body</code></pre><p>Paragraph</p>';
+      document.body.append(surface);
+      const applyTextChange = vi.fn(({ value }: { value: string }) => {
+        canonicalValue = value;
+      });
+      const onFailure = vi.fn();
+      const onMarkdownChange = vi.fn();
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const documentSession = {
+        document: {
+          applyTextChange,
+          getValue: () => canonicalValue,
+          setVisualEditingActive: vi.fn(),
+          subscribe: () => vi.fn()
+        }
+      } as unknown as EditorDocumentSession;
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={documentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={onMarkdownChange}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={requestPreview}
+          surface={surface}
+        />
+      );
+      const pre = surface.querySelector('pre');
+      const code = pre?.querySelector(':scope > code');
+      const codeText = code?.firstChild;
+      if (!(pre instanceof HTMLElement)
+        || !(code instanceof HTMLElement)
+        || !(codeText instanceof Text)) {
+        throw new Error('visual-invalid-shape-fixture-missing');
+      }
+      const unknown = document.createElement('span');
+      unknown.textContent = 'user-visible';
+      placeCaretInText(codeText);
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '!',
+        inputType: 'insertText'
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      pre.insertBefore(unknown, code);
+      const input = new InputEvent('input', {
+        bubbles: true,
+        data: '!',
+        inputType: 'insertText'
+      });
+      expect(() => surface.dispatchEvent(input)).not.toThrow();
+
+      expect(onFailure).toHaveBeenCalledWith('visual-editor-code-shape-invalid');
+      expect(onFailure).toHaveBeenCalledOnce();
+      expect(canonicalValue).toBe(canonicalBefore);
+      expect(applyTextChange).not.toHaveBeenCalled();
+      expect(onMarkdownChange).not.toHaveBeenCalled();
+      expect(requestPreview).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('blocks image paste when automatic paste upload is disabled without blocking image drop', () => {
     const surface = document.createElement('article');
     surface.innerHTML = '<p>Visual paragraph</p>';

@@ -12,12 +12,14 @@ import {
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   assertVisualMarkdownReadOnlySnapshot,
+  captureVisualCodeInputSnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   applyVisualMarkdownEditIntent,
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceIntervalMap,
   mergeVisualMarkdownChangeDetails,
   normalizeVisualCaretAtDocumentBoundary,
+  normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
@@ -25,6 +27,7 @@ import {
   restoreVisualCodeFenceFamilies,
   serializeVisualMarkdown,
   type VisualMarkdownReadOnlySnapshot,
+  type VisualCodeInputSnapshot,
   type AcceptedPasteDocumentBoundary,
   type VisualMarkdownSourceIntervalMap,
   visualSelectionSourceRange
@@ -151,6 +154,14 @@ function placeSurfaceCaretAtEnd(surface: HTMLElement): boolean {
 
 function focusVisualSurface(surface: HTMLElement): void {
   surface.focus({ preventScroll: true });
+}
+
+function selectedVisualCodeBlock(surface: HTMLElement): HTMLElement | null {
+  const node = surface.ownerDocument.defaultView?.getSelection()?.anchorNode;
+  if (!node || !surface.contains(node)) return null;
+  const element = node instanceof HTMLElement ? node : node.parentElement;
+  const pre = element?.closest('pre');
+  return pre && surface.contains(pre) ? pre : null;
 }
 
 function ensureEmptyVisualParagraph(
@@ -1150,6 +1161,7 @@ export function ImmersiveVisualEditor({
     let active = true;
     let composing = false;
     let compositionCommitScheduled = false;
+    let visualInputBlock: VisualCodeInputSnapshot | null = null;
 
     const commitPendingVisualIntent = (): boolean => {
       const pending = pendingVisualIntentResultRef.current;
@@ -1303,6 +1315,7 @@ export function ImmersiveVisualEditor({
       });
     };
     const handleBeforeInput = (event: InputEvent) => {
+      visualInputBlock = null;
       pendingVisualIntentRef.current = null;
       if (visualTransferFailureReportedRef.current) {
         event.preventDefault();
@@ -1313,6 +1326,20 @@ export function ImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) {
+        return;
+      }
+      try {
+        visualInputBlock = captureVisualCodeInputSnapshot(
+          selectedVisualCodeBlock(surface)
+        );
+      } catch (error) {
+        event.preventDefault();
+        onFailure(
+          visualEditorFailureCode(
+            error,
+            'visual-editor-code-shape-invalid'
+          )
+        );
         return;
       }
       try {
@@ -1387,6 +1414,8 @@ export function ImmersiveVisualEditor({
       }
     };
     const handleInput = (event: InputEvent) => {
+      const inputBlock = visualInputBlock;
+      visualInputBlock = null;
       if (
         visualTransferFailureReportedRef.current
         ||
@@ -1395,6 +1424,12 @@ export function ImmersiveVisualEditor({
         || event.isComposing
         || compositionCommitScheduled
       ) {
+        return;
+      }
+      try {
+        normalizeVisualCodePlaceholders(surface, event.inputType, inputBlock);
+      } catch (error) {
+        failVisualSynchronization(error);
         return;
       }
       const shortcutApplied = [

@@ -18,6 +18,7 @@ import {
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
   normalizeVisualCaretAtDocumentBoundary,
+  normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
@@ -189,6 +190,155 @@ A--&gt;B</code></pre>
       '~~~Mermaid\nflowchart TD\nA-->B\n~~~'
     );
   });
+
+  it('serializes a direct code child when a line-number gutter comes first', () => {
+    const surface = editor(`
+      <pre data-easymde-visual-fence="~~~">
+        <span class="easymde-code-line-number-gutter" aria-hidden="true">1</span>
+        <code class="language-bash">echo ready</code>
+      </pre>
+    `);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '~~~bash\necho ready\n~~~'
+    );
+  });
+
+  it.each([
+    [
+      'an unknown direct element',
+      '<pre><span>user-visible</span><code>body</code></pre>'
+    ],
+    [
+      'duplicate direct code children',
+      '<pre><code>first</code><code>second</code></pre>'
+    ],
+    [
+      'non-empty direct text',
+      '<pre>user-visible<code>body</code></pre>'
+    ],
+    [
+      'duplicate line-number gutters',
+      '<pre><span class="easymde-code-line-number-gutter">1</span><span class="easymde-code-line-number-gutter">2</span><code>body</code></pre>'
+    ]
+  ])('fails closed for %s in the serializer', (_description, markup) => {
+    expect(() => serializeVisualMarkdown(editor(markup)))
+      .toThrow('visual-editor-code-shape-invalid');
+  });
+
+  it('fails closed for an unsupported PRE shape while restoring fence families', () => {
+    const surface = editor(
+      '<pre><span>user-visible</span><code>body</code></pre>'
+    );
+
+    expect(() => restoreVisualCodeFenceFamilies(surface, '~~~\nbody\n~~~'))
+      .toThrow('visual-editor-code-shape-invalid');
+  });
+
+  it('keeps Markdown-looking tokens literal inside a fenced code block', () => {
+    const surface = editor(`
+      <pre data-easymde-visual-fence="~~~">
+        <code class="language-bash">**literal** [link](https://example.test)</code>
+      </pre>
+    `);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '~~~bash\n**literal** [link](https://example.test)\n~~~'
+    );
+  });
+
+  it('does not attach a fence family to an earlier indented code block', () => {
+    const surface = editor(`
+      <pre><code>indented code</code></pre>
+      <pre><code class="language-bash">echo ready</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '    indented code\n\n~~~bash\necho ready\n~~~'
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual([null, '~~~']);
+  });
+
+  it('maps duplicate no-language content to the later fenced code block', () => {
+    const surface = editor(`
+      <pre><code>duplicate</code></pre>
+      <pre><code>duplicate</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '    duplicate\n\n~~~\nduplicate\n~~~'
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual([null, '~~~']);
+  });
+
+  it('does not treat an indented paragraph continuation as a code block ordinal', () => {
+    const surface = editor('<pre><code>code</code></pre>');
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      'paragraph\n    continuation\n\n~~~\ncode\n~~~'
+    );
+
+    expect(
+      surface.querySelector('pre')?.getAttribute('data-easymde-visual-fence')
+    ).toBe('~~~');
+  });
+
+  it('counts an eight-space indented code block before a fenced block', () => {
+    const surface = editor(`
+      <pre><code>code</code></pre>
+      <pre><code>code</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '        code\n\n~~~\ncode\n~~~'
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual([null, '~~~']);
+  });
+
+  it.each([
+    ['~~~', 2],
+    ['```', 2],
+    ['~~~', 3],
+    ['```', 3]
+  ])(
+    'keeps an indented block together across %s fence with %s blank lines',
+    (fence, blankLineCount) => {
+      const blanks = '\n'.repeat(Number(blankLineCount) + 1);
+      const surface = editor(
+        '<pre><code>first\n\nsecond</code></pre><pre><code class="language-bash">x</code></pre>'
+      );
+
+      restoreVisualCodeFenceFamilies(
+        surface,
+        `    first${blanks}    second\n\n${fence}bash\nx\n${fence}`
+      );
+
+      expect(
+        Array.from(surface.querySelectorAll('pre')).map((pre) =>
+          pre.getAttribute('data-easymde-visual-fence')
+        )
+      ).toEqual([null, fence]);
+    }
+  );
 
   it('fails closed when the visual surface contains an incomplete Preview window', () => {
     const surface = editor(
@@ -418,8 +568,11 @@ A--&gt;B</code></pre>
     '~~~',
     '~~~js',
     '~~~~',
+    '~~~~bash',
     '````',
-    '```js'
+    '````bash',
+    '```',
+    '```bash'
   ])('forms the supported %s fence only after Enter and preserves its family', (fence) => {
     const surface = editor(`<p>${fence}</p>`);
     const text = surface.querySelector('p')?.firstChild;
@@ -433,11 +586,159 @@ A--&gt;B</code></pre>
     });
 
     expect(applyVisualBlockShortcut(surface, event)).toBe(true);
-    expect(surface.querySelector('pre > code')).not.toBeNull();
+    const code = surface.querySelector('pre > code');
+    expect(code).not.toBeNull();
+    const placeholder = code?.firstElementChild;
+    expect(code?.childNodes).toHaveLength(1);
+    expect(placeholder).toBeInstanceOf(HTMLSpanElement);
+    expect(placeholder?.getAttribute(
+      'data-easymde-visual-code-placeholder'
+    )).toBe('');
+    expect(placeholder?.childNodes).toHaveLength(1);
+    expect(placeholder?.firstChild).toBeInstanceOf(Text);
+    expect(placeholder?.textContent).toBe(' ');
+    expect(window.getSelection()?.anchorNode).toBe(code);
+    expect(window.getSelection()?.focusNode).toBe(code);
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
+    expect(window.getSelection()?.focusOffset).toBe(1);
     const closingFence = fence.match(/^(`{3,4}|~{3,4})/)?.[1];
     expect(closingFence).toBeTruthy();
+    expect(
+      visualSelectionSourceRange(
+        surface,
+        fence,
+        fence,
+        `${fence}\n\n${closingFence}`
+      )
+    ).toEqual({ direction: 'none', end: fence.length + 1, start: fence.length + 1 });
     expect(serializeVisualMarkdown(surface)).toBe(`${fence}\n\n${closingFence}`);
   });
+
+  it('keeps the empty code placeholder through first input and deletion', () => {
+    const surface = editor('<p>~~~bash</p>');
+    const paragraph = surface.querySelector('p');
+    const source = paragraph?.firstChild;
+    if (!(source instanceof Text)) throw new Error('visual-empty-fence-source-missing');
+    placeCaret(source, source.length);
+
+    expect(applyVisualBlockShortcut(surface, new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }))).toBe(true);
+    const code = surface.querySelector('pre > code');
+    const placeholder = code?.firstElementChild;
+    const placeholderText = placeholder?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(placeholder instanceof HTMLSpanElement)
+      || !(placeholderText instanceof Text)
+    ) {
+      throw new Error('visual-empty-fence-code-missing');
+    }
+
+    placeholderText.data = 'x';
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    placeholder.removeAttribute('data-easymde-visual-code-placeholder');
+    placeCaret(placeholderText, placeholderText.length);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    placeholderText.data = '';
+    normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    expect(applyVisualBlockShortcut(surface, backspace)).toBe(true);
+    expect(surface.querySelector('pre')).toBeNull();
+    expect(surface.querySelector('p')).not.toBeNull();
+  });
+
+  it('leaves a strict empty code fence on Enter and then forms a list marker', () => {
+    const surface = editor('<p>```js</p>');
+    const source = surface.querySelector('p')?.firstChild;
+    if (!(source instanceof Text)) throw new Error('visual-second-enter-source-missing');
+    placeCaret(source, source.length);
+
+    expect(applyVisualBlockShortcut(surface, new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }))).toBe(true);
+    const emptyCode = surface.querySelector('pre > code');
+    if (!(emptyCode instanceof HTMLElement)) throw new Error('visual-second-enter-code-missing');
+    const secondEnter = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+    expect(applyVisualBlockShortcut(surface, secondEnter)).toBe(true);
+    expect(secondEnter.defaultPrevented).toBe(true);
+    expect(surface.querySelector('pre')).toBeNull();
+    const paragraph = surface.querySelector('p');
+    expect(paragraph).not.toBeNull();
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBe(paragraph);
+    expect(serializeVisualMarkdown(surface)).toBe('');
+
+    const marker = document.createTextNode('-');
+    paragraph?.replaceChildren(marker);
+    placeCaret(marker, marker.length);
+    const space = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: ' '
+    });
+    expect(applyVisualBlockShortcut(surface, space)).toBe(true);
+    expect(surface.querySelector('ul > li')).not.toBeNull();
+  });
+
+  it('keeps a non-empty code block in CODE when Enter is pressed', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>echo hi</code></pre>'
+    );
+    const codeText = surface.querySelector('pre > code')?.firstChild;
+    if (!(codeText instanceof Text)) throw new Error('visual-non-empty-code-text-missing');
+    placeCaret(codeText, codeText.length);
+    const enter = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+
+    expect(applyVisualBlockShortcut(surface, enter)).toBe(false);
+    expect(enter.defaultPrevented).toBe(false);
+    expect(surface.querySelector('pre > code')?.textContent).toBe('echo hi');
+  });
+
+  it('does not treat an unmarked single-space code body as the empty placeholder', () => {
+    const surface = editor('<pre><code> </code></pre>');
+
+    expect(serializeVisualMarkdown(surface)).toBe('```\n \n```');
+  });
+
+  it.each(['insertText', 'deleteContentBackward'])(
+    'does not scan unrelated code placeholders when the input block is null (%s)',
+    (inputType) => {
+      const surface = editor(
+        '<pre data-easymde-visual-fence="~~~"><code><span data-easymde-visual-code-placeholder> </span></code></pre><p>Paragraph</p>'
+      );
+      const before = surface.innerHTML;
+
+      normalizeVisualCodePlaceholders(surface, inputType, null);
+
+      expect(surface.innerHTML).toBe(before);
+      expect(surface.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      )).not.toBeNull();
+      expect(serializeVisualMarkdown(surface)).toBe(
+        '~~~\n\n~~~\n\nParagraph'
+      );
+    }
+  );
 
   it('does not form a fence when Enter is pressed before the caret reaches block end', () => {
     const surface = editor('<p>~~~js</p>');

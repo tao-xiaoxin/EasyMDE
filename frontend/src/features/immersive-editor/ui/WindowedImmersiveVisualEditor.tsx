@@ -6,13 +6,16 @@ import {
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   assertVisualMarkdownReadOnlySnapshot,
+  captureVisualCodeInputSnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChangeDetails,
   normalizeVisualCaretAtDocumentBoundary,
+  normalizeVisualCodePlaceholders,
   protectVisualMarkdownReadOnlyRegions,
   restoreVisualCodeFenceFamilies,
   serializeVisualMarkdownBlockFragment,
   type VisualMarkdownReadOnlySnapshot,
+  type VisualCodeInputSnapshot,
   visualSelectionSourceRangeForBlocks
 } from '../visual-markdown';
 import type {
@@ -99,6 +102,14 @@ type CommitOptions = Readonly<{
 
 function focusSurface(surface: HTMLElement): void {
   surface.focus({ preventScroll: true });
+}
+
+function selectedVisualCodeBlock(surface: HTMLElement): HTMLElement | null {
+  const node = surface.ownerDocument.defaultView?.getSelection()?.anchorNode;
+  if (!node || !surface.contains(node)) return null;
+  const element = node instanceof HTMLElement ? node : node.parentElement;
+  const pre = element?.closest('pre');
+  return pre && surface.contains(pre) ? pre : null;
 }
 
 function rootBlock(surface: HTMLElement, node: Node | null): HTMLElement | null {
@@ -455,6 +466,7 @@ export function WindowedImmersiveVisualEditor({
     focusSurface(surface);
     let active = true;
     let composing = false;
+    let visualInputBlock: VisualCodeInputSnapshot | null = null;
 
     const report = (error: unknown): false => {
       onFailure(
@@ -649,6 +661,7 @@ export function WindowedImmersiveVisualEditor({
         (file) => /^image\//i.test(file.type)
       );
     const handleBeforeInput = (event: InputEvent) => {
+      visualInputBlock = null;
       if (
         pendingRef.current
         || pendingPropRef.current
@@ -664,6 +677,15 @@ export function WindowedImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) return;
+      try {
+        visualInputBlock = captureVisualCodeInputSnapshot(
+          selectedVisualCodeBlock(surface)
+        );
+      } catch (error) {
+        event.preventDefault();
+        report(error);
+        return;
+      }
       try {
         normalizeVisualCaretAtDocumentBoundary(surface);
       } catch (error) {
@@ -685,6 +707,8 @@ export function WindowedImmersiveVisualEditor({
       }
     };
     const handleInput = (event: InputEvent) => {
+      const inputBlock = visualInputBlock;
+      visualInputBlock = null;
       if (
         !active
         || externalChangeReportedRef.current
@@ -692,6 +716,12 @@ export function WindowedImmersiveVisualEditor({
         || event.isComposing
         || pendingRef.current
       ) return;
+      try {
+        normalizeVisualCodePlaceholders(surface, event.inputType, inputBlock);
+      } catch (error) {
+        report(error);
+        return;
+      }
       if (!['historyUndo', 'historyRedo'].includes(event.inputType)) {
         applyVisualInlineShortcut(surface);
       }
@@ -746,7 +776,7 @@ export function WindowedImmersiveVisualEditor({
           return;
         }
         regionRef.current = region;
-        commit();
+        commit({ allowSingleBlockStructural: true });
       } catch (error) {
         report(error);
       }

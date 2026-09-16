@@ -8,6 +8,8 @@ import type { PreviewEditMap } from '../../contracts/ports/preview-request';
 const PREVIEW_WINDOW_SPACER_SELECTOR =
   '[data-easymde-preview-window-spacer]';
 const VISUAL_FENCE_ATTRIBUTE = 'data-easymde-visual-fence';
+const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
+  'data-easymde-visual-code-placeholder';
 const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
   '.easymde-toc',
   '.footnotes-sep',
@@ -181,83 +183,375 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
   }
 }
 
-type VisualFenceFamily = Readonly<{
-  family: string;
+type MarkdownCodeBlock = Readonly<{
+  family: string | null;
+  kind: 'fenced' | 'indented';
   language: string;
+  ordinal: number;
 }>;
 
-function markdownFenceFamilies(markdown: string): ReadonlyArray<VisualFenceFamily> {
+function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> {
   if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
-  const families: VisualFenceFamily[] = [];
-  let active: string | null = null;
-  for (const line of markdown.split(/\r?\n/)) {
+  const blocks: MarkdownCodeBlock[] = [];
+  let active: {
+    family: string;
+    language: string;
+  } | null = null;
+  let inIndentedCode = false;
+  let ordinal = 0;
+  const lines = markdown.split(/\r?\n/);
+  const isIndentedCodeLine = (line: string): boolean =>
+    /^(?: {4,}|\t+)\S/.test(line);
+  const isBlankLine = (line: string): boolean => /^\s*$/.test(line);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex] ?? '';
     if (active) {
       const closing = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
       if (
         closing
-        && closing[1]?.[0] === active[0]
-        && (closing[1]?.length ?? 0) >= active.length
+        && closing[1]?.[0] === active.family[0]
+        && (closing[1]?.length ?? 0) >= active.family.length
       ) {
         active = null;
       }
       continue;
     }
+    if (
+      isIndentedCodeLine(line)
+      && (inIndentedCode
+        || 0 === lineIndex
+        || isBlankLine(lines[lineIndex - 1] ?? ''))
+    ) {
+      if (!inIndentedCode) {
+        blocks.push({
+          family: null,
+          kind: 'indented',
+          language: '',
+          ordinal
+        });
+        ordinal += 1;
+        inIndentedCode = true;
+      }
+      continue;
+    }
+    if (inIndentedCode) {
+      if (isBlankLine(line)) continue;
+      inIndentedCode = false;
+    }
     const opening = line.match(
       /^\s{0,3}(`{3,4}|~{3,4})([a-zA-Z0-9_-]*)\s*$/
     );
     if (!opening?.[1]) continue;
-    active = opening[1];
-    families.push({
+    active = {
       family: opening[1],
       language: opening[2] ?? ''
+    };
+    blocks.push({
+      family: active.family,
+      kind: 'fenced',
+      language: active.language,
+      ordinal
     });
+    ordinal += 1;
   }
-  return families;
+  return blocks;
+}
+
+type DirectCodeChildOptions = Readonly<{
+  allowMissingCode?: boolean;
+}>;
+
+function directCodeChild(
+  pre: Element,
+  options: DirectCodeChildOptions = {}
+): HTMLElement | null {
+  let code: HTMLElement | null = null;
+  let gutterCount = 0;
+  let browserBreakCount = 0;
+  for (const child of Array.from(pre.childNodes)) {
+    if (Node.TEXT_NODE === child.nodeType) {
+      if ('' !== (child.textContent ?? '').trim()) {
+        throw new Error('visual-editor-code-shape-invalid');
+      }
+      continue;
+    }
+    if (Node.COMMENT_NODE === child.nodeType) continue;
+    if (!(child instanceof HTMLElement)) {
+      throw new Error('visual-editor-code-shape-invalid');
+    }
+    if ('CODE' === child.tagName) {
+      if (code) throw new Error('visual-editor-code-shape-invalid');
+      code = child;
+      continue;
+    }
+    if (
+      'SPAN' === child.tagName
+      && child.classList.contains('easymde-code-line-number-gutter')
+    ) {
+      gutterCount += 1;
+      if (gutterCount > 1) {
+        throw new Error('visual-editor-code-shape-invalid');
+      }
+      continue;
+    }
+    if ('BR' === child.tagName) {
+      browserBreakCount += 1;
+      if (browserBreakCount > 1) {
+        throw new Error('visual-editor-code-shape-invalid');
+      }
+      continue;
+    }
+    throw new Error('visual-editor-code-shape-invalid');
+  }
+  if (!code) {
+    if (options.allowMissingCode) return null;
+    throw new Error('visual-editor-code-shape-invalid');
+  }
+  if (browserBreakCount > 0) {
+    throw new Error('visual-editor-code-shape-invalid');
+  }
+  return code;
+}
+
+function codeLanguage(code: HTMLElement): string {
+  return Array.from(code.classList)
+    .find((className) => className.startsWith('language-'))
+    ?.slice('language-'.length)
+    .toLowerCase() ?? '';
+}
+
+function strictVisualCodePlaceholder(code: HTMLElement): HTMLSpanElement | null {
+  const marked = Array.from(code.querySelectorAll<HTMLElement>(
+    `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
+  ));
+  const candidate = marked[0];
+  if (
+    marked.length !== 1
+    || !(candidate instanceof HTMLSpanElement)
+    || candidate.parentElement !== code
+    || code.children.length !== 1
+    || code.childNodes.length !== 1
+    || code.firstChild !== candidate
+    || candidate.childNodes.length !== 1
+    || !(candidate.firstChild instanceof Text)
+    || candidate.firstChild.data !== ' '
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function createVisualCodePlaceholder(
+  documentRef: Document
+): HTMLSpanElement {
+  const placeholder = documentRef.createElement('span');
+  placeholder.setAttribute(VISUAL_CODE_PLACEHOLDER_ATTRIBUTE, '');
+  placeholder.append(documentRef.createTextNode(' '));
+  return placeholder;
+}
+
+export type VisualCodeInputSnapshot = Readonly<{
+  code: HTMLElement;
+  codeClassName: string;
+  fence: string | null;
+  pre: HTMLElement;
+}>;
+
+export function captureVisualCodeInputSnapshot(
+  block: HTMLElement | null
+): VisualCodeInputSnapshot | null {
+  if ('PRE' !== block?.tagName) return null;
+  const code = directCodeChild(block);
+  if (!code || code.parentElement !== block) return null;
+  return {
+    code,
+    codeClassName: code.className,
+    fence: block.getAttribute(VISUAL_FENCE_ATTRIBUTE),
+    pre: block
+  };
+}
+
+function selectVisualCodePlaceholder(
+  placeholder: HTMLSpanElement,
+  contents = false
+): void {
+  const selection = placeholder.ownerDocument.defaultView?.getSelection();
+  if (!selection || !placeholder.parentNode) return;
+  const range = placeholder.ownerDocument.createRange();
+  if (contents) {
+    range.selectNodeContents(placeholder);
+  } else {
+    range.selectNode(placeholder);
+  }
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function selectedVisualCodePlaceholder(
+  selection: Selection
+): HTMLSpanElement | null {
+  if (!selection.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const code = range.startContainer;
+  if (
+    !(code instanceof HTMLElement)
+    || 'CODE' !== code.tagName
+    || range.endContainer !== code
+    || range.endOffset !== range.startOffset + 1
+  ) {
+    const span = range.commonAncestorContainer;
+    if (
+      !(span instanceof HTMLSpanElement)
+      || span.parentElement?.tagName !== 'CODE'
+      || range.startContainer !== span.firstChild
+      || range.endContainer !== span.firstChild
+      || range.startOffset !== 0
+      || range.endOffset !== span.firstChild?.textContent?.length
+    ) return null;
+    return strictVisualCodePlaceholder(span.parentElement)
+      === span
+      ? span
+      : null;
+  }
+  const candidate = code.childNodes[range.startOffset];
+  return candidate instanceof HTMLSpanElement
+    && strictVisualCodePlaceholder(code) === candidate
+    ? candidate
+    : null;
+}
+
+function visualCodeFenceMarkdown(
+  pre: HTMLElement,
+  code: HTMLElement
+): string {
+  const configuredFence = pre.getAttribute(VISUAL_FENCE_ATTRIBUTE) ?? '';
+  const fence = /^(?:`{3,4}|~{3,4})$/.test(configuredFence)
+    ? configuredFence
+    : '```';
+  const language = Array.from(code.classList)
+    .find((className) => className.startsWith('language-'))
+    ?.slice('language-'.length)
+    .match(/^[a-zA-Z0-9_-]+$/)?.[0] ?? '';
+  const source = strictVisualCodePlaceholder(code)
+    ? ''
+    : code.textContent ?? '';
+  return `\n\n${fence}${language}\n${source}\n${fence}\n\n`;
+}
+
+export function normalizeVisualCodePlaceholders(
+  editor: HTMLElement,
+  inputType: string,
+  block: HTMLElement | VisualCodeInputSnapshot | null = null
+): void {
+  if (!block) return;
+  const deletion = inputType.startsWith('delete');
+  const snapshot = block && !(block instanceof HTMLElement) ? block : null;
+  const blockElement: HTMLElement = block instanceof HTMLElement
+    ? block
+    : block.pre;
+  const candidates = [blockElement];
+  const processed = new Set<HTMLElement>();
+  for (const candidate of candidates) {
+    const pre = 'PRE' === candidate.tagName
+      ? candidate
+      : candidate.closest('pre');
+    if (
+      !pre
+      || processed.has(pre)
+      || !editor.contains(pre)
+    ) continue;
+    processed.add(pre);
+    const detachedCode = snapshot?.code;
+    const canRecoverDetachedCode = Boolean(
+      deletion
+      && snapshot
+      && snapshot.pre === pre
+      && editor.contains(pre)
+      && pre.isConnected
+      && detachedCode
+      && detachedCode.parentNode === null
+      && !detachedCode.isConnected
+    );
+    const code = directCodeChild(pre, {
+      allowMissingCode: canRecoverDetachedCode
+    });
+    if (!code) {
+      if (!snapshot || !canRecoverDetachedCode) continue;
+      for (const child of Array.from(pre.children)) {
+        if ('BR' === child.tagName) child.remove();
+      }
+      const restoredCode = editor.ownerDocument.createElement('code');
+      restoredCode.className = snapshot.codeClassName;
+      restoredCode.append(createVisualCodePlaceholder(editor.ownerDocument));
+      pre.append(restoredCode);
+      if (null !== snapshot.fence) {
+        pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, snapshot.fence);
+      }
+      const placeholder = restoredCode.firstElementChild;
+      if (placeholder instanceof HTMLSpanElement) {
+        selectVisualCodePlaceholder(placeholder, true);
+      }
+      continue;
+    }
+    const marked = Array.from(code.querySelectorAll<HTMLElement>(
+      `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
+    ));
+    if (deletion && '' === (code.textContent ?? '')) {
+      const placeholder = createVisualCodePlaceholder(
+        editor.ownerDocument
+      );
+      code.replaceChildren(placeholder);
+      selectVisualCodePlaceholder(placeholder, true);
+      continue;
+    }
+    for (const marker of marked) {
+      marker.removeAttribute(VISUAL_CODE_PLACEHOLDER_ATTRIBUTE);
+    }
+  }
 }
 
 export function restoreVisualCodeFenceFamilies(
   root: HTMLElement,
   markdown: string
 ): void {
-  const codeBlocks = Array.from(root.querySelectorAll<HTMLElement>('pre > code'));
+  const codeBlocks = Array.from(root.querySelectorAll<HTMLElement>('pre'))
+    .map((pre) => directCodeChild(pre))
+    .filter((code): code is HTMLElement => Boolean(code));
   for (const code of codeBlocks) {
     code.parentElement?.removeAttribute(VISUAL_FENCE_ATTRIBUTE);
   }
   if (!codeBlocks.length) return;
-  const families = markdownFenceFamilies(markdown);
-  if (!families.length) return;
-  const isMermaidCode = (code: HTMLElement | undefined): boolean =>
-    Boolean(
-      code
-      && Array.from(code.classList).some(
-        (className) => 'language-mermaid' === className.toLowerCase()
-      )
-    );
-  let codeIndex = 0;
-  for (const family of families) {
-    const language = family.language.toLowerCase();
-    if ('mermaid' === language) {
-      const code = codeBlocks[codeIndex];
-      if (code && isMermaidCode(code)) {
-        code.parentElement?.setAttribute(
-          VISUAL_FENCE_ATTRIBUTE,
-          family.family
-        );
-        codeIndex += 1;
-      }
+  const sourceBlocks = markdownCodeBlocks(markdown);
+  if (!sourceBlocks.length) return;
+  const isMermaidCode = (code: HTMLElement): boolean =>
+    'mermaid' === codeLanguage(code);
+  let omittedSourceBlocks = 0;
+  for (const sourceBlock of sourceBlocks) {
+    const codeIndex = sourceBlock.ordinal - omittedSourceBlocks;
+    const code = codeBlocks[codeIndex];
+    if ('indented' === sourceBlock.kind) {
       continue;
     }
-    while (isMermaidCode(codeBlocks[codeIndex])) {
-      codeIndex += 1;
+    if (
+      'mermaid' === sourceBlock.language.toLowerCase()
+      && (!code || !isMermaidCode(code))
+    ) {
+      omittedSourceBlocks += 1;
+      continue;
     }
-    const code = codeBlocks[codeIndex];
-    if (!code) return;
-    code.parentElement?.setAttribute(VISUAL_FENCE_ATTRIBUTE, family.family);
-    codeIndex += 1;
+    if (!code) break;
+    code.parentElement?.setAttribute(
+      VISUAL_FENCE_ATTRIBUTE,
+      sourceBlock.family ?? '```'
+    );
   }
 }
 
 function visualBlockText(block: HTMLElement): string {
+  if ('PRE' === block.tagName) {
+    const code = directCodeChild(block);
+    if (code && strictVisualCodePlaceholder(code)) return '';
+  }
   const clone = block.cloneNode(true) as HTMLElement;
   for (const marker of clone.querySelectorAll(
     '.easymde-task-checkbox, input[type="checkbox"]'
@@ -330,7 +624,15 @@ export function applyVisualBlockShortcut(
   if (event.isComposing) return false;
   const block = currentVisualBlock(editor);
   const selection = window.getSelection();
-  if (!block || !selection?.isCollapsed) return false;
+  const code = 'PRE' === block?.tagName
+    ? directCodeChild(block)
+    : null;
+  const isEmptyCodePlaceholder = Boolean(
+    code && strictVisualCodePlaceholder(code)
+  );
+  if (!block || (!selection?.isCollapsed && !isEmptyCodePlaceholder)) {
+    return false;
+  }
 
   const text = visualBlockText(block);
   if ('Backspace' === event.key && '' === text) {
@@ -347,6 +649,16 @@ export function applyVisualBlockShortcut(
       replaceBlock(block, 'p');
       return true;
     }
+  }
+
+  if (
+    'Enter' === event.key
+    && 'PRE' === block.tagName
+    && isEmptyCodePlaceholder
+  ) {
+    event.preventDefault();
+    replaceBlock(block, 'p');
+    return true;
   }
 
   if (' ' === event.key) {
@@ -430,16 +742,18 @@ export function applyVisualBlockShortcut(
     const fenceFamily = fence?.[1];
     if (fenceFamily && caretIsAtEnd(block)) {
       event.preventDefault();
-      const pre = document.createElement('pre');
-      const code = document.createElement('code');
+      const documentRef = editor.ownerDocument;
+      const pre = documentRef.createElement('pre');
+      const code = documentRef.createElement('code');
+      const editablePlaceholder = createVisualCodePlaceholder(documentRef);
       code.className = fence[2] ? `language-${fence[2]}` : '';
-      code.innerHTML = '<br>';
+      code.append(editablePlaceholder);
       pre.append(code);
       pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, fenceFamily);
       preserveVisualBlockIdentity(block, pre);
       block.replaceWith(pre);
       markShortcutApplied(pre, 'block');
-      placeCaretAtEnd(code);
+      selectVisualCodePlaceholder(editablePlaceholder);
       return true;
     }
   }
@@ -1015,6 +1329,24 @@ function visualMarkdownSerializer(): TurndownService {
   if (visualMarkdownService) return visualMarkdownService;
 
   const service = new TurndownService({
+    blankReplacement: (_content, node) => {
+      if ('PRE' === node.nodeName) {
+        const pre = node as HTMLElement;
+        const code = directCodeChild(pre);
+        if (
+          code
+          && (
+            strictVisualCodePlaceholder(code)
+            || ' ' === code.textContent
+          )
+        ) {
+          return visualCodeFenceMarkdown(pre, code);
+        }
+      }
+      return (node as HTMLElement & { isBlock?: boolean }).isBlock
+        ? '\n\n'
+        : '';
+    },
     bulletListMarker: '-',
     codeBlockStyle: 'fenced',
     emDelimiter: '*',
@@ -1047,20 +1379,12 @@ function visualMarkdownSerializer(): TurndownService {
   service.addRule('easymde-visual-code-fence', {
     filter: (node) =>
       'PRE' === node.nodeName
-      && node.firstElementChild?.nodeName === 'CODE',
+      && Boolean(directCodeChild(node)),
     replacement: (_content, node) => {
       const pre = node as HTMLElement;
-      const code = pre.firstElementChild as HTMLElement;
-      const configuredFence = pre.getAttribute(VISUAL_FENCE_ATTRIBUTE) ?? '';
-      const fence = /^(?:`{3,4}|~{3,4})$/.test(configuredFence)
-        ? configuredFence
-        : '```';
-      const language = Array.from(code.classList)
-        .find((className) => className.startsWith('language-'))
-        ?.slice('language-'.length)
-        .match(/^[a-zA-Z0-9_-]+$/)?.[0] ?? '';
-      const source = code.textContent ?? '';
-      return `\n\n${fence}${language}\n${source}\n${fence}\n\n`;
+      const code = directCodeChild(pre);
+      if (!code) throw new Error('visual-editor-code-child-missing');
+      return visualCodeFenceMarkdown(pre, code);
     }
   });
   service.addRule('easymde-mermaid', {
@@ -1894,6 +2218,17 @@ export function visualSelectionSourceRange(
     const offset = selection.anchorOffset === 0
       ? 0
       : sourceMarkdown.length;
+    return { direction: 'none', end: offset, start: offset };
+  }
+  if (selectedVisualCodePlaceholder(selection)) {
+    const range = selection.getRangeAt(0);
+    const offset = visualBoundarySourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      range.startContainer,
+      range.startOffset
+    );
     return { direction: 'none', end: offset, start: offset };
   }
   const anchor = visualBoundarySourceOffset(

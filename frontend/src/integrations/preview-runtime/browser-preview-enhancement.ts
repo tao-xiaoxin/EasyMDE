@@ -5,6 +5,7 @@ import type {
   PreviewEnhancementContext,
   PreviewEnhancementPort
 } from '../../features/live-preview/ports/preview-enhancement-port';
+import type { FrontendEnhancementControl } from './frontend-enhancement-runtime';
 
 type SharedEnhancements = Readonly<{
   enhance: (
@@ -13,7 +14,8 @@ type SharedEnhancements = Readonly<{
       assetErrors?: Readonly<{ mermaid?: string }>;
       features: PreviewFeatures;
       strings: Readonly<{ renderingFailed: string }>;
-    }>
+    }>,
+    control?: FrontendEnhancementControl
   ) => Promise<unknown> | unknown;
   syncCodeFrameBackgrounds: (surface: HTMLElement) => void;
 }>;
@@ -25,6 +27,7 @@ export type PreviewEnhancementBrowserRuntime = Readonly<{
   hasMathRenderer: () => boolean;
   hasMermaid: () => boolean;
   hasMermaidRenderer: () => boolean;
+  warmHighlightAuto: (signal: AbortSignal) => Promise<boolean>;
 }>;
 
 type BrowserPreviewEnhancementOptions = Readonly<{
@@ -638,10 +641,29 @@ export function createBrowserPreviewEnhancementPort(
     }
   }
 
-  function prepareCodeTheme(
+  async function prepareCodeTheme(
     context: PreviewEnhancementContext
   ): Promise<PreparedCodeTheme> {
-    return prepareCodeThemeForOwner(context, 'activation');
+    const prepared = await prepareCodeThemeForOwner(context, 'activation');
+    try {
+      await loadRuntime(options.runtime.hasHighlight, () =>
+        loader.loadScript(
+          'easymde-highlight-js',
+          assets.highlightScriptUrl,
+          context.signal
+        ));
+      const warmed = await options.runtime.warmHighlightAuto(context.signal);
+      if (context.signal.aborted) {
+        throw resourceError('preview-enhancement-resource-stale');
+      }
+      if (!warmed) {
+        throw resourceError('preview-enhancement-runtime-unavailable');
+      }
+      return prepared;
+    } catch (error) {
+      prepared.cancel();
+      throw error;
+    }
   }
 
   async function prepareHighlight(codeTheme: string, signal: AbortSignal): Promise<void> {
@@ -738,7 +760,7 @@ export function createBrowserPreviewEnhancementPort(
           : {}),
         features: fallbackFeatures,
         strings: bootstrap.strings
-      });
+      }, { isCurrent, signal: context.signal });
       if (!isCurrent() || context.signal.aborted) return;
       if (surface.querySelector('.easymde-render-error')) {
         throw resourceError('preview-enhancement-render-failed');
@@ -764,12 +786,35 @@ declare global {
 export function createWindowPreviewEnhancementRuntime(
   windowRef: Window
 ): PreviewEnhancementBrowserRuntime {
+  type HighlightWarmRuntime = Readonly<{
+    highlight: (
+      code: string,
+      options: Readonly<{ ignoreIllegals: boolean; language: string }>
+    ) => unknown;
+    listLanguages: () => string[];
+  }>;
+  let warmedHighlightRuntime: HighlightWarmRuntime | null = null;
   return {
     getEnhancements: () => windowRef.EasyMDEEnhancements ?? null,
     hasHighlight: () => !!windowRef.hljs,
     hasKatex: () => !!windowRef.katex,
     hasMathRenderer: () => !!windowRef.EasyMDEMathRenderer,
     hasMermaid: () => !!windowRef.mermaid,
-    hasMermaidRenderer: () => !!windowRef.EasyMDEMermaidRenderer
+    hasMermaidRenderer: () => !!windowRef.EasyMDEMermaidRenderer,
+    async warmHighlightAuto(signal) {
+      const highlight = windowRef.hljs as HighlightWarmRuntime | undefined;
+      if (!highlight) return false;
+      if (warmedHighlightRuntime === highlight) return true;
+      for (const language of highlight.listLanguages()) {
+        if (signal.aborted) return false;
+        highlight.highlight('', { ignoreIllegals: true, language });
+        await new Promise<void>((resolve) => {
+          windowRef.requestAnimationFrame(() => resolve());
+        });
+      }
+      if (signal.aborted) return false;
+      warmedHighlightRuntime = highlight;
+      return true;
+    }
   };
 }

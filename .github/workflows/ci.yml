@@ -510,7 +510,7 @@ jobs:
         env:
           EASYMDE_E2E_BASE_URL: http://127.0.0.1:8089
           EASYMDE_E2E_WP_PATH: /tmp/easymde-e2e-wp
-        run: npx playwright test --project=chromium
+        run: npx playwright test --project=chromium --project=chromium-performance
 
       - name: Upload Playwright failure artifacts
         if: failure()

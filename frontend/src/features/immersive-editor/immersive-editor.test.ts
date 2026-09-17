@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOutlineTree,
+  createDocumentDerivationScanner,
   derivePublishExcerpt,
+  deriveDocumentDerivations,
   extractOutline,
   getDocumentStats,
   tableMarkdown
@@ -319,14 +321,14 @@ describe('immersive editor model', () => {
     const markdown = [
       '  ## Indented',
       '# C#',
-      '# Closed ###',
+      '# Closed ###  #',
       '    # Code block text'
     ].join('\n');
 
     expect(extractOutline(markdown)).toEqual([
       { level: 2, text: 'Indented', line: 0, position: 0, index: 0 },
       { level: 1, text: 'C#', line: 1, position: 14, index: 1 },
-      { level: 1, text: 'Closed', line: 2, position: 19, index: 2 }
+      { level: 1, text: 'Closed ###', line: 2, position: 19, index: 2 }
     ]);
   });
 
@@ -354,6 +356,121 @@ describe('immersive editor model', () => {
     expect(extractOutline(markdown)).toEqual([
       { level: 1, text: 'Visible', line: 5, position: 46, index: 0 }
     ]);
+  });
+
+  it('derives statistics and outline together while excluding fenced lines', () => {
+    expect(
+      deriveDocumentDerivations(
+        'visible\n~~~markdown\n# hidden\nhidden words\n~~~\n# Real'
+      )
+    ).toEqual({
+      stats: { words: 2, characters: 11, minutes: 1 },
+      outline: [{ level: 1, text: 'Real', line: 5, position: 46, index: 0 }]
+    });
+  });
+
+  it('keeps CRLF positions exact while excluding a tilde fence', () => {
+    expect(
+      deriveDocumentDerivations(
+        'visible\r\n~~~\r\n# hidden\r\n~~~\r\n# Real'
+      )
+    ).toEqual({
+      stats: { words: 2, characters: 11, minutes: 1 },
+      outline: [{ level: 1, text: 'Real', line: 4, position: 29, index: 0 }]
+    });
+  });
+
+  it('preserves UTF-16 statistics across CRLF while excluding fenced syntax', () => {
+    expect(
+      deriveDocumentDerivations(
+        '😀 **visible**\r\n```markdown\r\n# hidden 😀\r\n```\r\n## 标题'
+      )
+    ).toEqual({
+      stats: { words: 3, characters: 11, minutes: 1 },
+      outline: [{ level: 2, text: '标题', line: 4, position: 47, index: 0 }]
+    });
+  });
+
+  it('derives a long document incrementally with the synchronous result unchanged', () => {
+    const markdown = Array.from(
+      { length: 600 },
+      (_, index) => `## Section ${index}\n\nvisible words ${index}`
+    ).join('\n\n');
+    const scanner = createDocumentDerivationScanner(markdown);
+    let slices = 0;
+    while (!scanner.advance(512)) slices += 1;
+
+    expect(slices).toBeGreaterThan(1);
+    expect(scanner.result()).toEqual(deriveDocumentDerivations(markdown));
+    expect(scanner.advance(512)).toBe(true);
+    expect(() => createDocumentDerivationScanner(markdown).result()).toThrow(
+      'immersive-document-scan-incomplete'
+    );
+    expect(() => createDocumentDerivationScanner(markdown).advance(0)).toThrow(
+      'immersive-document-scan-budget-invalid'
+    );
+  });
+
+  it('limits each slice for a single ordinary line larger than 4KiB', () => {
+    const markdown = `# ${'word '.repeat(6000)}`;
+    const budget = 1024;
+    const scanner = createDocumentDerivationScanner(markdown);
+    let calls = 0;
+    let complete = false;
+    while (!complete) {
+      complete = scanner.advance(budget);
+      calls += 1;
+    }
+
+    expect(markdown.length).toBeGreaterThan(4 * 1024);
+    expect(calls).toBe(Math.ceil(markdown.length / budget));
+    expect(scanner.result()).toEqual(deriveDocumentDerivations(markdown));
+  });
+
+  it('retains fence state across slices for a fenced line larger than 4KiB', () => {
+    const markdown = [
+      '~~~markdown',
+      'hidden '.repeat(6000),
+      '~~~',
+      '# Visible'
+    ].join('\n');
+    const budget = 1024;
+    const scanner = createDocumentDerivationScanner(markdown);
+    let calls = 0;
+    let complete = false;
+    while (!complete) {
+      complete = scanner.advance(budget);
+      calls += 1;
+    }
+
+    expect(markdown.length).toBeGreaterThan(4 * 1024);
+    expect(calls).toBe(Math.ceil(markdown.length / budget));
+    expect(scanner.result()).toEqual(deriveDocumentDerivations(markdown));
+  });
+
+  it('preserves line parser semantics when a slice splits CRLF or line separators', () => {
+    const documents = [
+      'first\r\n# Heading\r\nsecond',
+      '~~~\r\n# Hidden\r\n~~~\r\n# Visible',
+      '~~~\rX\n# Visible',
+      '# A\r',
+      '~~~\n# Hidden\n~~~\r',
+      '# Heading\u2028not a heading\n# Visible',
+      '```\u2029not a fence\n# Visible'
+    ];
+
+    for (const markdown of documents) {
+      const scanner = createDocumentDerivationScanner(markdown);
+      while (!scanner.advance(1)) {
+        // Deliberately cross every source-unit boundary.
+      }
+      expect(scanner.result()).toEqual(deriveDocumentDerivations(markdown));
+    }
+  });
+
+  it('preserves ECMAScript Unicode whitespace semantics without regex scanning', () => {
+    expect(getDocumentStats('one\u00a0two\u1680three\u202ffour\u3000five\ufeffsix'))
+      .toEqual({ words: 6, characters: 22, minutes: 1 });
   });
 
   it('groups numbered sections as reference-level roots', () => {

@@ -15,10 +15,23 @@ const fullCapabilityMarkdown = readFileSync(
   new URL('../../docs/examples/markdown-full-capability-test.md', import.meta.url),
   'utf8'
 );
+const fullCapabilityFixtureEvidence = {
+  sha256: createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'),
+  characters: fullCapabilityMarkdown.length,
+  bytes: Buffer.byteLength(fullCapabilityMarkdown, 'utf8'),
+  endsWithSingleLf: fullCapabilityMarkdown.endsWith('\n')
+    && !fullCapabilityMarkdown.endsWith('\r\n')
+    && !fullCapabilityMarkdown.endsWith('\n\n')
+};
 const fullCapabilityImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
+const syntheticLargeHeadingCount = 454;
+const syntheticLargeParagraphCount = 1581;
+const syntheticLargeEditSettledLimitMs = 100;
+const syntheticLargePasteSettledLimitMs = 5_000;
+const syntheticLargePreviewLayoutTaskLimitMs = 75;
 const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const managedRuntimeAssets = [
   {
@@ -583,10 +596,11 @@ async function canonicalMarkdownForPage(page) {
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
-      .map(({ id, label, cssUrl, markupProfile, swatch }) => ({
+      .map(({ id, label, cssUrl, defaultCodeTheme, markupProfile, swatch }) => ({
         id,
         label,
         cssUrl,
+        defaultCodeTheme,
         markupProfile,
         swatch
       })),
@@ -689,7 +703,7 @@ function normalizeMarkdown(markdown) {
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
-  const preview = page.locator('.easymde-pane-preview article');
+  const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
   if (expectedText) await expect(preview).toContainText(expectedText);
@@ -697,7 +711,7 @@ async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
 
 async function seedMarkdownAndWaitForPreview(page, markdown, expectedText) {
   const field = page.locator('#easymde-source');
-  const preview = page.locator('.easymde-pane-preview article');
+  const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
   const previousSignature = await readyPreviewSignature(preview);
   const response = page.waitForResponse((candidate) => {
     const request = candidate.request();
@@ -783,6 +797,337 @@ async function waitForBrowserPaint(page) {
   await page.evaluate(() => new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   }));
+}
+
+async function enterImmersivePreviewAndUnlock(page) {
+  const labels = await page.evaluate(
+    () => window.EasyMDEEditorRootBootstrap.strings.immersive
+  );
+  await page.getByRole('button', { name: labels.enter }).click();
+  await page.getByRole('button', { name: labels.preview, exact: true }).click();
+  await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+  await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+  const visualEditor = page.getByRole('textbox', {
+    name: labels.previewEditorLabel
+  });
+  await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+  return {
+    labels,
+    source: page.locator('#easymde-source'),
+    visualEditor
+  };
+}
+
+async function expectUnlockedVisualArticle(visualEditor) {
+  expect(await visualEditor.evaluate((surface) => ({
+    contentEditable: surface.getAttribute('contenteditable'),
+    isContentEditable: surface.isContentEditable,
+    tagName: surface.tagName
+  }))).toEqual({
+    contentEditable: 'true',
+    isContentEditable: true,
+    tagName: 'ARTICLE'
+  });
+}
+
+async function readCodeFrameGeometry(surface) {
+  return surface.evaluate((root) => {
+    const pre = root.querySelector('pre');
+    const code = pre?.querySelector(':scope > code');
+    if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+      throw new Error('code-frame-geometry-unavailable');
+    }
+
+    const rootStyle = getComputedStyle(root);
+    const preStyle = getComputedStyle(pre);
+    const codeStyle = getComputedStyle(code);
+    const pseudoStyle = getComputedStyle(pre, '::before');
+    const rootBox = root.getBoundingClientRect();
+    const preBox = pre.getBoundingClientRect();
+    const codeBox = code.getBoundingClientRect();
+    const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
+    const paddingRight = Number.parseFloat(rootStyle.paddingRight);
+    const frameStylesheet = document.querySelector('#easymde-code-frame-css');
+
+    return {
+      code: {
+        backgroundColor: codeStyle.backgroundColor,
+        display: codeStyle.display,
+        fontSize: codeStyle.fontSize,
+        height: codeBox.height,
+        lineHeight: codeStyle.lineHeight,
+        paddingBottom: codeStyle.paddingBottom,
+        paddingTop: codeStyle.paddingTop,
+        width: codeBox.width
+      },
+      frameCss: {
+        exists: !!frameStylesheet,
+        ready: !!frameStylesheet?.sheet
+      },
+      paper: {
+        contentWidth: root.clientWidth - paddingLeft - paddingRight,
+        height: rootBox.height,
+        width: rootBox.width
+      },
+      pre: {
+        backgroundColor: preStyle.backgroundColor,
+        display: preStyle.display,
+        frameBackground: pre.style.getPropertyValue(
+          '--easymde-code-frame-background'
+        ),
+        height: preBox.height,
+        paddingTop: preStyle.paddingTop,
+        width: preBox.width
+      },
+      pseudo: {
+        content: pseudoStyle.content,
+        height: pseudoStyle.height,
+        width: pseudoStyle.width
+      }
+    };
+  });
+}
+
+function expectCodeFrameContract(geometry, message) {
+  expect(geometry.frameCss.ready, `${message}: code frame CSS is ready`).toBe(true);
+  expect(geometry.pre.display, `${message}: PRE display`).toBe('block');
+  expect(geometry.pre.paddingTop, `${message}: PRE padding top`).toBe('34px');
+  expect(
+    Math.abs(geometry.pre.height - 89.796875),
+    `${message}: framed PRE height`
+  ).toBeLessThanOrEqual(1);
+  expect(geometry.pseudo.width, `${message}: traffic-light width`).toBe('12px');
+  expect(geometry.pseudo.height, `${message}: traffic-light height`).toBe('12px');
+  expect(geometry.code.display, `${message}: CODE display`).toBe('block');
+  expect(
+    geometry.pre.frameBackground,
+    `${message}: frame background is synchronized from the code theme`
+  ).toBe(geometry.code.backgroundColor);
+  expect(
+    geometry.pre.backgroundColor,
+    `${message}: computed PRE and CODE backgrounds match`
+  ).toBe(geometry.code.backgroundColor);
+  expect(geometry.code.fontSize, `${message}: CODE font size`).toBe('14px');
+  expect(geometry.code.lineHeight, `${message}: CODE line height`).toBe('23.8px');
+  expect(
+    Math.abs(geometry.pre.width - geometry.paper.contentWidth),
+    `${message}: PRE fills the paper content box`
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(geometry.code.width - geometry.paper.contentWidth),
+    `${message}: CODE fills the paper content box`
+  ).toBeLessThanOrEqual(1);
+}
+
+async function installCodeFrameEvidence(surface, key) {
+  await surface.evaluate((root, stateKey) => {
+    const samples = [];
+    const state = { active: true, samples, frameId: null };
+    const read = (phase) => {
+      const pre = root.querySelector('pre');
+      const code = pre?.querySelector(':scope > code');
+      if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) return;
+
+      const rootStyle = getComputedStyle(root);
+      const preStyle = getComputedStyle(pre);
+      const codeStyle = getComputedStyle(code);
+      const pseudoStyle = getComputedStyle(pre, '::before');
+      const rootBox = root.getBoundingClientRect();
+      const preBox = pre.getBoundingClientRect();
+      const codeBox = code.getBoundingClientRect();
+      const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
+      const paddingRight = Number.parseFloat(rootStyle.paddingRight);
+      const frameStylesheet = document.querySelector('#easymde-code-frame-css');
+
+      samples.push({
+        at: performance.now(),
+        code: {
+          backgroundColor: codeStyle.backgroundColor,
+          display: codeStyle.display,
+          fontSize: codeStyle.fontSize,
+          height: codeBox.height,
+          lineHeight: codeStyle.lineHeight,
+          paddingBottom: codeStyle.paddingBottom,
+          paddingTop: codeStyle.paddingTop,
+          width: codeBox.width
+        },
+        frameCss: {
+          exists: !!frameStylesheet,
+          ready: !!frameStylesheet?.sheet
+        },
+        paper: {
+          contentWidth: root.clientWidth - paddingLeft - paddingRight,
+          height: rootBox.height,
+          width: rootBox.width
+        },
+        phase,
+        preCount: root.querySelectorAll('pre').length,
+        pre: {
+          backgroundColor: preStyle.backgroundColor,
+          display: preStyle.display,
+          frameBackground: pre.style.getPropertyValue(
+            '--easymde-code-frame-background'
+          ),
+          height: preBox.height,
+          paddingTop: preStyle.paddingTop,
+          width: preBox.width
+        },
+        pseudo: {
+          content: pseudoStyle.content,
+          height: pseudoStyle.height,
+          width: pseudoStyle.width
+        }
+      });
+    };
+    const observer = new MutationObserver((mutations) => {
+      if (
+        state.active
+        && mutations.some(({ type }) => ['attributes', 'childList'].includes(type))
+      ) {
+        read('mutation');
+      }
+    });
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ['class', 'style'],
+      childList: true,
+      subtree: true
+    });
+    const nextFrame = () => {
+      if (!state.active) return;
+      read('frame');
+      state.frameId = requestAnimationFrame(nextFrame);
+    };
+    state.frameId = requestAnimationFrame(nextFrame);
+    window[stateKey] = { observer, read, state };
+  }, key);
+}
+
+async function stopCodeFrameEvidence(surface, key) {
+  return surface.evaluate((_root, stateKey) => {
+    const holder = window[stateKey];
+    if (!holder) throw new Error('code-frame-evidence-state-missing');
+    holder.state.active = false;
+    holder.observer.disconnect();
+    if (null !== holder.state.frameId) {
+      cancelAnimationFrame(holder.state.frameId);
+    }
+    holder.read('stop');
+    const samples = holder.state.samples;
+    delete window[stateKey];
+    return { samples };
+  }, key);
+}
+
+async function waitForCodeFrameEvidence(surface, key) {
+  await expect.poll(
+    () => surface.evaluate((_root, stateKey) => {
+      const holder = window[stateKey];
+      if (!holder) return false;
+      return holder.state.samples.some(({ phase }) => 'mutation' === phase);
+    }, key),
+    { message: 'first PRE mutation should be observed before the test settles' }
+  ).toBe(true);
+  await expect.poll(
+    () => surface.evaluate((_root, stateKey) => {
+      const holder = window[stateKey];
+      if (!holder) return 0;
+      return holder.state.samples.filter(({ phase }) => 'frame' === phase).length;
+    }, key),
+    { message: 'code frame evidence should include a painted animation frame' }
+  ).toBeGreaterThanOrEqual(1);
+}
+
+function syntheticWindowedMarkdown() {
+  return `${Array.from(
+    { length: 220 },
+    (_, index) => `Windowed paragraph ${index + 1}.`
+  ).join('\n\n')}\n\n`;
+}
+
+function syntheticLargeMarkdown() {
+  const paragraphs = Array.from(
+    { length: syntheticLargeParagraphCount },
+    (_, index) => [
+      `Synthetic performance paragraph ${index + 1}.`,
+      'Generated windowed Markdown. Generated windowed Markdown.'
+    ].join(' ')
+  );
+  const headings = Array.from(
+    { length: syntheticLargeHeadingCount },
+    (_, index) => `### Synthetic performance heading ${index + 1} with enough content for responsive layout validation.`
+  );
+  const blocks = [
+    paragraphs[0],
+    paragraphs[1],
+    '```\nSynthetic language-free code block.\n```',
+    '```javascript\nconst syntheticWindowedValue = 1;\n```',
+    '~~~bash\nprintf "synthetic windowed code block"\n~~~',
+    ...Array.from(
+      { length: syntheticLargeHeadingCount },
+      (_, index) => [headings[index], paragraphs[index + 2]].join('\n\n')
+    ),
+    ...paragraphs.slice(syntheticLargeHeadingCount + 2)
+  ];
+
+  return `\n\n${blocks.join('\n\n')}\n\n`;
+}
+
+async function placeVisualCaretAfterText(visualEditor, targetText) {
+  await visualEditor.evaluate((surface, text) => {
+    const walker = surface.ownerDocument.createTreeWalker(
+      surface,
+      NodeFilter.SHOW_TEXT
+    );
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!(node instanceof Text)) continue;
+      const offset = node.data.indexOf(text);
+      if (offset < 0) continue;
+      const range = surface.ownerDocument.createRange();
+      range.setStart(node, offset + text.length);
+      range.collapse(true);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('immersive-visual-selection-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+    throw new Error('immersive-visual-caret-text-missing');
+  }, targetText);
+}
+
+async function selectVisualText(visualEditor, text, occurrence = 0) {
+  await visualEditor.evaluate((surface, { occurrence: targetOccurrence, text: targetText }) => {
+    const walker = surface.ownerDocument.createTreeWalker(
+      surface,
+      NodeFilter.SHOW_TEXT
+    );
+    let occurrenceIndex = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!(node instanceof Text)) continue;
+      let searchOffset = 0;
+      while (searchOffset <= node.data.length) {
+        const matchOffset = node.data.indexOf(targetText, searchOffset);
+        if (matchOffset < 0) break;
+        if (occurrenceIndex === targetOccurrence) {
+          const range = surface.ownerDocument.createRange();
+          range.setStart(node, matchOffset);
+          range.setEnd(node, matchOffset + targetText.length);
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          if (!selection) throw new Error('immersive-visual-selection-unavailable');
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return;
+        }
+        occurrenceIndex += 1;
+        searchOffset = matchOffset + Math.max(1, targetText.length);
+      }
+    }
+    throw new Error('immersive-visual-selection-text-missing');
+  }, { occurrence, text });
 }
 
 async function articleVisualFingerprint(preview) {
@@ -910,7 +1255,7 @@ async function measureArticleThemeGeometry(
   expectedThemeBackgroundImage = null
 ) {
   const positions = Array.isArray(position) ? position : [position];
-  const results = await page.locator('.easymde-pane-preview article').evaluate(
+  const results = await page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]').evaluate(
     async (root, {
       expectedThemeBackgroundImage,
       longHeadingPrefix,
@@ -1998,6 +2343,1139 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  test('@performance keeps a synthetic large Markdown paste and windowed visual editing responsive', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    const previewRequests = [];
+    const syntheticPaste = syntheticLargeMarkdown();
+    const expectedMarkdown = `Before${syntheticPaste}`;
+    const marker = 'Synthetic performance paragraph 1.';
+    const performanceKey = '__easymdeSyntheticLongPerformance';
+    expect(syntheticPaste.match(/^### /gm) ?? []).toHaveLength(syntheticLargeHeadingCount);
+    expect(syntheticPaste).toContain('```\nSynthetic language-free code block.\n```');
+    expect(syntheticPaste).toContain('```javascript\nconst syntheticWindowedValue = 1;\n```');
+    expect(syntheticPaste).toContain('~~~bash\nprintf "synthetic windowed code block"\n~~~');
+    const markdownEvidence = (markdown) => ({
+      bytes: Buffer.byteLength(markdown, 'utf8'),
+      characters: markdown.length,
+      sha256: createHash('sha256').update(markdown, 'utf8').digest('hex')
+    });
+    const expectedMarkdownEvidence = markdownEvidence(expectedMarkdown);
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    await page.route(
+      'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      })
+    );
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        let markdown = null;
+        try {
+          markdown = request.postDataJSON()?.markdown ?? null;
+        } catch {
+          markdown = null;
+        }
+        previewRequests.push(
+          'string' === typeof markdown ? markdownEvidence(markdown) : null
+        );
+        void page.evaluate((key) => {
+          window[key]?.setPhase?.('preview-request');
+        }, performanceKey).catch(() => undefined);
+      }
+    });
+    page.on('response', (response) => {
+      if (
+        'POST' === response.request().method()
+        && new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        void page.evaluate((key) => {
+          window[key]?.setPhase?.('preview-response');
+        }, performanceKey).catch(() => undefined);
+      }
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Before', 'Before');
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: immersiveLabels.enter }).click();
+    await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
+    await expect(page.getByText(immersiveLabels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: immersiveLabels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.locator(
+      '.easymde-immersive-visual-editor[data-easymde-preview-html-sink="1"]'
+    );
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    const baselinePreviewRequestCount = previewRequests.length;
+    await visualEditor.evaluate((surface, key) => {
+      const editInputTypes = new Set([
+        'insertText',
+        'deleteContentBackward',
+        'deleteContentForward'
+      ]);
+      const state = {
+        cls: 0,
+        editWindows: [],
+        editStartedAt: null,
+        handlerDurations: [],
+        inputEvents: 0,
+        longTasks: [],
+        measurementStartedAt: null,
+        mutationSerial: 0,
+        phase: 'idle',
+        pasteHandlerDurations: [],
+        pasteFirstDoubleRaf: null,
+        pasteSettlementPending: false,
+        pasteSettledAt: null,
+        pasteStartedAt: null,
+        stableFrameDurations: [],
+        transitions: [{ at: performance.now(), phase: 'idle' }],
+        baselineSignature: surface.easymdePreviewSignature ?? ''
+      };
+      state.setPhase = (phase) => {
+        state.phase = phase;
+        state.transitions.push({ at: performance.now(), phase });
+      };
+      const isSurfaceSettled = () => surface.isConnected
+        && surface.getAttribute('aria-busy') === 'false'
+        && !surface.hasAttribute('data-easymde-preview-error')
+        && 'string' === typeof surface.easymdePreviewSignature
+        && surface.easymdePreviewSignature.length > 0;
+      const isPasteSettled = () => Number.isFinite(state.pasteStartedAt)
+        && isSurfaceSettled()
+        && surface.easymdePreviewSignature !== state.baselineSignature
+        && surface.querySelector('[data-easymde-preview-window-spacer]')
+        && surface.querySelector('[data-easymde-visual-block-id]');
+      const schedulePasteSettlement = () => {
+        if (
+          state.pasteSettledAt !== null
+          || state.pasteSettlementPending
+          || !isPasteSettled()
+        ) return;
+        state.pasteSettlementPending = true;
+        const mutationSerial = state.mutationSerial;
+        requestAnimationFrame(() => {
+          if (state.pasteSettledAt !== null) {
+            state.pasteSettlementPending = false;
+            return;
+          }
+          if (!isPasteSettled() || state.mutationSerial !== mutationSerial) {
+            state.pasteSettlementPending = false;
+            schedulePasteSettlement();
+            return;
+          }
+          state.pasteSettlementPending = false;
+          state.pasteSettledAt = performance.now();
+          state.setPhase('paste-settled');
+        });
+      };
+      const eventStarts = new WeakMap();
+      const isTrackedInput = (event) => editInputTypes.has(event.inputType)
+        && !event.isComposing;
+      const recordLongTasks = (entries) => {
+        if (null === state.measurementStartedAt) return;
+        for (const entry of entries) {
+          if (entry.startTime >= state.measurementStartedAt && entry.duration > 50) {
+            state.longTasks.push({
+              duration: entry.duration,
+              startTime: entry.startTime
+            });
+          }
+        }
+      };
+      const recordLayoutShifts = (entries) => {
+        if (null === state.measurementStartedAt) return;
+        for (const entry of entries) {
+          if (entry.startTime >= state.measurementStartedAt) {
+            state.cls += entry.value;
+          }
+        }
+      };
+      if (!Array.isArray(PerformanceObserver.supportedEntryTypes)
+        || !PerformanceObserver.supportedEntryTypes.includes('longtask')
+        || !PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
+        throw new Error('immersive-performance-observer-unavailable');
+      }
+      const longTaskObserver = new PerformanceObserver((list) => {
+        recordLongTasks(list.getEntries());
+      });
+      longTaskObserver.observe({ type: 'longtask', buffered: true });
+      const layoutShiftObserver = new PerformanceObserver((list) => {
+        recordLayoutShifts(list.getEntries());
+      });
+      layoutShiftObserver.observe({ type: 'layout-shift', buffered: true });
+      state.longTaskObserver = longTaskObserver;
+      state.layoutShiftObserver = layoutShiftObserver;
+      const captureEventStart = (event) => {
+        if (isTrackedInput(event)) eventStarts.set(event, performance.now());
+      };
+      const recordEventEnd = (event) => {
+        if (!isTrackedInput(event)) return;
+        const startedAt = eventStarts.get(event);
+        if (undefined !== startedAt
+          && null !== state.editStartedAt
+          && startedAt >= state.editStartedAt) {
+          state.handlerDurations.push(performance.now() - startedAt);
+        }
+      };
+      const recordInput = (event) => {
+        if (!isTrackedInput(event)) return;
+        const startedAt = eventStarts.get(event) ?? performance.now();
+        if (null === state.editStartedAt || startedAt < state.editStartedAt) return;
+        state.inputEvents += 1;
+        let settledMutationSerial = state.mutationSerial;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (startedAt >= state.editStartedAt) {
+            const settledAt = performance.now();
+            state.stableFrameDurations.push(settledAt - startedAt);
+            const settleInput = () => {
+              if (startedAt < state.editStartedAt) return;
+              if (!isSurfaceSettled()) {
+                requestAnimationFrame(settleInput);
+                return;
+              }
+              if (state.mutationSerial !== settledMutationSerial) {
+                settledMutationSerial = state.mutationSerial;
+                requestAnimationFrame(settleInput);
+                return;
+              }
+              state.editWindows.push({ end: performance.now(), start: startedAt });
+            };
+            requestAnimationFrame(settleInput);
+          }
+        }));
+      };
+      const recordPaste = (event) => {
+        if (Array.from(event.clipboardData?.types ?? []).includes('text/plain')) {
+          const startedAt = performance.now();
+          state.pasteStartedAt = startedAt;
+          state.measurementStartedAt = startedAt;
+          state.setPhase('paste');
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (state.pasteStartedAt === startedAt) {
+              state.pasteFirstDoubleRaf = performance.now() - startedAt;
+            }
+          }));
+        }
+      };
+      const finishPaste = (event) => {
+        if (!Array.from(event.clipboardData?.types ?? []).includes('text/plain')) return;
+        if (!Number.isFinite(state.pasteStartedAt)) return;
+        state.pasteHandlerDurations.push(performance.now() - state.pasteStartedAt);
+        state.setPhase('paste-deferred');
+        schedulePasteSettlement();
+      };
+      const mutationObserver = new MutationObserver(() => {
+        state.mutationSerial += 1;
+        schedulePasteSettlement();
+      });
+      mutationObserver.observe(surface, {
+        attributes: true,
+        attributeFilter: ['aria-busy', 'data-easymde-preview-error'],
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
+      surface.addEventListener('beforeinput', captureEventStart, true);
+      surface.addEventListener('beforeinput', recordEventEnd);
+      surface.addEventListener('input', captureEventStart, true);
+      surface.addEventListener('input', recordEventEnd);
+      surface.addEventListener('input', recordInput);
+      surface.addEventListener('paste', recordPaste, true);
+      surface.addEventListener('paste', finishPaste);
+      state.dispose = () => {
+        surface.removeEventListener('beforeinput', captureEventStart, true);
+        surface.removeEventListener('beforeinput', recordEventEnd);
+        surface.removeEventListener('input', captureEventStart, true);
+        surface.removeEventListener('input', recordEventEnd);
+        surface.removeEventListener('input', recordInput);
+        surface.removeEventListener('paste', recordPaste, true);
+        surface.removeEventListener('paste', finishPaste);
+        mutationObserver.disconnect();
+        longTaskObserver.disconnect();
+        layoutShiftObserver.disconnect();
+      };
+      window[key] = state;
+    }, performanceKey);
+
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await visualEditor.focus();
+    await visualEditor.press('ControlOrMeta+End');
+    await page.evaluate(async (value) => {
+      if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+        throw new Error('native-clipboard-write-unavailable');
+      }
+      await navigator.clipboard.writeText(value);
+    }, syntheticPaste);
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect.poll(
+      () => visualEditor.evaluate((surface, key) => window[key]?.pasteFirstDoubleRaf, performanceKey),
+      { timeout: 30_000, message: 'large paste should reach its first double-rAF' }
+    ).not.toBeNull();
+
+    await expect.poll(
+      () => visualEditor.evaluate((surface, key) => window[key]?.pasteSettledAt, performanceKey),
+      { timeout: 30_000, message: 'large paste should reach semantic Preview settled readiness' }
+    ).not.toBeNull();
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+      timeout: 30_000
+    });
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect.poll(
+      () => previewRequests.length,
+      { timeout: 30_000, message: 'large paste should issue one Preview request' }
+    ).toBe(baselinePreviewRequestCount + 1);
+    expect(previewRequests.at(-1)).toEqual(expectedMarkdownEvidence);
+    expect(expectedMarkdownEvidence.bytes).toBeGreaterThan(190_000);
+    expect(expectedMarkdownEvidence.bytes).toBeLessThan(200_000);
+
+    const pasteToSettled = await page.evaluate((key) => {
+      const state = window[key];
+      if (
+        !state
+        || !Number.isFinite(state.pasteStartedAt)
+        || !Number.isFinite(state.pasteSettledAt)
+      ) {
+        throw new Error('immersive-paste-performance-state-missing');
+      }
+      return state.pasteSettledAt - state.pasteStartedAt;
+    }, performanceKey);
+    expect(Number.isFinite(pasteToSettled)).toBe(true);
+    expect(pasteToSettled).toBeGreaterThanOrEqual(0);
+    expect(pasteToSettled).toBeLessThanOrEqual(syntheticLargePasteSettledLimitMs);
+
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    const mountedBlocks = visualEditor.locator('[data-easymde-visual-block-id]');
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    await canvas.evaluate((element) => {
+      if (!(element instanceof HTMLElement)) {
+        throw new Error('immersive-preview-canvas-unavailable');
+      }
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    const firstBlock = visualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    ).filter({ hasText: marker }).first();
+    await expect(firstBlock).toBeVisible({ timeout: 30_000 });
+    await expect.poll(
+      () => mountedBlocks.count(),
+      { timeout: 30_000, message: 'scroll should settle the bounded visual window' }
+    ).toBeLessThanOrEqual(160);
+    const mountedBlockCount = await mountedBlocks.count();
+    expect(mountedBlockCount).toBeGreaterThan(0);
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    await placeVisualCaretAfterText(visualEditor, marker);
+    await visualEditor.evaluate((surface, key) => {
+      const state = window[key];
+      if (!state) throw new Error('immersive-edit-performance-state-missing');
+      state.editStartedAt = performance.now();
+      state.setPhase('edit');
+    }, performanceKey);
+
+    let expectedInputEvents = 0;
+    for (let index = 0; index < 30; index += 1) {
+      await expect(visualEditor).toBeFocused();
+      await page.keyboard.type('x');
+      expectedInputEvents += 1;
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.inputEvents ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.stableFrameDurations.length ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.editWindows.length ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect(firstBlock).toContainText(`${marker}x`);
+
+      await page.keyboard.press('Backspace');
+      expectedInputEvents += 1;
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.inputEvents ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.stableFrameDurations.length ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect.poll(
+        () => visualEditor.evaluate((surface, key) => window[key]?.editWindows.length ?? 0, performanceKey)
+      ).toBe(expectedInputEvents);
+      await expect(firstBlock).toContainText(marker);
+    }
+
+    const performanceEvidence = await visualEditor.evaluate((surface, key) => {
+      const state = window[key];
+      if (!state) throw new Error('immersive-edit-performance-state-missing');
+      for (const entry of state.longTaskObserver?.takeRecords?.() ?? []) {
+        if (state.measurementStartedAt !== null
+          && entry.startTime >= state.measurementStartedAt
+          && entry.duration > 50) {
+          state.longTasks.push({
+            duration: entry.duration,
+            startTime: entry.startTime
+          });
+        }
+      }
+      for (const entry of state.layoutShiftObserver?.takeRecords?.() ?? []) {
+        if (state.measurementStartedAt !== null
+          && entry.startTime >= state.measurementStartedAt) {
+          state.cls += entry.value;
+        }
+      }
+      const interactionWindows = [
+        ...(Number.isFinite(state.pasteStartedAt)
+          && Number.isFinite(state.pasteSettledAt)
+          ? [{ end: state.pasteSettledAt, start: state.pasteStartedAt }]
+          : []),
+        ...state.editWindows
+      ];
+      const interactionLongTasks = state.longTasks
+        .filter((task) => interactionWindows.some((window) =>
+          task.startTime < window.end
+          && task.startTime + task.duration > window.start
+        ))
+        .map((task) => {
+          const transition = [...state.transitions]
+            .reverse()
+            .find(({ at }) => at <= task.startTime);
+          return {
+            duration: task.duration,
+            offset: Math.round(task.startTime - state.measurementStartedAt),
+            phase: transition?.phase ?? state.phase
+          };
+        });
+      const result = {
+        cls: state.cls,
+        editWindows: [...state.editWindows],
+        handlerDurations: [...state.handlerDurations],
+        inputEvents: state.inputEvents,
+        longTasks: interactionLongTasks,
+        pasteFirstDoubleRaf: state.pasteFirstDoubleRaf,
+        pasteStartedAt: state.pasteStartedAt,
+        pasteSettledAt: state.pasteSettledAt,
+        pasteHandlerDurations: [...state.pasteHandlerDurations],
+        stableFrameDurations: [...state.stableFrameDurations]
+      };
+      state.dispose();
+      delete window[key];
+      return result;
+    }, performanceKey);
+    const p95 = (values, label) => {
+      expect(values.length, `${label} should contain measurements`).toBeGreaterThan(0);
+      const sorted = [...values].sort((left, right) => left - right);
+      return sorted[Math.ceil(sorted.length * 0.95) - 1];
+    };
+    const p95HandlerDuration = p95(
+      performanceEvidence.handlerDurations,
+      'edit handler durations'
+    );
+    const pasteHandlerDuration = p95(
+      performanceEvidence.pasteHandlerDurations,
+      'paste handler durations'
+    );
+    const p95StableFrameDuration = p95(
+      performanceEvidence.stableFrameDurations,
+      'stable frame durations'
+    );
+    const settledEditDurations = performanceEvidence.editWindows.map(({ end, start }) => {
+      const duration = end - start;
+      expect(Number.isFinite(duration), 'settled edit duration should be finite').toBe(true);
+      expect(duration, 'settled edit duration should not be negative').toBeGreaterThanOrEqual(0);
+      return duration;
+    });
+    const p95SettledEditDuration = p95(
+      settledEditDurations,
+      'mutation-settled edit durations'
+    );
+    await testInfo.attach('immersive-synthetic-long-performance', {
+      body: JSON.stringify({
+        document: expectedMarkdownEvidence,
+        editCycles: 30,
+        inputEvents: performanceEvidence.inputEvents,
+        longTasks: performanceEvidence.longTasks,
+        cls: performanceEvidence.cls,
+        pasteHandlerDuration,
+        pasteFirstDoubleRaf: performanceEvidence.pasteFirstDoubleRaf,
+        pasteToSettled,
+        pasteSettledLimit: syntheticLargePasteSettledLimitMs,
+        p95HandlerDuration,
+        p95SettledEditDuration,
+        p95StableFrameDuration,
+        previewRequests: previewRequests.length - baselinePreviewRequestCount,
+        settledEditCount: settledEditDurations.length,
+        settledEditLimit: syntheticLargeEditSettledLimitMs,
+        windowedMountedBlocks: mountedBlockCount,
+        headings: syntheticLargeHeadingCount
+      }),
+      contentType: 'application/json'
+    });
+    expect(performanceEvidence.inputEvents).toBe(60);
+    expect(performanceEvidence.editWindows).toHaveLength(60);
+    expect(performanceEvidence.handlerDurations).toHaveLength(120);
+    expect(performanceEvidence.stableFrameDurations).toHaveLength(60);
+    expect(settledEditDurations).toHaveLength(60);
+    expect(pasteHandlerDuration).toBeLessThan(50);
+    expect(Number.isFinite(performanceEvidence.pasteFirstDoubleRaf)).toBe(true);
+    expect(performanceEvidence.pasteFirstDoubleRaf).toBeLessThanOrEqual(100);
+    expect(Number.isFinite(performanceEvidence.pasteSettledAt)).toBe(true);
+    expect(performanceEvidence.pasteSettledAt - performanceEvidence.pasteStartedAt)
+      .toBe(pasteToSettled);
+    expect(p95HandlerDuration).toBeLessThanOrEqual(16);
+    expect(p95SettledEditDuration).toBeLessThanOrEqual(syntheticLargeEditSettledLimitMs);
+    expect(p95StableFrameDuration).toBeLessThanOrEqual(100);
+    const editLongTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'edit'
+    );
+    const previewLayoutTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase !== 'edit'
+    );
+    expect(editLongTasks).toEqual([]);
+    expect(previewLayoutTasks.length).toBeLessThanOrEqual(1);
+    for (const task of previewLayoutTasks) {
+      expect(task.phase).toBe('preview-response');
+      expect(task.duration)
+        .toBeLessThanOrEqual(syntheticLargePreviewLayoutTaskLimitMs);
+    }
+    expect(performanceEvidence.cls).toBeLessThanOrEqual(0.01);
+    expect(previewRequests.length).toBe(baselinePreviewRequestCount + 1);
+    await page.getByRole('button', {
+      name: immersiveLabels.previewLockReadOnly
+    }).click();
+    await expect(page.getByRole('textbox', {
+      name: immersiveLabels.previewEditorLabel
+    })).toHaveCount(0);
+    await expect(source).toHaveValue(expectedMarkdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('keeps the active visual Preview atomic during paste and maps destructive edits locally', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Before', 'Before');
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    const paste = '\n\n# Pasted heading\n\n**Pasted bold**';
+    const pastedMarkdown = `Before${paste}`;
+    const routeState = { started: false };
+    await page.route('**/wp-json/easymde/v1/preview*', async (route) => {
+      let markdown = null;
+      try {
+        markdown = route.request().postDataJSON()?.markdown ?? null;
+      } catch {
+        markdown = null;
+      }
+      if (markdown === pastedMarkdown) {
+        routeState.started = true;
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        await route.fulfill({ response });
+        return;
+      }
+      await route.continue();
+    });
+
+    const activeBeforePaste = await visualEditor.evaluate((surface) => {
+      window.__easymdeIssue232ActiveSurface = surface;
+      return surface.innerHTML;
+    });
+    await visualEditor.evaluate((surface, value) => {
+      const range = document.createRange();
+      range.selectNodeContents(surface);
+      range.collapse(false);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('issue232-selection-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const transfer = new DataTransfer();
+      transfer.setData('text/plain', value);
+      surface.dispatchEvent(new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer
+      }));
+    }, paste);
+
+    await expect(source).toHaveValue(pastedMarkdown);
+    await expect.poll(() => routeState.started, {
+      message: 'pasted Preview request should be in flight before candidate commit'
+    }).toBe(true);
+    await expect.poll(
+      () => visualEditor.evaluate((surface) => surface.innerHTML),
+      { timeout: 200, message: 'active Preview must remain unchanged while candidate renders' }
+    ).toBe(activeBeforePaste);
+    await expect(visualEditor.locator('h1')).toHaveText('Pasted heading');
+    await expect(visualEditor.locator('strong')).toHaveText('Pasted bold');
+    await expect.poll(() => visualEditor.evaluate(
+      (surface) => surface === window.__easymdeIssue232ActiveSurface
+    )).toBe(true);
+
+    await visualEditor.evaluate((surface) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        'innerHTML'
+      );
+      if (!descriptor?.get || !descriptor.set) {
+        throw new Error('issue232-inner-html-descriptor-unavailable');
+      }
+      const originalCloneNode = surface.cloneNode;
+      const counters = { cloneNode: 0, innerHTMLReads: 0 };
+      Object.defineProperty(surface, 'innerHTML', {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        get() {
+          counters.innerHTMLReads += 1;
+          return descriptor.get.call(this);
+        },
+        set(value) {
+          descriptor.set.call(this, value);
+        }
+      });
+      Object.defineProperty(surface, 'cloneNode', {
+        configurable: true,
+        value(deep) {
+          counters.cloneNode += 1;
+          return originalCloneNode.call(this, deep);
+        }
+      });
+      window.__easymdeIssue232Counters = counters;
+    });
+    await selectVisualText(visualEditor, 'Pasted bold');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => source.inputValue()).not.toContain('Pasted bold');
+    const counters = await visualEditor.evaluate((surface) => {
+      const result = { ...window.__easymdeIssue232Counters };
+      delete window.__easymdeIssue232Counters;
+      delete window.__easymdeIssue232ActiveSurface;
+      return result;
+    });
+    expect(counters).toEqual({ cloneNode: 0, innerHTMLReads: 0 });
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('rebuilds the current Preview window after lock refresh and a second unlock', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = Array.from(
+      { length: 220 },
+      (_, index) => `Synthetic window cycle paragraph ${index}.`
+    ).join('\n\n');
+    await fillMarkdownAndWaitForPreview(
+      page,
+      markdown,
+      'Synthetic window cycle paragraph 0.'
+    );
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    expect(await visualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    ).count()).toBeLessThanOrEqual(160);
+
+    await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+    await expect(visualEditor).toHaveCount(0);
+    const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
+    await expect(unlock).toBeEnabled();
+    await unlock.click();
+    const secondVisualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(secondVisualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    expect(await secondVisualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    ).count()).toBeLessThanOrEqual(160);
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('supports representative Typora visual shortcuts and repeated deletion', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await visualEditor.click();
+
+    await page.keyboard.type('# Heading');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('h1')).toHaveText('Heading');
+
+    await page.keyboard.type('Use **bold**');
+    await expect(visualEditor.locator('strong')).toHaveText('bold');
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('```js');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('pre > code.language-js')).toHaveCount(1);
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('-');
+    await page.keyboard.press('Space');
+    await page.keyboard.type('List item');
+    await page.keyboard.press('Enter');
+    await expect(visualEditor.locator('ul li')).toHaveCount(2);
+
+    await page.keyboard.type('Undo target');
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect.poll(() => source.inputValue()).not.toContain('Undo target');
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await expect.poll(() => source.inputValue()).toContain('Undo target');
+
+    const deleteText = 'delete '.repeat(24).trim();
+    const deleteParagraph = await visualEditor.locator('p').last();
+    await deleteParagraph.evaluate((paragraph) => {
+      paragraph.textContent = 'delete '.repeat(24).trim();
+      const text = paragraph.firstChild;
+      if (!(text instanceof Text)) throw new Error('issue232-delete-text-missing');
+      const range = document.createRange();
+      range.setStart(text, text.length);
+      range.collapse(true);
+      const selection = document.getSelection();
+      if (!selection) throw new Error('issue232-delete-selection-missing');
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await page.keyboard.press('End');
+    for (let index = 0; index < 24; index += 1) {
+      await page.keyboard.press('Backspace');
+    }
+    await expect.poll(() => source.inputValue()).toContain('delete');
+    await expect.poll(() => visualEditor.locator('p').last().textContent()).not.toBe(deleteText);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('parses the exact full-capability fixture after immersive unlock at empty and prefixed document ends', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    const previewRequests = [];
+    const fixtureImageUrl = 'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        previewRequests.push(request.postDataJSON()?.markdown ?? null);
+      }
+    });
+    await page.route(fixtureImageUrl, (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+
+    expect(fullCapabilityFixtureEvidence).toEqual({
+      sha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',
+      characters: 9254,
+      bytes: 11959,
+      endsWithSingleLf: true
+    });
+
+    await login(page, testInfo.easymdeUser);
+
+    const pasteFixtureAtDocumentEnd = async (expectedMarkdown) => {
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.getByRole('button', { name: labels.enter }).click();
+      await page.getByRole('button', { name: labels.preview, exact: true }).click();
+      await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+      await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+      const source = page.locator('#easymde-source');
+      const visualEditor = page.getByRole('textbox', {
+        name: labels.previewEditorLabel
+      });
+      const beforePaste = previewRequests.filter(
+        (markdown) => markdown === expectedMarkdown
+      ).length;
+      await visualEditor.evaluate((surface, value) => {
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-full-fixture-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, fullCapabilityMarkdown);
+
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      const expectedEvidence = {
+        sha256: createHash('sha256').update(expectedMarkdown, 'utf8').digest('hex'),
+        characters: expectedMarkdown.length,
+        bytes: Buffer.byteLength(expectedMarkdown, 'utf8'),
+        endsWithSingleLf: expectedMarkdown.endsWith('\n')
+          && !expectedMarkdown.endsWith('\r\n')
+          && !expectedMarkdown.endsWith('\n\n')
+      };
+      const actualMarkdown = await source.inputValue();
+      const actualEvidence = {
+        sha256: createHash('sha256').update(actualMarkdown, 'utf8').digest('hex'),
+        characters: actualMarkdown.length,
+        bytes: Buffer.byteLength(actualMarkdown, 'utf8'),
+        endsWithSingleLf: actualMarkdown.endsWith('\n')
+          && !actualMarkdown.endsWith('\r\n')
+          && !actualMarkdown.endsWith('\n\n')
+      };
+      expect(actualEvidence).toEqual(expectedEvidence);
+      await expect.poll(
+        () => previewRequests.filter((markdown) => markdown === expectedMarkdown).length,
+        { timeout: 30_000 }
+      ).toBe(beforePaste + 1);
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+
+      await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+      await expect(visualEditor).toHaveCount(0);
+      const completePreview = page.locator(
+        '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+      );
+      const semantics = await completePreview.evaluate((surface) => ({
+        headings: surface.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+        tables: surface.querySelectorAll('table').length,
+        codeBlocks: surface.querySelectorAll('pre > code:not(.language-mermaid)').length,
+        mermaid: surface.querySelectorAll('.easymde-mermaid').length,
+        math: surface.querySelectorAll('.easymde-math').length,
+        taskItems: surface.querySelectorAll('li.task-list-item').length,
+        fixtureTitle: surface.querySelector('h1')?.textContent ?? ''
+      }));
+      expect(semantics).toEqual({
+        headings: 57,
+        tables: 4,
+        codeBlocks: 8,
+        mermaid: 10,
+        math: 14,
+        taskItems: 19,
+        fixtureTitle: 'Markdown 全量能力测试文档'
+      });
+      expect(browserFailures).toEqual([]);
+      await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+
+      await visualEditor.focus();
+      await expect(visualEditor).toBeFocused();
+      await visualEditor.press('ControlOrMeta+End');
+      await expect.poll(
+        () => visualEditor.evaluate((surface) =>
+          !surface.lastElementChild?.hasAttribute(
+            'data-easymde-preview-window-spacer'
+          )
+        )
+      ).toBe(true);
+      await page.keyboard.type(' continuation');
+      const expectedContinuedMarkdown = expectedMarkdown.endsWith('\n')
+        ? `${expectedMarkdown.slice(0, -1)} continuation\n`
+        : `${expectedMarkdown} continuation`;
+      await expect.poll(
+        () => source.inputValue(),
+        { timeout: 10_000 }
+      ).toBe(expectedContinuedMarkdown);
+
+      await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+      await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+      await expect(source).toHaveValue(/continuation/);
+      await page.getByRole('button', { name: labels.split, exact: true }).click();
+      await expect(page.locator('.easymde-pane-source')).toBeVisible();
+      await expect(page.locator('.easymde-pane-preview')).toBeVisible();
+      await page.getByRole('button', { name: labels.edit, exact: true }).click();
+      await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+      await page.getByRole('button', { name: labels.exit }).click();
+      await expect(page.getByRole('region', { name: labels.immersive })).toHaveCount(0);
+    };
+
+    await openEasyMdeNewPost(page);
+    await pasteFixtureAtDocumentEnd(fullCapabilityMarkdown);
+
+    await openEasyMdeNewPost(page);
+    const prefix = 'Existing prefix\n\n';
+    await fillMarkdownAndWaitForPreview(page, prefix, 'Existing prefix');
+    await pasteFixtureAtDocumentEnd(`${prefix}${fullCapabilityMarkdown}`);
+
+    expect(previewRequests.filter((markdown) => markdown === fullCapabilityMarkdown)).toHaveLength(2);
+    expect(previewRequests.filter((markdown) => markdown === `${prefix}${fullCapabilityMarkdown}`)).toHaveLength(2);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('keeps the public full-capability fixture stable through destructive visual editing', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    await page.route(
+      'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      })
+    );
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(page.url()).origin
+    });
+    await fillMarkdownAndWaitForPreview(
+      page,
+      fullCapabilityMarkdown,
+      'Markdown 全量能力测试文档'
+    );
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: labels.enter }).click();
+    await page.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.getByRole('textbox', {
+      name: labels.previewEditorLabel
+    });
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    const protectedVisualSelector = [
+      '.easymde-toc',
+      '.footnotes-sep',
+      '.footnotes',
+      '.easymde-math[data-easymde-rendered]',
+      '.easymde-mermaid'
+    ].join(', ');
+    const protectedVisualMarkup = () => visualEditor.locator(
+      protectedVisualSelector
+    ).evaluateAll((nodes) => nodes.map((node) => ({
+      attributes: Array.from(node.attributes)
+        .filter(({ name, value }) => 'style' !== name || '' !== value.trim())
+        .map(({ name, value }) => ({ name, value }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+      innerHTML: node.innerHTML
+    })));
+    const protectedMarkup = await protectedVisualMarkup();
+    await visualEditor.evaluate((surface) => {
+      window.__easymdeProtectedVisualNodes = Array.from(surface.querySelectorAll(
+        '.easymde-toc, .footnotes-sep, .footnotes, '
+          + '.easymde-math[data-easymde-rendered], .easymde-mermaid'
+      ));
+    });
+    const expectProtectedMarkup = async () => {
+      expect(await protectedVisualMarkup()).toEqual(protectedMarkup);
+      expect(await visualEditor.evaluate((surface) => {
+        const initial = window.__easymdeProtectedVisualNodes ?? [];
+        const current = Array.from(surface.querySelectorAll(
+          '.easymde-toc, .footnotes-sep, .footnotes, '
+            + '.easymde-math[data-easymde-rendered], .easymde-mermaid'
+        ));
+        return current.length === initial.length
+          && current.every((node, index) => node === initial[index]);
+      })).toBe(true);
+    };
+
+    await selectVisualText(visualEditor, 'Heading 1');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => source.inputValue()).not.toContain('Heading 1');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '下划线文本');
+    await page.keyboard.type('改写文本');
+    await expect.poll(() => source.inputValue()).toContain('<u>改写文本</u>');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '这是一级引用。');
+    await page.keyboard.press('Delete');
+    await expect.poll(() => source.inputValue()).not.toContain('这是一级引用。');
+    await expectProtectedMarkup();
+
+    await selectVisualText(visualEditor, '第二层引用。');
+    const beforeCut = await source.inputValue();
+    await page.keyboard.press('ControlOrMeta+X');
+    await expect.poll(() => source.inputValue()).not.toBe(beforeCut);
+    await expectProtectedMarkup();
+    const afterCut = await source.inputValue();
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect.poll(() => source.inputValue()).toBe(beforeCut);
+    await expectProtectedMarkup();
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    await expect.poll(() => source.inputValue()).toBe(afterCut);
+    await expectProtectedMarkup();
+
+    const mermaid = visualEditor.locator('.easymde-mermaid').first();
+    await expect(mermaid).toHaveAttribute('contenteditable', 'false');
+    await expectProtectedMarkup();
+
+    await testInfo.attach('immersive-full-fixture-edit-desktop', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png'
+    });
+    await page.locator('.easymde-immersive-outline-close').click();
+    await expect(page.locator('.easymde-immersive-outline')).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(visualEditor).toBeVisible();
+    const mobileGeometry = await visualEditor.evaluate((surface) => ({
+      horizontalOverflow: surface.scrollWidth > surface.clientWidth + 1,
+      pageOverflow: Math.max(
+        document.documentElement.scrollWidth,
+        document.body?.scrollWidth ?? 0
+      ) > document.documentElement.clientWidth + 1,
+      visualEditorClientWidth: surface.clientWidth,
+      tableScrollOwners: Array.from(surface.querySelectorAll(
+        '.table-container, .easymde-table-container'
+      )).map((owner) => {
+        const style = getComputedStyle(owner);
+        const originalScrollLeft = owner.scrollLeft;
+        owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        const moved = owner.scrollLeft > originalScrollLeft;
+        owner.scrollLeft = originalScrollLeft;
+        const box = owner.getBoundingClientRect();
+        const surfaceBox = surface.getBoundingClientRect();
+        return {
+          contained: box.left >= surfaceBox.left - 1
+            && box.right <= surfaceBox.right + 1,
+          localWhenNeeded: owner.scrollWidth <= owner.clientWidth + 1 || moved,
+          overflowX: style.overflowX
+        };
+      }),
+      codeScrollOwners: Array.from(surface.querySelectorAll(
+        'pre > code:not(.language-mermaid)'
+      )).map((owner) => {
+        const style = getComputedStyle(owner);
+        const originalScrollLeft = owner.scrollLeft;
+        owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        const moved = owner.scrollLeft > originalScrollLeft;
+        owner.scrollLeft = originalScrollLeft;
+        return {
+          localWhenNeeded: owner.scrollWidth <= owner.clientWidth + 1 || moved,
+          overflowX: style.overflowX
+        };
+      })
+    }));
+    expect(mobileGeometry.horizontalOverflow).toBe(false);
+    expect(mobileGeometry.pageOverflow).toBe(false);
+    expect(mobileGeometry.visualEditorClientWidth).toBeGreaterThanOrEqual(280);
+    expect(mobileGeometry.tableScrollOwners.length).toBeGreaterThan(0);
+    expect(mobileGeometry.tableScrollOwners.every((owner) => (
+      owner.contained
+      && owner.localWhenNeeded
+      && ['auto', 'scroll'].includes(owner.overflowX)
+    ))).toBe(true);
+    expect(mobileGeometry.codeScrollOwners.length).toBeGreaterThan(0);
+    expect(mobileGeometry.codeScrollOwners.every((owner) => (
+      owner.localWhenNeeded
+      && ['auto', 'scroll'].includes(owner.overflowX)
+    ))).toBe(true);
+    await expectProtectedMarkup();
+    await testInfo.attach('immersive-full-fixture-edit-mobile', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png'
+    });
+
+    await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+    await expect(page.getByRole('textbox', { name: labels.previewEditorLabel })).toHaveCount(0);
+    await expect(source).toHaveValue(/改写文本/);
+    await expect(page.locator('.easymde-pane-preview')).toBeVisible();
+    expect(browserFailures).toEqual([]);
+  });
+
   test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {
     const browserFailures = [];
     testInfo.easymdeOriginalEditorDisplaySettings = editorDisplaySettings();
@@ -2194,6 +3672,318 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('Alpha');
   });
 
+  test('keeps fresh Alpha immersive heading menu interaction zero-write after code resources are ready', async ({ page }, testInfo) => {
+    const runtimeRequests = collectRuntimeAssetRequests(page);
+    const previewRequests = collectPreviewRequestOutcomes(page);
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Alpha', 'Alpha');
+    await previewRequests.checkpoint();
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
+    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+
+    const { source, visualEditor } =
+      await enterImmersivePreviewAndUnlock(page);
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
+    await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(1);
+    const previewRequestBaseline = previewRequests.length;
+    const markdownTheme = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
+    );
+    const toolbarLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.toolbar
+    );
+    const headingLabel = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.toolbar.strings.headings
+    );
+    const toolbar = page.getByRole('toolbar', {
+      name: toolbarLabel
+    });
+    const headingTrigger = toolbar.locator(
+      '.easymde-toolbar-popover-headings > button'
+    );
+    const headingMenu = page.locator('.is-immersive-heading-menu');
+
+    await expect(headingTrigger).toBeVisible();
+    await headingTrigger.click();
+    await expect(headingMenu).toBeVisible();
+    await expect(headingMenu).toHaveAttribute('aria-label', headingLabel);
+    await expectUnlockedVisualArticle(visualEditor);
+    await expect(source).toHaveValue('Alpha');
+    await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    await expect(headingMenu).toBeHidden();
+    await expectUnlockedVisualArticle(visualEditor);
+    await expect(source).toHaveValue('Alpha');
+
+    const requestEvidence = await previewRequests.evidence(
+      previewRequestBaseline,
+      markdownTheme
+    );
+    expect(requestEvidence.observed).toHaveLength(0);
+    const codeResourceKeys = runtimeRequests.filter(({ key }) => [
+      'codeFrameCss',
+      'highlightScript',
+      'highlightThemeCss'
+    ].includes(key)).map(({ key }) => key);
+    expect([...new Set(codeResourceKeys)].sort()).toEqual([
+      'codeFrameCss',
+      'highlightScript',
+      'highlightThemeCss'
+    ]);
+  });
+
+  for (const commandId of ['inlinecode', 'codefence']) {
+    test(`keeps fresh Alpha ${commandId} selection editing in the unlocked ARTICLE`, async ({ page }, testInfo) => {
+      const previewRequests = collectPreviewRequestOutcomes(page);
+
+      await login(page, testInfo.easymdeUser);
+      for (const operation of ['type', 'Backspace', 'Delete']) {
+        await openEasyMdeNewPost(page);
+        await fillMarkdownAndWaitForPreview(page, 'Alpha', 'Alpha');
+        await previewRequests.checkpoint();
+        const { source, visualEditor } =
+          await enterImmersivePreviewAndUnlock(page);
+        const previewRequestBaseline = previewRequests.length;
+        const markdownTheme = await page.evaluate(
+          () => window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
+        );
+
+        await selectVisualText(visualEditor, 'Alpha');
+        const commandButton = page.locator(
+          `.easymde-immersive-formatting [data-easymde-command="${commandId}"]`
+        );
+        await expect(commandButton).toBeVisible();
+        await commandButton.click();
+        await expectUnlockedVisualArticle(visualEditor);
+        const commandValue = 'inlinecode' === commandId
+          ? '`Alpha`'
+          : '```\nAlpha\n```';
+        await expect(source).toHaveValue(commandValue);
+        await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
+        if ('inlinecode' === commandId) {
+          await expect(visualEditor.locator('p > code')).toHaveText('Alpha');
+        } else {
+          await expect(visualEditor.locator('pre > code.hljs')).toHaveText('Alpha');
+        }
+
+        const expectedValue = 'inlinecode' === commandId
+          ? ('type' === operation ? '`X`' : '')
+          : ('type' === operation ? '```\nX\n```' : '```\n\n```');
+        if ('type' === operation) {
+          await page.keyboard.type('X');
+        } else {
+          await page.keyboard.press(operation);
+        }
+        await expect.poll(
+          () => source.inputValue(),
+          { message: `${commandId}/${operation} should update the canonical bridge` }
+        ).toBe(expectedValue);
+        await expectUnlockedVisualArticle(visualEditor);
+
+        const requestEvidence = await previewRequests.evidence(
+          previewRequestBaseline,
+          markdownTheme
+        );
+        expect(requestEvidence.observed).toHaveLength(0);
+      }
+    });
+  }
+
+  for (const fixture of [
+    {
+      id: 'short-tilde',
+      fence: '~~~bash',
+      closingFence: '~~~',
+      windowed: false
+    },
+    {
+      id: 'short-backtick',
+      fence: '```bash',
+      closingFence: '```',
+      windowed: false
+    },
+    {
+      id: 'windowed-tilde',
+      fence: '~~~bash',
+      closingFence: '~~~',
+      windowed: true
+    },
+    {
+      id: 'windowed-backtick',
+      fence: '```bash',
+      closingFence: '```',
+      windowed: true
+    },
+    {
+      id: 'short-tilde-five',
+      fence: '~~~~~',
+      closingFence: '~~~~~',
+      windowed: false
+    },
+    {
+      id: 'windowed-backtick-five',
+      fence: '`````bash',
+      closingFence: '`````',
+      windowed: true
+    }
+  ]) {
+    test(`forms a fresh ${fixture.id} code fence with the Mac frame on the first PRE`, async ({ page }, testInfo) => {
+      const runtimeRequests = collectRuntimeAssetRequests(page);
+      const previewRequests = collectPreviewRequestOutcomes(page);
+      const baseMarkdown = fixture.windowed
+        ? syntheticWindowedMarkdown()
+        : null;
+      const observationKey = `__easymdeCodeFrameEvidence${fixture.id}`;
+      let observationInstalled = false;
+      let freshEvidence = null;
+
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      if (baseMarkdown) {
+        await fillMarkdownAndWaitForPreview(page, baseMarkdown, 'Windowed paragraph 1.');
+      }
+      await previewRequests.checkpoint();
+      await expect(page.locator('#easymde-code-frame-css')).toHaveCount(0);
+      await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(0);
+
+      const { source, visualEditor } =
+        await enterImmersivePreviewAndUnlock(page);
+      await expect(page.locator('#easymde-code-frame-css')).toHaveCount(1);
+      await expect(page.locator('#easymde-highlight-theme-css')).toHaveCount(1);
+      const codeAssetsBeforeFormation = runtimeRequests.filter(({ key }) => [
+        'codeFrameCss',
+        'highlightScript',
+        'highlightThemeCss'
+      ].includes(key));
+      expect([...new Set(codeAssetsBeforeFormation.map(({ key }) => key))].sort())
+        .toEqual(['codeFrameCss', 'highlightScript', 'highlightThemeCss']);
+      const previewRequestBaseline = previewRequests.length;
+      const markdownTheme = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
+      );
+      await expectUnlockedVisualArticle(visualEditor);
+      await installCodeFrameEvidence(visualEditor, observationKey);
+      observationInstalled = true;
+
+      try {
+        if (fixture.windowed) {
+          await selectVisualText(visualEditor, 'Windowed paragraph 1.');
+        } else {
+          await visualEditor.focus();
+          await visualEditor.press('ControlOrMeta+End');
+        }
+        await page.keyboard.type(fixture.fence);
+        await page.keyboard.press('Enter');
+        await waitForCodeFrameEvidence(visualEditor, observationKey);
+        await expect(visualEditor.locator('pre > code')).toHaveCount(1);
+        await expect.poll(
+          () => source.inputValue().then((value) => fixture.windowed
+            ? value.startsWith(`${fixture.fence}\n\n${fixture.closingFence}`)
+            : value.endsWith(`${fixture.fence}\n\n${fixture.closingFence}`)),
+          { message: `${fixture.id} should preserve its fence family` }
+        ).toBe(true);
+
+        await page.keyboard.type('Alpha');
+        await expect.poll(
+          () => source.inputValue().then((value) => fixture.windowed
+            ? value.startsWith(`${fixture.fence}\nAlpha\n${fixture.closingFence}`)
+            : value.endsWith(`${fixture.fence}\nAlpha\n${fixture.closingFence}`)),
+          { message: `${fixture.id} should accept immediate code input` }
+        ).toBe(true);
+        const requestEvidence = await previewRequests.evidence(
+          previewRequestBaseline,
+          markdownTheme
+        );
+        expect(requestEvidence.observed).toHaveLength(0);
+      } finally {
+        if (observationInstalled) {
+          freshEvidence = await stopCodeFrameEvidence(
+            visualEditor,
+            observationKey
+          );
+          observationInstalled = false;
+        }
+      }
+
+      const observedSamples = freshEvidence.samples.filter(({ phase }) => (
+        ['mutation', 'frame'].includes(phase)
+      ));
+      const firstMutation = observedSamples.find(({ phase }) => 'mutation' === phase);
+      expect(firstMutation, `${fixture.id} should expose the first PRE mutation`).toBeTruthy();
+      expect(firstMutation.preCount, `${fixture.id} should observe one first PRE`).toBe(1);
+      const frameSamples = observedSamples.filter(({ phase }) => 'frame' === phase);
+      expect(frameSamples.length, `${fixture.id} should capture a painted frame`)
+        .toBeGreaterThanOrEqual(1);
+
+      const initialViewport = page.viewportSize();
+      if (!initialViewport) throw new Error('code-frame-initial-viewport-unavailable');
+      const hideOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      const hideOutline = page.getByRole('button', {
+        name: hideOutlineLabel
+      }).first();
+      await expect(hideOutline).toBeVisible();
+      await hideOutline.click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect.poll(
+        async () => {
+          const geometry = await readCodeFrameGeometry(visualEditor);
+          return geometry.frameCss.ready
+            && geometry.pre.paddingTop === '34px'
+            && geometry.code.display === 'block'
+            && Math.abs(geometry.pre.width - geometry.paper.contentWidth) <= 1
+            && Math.abs(geometry.code.width - geometry.paper.contentWidth) <= 1;
+        },
+        { message: `${fixture.id} should preserve the frame through mobile resize` }
+      ).toBe(true);
+      const mobileGeometry = await readCodeFrameGeometry(visualEditor);
+      expectCodeFrameContract(mobileGeometry, `${fixture.id}:mobile`);
+      expect(await page.evaluate(() => Math.max(
+        document.documentElement.scrollWidth,
+        document.body?.scrollWidth ?? 0
+      ) - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+      await page.setViewportSize(initialViewport);
+
+      await openEasyMdeNewPost(page);
+      const warmMarkdown = `${fixture.fence}\nAlpha\n${fixture.closingFence}`;
+      await fillMarkdownAndWaitForPreview(page, warmMarkdown, 'Alpha');
+      const warmPreview = page.locator(
+        '.easymde-pane-preview:visible [data-easymde-preview-html-sink="1"]'
+      ).first();
+      await expect(warmPreview.locator('pre')).toHaveCount(1);
+      await expect.poll(
+        async () => {
+          const geometry = await readCodeFrameGeometry(warmPreview);
+          return geometry.frameCss.ready
+            && geometry.pre.paddingTop === '34px'
+            && geometry.code.display === 'block';
+        },
+        { message: `${fixture.id} PHP-rendered warm Preview should load the frame CSS` }
+      ).toBe(true);
+      const warmBaseline = await readCodeFrameGeometry(warmPreview);
+      expectCodeFrameContract(warmBaseline, `${fixture.id}:warm`);
+
+      for (const [index, sample] of observedSamples.entries()) {
+        expectCodeFrameContract(
+          sample,
+          `${fixture.id}:${sample.phase}:${index}`
+        );
+      }
+      await testInfo.attach(`code-frame-${fixture.id}`, {
+        body: JSON.stringify({
+          fixture: fixture.id,
+          fresh: freshEvidence,
+          mobile: mobileGeometry,
+          warm: warmBaseline
+        }, null, 2),
+        contentType: 'application/json'
+      });
+    });
+  }
+
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];
@@ -2244,7 +4034,7 @@ test.describe('EasyMDE editor workflows', () => {
     const reactSource = page.locator('.easymde-source-react');
     const nativeSource = page.locator('#easymde-source');
     const sourceEditor = reactSource.locator('.cm-content');
-    const activePreview = page.locator('.easymde-pane-preview article');
+    const activePreview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const activePreviewCanvas = page.locator(
       '.easymde-pane-preview .easymde-immersive-preview-canvas'
     );
@@ -2260,7 +4050,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(activePreviewCanvas).toBeVisible();
     await expect(activePreviewCanvas).toHaveCount(1);
     await expect(
-      page.locator('.easymde-pane-preview article')
+      page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
     ).toHaveCount(1);
 
     await sourceEditor.fill('# React source\n\nBridge value 中文');
@@ -2466,7 +4256,18 @@ test.describe('EasyMDE editor workflows', () => {
         await route.fulfill({
           contentType: 'application/json',
           body: JSON.stringify({
-            html: `<p>${1 === requestNumber ? 'stale preview' : 'current preview'}</p>`,
+            editMap: {
+              blocks: [{
+                editable: true,
+                endLine: 1,
+                id: 'b0',
+                startLine: 0
+              }],
+              coordinate: 'line',
+              signature: payload.signature,
+              version: 1
+            },
+            html: `<p data-easymde-visual-block-id="b0">${1 === requestNumber ? 'stale preview' : 'current preview'}</p>`,
             features: {}
           })
         });
@@ -2482,7 +4283,7 @@ test.describe('EasyMDE editor workflows', () => {
     await login(page, user);
     await openEasyMdeNewPost(page);
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const firstRequest = page.waitForRequest(/\/wp-json\/easymde\/v1\/preview(?:\?.*)?$/);
     await sourceEditor.fill('first request');
     await firstRequest;
@@ -2631,7 +4432,7 @@ test.describe('EasyMDE editor workflows', () => {
       .getByRole('button', { name: labels.editorSettings, exact: true });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const editorOwner = page.locator('[data-easymde-editor-owner="react"]');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const failures = [];
     const matrix = [];
     const visualFingerprints = new Map();
@@ -3083,7 +4884,7 @@ test.describe('EasyMDE editor workflows', () => {
     }));
     const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
       .getByRole('button', { name: labels.editorSettings, exact: true });
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     const measurements = [];
     const requestFailures = [];
     const selectedTheme = catalog.articleThemes.find(
@@ -3268,8 +5069,7 @@ test.describe('EasyMDE editor workflows', () => {
     const sessionKeepalive = startWordPressSessionKeepalive(page, user);
     testInfo.easymdeStopSessionKeepalive = sessionKeepalive.stop;
     await openEasyMdeNewPost(page);
-    const fixtureCatalog = await editorThemeCatalog(page);
-    const markdown = canonicalMarkdownForSite(fixtureCatalog.localFixtureImage)
+    const markdown = await canonicalMarkdownForPage(page)
       + '\n\n```js\n'
       + `const longValue = "${'x'.repeat(240)}";\n`
       + '```';
@@ -3278,7 +5078,7 @@ test.describe('EasyMDE editor workflows', () => {
       markdown,
       'Markdown 全量能力测试文档'
     );
-    await expectRenderedFixture(page, '.easymde-pane-preview article');
+    await expectRenderedFixture(page, '.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
 
     const labels = await page.evaluate(() => ({
       appearance: window.EasyMDEEditorRootBootstrap.appearance.strings.appearance,
@@ -3412,7 +5212,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
     const articleThemeLink = page.locator('#easymde-article-theme-css');
     const codeThemeLink = page.locator('#easymde-highlight-theme-css');
-    const previewCode = page.locator('.easymde-pane-preview article pre code.hljs')
+    const previewCode = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"] pre code.hljs')
       .filter({ hasText: 'const longValue' })
       .first();
     const codeGeometry = () => previewCode.evaluate((code) => {
@@ -3465,9 +5265,9 @@ test.describe('EasyMDE editor workflows', () => {
     for (const { id, label, cssUrl, defaultCodeTheme } of catalog.articleThemes) {
       await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, articleSelect, label);
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-markdown-theme-' + id));
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-code-theme-' + defaultCodeTheme));
       await expect(page.locator('#easymde-code-theme-field')).toHaveValue(defaultCodeTheme);
       await expect.poll(() => articleThemeLink.evaluate((link, expectedUrl) => (
@@ -3505,7 +5305,7 @@ test.describe('EasyMDE editor workflows', () => {
       throw new Error('terminal-noir-theme-unavailable');
     }
     await selectOrdinaryOption(page, codeSelect, terminalNoir.label);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-code-theme-terminal-noir/);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
     const defaultArticleTheme = catalog.articleThemes.find(({ id }) => 'default' === id);
@@ -3513,9 +5313,9 @@ test.describe('EasyMDE editor workflows', () => {
       throw new Error('default-article-theme-unavailable');
     }
     await selectOrdinaryOption(page, articleSelect, defaultArticleTheme.label);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-markdown-theme-default/);
-    await expect(page.locator('.easymde-pane-preview article'))
+    await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
       .toHaveClass(/easymde-code-theme-terminal-noir/);
     await expect(page.locator('#easymde-code-theme-field')).toHaveValue('terminal-noir');
     await expect.poll(codeGeometry, {
@@ -3524,7 +5324,7 @@ test.describe('EasyMDE editor workflows', () => {
     for (const { id, label, cssUrl } of catalog.codeThemes) {
       await sessionKeepalive.assertHealthy();
       await selectOrdinaryOption(page, codeSelect, label);
-      await expect(page.locator('.easymde-pane-preview article'))
+      await expect(page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]'))
         .toHaveClass(new RegExp('easymde-code-theme-' + id));
       await expect.poll(() => codeThemeLink.evaluate((link, expectedUrl) => (
         link instanceof HTMLLinkElement
@@ -3716,7 +5516,7 @@ test.describe('EasyMDE editor workflows', () => {
           return parts.join(', ');
         });
         await expect.poll(() => page
-          .locator('.easymde-pane-preview article')
+          .locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]')
           .evaluate((article) => article.style.getPropertyValue(
             '--easymde-content-font-family'
           ))).toBe(expectedFontStack);
@@ -5050,13 +6850,13 @@ test.describe('EasyMDE editor workflows', () => {
     const catalog = await editorThemeCatalog(page);
     const markdown = await canonicalMarkdownForPage(page);
     await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
-    const preview = page.locator('.easymde-pane-preview article');
+    const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
     await expect(preview.locator('pre code.hljs').first()).toBeVisible();
     await expect(preview.locator('.katex').first()).toBeVisible();
     await expect(preview.locator('.easymde-mermaid').first()).toBeVisible();
     await expectRenderedFixture(
       page,
-      '.easymde-pane-preview article'
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
     );
 
     const cupidBusy = catalog.articleThemes.find(({ id }) => 'cupid-busy' === id);

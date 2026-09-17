@@ -158,6 +158,62 @@ describe('createBrowserWechatClipboard', () => {
     expect(preview.querySelector('svg')).not.toBeNull();
   });
 
+  it('starts modern Clipboard write before resolving a complete windowed Preview', async () => {
+    const writes: unknown[] = [];
+    const ready = deferred<HTMLElement | null>();
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<p>Visible window</p>',
+      '<div data-easymde-preview-window-spacer="1"></div>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Visible window'
+    });
+    const write = vi.fn((items: unknown[]) => {
+      writes.push(items);
+      return Promise.resolve();
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+
+    const operation = clipboard.copy(preview, {
+      resolvePreview: () => ready.promise
+    });
+    expect(write).toHaveBeenCalledOnce();
+
+    preview.innerHTML = '<p>Complete Preview</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Complete Preview'
+    });
+    ready.resolve(preview);
+
+    await expect(operation).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = await item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    expect(await blobText(htmlBlob)).toContain('Complete Preview');
+    expect(await blobText(htmlBlob)).not.toContain(
+      'data-easymde-preview-window-spacer'
+    );
+  });
+
   it('fails explicitly without modern Clipboard support and never enters legacy copy', async () => {
     const execCommand = vi.fn(() => true);
     Object.defineProperty(document, 'execCommand', {

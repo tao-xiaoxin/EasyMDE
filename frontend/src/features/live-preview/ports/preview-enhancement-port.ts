@@ -20,7 +20,8 @@ export type PreviewEnhancementFailureCode =
   | 'preview-enhancement-resource-conflict'
   | 'preview-enhancement-resource-load-failed'
   | 'preview-enhancement-resource-stale'
-  | 'preview-enhancement-runtime-unavailable';
+  | 'preview-enhancement-runtime-unavailable'
+  | 'preview-enhancement-visual-source-missing';
 
 const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>([
   'preview-enhancement-code-theme-missing',
@@ -32,7 +33,8 @@ const failureCodes: ReadonlySet<string> = new Set<PreviewEnhancementFailureCode>
   'preview-enhancement-resource-conflict',
   'preview-enhancement-resource-load-failed',
   'preview-enhancement-resource-stale',
-  'preview-enhancement-runtime-unavailable'
+  'preview-enhancement-runtime-unavailable',
+  'preview-enhancement-visual-source-missing'
 ]);
 
 export function previewEnhancementFailureCode(error: unknown): PreviewEnhancementFailureCode {

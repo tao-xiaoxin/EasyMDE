@@ -7,6 +7,7 @@ use DOMElement;
 use DOMNode;
 use DOMText;
 use DOMXPath;
+use RuntimeException;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -58,6 +59,86 @@ final class ThemeMarkupTransformer {
 		}
 
 		return implode( "\n", $normalized );
+	}
+
+	/**
+	 * Normalize Markdown while retaining a transformed-line to source-line map.
+	 *
+	 * The normalizer only inserts structural blank lines for Cupid Busy. Every
+	 * inserted line inherits the marker line's provenance; all other profiles
+	 * retain the exact input line map.
+	 *
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @return array{markdown:string,line_map:array<int,array{start:int,end:int}>}
+	 */
+	public static function normalize_markdown_with_line_map( $markdown, $theme, array $line_map ) {
+		$markdown = (string) $markdown;
+		$theme    = sanitize_key( (string) $theme );
+
+		if ( 'cupid-busy-v1' !== self::markup_profile( $theme ) ) {
+			return array(
+				'markdown' => $markdown,
+				'line_map' => $line_map,
+			);
+		}
+
+		$markdown = str_replace( array( "\r\n", "\r" ), "\n", $markdown );
+		$markdown = preg_replace_callback(
+			'/!\[([^\]]*)\]\((\S+)\s+=([0-9]{1,3})%x\)/',
+			function ( $matches ) {
+				$width = max( 1, min( 100, (int) $matches[3] ) );
+
+				return '![EASYMDE_MDNICE_WIDTH_' . $width . '](' . $matches[2] . ')';
+			},
+			$markdown
+		);
+
+		$lines = explode( "\n", $markdown );
+		if ( count( $lines ) !== count( $line_map ) ) {
+			throw new RuntimeException( 'Theme Markdown normalization received incomplete source line provenance.' );
+		}
+
+		$normalized     = array();
+		$normalized_map = array();
+		$in_fence       = false;
+
+		foreach ( $lines as $index => $line ) {
+			if ( ! isset( $line_map[ $index + 1 ]['start'], $line_map[ $index + 1 ]['end'] ) ) {
+				throw new RuntimeException( 'Theme Markdown normalization could not locate a source line.' );
+			}
+
+			$origin = $line_map[ $index + 1 ];
+			if ( preg_match( '/^\s*(```|~~~)/', $line ) ) {
+				$in_fence         = ! $in_fence;
+				$normalized[]     = $line;
+				$normalized_map[] = $origin;
+				continue;
+			}
+
+			if (
+				! $in_fence
+				&& preg_match( '/^\s*:{3,5}(?:\s+(?:block-[123]|column|column-left|column-right))?\s*$/', $line )
+			) {
+				if ( ! empty( $normalized ) && '' !== end( $normalized ) ) {
+					$normalized[]     = '';
+					$normalized_map[] = $origin;
+				}
+
+				$normalized[]     = trim( $line );
+				$normalized_map[] = $origin;
+				$normalized[]     = '';
+				$normalized_map[] = $origin;
+				continue;
+			}
+
+			$normalized[]     = $line;
+			$normalized_map[] = $origin;
+		}
+
+		return array(
+			'markdown' => implode( "\n", $normalized ),
+			'line_map' => array_combine( range( 1, count( $normalized_map ) ), $normalized_map ),
+		);
 	}
 
 	public static function markup_profile( $theme ) {

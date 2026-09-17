@@ -26,7 +26,17 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      grepInvert: /@performance/,
       use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'chromium-performance',
+      grep: /@performance/,
+      use: {
+        ...devices['Desktop Chrome'],
+        trace: 'off',
+        video: 'off'
+      }
     }
   ],
   outputDir: 'test-results/playwright'

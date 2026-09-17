@@ -202,6 +202,7 @@ function HeadingMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const initialFocus = useRef<'first' | 'last' | 'preserve'>('preserve');
+  const scrollPositionFrame = useRef<number | null>(null);
   const [menuPosition, setMenuPosition] = useState<HeadingMenuPosition | null>(null);
 
   const positionHeadingMenu = () => {
@@ -266,11 +267,33 @@ function HeadingMenu({
       throw new Error('heading-menu-window-unavailable');
     }
     const updatePosition = () => positionHeadingMenu();
+    const scheduleScrollPosition = () => {
+      if (null !== scrollPositionFrame.current) return;
+      if (windowRef.requestAnimationFrame) {
+        scrollPositionFrame.current = windowRef.requestAnimationFrame(() => {
+          scrollPositionFrame.current = null;
+          positionHeadingMenu();
+        });
+        return;
+      }
+      scrollPositionFrame.current = windowRef.setTimeout(() => {
+        scrollPositionFrame.current = null;
+        positionHeadingMenu();
+      }, 0);
+    };
     windowRef.addEventListener('resize', updatePosition);
-    windowRef.addEventListener('scroll', updatePosition, true);
+    windowRef.addEventListener('scroll', scheduleScrollPosition, true);
     return () => {
       windowRef.removeEventListener('resize', updatePosition);
-      windowRef.removeEventListener('scroll', updatePosition, true);
+      windowRef.removeEventListener('scroll', scheduleScrollPosition, true);
+      if (null !== scrollPositionFrame.current) {
+        if (windowRef.cancelAnimationFrame) {
+          windowRef.cancelAnimationFrame(scrollPositionFrame.current);
+        } else {
+          windowRef.clearTimeout(scrollPositionFrame.current);
+        }
+        scrollPositionFrame.current = null;
+      }
     };
   }, [isOpen, variant]);
 
@@ -353,7 +376,6 @@ function HeadingMenu({
           event.stopPropagation();
           const nextIsOpen = !isOpen;
           if (nextIsOpen) {
-            positionHeadingMenu();
             onOpen(triggerRef.current ?? undefined);
             initialFocus.current = 0 === event.detail ? 'first' : 'preserve';
           }
@@ -365,7 +387,6 @@ function HeadingMenu({
           }
 
           event.preventDefault();
-          positionHeadingMenu();
           onOpen(triggerRef.current ?? undefined);
           initialFocus.current = 'ArrowUp' === event.key ? 'last' : 'first';
           setIsOpen(true);
@@ -413,23 +434,31 @@ function HeadingMenu({
             {headingLevelLabel}
           </div>
         ) : null}
-        {commands.map((command, index) => (
-          <button
-            key={command.id}
-            ref={(node) => {
-              itemRefs.current[index] = node;
-            }}
-            type="button"
-            className={`easymde-popover-item${'immersive' === variant ? ' is-immersive-heading-item' : ''}`}
-            role="menuitem"
-            tabIndex={-1}
-            data-easymde-command={command.id}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              setIsOpen(false);
-              executeCommand(command.id);
-            }}
-          >
+        {commands.map((command, index) => {
+          const activateCommand = () => {
+            setIsOpen(false);
+            executeCommand(command.id);
+          };
+          return (
+            <button
+              key={command.id}
+              ref={(node) => {
+                itemRefs.current[index] = node;
+              }}
+              type="button"
+              className={`easymde-popover-item${'immersive' === variant ? ' is-immersive-heading-item' : ''}`}
+              role="menuitem"
+              tabIndex={-1}
+              data-easymde-command={command.id}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={activateCommand}
+              onKeyDown={(event) => {
+                if ('Enter' !== event.key && ' ' !== event.key) return;
+                event.preventDefault();
+                event.stopPropagation();
+                activateCommand();
+              }}
+            >
             {'immersive' === variant &&
             'heading' === command.action &&
             'number' === typeof command.level ? (
@@ -490,8 +519,9 @@ function HeadingMenu({
                 ) : null}
               </Fragment>
             )}
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

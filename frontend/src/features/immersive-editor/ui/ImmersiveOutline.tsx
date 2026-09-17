@@ -1,7 +1,10 @@
 import {
   Fragment,
   createElement,
+  memo,
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from '@wordpress/element';
@@ -40,6 +43,8 @@ import type { ImmersiveStrings } from './immersive-editor-ui-types';
 const DEFAULT_WIDTH = 240;
 const MIN_WIDTH = 190;
 const MAX_WIDTH = 360;
+const EMPTY_OUTLINE_KEYS = new Map<ImmersiveOutlineItem, string>();
+const EMPTY_OUTLINE_TREE: ReadonlyArray<ImmersiveOutlineNode> = [];
 
 function boundedWidth(width: number) {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(width)));
@@ -80,14 +85,45 @@ function outlineIcon(title: string): LucideIcon {
   return FileText;
 }
 
+function buildOutlineItemKeys(
+  items: ReadonlyArray<ImmersiveOutlineItem>
+): ReadonlyMap<ImmersiveOutlineItem, string> {
+  const occurrences = new Map<string, number>();
+  const keys = new Map<ImmersiveOutlineItem, string>();
+  for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+    const item = items[itemIndex];
+    if (!item) throw new Error('immersive-outline-item-missing');
+    const signature = JSON.stringify([item.level, item.text]);
+    const occurrence = occurrences.get(signature) ?? 0;
+    occurrences.set(signature, occurrence + 1);
+    keys.set(item, `${signature}:${occurrence}`);
+  }
+  return keys;
+}
+
+function sameOutlinePresentation(
+  left: ReadonlyArray<ImmersiveOutlineItem>,
+  right: ReadonlyArray<ImmersiveOutlineItem>
+): boolean {
+  return left.length === right.length
+    && left.every((item, index) => {
+      const candidate = right[index];
+      return candidate?.index === item.index
+        && candidate.level === item.level
+        && candidate.text === item.text;
+    });
+}
+
 function OutlineNodes({
   activeIndex,
   depth,
+  itemKeys,
   nodes,
   onSelect
 }: Readonly<{
   activeIndex: number | null;
   depth: number;
+  itemKeys: ReadonlyMap<ImmersiveOutlineItem, string>;
   nodes: ReadonlyArray<ImmersiveOutlineNode>;
   onSelect: (item: ImmersiveOutlineItem) => void;
 }>) {
@@ -100,8 +136,12 @@ function OutlineNodes({
         const numbered = topLevel
           ? /^(\d+\.)\s*(.*)$/u.exec(node.item.text)
           : null;
+        const itemKey = itemKeys.get(node.item);
+        if (undefined === itemKey) {
+          throw new Error('immersive-outline-item-key-missing');
+        }
         return (
-          <div key={`${node.item.position}-${node.item.index}`}>
+          <div key={itemKey}>
             <button
               type="button"
               className={`${active ? 'is-active ' : ''}is-level-${node.item.level}${topLevel ? ' is-top-level' : ''}`}
@@ -123,9 +163,10 @@ function OutlineNodes({
               </span>
             </button>
             {node.children.length ? (
-              <OutlineNodes
+              <MemoizedOutlineNodes
                 activeIndex={activeIndex}
                 depth={depth + 1}
+                itemKeys={itemKeys}
                 nodes={node.children}
                 onSelect={onSelect}
               />
@@ -137,7 +178,9 @@ function OutlineNodes({
   );
 }
 
-export function ImmersiveOutline({
+const MemoizedOutlineNodes = memo(OutlineNodes);
+
+export const ImmersiveOutline = memo(function ImmersiveOutline({
   activeIndex,
   direction,
   items,
@@ -157,6 +200,43 @@ export function ImmersiveOutline({
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
+  const onSelectRef = useRef(onSelect);
+  const latestItemsRef = useRef(items);
+  const stableItemsRef = useRef(items);
+  onSelectRef.current = onSelect;
+  latestItemsRef.current = items;
+  const stableItems = useMemo(() => {
+    const previous = stableItemsRef.current;
+    if (previous === items || sameOutlinePresentation(previous, items)) {
+      return previous;
+    }
+    stableItemsRef.current = items;
+    return items;
+  }, [items]);
+  const selectItem = useCallback(
+    (item: ImmersiveOutlineItem) => {
+      const current = latestItemsRef.current.find(
+        (candidate) => candidate.index === item.index
+      );
+      if (
+        !current
+        || current.level !== item.level
+        || current.text !== item.text
+      ) {
+        throw new Error('immersive-outline-item-stale');
+      }
+      onSelectRef.current(current);
+    },
+    []
+  );
+  const outlineItemKeys = useMemo(
+    () => open ? buildOutlineItemKeys(stableItems) : EMPTY_OUTLINE_KEYS,
+    [open, stableItems]
+  );
+  const outlineTree = useMemo(
+    () => open ? buildOutlineTree(stableItems) : EMPTY_OUTLINE_TREE,
+    [open, stableItems]
+  );
 
   useEffect(
     () => () => {
@@ -254,12 +334,13 @@ export function ImmersiveOutline({
           </button>
         </div>
         <div className="easymde-immersive-outline-tree">
-          {items.length ? (
-            <OutlineNodes
+          {stableItems.length ? (
+            <MemoizedOutlineNodes
               activeIndex={activeIndex}
               depth={0}
-              nodes={buildOutlineTree(items)}
-              onSelect={onSelect}
+              itemKeys={outlineItemKeys}
+              nodes={outlineTree}
+              onSelect={selectItem}
             />
           ) : (
             <p className="easymde-immersive-outline-empty">{strings.noHeadings}</p>
@@ -286,4 +367,4 @@ export function ImmersiveOutline({
       />
     </Fragment>
   );
-}
+});

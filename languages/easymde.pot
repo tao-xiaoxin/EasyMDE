@@ -1012,7 +1012,7 @@ msgstr ""
 msgid "Start writing Markdown to preview the article."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1025
+#: src/Admin/AdminAssets.php:1025 src/Rest/PreviewController.php:101
 msgid "Preview failed. Please keep writing; saving is not affected."
 msgstr ""
 
@@ -2994,11 +2994,11 @@ msgstr ""
 msgid "The image could not be saved to the WordPress media library."
 msgstr ""
 
-#: src/Rest/PreviewController.php:79
+#: src/Rest/PreviewController.php:82
 msgid "Markdown preview content is too large."
 msgstr ""
 
-#: src/Rest/PreviewController.php:87 src/Rest/RevisionController.php:142
+#: src/Rest/PreviewController.php:90 src/Rest/RevisionController.php:142
 msgid ""
 "Markdown rendering is unavailable because Composer dependencies are missing."
 msgstr ""

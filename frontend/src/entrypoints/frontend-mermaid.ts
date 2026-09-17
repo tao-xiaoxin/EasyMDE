@@ -6,5 +6,11 @@ import {
 const windowRef = window as unknown as FrontendEnhancementWindow;
 
 windowRef.EasyMDEMermaidRenderer = {
-  render: (root, config) => renderMermaidContent(root, config, windowRef)
+  render: (root, config, control) =>
+    renderMermaidContent(
+      root,
+      config,
+      windowRef,
+      control ? { control } : {}
+    )
 };

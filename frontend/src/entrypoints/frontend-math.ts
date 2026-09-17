@@ -6,5 +6,11 @@ import {
 const windowRef = window as unknown as FrontendEnhancementWindow;
 
 windowRef.EasyMDEMathRenderer = {
-  render: (root, config) => renderMathContent(root, config, windowRef)
+  render: (root, config, control) =>
+    renderMathContent(
+      root,
+      config,
+      windowRef,
+      control ? { control } : {}
+    )
 };

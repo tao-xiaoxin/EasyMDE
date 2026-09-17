@@ -56,6 +56,57 @@ final class PreviewControllerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_preview_request_returns_a_line_edit_map_without_changing_the_formal_html_contract()
+    {
+        $controller = $this->controller();
+        $request   = new WP_REST_Request('POST', '/easymde/v1/preview');
+        $markdown  = "# Heading\r\n\r\nParagraph with **strong**.";
+        $request->set_param('markdown', $markdown);
+
+        $response = $controller->handle_request($request);
+        $data     = $response->get_data();
+
+        $this->assertArrayHasKey('html', $data);
+        $this->assertArrayHasKey('features', $data);
+        $this->assertArrayHasKey('editMap', $data);
+        $this->assertSame(1, $data['editMap']['version']);
+        $this->assertSame('line', $data['editMap']['coordinate']);
+        $this->assertCount(2, $data['editMap']['blocks']);
+        $this->assertSame(array('id', 'startLine', 'endLine', 'editable'), array_keys($data['editMap']['blocks'][0]));
+        $this->assertSame('b0', $data['editMap']['blocks'][0]['id']);
+        $this->assertSame(0, $data['editMap']['blocks'][0]['startLine']);
+        $this->assertSame(1, $data['editMap']['blocks'][0]['endLine']);
+        $this->assertSame('b1', $data['editMap']['blocks'][1]['id']);
+        $this->assertSame(2, $data['editMap']['blocks'][1]['startLine']);
+        $this->assertSame(3, $data['editMap']['blocks'][1]['endLine']);
+        $this->assertStringContainsString('data-easymde-visual-block-id="b0"', $data['html']);
+        $this->assertStringContainsString('data-easymde-visual-block-id="b1"', $data['html']);
+        $this->assertStringNotContainsString('data-easymde-visual-source-id', $data['html']);
+    }
+
+    public function test_preview_request_rejects_oversized_markdown_before_rendering_or_mapping()
+    {
+        $controller = $this->controller();
+        $request   = new WP_REST_Request('POST', '/easymde/v1/preview');
+        $request->set_param('markdown', str_repeat('x', PreviewController::MAX_MARKDOWN_BYTES + 1));
+
+        $response = $controller->handle_request($request);
+
+        $this->assertWPError($response);
+        $this->assertSame('easymde_markdown_too_large', $response->get_error_code());
+        $this->assertSame(413, $response->get_error_data()['status']);
+    }
+
+    public function test_preview_mapping_failure_uses_the_existing_failure_copy_and_stable_error_contract()
+    {
+        $this->assertSame('easymde_preview_failed', PreviewController::PREVIEW_FAILURE_CODE);
+        $this->assertSame(500, PreviewController::PREVIEW_FAILURE_STATUS);
+        $this->assertSame(
+            'Preview failed. Please keep writing; saving is not affected.',
+            __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' )
+        );
+    }
+
     public function test_preview_route_has_no_mac_frame_argument_and_unknown_input_cannot_change_output()
     {
         $controller = $this->controller();

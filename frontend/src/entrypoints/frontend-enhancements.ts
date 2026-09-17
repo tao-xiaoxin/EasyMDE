@@ -10,6 +10,12 @@ import {
 const windowRef = window as unknown as FrontendEnhancementWindow;
 
 windowRef.EasyMDEEnhancements = {
-  enhance: (root, config) => enhanceFrontendContent(root, config, windowRef),
+  enhance: (root, config, control) =>
+    enhanceFrontendContent(
+      root,
+      config,
+      windowRef,
+      control ? { control } : {}
+    ),
   syncCodeFrameBackgrounds: (root) => syncCodeFrameBackgrounds(root, windowRef)
 };

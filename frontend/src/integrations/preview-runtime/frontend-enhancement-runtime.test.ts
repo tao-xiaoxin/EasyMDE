@@ -82,6 +82,66 @@ describe('frontend enhancement runtime', () => {
       .toBe('rgb(12, 34, 56)');
   });
 
+  it('keeps language-free code highlighting and framing unchanged', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code>plain fenced code</code></pre>';
+    const windowRef = runtime();
+    const highlightElement = vi.fn();
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef
+    );
+
+    const code = root.querySelector('code');
+    expect(code?.classList.contains('hljs')).toBe(true);
+    expect(code?.dataset.easymdeHighlighted).toBe('1');
+    expect(highlightElement).toHaveBeenCalledWith(code);
+    expect(code?.parentElement?.style.getPropertyValue(
+      '--easymde-code-frame-background'
+    )).toBe('rgb(12, 34, 56)');
+  });
+
+  it('eventually auto-highlights every code block in a large immersive root in bounded slices', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-immersive-visual-editor';
+    root.innerHTML = Array.from({ length: 10 }, (_, index) => {
+      const language = 1 === index ? ' class="language-javascript"' : '';
+      return `<pre><code${language}>${'plain fenced code\n'.repeat(800)}</code></pre>`;
+    }).join('');
+    const windowRef = runtime();
+    const highlightElement = vi.fn();
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+    const fake = scheduler();
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+
+    const codeBlocks = root.querySelectorAll('code');
+    expect(new TextEncoder().encode(root.textContent ?? '').length)
+      .toBeGreaterThan(128 * 1024);
+    expect([...codeBlocks].every((code) => code.classList.contains('hljs'))).toBe(true);
+    expect([...codeBlocks].every((code) => code.dataset.easymdeHighlighted === '1'))
+      .toBe(true);
+    expect(highlightElement).toHaveBeenCalledTimes(codeBlocks.length);
+    expect(fake.yields).toBeGreaterThan(0);
+    expect(fake.yields).toBeLessThan(codeBlocks.length);
+  });
+
   it('adds one decorative line-number gutter after highlighting without changing code text', async () => {
     const root = document.createElement('article');
     root.className = 'easymde-code-line-numbers';
@@ -283,6 +343,45 @@ describe('frontend enhancement runtime', () => {
     expect(highlightElement).toHaveBeenCalledTimes(12);
     expect(base.yields).toBeGreaterThan(0);
     expect(base.yields).toBeLessThan(12);
+  });
+
+  it('lets the browser paint between default enhancement slices', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const first = 1;</code></pre>',
+      '<pre><code class="language-javascript">const second = 2;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    let clock = 0;
+    Object.defineProperty(windowRef, 'performance', {
+      configurable: true,
+      value: { now: () => clock }
+    });
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(clock);
+      return 1;
+    });
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    windowRef.hljs = {
+      highlightElement: () => {
+        clock += 9;
+      }
+    };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef
+    );
+
+    expect(requestAnimationFrame).toHaveBeenCalled();
   });
 
   it('renders Mermaid serially and stops between blocks when the owner is stale', async () => {

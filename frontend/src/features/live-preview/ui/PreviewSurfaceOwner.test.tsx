@@ -153,6 +153,7 @@ function setup(options?: {
   onDiagnostic?: (code: string) => void;
   onHtmlChange?: (html: SafePreviewHtml) => void;
   onStatusChange?: (status: PreviewSurfaceStatus) => void;
+  onWindowReady?: () => void;
   scrollPort?: PreviewScrollPort;
   materializeScheduler?: MaterializeScheduler;
   stagingScheduler?: Readonly<{ yield: () => Promise<void> }>;
@@ -221,6 +222,9 @@ function setup(options?: {
           : {})}
         {...(options?.onStatusChange
           ? { onStatusChange: options.onStatusChange }
+          : {})}
+        {...(options?.onWindowReady
+          ? { onWindowReady: options.onWindowReady }
           : {})}
         onReady={(readySession) => {
           runtime = readySession;
@@ -317,7 +321,7 @@ describe('PreviewSurfaceOwner', () => {
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
     expect(enhance).toHaveBeenCalledOnce();
-    expect(stagingYield).not.toHaveBeenCalled();
+    expect(stagingYield).toHaveBeenCalledTimes(10);
     expect(enhance.mock.calls[0]?.[0].isConnected).toBe(false);
     expect(enhance.mock.calls[0]?.[0].style.display).toBe('none');
     const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
@@ -388,6 +392,117 @@ describe('PreviewSurfaceOwner', () => {
     expect(previous.isConnected).toBe(false);
   });
 
+  it('adopts a replacement while a pending window commit still contains the old node', async () => {
+    const fixture = windowedFixture(320, 'adopt-pending-window-block');
+    const onWindowReady = vi.fn();
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: fixture.editMap,
+      initialHtml: fixture.html,
+      initialSignature: 'adopt-pending-window-block',
+      onWindowReady,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => {
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    const previous = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    if (!previous) throw new Error('adopt-pending-window-source-missing');
+    const readyCallsBeforePendingCommit = onWindowReady.mock.calls.length;
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 240
+    });
+    const replacement = document.createElement('pre');
+    replacement.setAttribute('data-easymde-visual-block-id', 'b0');
+    replacement.textContent = 'adopted pending block';
+    let finalized = false;
+    let observedBeforeSink = false;
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+    const requestAnimationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
+
+    try {
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          nativeRequestAnimationFrame(() => resolve());
+        });
+      });
+      current.canvas.scrollTop = 24;
+      current.canvas.dispatchEvent(new Event('scroll'));
+      current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+      const commitWindow = frameCallbacks.shift();
+      if (!commitWindow) throw new Error('adopt-pending-window-frame-missing');
+      act(() => {
+        commitWindow(0);
+        expect(current.surface.contains(previous)).toBe(true);
+        observedBeforeSink = true;
+        previous.replaceWith(replacement);
+        const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
+        expect(finalize).not.toBeNull();
+        finalized = finalize?.() ?? false;
+        expect(onWindowReady).toHaveBeenCalledTimes(readyCallsBeforePendingCommit);
+      });
+      const stableWindow = frameCallbacks.shift();
+      if (!stableWindow) {
+        throw new Error('adopt-pending-window-stable-frame-missing');
+      }
+      act(() => stableWindow(1));
+    } finally {
+      requestAnimationFrame.mockRestore();
+    }
+    await act(async () => {
+      await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(observedBeforeSink).toBe(true);
+    expect(finalized).toBe(true);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    )).toBe(replacement);
+    expect(current.surface.contains(previous)).toBe(false);
+    expect(onWindowReady.mock.calls.length).toBeGreaterThan(
+      readyCallsBeforePendingCommit
+    );
+
+    window.getSelection()?.removeAllRanges();
+    current.canvas.scrollTop = 7_440;
+    current.canvas.dispatchEvent(new Event('scroll'));
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await Promise.resolve();
+    });
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b319"]'
+    )).not.toBeNull();
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    )).toBeNull();
+
+    current.canvas.scrollTop = 0;
+    current.canvas.dispatchEvent(new Event('scroll'));
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await Promise.resolve();
+    });
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    )).toBe(replacement);
+    expect(current.surface.contains(previous)).toBe(false);
+  });
+
   it('does not mutate the repository when a prepared adoption fails its final identity check', async () => {
     const fixture = windowedFixture(320, 'adopt-window-atomic');
     const current = setup({
@@ -407,20 +522,52 @@ describe('PreviewSurfaceOwner', () => {
       '[data-easymde-visual-block-id="b0"]'
     );
     if (!previous) throw new Error('adopt-window-atomic-source-missing');
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 240
+    });
     const replacement = document.createElement('h2');
     replacement.setAttribute('data-easymde-visual-block-id', 'b0');
     replacement.textContent = 'atomic replacement';
-    previous.replaceWith(replacement);
-    const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
-    if (!finalize) throw new Error('adopt-window-atomic-prepare-missing');
-
     const duplicate = document.createElement('p');
     duplicate.setAttribute('data-easymde-visual-block-id', 'b0');
-    current.surface.append(duplicate);
-    expect(finalize()).toBe(false);
-    duplicate.remove();
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+    const requestAnimationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback: FrameRequestCallback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      });
 
-    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    try {
+      await act(async () => {
+        await new Promise<void>((resolve) => {
+          nativeRequestAnimationFrame(() => resolve());
+        });
+      });
+      current.canvas.scrollTop = 24;
+      current.canvas.dispatchEvent(new Event('scroll'));
+      const commitWindow = frameCallbacks.shift();
+      if (!commitWindow) throw new Error('adopt-window-atomic-frame-missing');
+      act(() => {
+        commitWindow(0);
+        previous.replaceWith(replacement);
+        const finalize = current.runtime.prepareWindowBlockAdoption(replacement);
+        if (!finalize) throw new Error('adopt-window-atomic-prepare-missing');
+        current.surface.append(duplicate);
+        expect(finalize()).toBe(false);
+        duplicate.remove();
+      });
+      const stableWindow = frameCallbacks.shift();
+      if (!stableWindow) {
+        throw new Error('adopt-window-atomic-stable-frame-missing');
+      }
+      act(() => stableWindow(1));
+    } finally {
+      requestAnimationFrame.mockRestore();
+    }
+
     await act(async () => flushAnimationFrames(2));
     expect(current.surface.querySelector<HTMLElement>(
       '[data-easymde-visual-block-id="b0"]'
@@ -562,7 +709,7 @@ describe('PreviewSurfaceOwner', () => {
     )).toHaveLength(160);
     expect(candidate.isConnected).toBe(false);
     expect(candidate.style.display).toBe('none');
-    expect(stagingYield).not.toHaveBeenCalled();
+    expect(stagingYield).toHaveBeenCalledTimes(4);
     expect(materializeScheduler.yield).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -610,7 +757,7 @@ describe('PreviewSurfaceOwner', () => {
 
     await act(async () => {
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
-      await flushAnimationFrames();
+      await flushAnimationFrames(24);
     });
     expect(current.surface.querySelector(
       '[data-easymde-visual-block-id="b199"]'

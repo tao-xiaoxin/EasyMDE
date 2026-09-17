@@ -85,6 +85,7 @@ type VisualSelectionSourceRange = Readonly<{
 type SynchronizeMarkdownOptions = Readonly<{
   acceptedDocumentBoundary?: AcceptedPasteDocumentBoundary;
   mapSelectionWhenUnchanged?: boolean;
+  preferVisualSelection?: boolean;
 }>;
 
 type CaptureSnapshotOptions = Readonly<{
@@ -92,6 +93,7 @@ type CaptureSnapshotOptions = Readonly<{
 }>;
 
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
+const MAX_VISUAL_HISTORY_TRANSITIONS = 64;
 
 type VisualSelectionMemory = Readonly<{
   anchorNode: Text;
@@ -102,6 +104,28 @@ type VisualSelectionMemory = Readonly<{
   sourceFocus: number;
   visualAnchor: number;
   visualFocus: number;
+}>;
+
+type VisualHistorySelectionBoundary = Readonly<{
+  offset: number;
+  path: ReadonlyArray<number>;
+}>;
+
+type VisualHistorySelection = Readonly<{
+  anchor: VisualHistorySelectionBoundary;
+  backward: boolean;
+  focus: VisualHistorySelectionBoundary;
+}>;
+
+type VisualHistorySnapshot = Readonly<{
+  html: string;
+  markdown: string;
+  selection: VisualHistorySelection | null;
+}>;
+
+type VisualHistoryTransition = Readonly<{
+  after: VisualHistorySnapshot;
+  before: VisualHistorySnapshot;
 }>;
 
 type VisualInputIntent = Readonly<{
@@ -639,6 +663,99 @@ function collapsedVisualSelection(surface: HTMLElement): boolean {
   );
 }
 
+function visualNodePath(
+  root: HTMLElement,
+  node: Node
+): ReadonlyArray<number> | null {
+  const path: number[] = [];
+  let current: Node | null = node;
+  while (current && current !== root) {
+    const parent: Node | null = current.parentNode;
+    if (!parent) return null;
+    const index = Array.from(parent.childNodes)
+      .filter(
+        (child) => child === current
+          || !(child instanceof Text && '' === child.data)
+      )
+      .indexOf(current as ChildNode);
+    if (index < 0) return null;
+    path.unshift(index);
+    current = parent;
+  }
+  return current === root ? path : null;
+}
+
+function captureVisualHistorySelection(
+  surface: HTMLElement
+): VisualHistorySelection | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.rangeCount
+    || !selection.anchorNode
+    || !selection.focusNode
+    || selection.anchorNode === surface
+    || selection.focusNode === surface
+    || !surface.contains(selection.anchorNode)
+    || !surface.contains(selection.focusNode)
+  ) return null;
+  const anchorPath = visualNodePath(surface, selection.anchorNode);
+  const focusPath = visualNodePath(surface, selection.focusNode);
+  if (!anchorPath || !focusPath) return null;
+  const range = surface.ownerDocument.createRange();
+  range.setStart(selection.anchorNode, selection.anchorOffset);
+  range.setEnd(selection.focusNode, selection.focusOffset);
+  const forward = range.startContainer === selection.anchorNode
+    && range.startOffset === selection.anchorOffset;
+  return {
+    anchor: { offset: selection.anchorOffset, path: anchorPath },
+    backward: !selection.isCollapsed && !forward,
+    focus: { offset: selection.focusOffset, path: focusPath }
+  };
+}
+
+function visualNodeAtPath(
+  root: HTMLElement,
+  path: ReadonlyArray<number>
+): Node | null {
+  let current: Node = root;
+  for (const index of path) {
+    const child = Array.from(current.childNodes)
+      .filter(
+        (candidate) => !(candidate instanceof Text && '' === candidate.data)
+      )[index];
+    if (!child) return null;
+    current = child;
+  }
+  return current;
+}
+
+function restoreVisualHistorySelection(
+  surface: HTMLElement,
+  snapshot: VisualHistorySelection | null
+): boolean {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) return false;
+  if (!snapshot) {
+    selection.removeAllRanges();
+    return true;
+  }
+  const anchorNode = visualNodeAtPath(surface, snapshot.anchor.path);
+  const focusNode = visualNodeAtPath(surface, snapshot.focus.path);
+  if (!anchorNode || !focusNode) return false;
+  try {
+    selection.removeAllRanges();
+    selection.setBaseAndExtent(
+      anchorNode,
+      snapshot.anchor.offset,
+      focusNode,
+      snapshot.focus.offset
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function ImmersiveVisualEditor({
   documentSession,
   imageUploadEnabled,
@@ -679,8 +796,23 @@ export function ImmersiveVisualEditor({
   const flushVisualInputRef = useRef<() => boolean>(() => true);
   const restoreFocusRef = useRef(false);
   const selfWriteRef = useRef(false);
+  const visualCommandTransactionRef = useRef(false);
   const readOnlySnapshotRef =
     useRef<VisualMarkdownReadOnlySnapshot | null>(null);
+  const visualHistoryBaselineRef = useRef<VisualHistorySnapshot | null>(null);
+  const visualHistoryTransitionsRef = useRef<VisualHistoryTransition[]>([]);
+
+  const captureVisualHistorySnapshot = useCallback(
+    (
+      markdown: string,
+      html = acceptedHtmlRef.current ?? surface.innerHTML
+    ): VisualHistorySnapshot => ({
+      html,
+      markdown,
+      selection: captureVisualHistorySelection(surface)
+    }),
+    [surface]
+  );
 
   const captureSnapshot = useCallback((
     sourceMarkdown: string,
@@ -711,7 +843,14 @@ export function ImmersiveVisualEditor({
       && previousIntervalMap
         ? previousIntervalMap
         : createVisualMarkdownSourceIntervalMap(sourceMarkdown, visualMarkdown);
-    acceptedHtmlRef.current = surface.innerHTML;
+    const html = surface.innerHTML;
+    const historySnapshot: VisualHistorySnapshot = {
+      html,
+      markdown: sourceMarkdown,
+      selection: captureVisualHistorySelection(surface)
+    };
+    acceptedHtmlRef.current = historySnapshot.html;
+    visualHistoryBaselineRef.current = historySnapshot;
     visualBaselineMaterializedRef.current = true;
     capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
   }, [surface]);
@@ -763,6 +902,12 @@ export function ImmersiveVisualEditor({
       EditorDocumentSession['document']['applyTextChange']
     >[0]
   ) => {
+    if (
+      !visualCommandTransactionRef.current
+      && change.value !== sourceMarkdownRef.current
+    ) {
+      visualHistoryTransitionsRef.current = [];
+    }
     selfWriteRef.current = true;
     try {
       documentSession.document.applyTextChange(change);
@@ -848,7 +993,8 @@ export function ImmersiveVisualEditor({
         editedVisualMarkdown
       );
       let selection: VisualSelectionSourceRange;
-      const inferredEdit = collapsedVisualSelection(surface)
+      const inferredEdit = !options.preferVisualSelection
+        && collapsedVisualSelection(surface)
         && 1 === mergeResult.edits.length
         ? mergeResult.edits[0]
         : null;
@@ -1266,6 +1412,135 @@ export function ImmersiveVisualEditor({
     };
     flushVisualInputRef.current = flushVisualInput;
 
+    const historySnapshotFor = (
+      currentMarkdown: string,
+      targetMarkdown: string,
+      redo: boolean
+    ): VisualHistorySnapshot | null => {
+      const transitions = visualHistoryTransitionsRef.current;
+      for (let index = transitions.length - 1; index >= 0; index -= 1) {
+        const transition = transitions[index];
+        if (!transition) continue;
+        if (
+          redo
+            ? transition.before.markdown === currentMarkdown
+              && transition.after.markdown === targetMarkdown
+            : transition.after.markdown === currentMarkdown
+              && transition.before.markdown === targetMarkdown
+        ) {
+          return redo ? transition.after : transition.before;
+        }
+      }
+      const baseline = visualHistoryBaselineRef.current;
+      return baseline?.markdown === targetMarkdown ? baseline : null;
+    };
+
+    const hasHistoryTransition = (
+      currentMarkdown: string,
+      redo: boolean
+    ): boolean => {
+      const available = redo
+        ? documentSession.document.canRedo
+        : documentSession.document.canUndo;
+      if ('function' === typeof available && !available()) return false;
+      return visualHistoryTransitionsRef.current.some(
+        (transition) => redo
+          ? transition.before.markdown === currentMarkdown
+          : transition.after.markdown === currentMarkdown
+      );
+    };
+
+    const restoreHistorySnapshot = (
+      snapshot: VisualHistorySnapshot
+    ): void => {
+      surface.innerHTML = snapshot.html;
+      captureSnapshot(snapshot.markdown);
+      if (!restoreVisualHistorySelection(surface, snapshot.selection)) {
+        throw new Error('visual-editor-history-selection-restore-failed');
+      }
+    };
+
+    const runHistory = (redo: boolean): boolean => {
+      if (
+        !active
+        || pendingTransferRef.current
+        || externalChangeReportedRef.current
+        || visualTransferFailureReportedRef.current
+      ) return false;
+      if (!flushVisualInput()) return false;
+      const currentMarkdown = sourceMarkdownRef.current;
+      if (null === currentMarkdown) {
+        onFailure('visual-editor-markdown-snapshot-missing');
+        return false;
+      }
+      if (!hasHistoryTransition(currentMarkdown, redo)) return false;
+      if (documentSession.document.getValue() !== currentMarkdown) {
+        onFailure('visual-editor-history-document-stale');
+        return false;
+      }
+      const previousSnapshot = captureVisualHistorySnapshot(currentMarkdown);
+      let changed = false;
+      try {
+        selfWriteRef.current = true;
+        try {
+          changed = redo
+            ? documentSession.document.redo()
+            : documentSession.document.undo();
+        } finally {
+          selfWriteRef.current = false;
+        }
+        if (!changed) return false;
+        const targetMarkdown = documentSession.document.getValue();
+        const targetSnapshot = historySnapshotFor(
+          currentMarkdown,
+          targetMarkdown,
+          redo
+        );
+        if (!targetSnapshot) {
+          throw new Error('visual-editor-history-snapshot-missing');
+        }
+        restoreHistorySnapshot(targetSnapshot);
+        sourceMarkdownRef.current = targetMarkdown;
+        onMarkdownChange();
+        return true;
+      } catch (error) {
+        try {
+          selfWriteRef.current = true;
+          try {
+            const restored = redo
+              ? documentSession.document.undo()
+              : documentSession.document.redo();
+            if (
+              !restored
+              || documentSession.document.getValue() !== currentMarkdown
+            ) {
+              throw new Error('visual-editor-history-rollback-failed');
+            }
+          } finally {
+            selfWriteRef.current = false;
+          }
+          restoreHistorySnapshot(previousSnapshot);
+          sourceMarkdownRef.current = currentMarkdown;
+        } catch (rollbackError) {
+          onFailure(
+            visualEditorFailureCode(
+              rollbackError,
+              'visual-editor-history-rollback-failed'
+            )
+          );
+          onTransferFailure();
+          return false;
+        }
+        onFailure(
+          visualEditorFailureCode(
+            error,
+            'visual-editor-history-sync-failed'
+          )
+        );
+        return false;
+      }
+    };
+
     const handleDrop = (event: DragEvent) => {
       if (hasImageFile(event.dataTransfer)) {
         if (!imageUploadEnabled) event.preventDefault();
@@ -1317,6 +1592,29 @@ export function ImmersiveVisualEditor({
     const handleBeforeInput = (event: InputEvent) => {
       visualInputBlock = null;
       pendingVisualIntentRef.current = null;
+      const isHistoryInput =
+        'historyUndo' === event.inputType || 'historyRedo' === event.inputType;
+      const hasHistoryOwner =
+        'function' === typeof documentSession.document.undo
+        && 'function' === typeof documentSession.document.redo;
+      if (isHistoryInput && hasHistoryOwner) {
+        if (!flushVisualInput()) {
+          event.preventDefault();
+          return;
+        }
+        const currentMarkdown = sourceMarkdownRef.current;
+        if (
+          null !== currentMarkdown
+          && hasHistoryTransition(
+            currentMarkdown,
+            'historyRedo' === event.inputType
+          )
+        ) {
+          event.preventDefault();
+          runHistory('historyRedo' === event.inputType);
+          return;
+        }
+      }
       if (visualTransferFailureReportedRef.current) {
         event.preventDefault();
         return;
@@ -1511,9 +1809,17 @@ export function ImmersiveVisualEditor({
       const key = event.key.toLowerCase();
       const historyShortcut = (event.ctrlKey || event.metaKey)
         && !event.altKey
-        && ('z' === key || 'y' === key);
+        && ('z' === key || ('y' === key && !event.shiftKey));
       if (historyShortcut) {
         if (!flushVisualInput()) return;
+        const currentMarkdown = sourceMarkdownRef.current;
+        if (
+          null !== currentMarkdown
+          && hasHistoryTransition(currentMarkdown, 'y' === key || event.shiftKey)
+        ) {
+          event.preventDefault();
+          runHistory('y' === key || event.shiftKey);
+        }
         return;
       }
       if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
@@ -1556,11 +1862,39 @@ export function ImmersiveVisualEditor({
           || externalChangeReportedRef.current
           || visualTransferFailureReportedRef.current
         ) return false;
-        if (!flushVisualInput()) return false;
-        if (!applyVisualToolbarCommand(surface, command)) return false;
-        if (!synchronizeMarkdown()) return false;
-        focusVisualSurface(surface);
-        return true;
+        try {
+          if (!flushVisualInput()) return false;
+          const beforeMarkdown = sourceMarkdownRef.current;
+          if (null === beforeMarkdown) {
+            throw new Error('visual-editor-markdown-snapshot-missing');
+          }
+          const before = captureVisualHistorySnapshot(beforeMarkdown);
+          visualCommandTransactionRef.current = true;
+          try {
+            if (!applyVisualToolbarCommand(surface, command)) return false;
+            if (!synchronizeMarkdown({ preferVisualSelection: true })) return false;
+          } finally {
+            visualCommandTransactionRef.current = false;
+          }
+          const afterMarkdown = sourceMarkdownRef.current;
+          if (null === afterMarkdown) {
+            throw new Error('visual-editor-markdown-snapshot-missing');
+          }
+          const after = captureVisualHistorySnapshot(afterMarkdown);
+          if (before.markdown !== after.markdown) {
+            visualHistoryTransitionsRef.current.push({ after, before });
+            if (
+              visualHistoryTransitionsRef.current.length
+              > MAX_VISUAL_HISTORY_TRANSITIONS
+            ) {
+              visualHistoryTransitionsRef.current.shift();
+            }
+          }
+          focusVisualSurface(surface);
+          return true;
+        } catch (error) {
+          return failVisualSynchronization(error);
+        }
       },
       prepareMediaSelection() {
         if (
@@ -1653,6 +1987,7 @@ export function ImmersiveVisualEditor({
     };
   }, [
     captureSnapshot,
+    captureVisualHistorySnapshot,
     applyDocumentChange,
     failVisualSynchronization,
     documentSession,
@@ -1662,6 +1997,7 @@ export function ImmersiveVisualEditor({
     onFailure,
     onPendingChange,
     onReady,
+    onTransferFailure,
     materializeVisualBaseline,
     requestMarkdownTransfer,
     surface,

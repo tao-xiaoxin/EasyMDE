@@ -444,7 +444,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       .toEqual(['SPAN', 'CODE']);
     expect(pre.querySelector(':scope > .easymde-code-line-number-gutter'))
       .not.toBeNull();
-    expect(restoredCode?.className).toBe('language-bash');
+    expect(restoredCode?.className).toBe('hljs language-bash');
     expect(restored).toBeInstanceOf(HTMLSpanElement);
     expect(restored?.getAttribute(
       'data-easymde-visual-code-placeholder'
@@ -690,6 +690,105 @@ describe('WindowedImmersiveVisualEditor', () => {
     view.unmount();
   });
 
+  it('rolls back the canonical and Preview transaction when adoption finalization fails', () => {
+    const current = fixture();
+    const onFailure = vi.fn();
+    let canonicalDuringFinalize: string | null = null;
+    const finalizeAdoption = vi.fn(() => {
+      canonicalDuringFinalize = current.canonical();
+      return false;
+    });
+    const prepareWindowBlockAdoption = vi.fn(() => finalizeAdoption);
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const { view } = renderWindowEditor(current, {
+      onFailure,
+      onReady: (nextRuntime) => {
+        runtime = nextRuntime;
+      },
+      prepareWindowBlockAdoption
+    });
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const text = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLParagraphElement) || !(text instanceof Text)) {
+      throw new Error('windowed-finalization-text-missing');
+    }
+    if (!runtime) throw new Error('windowed-finalization-runtime-missing');
+
+    const before = current.canonical();
+    const beforeHtml = current.surface.innerHTML;
+    placeCaret(text, text.length);
+    expect((runtime as ImmersiveVisualEditorRuntime).executeCommand({
+      action: 'heading',
+      group: 'heading',
+      icon: 'heading',
+      id: 'heading2',
+      label: 'Heading 2',
+      level: 2,
+      surface: 'heading-menu'
+    })).toBe(false);
+
+    expect(current.canonical()).toBe(before);
+    expect(current.surface.innerHTML).toBe(beforeHtml);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b160"]'
+    )).toBe(paragraph);
+    expect(canonicalDuringFinalize).toBe(before);
+    expect(onFailure).toHaveBeenCalledWith(
+      'visual-editor-window-block-adoption-failed'
+    );
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(prepareWindowBlockAdoption).toHaveBeenCalledOnce();
+    expect(finalizeAdoption).toHaveBeenCalledOnce();
+    expect(current.applyTextChange).not.toHaveBeenCalled();
+
+    const historyUndo = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyUndo'
+    });
+    current.surface.dispatchEvent(historyUndo);
+    expect(historyUndo.defaultPrevented).toBe(true);
+    expect(current.documentSession.document.undo).toHaveBeenCalledOnce();
+    expect(current.canonical()).toBe(before);
+
+    const historyRedo = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyRedo'
+    });
+    current.surface.dispatchEvent(historyRedo);
+    expect(historyRedo.defaultPrevented).toBe(true);
+    expect(current.documentSession.document.redo).toHaveBeenCalledOnce();
+    expect(current.canonical()).toBe(before);
+
+    const restoredText = paragraph.firstChild;
+    if (!(restoredText instanceof Text)) {
+      throw new Error('windowed-finalization-restored-text-missing');
+    }
+    expect(window.getSelection()?.anchorNode).toBe(restoredText);
+    expect(window.getSelection()?.anchorOffset).toBe(restoredText.length);
+    placeCaret(restoredText, restoredText.length);
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: '!',
+      inputType: 'insertText'
+    }));
+    restoredText.data += '!';
+    placeCaret(restoredText, restoredText.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: '!',
+      inputType: 'insertText'
+    }));
+
+    expect(current.canonical().split('\n')[160]).toBe('Line 160!');
+    expect(onFailure).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
   it('releases editing ownership on unmount without deferred selection work', async () => {
     const current = fixture();
     const { view } = renderWindowEditor(current);
@@ -733,7 +832,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     view.unmount();
   });
 
-  it('projects the exact visual selection before falling back to the canonical toolbar owner', () => {
+  it('applies the exact visual wrap locally without falling back to the canonical toolbar owner', () => {
     const current = fixture();
     let runtime: ImmersiveVisualEditorRuntime | null = null;
     const { view } = renderWindowEditor(current, {
@@ -764,8 +863,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       prefix: '**',
       suffix: '**',
       surface: 'main'
-    })).toBe(false);
-    expect(readyRuntime.prepareToolbarFallback()).toBe(true);
+    })).toBe(true);
 
     const sourceStart = Array.from(
       { length: 160 },
@@ -773,11 +871,72 @@ describe('WindowedImmersiveVisualEditor', () => {
     ).join('\n').length + 1;
     expect(current.applyTextChange).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        selection: { direction: 'forward', end: sourceStart + 4, start: sourceStart },
+        selection: { direction: 'forward', end: sourceStart + 6, start: sourceStart + 2 },
         value: current.canonical()
       })
     );
+    expect(current.canonical().split('\n')[160]).toBe('**Line** 160');
+    expect(readyRuntime.prepareToolbarFallback()).toBe(true);
+    expect(current.canonical().split('\n')[160]).toBe('**Line** 160');
     view.unmount();
+  });
+
+  it('applies a selected visual code fence locally without requesting a Preview', () => {
+    const current = fixture();
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const prepareWindowBlockAdoption = vi.fn(() => () => true);
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const { view } = renderWindowEditor(current, {
+      onReady: (nextRuntime) => {
+        runtime = nextRuntime;
+      },
+      prepareWindowBlockAdoption,
+      requestPreview
+    });
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('windowed-code-fence-text-missing');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    if (!runtime) throw new Error('windowed-code-fence-runtime-missing');
+    const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+
+    try {
+      expect(readyRuntime.executeCommand({
+        action: 'codeFence',
+        group: 'insert',
+        icon: 'media-code',
+        id: 'codefence',
+        label: 'Code fence',
+        surface: 'main'
+      })).toBe(true);
+      expect(current.canonical().split('\n').slice(159, 164)).toEqual([
+        'Line 159',
+        '```',
+        'Line 160',
+        '```',
+        'Line 161'
+      ]);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b160"] > code.hljs'
+      )?.textContent).toBe('Line 160');
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(prepareWindowBlockAdoption).toHaveBeenCalledOnce();
+      expect(selection?.toString()).toBe('Line 160');
+      expect(selection?.anchorNode).toBe(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b160"] > code'
+      )?.firstChild);
+      expect(selection?.focusNode).toBe(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b160"] > code'
+      )?.firstChild);
+    } finally {
+      view.unmount();
+    }
   });
 
   it('keeps the canonical selection when the windowed surface has no DOM selection', () => {
@@ -833,7 +992,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     view.unmount();
   });
 
-  it.each(['~~~js', '```js'])('keeps a windowed %s fence family in the canonical change', (fence) => {
+  it.each(['~~~js', '```js', '~~~~~bash', '`````js'])('keeps a windowed %s fence family in the canonical change', (fence) => {
     const current = fixture();
     const canonical = current.canonical().split('\n');
     canonical[160] = fence;
@@ -859,9 +1018,37 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(event.defaultPrevented).toBe(true);
     expect(onFailure).not.toHaveBeenCalled();
     expect(requestPreview).not.toHaveBeenCalled();
-    expect(current.canonical()).toContain(`${fence}\n\n${fence.slice(0, 3)}`);
+    const family = fence.match(/^(`{3,}|~{3,})/)?.[1];
+    expect(family).toBeTruthy();
+    expect(current.canonical()).toContain(`${fence}\n\n${family}`);
     view.unmount();
   });
+
+  it.each(['`````js linenos=true', '~~~~~js linenos=true'])(
+    'restores the complete %s info string in a windowed code block',
+    (sourceFence) => {
+      const current = fixture({ lineOverrides: { 160: sourceFence } });
+      const paragraph = current.surface.querySelector<HTMLElement>(
+        '[data-easymde-visual-block-id="b160"]'
+      );
+      if (!paragraph) throw new Error('windowed-info-paragraph-missing');
+      const pre = document.createElement('pre');
+      pre.setAttribute('data-easymde-visual-block-id', 'b160');
+      const code = document.createElement('code');
+      code.className = 'language-rendered';
+      code.textContent = 'body';
+      pre.append(code);
+      paragraph.replaceWith(pre);
+
+      const { view } = renderWindowEditor(current);
+      const family = sourceFence.match(/^(`{3,}|~{3,})/)?.[1];
+      expect(pre.getAttribute('data-easymde-visual-fence')).toBe(family);
+      expect(pre.getAttribute('data-easymde-visual-fence-info')).toBe(
+        'js linenos=true'
+      );
+      view.unmount();
+    }
+  );
 
   it('commits one middle-Block input without cloning or serializing the partial surface', () => {
     const current = fixture();
@@ -973,7 +1160,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     view.unmount();
   });
 
-  it('commits pasted Markdown canonically while leaving the visible window in place', () => {
+  it('commits pasted Markdown after returning from the paste event', async () => {
     const current = fixture();
     const requestPreview = vi.fn(() => 'paste-signature');
     const onPendingChange = vi.fn();
@@ -1007,6 +1194,13 @@ describe('WindowedImmersiveVisualEditor', () => {
       value: { files: [], getData: () => '**bold**', items: [] }
     });
     current.surface.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(current.applyTextChange).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
 
     expect(current.canonical().split('\n')[160]).toBe('Line **bold**160');
     expect(requestPreview).toHaveBeenCalledOnce();

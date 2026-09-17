@@ -378,7 +378,13 @@ Accepted warnings and release-policy rationale are tracked in [Plugin Check Note
 
 ## Chromium E2E
 
-The Playwright suite is Chromium-only in the current configuration. CI runs it against the already-built release ZIP, not against a separately rebuilt package.
+The Playwright suite is Chromium-only in the current configuration. CI runs
+the ordinary `chromium` project and the isolated `chromium-performance`
+project against the already-built release ZIP, not against a separately
+rebuilt package. The performance project disables Playwright trace and video
+because their DevTools DOM snapshots create browser tasks inside the measured
+interaction windows; failure screenshots and the privacy-safe performance
+JSON attachment remain available.
 
 Local E2E requires a clean WordPress install with the release ZIP active and a running WordPress server. Then run:
 
@@ -418,17 +424,17 @@ Preview paper, completed block and inline syntax, bounded visual-input
 coalescing, explicit selection-loss failure without end-of-document appends,
 consecutive full Markdown pastes through the server Preview owner, one Preview
 request per paste, and zero Preview requests for ordinary visual keystrokes.
-The Chromium test `keeps immersive Markdown input responsive and parses
-consecutive full Markdown pastes` uses a CDP session alongside the headless
-browser to run 30 synthetic real input transactions, measure dispatch p95
-(`<= 50 ms`), reject any observed `longtask` over 50 ms, and validate finite
-before/after `TaskDuration`, `JSHeapUsedSize`, and `LayoutCount` metrics. The
-TaskDuration delta has a broad five-second bound to avoid making the test
-depend on host scheduling jitter; the p95 and longtask checks are the hard
-input-performance gates. The same test verifies lock/unlock transitions,
-canonical field synchronization, semantic rendered output, zero Preview
-requests during visual typing, one request per full Markdown paste, and the
-absence of page errors.
+The `chromium-performance` test uses about 194 KB of synthetic Markdown with
+454 headings, language-free and explicit-language code fences, and a real
+Clipboard paste. It requires a paste handler below 50 ms, edit-handler p95 at
+or below 16 ms, first-double-frame and mutation-settled edit p95 values at or
+below 100 ms, semantic Preview settling within five seconds, CLS at or below
+0.01, and zero Long Tasks across 60 real input/delete interactions. The atomic
+formal Preview layout may contribute at
+most one Long Task at or below 75 ms; every other deferred Preview or edit Long
+Task fails the test. The same test verifies exact canonical Markdown, one
+Preview request, bounded window mounting, lock synchronization, and the
+absence of browser errors without recording article content.
 The Chromium test `parses the exact full-capability fixture after immersive
 unlock at empty and prefixed document ends` reads the unchanged
 `docs/examples/markdown-full-capability-test.md` file directly, verifies the

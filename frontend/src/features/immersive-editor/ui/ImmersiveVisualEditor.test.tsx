@@ -24,6 +24,56 @@ function deleteTextRange(text: Text, start: number, end: number): void {
   range.deleteContents();
 }
 
+function createHistoryDocument(initial: string) {
+  let value = initial;
+  let cursor = 0;
+  const values = [initial];
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const listener of listeners) listener();
+  };
+  const applyTextChange = vi.fn(({ value: nextValue }: { value: string }) => {
+    if (nextValue === value) return;
+    values.splice(cursor + 1);
+    values.push(nextValue);
+    cursor = values.length - 1;
+    value = nextValue;
+    notify();
+  });
+  const undo = vi.fn(() => {
+    if (cursor === 0) return false;
+    cursor -= 1;
+    value = values[cursor] ?? '';
+    notify();
+    return true;
+  });
+  const redo = vi.fn(() => {
+    if (cursor >= values.length - 1) return false;
+    cursor += 1;
+    value = values[cursor] ?? '';
+    notify();
+    return true;
+  });
+  return {
+    applyTextChange,
+    document: {
+      applyTextChange,
+      canRedo: () => cursor < values.length - 1,
+      canUndo: () => cursor > 0,
+      getValue: () => value,
+      redo,
+      setVisualEditingActive: vi.fn(),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      undo
+    },
+    redo,
+    undo
+  };
+}
+
 describe('ImmersiveVisualEditor', () => {
   it('pauses CodeMirror Markdown parsing for each visual-editing mount', () => {
     const surface = document.createElement('article');
@@ -1200,16 +1250,19 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
-  it('projects an unchanged short visual selection before the canonical fallback', () => {
+  it('applies a selected visual wrap in one canonical transaction without fallback', () => {
     const surface = document.createElement('article');
     surface.innerHTML = '<p>Choose this text</p>';
     document.body.append(surface);
-    const applyTextChange = vi.fn();
+    let canonicalValue = 'Choose this text';
+    const applyTextChange = vi.fn(({ value }: { value: string }) => {
+      canonicalValue = value;
+    });
     const documentSession = {
       document: {
         setVisualEditingActive: vi.fn(),
         applyTextChange,
-        getValue: () => 'Choose this text',
+        getValue: () => canonicalValue,
         subscribe: () => vi.fn()
       }
     } as unknown as EditorDocumentSession;
@@ -1257,12 +1310,659 @@ describe('ImmersiveVisualEditor', () => {
         prefix: '**',
         suffix: '**',
         surface: 'main'
-      })).toBe(false);
-      expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
+      })).toBe(true);
+      expect(canonicalValue).toBe('**Choose** this text');
+      expect(applyTextChange).toHaveBeenCalledOnce();
       expect(applyTextChange).toHaveBeenCalledWith({
-        selection: { direction: 'forward', end: 6, start: 0 },
-        value: 'Choose this text'
+        selection: { direction: 'forward', end: 8, start: 2 },
+        value: '**Choose** this text'
       });
+      expect(documentSession.document.setVisualEditingActive)
+        .toHaveBeenLastCalledWith(true);
+      expect(runtimeHolder.current?.prepareToolbarFallback()).toBe(true);
+      expect(applyTextChange).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('applies a selected visual code fence without requesting a Preview or releasing ownership', () => {
+    let canonicalValue = 'Alpha';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Alpha</p>';
+    document.body.append(surface);
+    const applyTextChange = vi.fn(({ value }: { value: string }) => {
+      canonicalValue = value;
+    });
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const setVisualEditingActive = vi.fn();
+    const documentSession = {
+      document: {
+        applyTextChange,
+        getValue: () => canonicalValue,
+        setVisualEditingActive,
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-code-fence-text-missing');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.executeCommand({
+        action: 'codeFence',
+        group: 'insert',
+        icon: 'media-code',
+        id: 'codefence',
+        label: 'Code fence',
+        surface: 'main'
+      })).toBe(true);
+      expect(canonicalValue).toBe('```\nAlpha\n```');
+      expect(surface.querySelector('pre > code.hljs')?.textContent).toBe('Alpha');
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(setVisualEditingActive).toHaveBeenLastCalledWith(true);
+      expect(setVisualEditingActive).not.toHaveBeenCalledWith(false);
+      expect(selection?.toString()).toBe('Alpha');
+      expect(selection?.anchorNode).toBe(surface.querySelector('pre > code')?.firstChild);
+      expect(selection?.focusNode).toBe(surface.querySelector('pre > code')?.firstChild);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('routes an empty visual code-fence command through canonical undo and redo', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><br></p>';
+    document.body.append(surface);
+    const fixture = createHistoryDocument('');
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const onFailure = vi.fn();
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={fixture as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+    const paragraph = surface.querySelector('p');
+    const runtime = runtimeHolder.current;
+    if (!paragraph || !runtime) {
+      throw new Error('visual-empty-history-fixture-missing');
+    }
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtime.executeCommand({
+        action: 'codeFence',
+        group: 'insert',
+        icon: 'media-code',
+        id: 'codefence',
+        label: 'Code fence',
+        surface: 'main'
+      })).toBe(true);
+      expect(fixture.document.getValue()).toBe('```\ncode\n```');
+      expect(surface.querySelector('pre > code')?.textContent).toBe('code');
+
+      const undoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      surface.dispatchEvent(undoEvent);
+      expect(undoEvent.defaultPrevented).toBe(true);
+      expect(fixture.undo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('');
+      expect(surface.querySelector('pre')).toBeNull();
+      expect(surface.querySelector('p')).not.toBeNull();
+
+      const redoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'y'
+      });
+      surface.dispatchEvent(redoEvent);
+      expect(redoEvent.defaultPrevented).toBe(true);
+      expect(fixture.redo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('```\ncode\n```');
+      expect(surface.querySelector('pre > code')?.textContent).toBe('code');
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('routes a short visual inline command through canonical undo and redo', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Alpha</p>';
+    document.body.append(surface);
+    const fixture = createHistoryDocument('Alpha');
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const onFailure = vi.fn();
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={fixture as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(nextRuntime) => {
+          runtimeHolder.current = nextRuntime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+    const text = surface.querySelector('p')?.firstChild;
+    const runtime = runtimeHolder.current;
+    if (!(text instanceof Text) || !runtime) {
+      throw new Error('visual-history-inline-fixture-missing');
+    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.setBaseAndExtent(text, text.length, text, 0);
+
+    try {
+      expect(runtime.executeCommand({
+        action: 'wrap',
+        group: 'format',
+        icon: 'editor-code',
+        id: 'code',
+        label: 'Inline code',
+        prefix: '`',
+        suffix: '`',
+        surface: 'main'
+      })).toBe(true);
+      expect(fixture.document.getValue()).toBe('`Alpha`');
+      expect(surface.querySelector('code')?.textContent).toBe('Alpha');
+
+      const undoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      surface.dispatchEvent(undoEvent);
+      expect(undoEvent.defaultPrevented).toBe(true);
+      expect(fixture.undo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('Alpha');
+      expect(surface.querySelector('code')).toBeNull();
+      expect(surface.textContent).toBe('Alpha');
+      expect(selection?.toString()).toBe('Alpha');
+      expect(selection?.anchorOffset).toBe(5);
+      expect(selection?.focusOffset).toBe(0);
+
+      const redoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      surface.dispatchEvent(redoEvent);
+      expect(redoEvent.defaultPrevented).toBe(true);
+      expect(fixture.redo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('`Alpha`');
+      expect(surface.querySelector('code')?.textContent).toBe('Alpha');
+      expect(selection?.toString()).toBe('Alpha');
+      expect(selection?.anchorOffset).toBeGreaterThan(selection?.focusOffset ?? 0);
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('routes a short visual code-fence command through canonical undo and redo', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Alpha</p>';
+    document.body.append(surface);
+    const fixture = createHistoryDocument('Alpha');
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const onFailure = vi.fn();
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={fixture as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(nextRuntime) => {
+          runtimeHolder.current = nextRuntime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+    const text = surface.querySelector('p')?.firstChild;
+    const runtime = runtimeHolder.current;
+    if (!(text instanceof Text) || !runtime) {
+      throw new Error('visual-history-code-fence-fixture-missing');
+    }
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtime.executeCommand({
+        action: 'codeFence',
+        group: 'insert',
+        icon: 'media-code',
+        id: 'codefence',
+        label: 'Code fence',
+        surface: 'main'
+      })).toBe(true);
+      expect(fixture.document.getValue()).toBe('```\nAlpha\n```');
+      expect(surface.querySelector('pre > code')?.textContent).toBe('Alpha');
+
+      const undoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      surface.dispatchEvent(undoEvent);
+      expect(undoEvent.defaultPrevented).toBe(true);
+      expect(fixture.undo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('Alpha');
+      expect(surface.querySelector('pre')).toBeNull();
+      expect(surface.textContent).toBe('Alpha');
+      expect(selection?.toString()).toBe('Alpha');
+
+      const redoEvent = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'y'
+      });
+      surface.dispatchEvent(redoEvent);
+      expect(redoEvent.defaultPrevented).toBe(true);
+      expect(fixture.redo).toHaveBeenCalledOnce();
+      expect(fixture.document.getValue()).toBe('```\nAlpha\n```');
+      expect(surface.querySelector('pre > code')?.textContent).toBe('Alpha');
+      expect(selection?.toString()).toBe('Alpha');
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps native history for ordinary visual input without a command transition', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Alpha</p>';
+      document.body.append(surface);
+      const fixture = createHistoryDocument('Alpha');
+      const onFailure = vi.fn();
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={fixture as unknown as EditorDocumentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'unexpected-preview')}
+          surface={surface}
+        />
+      );
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('visual-native-history-text-missing');
+      }
+      const appendInput = (data: string): void => {
+        placeCaretInText(text);
+        surface.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data,
+          inputType: 'insertText'
+        }));
+        text.data += data;
+        placeCaretInText(text);
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          data,
+          inputType: 'insertText'
+        }));
+        act(() => vi.advanceTimersByTime(80));
+      };
+
+      appendInput('1');
+      appendInput('2');
+      expect(fixture.document.getValue()).toBe('Alpha12');
+
+      const shortcut = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      surface.dispatchEvent(shortcut);
+      expect(shortcut.defaultPrevented).toBe(false);
+      expect(fixture.undo).not.toHaveBeenCalled();
+
+      const beforeHistory = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyUndo'
+      });
+      surface.dispatchEvent(beforeHistory);
+      expect(beforeHistory.defaultPrevented).toBe(false);
+      text.data = text.data.slice(0, -1);
+      placeCaretInText(text);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'historyUndo'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(fixture.document.getValue()).toBe('Alpha1');
+      expect(fixture.undo).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not replay a stale toolbar transition after native history diverges', () => {
+    vi.useFakeTimers();
+    try {
+      const surface = document.createElement('article');
+      surface.innerHTML = '<p>Alpha</p>';
+      document.body.append(surface);
+      const fixture = createHistoryDocument('Alpha');
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const onFailure = vi.fn();
+      const runtimeHolder: {
+        current: ImmersiveVisualEditorRuntime | null;
+      } = { current: null };
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={fixture as unknown as EditorDocumentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn((runtime) => {
+            runtimeHolder.current = runtime;
+          })}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{ revision: 1, signature: 'visual' }}
+          previewStatus="ready"
+          requestPreview={requestPreview}
+          surface={surface}
+        />
+      );
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('visual-stale-history-text-missing');
+      }
+      let activeText = text;
+      const selectText = (node: Text): void => {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      const dispatchNativeInput = (inputType: string, data?: string): void => {
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          ...(undefined !== data ? { data } : {}),
+          inputType
+        });
+        surface.dispatchEvent(beforeInput);
+        if ('insertText' === inputType && undefined !== data) {
+          activeText.data += data;
+        } else if ('historyUndo' === inputType) {
+          activeText.data = activeText.data.slice(0, -1);
+        } else if ('historyRedo' === inputType) {
+          activeText.data += 'x';
+        }
+        placeCaretInText(activeText);
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          ...(undefined !== data ? { data } : {}),
+          inputType
+        }));
+        act(() => vi.advanceTimersByTime(80));
+      };
+
+      try {
+        selectText(text);
+        expect(runtimeHolder.current?.executeCommand({
+          action: 'wrap',
+          group: 'format',
+          icon: 'editor-code',
+          id: 'code',
+          label: 'Inline code',
+          prefix: '`',
+          suffix: '`',
+          surface: 'main'
+        })).toBe(true);
+        expect(fixture.document.getValue()).toBe('`Alpha`');
+
+        const toolbarUndo = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z'
+        });
+        surface.dispatchEvent(toolbarUndo);
+        expect(toolbarUndo.defaultPrevented).toBe(true);
+        expect(fixture.document.getValue()).toBe('Alpha');
+        expect(surface.querySelector('code')).toBeNull();
+
+        const currentText = surface.querySelector('p')?.firstChild;
+        if (!(currentText instanceof Text)) {
+          throw new Error('visual-stale-history-current-text-missing');
+        }
+        activeText = currentText;
+        placeCaretInText(activeText);
+        dispatchNativeInput('insertText', 'x');
+        expect(fixture.document.getValue()).toBe('Alphax');
+
+        const nativeUndo = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z'
+        });
+        surface.dispatchEvent(nativeUndo);
+        expect(nativeUndo.defaultPrevented).toBe(false);
+        dispatchNativeInput('historyUndo');
+        expect(fixture.document.getValue()).toBe('Alpha');
+        expect(fixture.undo).toHaveBeenCalledOnce();
+
+        const nativeRedo = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          key: 'y'
+        });
+        surface.dispatchEvent(nativeRedo);
+        expect(nativeRedo.defaultPrevented).toBe(false);
+        dispatchNativeInput('historyRedo');
+
+        expect(fixture.document.getValue()).toBe('Alphax');
+        expect(surface.querySelector('code')).toBeNull();
+        expect(surface.textContent).toBe('Alphax');
+        expect(fixture.redo).not.toHaveBeenCalled();
+        expect(onFailure).not.toHaveBeenCalled();
+        expect(requestPreview).not.toHaveBeenCalled();
+      } finally {
+        view.unmount();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a collapsed visual wrap caret between its canonical delimiters', () => {
+    let canonicalValue = 'Alpha';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Alpha</p>';
+    document.body.append(surface);
+    const applyTextChange = vi.fn(({ value }: { value: string }) => {
+      canonicalValue = value;
+    });
+    const setVisualEditingActive = vi.fn();
+    const documentSession = {
+      document: {
+        applyTextChange,
+        getValue: () => canonicalValue,
+        setVisualEditingActive,
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: {
+      current: ImmersiveVisualEditorRuntime | null;
+    } = { current: null };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'visual' }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'unexpected-preview')}
+        surface={surface}
+      />
+    );
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-collapsed-wrap-text-missing');
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.setStart(text, 2);
+    range.collapse(true);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.executeCommand({
+        action: 'wrap',
+        group: 'format',
+        icon: 'editor-bold',
+        id: 'bold',
+        label: 'Bold',
+        prefix: '**',
+        suffix: '**',
+        surface: 'main'
+      })).toBe(true);
+      expect(canonicalValue).toBe('Al****pha');
+      expect(applyTextChange).toHaveBeenLastCalledWith({
+        selection: { direction: 'none', end: 4, start: 4 },
+        value: 'Al****pha'
+      });
+      expect(setVisualEditingActive).toHaveBeenLastCalledWith(true);
+      expect(setVisualEditingActive).not.toHaveBeenCalledWith(false);
     } finally {
       view.unmount();
     }

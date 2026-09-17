@@ -1,4 +1,5 @@
 import type {
+  PreparedPreviewMarkup,
   PreviewEditMap,
   PreviewEditMapBlock,
   PreviewRequest,
@@ -79,10 +80,10 @@ function parseFeatures(value: unknown): Record<string, boolean> {
   return features;
 }
 
-function validateTopLevelBlockMarkers(
+function prepareTopLevelBlockMarkup(
   html: string,
   blocks: ReadonlyArray<PreviewEditMapBlock>
-): void {
+): PreparedPreviewMarkup {
   const Parser = globalThis.DOMParser;
   if ('function' !== typeof Parser) invalidResponse();
 
@@ -109,6 +110,7 @@ function validateTopLevelBlockMarkers(
       invalidResponse();
     }
   }
+  return { sourceNodes: Array.from(parsed.body.childNodes) };
 }
 
 function parseEditMap(
@@ -116,7 +118,10 @@ function parseEditMap(
   markdown: string,
   html: string,
   signature: string
-): PreviewEditMap {
+): Readonly<{
+  editMap: PreviewEditMap;
+  preparedMarkup: PreparedPreviewMarkup;
+}> {
   if (!isSafeRecord(value)) invalidResponse();
 
   if (
@@ -173,12 +178,15 @@ function parseEditMap(
     previous = block;
   }
 
-  validateTopLevelBlockMarkers(html, blocks);
+  const preparedMarkup = prepareTopLevelBlockMarkup(html, blocks);
   return {
-    version: 1,
-    coordinate: 'line',
-    signature,
-    blocks
+    editMap: {
+      version: 1,
+      coordinate: 'line',
+      signature,
+      blocks
+    },
+    preparedMarkup
   };
 }
 
@@ -198,7 +206,7 @@ function parseResponse(value: unknown, request: PreviewRequest): PreviewResponse
     }
 
     const features = parseFeatures(value.features);
-    const editMap = parseEditMap(
+    const { editMap, preparedMarkup } = parseEditMap(
       value.editMap,
       request.markdown,
       value.html,
@@ -206,7 +214,12 @@ function parseResponse(value: unknown, request: PreviewRequest): PreviewResponse
     );
 
     // The protected Preview route returns only PHP-rendered, server-sanitized HTML.
-    return { html: value.html as SafePreviewHtml, features, editMap };
+    return {
+      html: value.html as SafePreviewHtml,
+      features,
+      editMap,
+      preparedMarkup
+    };
   } catch (error) {
     if (error instanceof PreviewResponseError) throw error;
     throw new PreviewResponseError();

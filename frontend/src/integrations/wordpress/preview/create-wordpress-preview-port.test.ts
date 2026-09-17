@@ -52,7 +52,8 @@ describe('createWordPressPreviewPort', () => {
     );
     const controller = new AbortController();
 
-    await expect(port.render(request, controller.signal)).resolves.toEqual({
+    const response = await port.render(request, controller.signal);
+    expect(response).toMatchObject({
       html: '<h1 data-easymde-visual-block-id="b0">Preview</h1>',
       features: { toc: true },
       editMap: {
@@ -62,6 +63,11 @@ describe('createWordPressPreviewPort', () => {
         blocks: [block('b0', 0, 1)]
       }
     });
+    expect(response.preparedMarkup?.sourceNodes).toHaveLength(1);
+    expect(
+      (response.preparedMarkup?.sourceNodes[0] as HTMLElement | undefined)
+        ?.getAttribute('data-easymde-visual-block-id')
+    ).toBe('b0');
     expect(apiFetch).toHaveBeenCalledWith({
       url: 'https://example.test/wp-json/easymde/v1/preview',
       method: 'POST',

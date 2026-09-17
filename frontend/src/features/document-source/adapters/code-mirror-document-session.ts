@@ -37,6 +37,7 @@ export type DocumentTextChangeRange = Readonly<{
 
 export type DocumentTextChange = Readonly<{
   deferNativeBridge?: boolean;
+  holdNativeBridge?: boolean;
   selection: DocumentSelection;
   value: string;
   changes?: DocumentTextChangeRange;
@@ -251,6 +252,7 @@ export function createCodeMirrorDocumentSession({
   let visualEditingParent: Node | null = null;
   let visualEditingNextSibling: ChildNode | null = null;
   let visualNativeBridgeTimer: number | null = null;
+  let visualNativeBridgeHeld = false;
   let pendingVisualNativeBridge: Readonly<{
     emitInput: boolean;
     selection: DocumentSelection;
@@ -343,8 +345,10 @@ export function createCodeMirrorDocumentSession({
       visualNativeBridgeTimer = null;
     }
     pendingVisualNativeBridge = null;
+    visualNativeBridgeHeld = false;
   };
   const flushVisualNativeBridge = (): void => {
+    visualNativeBridgeHeld = false;
     if (null !== visualNativeBridgeTimer) {
       browserWindow.clearTimeout(visualNativeBridgeTimer);
       visualNativeBridgeTimer = null;
@@ -370,14 +374,23 @@ export function createCodeMirrorDocumentSession({
   const scheduleVisualNativeBridge = (
     selection: DocumentSelection,
     value: string | null,
-    emitInput: boolean
+    emitInput: boolean,
+    hold: boolean
   ): void => {
     pendingVisualNativeBridge = {
       emitInput: emitInput || Boolean(pendingVisualNativeBridge?.emitInput),
       selection,
       value: value ?? pendingVisualNativeBridge?.value ?? null
     };
-    if (null !== visualNativeBridgeTimer) return;
+    if (hold) {
+      visualNativeBridgeHeld = true;
+      if (null !== visualNativeBridgeTimer) {
+        browserWindow.clearTimeout(visualNativeBridgeTimer);
+        visualNativeBridgeTimer = null;
+      }
+      return;
+    }
+    if (visualNativeBridgeHeld || null !== visualNativeBridgeTimer) return;
     visualNativeBridgeTimer = browserWindow.setTimeout(() => {
       visualNativeBridgeTimer = null;
       flushVisualNativeBridge();
@@ -418,7 +431,9 @@ export function createCodeMirrorDocumentSession({
   const publishVisualTransaction = (
     transaction: Transaction,
     emitNativeInput = true,
-    deferNativeBridge = false
+    deferNativeBridge = false,
+    holdNativeBridge = false,
+    knownValue?: string
   ): void => {
     const current = activeVisualState;
     if (!current || transaction.startState !== current) {
@@ -427,14 +442,21 @@ export function createCodeMirrorDocumentSession({
     activeVisualState = transaction.state;
     const selection = stateSelection(transaction.state);
     const value = transaction.docChanged
-      ? transaction.state.doc.toString()
+      ? knownValue ?? transaction.state.doc.toString()
       : null;
     if (null !== value) {
       publishValue(value);
     }
     if (emitNativeInput) {
-      scheduleVisualNativeBridge(selection, value, null !== value);
-      if (!deferNativeBridge) flushVisualNativeBridge();
+      scheduleVisualNativeBridge(
+        selection,
+        value,
+        null !== value,
+        holdNativeBridge
+      );
+      if (!deferNativeBridge && !visualNativeBridgeHeld) {
+        flushVisualNativeBridge();
+      }
     }
     if (transaction.selection) {
       for (const listener of selectionListeners) listener();
@@ -522,6 +544,7 @@ export function createCodeMirrorDocumentSession({
     applyTextChange({
       changes,
       deferNativeBridge = false,
+      holdNativeBridge = false,
       selection,
       value
     }: DocumentTextChange) {
@@ -570,7 +593,9 @@ export function createCodeMirrorDocumentSession({
         publishVisualTransaction(
           activeVisualState.update(transactionSpec),
           true,
-          deferNativeBridge
+          deferNativeBridge,
+          holdNativeBridge,
+          value
         );
       } else {
         view.dispatch(transactionSpec);

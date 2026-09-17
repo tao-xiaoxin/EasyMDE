@@ -43,6 +43,8 @@ import type { ImmersiveStrings } from './immersive-editor-ui-types';
 const DEFAULT_WIDTH = 240;
 const MIN_WIDTH = 190;
 const MAX_WIDTH = 360;
+const EMPTY_OUTLINE_KEYS = new Map<ImmersiveOutlineItem, string>();
+const EMPTY_OUTLINE_TREE: ReadonlyArray<ImmersiveOutlineNode> = [];
 
 function boundedWidth(width: number) {
   return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, Math.round(width)));
@@ -97,6 +99,19 @@ function buildOutlineItemKeys(
     keys.set(item, `${signature}:${occurrence}`);
   }
   return keys;
+}
+
+function sameOutlinePresentation(
+  left: ReadonlyArray<ImmersiveOutlineItem>,
+  right: ReadonlyArray<ImmersiveOutlineItem>
+): boolean {
+  return left.length === right.length
+    && left.every((item, index) => {
+      const candidate = right[index];
+      return candidate?.index === item.index
+        && candidate.level === item.level
+        && candidate.text === item.text;
+    });
 }
 
 function OutlineNodes({
@@ -186,13 +201,42 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
   const outlineRef = useRef<HTMLElement>(null);
   const releaseDragRef = useRef<(() => void) | null>(null);
   const onSelectRef = useRef(onSelect);
+  const latestItemsRef = useRef(items);
+  const stableItemsRef = useRef(items);
   onSelectRef.current = onSelect;
+  latestItemsRef.current = items;
+  const stableItems = useMemo(() => {
+    const previous = stableItemsRef.current;
+    if (previous === items || sameOutlinePresentation(previous, items)) {
+      return previous;
+    }
+    stableItemsRef.current = items;
+    return items;
+  }, [items]);
   const selectItem = useCallback(
-    (item: ImmersiveOutlineItem) => onSelectRef.current(item),
+    (item: ImmersiveOutlineItem) => {
+      const current = latestItemsRef.current.find(
+        (candidate) => candidate.index === item.index
+      );
+      if (
+        !current
+        || current.level !== item.level
+        || current.text !== item.text
+      ) {
+        throw new Error('immersive-outline-item-stale');
+      }
+      onSelectRef.current(current);
+    },
     []
   );
-  const outlineItemKeys = useMemo(() => buildOutlineItemKeys(items), [items]);
-  const outlineTree = useMemo(() => buildOutlineTree(items), [items]);
+  const outlineItemKeys = useMemo(
+    () => open ? buildOutlineItemKeys(stableItems) : EMPTY_OUTLINE_KEYS,
+    [open, stableItems]
+  );
+  const outlineTree = useMemo(
+    () => open ? buildOutlineTree(stableItems) : EMPTY_OUTLINE_TREE,
+    [open, stableItems]
+  );
 
   useEffect(
     () => () => {
@@ -290,7 +334,7 @@ export const ImmersiveOutline = memo(function ImmersiveOutline({
           </button>
         </div>
         <div className="easymde-immersive-outline-tree">
-          {items.length ? (
+          {stableItems.length ? (
             <MemoizedOutlineNodes
               activeIndex={activeIndex}
               depth={0}

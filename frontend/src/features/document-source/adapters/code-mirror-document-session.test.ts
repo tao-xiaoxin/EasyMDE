@@ -344,6 +344,44 @@ describe('createCodeMirrorDocumentSession', () => {
     vi.useRealTimers();
   });
 
+  it('holds a large visual bridge until an explicit submission flush', () => {
+    vi.useFakeTimers();
+    const { container, submissionField } = createFixture('Original');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const input = vi.fn();
+    submissionField.addEventListener('input', input);
+    session.setVisualEditingActive(true);
+
+    session.applyTextChange({
+      changes: { from: 0, insert: 'Held', to: 8 },
+      deferNativeBridge: true,
+      holdNativeBridge: true,
+      selection: { direction: 'none', end: 4, start: 4 },
+      value: 'Held'
+    });
+    session.applyTextChange({
+      changes: { from: 4, insert: ' final', to: 4 },
+      deferNativeBridge: true,
+      selection: { direction: 'none', end: 10, start: 10 },
+      value: 'Held final'
+    });
+
+    vi.runOnlyPendingTimers();
+    expect(session.getValue()).toBe('Held final');
+    expect(submissionField.value).toBe('Original');
+    expect(input).not.toHaveBeenCalled();
+
+    session.flush();
+    expect(submissionField.value).toBe('Held final');
+    expect(input).toHaveBeenCalledOnce();
+    session.destroy();
+    vi.useRealTimers();
+  });
+
   it('cancels a deferred visual bridge when an external native value arrives', () => {
     vi.useFakeTimers();
     const { container, submissionField } = createFixture('Original');

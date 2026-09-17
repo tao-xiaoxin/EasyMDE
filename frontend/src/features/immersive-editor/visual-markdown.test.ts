@@ -10,6 +10,7 @@ import {
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   applyVisualMarkdownEditIntent,
+  captureVisualCodeInputSnapshot,
   createVisualMarkdownSourceIntervalMap,
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
@@ -169,6 +170,73 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('restores arbitrary fence lengths and keeps shorter closing runs in the body', () => {
+    const surface = editor(`
+      <pre><code class="language-bash">echo tilde
+~~~~
+still tilde</code></pre>
+      <pre><code class="language-js">const value = 1;
+&#96;&#96;&#96;&#96;
+~~~~~~</code></pre>
+    `);
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      [
+        '~~~~~bash  linenos=true  ',
+        'echo tilde',
+        '~~~~',
+        'still tilde',
+        '~~~~~~~',
+        '',
+        '`````js linenos=true',
+        'const value = 1;',
+        '````',
+        '~~~~~~',
+        '``````'
+      ].join('\n')
+    );
+
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence')
+      )
+    ).toEqual(['~~~~~', '`````']);
+    expect(
+      Array.from(surface.querySelectorAll('pre')).map((pre) =>
+        pre.getAttribute('data-easymde-visual-fence-info')
+      )
+    ).toEqual(['bash  linenos=true  ', 'js linenos=true']);
+    expect(serializeVisualMarkdown(surface)).toBe(
+      [
+        '~~~~~bash  linenos=true  ',
+        'echo tilde',
+        '~~~~',
+        'still tilde',
+        '~~~~~',
+        '',
+        '`````js linenos=true',
+        'const value = 1;',
+        '````',
+        '~~~~~~',
+        '`````'
+      ].join('\n')
+    );
+  });
+
+  it('keeps a backtick in an info string from becoming a source fence', () => {
+    const surface = editor('<pre><code>body</code></pre>');
+
+    restoreVisualCodeFenceFamilies(
+      surface,
+      '`````js`invalid\nbody'
+    );
+
+    expect(surface.querySelector('pre')?.getAttribute(
+      'data-easymde-visual-fence'
+    )).toBeNull();
+  });
+
   it('keeps Mermaid fence alignment when the renderer leaves Mermaid as code', () => {
     const surface = editor(`
       <pre><code class="language-Mermaid">flowchart TD
@@ -187,7 +255,7 @@ A--&gt;B</code></pre>
       )
     ).toEqual(['~~~', '```']);
     expect(serializeVisualMarkdown(surface)).toContain(
-      '~~~Mermaid\nflowchart TD\nA-->B\n~~~'
+      '~~~mermaid\nflowchart TD\nA-->B\n~~~'
     );
   });
 
@@ -569,8 +637,12 @@ A--&gt;B</code></pre>
     '~~~js',
     '~~~~',
     '~~~~bash',
+    '~~~~~',
+    '~~~~~bash',
     '````',
     '````bash',
+    '`````',
+    '`````bash',
     '```',
     '```bash'
   ])('forms the supported %s fence only after Enter and preserves its family', (fence) => {
@@ -588,6 +660,7 @@ A--&gt;B</code></pre>
     expect(applyVisualBlockShortcut(surface, event)).toBe(true);
     const code = surface.querySelector('pre > code');
     expect(code).not.toBeNull();
+    expect(code?.classList.contains('hljs')).toBe(true);
     const placeholder = code?.firstElementChild;
     expect(code?.childNodes).toHaveLength(1);
     expect(placeholder).toBeInstanceOf(HTMLSpanElement);
@@ -602,7 +675,7 @@ A--&gt;B</code></pre>
     expect(window.getSelection()?.isCollapsed).toBe(false);
     expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(window.getSelection()?.focusOffset).toBe(1);
-    const closingFence = fence.match(/^(`{3,4}|~{3,4})/)?.[1];
+    const closingFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
     expect(closingFence).toBeTruthy();
     expect(
       visualSelectionSourceRange(
@@ -613,6 +686,103 @@ A--&gt;B</code></pre>
       )
     ).toEqual({ direction: 'none', end: fence.length + 1, start: fence.length + 1 });
     expect(serializeVisualMarkdown(surface)).toBe(`${fence}\n\n${closingFence}`);
+  });
+
+  it('rejects a backtick fence with an embedded backtick in its info string', () => {
+    const surface = editor('<p>`````js`invalid</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-invalid-fence-text-missing');
+    placeCaret(text, text.length);
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(surface.innerHTML).toBe('<p>`````js`invalid</p>');
+  });
+
+  it.each([
+    { body: 'before\n~~~\nafter', expectedFence: '~~~~', fence: '~~~' },
+    { body: 'before\n~~~~~\nafter', expectedFence: '~~~~~~', fence: '~~~' },
+    { body: 'before\n```\nafter', expectedFence: '````', fence: '```' },
+    { body: 'before\n`````\nafter', expectedFence: '``````', fence: '```' }
+  ])(
+    'expands a $fence fence beyond an equal or longer body run and allows deletion',
+    ({ body, expectedFence, fence }) => {
+      const surface = editor(
+        `<pre data-easymde-visual-fence="${fence}" data-easymde-visual-fence-info="js linenos=true"><code class="language-rendered">${body}</code></pre>`
+      );
+      const code = surface.querySelector('pre > code');
+      if (!(code instanceof HTMLElement)) throw new Error('visual-body-run-code-missing');
+
+      expect(serializeVisualMarkdown(surface)).toBe(
+        `${expectedFence}js linenos=true\n${body}\n${expectedFence}`
+      );
+
+      code.textContent = 'before\nafter';
+      expect(serializeVisualMarkdown(surface)).toBe(
+        `${fence}js linenos=true\nbefore\nafter\n${fence}`
+      );
+    }
+  );
+
+  it.each(['~~~~~', '~~~~~bash', '`````', '`````bash'])(
+    'serializes an unformed arbitrary-length %s marker literally',
+    (marker) => {
+      expect(serializeVisualMarkdown(editor(`<p>${marker}</p>`))).toBe(marker);
+    }
+  );
+
+  it('keeps an arbitrary-length fence through placeholder editing and deletion', () => {
+    const surface = editor('<p>`````bash</p>');
+    const paragraph = surface.querySelector('p');
+    const source = paragraph?.firstChild;
+    if (!(source instanceof Text)) throw new Error('visual-long-fence-source-missing');
+    placeCaret(source, source.length);
+
+    expect(applyVisualBlockShortcut(surface, new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }))).toBe(true);
+
+    const code = surface.querySelector('pre > code');
+    const placeholder = code?.firstElementChild;
+    const placeholderText = placeholder?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(placeholder instanceof HTMLSpanElement)
+      || !(placeholderText instanceof Text)
+    ) throw new Error('visual-long-fence-placeholder-missing');
+
+    expect(serializeVisualMarkdown(surface)).toBe('`````bash\n\n`````');
+    placeholderText.data = 'echo ready';
+    expect(serializeVisualMarkdown(surface)).toBe('`````bash\necho ready\n`````');
+    placeholderText.data = '';
+    normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('`````bash\n\n`````');
+  });
+
+  it('keeps the source info string when deletion rebuilds a code child', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence="`````" data-easymde-visual-fence-info="js linenos=true"><code>body</code></pre>'
+    );
+    const pre = surface.querySelector('pre');
+    if (!(pre instanceof HTMLElement)) throw new Error('visual-info-pre-missing');
+    const code = pre.querySelector(':scope > code');
+    if (!(code instanceof HTMLElement)) throw new Error('visual-info-code-missing');
+    const snapshot = captureVisualCodeInputSnapshot(pre);
+    if (!snapshot) throw new Error('visual-info-snapshot-missing');
+
+    code.remove();
+    pre.append(document.createElement('br'));
+    normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', snapshot);
+
+    expect(pre.getAttribute('data-easymde-visual-fence-info')).toBe('js linenos=true');
+    expect(serializeVisualMarkdown(surface)).toBe('`````js linenos=true\n\n`````');
   });
 
   it('keeps the empty code placeholder through first input and deletion', () => {
@@ -1198,45 +1368,201 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('## Toolbar heading');
   });
 
-  it('reports an unsupported inline toolbar command without changing the visual selection', () => {
+  it.each([
+    { expected: '**Toolbar** bold', id: 'bold', prefix: '**', tag: 'strong' },
+    { expected: '*Toolbar* bold', id: 'italic', prefix: '*', tag: 'em' },
+    { expected: '~~Toolbar~~ bold', id: 'strike', prefix: '~~', tag: 'del' },
+    { expected: '`Toolbar` bold', id: 'inlinecode', prefix: '`', tag: 'code' }
+  ])('applies the $id toolbar wrap locally and preserves the visual selection', ({ expected, id, prefix, tag }) => {
     const surface = editor('<p>Toolbar bold</p>');
     const text = surface.querySelector('p')?.firstChild;
     if (!(text instanceof Text)) throw new Error('visual-toolbar-wrap-text-missing');
     const range = document.createRange();
-    range.setStart(text, 8);
-    range.collapse(true);
+    range.setStart(text, 0);
+    range.setEnd(text, 7);
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    const original = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => false);
-    Object.defineProperty(document, 'execCommand', {
-      configurable: true,
-      value: execCommand
-    });
 
-    try {
-      expect(applyVisualToolbarCommand(surface, {
-        action: 'wrap',
-        group: 'format',
-        icon: 'editor-bold',
-        id: 'bold',
-        label: 'Bold',
-        prefix: '**',
-        suffix: '**',
-        surface: 'main'
-      })).toBe(false);
-      expect(execCommand).not.toHaveBeenCalled();
-      expect(surface.textContent).toBe('Toolbar bold');
-      expect(selection?.anchorNode).toBe(text);
-      expect(selection?.anchorOffset).toBe(8);
-    } finally {
-      if (original) {
-        Object.defineProperty(document, 'execCommand', original);
-      } else {
-        Reflect.deleteProperty(document, 'execCommand');
-      }
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'wrap',
+      group: 'format',
+      icon: 'editor-code',
+      id,
+      label: id,
+      prefix,
+      suffix: prefix,
+      surface: 'main'
+    })).toBe(true);
+    expect(serializeVisualMarkdown(surface)).toBe(expected);
+    expect(surface.querySelector(`p > ${tag}`)?.textContent).toBe('Toolbar');
+    expect(selection?.toString()).toBe('Toolbar');
+    expect(selection?.anchorNode).toBe(surface.querySelector(tag));
+    expect(selection?.focusNode).toBe(surface.querySelector(tag));
+  });
+
+  it('inserts an empty local inline wrapper at a collapsed selection', () => {
+    const surface = editor('<p>Toolbar bold</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-collapsed-text-missing');
+    placeCaret(text, 7);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'wrap',
+      group: 'format',
+      icon: 'editor-bold',
+      id: 'bold',
+      label: 'Bold',
+      prefix: '**',
+      suffix: '**',
+      surface: 'main'
+    })).toBe(true);
+    const strong = surface.querySelector('p > strong');
+    expect(strong).not.toBeNull();
+    expect(serializeVisualMarkdown(surface)).toBe('Toolbar**** bold');
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+    expect(window.getSelection()?.anchorNode?.parentElement).toBe(strong);
+  });
+
+  it('preserves a backward visual selection for a local inline wrap', () => {
+    const surface = editor('<p>Toolbar bold</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-backward-text-missing');
+    const selection = window.getSelection();
+    selection?.setBaseAndExtent(text, 7, text, 0);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'wrap',
+      group: 'format',
+      icon: 'editor-bold',
+      id: 'bold',
+      label: 'Bold',
+      prefix: '**',
+      suffix: '**',
+      surface: 'main'
+    })).toBe(true);
+    expect(serializeVisualMarkdown(surface)).toBe('**Toolbar** bold');
+    expect(selection?.toString()).toBe('Toolbar');
+    expect(selection?.anchorNode).toBe(surface.querySelector('strong'));
+    expect(selection?.focusNode).toBe(surface.querySelector('strong'));
+    expect(selection?.anchorOffset).toBe(1);
+    expect(selection?.focusOffset).toBe(0);
+  });
+
+  it('creates a local highlighted code fence for a selected paragraph', () => {
+    const surface = editor('<p>Alpha</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-code-fence-text-missing');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'codeFence',
+      group: 'insert',
+      icon: 'media-code',
+      id: 'codefence',
+      label: 'Code fence',
+      surface: 'main'
+    })).toBe(true);
+    const code = surface.querySelector('pre > code');
+    expect(code?.classList.contains('hljs')).toBe(true);
+    expect(code?.textContent).toBe('Alpha');
+    expect(serializeVisualMarkdown(surface)).toBe('```\nAlpha\n```');
+    const codeText = code?.firstChild;
+    expect(codeText).toBeInstanceOf(Text);
+    expect(selection?.anchorNode).toBe(codeText);
+    expect(selection?.focusNode).toBe(codeText);
+  });
+
+  it('flattens formatted children when fencing a middle visual selection', () => {
+    const surface = editor('<p>Al<strong>pha</strong>!</p>');
+    const selected = surface.querySelector('strong')?.firstChild;
+    if (!(selected instanceof Text)) {
+      throw new Error('visual-toolbar-formatted-code-fence-text-missing');
     }
+    const range = document.createRange();
+    range.selectNodeContents(selected);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'codeFence',
+      group: 'insert',
+      icon: 'media-code',
+      id: 'codefence',
+      label: 'Code fence',
+      surface: 'main'
+    })).toBe(true);
+    const code = surface.querySelector('pre > code');
+    const codeText = code?.firstChild;
+    expect(code?.children).toHaveLength(0);
+    expect(codeText).toBeInstanceOf(Text);
+    expect(surface.querySelector('p')?.textContent).toBe('Al');
+    expect(code?.textContent).toBe('pha');
+    expect(surface.querySelectorAll('p')).toHaveLength(2);
+    expect(surface.querySelectorAll('p')[1]?.textContent).toBe('!');
+    expect(serializeVisualMarkdown(surface)).toBe(
+      'Al\n\n```\npha\n```\n\n!'
+    );
+    expect(selection?.toString()).toBe('pha');
+    expect(selection?.anchorOffset).toBe(0);
+    expect(selection?.focusOffset).toBe(3);
+  });
+
+  it('uses the canonical code placeholder for an empty code-fence command', () => {
+    const surface = editor('<p><br></p>');
+    const paragraph = surface.querySelector('p');
+    if (!paragraph) throw new Error('visual-empty-code-fence-paragraph-missing');
+    placeCaret(paragraph, paragraph.childNodes.length);
+
+    expect(applyVisualToolbarCommand(surface, {
+      action: 'codeFence',
+      group: 'insert',
+      icon: 'media-code',
+      id: 'codefence',
+      label: 'Code fence',
+      surface: 'main'
+    })).toBe(true);
+    expect(surface.querySelector('pre > code')?.textContent).toBe('code');
+    expect(serializeVisualMarkdown(surface)).toBe('```\ncode\n```');
+    expect(window.getSelection()?.toString()).toBe('code');
+  });
+
+  it('handles toolbar code commands inside an existing code block without nesting or leaving visual editing', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code class="hljs language-bash">test</code></pre>'
+    );
+    const text = surface.querySelector('pre > code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-toolbar-code-context-text-missing');
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const before = surface.innerHTML;
+
+    for (const command of [
+      { id: 'inlinecode', prefix: '`', suffix: '`' },
+      { id: 'codefence', prefix: undefined, suffix: undefined }
+    ]) {
+      expect(applyVisualToolbarCommand(surface, {
+        action: 'inlinecode' === command.id ? 'wrap' : 'codeFence',
+        group: 'insert',
+        icon: 'media-code',
+        id: command.id,
+        label: command.id,
+        ...(undefined !== command.prefix ? { prefix: command.prefix } : {}),
+        ...(undefined !== command.suffix ? { suffix: command.suffix } : {}),
+        surface: 'main'
+      })).toBe(true);
+    }
+    expect(surface.innerHTML).toBe(before);
+    expect(selection?.anchorNode).toBe(text);
+    expect(selection?.focusNode).toBe(text);
   });
 
   it('fails closed for a cross-block heading selection', () => {

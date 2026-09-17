@@ -8,6 +8,7 @@ import type { PreviewEditMap } from '../../contracts/ports/preview-request';
 const PREVIEW_WINDOW_SPACER_SELECTOR =
   '[data-easymde-preview-window-spacer]';
 const VISUAL_FENCE_ATTRIBUTE = 'data-easymde-visual-fence';
+const VISUAL_FENCE_INFO_ATTRIBUTE = 'data-easymde-visual-fence-info';
 const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
   'data-easymde-visual-code-placeholder';
 const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
@@ -88,6 +89,225 @@ function currentVisualSelectionBlock(editor: HTMLElement): HTMLElement | null {
 function visualBlockCanBeTransformed(block: HTMLElement): boolean {
   return !block.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
     && !block.querySelector(VISUAL_MARKDOWN_READ_ONLY_SELECTOR);
+}
+
+type VisualInlineWrap = Readonly<{
+  suffix: string;
+  tagName: 'code' | 'del' | 'em' | 'strong';
+}>;
+
+function visualInlineWrap(command: ToolbarCommand): VisualInlineWrap | null {
+  const prefix = command.prefix ?? '';
+  const suffix = command.suffix ?? '';
+  const wraps: ReadonlyArray<VisualInlineWrap & Readonly<{ prefix: string }>> = [
+    { prefix: '**', suffix: '**', tagName: 'strong' },
+    { prefix: '*', suffix: '*', tagName: 'em' },
+    { prefix: '~~', suffix: '~~', tagName: 'del' },
+    { prefix: '`', suffix: '`', tagName: 'code' }
+  ];
+  return wraps.find((wrap) =>
+    wrap.prefix === prefix && wrap.suffix === suffix
+  ) ?? null;
+}
+
+function selectVisualText(
+  documentRef: Document,
+  text: Text,
+  start: number,
+  end: number,
+  backward = false
+): void {
+  const selection = documentRef.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const range = documentRef.createRange();
+  range.setStart(text, start);
+  range.setEnd(text, end);
+  selection.removeAllRanges();
+  selection.setBaseAndExtent(
+    text,
+    backward ? end : start,
+    text,
+    backward ? start : end
+  );
+}
+
+function selectVisualContents(
+  documentRef: Document,
+  element: HTMLElement,
+  backward: boolean
+): void {
+  const selection = documentRef.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const range = documentRef.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.setBaseAndExtent(
+    backward ? range.endContainer : range.startContainer,
+    backward ? range.endOffset : range.startOffset,
+    backward ? range.startContainer : range.endContainer,
+    backward ? range.startOffset : range.endOffset
+  );
+}
+
+function applyVisualInlineToolbarCommand(
+  editor: HTMLElement,
+  block: HTMLElement,
+  command: ToolbarCommand
+): boolean {
+  const wrap = visualInlineWrap(command);
+  if (!wrap) return false;
+
+  // Inline syntax has no meaning inside a fenced code block. Treat the
+  // command as handled so the root does not tear down visual ownership just
+  // to run a source fallback that would add literal delimiters to code.
+  if ('PRE' === block.tagName) return true;
+  if (!visualBlockCanBeTransformed(block)) return false;
+
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  const snapshot = captureVisualSelection(editor);
+  if (!selection?.rangeCount || !snapshot) return false;
+  const range = selection.getRangeAt(0);
+  if (
+    !block.contains(range.startContainer)
+    || !block.contains(range.endContainer)
+  ) return false;
+
+  const documentRef = editor.ownerDocument;
+  const formatted = documentRef.createElement(wrap.tagName);
+  if (selection.isCollapsed) {
+    if ('' === (block.textContent ?? '') && block.firstElementChild?.matches('br')) {
+      block.replaceChildren();
+    }
+    const marker = documentRef.createTextNode('');
+    formatted.append(marker);
+    range.insertNode(formatted);
+    markShortcutApplied(formatted, 'inline');
+    selectVisualText(documentRef, marker, 0, 0);
+    return true;
+  }
+
+  const contents = range.extractContents();
+  formatted.append(contents);
+  range.insertNode(formatted);
+  markShortcutApplied(formatted, 'inline');
+  selectVisualContents(documentRef, formatted, snapshot.backward);
+  return true;
+}
+
+function applyVisualCodeFenceToolbarCommand(
+  editor: HTMLElement,
+  block: HTMLElement,
+  command: ToolbarCommand
+): boolean {
+  if ('PRE' === block.tagName) return true;
+  if (!visualBlockCanBeTransformed(block)
+    || !/^(P|DIV|H[1-6])$/.test(block.tagName)) {
+    return false;
+  }
+
+  const snapshot = captureVisualSelection(editor);
+  if (!snapshot) return false;
+  const documentRef = editor.ownerDocument;
+  const selection = documentRef.defaultView?.getSelection();
+  if (!selection?.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  if (
+    !block.contains(range.startContainer)
+    || !block.contains(range.endContainer)
+  ) return false;
+  const textOffset = (node: Node, offset: number): number => {
+    if (node !== block && !block.contains(node)) {
+      throw new Error('visual-editor-selection-map-failed');
+    }
+    const range = documentRef.createRange();
+    range.selectNodeContents(block);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  };
+  const anchorOffset = textOffset(snapshot.anchorNode, snapshot.anchorOffset);
+  const focusOffset = textOffset(snapshot.focusNode, snapshot.focusOffset);
+  const startOffset = Math.min(anchorOffset, focusOffset);
+  const endOffset = Math.max(anchorOffset, focusOffset);
+  const textContent = (root: Node): string => {
+    let value = '';
+    for (const child of Array.from(root.childNodes)) {
+      if ('BR' === (child as Element).nodeName) {
+        value += '\n';
+      } else if (Node.TEXT_NODE === child.nodeType) {
+        value += child.textContent ?? '';
+      } else {
+        value += textContent(child);
+      }
+    }
+    return value;
+  };
+  const cloneRange = (start: Node, startAt: number, end: Node, endAt: number): DocumentFragment => {
+    const clone = range.cloneRange();
+    clone.setStart(start, startAt);
+    clone.setEnd(end, endAt);
+    return clone.cloneContents();
+  };
+  const before = cloneRange(block, 0, range.startContainer, range.startOffset);
+  const selected = cloneRange(
+    range.startContainer,
+    range.startOffset,
+    range.endContainer,
+    range.endOffset
+  );
+  const after = cloneRange(
+    range.endContainer,
+    range.endOffset,
+    block,
+    block.childNodes.length
+  );
+  const selectedText = textContent(selected);
+  const fragmentHasVisibleContent = (fragment: DocumentFragment): boolean =>
+    Boolean(textContent(fragment).length)
+    || Boolean(fragment.querySelector('img, hr, table'));
+  const createSurroundingBlock = (fragment: DocumentFragment): HTMLElement | null => {
+    if (!fragmentHasVisibleContent(fragment)) return null;
+    const surrounding = block.cloneNode(false) as HTMLElement;
+    surrounding.removeAttribute('data-easymde-visual-block-id');
+    surrounding.append(fragment);
+    return surrounding;
+  };
+  const pre = documentRef.createElement('pre');
+  const code = documentRef.createElement('code');
+  code.classList.add('hljs');
+  if (selectedText) {
+    code.append(documentRef.createTextNode(selectedText));
+  } else {
+    const placeholder = command.placeholder ?? 'code';
+    const placeholderText = documentRef.createTextNode(placeholder);
+    code.append(placeholderText);
+  }
+  pre.append(code);
+  pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, '```');
+  preserveVisualBlockIdentity(block, pre);
+  const replacements = [
+    createSurroundingBlock(before),
+    pre,
+    createSurroundingBlock(after)
+  ].filter((node): node is HTMLElement => Boolean(node));
+  block.replaceWith(...replacements);
+  markShortcutApplied(pre, 'block');
+
+  if (selectedText) {
+    const codeText = code.firstChild;
+    if (!(codeText instanceof Text)) {
+      throw new Error('visual-editor-code-child-missing');
+    }
+    selectVisualText(
+      documentRef,
+      codeText,
+      0,
+      endOffset - startOffset,
+      snapshot.backward
+    );
+  } else if (code.firstChild instanceof Text) {
+    selectVisualText(documentRef, code.firstChild, 0, code.firstChild.length);
+  }
+  return true;
 }
 
 export type VisualSelectionSnapshot = Readonly<{
@@ -186,9 +406,38 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
 type MarkdownCodeBlock = Readonly<{
   family: string | null;
   kind: 'fenced' | 'indented';
+  info: string;
   language: string;
   ordinal: number;
 }>;
+
+type MarkdownFenceOpening = Readonly<{
+  family: string;
+  info: string;
+  language: string;
+}>;
+
+function markdownFenceOpening(line: string): MarkdownFenceOpening | null {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+  if (!match?.[1]) return null;
+  const family = match[1];
+  const suffix = match[2] ?? '';
+  if (
+    /[\r\n\u2028\u2029]/.test(suffix)
+    || ('`' === family[0] && suffix.includes('`'))
+  ) return null;
+  const info = suffix.trim();
+  return {
+    family,
+    info: suffix,
+    language: info.split(/[ \t]+/, 1)[0] ?? ''
+  };
+}
+
+function markdownFenceClosing(line: string): string | null {
+  const match = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+  return match?.[1] ?? null;
+}
 
 function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> {
   if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
@@ -206,11 +455,11 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex] ?? '';
     if (active) {
-      const closing = line.match(/^\s{0,3}(`{3,}|~{3,})\s*$/);
+      const closing = markdownFenceClosing(line);
       if (
         closing
-        && closing[1]?.[0] === active.family[0]
-        && (closing[1]?.length ?? 0) >= active.family.length
+        && closing[0] === active.family[0]
+        && closing.length >= active.family.length
       ) {
         active = null;
       }
@@ -226,6 +475,7 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
         blocks.push({
           family: null,
           kind: 'indented',
+          info: '',
           language: '',
           ordinal
         });
@@ -238,17 +488,16 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
       if (isBlankLine(line)) continue;
       inIndentedCode = false;
     }
-    const opening = line.match(
-      /^\s{0,3}(`{3,4}|~{3,4})([a-zA-Z0-9_-]*)\s*$/
-    );
-    if (!opening?.[1]) continue;
+    const opening = markdownFenceOpening(line);
+    if (!opening) continue;
     active = {
-      family: opening[1],
-      language: opening[2] ?? ''
+      family: opening.family,
+      language: opening.language
     };
     blocks.push({
       family: active.family,
       kind: 'fenced',
+      info: opening.info,
       language: active.language,
       ordinal
     });
@@ -354,6 +603,7 @@ export type VisualCodeInputSnapshot = Readonly<{
   code: HTMLElement;
   codeClassName: string;
   fence: string | null;
+  fenceInfo: string | null;
   pre: HTMLElement;
 }>;
 
@@ -367,6 +617,7 @@ export function captureVisualCodeInputSnapshot(
     code,
     codeClassName: code.className,
     fence: block.getAttribute(VISUAL_FENCE_ATTRIBUTE),
+    fenceInfo: block.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE),
     pre: block
   };
 }
@@ -425,17 +676,31 @@ function visualCodeFenceMarkdown(
   code: HTMLElement
 ): string {
   const configuredFence = pre.getAttribute(VISUAL_FENCE_ATTRIBUTE) ?? '';
-  const fence = /^(?:`{3,4}|~{3,4})$/.test(configuredFence)
+  const baseFence = /^(?:`{3,}|~{3,})$/.test(configuredFence)
     ? configuredFence
     : '```';
+  const source = strictVisualCodePlaceholder(code)
+    ? ''
+    : code.textContent ?? '';
+  const marker = baseFence[0] ?? '`';
+  let longestBodyRun = 0;
+  let currentBodyRun = 0;
+  for (const character of source) {
+    if (character === marker) {
+      currentBodyRun += 1;
+      longestBodyRun = Math.max(longestBodyRun, currentBodyRun);
+    } else {
+      currentBodyRun = 0;
+    }
+  }
+  const fence = marker.repeat(Math.max(baseFence.length, longestBodyRun + 1));
   const language = Array.from(code.classList)
     .find((className) => className.startsWith('language-'))
     ?.slice('language-'.length)
     .match(/^[a-zA-Z0-9_-]+$/)?.[0] ?? '';
-  const source = strictVisualCodePlaceholder(code)
-    ? ''
-    : code.textContent ?? '';
-  return `\n\n${fence}${language}\n${source}\n${fence}\n\n`;
+  const configuredInfo = pre.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE);
+  const info = null !== configuredInfo ? configuredInfo : language;
+  return `\n\n${fence}${info}\n${source}\n${fence}\n\n`;
 }
 
 export function normalizeVisualCodePlaceholders(
@@ -487,6 +752,11 @@ export function normalizeVisualCodePlaceholders(
       if (null !== snapshot.fence) {
         pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, snapshot.fence);
       }
+      if (null !== snapshot.fenceInfo) {
+        pre.setAttribute(VISUAL_FENCE_INFO_ATTRIBUTE, snapshot.fenceInfo);
+      } else {
+        pre.removeAttribute(VISUAL_FENCE_INFO_ATTRIBUTE);
+      }
       const placeholder = restoredCode.firstElementChild;
       if (placeholder instanceof HTMLSpanElement) {
         selectVisualCodePlaceholder(placeholder, true);
@@ -519,6 +789,7 @@ export function restoreVisualCodeFenceFamilies(
     .filter((code): code is HTMLElement => Boolean(code));
   for (const code of codeBlocks) {
     code.parentElement?.removeAttribute(VISUAL_FENCE_ATTRIBUTE);
+    code.parentElement?.removeAttribute(VISUAL_FENCE_INFO_ATTRIBUTE);
   }
   if (!codeBlocks.length) return;
   const sourceBlocks = markdownCodeBlocks(markdown);
@@ -543,6 +814,10 @@ export function restoreVisualCodeFenceFamilies(
     code.parentElement?.setAttribute(
       VISUAL_FENCE_ATTRIBUTE,
       sourceBlock.family ?? '```'
+    );
+    code.parentElement?.setAttribute(
+      VISUAL_FENCE_INFO_ATTRIBUTE,
+      sourceBlock.info
     );
   }
 }
@@ -738,7 +1013,7 @@ export function applyVisualBlockShortcut(
       return true;
     }
 
-    const fence = text.match(/^(`{3,4}|~{3,4})([a-zA-Z0-9_-]*)$/);
+    const fence = text.match(/^(`{3,}|~{3,})([a-zA-Z0-9_-]*)$/);
     const fenceFamily = fence?.[1];
     if (fenceFamily && caretIsAtEnd(block)) {
       event.preventDefault();
@@ -746,7 +1021,9 @@ export function applyVisualBlockShortcut(
       const pre = documentRef.createElement('pre');
       const code = documentRef.createElement('code');
       const editablePlaceholder = createVisualCodePlaceholder(documentRef);
-      code.className = fence[2] ? `language-${fence[2]}` : '';
+      code.className = fence[2]
+        ? `hljs language-${fence[2]}`
+        : 'hljs';
       code.append(editablePlaceholder);
       pre.append(code);
       pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, fenceFamily);
@@ -827,12 +1104,14 @@ export function applyVisualToolbarCommand(
   editor: HTMLElement,
   command: ToolbarCommand
 ): boolean {
+  const block = currentVisualSelectionBlock(editor)
+    ? currentVisualBlock(editor)
+    : null;
   switch (command.action) {
     case 'wrap':
-      // Inline formatting is owned by the canonical toolbar session. Returning
-      // false keeps a failed browser command explicit and lets the caller
-      // project the visual selection before applying that source edit.
-      return false;
+      return block
+        ? applyVisualInlineToolbarCommand(editor, block, command)
+        : false;
     case 'quote':
       if (!currentVisualSelectionBlock(editor)) return false;
       {
@@ -880,9 +1159,8 @@ export function applyVisualToolbarCommand(
       }
     case 'heading':
     case 'paragraph': {
-      if (!currentVisualSelectionBlock(editor)) return false;
+      if (!block) return false;
       const selection = captureVisualSelection(editor);
-      const block = currentVisualBlock(editor);
       if (
         !selection
         || !block
@@ -904,6 +1182,10 @@ export function applyVisualToolbarCommand(
       restoreVisualSelection(editor, selection);
       return true;
     }
+    case 'codeFence':
+      return block
+        ? applyVisualCodeFenceToolbarCommand(editor, block, command)
+        : false;
     default:
       return false;
   }
@@ -1330,6 +1612,19 @@ function visualMarkdownSerializer(): TurndownService {
 
   const service = new TurndownService({
     blankReplacement: (_content, node) => {
+      if (
+        node.classList.contains('markdown-inline-applied')
+        && ['CODE', 'DEL', 'EM', 'STRONG'].includes(node.nodeName)
+      ) {
+        const delimiter = 'STRONG' === node.nodeName
+          ? '**'
+          : 'DEL' === node.nodeName
+            ? '~~'
+            : 'CODE' === node.nodeName
+              ? '`'
+              : '*';
+        return `${delimiter}${delimiter}`;
+      }
       if ('PRE' === node.nodeName) {
         const pre = node as HTMLElement;
         const code = directCodeChild(pre);
@@ -1355,6 +1650,10 @@ function visualMarkdownSerializer(): TurndownService {
     strongDelimiter: '**'
   });
   service.use(gfm);
+  service.addRule('easymde-strikethrough', {
+    filter: (node) => ['DEL', 'S', 'STRIKE'].includes(node.nodeName),
+    replacement: (content) => `~~${content}~~`
+  });
   service.addRule('easymde-math-block', {
     filter: (node) =>
       node.classList.contains('easymde-math-block') ||
@@ -1373,7 +1672,7 @@ function visualMarkdownSerializer(): TurndownService {
     filter: (node) =>
       ['P', 'DIV'].includes(node.nodeName)
       && 0 === node.children.length
-      && /^(?:`{3,4}|~{3,4})[a-zA-Z0-9_-]*$/.test(node.textContent ?? ''),
+      && /^(?:`{3,}|~{3,})[a-zA-Z0-9_-]*$/.test(node.textContent ?? ''),
     replacement: (_content, node) => node.textContent ?? ''
   });
   service.addRule('easymde-visual-code-fence', {

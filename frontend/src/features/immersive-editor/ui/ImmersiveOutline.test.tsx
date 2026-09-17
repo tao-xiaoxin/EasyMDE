@@ -1,6 +1,6 @@
 import { fireEvent, render } from '@testing-library/react';
 import { createElement } from '@wordpress/element';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../immersive-editor', async () => {
   const actual = await vi.importActual<typeof import('../immersive-editor')>(
@@ -49,6 +49,34 @@ function OutlineHarness({ tick }: Readonly<{ tick: number }>) {
 }
 
 describe('ImmersiveOutline', () => {
+  beforeEach(() => {
+    vi.mocked(buildOutlineTree).mockClear();
+  });
+
+  it('does not build the outline tree while the outline is collapsed', () => {
+    const props = {
+      activeIndex: null,
+      direction: 'ltr' as const,
+      items,
+      onOpenChange: () => {},
+      onSelect: () => {},
+      strings
+    };
+    const view = render(<ImmersiveOutline {...props} open={false} />);
+
+    expect(vi.mocked(buildOutlineTree)).not.toHaveBeenCalled();
+    view.rerender(<ImmersiveOutline {...props} open />);
+    expect(vi.mocked(buildOutlineTree)).toHaveBeenCalledOnce();
+    view.rerender(
+      <ImmersiveOutline
+        {...props}
+        items={items.map((item) => ({ ...item, position: item.position + 4 }))}
+        open={false}
+      />
+    );
+    expect(vi.mocked(buildOutlineTree)).toHaveBeenCalledOnce();
+  });
+
   it('does not rebuild the outline tree when the input items are unchanged', () => {
     const view = render(<OutlineHarness tick={0} />);
 
@@ -60,28 +88,35 @@ describe('ImmersiveOutline', () => {
   });
 
   it('preserves heading button identity when only source positions change', () => {
+    const onSelect = vi.fn();
     const view = render(<ImmersiveOutline
       activeIndex={null}
       direction="ltr"
       items={items}
       onOpenChange={() => {}}
-      onSelect={() => {}}
+      onSelect={onSelect}
       open
       strings={strings}
     />);
+    expect(vi.mocked(buildOutlineTree)).toHaveBeenCalledOnce();
     const buttonsBefore = Array.from(
       view.container.querySelectorAll('.easymde-immersive-outline-tree button')
     );
+    const updatedItems = items.map((item) => ({
+      ...item,
+      position: item.position + 11
+    }));
 
     view.rerender(<ImmersiveOutline
       activeIndex={null}
       direction="ltr"
-      items={items.map((item) => ({ ...item, position: item.position + 11 }))}
+      items={updatedItems}
       onOpenChange={() => {}}
-      onSelect={() => {}}
+      onSelect={onSelect}
       open
       strings={strings}
     />);
+    expect(vi.mocked(buildOutlineTree)).toHaveBeenCalledOnce();
 
     const buttonsAfter = Array.from(
       view.container.querySelectorAll('.easymde-immersive-outline-tree button')
@@ -90,6 +125,10 @@ describe('ImmersiveOutline', () => {
     buttonsAfter.forEach((button, index) => {
       expect(button).toBe(buttonsBefore[index]);
     });
+    const firstButton = buttonsAfter[0];
+    if (!firstButton) throw new Error('immersive-outline-first-button-missing');
+    fireEvent.click(firstButton);
+    expect(onSelect).toHaveBeenCalledWith(updatedItems[0]);
   });
 
   it('keeps existing headings stable when a heading is prepended and selects current items', () => {

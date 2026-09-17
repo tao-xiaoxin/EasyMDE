@@ -89,7 +89,8 @@ export type PreviewSurfaceStagingScheduler = Readonly<{
   yield: () => Promise<void>;
 }>;
 
-const PREVIEW_STAGING_BATCH_SIZE = 64;
+const PREVIEW_STAGING_BATCH_SIZE = 32;
+const PREVIEW_HIDDEN_STAGING_BATCH_SIZE = 256;
 
 type PreviewEnhancementCandidate = Readonly<{
   codeTheme: string;
@@ -118,6 +119,12 @@ type PendingMaterialization = Readonly<{
   resolve: (completed: boolean) => void;
   revision: number;
 }>;
+
+type MutablePreviewWindowCommit = {
+  key: number;
+  nodes: Node[];
+  revision: number;
+};
 
 export type PreviewSurfaceRuntime = Readonly<{
   materialize: () => Promise<boolean>;
@@ -232,11 +239,18 @@ function previewScrollCanvas(surface: HTMLElement): HTMLElement {
 function createEnhancementCandidate(
   activeSurface: HTMLElement,
   html: SafePreviewHtml,
-  layoutParticipating: boolean
+  layoutParticipating: boolean,
+  preparedSourceNodes?: ReadonlyArray<Node>
 ): Readonly<{ sourceNodes: ReadonlyArray<Node>; surface: HTMLElement }> {
   const documentRef = activeSurface.ownerDocument;
-  const template = documentRef.createElement('template');
-  template.innerHTML = html;
+  let sourceNodes: ReadonlyArray<Node>;
+  if (preparedSourceNodes) {
+    sourceNodes = preparedSourceNodes;
+  } else {
+    const template = documentRef.createElement('template');
+    template.innerHTML = html;
+    sourceNodes = Array.from(template.content.childNodes);
+  }
   const candidate = documentRef.createElement('div');
   candidate.className = activeSurface.className;
   candidate.style.cssText = activeSurface.style.cssText;
@@ -257,12 +271,9 @@ function createEnhancementCandidate(
     previewScrollCanvas(activeSurface).append(candidate);
   } else {
     candidate.style.display = 'none';
-    candidate.append(template.content);
   }
   return {
-    sourceNodes: Array.from(
-      layoutParticipating ? template.content.childNodes : candidate.childNodes
-    ),
+    sourceNodes,
     surface: candidate
   };
 }
@@ -292,23 +303,18 @@ async function populateEnhancementCandidate(
   isCurrent: () => boolean,
   signal: AbortSignal
 ): Promise<boolean> {
-  if ('none' === candidate.surface.style.display) {
-    if (candidate.sourceNodes.some(
-      (node) => node.parentNode !== candidate.surface
-    )) {
-      throw new Error('preview-window-staging-node-detached');
-    }
-    return !signal.aborted && isCurrent();
-  }
+  const batchSize = 'none' === candidate.surface.style.display
+    ? PREVIEW_HIDDEN_STAGING_BATCH_SIZE
+    : PREVIEW_STAGING_BATCH_SIZE;
   for (
     let index = 0;
     index < candidate.sourceNodes.length;
-    index += PREVIEW_STAGING_BATCH_SIZE
+    index += batchSize
   ) {
     if (signal.aborted || !isCurrent()) return false;
     const batch = candidate.sourceNodes.slice(
       index,
-      index + PREVIEW_STAGING_BATCH_SIZE
+      index + batchSize
     );
     candidate.surface.append(...batch);
     if (index + batch.length >= candidate.sourceNodes.length) continue;
@@ -326,20 +332,54 @@ function discardEnhancementCandidate(
 
 function capturePreviewBlockMarkers(
   surface: HTMLElement,
-  editMap: PreviewEditMap
-): ReadonlyArray<VisualBlockMarker> {
+  editMap: PreviewEditMap,
+  scheduler: PreviewSurfaceStagingScheduler,
+  isCurrent: () => boolean,
+  signal: AbortSignal
+): ReadonlyArray<VisualBlockMarker> | null
+  | Promise<ReadonlyArray<VisualBlockMarker> | null> {
   validatePreviewWindowMarkup(surface, editMap);
-  return editMap.blocks.map((block, index) => {
-    const root = surface.children[index];
-    if (!(root instanceof HTMLElement)) {
-      throw new Error('preview-window-block-map-marker-mismatch');
-    }
-    const marker = surface.ownerDocument.createComment(
-      `easymde-visual-block:${block.id}`
+  const markers: VisualBlockMarker[] = [];
+  const stale = (): null => {
+    removePreviewBlockMarkers(markers);
+    return null;
+  };
+  const captureBatch = (
+    index: number
+  ): ReadonlyArray<VisualBlockMarker> | null
+    | Promise<ReadonlyArray<VisualBlockMarker> | null> => {
+    if (signal.aborted || !isCurrent()) return stale();
+    const end = Math.min(
+      editMap.blocks.length,
+      index + PREVIEW_STAGING_BATCH_SIZE
     );
-    root.before(marker);
-    return { id: block.id, marker };
-  });
+    for (let blockIndex = index; blockIndex < end; blockIndex += 1) {
+      const block = editMap.blocks[blockIndex];
+      const root = surface.children[blockIndex];
+      if (!block || !(root instanceof HTMLElement)) {
+        throw new Error('preview-window-block-map-marker-mismatch');
+      }
+      const marker = surface.ownerDocument.createComment(
+        `easymde-visual-block:${block.id}`
+      );
+      root.before(marker);
+      markers.push({ id: block.id, marker });
+    }
+    if (end >= editMap.blocks.length) return markers;
+    return scheduler.yield().then(() => captureBatch(end));
+  };
+  try {
+    const result = captureBatch(0);
+    return result instanceof Promise
+      ? result.catch((error: unknown) => {
+          removePreviewBlockMarkers(markers);
+          throw error;
+        })
+      : result;
+  } catch (error) {
+    removePreviewBlockMarkers(markers);
+    throw error;
+  }
 }
 
 function removePreviewBlockMarkers(
@@ -349,18 +389,36 @@ function removePreviewBlockMarkers(
 }
 
 function annotateEnhancedPreviewBlocks(
-  markers: ReadonlyArray<VisualBlockMarker>
-): void {
-  try {
-    for (const { id, marker } of markers) {
+  markers: ReadonlyArray<VisualBlockMarker>,
+  scheduler: PreviewSurfaceStagingScheduler,
+  isCurrent: () => boolean,
+  signal: AbortSignal
+): boolean | Promise<boolean> {
+  const annotateBatch = (index: number): boolean | Promise<boolean> => {
+    if (signal.aborted || !isCurrent()) return false;
+    const batch = markers.slice(index, index + PREVIEW_STAGING_BATCH_SIZE);
+    for (const { id, marker } of batch) {
       const target = marker.nextElementSibling;
       if (!(target instanceof HTMLElement)) {
         throw new Error('preview-window-block-map-marker-mismatch');
       }
       target.setAttribute(VISUAL_BLOCK_ATTRIBUTE, id);
     }
-  } finally {
+    if (index + batch.length >= markers.length) {
+      return !signal.aborted && isCurrent();
+    }
+    return scheduler.yield().then(() => annotateBatch(index + batch.length));
+  };
+  try {
+    const result = annotateBatch(0);
+    if (result instanceof Promise) {
+      return result.finally(() => removePreviewBlockMarkers(markers));
+    }
     removePreviewBlockMarkers(markers);
+    return result;
+  } catch (error) {
+    removePreviewBlockMarkers(markers);
+    throw error;
   }
 }
 
@@ -435,6 +493,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     useRef<PreviewEnhancementCandidate | null>(null);
   const previewWindowRepositoryRef =
     useRef<PreviewWindowNodeRepository | null>(null);
+  const pendingWindowCommitRef =
+    useRef<MutablePreviewWindowCommit | null>(null);
   const windowCommitKeyRef = useRef(0);
   const windowCommitPendingRef = useRef(false);
   const windowStyleEpochRef = useRef(0);
@@ -477,6 +537,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       pendingMaterialization.resolve(false);
     }
     materializedOverrideRef.current = false;
+    pendingWindowCommitRef.current = null;
+    windowCommitPendingRef.current = false;
     discardEnhancementCandidate(enhancementCandidateRef.current);
     enhancementCandidateRef.current = null;
   }, []);
@@ -490,6 +552,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
   const onStagedCommit = useCallback((revision: number) => {
     windowCommitPendingRef.current = false;
+    if (pendingWindowCommitRef.current?.revision === revision) {
+      pendingWindowCommitRef.current = null;
+    }
     const repository = previewWindowRepositoryRef.current;
     if (repository && repository.context.revision !== revision) {
       previewWindowRepositoryRef.current = null;
@@ -499,20 +564,56 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       candidate.surface.remove();
       committedEnhancementCandidateRef.current = null;
     }
-    setState((current) =>
-      'html' === current.kind
-      && current.generation === revision
+    const finish = () => {
+      if (!ownerActiveRef.current || generationRef.current !== revision) return;
+      setState((current) =>
+        'html' === current.kind
+        && current.generation === revision
+        && 'committing' === current.phase
+        && (
+          current.stagedCommit?.revision === revision
+          || current.windowedCommit?.revision === revision
+        )
+          ? { ...current, phase: 'ready', stagedCommit: null }
+          : current
+      );
+      scheduleWindowRef.current();
+    };
+    const fail = (error: unknown) => {
+      if (!ownerActiveRef.current || generationRef.current !== revision) return;
+      props.onDiagnostic?.(previewFailureCode(error));
+      previewWindowRepositoryRef.current = null;
+      setState((current) =>
+        'html' === current.kind
+        && current.generation === revision
+        && 'committing' === current.phase
+          ? {
+              ...current,
+              phase: 'failed',
+              signature: '',
+              stagedCommit: null,
+              windowedCommit: null,
+              windowedFailure: true
+            }
+          : current
+      );
+    };
+    const current = stateRef.current;
+    if (
+      windowedRef.current
+      && 'html' === current.kind
       && 'committing' === current.phase
-      && (
-        current.stagedCommit?.revision === revision
-        || current.windowedCommit?.revision === revision
-      )
-        ? { ...current, phase: 'ready', stagedCommit: null }
-        : current
-    );
-    if (windowedRef.current) props.onWindowReady?.();
-    scheduleWindowRef.current();
-  }, [props.onWindowReady]);
+      && previewNeedsWindow(current.editMap)
+    ) {
+      const surface = surfaceRef.current;
+      if (!surface) throw new Error('preview-surface-missing');
+      const scheduler = props.stagingScheduler
+        ?? defaultPreviewSurfaceStagingScheduler(surface.ownerDocument);
+      void scheduler.yield().then(finish, fail);
+      return;
+    }
+    finish();
+  }, [props.onDiagnostic, props.stagingScheduler]);
 
   const onMaterializeComplete = useCallback((
     revision: number,
@@ -657,7 +758,6 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       || current.editMap?.blocks.length !== repository.nodes.length
       || generationRef.current !== repository.context.revision
       || materializationPendingRef.current
-      || windowCommitPendingRef.current
       || !(node instanceof HTMLElement)
       || node.ownerDocument !== surface.ownerDocument
       || node.parentNode !== surface
@@ -706,6 +806,19 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     if (!mountedIndices.has(index)) return null;
 
     const previousNode = repository.nodes[index];
+    if (!previousNode) return null;
+    const pendingCommit = windowCommitPendingRef.current
+      ? pendingWindowCommitRef.current
+      : null;
+    const pendingNodeIndex = pendingCommit?.nodes.indexOf(previousNode) ?? -1;
+    if (
+      windowCommitPendingRef.current
+      && (
+        !pendingCommit
+        || pendingCommit.revision !== repository.context.revision
+        || pendingNodeIndex < 0
+      )
+    ) return null;
     const expectedContext = repository.context;
     return () => {
       if (!ownerActiveRef.current || !windowedRef.current) return false;
@@ -726,7 +839,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         || generationRef.current !== expectedContext.revision
         || repository.context !== expectedContext
         || materializationPendingRef.current
-        || windowCommitPendingRef.current
+        || (
+          pendingCommit
+          && pendingWindowCommitRef.current !== pendingCommit
+        )
         || node.ownerDocument !== surface.ownerDocument
         || node.parentNode !== surface
         || node.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== id
@@ -760,6 +876,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
       const previousNodes = repository.nodes;
       const previousBlocks = repository.blocks;
+      const mutablePendingNodes = pendingCommit?.nodes;
+      const previousPendingNode = mutablePendingNodes?.[pendingNodeIndex];
       const nextNodes = [...repository.nodes];
       nextNodes[index] = node;
       const nextBlocks = repository.blocks.map((entry, entryIndex) =>
@@ -767,11 +885,15 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       );
       repository.nodes = nextNodes;
       repository.blocks = nextBlocks;
+      if (mutablePendingNodes) mutablePendingNodes[pendingNodeIndex] = node;
       try {
         validatePreviewWindowRepository(repository);
       } catch {
         repository.nodes = previousNodes;
         repository.blocks = previousBlocks;
+        if (mutablePendingNodes && previousPendingNode) {
+          mutablePendingNodes[pendingNodeIndex] = previousPendingNode;
+        }
         return false;
       }
       return true;
@@ -885,17 +1007,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       ...requestState.response.features,
       ...props.featureOverrides
     };
-    let candidateMarkup: Readonly<{
-      sourceNodes: ReadonlyArray<Node>;
-      surface: HTMLElement;
-    }>;
-    try {
-      candidateMarkup = createEnhancementCandidate(
-        activeSurface,
-        requestState.response.html,
-        !windowedRef.current
-      );
-    } catch (error) {
+    const failCandidate = (error: unknown) => {
+      if (!ownerActiveRef.current || generationRef.current !== generation) return;
       props.onDiagnostic?.(previewFailureCode(error));
       setState((current) => {
         const previousHtml = 'html' === current.kind ? current : null;
@@ -915,35 +1028,62 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           ...(windowedRef.current ? { windowedFailure: true } : {})
         };
       });
-      return;
-    }
-    enhancementCandidateRef.current = {
-      codeTheme: requestState.request.codeTheme,
-      editMap: requestState.response.editMap ?? null,
-      features,
-      generation,
-      serverHtml: requestState.response.html,
-      signature: requestState.request.signature,
-      sourceNodes: candidateMarkup.sourceNodes,
-      surface: candidateMarkup.surface
     };
-    setState((current) => {
-      const previousHtml = 'html' === current.kind ? current : null;
-      return {
+    const stageCandidate = () => {
+      if (!ownerActiveRef.current || generationRef.current !== generation) return;
+      let candidateMarkup: Readonly<{
+        sourceNodes: ReadonlyArray<Node>;
+        surface: HTMLElement;
+      }>;
+      try {
+        candidateMarkup = createEnhancementCandidate(
+          activeSurface,
+          requestState.response.html,
+          !windowedRef.current,
+          requestState.response.preparedMarkup?.sourceNodes
+        );
+      } catch (error) {
+        failCandidate(error);
+        return;
+      }
+      enhancementCandidateRef.current = {
         codeTheme: requestState.request.codeTheme,
         editMap: requestState.response.editMap ?? null,
         features,
         generation,
-        html: previousHtml?.html ?? ('' as SafePreviewHtml),
-        htmlRevision: previousHtml?.htmlRevision ?? 0,
-        kind: 'html',
-        phase: 'enhancing',
-        signature: '',
-        materializeCommit: null,
-        stagedCommit: null,
-        windowedCommit: null,
+        serverHtml: requestState.response.html,
+        signature: requestState.request.signature,
+        sourceNodes: candidateMarkup.sourceNodes,
+        surface: candidateMarkup.surface
       };
-    });
+      setState((current) => {
+        const previousHtml = 'html' === current.kind ? current : null;
+        return {
+          codeTheme: requestState.request.codeTheme,
+          editMap: requestState.response.editMap ?? null,
+          features,
+          generation,
+          html: previousHtml?.html ?? ('' as SafePreviewHtml),
+          htmlRevision: previousHtml?.htmlRevision ?? 0,
+          kind: 'html',
+          phase: 'enhancing',
+          signature: '',
+          materializeCommit: null,
+          stagedCommit: null,
+          windowedCommit: null,
+        };
+      });
+    };
+    if (
+      windowedRef.current
+      && previewNeedsWindow(requestState.response.editMap ?? null)
+    ) {
+      const scheduler = props.stagingScheduler
+        ?? defaultPreviewSurfaceStagingScheduler(activeSurface.ownerDocument);
+      void scheduler.yield().then(stageCandidate, failCandidate);
+      return;
+    }
+    stageCandidate();
   }
 
   useLayoutEffect(() => {
@@ -1141,10 +1281,21 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         }
         if (!isCurrent()) return;
         if (activeCandidate.editMap) {
-          blockMarkers = capturePreviewBlockMarkers(
+          const markerCapture = capturePreviewBlockMarkers(
             candidateSurface,
-            activeCandidate.editMap
+            activeCandidate.editMap,
+            scheduler,
+            isCurrent,
+            controller.signal
           );
+          const capturedMarkers = markerCapture instanceof Promise
+            ? await markerCapture
+            : markerCapture;
+          if (!capturedMarkers) {
+            candidateSurface.remove();
+            return;
+          }
+          blockMarkers = capturedMarkers;
         }
         visualSources = captureVisualMarkdownSources(candidateSurface);
         await props.enhancementPort.enhance(
@@ -1156,16 +1307,49 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         if (!isCurrent()) return;
         try {
           if (blockMarkers.length > 0) {
-            annotateEnhancedPreviewBlocks(blockMarkers);
+            const annotation = annotateEnhancedPreviewBlocks(
+              blockMarkers,
+              scheduler,
+              isCurrent,
+              controller.signal
+            );
+            const annotated = annotation instanceof Promise
+              ? await annotation
+              : annotation;
+            if (!annotated) {
+              candidateSurface.remove();
+              return;
+            }
           }
           annotateEnhancedVisualSources(visualSources);
         } catch (error) {
           failEnhancement(error);
           return;
         }
-        const enhancedHtml = candidateSurface.innerHTML as SafePreviewHtml;
+        if (
+          activeCandidate.sourceNodes.length > PREVIEW_STAGING_BATCH_SIZE
+          || blockMarkers.length > PREVIEW_STAGING_BATCH_SIZE
+        ) {
+          await scheduler.yield();
+          if (!isCurrent() || controller.signal.aborted) {
+            candidateSurface.remove();
+            return;
+          }
+        }
+        const largeWindow = windowedRef.current
+          && previewNeedsWindow(activeCandidate.editMap);
+        const enhancedHtml = largeWindow
+          ? activeCandidate.serverHtml
+          : candidateSurface.innerHTML as SafePreviewHtml;
+        if (largeWindow) {
+          await scheduler.yield();
+          if (!isCurrent() || controller.signal.aborted) {
+            candidateSurface.remove();
+            return;
+          }
+        }
         let repository: PreviewWindowNodeRepository | null = null;
-        let windowedCommit: SafePreviewHtmlSinkWindowCommit | null = null;
+        let windowedCommit: MutablePreviewWindowCommit | null = null;
         let stagedCommit: SafePreviewHtmlSinkCommit | null = null;
         if (windowedRef.current && previewNeedsWindow(activeCandidate.editMap)) {
           if (!activeCandidate.editMap) {
@@ -1182,6 +1366,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             }
           );
           repository = previewWindowRepositoryRef.current;
+          await scheduler.yield();
+          if (!isCurrent() || controller.signal.aborted) {
+            previewWindowRepositoryRef.current = null;
+            candidateSurface.remove();
+            return;
+          }
           const initialWindow = repository.model.getWindow({
             context: repository.context,
             pinnedIndices: [],
@@ -1189,10 +1379,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           });
           windowedCommit = {
             key: ++windowCommitKeyRef.current,
-            nodes: windowNodes(repository, initialWindow),
+            nodes: [...windowNodes(repository, initialWindow)],
             revision: generation
           };
           windowCommitPendingRef.current = true;
+          pendingWindowCommitRef.current = windowedCommit;
         } else {
           stagedCommit = {
             nodes: Array.from(candidateSurface.childNodes),
@@ -1417,16 +1608,20 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         pinnedIndices: pinnedIndices(),
         viewport: viewportForCanvas(canvas)
       });
-      const commit: SafePreviewHtmlSinkWindowCommit = {
+      const commit: MutablePreviewWindowCommit = {
         key: ++windowCommitKeyRef.current,
-        nodes: windowNodes(activeRepository, result),
+        nodes: [...windowNodes(activeRepository, result)],
         revision: activeRepository.context.revision
       };
       if (
         commit.nodes.length === surface.childNodes.length
         && commit.nodes.every((node, index) => surface.childNodes[index] === node)
-      ) return;
+      ) {
+        props.onWindowReady?.();
+        return;
+      }
       windowCommitPendingRef.current = true;
+      pendingWindowCommitRef.current = commit;
       setState((current) =>
         'html' === current.kind
         && current.generation === activeRepository.context.revision
@@ -1508,6 +1703,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     materialize,
     props.className,
     props.onDiagnostic,
+    props.onWindowReady,
     props.style
   ]);
 

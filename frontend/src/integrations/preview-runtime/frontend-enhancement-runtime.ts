@@ -101,6 +101,14 @@ foreignObject > div {
 }`;
 
 const ENHANCEMENT_SLICE_BUDGET_MS = 8;
+// Auto-detection is synchronous per block; keep large immersive previews bounded
+// between paints without dropping language-free code blocks.
+const LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT = 128 * 1024;
+const LARGE_IMMERSIVE_ITEMS_PER_SLICE = 4;
+
+type ScheduledWorkOptions = Readonly<{
+  maxItemsPerSlice?: number;
+}>;
 
 function enhancementIsCurrent(
   control: FrontendEnhancementControl | undefined
@@ -114,6 +122,10 @@ function defaultEnhancementScheduler(
   return {
     now: () => windowRef.performance?.now() ?? Date.now(),
     yield: () => new Promise<void>((resolve) => {
+      if ('function' === typeof windowRef.requestAnimationFrame) {
+        windowRef.requestAnimationFrame(() => resolve());
+        return;
+      }
       windowRef.setTimeout(resolve, 0);
     })
   };
@@ -140,20 +152,26 @@ async function runScheduled<T>(
   items: ReadonlyArray<T>,
   work: (item: T) => void | Promise<void>,
   scheduler: FrontendEnhancementScheduler,
-  control: FrontendEnhancementControl
+  control: FrontendEnhancementControl,
+  options: ScheduledWorkOptions = {}
 ): Promise<boolean> {
   let sliceStartedAt = scheduler.now();
+  let itemsInSlice = 0;
   for (let index = 0; index < items.length; index += 1) {
     if (!enhancementIsCurrent(control)) return false;
     const item = items[index];
     if (undefined === item) return false;
     await work(item);
+    itemsInSlice += 1;
     const hasMore = index < items.length - 1;
     const elapsed = scheduler.now() - sliceStartedAt;
-    if (hasMore && elapsed >= ENHANCEMENT_SLICE_BUDGET_MS) {
+    const reachedItemBound = options.maxItemsPerSlice !== undefined
+      && itemsInSlice >= options.maxItemsPerSlice;
+    if (hasMore && (elapsed >= ENHANCEMENT_SLICE_BUDGET_MS || reachedItemBound)) {
       await scheduler.yield();
       if (!enhancementIsCurrent(control)) return false;
       sliceStartedAt = scheduler.now();
+      itemsInSlice = 0;
     }
   }
   return enhancementIsCurrent(control);
@@ -178,6 +196,14 @@ function isMermaidCode(element: Element): boolean {
   return [...element.classList].some(
     (className) => 'language-mermaid' === className.toLowerCase()
   );
+}
+
+function isLargeImmersivePreviewRoot(root: ParentNode): boolean {
+  const text = root.textContent;
+  return root instanceof HTMLElement
+    && root.classList.contains('easymde-immersive-visual-editor')
+    && new TextEncoder().encode(text ?? '').length
+      > LARGE_IMMERSIVE_PREVIEW_BYTE_LIMIT;
 }
 
 function stringValue(
@@ -305,6 +331,9 @@ async function highlightCode(
   control: FrontendEnhancementControl
 ): Promise<boolean> {
   const syntaxHighlight = featureEnabled(config, 'syntaxHighlight');
+  const scheduleOptions = isLargeImmersivePreviewRoot(root)
+    ? { maxItemsPerSlice: LARGE_IMMERSIVE_ITEMS_PER_SLICE }
+    : undefined;
   const codeBlocks = [...root.querySelectorAll('pre > code')].filter(
     (element) => !isMermaidCode(element) || !featureEnabled(config, 'mermaid')
   );
@@ -328,19 +357,22 @@ async function highlightCode(
       element.dataset.easymdeHighlighted = '1';
     },
     scheduler,
-    control
+    control,
+    scheduleOptions
   )) return false;
   if (!await runScheduled(
     [...root.querySelectorAll('pre > code')],
     (element) => syncCodeLineNumberGutter(element, windowRef),
     scheduler,
-    control
+    control,
+    scheduleOptions
   )) return false;
   return runScheduled(
     [...root.querySelectorAll('pre > code.hljs')],
     (element) => syncCodeFrameBackground(element, windowRef),
     scheduler,
-    control
+    control,
+    scheduleOptions
   );
 }
 

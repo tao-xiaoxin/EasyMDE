@@ -10,7 +10,8 @@ const appended: Element[] = [];
 
 function runtime(
   enhance = vi.fn().mockResolvedValue(undefined),
-  syncCodeFrameBackgrounds = vi.fn()
+  syncCodeFrameBackgrounds = vi.fn(),
+  warmHighlightAuto = vi.fn().mockResolvedValue(true)
 ): PreviewEnhancementBrowserRuntime {
   return {
     getEnhancements: () => ({ enhance, syncCodeFrameBackgrounds }),
@@ -18,7 +19,8 @@ function runtime(
     hasKatex: () => true,
     hasMathRenderer: () => true,
     hasMermaid: () => true,
-    hasMermaidRenderer: () => true
+    hasMermaidRenderer: () => true,
+    warmHighlightAuto
   };
 }
 
@@ -111,10 +113,14 @@ describe('createBrowserPreviewEnhancementPort', () => {
 
   it('prepares a code theme without executing document enhancements', async () => {
     const enhance = vi.fn();
+    const warmHighlightAuto = vi.fn().mockResolvedValue(true);
     autoLoadResources();
     const port = createBrowserPreviewEnhancementPort(
       previewEnhancementBootstrapFixture,
-      { documentRef: document, runtime: runtime(enhance) }
+      {
+        documentRef: document,
+        runtime: runtime(enhance, vi.fn(), warmHighlightAuto)
+      }
     );
 
     const prepared = await port.prepareCodeTheme({
@@ -127,6 +133,7 @@ describe('createBrowserPreviewEnhancementPort', () => {
     prepared.commit();
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
+    expect(warmHighlightAuto).toHaveBeenCalledOnce();
     expect(enhance).not.toHaveBeenCalled();
   });
 

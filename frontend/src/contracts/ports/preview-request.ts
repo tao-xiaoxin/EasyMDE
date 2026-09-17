@@ -22,6 +22,10 @@ export type PreviewEditMap = Readonly<{
   blocks: ReadonlyArray<PreviewEditMapBlock>;
 }>;
 
+export type PreparedPreviewMarkup = Readonly<{
+  sourceNodes: ReadonlyArray<Node>;
+}>;
+
 const PROTOTYPE_RESERVED_FEATURE_KEYS = new Set([
   '__proto__',
   'constructor',
@@ -49,6 +53,7 @@ export type PreviewResponse = Readonly<{
   html: SafePreviewHtml;
   features: PreviewFeatures;
   editMap?: PreviewEditMap;
+  preparedMarkup?: PreparedPreviewMarkup;
 }>;
 
 export type PreviewRequestPort = Readonly<{

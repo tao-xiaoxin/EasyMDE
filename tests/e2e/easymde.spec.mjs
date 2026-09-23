@@ -3052,6 +3052,7 @@ test.describe('EasyMDE editor workflows', () => {
         throw new Error('immersive-performance-observer-unavailable');
       }
       longTaskObserver.observe({ type: 'longtask', buffered: true });
+      state.longTaskObserver = longTaskObserver;
       const mutationObserver = new MutationObserver(scheduleSettlement);
       mutationObserver.observe(surface, {
         attributes: true,

@@ -6892,14 +6892,24 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(locator).toHaveCount(available[field] ? 1 : 0);
     }
 
-    await publishDialog
-      .getByRole('switch', { name: labels.openAfterPublish })
-      .click();
-    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    const openAfterPublish = publishDialog.getByRole('switch', {
+      name: labels.openAfterPublish
+    });
+    if (await openAfterPublish.isChecked()) await openAfterPublish.click();
+    await expect(openAfterPublish).not.toBeChecked();
+
+    const nativePublish = page.locator('#publish');
+    await expect(nativePublish).toBeEnabled();
+    await expect(nativePublish).not.toHaveClass(/(?:^|\s)disabled(?:\s|$)/u);
+    const publishResponse = page.waitForResponse((response) => (
+      'POST' === response.request().method()
+      && new URL(response.url()).pathname.endsWith('/wp-admin/post.php')
+    ), { timeout: 15_000 });
     await publishDialog
       .getByRole('button', { name: labels.publish, exact: true })
       .click();
-    await navigation;
+    await publishResponse;
+    await expect(page).toHaveURL(/\/wp-admin\/post\.php(?:\?|$)/u);
     await expect(page.locator('#message, .notice-success')).toBeVisible();
 
     const postId = await currentPostId(page);

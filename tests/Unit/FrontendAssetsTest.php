@@ -584,6 +584,41 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertTrue($blockquote_indented_code['codeCopy']);
     }
 
+    public function test_feature_manifest_ignores_math_delimiters_inside_code()
+    {
+        $detector = new MarkdownFeatureDetector();
+
+        $code_only = $detector->detect(<<<'MD'
+```bash
+printf '$x$'
+```
+MD);
+        $mixed = $detector->detect(<<<'MD'
+```bash
+printf '$x$'
+```
+
+Real $y$
+MD);
+        $tilde_code_only = $detector->detect(<<<'MD'
+~~~bash
+printf '$x$'
+~~~
+MD);
+        $tilde_mixed = $detector->detect(<<<'MD'
+~~~bash
+printf '$x$'
+~~~
+
+Real $y$
+MD);
+
+        $this->assertFalse($code_only['math']);
+        $this->assertTrue($mixed['math']);
+        $this->assertFalse($tilde_code_only['math']);
+        $this->assertTrue($tilde_mixed['math']);
+    }
+
     private function create_code_copy_build_directory()
     {
         $temporary_file = wp_tempnam('easymde-code-copy-build');

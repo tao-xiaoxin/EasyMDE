@@ -4,6 +4,7 @@ import {
   enhanceFrontendContent,
   renderMathContent,
   renderMermaidContent,
+  type FrontendEnhancementScheduler,
   type FrontendEnhancementWindow
 } from './frontend-enhancement-runtime';
 
@@ -25,6 +26,36 @@ function runtime(): FrontendEnhancementWindow {
     });
   }
   return windowRef;
+}
+
+function scheduler(nowValues: number[] = []): Readonly<{
+  scheduler: FrontendEnhancementScheduler;
+  yields: number;
+}> {
+  let nowIndex = 0;
+  let yields = 0;
+  return {
+    get yields() {
+      return yields;
+    },
+    scheduler: {
+      now: () => nowValues[nowIndex] ?? nowValues.at(-1) ?? 0,
+      yield: async () => {
+        yields += 1;
+        nowIndex += 1;
+      }
+    }
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }
 
 describe('frontend enhancement runtime', () => {
@@ -49,6 +80,66 @@ describe('frontend enhancement runtime', () => {
     expect(highlighted).toEqual([code]);
     expect(code?.parentElement?.style.getPropertyValue('--easymde-code-frame-background'))
       .toBe('rgb(12, 34, 56)');
+  });
+
+  it('keeps language-free code highlighting and framing unchanged', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = '<pre><code>plain fenced code</code></pre>';
+    const windowRef = runtime();
+    const highlightElement = vi.fn();
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef
+    );
+
+    const code = root.querySelector('code');
+    expect(code?.classList.contains('hljs')).toBe(true);
+    expect(code?.dataset.easymdeHighlighted).toBe('1');
+    expect(highlightElement).toHaveBeenCalledWith(code);
+    expect(code?.parentElement?.style.getPropertyValue(
+      '--easymde-code-frame-background'
+    )).toBe('rgb(12, 34, 56)');
+  });
+
+  it('eventually auto-highlights every code block in a large immersive root in bounded slices', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-immersive-visual-editor';
+    root.innerHTML = Array.from({ length: 10 }, (_, index) => {
+      const language = 1 === index ? ' class="language-javascript"' : '';
+      return `<pre><code${language}>${'plain fenced code\n'.repeat(800)}</code></pre>`;
+    }).join('');
+    const windowRef = runtime();
+    const highlightElement = vi.fn();
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+    const fake = scheduler();
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+
+    const codeBlocks = root.querySelectorAll('code');
+    expect(new TextEncoder().encode(root.textContent ?? '').length)
+      .toBeGreaterThan(128 * 1024);
+    expect([...codeBlocks].every((code) => code.classList.contains('hljs'))).toBe(true);
+    expect([...codeBlocks].every((code) => code.dataset.easymdeHighlighted === '1'))
+      .toBe(true);
+    expect(highlightElement).toHaveBeenCalledTimes(codeBlocks.length);
+    expect(fake.yields).toBeGreaterThan(0);
+    expect(fake.yields).toBeLessThan(codeBlocks.length);
   });
 
   it('adds one decorative line-number gutter after highlighting without changing code text', async () => {
@@ -164,14 +255,14 @@ describe('frontend enhancement runtime', () => {
     expect(pre?.classList.contains('easymde-render-error')).toBe(false);
   });
 
-  it('keeps KaTeX normalization, options, and rendered marker behavior unchanged', () => {
+  it('keeps KaTeX normalization, options, and rendered marker behavior unchanged', async () => {
     const root = document.createElement('article');
     root.innerHTML = '<span class="easymde-math easymde-math-block">$$frac{a}{b}$$</span>';
     const windowRef = runtime();
     const render = vi.fn();
     windowRef.katex = { render };
 
-    renderMathContent(root, { features: { math: true } }, windowRef);
+    await renderMathContent(root, { features: { math: true } }, windowRef);
 
     expect(render).toHaveBeenCalledWith(
       '\\frac{a}{b}',
@@ -180,6 +271,257 @@ describe('frontend enhancement runtime', () => {
     );
     expect(root.querySelector('.easymde-math')?.getAttribute('data-easymde-rendered'))
       .toBe('1');
+  });
+
+  it('does not yield between short enhancement batches', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      ...Array.from({ length: 6 }, (_, index) =>
+        `<pre><code class="language-javascript">const value${index} = ${index};</code></pre>`
+      ),
+      ...Array.from({ length: 6 }, (_, index) =>
+        `<span class="easymde-math easymde-math-inline">$x_${index}$</span>`
+      )
+    ].join('');
+    const windowRef = runtime();
+    const highlightElement = vi.fn();
+    const mathRender = vi.fn();
+    windowRef.hljs = { highlightElement };
+    windowRef.katex = { render: mathRender };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+    const fake = scheduler();
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+    await renderMathContent(
+      root,
+      { features: { math: true } },
+      windowRef,
+      { scheduler: fake.scheduler }
+    );
+
+    expect(highlightElement).toHaveBeenCalledTimes(6);
+    expect(mathRender).toHaveBeenCalledTimes(6);
+    expect(fake.yields).toBe(0);
+  });
+
+  it('yields only after the accumulated enhancement slice exceeds 8ms', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = Array.from({ length: 12 }, (_, index) =>
+      `<pre><code class="language-javascript">const value${index} = ${index};</code></pre>`
+    ).join('');
+    const windowRef = runtime();
+    let clock = 0;
+    const highlightElement = vi.fn(() => {
+      clock += 1;
+    });
+    windowRef.hljs = { highlightElement };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+    const base = scheduler();
+    const timedScheduler: FrontendEnhancementScheduler = {
+      now: () => clock,
+      yield: base.scheduler.yield
+    };
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef,
+      { scheduler: timedScheduler }
+    );
+
+    expect(highlightElement).toHaveBeenCalledTimes(12);
+    expect(base.yields).toBeGreaterThan(0);
+    expect(base.yields).toBeLessThan(12);
+  });
+
+  it('lets the browser paint between default enhancement slices', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const first = 1;</code></pre>',
+      '<pre><code class="language-javascript">const second = 2;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    let clock = 0;
+    Object.defineProperty(windowRef, 'performance', {
+      configurable: true,
+      value: { now: () => clock }
+    });
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(clock);
+      return 1;
+    });
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    windowRef.hljs = {
+      highlightElement: () => {
+        clock += 9;
+      }
+    };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    await enhanceFrontendContent(
+      root,
+      { features: { syntaxHighlight: true } },
+      windowRef
+    );
+
+    expect(requestAnimationFrame).toHaveBeenCalled();
+  });
+
+  it('finishes enhancement when requestAnimationFrame never invokes its callback', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-code-line-numbers';
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const first = 1;</code></pre>',
+      '<pre><code class="language-javascript">const second = 2;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    let clock = 0;
+    Object.defineProperty(windowRef, 'performance', {
+      configurable: true,
+      value: { now: () => clock }
+    });
+    const requestAnimationFrame = vi.fn(() => 1);
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    Object.defineProperty(windowRef, 'setTimeout', {
+      configurable: true,
+      value: window.setTimeout.bind(window)
+    });
+    windowRef.hljs = {
+      highlightElement: () => {
+        clock += 9;
+      }
+    };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    const completion = Promise.race([
+      enhanceFrontendContent(
+        root,
+        { features: { syntaxHighlight: true } },
+        windowRef
+      ).then(() => 'complete' as const),
+      new Promise<'timeout'>((resolve) => {
+        window.setTimeout(() => resolve('timeout'), 100);
+      })
+    ]);
+
+    expect(await completion).toBe('complete');
+    expect(requestAnimationFrame).toHaveBeenCalled();
+    expect(root.querySelectorAll('.easymde-code-line-number-gutter > span'))
+      .toHaveLength(2);
+  });
+
+  it('renders Mermaid serially and stops between blocks when the owner is stale', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<pre><code class="language-mermaid">graph TD; A--&gt;B;</code></pre>',
+      '<pre><code class="language-mermaid">graph TD; B--&gt;C;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    const first = deferred<{ svg: string }>();
+    let active = true;
+    let clock = 0;
+    const render = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        clock = 9;
+        return first.promise;
+      })
+      .mockResolvedValueOnce({ svg: '<svg data-index="2"></svg>' });
+    windowRef.mermaid = {
+      initialize: vi.fn(),
+      render
+    };
+    const fake = scheduler();
+    const timedScheduler: FrontendEnhancementScheduler = {
+      now: () => clock,
+      yield: fake.scheduler.yield
+    };
+    const operation = renderMermaidContent(
+      root,
+      { features: { mermaid: true } },
+      windowRef,
+      {
+        control: { isCurrent: () => active },
+        scheduler: timedScheduler
+      }
+    );
+
+    expect(render).toHaveBeenCalledOnce();
+    active = false;
+    first.resolve({ svg: '<svg data-index="1"></svg>' });
+    await operation;
+
+    expect(render).toHaveBeenCalledOnce();
+    expect(root.querySelectorAll('.easymde-mermaid')).toHaveLength(0);
+    expect(fake.yields).toBeGreaterThan(0);
+  });
+
+  it('stops scheduled math work when its AbortSignal is cancelled between blocks', async () => {
+    const root = document.createElement('article');
+    root.innerHTML = [
+      '<span class="easymde-math easymde-math-inline">$x$</span>',
+      '<span class="easymde-math easymde-math-inline">$y$</span>'
+    ].join('');
+    const windowRef = runtime();
+    const render = vi.fn();
+    windowRef.katex = { render };
+    const controller = new AbortController();
+    let clock = 0;
+    const fake = scheduler();
+    const timedScheduler: FrontendEnhancementScheduler = {
+      now: () => clock,
+      yield: fake.scheduler.yield
+    };
+    render.mockImplementation(() => {
+      clock += 9;
+    });
+    const abortingScheduler: FrontendEnhancementScheduler = {
+      now: fake.scheduler.now,
+      yield: async () => {
+        await fake.scheduler.yield();
+        controller.abort();
+      }
+    };
+
+    await renderMathContent(
+      root,
+      { features: { math: true } },
+      windowRef,
+      {
+        control: { signal: controller.signal },
+        scheduler: {
+          now: timedScheduler.now,
+          yield: abortingScheduler.yield
+        }
+      }
+    );
+
+    expect(render).toHaveBeenCalledOnce();
+    expect(root.querySelectorAll('[data-easymde-rendered]')).toHaveLength(1);
+    expect(fake.yields).toBe(1);
   });
 
   it('keeps Mermaid replacement and rendering failure markers unchanged', async () => {

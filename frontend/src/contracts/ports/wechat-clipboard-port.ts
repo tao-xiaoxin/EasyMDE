@@ -21,6 +21,7 @@ export type WechatClipboardCopyOptions = Readonly<{
   maxBytes?: number;
   pngConversionEnabled?: boolean;
   postId?: number;
+  resolvePreview?: () => Promise<HTMLElement | null>;
   signal?: AbortSignal;
   visualRasterizationPort?: WechatVisualRasterizationPort;
 }>;

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import {
   createBrowserPreviewEnhancementPort,
+  createWindowPreviewEnhancementRuntime,
   type PreviewEnhancementBrowserRuntime
 } from './browser-preview-enhancement';
 
@@ -10,7 +11,8 @@ const appended: Element[] = [];
 
 function runtime(
   enhance = vi.fn().mockResolvedValue(undefined),
-  syncCodeFrameBackgrounds = vi.fn()
+  syncCodeFrameBackgrounds = vi.fn(),
+  warmHighlightAuto = vi.fn().mockResolvedValue(true)
 ): PreviewEnhancementBrowserRuntime {
   return {
     getEnhancements: () => ({ enhance, syncCodeFrameBackgrounds }),
@@ -18,7 +20,8 @@ function runtime(
     hasKatex: () => true,
     hasMathRenderer: () => true,
     hasMermaid: () => true,
-    hasMermaidRenderer: () => true
+    hasMermaidRenderer: () => true,
+    warmHighlightAuto
   };
 }
 
@@ -87,10 +90,17 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
     expect(enhance).toHaveBeenCalledTimes(2);
-    expect(enhance).toHaveBeenLastCalledWith(surface, {
-      features: { codeBlocks: true, syntaxHighlight: true },
-      strings: { renderingFailed: 'Rendering failed.' }
-    });
+    expect(enhance).toHaveBeenLastCalledWith(
+      surface,
+      {
+        features: { codeBlocks: true, syntaxHighlight: true },
+        strings: { renderingFailed: 'Rendering failed.' }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
+    );
 
     await port.enhance(
       surface,
@@ -104,10 +114,14 @@ describe('createBrowserPreviewEnhancementPort', () => {
 
   it('prepares a code theme without executing document enhancements', async () => {
     const enhance = vi.fn();
+    const warmHighlightAuto = vi.fn().mockResolvedValue(true);
     autoLoadResources();
     const port = createBrowserPreviewEnhancementPort(
       previewEnhancementBootstrapFixture,
-      { documentRef: document, runtime: runtime(enhance) }
+      {
+        documentRef: document,
+        runtime: runtime(enhance, vi.fn(), warmHighlightAuto)
+      }
     );
 
     const prepared = await port.prepareCodeTheme({
@@ -120,7 +134,42 @@ describe('createBrowserPreviewEnhancementPort', () => {
     prepared.commit();
     expect(document.querySelector<HTMLLinkElement>('#easymde-highlight-theme-css')?.href)
       .toContain('/assets/vendor/highlight/styles/github.min.css');
+    expect(warmHighlightAuto).toHaveBeenCalledOnce();
     expect(enhance).not.toHaveBeenCalled();
+  });
+
+  it('completes Highlight auto-detection warmup when requestAnimationFrame is starved', async () => {
+    const windowRef = Object.create(window) as Window;
+    const requestAnimationFrame = vi.fn(() => 1);
+    const highlight = {
+      highlight: vi.fn(),
+      listLanguages: vi.fn(() => ['javascript', 'python'])
+    };
+    Object.defineProperty(windowRef, 'hljs', {
+      configurable: true,
+      value: highlight
+    });
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    Object.defineProperty(windowRef, 'setTimeout', {
+      configurable: true,
+      value: window.setTimeout.bind(window)
+    });
+    const runtime = createWindowPreviewEnhancementRuntime(windowRef);
+
+    const completion = Promise.race([
+      runtime.warmHighlightAuto(new AbortController().signal)
+        .then((warmed) => warmed ? 'complete' as const : 'not-ready' as const),
+      new Promise<'timeout'>((resolve) => {
+        window.setTimeout(() => resolve('timeout'), 100);
+      })
+    ]);
+
+    expect(await completion).toBe('complete');
+    expect(highlight.highlight).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
   });
 
   it('keeps the active code stylesheet until commit and removes a cancelled candidate', async () => {
@@ -930,7 +979,11 @@ describe('createBrowserPreviewEnhancementPort', () => {
         assetErrors: { mermaid: 'frontend-enhancement-frontend-mermaid-build-integrity-invalid' },
         features: { mermaid: false },
         strings: { renderingFailed: 'Rendering failed.' }
-      }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
     );
   });
 
@@ -960,7 +1013,11 @@ describe('createBrowserPreviewEnhancementPort', () => {
       {
         features: { syntaxHighlight: true, mermaid: false },
         strings: { renderingFailed: 'Rendering failed.' }
-      }
+      },
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal)
+      })
     );
   });
 

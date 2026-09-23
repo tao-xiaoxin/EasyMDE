@@ -235,6 +235,38 @@ describe('EditorToolbar', () => {
     expect(menu.hidden).toBe(true);
   });
 
+  it('activates a heading menu item once for Enter and Space keyboard commits', async () => {
+    const user = userEvent.setup();
+
+    for (const key of ['{Enter}', '{Space}']) {
+      const executeCommand = vi.fn();
+      const view = render(
+        <EditorToolbar
+          bootstrap={bootstrap}
+          platform="win"
+          executeCommand={executeCommand}
+        />
+      );
+      try {
+        await user.click(screen.getByRole('button', { name: '标题' }));
+        const menu = screen.getByRole('menu', { name: '标题' });
+        const item = within(menu).getByRole('menuitem', { name: /一级标题/ });
+        item.focus();
+        const keyboardEvent = new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          key: '{Enter}' === key ? 'Enter' : ' '
+        });
+        item.dispatchEvent(keyboardEvent);
+        expect(keyboardEvent.defaultPrevented).toBe(true);
+        expect(executeCommand).toHaveBeenCalledTimes(1);
+        expect(executeCommand).toHaveBeenCalledWith('heading1');
+      } finally {
+        view.unmount();
+      }
+    }
+  });
+
   it('shows current-platform H1-H6 bindings in the ordinary menu and removes cleared hints', async () => {
     const user = userEvent.setup();
     const commands = [1, 2, 3, 4, 5, 6].map((level) => ({
@@ -611,6 +643,47 @@ describe('EditorToolbar', () => {
     } finally {
       viewportWidth.mockRestore();
     }
+  });
+
+  it('measures the heading menu once after opening', async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <EditorToolbar bootstrap={bootstrap} platform="win" executeCommand={vi.fn()} />
+    );
+    const trigger = screen.getByRole('button', { name: '标题' });
+    const menu = container.querySelector('[role="menu"]');
+    if (!(menu instanceof HTMLElement)) throw new Error('heading-menu-test-menu-missing');
+    const triggerRect = vi.spyOn(trigger, 'getBoundingClientRect');
+    const menuRect = vi.spyOn(menu, 'getBoundingClientRect');
+
+    await user.click(trigger);
+
+    expect(triggerRect).toHaveBeenCalledTimes(1);
+    expect(menuRect).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies the popover owner before keyboard opening moves focus into the menu', async () => {
+    const user = userEvent.setup();
+    let activeElementAtOpen: Element | null = null;
+    const onPopoverOpen = vi.fn(() => {
+      activeElementAtOpen = document.activeElement;
+    });
+    render(
+      <EditorToolbar
+        bootstrap={bootstrap}
+        onPopoverOpen={onPopoverOpen}
+        platform="win"
+        executeCommand={vi.fn()}
+        variant="immersive"
+      />
+    );
+    const trigger = screen.getByRole('button', { name: '标题' });
+    trigger.focus();
+
+    await user.keyboard('{ArrowDown}');
+
+    expect(onPopoverOpen).toHaveBeenCalledWith(trigger);
+    expect(activeElementAtOpen).toBe(trigger);
   });
 
   it('positions the ordinary menu for a longest macOS shortcut without losing its trigger anchor', async () => {

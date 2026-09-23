@@ -29,9 +29,25 @@ const fullCapabilityImage = readFileSync(
 const longFixtureHeadingPrefix = '超长中英文标题用于验证狭窄预览容器';
 const syntheticLargeHeadingCount = 454;
 const syntheticLargeParagraphCount = 1581;
+const syntheticLargeGeneratedCodeBlockCount = 0;
+const syntheticLargeCodeBlockCount = syntheticLargeGeneratedCodeBlockCount + 3;
+const syntheticLargePreviewRootCount =
+  syntheticLargeParagraphCount
+  + syntheticLargeHeadingCount
+  + syntheticLargeCodeBlockCount;
+const syntheticDenseParagraphCount = 1696;
+const syntheticDenseGeneratedCodeBlockCount = 147;
+const syntheticDenseCodeBlockCount = syntheticDenseGeneratedCodeBlockCount + 3;
+const syntheticDensePreviewRootCount =
+  syntheticDenseParagraphCount
+  + syntheticLargeHeadingCount
+  + syntheticDenseCodeBlockCount;
 const syntheticLargeEditSettledLimitMs = 100;
 const syntheticLargePasteSettledLimitMs = 5_000;
 const syntheticLargePreviewLayoutTaskLimitMs = 75;
+const syntheticDensePasteSettledLimitMs = 2_500;
+const syntheticDensePreviewTaskCountLimit = 2;
+const syntheticDensePreviewLayoutTaskLimitMs = 75;
 const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const managedRuntimeAssets = [
   {
@@ -1046,12 +1062,16 @@ function syntheticWindowedMarkdown() {
   ).join('\n\n')}\n\n`;
 }
 
-function syntheticLargeMarkdown() {
+function syntheticLargeMarkdown({
+  paragraphCount = syntheticLargeParagraphCount,
+  generatedCodeBlockCount = syntheticLargeGeneratedCodeBlockCount,
+  paragraphSuffix = 'Generated windowed Markdown. Generated windowed Markdown.'
+} = {}) {
   const paragraphs = Array.from(
-    { length: syntheticLargeParagraphCount },
+    { length: paragraphCount },
     (_, index) => [
       `Synthetic performance paragraph ${index + 1}.`,
-      'Generated windowed Markdown. Generated windowed Markdown.'
+      paragraphSuffix
     ].join(' ')
   );
   const headings = Array.from(
@@ -1064,10 +1084,13 @@ function syntheticLargeMarkdown() {
     '```\nSynthetic language-free code block.\n```',
     '```javascript\nconst syntheticWindowedValue = 1;\n```',
     '~~~bash\nprintf "synthetic windowed code block"\n~~~',
-    ...Array.from(
-      { length: syntheticLargeHeadingCount },
-      (_, index) => [headings[index], paragraphs[index + 2]].join('\n\n')
-    ),
+    ...Array.from({ length: syntheticLargeHeadingCount }, (_, index) => [
+      headings[index],
+      paragraphs[index + 2],
+      ...(index < generatedCodeBlockCount
+        ? [`\`\`\`javascript\nconst syntheticWindowedExtra${index + 1} = ${index + 1};\n\`\`\``]
+        : [])
+    ].join('\n\n')),
     ...paragraphs.slice(syntheticLargeHeadingCount + 2)
   ];
 
@@ -2351,6 +2374,11 @@ test.describe('EasyMDE editor workflows', () => {
     const marker = 'Synthetic performance paragraph 1.';
     const performanceKey = '__easymdeSyntheticLongPerformance';
     expect(syntheticPaste.match(/^### /gm) ?? []).toHaveLength(syntheticLargeHeadingCount);
+    expect(syntheticPaste.match(/^```javascript$/gm) ?? []).toHaveLength(
+      syntheticLargeGeneratedCodeBlockCount + 1
+    );
+    expect(syntheticLargePreviewRootCount).toBe(2038);
+    expect(syntheticLargeCodeBlockCount).toBe(3);
     expect(syntheticPaste).toContain('```\nSynthetic language-free code block.\n```');
     expect(syntheticPaste).toContain('```javascript\nconst syntheticWindowedValue = 1;\n```');
     expect(syntheticPaste).toContain('~~~bash\nprintf "synthetic windowed code block"\n~~~');
@@ -2639,6 +2667,9 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
       timeout: 30_000
     });
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true', {
+      timeout: 30_000
+    });
     await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
     await expect.poll(
       () => previewRequests.length,
@@ -2868,6 +2899,315 @@ test.describe('EasyMDE editor workflows', () => {
       name: immersiveLabels.previewEditorLabel
     })).toHaveCount(0);
     await expect(source).toHaveValue(expectedMarkdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('@performance renders a dense 2300-block Preview with 150 code fences before enabling visual edits', async ({ page, context }, testInfo) => {
+    const browserFailures = [];
+    const previewRequests = [];
+    const previewResponses = [];
+    const syntheticPaste = syntheticLargeMarkdown({
+      paragraphCount: syntheticDenseParagraphCount,
+      generatedCodeBlockCount: syntheticDenseGeneratedCodeBlockCount,
+      paragraphSuffix: 'Generated windowed markdown remains readable.'
+    });
+    const expectedMarkdown = `Before${syntheticPaste}`;
+    const expectedMarkdownEvidence = {
+      bytes: Buffer.byteLength(expectedMarkdown, 'utf8'),
+      characters: expectedMarkdown.length,
+      sha256: createHash('sha256').update(expectedMarkdown, 'utf8').digest('hex')
+    };
+    const performanceKey = '__easymdeDensePreviewPerformance';
+    expect(syntheticPaste.match(/^### /gm) ?? []).toHaveLength(
+      syntheticLargeHeadingCount
+    );
+    expect(syntheticPaste.match(/^```javascript$/gm) ?? []).toHaveLength(
+      syntheticDenseGeneratedCodeBlockCount + 1
+    );
+    expect(syntheticDensePreviewRootCount).toBe(2300);
+    expect(syntheticDenseCodeBlockCount).toBe(150);
+    expect(expectedMarkdownEvidence.bytes).toBeGreaterThan(190_000);
+    expect(expectedMarkdownEvidence.bytes).toBeLessThan(200_000);
+
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    await page.route(
+      'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
+      (route) => route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      })
+    );
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+    });
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        const markdown = request.postDataJSON()?.markdown ?? null;
+        previewRequests.push(
+          'string' === typeof markdown
+            ? {
+                bytes: Buffer.byteLength(markdown, 'utf8'),
+                characters: markdown.length,
+                sha256: createHash('sha256').update(markdown, 'utf8').digest('hex')
+              }
+            : null
+        );
+      }
+    });
+    page.on('response', (response) => {
+      if (
+        'POST' === response.request().method()
+        && new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) {
+        previewResponses.push(response);
+        void page.evaluate((key) => {
+          window[key]?.setPhase?.('preview-response');
+        }, performanceKey).catch((error) => {
+          browserFailures.push(`preview-phase:${error.message}`);
+        });
+      }
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, 'Before', 'Before');
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: immersiveLabels.enter }).click();
+    await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
+    await expect(page.getByText(immersiveLabels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: immersiveLabels.previewUnlockEdit }).click();
+
+    const source = page.locator('#easymde-source');
+    const visualEditor = page.locator(
+      '.easymde-immersive-visual-editor[data-easymde-preview-html-sink="1"]'
+    );
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    const baselinePreviewRequestCount = previewRequests.length;
+    const baselinePreviewResponseCount = previewResponses.length;
+    await visualEditor.evaluate((surface, key) => {
+      const state = {
+        baselineSignature: surface.easymdePreviewSignature ?? '',
+        longTasks: [],
+        measurementStartedAt: null,
+        pasteHandlerDuration: null,
+        pasteFirstDoubleRaf: null,
+        pasteSettledAt: null,
+        pasteStartedAt: null,
+        phase: 'idle',
+        settlementPending: false,
+        transitions: [{ at: performance.now(), phase: 'idle' }]
+      };
+      state.setPhase = (phase) => {
+        state.phase = phase;
+        state.transitions.push({ at: performance.now(), phase });
+      };
+      const isSettled = () => surface.isConnected
+        && surface.getAttribute('aria-busy') === 'false'
+        && !surface.hasAttribute('data-easymde-preview-error')
+        && surface.easymdePreviewSignature
+        && surface.easymdePreviewSignature !== state.baselineSignature
+        && surface.querySelector('[data-easymde-preview-window-spacer]')
+        && surface.querySelector('[data-easymde-visual-block-id]');
+      const scheduleSettlement = () => {
+        if (
+          state.pasteSettledAt !== null
+          || state.settlementPending
+          || !isSettled()
+        ) return;
+        state.settlementPending = true;
+        requestAnimationFrame(() => {
+          state.settlementPending = false;
+          if (!isSettled() || state.pasteSettledAt !== null) return;
+          state.pasteSettledAt = performance.now();
+          state.setPhase('paste-settled');
+        });
+      };
+      const longTaskObserver = new PerformanceObserver((list) => {
+        if (state.measurementStartedAt === null) return;
+        for (const entry of list.getEntries()) {
+          if (
+            entry.startTime >= state.measurementStartedAt
+            && entry.duration > 50
+          ) {
+            state.longTasks.push({
+              duration: entry.duration,
+              startTime: entry.startTime
+            });
+          }
+        }
+      });
+      if (!PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+        throw new Error('immersive-performance-observer-unavailable');
+      }
+      longTaskObserver.observe({ type: 'longtask', buffered: true });
+      const mutationObserver = new MutationObserver(scheduleSettlement);
+      mutationObserver.observe(surface, {
+        attributes: true,
+        attributeFilter: ['aria-busy', 'data-easymde-preview-error'],
+        characterData: true,
+        childList: true,
+        subtree: true
+      });
+      const hasPlainText = (event) => Array.from(event.clipboardData?.types ?? [])
+        .includes('text/plain');
+      const onPaste = (event) => {
+        if (!hasPlainText(event)) return;
+        state.pasteStartedAt = performance.now();
+        state.measurementStartedAt = state.pasteStartedAt;
+        state.setPhase('paste');
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          state.pasteFirstDoubleRaf = performance.now() - state.pasteStartedAt;
+        }));
+      };
+      const onPasteEnd = (event) => {
+        if (!hasPlainText(event) || state.pasteStartedAt === null) return;
+        state.pasteHandlerDuration = performance.now() - state.pasteStartedAt;
+        state.setPhase('paste-deferred');
+        scheduleSettlement();
+      };
+      surface.addEventListener('paste', onPaste, true);
+      surface.addEventListener('paste', onPasteEnd);
+      state.dispose = () => {
+        surface.removeEventListener('paste', onPaste, true);
+        surface.removeEventListener('paste', onPasteEnd);
+        mutationObserver.disconnect();
+        longTaskObserver.disconnect();
+      };
+      window[key] = state;
+    }, performanceKey);
+
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await visualEditor.focus();
+    await visualEditor.press('ControlOrMeta+End');
+    await page.evaluate(async (value) => {
+      if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+        throw new Error('native-clipboard-write-unavailable');
+      }
+      await navigator.clipboard.writeText(value);
+    }, syntheticPaste);
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect.poll(
+      () => visualEditor.evaluate((surface, key) => window[key]?.pasteFirstDoubleRaf, performanceKey),
+      { timeout: 30_000, message: 'dense paste should reach its first double-rAF' }
+    ).not.toBeNull();
+    await expect.poll(
+      () => visualEditor.evaluate((surface, key) => window[key]?.pasteSettledAt, performanceKey),
+      { timeout: 30_000, message: 'dense Preview should reach editable readiness' }
+    ).not.toBeNull();
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+      timeout: 30_000
+    });
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true', {
+      timeout: 30_000
+    });
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect.poll(
+      () => previewRequests.length,
+      { timeout: 30_000, message: 'dense paste should issue one Preview request' }
+    ).toBe(baselinePreviewRequestCount + 1);
+    await expect.poll(
+      () => previewResponses.length,
+      { timeout: 30_000, message: 'dense Preview response should be received' }
+    ).toBe(baselinePreviewResponseCount + 1);
+    expect(previewRequests.at(-1)).toEqual(expectedMarkdownEvidence);
+    await expect(source).toHaveValue(expectedMarkdown);
+
+    const response = await previewResponses.at(-1).json();
+    expect(response.editMap?.blocks).toHaveLength(syntheticDensePreviewRootCount + 1);
+    expect(typeof response.html).toBe('string');
+    expect((response.html.match(/<pre\b/g) ?? []).length)
+      .toBeGreaterThanOrEqual(syntheticDenseCodeBlockCount);
+
+    const pasteToSettled = await visualEditor.evaluate((surface, key) => {
+      const state = window[key];
+      if (!state || state.pasteStartedAt === null || state.pasteSettledAt === null) {
+        throw new Error('immersive-dense-paste-performance-state-missing');
+      }
+      return state.pasteSettledAt - state.pasteStartedAt;
+    }, performanceKey);
+    expect(pasteToSettled).toBeLessThanOrEqual(syntheticDensePasteSettledLimitMs);
+
+    const performanceEvidence = await visualEditor.evaluate((surface, key) => {
+      const state = window[key];
+      if (!state) throw new Error('immersive-dense-paste-performance-state-missing');
+      for (const entry of state.longTaskObserver?.takeRecords?.() ?? []) {
+        if (
+          state.measurementStartedAt !== null
+          && entry.startTime >= state.measurementStartedAt
+          && entry.duration > 50
+        ) {
+          state.longTasks.push({
+            duration: entry.duration,
+            startTime: entry.startTime
+          });
+        }
+      }
+      const tasks = state.longTasks
+        .filter(({ startTime, duration }) => (
+          startTime < state.pasteSettledAt
+          && startTime + duration > state.pasteStartedAt
+        ))
+        .map(({ startTime, duration }) => {
+          const transition = [...state.transitions]
+            .reverse()
+            .find(({ at }) => at <= startTime);
+          return {
+            duration,
+            offset: Math.round(startTime - state.measurementStartedAt),
+            phase: transition?.phase ?? state.phase
+          };
+        });
+      const evidence = {
+        longTasks: tasks,
+        pasteFirstDoubleRaf: state.pasteFirstDoubleRaf,
+        pasteHandlerDuration: state.pasteHandlerDuration,
+        pasteSettledAt: state.pasteSettledAt,
+        pasteStartedAt: state.pasteStartedAt
+      };
+      state.dispose();
+      delete window[key];
+      return evidence;
+    }, performanceKey);
+    expect(performanceEvidence.pasteHandlerDuration).toBeLessThan(50);
+    expect(performanceEvidence.pasteFirstDoubleRaf).toBeLessThanOrEqual(100);
+    const previewTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase !== 'paste-settled'
+    );
+    expect(previewTasks.length)
+      .toBeLessThanOrEqual(syntheticDensePreviewTaskCountLimit);
+    for (const task of previewTasks) {
+      expect(task.phase).toBe('preview-response');
+      expect(task.duration)
+        .toBeLessThanOrEqual(syntheticDensePreviewLayoutTaskLimitMs);
+    }
+    await testInfo.attach('immersive-synthetic-dense-preview-performance', {
+      body: JSON.stringify({
+        document: expectedMarkdownEvidence,
+        longTasks: performanceEvidence.longTasks,
+        pasteFirstDoubleRaf: performanceEvidence.pasteFirstDoubleRaf,
+        pasteHandlerDuration: performanceEvidence.pasteHandlerDuration,
+        pasteToSettled,
+        pasteSettledLimit: syntheticDensePasteSettledLimitMs,
+        previewRootBlocks: response.editMap.blocks.length,
+        previewCodeBlocks: (response.html.match(/<pre\b/g) ?? []).length,
+        previewTaskCountLimit: syntheticDensePreviewTaskCountLimit,
+        previewTaskDurationLimit: syntheticDensePreviewLayoutTaskLimitMs
+      }),
+      contentType: 'application/json'
+    });
     expect(browserFailures).toEqual([]);
   });
 
@@ -3792,6 +4132,18 @@ test.describe('EasyMDE editor workflows', () => {
   }
 
   for (const fixture of [
+    {
+      id: 'short-tilde-bare',
+      fence: '~~~',
+      closingFence: '~~~',
+      windowed: false
+    },
+    {
+      id: 'short-backtick-bare',
+      fence: '```',
+      closingFence: '```',
+      windowed: false
+    },
     {
       id: 'short-tilde',
       fence: '~~~bash',

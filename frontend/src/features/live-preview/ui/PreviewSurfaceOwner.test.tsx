@@ -156,7 +156,10 @@ function setup(options?: {
   onWindowReady?: () => void;
   scrollPort?: PreviewScrollPort;
   materializeScheduler?: MaterializeScheduler;
-  stagingScheduler?: Readonly<{ yield: () => Promise<void> }>;
+  stagingScheduler?: Readonly<{
+    now?: () => number;
+    yield: () => Promise<void>;
+  }>;
   windowed?: boolean;
 }) {
   let windowed = options?.windowed;
@@ -303,7 +306,6 @@ describe('PreviewSurfaceOwner', () => {
   it('commits only the bounded window on the first windowed ready state', async () => {
     const fixture = windowedFixture(320, 'windowed');
     const enhancement = deferred<void>();
-    const stagingYield = vi.fn(() => Promise.resolve());
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
       () => enhancement.promise
     );
@@ -313,7 +315,10 @@ describe('PreviewSurfaceOwner', () => {
       initialEditMap: fixture.editMap,
       initialHtml: fixture.html,
       initialSignature: 'windowed',
-      stagingScheduler: { yield: stagingYield },
+      stagingScheduler: {
+        now: () => 0,
+        yield: () => Promise.resolve()
+      },
       windowed: true
     });
 
@@ -321,7 +326,6 @@ describe('PreviewSurfaceOwner', () => {
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     });
     expect(enhance).toHaveBeenCalledOnce();
-    expect(stagingYield).toHaveBeenCalledTimes(10);
     expect(enhance.mock.calls[0]?.[0].isConnected).toBe(false);
     expect(enhance.mock.calls[0]?.[0].style.display).toBe('none');
     const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
@@ -676,7 +680,6 @@ describe('PreviewSurfaceOwner', () => {
       )?.setAttribute('data-enhanced', '1');
       return enhancement.promise;
     });
-    const stagingYield = vi.fn(() => Promise.resolve());
     const materializeScheduler: MaterializeScheduler = {
       pending: [],
       yield: vi.fn(() => Promise.resolve())
@@ -692,7 +695,6 @@ describe('PreviewSurfaceOwner', () => {
       materializeScheduler,
       onHtmlChange: (html) => htmlChanges.push(html),
       onStatusChange: (status) => statuses.push(status),
-      stagingScheduler: { yield: stagingYield },
       windowed: true
     });
     const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
@@ -709,7 +711,6 @@ describe('PreviewSurfaceOwner', () => {
     )).toHaveLength(160);
     expect(candidate.isConnected).toBe(false);
     expect(candidate.style.display).toBe('none');
-    expect(stagingYield).toHaveBeenCalledTimes(4);
     expect(materializeScheduler.yield).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -1398,10 +1399,22 @@ describe('PreviewSurfaceOwner', () => {
     setInnerHTML.mockRestore();
   });
 
-  it('moves large server responses into connected staging in bounded batches before enhancement', async () => {
+  it('yields connected staging when elapsed work reaches its time budget', async () => {
     const firstYield = deferred<void>();
+    let clockReads = 0;
+    let releaseFirstYield = true;
     const stagingScheduler = {
-      yield: vi.fn(() => firstYield.promise)
+      now: () => {
+        clockReads += 1;
+        return clockReads * 3;
+      },
+      yield: vi.fn(() => {
+        if (releaseFirstYield) {
+          releaseFirstYield = false;
+          return firstYield.promise;
+        }
+        return Promise.resolve();
+      })
     };
     const totalNodes = 130;
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>(async (candidate) => {
@@ -1420,6 +1433,14 @@ describe('PreviewSurfaceOwner', () => {
 
     const activeChild = current.surface.firstChild;
     const setInnerHTML = vi.spyOn(current.surface, 'innerHTML', 'set');
+    const stagingMutations: MutationRecord[] = [];
+    const stagingObserver = new MutationObserver((records) => {
+      stagingMutations.push(...records.filter((record) => (
+        record.target instanceof HTMLElement
+        && record.target.hasAttribute('data-easymde-preview-staging')
+      )));
+    });
+    stagingObserver.observe(current.canvas, { childList: true, subtree: true });
     act(() => {
       current.session.schedule(request('large', 'large'), true);
     });
@@ -1439,9 +1460,15 @@ describe('PreviewSurfaceOwner', () => {
     );
     expect(staging).not.toBeNull();
     expect(staging?.isConnected).toBe(true);
-    expect(staging?.childElementCount).toBeGreaterThan(0);
+    expect(staging?.childElementCount).toBe(3);
     expect(staging?.childElementCount).toBeLessThan(totalNodes);
     expect(stagingScheduler.yield).toHaveBeenCalledOnce();
+    stagingMutations.push(...stagingObserver.takeRecords().filter((record) => (
+      record.target === staging
+    )));
+    stagingObserver.disconnect();
+    expect(stagingMutations.filter((record) => record.target === staging)).toHaveLength(1);
+    expect(stagingMutations[0]?.addedNodes).toHaveLength(3);
     expect(enhance).not.toHaveBeenCalled();
     expect(current.surface.firstChild).toBe(activeChild);
     expect(setInnerHTML).not.toHaveBeenCalled();
@@ -1460,8 +1487,13 @@ describe('PreviewSurfaceOwner', () => {
 
   it('aborts a staging batch before enhancement and removes its connected candidate', async () => {
     const firstYield = deferred<void>();
+    let clockReads = 0;
     let firstBatch = true;
     const stagingScheduler = {
+      now: () => {
+        clockReads += 1;
+        return clockReads * 3;
+      },
       yield: vi.fn(() => {
         if (firstBatch) {
           firstBatch = false;

@@ -64,6 +64,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   windowedCommit?: SafePreviewHtmlSinkWindowCommit | null;
   statusClassName?: string;
   statusMessage?: string;
+  statusRole?: string;
   style?: CSSProperties;
   surfaceRef: Ref<HTMLElement>;
 }>;
@@ -73,6 +74,7 @@ type AppliedSurfaceState = Readonly<{
   revision: number;
   statusClassName: string | undefined;
   statusMessage: string | undefined;
+  statusRole: string | undefined;
   materializeCommitKey: number | null;
   windowedCommitKey: number | null;
 }>;
@@ -333,6 +335,7 @@ export function SafePreviewHtmlSink({
   windowedCommit,
   statusClassName,
   statusMessage,
+  statusRole,
   style,
   surfaceRef
 }: SafePreviewHtmlSinkProps) {
@@ -365,6 +368,7 @@ export function SafePreviewHtmlSink({
       && appliedSurfaceState.html === html
       && appliedSurfaceState.statusClassName === statusClassName
       && appliedSurfaceState.statusMessage === statusMessage
+      && appliedSurfaceState.statusRole === statusRole
       && null === appliedSurfaceState.windowedCommitKey
     ) {
       return;
@@ -377,6 +381,7 @@ export function SafePreviewHtmlSink({
         && appliedSurfaceState.html === html
         && appliedSurfaceState.statusClassName === statusClassName
         && appliedSurfaceState.statusMessage === statusMessage
+        && appliedSurfaceState.statusRole === statusRole
         && appliedSurfaceState.materializeCommitKey === activeMaterializeCommit.key
       ) {
         return undefined;
@@ -394,6 +399,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: null
           };
           onMaterializeComplete?.(
@@ -408,6 +414,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: null
           };
           onMaterializeFailure?.(
@@ -425,6 +432,7 @@ export function SafePreviewHtmlSink({
           revision: htmlRevision,
           statusClassName,
           statusMessage,
+          statusRole,
           windowedCommitKey: null
         };
       };
@@ -437,6 +445,7 @@ export function SafePreviewHtmlSink({
         && appliedSurfaceState.html === html
         && appliedSurfaceState.statusClassName === statusClassName
         && appliedSurfaceState.statusMessage === statusMessage
+        && appliedSurfaceState.statusRole === statusRole
         && appliedSurfaceState.windowedCommitKey === windowCommit.key
       ) {
         return undefined;
@@ -451,6 +460,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: windowCommit.key
           };
           onStagedCommit?.(windowCommit.revision);
@@ -468,6 +478,7 @@ export function SafePreviewHtmlSink({
         revision: htmlRevision,
         statusClassName,
         statusMessage,
+        statusRole,
         windowedCommitKey: null
       };
       onStagedCommit?.(commit.revision);
@@ -486,12 +497,14 @@ export function SafePreviewHtmlSink({
           revision: htmlRevision,
           statusClassName,
           statusMessage,
+          statusRole,
           windowedCommitKey: null
         };
         return undefined;
       }
       const message = surface.ownerDocument.createElement('p');
       if (statusClassName) message.className = statusClassName;
+      if (statusRole) message.setAttribute('role', statusRole);
       message.textContent = statusMessage;
       surface.append(message);
     }
@@ -501,6 +514,7 @@ export function SafePreviewHtmlSink({
       revision: htmlRevision,
       statusClassName,
       statusMessage,
+      statusRole,
       windowedCommitKey: null
     };
     return undefined;
@@ -515,6 +529,7 @@ export function SafePreviewHtmlSink({
     stagedCommit,
     statusClassName,
     statusMessage,
+    statusRole,
     windowedCommit
   ]);
 

@@ -59,6 +59,7 @@ function previewNeedsWindow(editMap: PreviewEditMap | null): boolean {
 type PreviewMessages = Readonly<{
   empty: string;
   error: string;
+  loading: string;
 }>;
 
 type PreviewHtmlState = Readonly<{
@@ -243,13 +244,13 @@ function createEnhancementCandidate(
   preparedSourceNodes?: ReadonlyArray<Node>
 ): Readonly<{ sourceNodes: ReadonlyArray<Node>; surface: HTMLElement }> {
   const documentRef = activeSurface.ownerDocument;
-  let sourceNodes: ReadonlyArray<Node>;
+  let parsedSourceNodes: ReadonlyArray<Node>;
   if (preparedSourceNodes) {
-    sourceNodes = preparedSourceNodes;
+    parsedSourceNodes = preparedSourceNodes;
   } else {
     const template = documentRef.createElement('template');
     template.innerHTML = html;
-    sourceNodes = Array.from(template.content.childNodes);
+    parsedSourceNodes = Array.from(template.content.childNodes);
   }
   const candidate = documentRef.createElement('div');
   candidate.className = activeSurface.className;
@@ -273,7 +274,7 @@ function createEnhancementCandidate(
     candidate.style.display = 'none';
   }
   return {
-    sourceNodes,
+    sourceNodes: parsedSourceNodes,
     surface: candidate
   };
 }
@@ -1017,8 +1018,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           editMap: null,
           features,
           generation,
-          html: previousHtml?.html ?? ('' as SafePreviewHtml),
-          htmlRevision: previousHtml?.htmlRevision ?? 0,
+          html: previousHtml?.html ?? '' as SafePreviewHtml,
+          htmlRevision: previousHtml?.htmlRevision ?? generation,
           kind: 'html',
           phase: 'failed',
           signature: '',
@@ -1035,6 +1036,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         sourceNodes: ReadonlyArray<Node>;
         surface: HTMLElement;
       }>;
+      const windowedFirstPaint = windowedRef.current
+        && previewNeedsWindow(requestState.response.editMap ?? null);
       try {
         candidateMarkup = createEnhancementCandidate(
           activeSurface,
@@ -1057,19 +1060,32 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         surface: candidateMarkup.surface
       };
       setState((current) => {
-        const previousHtml = 'html' === current.kind ? current : null;
+        if (generationRef.current !== generation) return current;
+        const hasCurrentHtml = 'html' === current.kind
+          && Boolean(current.html.trim());
         return {
           codeTheme: requestState.request.codeTheme,
           editMap: requestState.response.editMap ?? null,
           features,
           generation,
-          html: previousHtml?.html ?? ('' as SafePreviewHtml),
-          htmlRevision: previousHtml?.htmlRevision ?? 0,
+          html: hasCurrentHtml && 'html' === current.kind
+            ? current.html
+            : windowedFirstPaint
+              ? '' as SafePreviewHtml
+              : requestState.response.html,
+          htmlRevision: hasCurrentHtml && 'html' === current.kind
+            ? current.htmlRevision
+            : generation,
           kind: 'html',
           phase: 'enhancing',
           signature: '',
           materializeCommit: null,
-          stagedCommit: null,
+          stagedCommit: !hasCurrentHtml && !windowedFirstPaint
+            ? {
+                nodes: candidateMarkup.sourceNodes.map((node) => node.cloneNode(true)),
+                revision: generation
+              }
+            : null,
           windowedCommit: null,
         };
       });
@@ -1760,6 +1776,19 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         ? {
             statusClassName: 'easymde-preview-error',
             statusMessage: props.messages.error
+          }
+        : {})}
+      {...(
+        ('loading' === state.kind || (
+          'html' === state.kind
+          && 'enhancing' === state.phase
+          && !state.html.trim()
+        ))
+        && 'paper' !== props.emptyMode
+        ? {
+            statusClassName: 'easymde-preview-pending',
+            statusMessage: props.messages.loading,
+            statusRole: 'status'
           }
         : {})}
       {...(undefined !== props.contentEditable

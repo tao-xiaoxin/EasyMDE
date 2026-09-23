@@ -424,6 +424,7 @@ final class AdminAssets {
 				'messages'  => array(
 					'empty' => $strings['previewEmpty'],
 					'error' => $strings['previewError'],
+					'loading' => $strings['previewLoading'],
 				),
 				'postId'    => absint( $post_id ),
 				'signature' => '',
@@ -1023,6 +1024,7 @@ final class AdminAssets {
 			'editorLabel'           => __( 'Markdown source', 'easymde' ),
 			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
 			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
+			'previewLoading'        => __( 'Loading preview...', 'easymde' ),
 			'insertMedia'           => __( 'Insert Media', 'easymde' ),
 			'markdownToolbar'       => __( 'Markdown toolbar', 'easymde' ),
 			'undo'                  => __( 'Undo', 'easymde' ),

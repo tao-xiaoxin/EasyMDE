@@ -523,7 +523,7 @@ function fixture(): EditorRootProps &
     preview: {
       features: {},
       html: '<p>Initial</p>' as SafePreviewHtml,
-      messages: { empty: 'Empty', error: 'Failed' },
+      messages: { empty: 'Empty', error: 'Failed', loading: 'Loading' },
       postId: 7,
       signature: 'initial'
     },

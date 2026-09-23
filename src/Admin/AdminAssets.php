@@ -422,8 +422,8 @@ final class AdminAssets {
 				'features'  => (object) array(),
 				'html'      => '',
 				'messages'  => array(
-					'empty' => $strings['previewEmpty'],
-					'error' => $strings['previewError'],
+					'empty'   => $strings['previewEmpty'],
+					'error'   => $strings['previewError'],
 					'loading' => $strings['previewLoading'],
 				),
 				'postId'    => absint( $post_id ),

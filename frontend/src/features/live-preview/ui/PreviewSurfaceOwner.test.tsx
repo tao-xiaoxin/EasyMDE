@@ -674,10 +674,12 @@ describe('PreviewSurfaceOwner', () => {
   it('commits the complete enhanced DOM directly at the window cap', async () => {
     const fixture = windowedFixture(160, 'windowed-cap');
     const enhancement = deferred<void>();
+    const enhancementStarted = deferred<HTMLElement>();
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>((candidate) => {
       candidate.querySelector(
         '[data-easymde-visual-block-id="b159"]'
       )?.setAttribute('data-enhanced', '1');
+      enhancementStarted.resolve(candidate);
       return enhancement.promise;
     });
     const materializeScheduler: MaterializeScheduler = {
@@ -695,17 +697,20 @@ describe('PreviewSurfaceOwner', () => {
       materializeScheduler,
       onHtmlChange: (html) => htmlChanges.push(html),
       onStatusChange: (status) => statuses.push(status),
+      stagingScheduler: {
+        now: () => 0,
+        yield: () => Promise.resolve()
+      },
       windowed: true
     });
     const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    let candidate!: HTMLElement;
 
     await act(async () => {
-      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      candidate = await enhancementStarted.promise;
     });
 
     expect(enhance).toHaveBeenCalledOnce();
-    const candidate = enhance.mock.calls[0]?.[0];
-    if (!candidate) throw new Error('enhancement candidate missing');
     expect(candidate.querySelectorAll(
       '[data-easymde-visual-block-id]'
     )).toHaveLength(160);

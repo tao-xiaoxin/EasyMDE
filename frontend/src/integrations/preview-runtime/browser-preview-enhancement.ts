@@ -805,12 +805,16 @@ export function createWindowPreviewEnhancementRuntime(
       const highlight = windowRef.hljs as HighlightWarmRuntime | undefined;
       if (!highlight) return false;
       if (warmedHighlightRuntime === highlight) return true;
-      for (const language of highlight.listLanguages()) {
+      const languages = highlight.listLanguages();
+      for (let index = 0; index < languages.length; index += 1) {
         if (signal.aborted) return false;
+        const language = languages[index];
+        if (undefined === language) return false;
         highlight.highlight('', { ignoreIllegals: true, language });
-        await new Promise<void>((resolve) => {
-          windowRef.requestAnimationFrame(() => resolve());
-        });
+        const hasMore = index < languages.length - 1;
+        if (hasMore) {
+          await new Promise<void>((resolve) => windowRef.setTimeout(resolve, 0));
+        }
       }
       if (signal.aborted) return false;
       warmedHighlightRuntime = highlight;

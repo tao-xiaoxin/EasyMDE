@@ -384,6 +384,55 @@ describe('frontend enhancement runtime', () => {
     expect(requestAnimationFrame).toHaveBeenCalled();
   });
 
+  it('finishes enhancement when requestAnimationFrame never invokes its callback', async () => {
+    const root = document.createElement('article');
+    root.className = 'easymde-code-line-numbers';
+    root.innerHTML = [
+      '<pre><code class="language-javascript">const first = 1;</code></pre>',
+      '<pre><code class="language-javascript">const second = 2;</code></pre>'
+    ].join('');
+    const windowRef = runtime();
+    let clock = 0;
+    Object.defineProperty(windowRef, 'performance', {
+      configurable: true,
+      value: { now: () => clock }
+    });
+    const requestAnimationFrame = vi.fn(() => 1);
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    Object.defineProperty(windowRef, 'setTimeout', {
+      configurable: true,
+      value: window.setTimeout.bind(window)
+    });
+    windowRef.hljs = {
+      highlightElement: () => {
+        clock += 9;
+      }
+    };
+    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
+      backgroundColor: 'rgb(12, 34, 56)',
+      color: 'rgb(171, 178, 191)'
+    } as CSSStyleDeclaration);
+
+    const completion = Promise.race([
+      enhanceFrontendContent(
+        root,
+        { features: { syntaxHighlight: true } },
+        windowRef
+      ).then(() => 'complete' as const),
+      new Promise<'timeout'>((resolve) => {
+        window.setTimeout(() => resolve('timeout'), 100);
+      })
+    ]);
+
+    expect(await completion).toBe('complete');
+    expect(requestAnimationFrame).toHaveBeenCalled();
+    expect(root.querySelectorAll('.easymde-code-line-number-gutter > span'))
+      .toHaveLength(2);
+  });
+
   it('renders Mermaid serially and stops between blocks when the owner is stale', async () => {
     const root = document.createElement('article');
     root.innerHTML = [

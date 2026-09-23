@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { previewEnhancementBootstrapFixture } from '../../test/preview-enhancement-bootstrap-fixture';
 import {
   createBrowserPreviewEnhancementPort,
+  createWindowPreviewEnhancementRuntime,
   type PreviewEnhancementBrowserRuntime
 } from './browser-preview-enhancement';
 
@@ -135,6 +136,40 @@ describe('createBrowserPreviewEnhancementPort', () => {
       .toContain('/assets/vendor/highlight/styles/github.min.css');
     expect(warmHighlightAuto).toHaveBeenCalledOnce();
     expect(enhance).not.toHaveBeenCalled();
+  });
+
+  it('completes Highlight auto-detection warmup when requestAnimationFrame is starved', async () => {
+    const windowRef = Object.create(window) as Window;
+    const requestAnimationFrame = vi.fn(() => 1);
+    const highlight = {
+      highlight: vi.fn(),
+      listLanguages: vi.fn(() => ['javascript', 'python'])
+    };
+    Object.defineProperty(windowRef, 'hljs', {
+      configurable: true,
+      value: highlight
+    });
+    Object.defineProperty(windowRef, 'requestAnimationFrame', {
+      configurable: true,
+      value: requestAnimationFrame
+    });
+    Object.defineProperty(windowRef, 'setTimeout', {
+      configurable: true,
+      value: window.setTimeout.bind(window)
+    });
+    const runtime = createWindowPreviewEnhancementRuntime(windowRef);
+
+    const completion = Promise.race([
+      runtime.warmHighlightAuto(new AbortController().signal)
+        .then((warmed) => warmed ? 'complete' as const : 'not-ready' as const),
+      new Promise<'timeout'>((resolve) => {
+        window.setTimeout(() => resolve('timeout'), 100);
+      })
+    ]);
+
+    expect(await completion).toBe('complete');
+    expect(highlight.highlight).toHaveBeenCalledTimes(2);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
   });
 
   it('keeps the active code stylesheet until commit and removes a cancelled candidate', async () => {

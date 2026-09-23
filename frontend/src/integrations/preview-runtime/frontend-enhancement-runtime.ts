@@ -122,11 +122,20 @@ function defaultEnhancementScheduler(
   return {
     now: () => windowRef.performance?.now() ?? Date.now(),
     yield: () => new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+
+      // rAF is useful when available, but it is not a completion guarantee for
+      // hidden pages or popup surfaces. The timer keeps enhancement progress
+      // independent of frame delivery.
       if ('function' === typeof windowRef.requestAnimationFrame) {
-        windowRef.requestAnimationFrame(() => resolve());
-        return;
+        windowRef.requestAnimationFrame(finish);
       }
-      windowRef.setTimeout(resolve, 0);
+      windowRef.setTimeout(finish, 0);
     })
   };
 }

@@ -765,13 +765,9 @@ describe('createBrowserPreviewEnhancementPort', () => {
     const unavailableRuntime: PreviewEnhancementBrowserRuntime = {
       ...runtime(enhance),
       hasKatex: () => !!document.getElementById('easymde-katex-js'),
-      hasMathRenderer: () => !!document.querySelector(
-        'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
-      ),
+      hasMathRenderer: () => true,
       hasMermaid: () => !!document.getElementById('easymde-mermaid-js'),
-      hasMermaidRenderer: () => !!document.querySelector(
-        'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
-      )
+      hasMermaidRenderer: () => true
     };
     const port = createBrowserPreviewEnhancementPort(
       previewEnhancementBootstrapFixture,
@@ -789,21 +785,249 @@ describe('createBrowserPreviewEnhancementPort', () => {
     expect(document.querySelector('#easymde-katex-css')).not.toBeNull();
     expect(document.querySelector('#easymde-toc-css')).not.toBeNull();
     expect(document.querySelector('#easymde-katex-js')).not.toBeNull();
-    expect(document.querySelector(
-      'script[data-easymde-loaded*="frontend-enhancements-fixture.js"]'
-    )).not.toBeNull();
     expect(document.querySelector('#easymde-mermaid-js')).not.toBeNull();
     expect(document.querySelectorAll<HTMLScriptElement>(
-      'script[src*="frontend-enhancements-fixture.js"]'
-    )).toHaveLength(1);
+      '#easymde-math-renderer-js, #easymde-mermaid-renderer-js'
+    )).toHaveLength(0);
     expect(enhance).toHaveBeenCalledTimes(1);
   });
 
-  it('re-associates a reused renderer URL and cancels the superseded alias', async () => {
+  it('reuses a generic library URL across independent runtime IDs', async () => {
     const append = document.head.appendChild.bind(document.head);
-    let rendererReady = false;
-    const mathRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-math.js';
-    const mermaidRendererUrl = 'https://example.test/wp-content/plugins/easymde/assets/frontend-enhancements-mermaid.js';
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      if (node instanceof HTMLScriptElement && 'easymde-katex-js' === node.id) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const sharedLibraryUrl = previewEnhancementBootstrapFixture.assets.katexScriptUrl;
+    const bootstrap = {
+      ...previewEnhancementBootstrapFixture,
+      assets: {
+        ...previewEnhancementBootstrapFixture.assets,
+        mermaidScriptUrl: sharedLibraryUrl
+      }
+    };
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const runtimeOwner: PreviewEnhancementBrowserRuntime = {
+      ...runtime(enhance),
+      hasKatex: () => !!document.querySelector(
+        `script[data-easymde-loaded="${sharedLibraryUrl}"]`
+      ),
+      hasMathRenderer: () => true,
+      hasMermaid: () => !!document.querySelector(
+        `script[data-easymde-loaded="${sharedLibraryUrl}"]`
+      ),
+      hasMermaidRenderer: () => true
+    };
+    const port = createBrowserPreviewEnhancementPort(
+      bootstrap,
+      { documentRef: document, runtime: runtimeOwner }
+    );
+
+    await port.enhance(
+      document.createElement('article'),
+      { math: true, mermaid: true },
+      () => true,
+      context()
+    );
+
+    expect(Array.from(document.scripts).filter((script) =>
+      script.src === sharedLibraryUrl
+    )).toHaveLength(1);
+    expect(document.querySelector('#easymde-mermaid-js')).toBeNull();
+    expect(enhance).toHaveBeenCalledOnce();
+  });
+
+  it('waits for a matching enqueued script while the document is loading', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    try {
+      const existing = document.createElement('script');
+      existing.id = 'easymde-highlight-js';
+      existing.src = previewEnhancementBootstrapFixture.assets.highlightScriptUrl;
+      document.head.appendChild(existing);
+      const addEventListener = vi.spyOn(existing, 'addEventListener');
+      let highlightReady = false;
+      const enhance = vi.fn().mockResolvedValue(undefined);
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        {
+          documentRef: document,
+          runtime: {
+            ...runtime(enhance),
+            hasHighlight: () => highlightReady
+          }
+        }
+      );
+      let outcome: 'resolved' | 'rejected' | null = null;
+      const operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        context('github')
+      );
+      void operation.then(
+        () => { outcome = 'resolved'; },
+        () => { outcome = 'rejected'; }
+      );
+
+      for (const link of document.querySelectorAll<HTMLLinkElement>(
+        '[data-easymde-stylesheet-owner]'
+      )) {
+        link.dispatchEvent(new Event('load'));
+      }
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+      expect(outcome).toBeNull();
+
+      highlightReady = true;
+      existing.dispatchEvent(new Event('load'));
+      await expect(operation).resolves.toBeUndefined();
+      expect(existing.isConnected).toBe(true);
+      expect(existing.dataset.easymdeLoaded).toBeUndefined();
+      expect(enhance).toHaveBeenCalledOnce();
+    } finally {
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('preserves an enqueued script when its pending wait is aborted or errors', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    try {
+      const existing = document.createElement('script');
+      existing.id = 'easymde-highlight-js';
+      existing.src = previewEnhancementBootstrapFixture.assets.highlightScriptUrl;
+      document.head.appendChild(existing);
+      const addEventListener = vi.spyOn(existing, 'addEventListener');
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        { documentRef: document, runtime: { ...runtime(), hasHighlight: () => false } }
+      );
+      const controller = new AbortController();
+      const operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      for (const link of document.querySelectorAll<HTMLLinkElement>(
+        '[data-easymde-stylesheet-owner]'
+      )) {
+        link.dispatchEvent(new Event('load'));
+      }
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+      controller.abort();
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-stale');
+      expect(existing.isConnected).toBe(true);
+
+      existing.remove();
+      const retry = document.createElement('script');
+      retry.id = 'easymde-highlight-js';
+      retry.src = previewEnhancementBootstrapFixture.assets.highlightScriptUrl;
+      document.head.appendChild(retry);
+      const retryAddEventListener = vi.spyOn(retry, 'addEventListener');
+      const errorPort = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        { documentRef: document, runtime: { ...runtime(), hasHighlight: () => false } }
+      );
+      const errorOperation = errorPort.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        context('github')
+      );
+      for (const link of document.querySelectorAll<HTMLLinkElement>(
+        '[data-easymde-stylesheet-owner]'
+      )) {
+        link.dispatchEvent(new Event('load'));
+      }
+      await vi.waitFor(() => expect(retryAddEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+      retry.dispatchEvent(new Event('error'));
+      await expect(errorOperation).rejects.toThrowError(
+        'preview-enhancement-resource-load-failed'
+      );
+      expect(retry.isConnected).toBe(true);
+    } finally {
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects an unmarked matching script after document loading has settled', async () => {
+    autoLoadResources();
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'complete'
+    });
+    try {
+      const existing = document.createElement('script');
+      existing.id = 'easymde-highlight-js';
+      existing.src = previewEnhancementBootstrapFixture.assets.highlightScriptUrl;
+      document.head.appendChild(existing);
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        { documentRef: document, runtime: { ...runtime(), hasHighlight: () => false } }
+      );
+
+      await expect(port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        context('github')
+      )).rejects.toThrowError('preview-enhancement-runtime-unavailable');
+      expect(existing.isConnected).toBe(true);
+    } finally {
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('waits for the shared enhancement script by exact URL without appending a duplicate', async () => {
+    const append = document.head.appendChild.bind(document.head);
     vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
       const result = append(node);
       if (node instanceof Element) appended.push(node);
@@ -812,71 +1036,909 @@ describe('createBrowserPreviewEnhancementPort', () => {
       }
       return result;
     });
-    const bootstrap = {
-      ...previewEnhancementBootstrapFixture,
-      assets: {
-        ...previewEnhancementBootstrapFixture.assets,
-        mathRendererUrl,
-        mermaidRendererUrl
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    try {
+      const existing = document.createElement('script');
+      existing.id = 'easymde-enhancements-js';
+      existing.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(existing);
+      const addEventListener = vi.spyOn(existing, 'addEventListener');
+      let enhancementsReady = false;
+      const enhance = vi.fn().mockResolvedValue(undefined);
+      const sharedEnhancements = {
+        enhance,
+        syncCodeFrameBackgrounds: vi.fn()
+      };
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        {
+          documentRef: document,
+          runtime: {
+            ...runtime(enhance),
+            getEnhancements: () => enhancementsReady ? sharedEnhancements : null,
+            hasHighlight: () => true
+          }
+        }
+      );
+      const operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+      expect(Array.from(document.scripts).filter((script) =>
+        script.src === previewEnhancementBootstrapFixture.assets.mathRendererUrl
+      )).toHaveLength(1);
+
+      enhancementsReady = true;
+      existing.dispatchEvent(new Event('load'));
+      await expect(operation).resolves.toBeUndefined();
+      expect(enhance).toHaveBeenCalledOnce();
+      expect(existing.id).toBe('easymde-enhancements-js');
+      expect(existing.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      controller.abort();
+      await Promise.resolve();
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
       }
+    }
+  });
+
+  it('uses one future WordPress script for math and Mermaid renderer capabilities', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      if (
+        node instanceof HTMLScriptElement
+        && ['easymde-katex-js', 'easymde-mermaid-js'].includes(node.id)
+      ) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const sharedEnhancements = {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
     };
+    const getEnhancements = vi.fn(() => enhancementsReady ? sharedEnhancements : null);
     const port = createBrowserPreviewEnhancementPort(
-      bootstrap,
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasKatex: () => !!document.getElementById('easymde-katex-js'),
+          hasMathRenderer: () => enhancementsReady,
+          hasMermaid: () => !!document.getElementById('easymde-mermaid-js'),
+          hasMermaidRenderer: () => enhancementsReady
+        }
+      }
+    );
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { math: true, mermaid: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(
+        getEnhancements.mock.calls.length
+        + document.querySelectorAll('#easymde-math-renderer-js, #easymde-mermaid-renderer-js').length
+      ).toBeGreaterThan(0));
+      expect(document.querySelector('#easymde-math-renderer-js')).toBeNull();
+      expect(document.querySelector('#easymde-mermaid-renderer-js')).toBeNull();
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      const addEventListener = vi.spyOn(external, 'addEventListener');
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await expect(operation).resolves.toBeUndefined();
+      expect(document.querySelectorAll('#easymde-enhancements-js')).toHaveLength(1);
+      expect(document.querySelector('#easymde-katex-js')).not.toBeNull();
+      expect(document.querySelector('#easymde-mermaid-js')).not.toBeNull();
+      expect(document.querySelectorAll('#easymde-math-renderer-js')).toHaveLength(0);
+      expect(document.querySelectorAll('#easymde-mermaid-renderer-js')).toHaveLength(0);
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+      expect(enhance).toHaveBeenCalledOnce();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('cancels the shared waiter when a parallel KaTeX load fails', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      if (node instanceof HTMLScriptElement && 'easymde-katex-js' === node.id) {
+        queueMicrotask(() => node.dispatchEvent(new Event('error')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const getEnhancements = vi.fn(() => enhancementsReady ? {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
+    } : null);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasKatex: () => false,
+          hasMathRenderer: () => enhancementsReady
+        }
+      }
+    );
+    let operation: Promise<void> | null = null;
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { math: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await expect(operation).rejects.toThrowError(
+        'preview-enhancement-resource-load-failed'
+      );
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      const addEventListener = vi.spyOn(external, 'addEventListener');
+      document.head.appendChild(external);
+      await Promise.resolve();
+      expect(addEventListener).not.toHaveBeenCalledWith('load', expect.any(Function));
+      expect(addEventListener).not.toHaveBeenCalledWith('error', expect.any(Function));
+
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('waits for a future shared enhancement script without injecting a parser race duplicate', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    let enhancementsReady = false;
+    const sharedEnhancements = {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
+    };
+    const getEnhancements = vi.fn(() => enhancementsReady ? sharedEnhancements : null);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasHighlight: () => true
+        }
+      }
+    );
+    try {
+      expect(document.querySelector('#easymde-enhancements-js')).toBeNull();
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+
+      await vi.waitFor(() => expect(getEnhancements).toHaveBeenCalled());
+      expect(document.querySelectorAll('#easymde-enhancements-js')).toHaveLength(0);
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      const addEventListener = vi.spyOn(external, 'addEventListener');
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await expect(operation).resolves.toBeUndefined();
+      expect(document.querySelectorAll('#easymde-enhancements-js')).toHaveLength(1);
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+      expect(enhance).toHaveBeenCalledOnce();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects a current shared enhancement script with the wrong ID', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const external = document.createElement('script');
+    external.id = 'easymde-enhancements-alias-js';
+    external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+    document.head.appendChild(external);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements: () => enhancementsReady ? {
+            enhance,
+            syncCodeFrameBackgrounds: vi.fn()
+          } : null,
+          hasHighlight: () => true
+        }
+      }
+    );
+    let operation: Promise<void> | null = null;
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-conflict');
+
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects a current shared enhancement script when only its version differs', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const expectedUrl = new URL(previewEnhancementBootstrapFixture.assets.mathRendererUrl);
+    const mismatchedUrl = new URL(expectedUrl.href);
+    mismatchedUrl.searchParams.set('ver', '0000000000000000');
+    const external = document.createElement('script');
+    external.id = 'easymde-enhancements-js';
+    external.src = mismatchedUrl.href;
+    document.head.appendChild(external);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements: () => null,
+          hasHighlight: () => true
+        }
+      }
+    );
+    let operation: Promise<void> | null = null;
+    try {
+      expect(mismatchedUrl.origin).toBe(expectedUrl.origin);
+      expect(mismatchedUrl.pathname).toBe(expectedUrl.pathname);
+      expect(mismatchedUrl.searchParams.get('ver')).not.toBe(expectedUrl.searchParams.get('ver'));
+
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-conflict');
+
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.id).toBe('easymde-enhancements-js');
+      expect(external.src).toBe(mismatchedUrl.href);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects an unmarked shared enhancement script after document loading settles', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'complete'
+    });
+    const controller = new AbortController();
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const external = document.createElement('script');
+    external.id = 'easymde-enhancements-js';
+    external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+    document.head.appendChild(external);
+    const addEventListener = vi.spyOn(external, 'addEventListener');
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements: () => null,
+          hasHighlight: () => true
+        }
+      }
+    );
+    let operation: Promise<void> | null = null;
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await expect(operation).rejects.toThrowError(
+        'preview-enhancement-runtime-unavailable'
+      );
+      expect(addEventListener).not.toHaveBeenCalledWith('load', expect.any(Function));
+      expect(addEventListener).not.toHaveBeenCalledWith('error', expect.any(Function));
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+      expect(enhance).not.toHaveBeenCalled();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects a future shared enhancement script with the wrong ID', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const getEnhancements = vi.fn(() => enhancementsReady ? {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
+    } : null);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasHighlight: () => true
+        }
+      }
+    );
+    let operation: Promise<void> | null = null;
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(getEnhancements).toHaveBeenCalled());
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-alias-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-conflict');
+
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('cancels a future shared enhancement wait on dispose before parser insertion', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const getEnhancements = vi.fn(() => enhancementsReady ? {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
+    } : null);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasHighlight: () => true
+        }
+      }
+    );
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(getEnhancements).toHaveBeenCalled());
+
+      port.dispose?.();
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-stale');
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('rejects an errored future shared enhancement script without mutating it', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    const addEventListener = vi.fn();
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
       {
         documentRef: document,
         runtime: {
           ...runtime(),
-          hasKatex: () => true,
-          hasMathRenderer: () => rendererReady,
-          hasMermaid: () => true,
-          hasMermaidRenderer: () => rendererReady
+          getEnhancements: () => null,
+          hasHighlight: () => true
         }
       }
     );
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(document.querySelector(
+        '#easymde-enhancements-js'
+      )).toBeNull());
 
-    const math = port.enhance(
-      document.createElement('article'),
-      { math: true },
-      () => true,
-      context()
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const firstMermaid = port.enhance(
-      document.createElement('article'),
-      { mermaid: true },
-      () => true,
-      context()
-    );
-    void firstMermaid.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    const staleMermaidScript = document.querySelector<HTMLScriptElement>(
-      '#easymde-mermaid-renderer-js'
-    );
-    bootstrap.assets.mermaidRendererUrl = mathRendererUrl;
-    const secondMermaid = port.enhance(
-      document.createElement('article'),
-      { mermaid: true },
-      () => true,
-      context()
-    );
-    await Promise.resolve();
-    await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      const originalAddEventListener = external.addEventListener.bind(external);
+      vi.spyOn(external, 'addEventListener').mockImplementation((type, listener, options) => {
+        addEventListener(type);
+        return originalAddEventListener(type, listener, options);
+      });
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith('load'));
 
-    const mathScript = document.querySelector<HTMLScriptElement>(
-      '#easymde-math-renderer-js'
-    );
-    if (!mathScript || !staleMermaidScript) {
-      throw new Error('expected pending renderer scripts');
+      external.dispatchEvent(new Event('error'));
+      await expect(operation).rejects.toThrowError(
+        'preview-enhancement-resource-load-failed'
+      );
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
     }
+  });
 
-    rendererReady = true;
-    mathScript.dispatchEvent(new Event('load'));
-    await expect(math).resolves.toBeUndefined();
-    await expect(secondMermaid).resolves.toBeUndefined();
-    await expect(firstMermaid).rejects.toThrowError('preview-enhancement-resource-stale');
-    expect(staleMermaidScript.isConnected).toBe(false);
-    expect(document.querySelectorAll(`script[src="${mathRendererUrl}"]`)).toHaveLength(1);
+  it('bounds a future shared enhancement wait and ignores a late parser node', async () => {
+    vi.useFakeTimers();
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const getEnhancements = vi.fn(() => enhancementsReady ? {
+      enhance,
+      syncCodeFrameBackgrounds: vi.fn()
+    } : null);
+    const port = createBrowserPreviewEnhancementPort(
+      previewEnhancementBootstrapFixture,
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements,
+          hasHighlight: () => true
+        }
+      }
+    );
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(getEnhancements).toHaveBeenCalled());
+      const rejection = expect(operation).rejects.toThrowError(
+        'preview-enhancement-resource-load-failed'
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      await rejection;
+
+      const external = document.createElement('script');
+      external.id = 'easymde-enhancements-js';
+      external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(external);
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects ambiguous exact URL matches before waiting on the expected script ID', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let operation: Promise<void> | null = null;
+    try {
+      const sharedUrl = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      const expected = document.createElement('script');
+      expected.id = 'easymde-enhancements-js';
+      expected.src = sharedUrl;
+      document.head.appendChild(expected);
+      const duplicate = document.createElement('script');
+      duplicate.id = 'easymde-enhancements-alias';
+      duplicate.src = sharedUrl;
+      document.head.appendChild(duplicate);
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        {
+          documentRef: document,
+          runtime: {
+            ...runtime(),
+            getEnhancements: () => null,
+            hasHighlight: () => true
+          }
+        }
+      );
+      let outcome: string | null = null;
+      operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      void operation.then(
+        () => { outcome = 'resolved'; },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.message : 'unknown';
+        }
+      );
+      for (const link of document.querySelectorAll<HTMLLinkElement>(
+        '[data-easymde-stylesheet-owner]'
+      )) {
+        link.dispatchEvent(new Event('load'));
+      }
+
+      await vi.waitFor(() => expect(outcome).toBe(
+        'preview-enhancement-resource-conflict'
+      ));
+      expect(expected.isConnected).toBe(true);
+      expect(duplicate.isConnected).toBe(true);
+      expect(expected.dataset.easymdeLoaded).toBeUndefined();
+      expect(duplicate.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
+  });
+
+  it('cancels a pending external enhancement wait on dispose without enhancing after a late load', async () => {
+    const append = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
+      const result = append(node);
+      if (node instanceof Element) appended.push(node);
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
+      return result;
+    });
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    try {
+      const existing = document.createElement('script');
+      existing.id = 'easymde-enhancements-js';
+      existing.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+      document.head.appendChild(existing);
+      const addEventListener = vi.spyOn(existing, 'addEventListener');
+      const enhance = vi.fn().mockResolvedValue(undefined);
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        {
+          documentRef: document,
+          runtime: {
+            ...runtime(enhance),
+            getEnhancements: () => null,
+            hasHighlight: () => true
+          }
+        }
+      );
+      const operation = port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
+      port.dispose?.();
+      await expect(operation).rejects.toThrowError('preview-enhancement-resource-stale');
+
+      existing.dispatchEvent(new Event('load'));
+      await Promise.resolve();
+      expect(enhance).not.toHaveBeenCalled();
+      expect(existing.isConnected).toBe(true);
+      expect(existing.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      controller.abort();
+      await Promise.resolve();
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
   });
 
   it('rejects failed assets, missing themes and rendered enhancement errors truthfully', async () => {
@@ -1021,47 +2083,75 @@ describe('createBrowserPreviewEnhancementPort', () => {
     );
   });
 
-  it('removes a failed script and permits a later explicit preview retry', async () => {
+  it('fails when the shared script loads without a requested renderer capability', async () => {
     const append = document.head.appendChild.bind(document.head);
-    let mermaidAttempts = 0;
     vi.spyOn(document.head, 'appendChild').mockImplementation((node) => {
       const result = append(node);
       if (node instanceof Element) appended.push(node);
-      queueMicrotask(() => {
-        if (node instanceof HTMLScriptElement && 'easymde-mermaid-renderer-js' === node.id) {
-          mermaidAttempts += 1;
-          node.dispatchEvent(new Event(1 === mermaidAttempts ? 'error' : 'load'));
-          return;
-        }
-        node.dispatchEvent(new Event('load'));
-      });
+      if (node instanceof HTMLLinkElement) {
+        queueMicrotask(() => node.dispatchEvent(new Event('load')));
+      }
       return result;
     });
-    const runtimeOwner: PreviewEnhancementBrowserRuntime = {
-      ...runtime(),
-      hasMermaid: () => !!document.getElementById('easymde-mermaid-js'),
-      hasMermaidRenderer: () => !!document.getElementById('easymde-mermaid-renderer-js')
-    };
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'loading'
+    });
+    const controller = new AbortController();
+    let enhancementsReady = false;
+    const enhance = vi.fn().mockResolvedValue(undefined);
+    const external = document.createElement('script');
+    external.id = 'easymde-enhancements-js';
+    external.src = previewEnhancementBootstrapFixture.assets.mathRendererUrl;
+    document.head.appendChild(external);
+    const addEventListener = vi.spyOn(external, 'addEventListener');
     const port = createBrowserPreviewEnhancementPort(
       previewEnhancementBootstrapFixture,
-      { documentRef: document, runtime: runtimeOwner }
+      {
+        documentRef: document,
+        runtime: {
+          ...runtime(enhance),
+          getEnhancements: () => enhancementsReady ? {
+            enhance,
+            syncCodeFrameBackgrounds: vi.fn()
+          } : null,
+          hasMermaid: () => true,
+          hasMermaidRenderer: () => false
+        }
+      }
     );
+    let operation: Promise<void> | null = null;
+    try {
+      operation = port.enhance(
+        document.createElement('article'),
+        { mermaid: true },
+        () => true,
+        { codeTheme: 'github', signal: controller.signal }
+      );
+      await vi.waitFor(() => expect(addEventListener).toHaveBeenCalledWith(
+        'load',
+        expect.any(Function)
+      ));
 
-    await expect(port.enhance(
-      document.createElement('article'),
-      { mermaid: true },
-      () => true,
-      context()
-    )).rejects.toThrowError('preview-enhancement-resource-load-failed');
-    expect(document.getElementById('easymde-mermaid-renderer-js')).toBeNull();
-
-    await expect(port.enhance(
-      document.createElement('article'),
-      { mermaid: true },
-      () => true,
-      context()
-    )).resolves.toBeUndefined();
-    expect(mermaidAttempts).toBe(2);
+      enhancementsReady = true;
+      external.dispatchEvent(new Event('load'));
+      await expect(operation).rejects.toThrowError(
+        'preview-enhancement-runtime-unavailable'
+      );
+      expect(enhance).not.toHaveBeenCalled();
+      expect(external.isConnected).toBe(true);
+      expect(external.dataset.easymdeLoaded).toBeUndefined();
+    } finally {
+      port.dispose?.();
+      controller.abort();
+      await operation?.catch(() => undefined);
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
   });
 
   it('settles an aborted request and disposes pending owned resources', async () => {
@@ -1148,19 +2238,32 @@ describe('createBrowserPreviewEnhancementPort', () => {
 
   it('fails clearly when the required shared enhancement owner is unavailable', async () => {
     autoLoadResources();
-    const port = createBrowserPreviewEnhancementPort(
-      previewEnhancementBootstrapFixture,
-      {
-        documentRef: document,
-        runtime: { ...runtime(), getEnhancements: () => null }
-      }
-    );
+    const originalReadyState = Object.getOwnPropertyDescriptor(document, 'readyState');
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      value: 'complete'
+    });
+    try {
+      const port = createBrowserPreviewEnhancementPort(
+        previewEnhancementBootstrapFixture,
+        {
+          documentRef: document,
+          runtime: { ...runtime(), getEnhancements: () => null }
+        }
+      );
 
-    await expect(port.enhance(
-      document.createElement('article'),
-      { syntaxHighlight: true },
-      () => true,
-      context('github')
-    )).rejects.toThrowError('preview-enhancement-runtime-unavailable');
+      await expect(port.enhance(
+        document.createElement('article'),
+        { syntaxHighlight: true },
+        () => true,
+        context('github')
+      )).rejects.toThrowError('preview-enhancement-runtime-unavailable');
+    } finally {
+      if (originalReadyState) {
+        Object.defineProperty(document, 'readyState', originalReadyState);
+      } else {
+        Reflect.deleteProperty(document, 'readyState');
+      }
+    }
   });
 });

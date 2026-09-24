@@ -5631,7 +5631,12 @@ test.describe('EasyMDE editor workflows', () => {
       await expect.poll(() => previewCode.evaluate((code) => {
         const frame = code.parentElement;
         const root = code.closest('.easymde-rendered-content');
+        if (!(frame instanceof HTMLElement) || !(root instanceof HTMLElement)) {
+          return null;
+        }
         return {
+          accepted: root.getAttribute('data-easymde-preview-accepted'),
+          busy: root.getAttribute('aria-busy'),
           backgroundIsVisible: 'rgba(0, 0, 0, 0)' !== getComputedStyle(code).backgroundColor,
           frameFitsRoot: frame.getBoundingClientRect().width <= root.getBoundingClientRect().width + 1,
           preservesNewlines: code.textContent.split('\n').length > 1,
@@ -5639,7 +5644,9 @@ test.describe('EasyMDE editor workflows', () => {
           whiteSpace: getComputedStyle(code).whiteSpace
         };
       }), { message: id + ' associated code theme should preserve code semantics' }).toEqual({
+        accepted: '1',
         backgroundIsVisible: true,
+        busy: 'false',
         frameFitsRoot: true,
         preservesNewlines: true,
         scrollsLocally: true,
@@ -7254,15 +7261,15 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
     expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
-    await expect.poll(
-      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
-    ).toBeGreaterThan(0);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
+    await expect.poll(
+      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
+    ).toBeGreaterThan(0);
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );

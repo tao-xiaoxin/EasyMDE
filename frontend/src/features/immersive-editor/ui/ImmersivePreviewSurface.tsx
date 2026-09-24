@@ -18,6 +18,7 @@ type Props = Readonly<{
   statusMessages: Readonly<{
     empty: string;
     error: string;
+    loading: string;
   }>;
   strings: ImmersiveStrings;
 }>;
@@ -45,6 +46,8 @@ export function ImmersivePreviewSurface({
   const statusLabel =
     'error' === status
       ? statusMessages.error
+      : 'loading' === status && !hasSnapshot
+        ? statusMessages.loading
       : hasCompletedPaper
         ? changed
           ? strings.previewChangesRecorded

@@ -19,7 +19,8 @@ import {
 
 const messages = {
   empty: 'Start writing Markdown to preview the article.',
-  error: 'Preview failed. Please keep writing; saving is not affected.'
+  error: 'Preview failed. Please keep writing; saving is not affected.',
+  loading: 'Loading preview...'
 };
 
 const request = (markdown: string, signature = markdown): PreviewRequest => ({
@@ -1162,7 +1163,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(paperHtmlChanges).toEqual([safeHtml('')]);
   });
 
-  it('keeps a non-empty initial request visually quiet when leaving empty paper mode', () => {
+  it('announces a non-empty initial request while leaving empty paper mode', () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({
       initialHtml: '',
@@ -1175,14 +1176,57 @@ describe('PreviewSurfaceOwner', () => {
       current.setEmptyMode('message');
     });
 
-    expect(current.surface.textContent).toBe('');
-    expect(
-      current.surface.querySelector('.easymde-preview-pending')
-    ).toBeNull();
-    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.textContent).toBe(messages.loading);
+    expect(current.surface.querySelector('[role="status"]')?.textContent)
+      .toBe(messages.loading);
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
     expect(statuses.at(-1)).toBe('loading');
     expect(current.surface.textContent).not.toBe(messages.empty);
+  });
+
+  it('keeps an empty paper surface blank while its preview request is pending', () => {
+    const current = setup({ emptyMode: 'paper', initialHtml: '' });
+    act(() => current.session.schedule(request('# Paper pending'), true));
+
+    expect(current.surface.innerHTML).toBe('');
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('keeps the loading status while an empty response is being enhanced', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: () => enhancement.promise,
+      initialHtml: ''
+    });
+
+    act(() => current.session.schedule(request('# Empty response'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: {
+          version: 1,
+          coordinate: 'line',
+          signature: '# Empty response',
+          blocks: []
+        },
+        features: {},
+        html: safeHtml('')
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.querySelector('[role="status"]')?.textContent)
+      .toBe(messages.loading);
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.innerHTML).toBe('');
   });
 
   it('preserves a failed non-empty request when leaving empty paper mode', async () => {
@@ -1207,8 +1251,11 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.textContent).not.toBe(messages.empty);
   });
 
-  it('keeps rendered content visible while the next request is loading', () => {
+  it('keeps the previously committed snapshot available while the next request is loading', async () => {
     const { session, surface } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     act(() => {
       session.schedule(request('# Updated'), true);
@@ -1216,8 +1263,58 @@ describe('PreviewSurfaceOwner', () => {
 
     expect(surface.getAttribute('aria-busy')).toBe('true');
     expect(surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+    expect(surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
     expect(surface.textContent).toContain('Initial preview');
     expect(surface.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('keeps the previous accepted HTML visible while the next response is pending', async () => {
+    const current = setup({ initialHtml: '<p>Stable preview</p>' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => current.session.schedule(request('# New version', 'new'), true));
+
+    expect(current.surface.innerHTML).toBe('<p>Stable preview</p>');
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('keeps only the previous enhanced snapshot accepted until its replacement commits', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: vi.fn()
+        .mockImplementationOnce(() => Promise.resolve())
+        .mockImplementationOnce(() => enhancement.promise),
+      initialHtml: '<p>Stable preview</p>'
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+
+    act(() => current.session.schedule(request('# Replacement', 'replacement'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<p>Unenhanced replacement</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toContain('Stable preview');
+    expect(current.surface.textContent).not.toContain('Unenhanced replacement');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    expect(current.surface.textContent).toContain('Unenhanced replacement');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
   });
 
   it('renders accessible empty and error states without reporting readiness', async () => {
@@ -1268,6 +1365,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(enhance.mock.calls[0]?.[3])
       .toEqual(expect.objectContaining({ codeTheme: 'atom-one-dark' }));
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.textContent).toContain('const current = true;');
     expect(current.surface.easymdePreviewSignature).toBe('');
     expect(statuses.at(-1)).toBe('loading');
 
@@ -1280,7 +1378,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(statuses.at(-1)).toBe('ready');
   });
 
-  it('enhances a connected staging candidate without mutating the active sink before commit', async () => {
+  it('retains the previous HTML until the accepted candidate is committed', async () => {
     const enhancement = deferred<void>();
     const initialHtml = '<p>Stable enhanced Preview</p>';
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
@@ -1323,6 +1421,7 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface).toBe(activeIdentity);
     expect(current.surface.innerHTML).toBe(initialHtml);
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.easymdePreviewSignature).toBe('');
 
     await act(async () => {
       enhancement.resolve();
@@ -1355,7 +1454,7 @@ describe('PreviewSurfaceOwner', () => {
     setInnerHTML.mockRestore();
   });
 
-  it('preheats an inert connected staging surface and commits enhanced nodes without an active HTML setter', async () => {
+  it('preheats an inert connected staging surface while retaining the active preview', async () => {
     const enhancement = deferred<void>();
     let enhancementCalls = 0;
     const enhance = vi.fn<PreviewEnhancementPort['enhance']>((candidate) => {
@@ -1402,6 +1501,34 @@ describe('PreviewSurfaceOwner', () => {
       '[data-easymde-preview-staging]'
     )).toHaveLength(0);
     setInnerHTML.mockRestore();
+  });
+
+  it('keeps initial server HTML unaccepted while enhancement is pending', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: () => enhancement.promise,
+      initialHtml: ''
+    });
+    act(() => current.session.schedule(request('# First Preview'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<p>First safe preview</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toBe('First safe preview');
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBeNull();
+    expect(current.surface.easymdePreviewSignature).toBe('');
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    expect(current.surface.easymdePreviewSignature).toBe('# First Preview');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
   });
 
   it('yields connected staging when elapsed work reaches its time budget', async () => {

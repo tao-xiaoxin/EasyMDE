@@ -218,6 +218,10 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(placeholder.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
+    expect(window.getSelection()?.anchorNode).toBe(placeholder.firstChild);
+    expect(window.getSelection()?.focusNode).toBe(placeholder.firstChild);
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(requestPreview).not.toHaveBeenCalled();
     expect(onPendingChange).not.toHaveBeenCalledWith(true);
     expect(prepareWindowBlockAdoption).toHaveBeenCalledWith(code.parentElement);
@@ -296,7 +300,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored?.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
-    expect(restored?.textContent).toBe(' ');
+    expect(restored?.textContent).toBe('');
     expect(current.canonical()).toContain('~~~bash\n\n~~~');
 
     const restoredText = restored?.firstChild;
@@ -449,7 +453,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored?.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
-    expect(restored?.textContent).toBe(' ');
+    expect(restored?.textContent).toBe('');
     expect(current.canonical()).toContain('~~~bash\n\n~~~');
     expect(requestPreview).not.toHaveBeenCalled();
 

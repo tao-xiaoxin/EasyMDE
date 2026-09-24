@@ -21,6 +21,7 @@ import {
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
+  placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
@@ -1625,6 +1626,34 @@ export function ImmersiveVisualEditor({
       }
       if (composing || event.isComposing) {
         return;
+      }
+      if (
+        'insertParagraph' === event.inputType
+        && 'end' === acceptedPasteDocumentBoundaryRef.current
+      ) {
+        const sourceMarkdown = sourceMarkdownRef.current;
+        if (null === sourceMarkdown) {
+          event.preventDefault();
+          onFailure('visual-editor-markdown-snapshot-missing');
+          return;
+        }
+        try {
+          if (
+            placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+              surface,
+              sourceMarkdown,
+              'end'
+            )
+          ) {
+            event.preventDefault();
+            captureSnapshot(sourceMarkdown);
+            return;
+          }
+        } catch (error) {
+          event.preventDefault();
+          failVisualSynchronization(error);
+          return;
+        }
       }
       try {
         visualInputBlock = captureVisualCodeInputSnapshot(

@@ -404,6 +404,7 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
 }
 
 type MarkdownCodeBlock = Readonly<{
+  closed: boolean | null;
   family: string | null;
   kind: 'fenced' | 'indented';
   info: string;
@@ -443,6 +444,7 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
   if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
   const blocks: MarkdownCodeBlock[] = [];
   let active: {
+    blockIndex: number;
     family: string;
     language: string;
   } | null = null;
@@ -461,6 +463,11 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
         && closing[0] === active.family[0]
         && closing.length >= active.family.length
       ) {
+        const block = blocks[active.blockIndex];
+        if ('fenced' !== block?.kind) {
+          throw new Error('visual-code-fence-map-invalid');
+        }
+        blocks[active.blockIndex] = { ...block, closed: true };
         active = null;
       }
       continue;
@@ -473,6 +480,7 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
     ) {
       if (!inIndentedCode) {
         blocks.push({
+          closed: null,
           family: null,
           kind: 'indented',
           info: '',
@@ -490,11 +498,14 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
     }
     const opening = markdownFenceOpening(line);
     if (!opening) continue;
+    const blockIndex = blocks.length;
     active = {
+      blockIndex,
       family: opening.family,
       language: opening.language
     };
     blocks.push({
+      closed: false,
       family: active.family,
       kind: 'fenced',
       info: opening.info,
@@ -583,7 +594,7 @@ function strictVisualCodePlaceholder(code: HTMLElement): HTMLSpanElement | null 
     || code.firstChild !== candidate
     || candidate.childNodes.length !== 1
     || !(candidate.firstChild instanceof Text)
-    || candidate.firstChild.data !== ' '
+    || candidate.firstChild.data !== ''
   ) {
     return null;
   }
@@ -595,7 +606,7 @@ function createVisualCodePlaceholder(
 ): HTMLSpanElement {
   const placeholder = documentRef.createElement('span');
   placeholder.setAttribute(VISUAL_CODE_PLACEHOLDER_ATTRIBUTE, '');
-  placeholder.append(documentRef.createTextNode(' '));
+  placeholder.append(documentRef.createTextNode(''));
   return placeholder;
 }
 
@@ -622,18 +633,19 @@ export function captureVisualCodeInputSnapshot(
   };
 }
 
-function selectVisualCodePlaceholder(
-  placeholder: HTMLSpanElement,
-  contents = false
-): void {
+function selectVisualCodePlaceholder(placeholder: HTMLSpanElement): void {
   const selection = placeholder.ownerDocument.defaultView?.getSelection();
-  if (!selection || !placeholder.parentNode) return;
-  const range = placeholder.ownerDocument.createRange();
-  if (contents) {
-    range.selectNodeContents(placeholder);
-  } else {
-    range.selectNode(placeholder);
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  if (!placeholder.parentNode) {
+    throw new Error('visual-editor-code-placeholder-detached');
   }
+  const text = placeholder.firstChild;
+  if (!(text instanceof Text)) {
+    throw new Error('visual-editor-code-placeholder-invalid');
+  }
+  const range = placeholder.ownerDocument.createRange();
+  range.setStart(text, 0);
+  range.collapse(true);
   selection.removeAllRanges();
   selection.addRange(range);
 }
@@ -709,7 +721,8 @@ export function normalizeVisualCodePlaceholders(
   block: HTMLElement | VisualCodeInputSnapshot | null = null
 ): void {
   if (!block) return;
-  const deletion = inputType.startsWith('delete');
+  const deletion = inputType.startsWith('delete')
+    || 'historyUndo' === inputType;
   const snapshot = block && !(block instanceof HTMLElement) ? block : null;
   const blockElement: HTMLElement = block instanceof HTMLElement
     ? block
@@ -759,7 +772,7 @@ export function normalizeVisualCodePlaceholders(
       }
       const placeholder = restoredCode.firstElementChild;
       if (placeholder instanceof HTMLSpanElement) {
-        selectVisualCodePlaceholder(placeholder, true);
+        selectVisualCodePlaceholder(placeholder);
       }
       continue;
     }
@@ -767,11 +780,27 @@ export function normalizeVisualCodePlaceholders(
       `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
     ));
     if (deletion && '' === (code.textContent ?? '')) {
+      const existingPlaceholder = code.firstElementChild;
+      if (
+        code.childNodes.length === 1
+        && existingPlaceholder instanceof HTMLSpanElement
+        && existingPlaceholder.parentElement === code
+        && existingPlaceholder.childNodes.length === 1
+        && existingPlaceholder.firstChild instanceof Text
+        && '' === existingPlaceholder.firstChild.data
+      ) {
+        existingPlaceholder.setAttribute(
+          VISUAL_CODE_PLACEHOLDER_ATTRIBUTE,
+          ''
+        );
+        selectVisualCodePlaceholder(existingPlaceholder);
+        continue;
+      }
       const placeholder = createVisualCodePlaceholder(
         editor.ownerDocument
       );
       code.replaceChildren(placeholder);
-      selectVisualCodePlaceholder(placeholder, true);
+      selectVisualCodePlaceholder(placeholder);
       continue;
     }
     for (const marker of marked) {
@@ -2198,16 +2227,18 @@ function visualSourceBoundaryCandidates(
   return candidates;
 }
 
-function lastEditableVisualBoundary(
-  editor: HTMLElement
-): VisualBoundary | null {
+function lastEditableVisualBlock(editor: HTMLElement): Element | null {
   const topLevelBlocks = Array.from(editor.children).filter(
     (child) => !isVisualCaretExcludedElement(child)
   );
-  const lastBlock = topLevelBlocks[topLevelBlocks.length - 1];
-  return lastBlock
-    ? visualEditableBoundaryAtEdge(lastBlock, 'end')
-    : null;
+  return topLevelBlocks[topLevelBlocks.length - 1] ?? null;
+}
+
+function lastEditableVisualBoundary(
+  editor: HTMLElement
+): VisualBoundary | null {
+  const lastBlock = lastEditableVisualBlock(editor);
+  return lastBlock ? visualEditableBoundaryAtEdge(lastBlock, 'end') : null;
 }
 
 export type AcceptedPasteDocumentBoundary = 'end' | 'start';
@@ -2290,6 +2321,59 @@ export function isVisualCaretAtAcceptedPasteDocumentBoundary(
     && selection.anchorOffset === caretBoundary.offset
     && selection.focusOffset === caretBoundary.offset
   );
+}
+
+function closedMarkdownFenceAtDocumentEnd(
+  markdown: string
+): MarkdownCodeBlock | null {
+  const blocks = markdownCodeBlocks(markdown);
+  const lastBlock = blocks[blocks.length - 1];
+  if ('fenced' !== lastBlock?.kind || true !== lastBlock.closed) {
+    return null;
+  }
+  const family = lastBlock.family;
+  if (!family) return null;
+  const lines = markdown.split(/\r?\n/);
+  let lastLineIndex = lines.length - 1;
+  while (lastLineIndex >= 0 && /^\s*$/.test(lines[lastLineIndex] ?? '')) {
+    lastLineIndex -= 1;
+  }
+  const closing = markdownFenceClosing(lines[lastLineIndex] ?? '');
+  return closing
+    && closing[0] === family[0]
+    && closing.length >= family.length
+    ? lastBlock
+    : null;
+}
+
+export function placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  boundary: AcceptedPasteDocumentBoundary
+): boolean {
+  if (
+    'end' !== boundary
+    || !isVisualCaretAtAcceptedPasteDocumentBoundary(editor, boundary)
+  ) return false;
+  const lastBlock = lastEditableVisualBlock(editor);
+  if (!(lastBlock instanceof HTMLElement) || 'PRE' !== lastBlock.tagName) {
+    return false;
+  }
+  if (directCodeChild(lastBlock)?.parentElement !== lastBlock) {
+    throw new Error('visual-editor-code-shape-invalid');
+  }
+  const sourceFence = closedMarkdownFenceAtDocumentEnd(sourceMarkdown);
+  if (
+    !sourceFence
+    || sourceFence.family !== lastBlock.getAttribute(VISUAL_FENCE_ATTRIBUTE)
+  ) return false;
+
+  const paragraph = editor.ownerDocument.createElement('p');
+  const caret = editor.ownerDocument.createTextNode('\u200b');
+  paragraph.append(caret);
+  lastBlock.after(paragraph);
+  placeVisualCaretAtBoundary(editor, { node: caret, offset: caret.length });
+  return true;
 }
 
 function tryPlaceVisualCaretAtSourceBoundary(

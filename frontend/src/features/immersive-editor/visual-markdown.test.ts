@@ -21,6 +21,7 @@ import {
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
+  placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
@@ -669,12 +670,12 @@ A--&gt;B</code></pre>
     )).toBe('');
     expect(placeholder?.childNodes).toHaveLength(1);
     expect(placeholder?.firstChild).toBeInstanceOf(Text);
-    expect(placeholder?.textContent).toBe(' ');
-    expect(window.getSelection()?.anchorNode).toBe(code);
-    expect(window.getSelection()?.focusNode).toBe(code);
-    expect(window.getSelection()?.isCollapsed).toBe(false);
+    expect(placeholder?.textContent).toBe('');
+    expect(window.getSelection()?.anchorNode).toBe(placeholder?.firstChild);
+    expect(window.getSelection()?.focusNode).toBe(placeholder?.firstChild);
+    expect(window.getSelection()?.isCollapsed).toBe(true);
     expect(window.getSelection()?.anchorOffset).toBe(0);
-    expect(window.getSelection()?.focusOffset).toBe(1);
+    expect(window.getSelection()?.focusOffset).toBe(0);
     const closingFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
     expect(closingFence).toBeTruthy();
     expect(
@@ -785,7 +786,7 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('`````js linenos=true\n\n`````');
   });
 
-  it('keeps the empty code placeholder through first input and deletion', () => {
+  it('preserves the empty code text node across native history and deletion', () => {
     const surface = editor('<p>~~~bash</p>');
     const paragraph = surface.querySelector('p');
     const source = paragraph?.firstChild;
@@ -813,9 +814,27 @@ A--&gt;B</code></pre>
     placeholder.removeAttribute('data-easymde-visual-code-placeholder');
     placeCaret(placeholderText, placeholderText.length);
     expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+
+    placeholderText.data = '';
+    normalizeVisualCodePlaceholders(surface, 'historyUndo', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
+    expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(placeholderText);
+
+    placeholderText.data = 'x';
+    normalizeVisualCodePlaceholders(surface, 'historyRedo', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
+    expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(false);
+
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
     expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
 
     const backspace = new KeyboardEvent('keydown', {
       bubbles: true,
@@ -894,8 +913,14 @@ A--&gt;B</code></pre>
     'does not scan unrelated code placeholders when the input block is null (%s)',
     (inputType) => {
       const surface = editor(
-        '<pre data-easymde-visual-fence="~~~"><code><span data-easymde-visual-code-placeholder> </span></code></pre><p>Paragraph</p>'
+        '<pre data-easymde-visual-fence="~~~"><code></code></pre><p>Paragraph</p>'
       );
+      const placeholder = surface.ownerDocument.createElement('span');
+      placeholder.setAttribute('data-easymde-visual-code-placeholder', '');
+      placeholder.append(surface.ownerDocument.createTextNode(''));
+      const code = surface.querySelector('code');
+      if (!code) throw new Error('visual-code-placeholder-fixture-missing');
+      code.append(placeholder);
       const before = surface.innerHTML;
 
       normalizeVisualCodePlaceholders(surface, inputType, null);
@@ -2157,6 +2182,56 @@ A--&gt;B</code></pre>
     ).toEqual({ direction: 'none', end: 0, start: 0 });
     expect(window.getSelection()?.anchorNode?.textContent).toBe(
       'Markdown content'
+    );
+  });
+
+  it.each([
+    { fence: '```', source: '```\nAlpha\n```' },
+    { fence: '~~~~~', source: '~~~~~\nAlpha\n~~~~~' }
+  ])(
+    'places an accepted document-end caret after a closed $fence fence without changing serialization',
+    ({ fence, source }) => {
+      const surface = editor(
+        `<pre data-easymde-visual-fence="${fence}"><code>Alpha</code></pre>`
+      );
+      placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+      expect(
+        placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+          surface,
+          source,
+          'end'
+        )
+      ).toBe(true);
+
+      const paragraph = surface.querySelector('pre + p');
+      const caret = paragraph?.firstChild;
+      expect(caret).toBeInstanceOf(Text);
+      expect(caret?.textContent).toBe('\u200b');
+      expect(serializeVisualMarkdown(surface)).toBe(source);
+      expect(window.getSelection()?.anchorNode).toBe(caret);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+    }
+  );
+
+  it('keeps an accepted end caret inside an unclosed final fence', () => {
+    const source = '~~~\nAlpha';
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>Alpha</code></pre>'
+    );
+    placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+    expect(
+      placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+        surface,
+        source,
+        'end'
+      )
+    ).toBe(false);
+    expect(surface.querySelector('pre + p')).toBeNull();
+    expect(window.getSelection()?.anchorNode).toBe(
+      surface.querySelector('pre > code')?.firstChild
     );
   });
 

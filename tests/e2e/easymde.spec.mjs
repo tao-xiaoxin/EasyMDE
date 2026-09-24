@@ -4337,6 +4337,302 @@ test.describe('EasyMDE editor workflows', () => {
     });
   }
 
+  for (const fence of ['~~~', '```']) {
+    test(`keeps immersive ${fence} typed and pasted caret/frame state`, async ({ page }, testInfo) => {
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const evidence = {
+        fence,
+        typed: null,
+        typedAfterInput: null,
+        typedAfterUndo: null,
+        typedAfterRedo: null,
+        typedAfterReentry: null,
+        typedMobile: null,
+        pasted: null,
+        pastedMobile: null,
+        pastedContent: null,
+        pastedContentAfterInput: null,
+        pastedContentAfterRedo: null,
+        pastedContentAfterReentry: null,
+        pastedContentMobile: null
+      };
+
+      const readEvidence = async (visualEditor) => visualEditor.evaluate((surface) => {
+        const pre = surface.querySelector('pre');
+        const code = pre?.querySelector(':scope > code');
+        if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+          throw new Error('immersive-code-fence-evidence-unavailable');
+        }
+        const rootStyle = getComputedStyle(surface);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const rootBox = surface.getBoundingClientRect();
+        const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
+        const paddingRight = Number.parseFloat(rootStyle.paddingRight);
+        const anchorNode = selection?.anchorNode ?? null;
+        const focusNode = selection?.focusNode ?? null;
+        return {
+          active: surface.ownerDocument.activeElement === surface,
+          caretColor: rootStyle.caretColor,
+          codeWidth: code.getBoundingClientRect().width,
+          contentWidth: surface.clientWidth - paddingLeft - paddingRight,
+          markerCount: surface.querySelectorAll(
+            '[data-easymde-visual-code-placeholder]'
+          ).length,
+          preWidth: pre.getBoundingClientRect().width,
+          selection: selection ? {
+            anchorInsideCode: anchorNode === code || Boolean(
+              anchorNode && code.contains(anchorNode)
+            ),
+            anchorInsideSurface: anchorNode === surface || Boolean(
+              anchorNode && surface.contains(anchorNode)
+            ),
+            anchorNode: anchorNode?.nodeName ?? null,
+            anchorParentIsPlaceholder: anchorNode instanceof Element
+              ? anchorNode.hasAttribute('data-easymde-visual-code-placeholder')
+              : anchorNode?.parentElement?.hasAttribute(
+                'data-easymde-visual-code-placeholder'
+              ) ?? false,
+            anchorOffset: selection.anchorOffset,
+            collapsed: selection.isCollapsed,
+            focusInsideCode: focusNode === code || Boolean(
+              focusNode && code.contains(focusNode)
+            ),
+            focusInsideSurface: focusNode === surface || Boolean(
+              focusNode && surface.contains(focusNode)
+            ),
+            focusNode: focusNode?.nodeName ?? null,
+            focusOffset: selection.focusOffset,
+          } : null,
+          surfaceWidth: rootBox.width
+        };
+      });
+
+      const expectFullWidthFrameAndCaret = (sample) => {
+        expect(Math.abs(sample.preWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(Math.abs(sample.codeWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(sample.active).toBe(true);
+        expect(sample.caretColor).not.toBe('auto');
+        expect(sample.selection?.collapsed).toBe(true);
+        expect(sample.selection?.anchorInsideCode).toBe(true);
+        expect(sample.selection?.focusInsideCode).toBe(true);
+      };
+
+      const expectFullWidthFrame = (sample) => {
+        expect(Math.abs(sample.preWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(Math.abs(sample.codeWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+      };
+
+      const expectCollapsedSurfaceCaret = (sample) => {
+        expect(sample.active).toBe(true);
+        expect(sample.caretColor).not.toBe('auto');
+        expect(sample.selection?.collapsed).toBe(true);
+        expect(sample.selection?.anchorInsideSurface).toBe(true);
+        expect(sample.selection?.focusInsideSurface).toBe(true);
+      };
+
+      await openEasyMdeNewPost(page);
+      const typed = await enterImmersivePreviewAndUnlock(page);
+      await typed.visualEditor.focus();
+      await typed.visualEditor.press('ControlOrMeta+End');
+      await page.keyboard.type(fence);
+      await page.keyboard.press('Enter');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\n\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.typed = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typed);
+      expect(evidence.typed.markerCount).toBe(1);
+      expect(evidence.typed.selection.anchorParentIsPlaceholder).toBe(true);
+      await page.keyboard.type('x');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\nx\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
+      evidence.typedAfterInput = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterInput);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\n\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.typedAfterUndo = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterUndo);
+      expect(evidence.typedAfterUndo.markerCount).toBe(1);
+      expect(evidence.typedAfterUndo.selection.anchorParentIsPlaceholder).toBe(true);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\nx\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
+      evidence.typedAfterRedo = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterRedo);
+
+      await page.getByRole('button', { name: typed.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: typed.labels.immersive
+      })).toHaveCount(0);
+      await expect(typed.source).toHaveValue(`${fence}\nx\n${fence}`);
+      const typedReentered = await enterImmersivePreviewAndUnlock(page);
+      await expect(typedReentered.source).toHaveValue(`${fence}\nx\n${fence}`);
+      await expect(typedReentered.visualEditor.locator('pre > code'))
+        .toContainText('x');
+      evidence.typedAfterReentry = await readEvidence(typedReentered.visualEditor);
+      expectFullWidthFrame(evidence.typedAfterReentry);
+      expectCollapsedSurfaceCaret(evidence.typedAfterReentry);
+
+      const hideTypedOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', {
+        name: hideTypedOutlineLabel
+      }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await typedReentered.visualEditor.focus();
+      evidence.typedMobile = await readEvidence(typedReentered.visualEditor);
+      expectFullWidthFrame(evidence.typedMobile);
+      expectCollapsedSurfaceCaret(evidence.typedMobile);
+      await page.setViewportSize({ width: 1280, height: 720 });
+
+      await openEasyMdeNewPost(page);
+      const pasted = await enterImmersivePreviewAndUnlock(page);
+      await pasted.visualEditor.evaluate((surface, value) => {
+        surface.focus();
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-code-fence-paste-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, fence);
+      await expect.poll(() => pasted.source.inputValue(), { timeout: 30_000 }).toBe(
+        fence
+      );
+      await expect(pasted.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.pasted = await readEvidence(pasted.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.pasted);
+      expect(evidence.pasted.markerCount).toBe(0);
+      const hideOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', { name: hideOutlineLabel }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await pasted.visualEditor.focus();
+      evidence.pastedMobile = await readEvidence(pasted.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.pastedMobile);
+      await page.setViewportSize({ width: 1280, height: 720 });
+
+      await openEasyMdeNewPost(page);
+      const pastedContent = await enterImmersivePreviewAndUnlock(page);
+      const pastedMarkdown = `${fence}\nAlpha\n${fence}`;
+      await pastedContent.visualEditor.evaluate((surface, value) => {
+        surface.focus();
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-code-fence-paste-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, pastedMarkdown);
+      await expect.poll(() => pastedContent.source.inputValue(), { timeout: 30_000 })
+        .toBe(pastedMarkdown);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      evidence.pastedContent = await readEvidence(pastedContent.visualEditor);
+      expectFullWidthFrame(evidence.pastedContent);
+      expectCollapsedSurfaceCaret(evidence.pastedContent);
+      expect(evidence.pastedContent.markerCount).toBe(0);
+
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('After');
+      const pastedWithTrailingParagraph = `${pastedMarkdown}\n\nAfter`;
+      await expect.poll(() => pastedContent.source.inputValue())
+        .toBe(pastedWithTrailingParagraph);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContent.visualEditor.locator('p')).toContainText('After');
+      evidence.pastedContentAfterInput = await readEvidence(
+        pastedContent.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterInput);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterInput);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(() => pastedContent.source.inputValue()).toBe(pastedMarkdown);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(() => pastedContent.source.inputValue())
+        .toBe(pastedWithTrailingParagraph);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContent.visualEditor.locator('p')).toContainText('After');
+      evidence.pastedContentAfterRedo = await readEvidence(
+        pastedContent.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterRedo);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterRedo);
+
+      await page.getByRole('button', { name: pastedContent.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: pastedContent.labels.immersive
+      })).toHaveCount(0);
+      await expect(pastedContent.source).toHaveValue(pastedWithTrailingParagraph);
+      const pastedContentReentered = await enterImmersivePreviewAndUnlock(page);
+      await expect(pastedContentReentered.source)
+        .toHaveValue(pastedWithTrailingParagraph);
+      await expect(pastedContentReentered.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContentReentered.visualEditor.locator('p'))
+        .toContainText('After');
+      evidence.pastedContentAfterReentry = await readEvidence(
+        pastedContentReentered.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterReentry);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterReentry);
+
+      const hideContentOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', {
+        name: hideContentOutlineLabel
+      }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await pastedContentReentered.visualEditor.focus();
+      evidence.pastedContentMobile = await readEvidence(
+        pastedContentReentered.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentMobile);
+      expectCollapsedSurfaceCaret(evidence.pastedContentMobile);
+
+      await testInfo.attach(`immersive-code-fence-caret-${fence === '~~~' ? 'tilde' : 'backtick'}`, {
+        body: JSON.stringify(evidence, null, 2),
+        contentType: 'application/json'
+      });
+    });
+  }
+
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;
     const imageUploadRequests = [];

@@ -78,7 +78,11 @@ same-source success, and monotonic generations prevent an older completion
 from downgrading it. Viewport-coordinate-only scroll changes may reuse a
 payload; dimensions and computed wrapping styles invalidate it. Full sink
 markup, root `class`/`style`, viewport, computed export styles, pseudo-element
-styles, and geometry participate in freshness.
+styles, and geometry participate in freshness. Only `aria-busy`,
+`data-easymde-preview-accepted`, and `data-easymde-preview-refreshing` on
+the sink root are refresh bookkeeping excluded from the source key; the same
+attributes on descendants and every other root attribute still invalidate it.
+The PNG conversion path uses that same source key across asynchronous checks.
 
 ## Optional PNG conversion
 

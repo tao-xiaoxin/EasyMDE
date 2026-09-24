@@ -104,11 +104,21 @@ function waitForResource(promise: Promise<void>, signal: AbortSignal): Promise<v
   });
 }
 
+function normalizedScriptUrl(documentRef: Document, value: string): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value, documentRef.baseURI).href;
+  } catch {
+    return null;
+  }
+}
+
 function createResourceLoader(documentRef: Document) {
   const scriptLoads = new Map<string, ScriptLoad>();
   const scriptLoadsByUrl = new Map<string, ScriptLoad>();
   const styleLoads = new Map<string, StyleLoad>();
   const preparedStyleSlots = new Map<string, PreparedStyleSlot>();
+  const externalScriptWaits = new Set<() => void>();
   let disposed = false;
 
   function head(): HTMLHeadElement {
@@ -117,24 +127,228 @@ function createResourceLoader(documentRef: Document) {
     return value;
   }
 
+  function waitForExistingScript(
+    script: HTMLScriptElement,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (signal.aborted) {
+      return Promise.reject(resourceError('preview-enhancement-resource-stale'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let abort: () => void;
+      const cleanup = () => {
+        script.removeEventListener('load', handleLoad);
+        script.removeEventListener('error', handleError);
+        signal.removeEventListener('abort', abort);
+        externalScriptWaits.delete(abort);
+        if (null !== timer) clearTimeout(timer);
+        timer = null;
+      };
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const handleLoad = () => finish(resolve);
+      const handleError = () => finish(() => reject(
+        resourceError('preview-enhancement-resource-load-failed')
+      ));
+      abort = () => finish(() => reject(
+        resourceError('preview-enhancement-resource-stale')
+      ));
+      externalScriptWaits.add(abort);
+      script.addEventListener('load', handleLoad);
+      script.addEventListener('error', handleError);
+      signal.addEventListener('abort', abort, { once: true });
+      timer = setTimeout(() => finish(() => reject(
+        resourceError('preview-enhancement-resource-load-failed')
+      )), RESOURCE_LOAD_TIMEOUT_MS);
+      if (signal.aborted) abort();
+    });
+  }
+
+  function waitForExternalScript(
+    id: string,
+    url: string,
+    signal: AbortSignal,
+    available: () => boolean
+  ): Promise<void> {
+    if (disposed) {
+      return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    }
+    if (signal.aborted) {
+      return Promise.reject(resourceError('preview-enhancement-resource-stale'));
+    }
+    const normalizedUrl = normalizedScriptUrl(documentRef, url);
+    if (!normalizedUrl) {
+      return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
+    }
+    const MutationObserverOwner = documentRef.defaultView?.MutationObserver;
+    if (!MutationObserverOwner) {
+      return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    }
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let observer: MutationObserver | null = null;
+      let observedScript: HTMLScriptElement | null = null;
+      let abort: () => void;
+      const detachScript = () => {
+        if (!observedScript) return;
+        observedScript.removeEventListener('load', handleLoad);
+        observedScript.removeEventListener('error', handleError);
+        observedScript = null;
+      };
+      const cleanup = () => {
+        detachScript();
+        observer?.disconnect();
+        observer = null;
+        documentRef.removeEventListener('readystatechange', handleReadyStateChange);
+        signal.removeEventListener('abort', abort);
+        externalScriptWaits.delete(abort);
+        if (null !== timer) clearTimeout(timer);
+        timer = null;
+      };
+      const finish = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback();
+      };
+      const fail = (code: string) => finish(() => reject(resourceError(code)));
+      const handleLoad = () => finish(resolve);
+      const handleError = () => fail('preview-enhancement-resource-load-failed');
+      const observeScript = (script: HTMLScriptElement) => {
+        if (observedScript === script) return;
+        detachScript();
+        observedScript = script;
+        script.addEventListener('load', handleLoad);
+        script.addEventListener('error', handleError);
+      };
+      const discover = () => {
+        if (settled) return;
+        const existing = documentRef.getElementById(id);
+        if (
+          existing
+          && (
+            !(existing instanceof HTMLScriptElement)
+            || normalizedScriptUrl(documentRef, existing.getAttribute('src') ?? '') !== normalizedUrl
+          )
+        ) {
+          fail('preview-enhancement-resource-conflict');
+          return;
+        }
+        const matchingScripts = Array.from(
+          documentRef.querySelectorAll<HTMLScriptElement>('script[src]')
+        ).filter((script) =>
+          normalizedScriptUrl(documentRef, script.getAttribute('src') ?? '') === normalizedUrl
+        );
+        if (matchingScripts.length > 1) {
+          fail('preview-enhancement-resource-conflict');
+          return;
+        }
+        const script = matchingScripts[0];
+        if (script && script.id !== id) {
+          fail('preview-enhancement-resource-conflict');
+          return;
+        }
+        if (!script) {
+          detachScript();
+          if (available()) {
+            finish(resolve);
+          } else if ('loading' !== documentRef.readyState) {
+            fail('preview-enhancement-runtime-unavailable');
+          }
+          return;
+        }
+        if (
+          available()
+          || normalizedScriptUrl(documentRef, script.dataset.easymdeLoaded ?? '') === normalizedUrl
+        ) {
+          finish(resolve);
+          return;
+        }
+        if ('loading' !== documentRef.readyState) {
+          fail('preview-enhancement-runtime-unavailable');
+          return;
+        }
+        observeScript(script);
+      };
+      const handleReadyStateChange = () => discover();
+      abort = () => finish(() => reject(
+        resourceError('preview-enhancement-resource-stale')
+      ));
+      externalScriptWaits.add(abort);
+      signal.addEventListener('abort', abort, { once: true });
+      documentRef.addEventListener('readystatechange', handleReadyStateChange);
+      observer = new MutationObserverOwner(discover);
+      observer.observe(documentRef, { childList: true, subtree: true });
+      timer = setTimeout(() => fail('preview-enhancement-resource-load-failed'),
+        RESOURCE_LOAD_TIMEOUT_MS);
+      discover();
+      if (signal.aborted) abort();
+    });
+  }
+
   function loadScript(id: string, url: string, signal: AbortSignal): Promise<void> {
     if (disposed) return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
+    const normalizedUrl = normalizedScriptUrl(documentRef, url);
+    if (!normalizedUrl) {
+      return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
+    }
     const cached = scriptLoads.get(id);
-    if (cached?.url === url && cached.script.isConnected) {
+    if (
+      cached
+      && normalizedScriptUrl(documentRef, cached.url) !== normalizedUrl
+      && !cached.loaded()
+    ) {
+      cached.cancel();
+    }
+    const existing = documentRef.getElementById(id);
+    if (
+      existing
+      && (
+        !(existing instanceof HTMLScriptElement)
+        || normalizedScriptUrl(documentRef, existing.getAttribute('src') ?? '') !== normalizedUrl
+      )
+    ) {
+      return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
+    }
+
+    const matchingScripts = Array.from(
+      documentRef.querySelectorAll<HTMLScriptElement>('script[src]')
+    ).filter((script) =>
+      normalizedScriptUrl(documentRef, script.getAttribute('src') ?? '') === normalizedUrl
+    );
+    if (matchingScripts.length > 1) {
+      return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
+    }
+    const existingByUrl = matchingScripts[0];
+
+    if (
+      cached
+      && normalizedScriptUrl(documentRef, cached.url) === normalizedUrl
+      && cached.script.isConnected
+    ) {
       return waitForResource(cached.promise, signal);
     }
     if (cached && !cached.loaded()) cached.cancel();
 
-    const existing = documentRef.getElementById(id);
     if (existing) {
-      if (!(existing instanceof HTMLScriptElement) || existing.getAttribute('src') !== url) {
-        return Promise.reject(resourceError('preview-enhancement-resource-conflict'));
+      if (
+        normalizedScriptUrl(documentRef, existing.dataset.easymdeLoaded ?? '') === normalizedUrl
+      ) return Promise.resolve();
+      if ('loading' === documentRef.readyState) {
+        // WordPress may have started this matching script before the loader ran.
+        // Keep the external node untouched; loadRuntime rechecks availability after load.
+        return waitForExistingScript(existing, signal);
       }
-      if (existing.dataset.easymdeLoaded === url) return Promise.resolve();
       return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
     }
-
-    const cachedByUrl = scriptLoadsByUrl.get(url);
+    const cachedByUrl = scriptLoadsByUrl.get(normalizedUrl);
     if (cachedByUrl?.script.isConnected) {
       if (cached && cached !== cachedByUrl && !cached.loaded()) {
         cached.cancel();
@@ -145,6 +359,17 @@ function createResourceLoader(documentRef: Document) {
     }
     if (cachedByUrl) {
       cachedByUrl.cancel();
+    }
+
+    if (existingByUrl) {
+      if (
+        normalizedScriptUrl(documentRef, existingByUrl.dataset.easymdeLoaded ?? '') === normalizedUrl
+      ) return Promise.resolve();
+      if ('loading' === documentRef.readyState) {
+        // URL matching is exact after normalization; never take ownership of this node.
+        return waitForExistingScript(existingByUrl, signal);
+      }
+      return Promise.reject(resourceError('preview-enhancement-runtime-unavailable'));
     }
 
     const script = documentRef.createElement('script');
@@ -175,7 +400,9 @@ function createResourceLoader(documentRef: Document) {
       for (const alias of load.ids) {
         if (scriptLoads.get(alias) === load) scriptLoads.delete(alias);
       }
-      if (scriptLoadsByUrl.get(url) === load) scriptLoadsByUrl.delete(url);
+      if (scriptLoadsByUrl.get(normalizedUrl) === load) {
+        scriptLoadsByUrl.delete(normalizedUrl);
+      }
       rejectLoad(resourceError(code));
     };
     const handleLoad = () => {
@@ -196,7 +423,7 @@ function createResourceLoader(documentRef: Document) {
       url
     };
     scriptLoads.set(id, load);
-    scriptLoadsByUrl.set(url, load);
+    scriptLoadsByUrl.set(normalizedUrl, load);
     script.addEventListener('load', handleLoad);
     script.addEventListener('error', handleError);
     timer = setTimeout(handleError, RESOURCE_LOAD_TIMEOUT_MS);
@@ -577,6 +804,8 @@ function createResourceLoader(documentRef: Document) {
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    for (const cancel of [...externalScriptWaits]) cancel();
+    externalScriptWaits.clear();
     for (const load of scriptLoads.values()) {
       if (!load.loaded()) load.cancel();
     }
@@ -592,7 +821,13 @@ function createResourceLoader(documentRef: Document) {
     preparedStyleSlots.clear();
   }
 
-  return { dispose, loadScript, loadStylesheet, prepareStylesheet };
+  return {
+    dispose,
+    loadExternalScript: waitForExternalScript,
+    loadScript,
+    loadStylesheet,
+    prepareStylesheet
+  };
 }
 
 async function loadRuntime(
@@ -685,26 +920,38 @@ export function createBrowserPreviewEnhancementPort(
     preparedCodeTheme.commit();
   }
 
-  async function prepareMath(signal: AbortSignal): Promise<void> {
+  async function prepareMath(
+    signal: AbortSignal,
+    sharedRuntime: Promise<void>
+  ): Promise<void> {
     await Promise.all([
       loader.loadStylesheet(assets.mathCssLinkId, assets.mathCssUrl, signal),
       loader.loadStylesheet(assets.katexCssLinkId, assets.katexCssUrl, signal),
       loadRuntime(options.runtime.hasKatex, () =>
-        loader.loadScript('easymde-katex-js', assets.katexScriptUrl, signal))
+        loader.loadScript('easymde-katex-js', assets.katexScriptUrl, signal)),
+      sharedRuntime
     ]);
-    await loadRuntime(options.runtime.hasMathRenderer, () =>
-      loader.loadScript('easymde-math-renderer-js', assets.mathRendererUrl, signal));
+    if (!options.runtime.hasMathRenderer()) {
+      throw resourceError('preview-enhancement-runtime-unavailable');
+    }
   }
 
-  async function prepareMermaid(signal: AbortSignal): Promise<void> {
+  async function prepareMermaid(
+    signal: AbortSignal,
+    sharedRuntime: Promise<void>
+  ): Promise<void> {
     const mermaidScriptUrl = assets.mermaidScriptUrl;
     if (!mermaidScriptUrl) {
       throw resourceError('preview-enhancement-mermaid-runtime-unavailable');
     }
-    await loadRuntime(options.runtime.hasMermaid, () =>
-      loader.loadScript('easymde-mermaid-js', mermaidScriptUrl, signal));
-    await loadRuntime(options.runtime.hasMermaidRenderer, () =>
-      loader.loadScript('easymde-mermaid-renderer-js', assets.mermaidRendererUrl, signal));
+    await Promise.all([
+      loadRuntime(options.runtime.hasMermaid, () =>
+        loader.loadScript('easymde-mermaid-js', mermaidScriptUrl, signal)),
+      sharedRuntime
+    ]);
+    if (!options.runtime.hasMermaidRenderer()) {
+      throw resourceError('preview-enhancement-runtime-unavailable');
+    }
   }
 
   return {
@@ -730,6 +977,33 @@ export function createBrowserPreviewEnhancementPort(
         || fallbackFeatures.mermaid
         || mermaidAssetFailure
       );
+      const sharedController = hasExecutableEnhancement
+        ? new AbortController()
+        : null;
+      let removeSharedAbortListener: (() => void) | null = null;
+      if (sharedController) {
+        const forwardAbort = () => sharedController.abort();
+        if (context.signal.aborted) {
+          sharedController.abort();
+        } else {
+          context.signal.addEventListener('abort', forwardAbort, { once: true });
+          removeSharedAbortListener = () => {
+            context.signal.removeEventListener('abort', forwardAbort);
+          };
+        }
+      }
+      const sharedRuntime = hasExecutableEnhancement
+        ? loadRuntime(
+          () => !!options.runtime.getEnhancements(),
+          () => loader.loadExternalScript(
+            'easymde-enhancements-js',
+            assets.mathRendererUrl,
+            sharedController?.signal ?? context.signal,
+            () => !!options.runtime.getEnhancements()
+          )
+        )
+        : null;
+      if (sharedRuntime) tasks.push(sharedRuntime);
 
       if (fallbackFeatures.syntaxHighlight) {
         tasks.push(prepareHighlight(context.codeTheme, context.signal));
@@ -739,8 +1013,18 @@ export function createBrowserPreviewEnhancementPort(
             .then((prepared) => prepared.commit())
         );
       }
-      if (fallbackFeatures.math) tasks.push(prepareMath(context.signal));
-      if (fallbackFeatures.mermaid) tasks.push(prepareMermaid(context.signal));
+      if (fallbackFeatures.math) {
+        if (!sharedRuntime) {
+          throw resourceError('preview-enhancement-runtime-unavailable');
+        }
+        tasks.push(prepareMath(context.signal, sharedRuntime));
+      }
+      if (fallbackFeatures.mermaid) {
+        if (!sharedRuntime) {
+          throw resourceError('preview-enhancement-runtime-unavailable');
+        }
+        tasks.push(prepareMermaid(context.signal, sharedRuntime));
+      }
       if (fallbackFeatures.toc) {
         tasks.push(
           loader.loadStylesheet(assets.tocCssLinkId, assets.tocCssUrl, context.signal)
@@ -748,7 +1032,15 @@ export function createBrowserPreviewEnhancementPort(
       }
       if (!tasks.length) return;
 
-      await Promise.all(tasks);
+      try {
+        await Promise.all(tasks);
+      } catch (error) {
+        sharedController?.abort();
+        await sharedRuntime?.catch(() => undefined);
+        throw error;
+      } finally {
+        removeSharedAbortListener?.();
+      }
       if (!isCurrent() || context.signal.aborted || !hasExecutableEnhancement) return;
       const enhancements = options.runtime.getEnhancements();
       if (!enhancements) {

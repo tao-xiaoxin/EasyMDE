@@ -139,6 +139,19 @@ function hasExactChildren(
   return nodes.every((node, index) => surface.childNodes[index] === node);
 }
 
+function appendStatusMessage(
+  surface: HTMLElement,
+  statusClassName: string | undefined,
+  statusMessage: string,
+  statusRole: string | undefined
+): void {
+  const message = surface.ownerDocument.createElement('p');
+  if (statusClassName) message.className = statusClassName;
+  if (statusRole) message.setAttribute('role', statusRole);
+  message.textContent = statusMessage;
+  surface.append(message);
+}
+
 function startMaterializeChildrenCommit(
   surface: HTMLElement,
   desiredNodes: ReadonlyArray<Node>,
@@ -474,6 +487,9 @@ export function SafePreviewHtmlSink({
       if (!hasExactChildren(surface, commit.nodes)) {
         surface.replaceChildren(...commit.nodes);
       }
+      if (statusMessage) {
+        appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
+      }
       appliedSurfaceStateRef.current = {
         html,
         materializeCommitKey: null,
@@ -504,11 +520,7 @@ export function SafePreviewHtmlSink({
         };
         return undefined;
       }
-      const message = surface.ownerDocument.createElement('p');
-      if (statusClassName) message.className = statusClassName;
-      if (statusRole) message.setAttribute('role', statusRole);
-      message.textContent = statusMessage;
-      surface.append(message);
+      appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
     }
     appliedSurfaceStateRef.current = {
       html,

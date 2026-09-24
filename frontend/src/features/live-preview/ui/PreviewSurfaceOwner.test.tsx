@@ -1193,6 +1193,42 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
   });
 
+  it('keeps the loading status while an empty response is being enhanced', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: () => enhancement.promise,
+      initialHtml: ''
+    });
+
+    act(() => current.session.schedule(request('# Empty response'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: {
+          version: 1,
+          coordinate: 'line',
+          signature: '# Empty response',
+          blocks: []
+        },
+        features: {},
+        html: safeHtml('')
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.querySelector('[role="status"]')?.textContent)
+      .toBe(messages.loading);
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
+    expect(current.surface.querySelector('[role="status"]')).toBeNull();
+    expect(current.surface.innerHTML).toBe('');
+  });
+
   it('preserves a failed non-empty request when leaving empty paper mode', async () => {
     const statuses: PreviewSurfaceStatus[] = [];
     const current = setup({

@@ -827,6 +827,38 @@ describe('createBrowserWechatClipboard', () => {
     expect(writes).toHaveLength(1);
   });
 
+  it('rejects an accepted windowed Preview during refresh before resolving materialization', async () => {
+    const write = vi.fn();
+    const resolvePreview = vi.fn(async () => null);
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+    const spacer = document.createElement('div');
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    preview.append(spacer);
+
+    await expect(clipboard.copy(preview, { resolvePreview })).resolves.toEqual({
+      code: 'wechat-preview-unavailable',
+      status: 'failed'
+    });
+    expect(resolvePreview).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
   it('writes sanitized styled HTML and plain text through the modern Clipboard API', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {

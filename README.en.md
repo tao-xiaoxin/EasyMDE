@@ -24,7 +24,7 @@
 EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, and WeChat content creators. Write in Markdown, review a split-pane live preview, and keep using WordPress for editing, saving, publishing, and sharing.
 
 <p align="center">
-  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>Download the installable EasyMDE.zip plugin</strong></a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>Download Plugin</strong></a>
   · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">Release notes</a>
 </p>
 

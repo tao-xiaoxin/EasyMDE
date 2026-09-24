@@ -2474,7 +2474,8 @@ export function EditorRoot(props: EditorRootProps) {
             status={previewSurfaceStatus}
             statusMessages={{
               empty: props.preview.messages.empty,
-              error: props.preview.messages.error
+              error: props.preview.messages.error,
+              loading: props.preview.messages.loading
             }}
             strings={props.immersiveStrings}
           >

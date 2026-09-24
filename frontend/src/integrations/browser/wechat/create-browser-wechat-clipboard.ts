@@ -98,6 +98,11 @@ const SVG_DEFINITION_TAGS = new Set([
 ]);
 
 const TRANSIENT_ATTRIBUTE = /^(?:aria-|data-|on|contenteditable$|role$|tabindex$|spellcheck$|draggable$)/i;
+const REFRESH_ONLY_PREVIEW_ATTRIBUTES = [
+  'aria-busy',
+  'data-easymde-preview-accepted',
+  'data-easymde-preview-refreshing'
+] as const;
 const UNSAFE_STYLE_VALUE = /(?:url\s*\(|expression\s*\(|(?:java|vb)script\s*:|@(?:import|charset|font-face)|(?:-moz-binding|behavior)\s*:|--[a-z])/i;
 const UNSAFE_URL = /^(?:data|javascript|vbscript|file|about):/i;
 const URL_ATTRIBUTES = new Set(['action', 'formaction', 'href', 'poster', 'src', 'xlink:href']);
@@ -148,6 +153,17 @@ const FULL_WIDTH_TABLE_CLONES = new WeakSet<Element>();
 const FULL_WIDTH_TABLE_SOURCE_LAYOUT = new WeakMap<Element, boolean>();
 const FULL_WIDTH_TABLE_ROOT_LAYOUT = new WeakMap<HTMLElement, Map<number, boolean>>();
 const PREVIEW_MEASUREMENT_WIDTHS = new WeakMap<HTMLElement, number>();
+
+function clipboardSourceMarkup(preview: HTMLElement): string {
+  // Root refresh bookkeeping is not source content; descendants still are.
+  // Clone only the root to avoid a full DOM clone on each long-document check.
+  const source = preview.cloneNode(false) as HTMLElement;
+  REFRESH_ONLY_PREVIEW_ATTRIBUTES.forEach((attribute) => {
+    source.removeAttribute(attribute);
+  });
+  return JSON.stringify([source.outerHTML, preview.innerHTML]);
+}
+
 const WECHAT_PNG_VISUAL_CLONES = new WeakMap<Element, Readonly<{
   kind: WechatVisualRasterizationKind;
   source: Element;
@@ -2050,13 +2066,20 @@ async function replaceVisualObjects(
 }
 
 function previewReady(preview: HTMLElement): boolean {
+  const refreshing = '1' === preview.getAttribute('data-easymde-preview-refreshing')
+    || 'true' === preview.getAttribute('aria-busy');
+  const hasWindowSpacer = Boolean(
+    preview.querySelector('[data-easymde-preview-window-spacer]')
+  );
+  const acceptedDuringRefresh = refreshing
+    && !hasWindowSpacer
+    && '1' === preview.getAttribute('data-easymde-preview-accepted');
   return '' !== preview.innerHTML.trim()
     && !preview.querySelector(
       '.easymde-preview-empty, .easymde-preview-error, .easymde-render-error'
     )
     && '1' !== preview.getAttribute('data-easymde-preview-error')
-    && '1' !== preview.getAttribute('data-easymde-preview-refreshing')
-    && 'true' !== preview.getAttribute('aria-busy');
+    && (!refreshing || acceptedDuringRefresh);
 }
 
 function finalizeMarkup(
@@ -2411,7 +2434,7 @@ function createPreparedClipboardPayload(
   // computed output without changing the rendered child markup. Responsive
   // breakpoints can also change computed styles and geometry without changing
   // the DOM, so keep both the full sink markup and a layout fingerprint.
-  const sourceMarkup = preview.outerHTML;
+  const sourceMarkup = clipboardSourceMarkup(preview);
   const yieldToBrowser = createSerializationYield(runtime, background);
   const layoutSignature = background
     ? ''
@@ -2500,7 +2523,7 @@ function preparedClipboardPayload(
   if (!replace) {
     if (
       existing
-      && existing.sourceMarkup === preview.outerHTML
+      && existing.sourceMarkup === clipboardSourceMarkup(preview)
       && existing.layoutSignature === preparedLayoutSignature(preview, runtime)
     ) return existing;
   }
@@ -2794,7 +2817,7 @@ export function createBrowserWechatClipboard(
           ? new Promise<SerializedClipboardPayload>((resolve, reject) => {
             startConversion = () => {
               void readyPreview.then((resolvedPreview) => {
-                const sourceMarkup = resolvedPreview.outerHTML;
+                const sourceMarkup = clipboardSourceMarkup(resolvedPreview);
                 return serializeClipboardPayload(
                   resolvedPreview,
                   runtime,
@@ -2803,7 +2826,7 @@ export function createBrowserWechatClipboard(
                   {
                     isCurrent: () => (
                       (!options.isCurrent || options.isCurrent())
-                      && resolvedPreview.outerHTML === sourceMarkup
+                      && clipboardSourceMarkup(resolvedPreview) === sourceMarkup
                     ),
                     imageUploadPort: conversionImageUploadPort as ImageUploadPort,
                     maxBytes: options.maxBytes as number,
@@ -2857,7 +2880,7 @@ export function createBrowserWechatClipboard(
           // the originating click task. A payload prepared before that task
           // may therefore use the activation-safe compatibility path.
           if (!nonPngPrepared) return { code: 'wechat-copy-failed', status: 'failed' };
-          const currentMarkup = preview.outerHTML;
+          const currentMarkup = clipboardSourceMarkup(preview);
           const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
           const preparedFallback = nonPngPrepared.payload
             && nonPngPrepared.sourceMarkup === currentMarkup
@@ -2967,7 +2990,7 @@ export function createBrowserWechatClipboard(
       // click before it resolves is a truthful failure and can be retried once
       // the next stable Preview notification has completed preparation.
       const prepared = preparedPayloads.get(preview);
-      const currentMarkup = preview.outerHTML;
+      const currentMarkup = clipboardSourceMarkup(preview);
       const currentLayoutSignature = preparedLayoutSignature(preview, runtime);
       const payload = prepared?.payload
         && prepared.sourceMarkup === currentMarkup

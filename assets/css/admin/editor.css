@@ -2294,6 +2294,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-preview-empty,
+.easymde-preview-pending,
 .easymde-preview-error {
     color: #64748b;
 }

@@ -338,7 +338,7 @@ final class FrontendAssets {
 			true,
 			'frontend-enhancements'
 		);
-		$enhancement_url = $this->versioned_asset_url( $enhancements['path'] );
+		$enhancement_url = $this->versioned_asset_url( $enhancements['path'], $enhancements['version'] );
 		$mermaid_url     = null;
 		$mermaid_error   = null;
 		try {
@@ -349,7 +349,7 @@ final class FrontendAssets {
 				true,
 				'frontend-mermaid'
 			);
-			$mermaid_url     = $this->versioned_asset_url( $mermaid_runtime['path'] );
+			$mermaid_url     = $this->versioned_asset_url( $mermaid_runtime['path'], $mermaid_runtime['version'] );
 		} catch ( \RuntimeException $error ) {
 			if ( ! FrontendAssetContract::is_error( $error ) ) {
 				throw $error;
@@ -392,8 +392,12 @@ final class FrontendAssets {
 		return $features;
 	}
 
-	private function versioned_asset_url( $asset_path ) {
-		return add_query_arg( 'ver', EASYMDE_VERSION, Asset::url( $asset_path ) );
+	private function versioned_asset_url( $asset_path, $version = null ) {
+		if ( null === $version ) {
+			$version = EASYMDE_VERSION;
+		}
+
+		return add_query_arg( 'ver', $version, Asset::url( $asset_path ) );
 	}
 
 	private function get_static_asset_version( $asset_path ) {

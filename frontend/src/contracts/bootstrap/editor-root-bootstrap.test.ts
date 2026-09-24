@@ -153,7 +153,7 @@ function validBootstrap() {
     preview: {
       features: { highlight: true, mermaid: false },
       html: '<p>Sanitized preview</p>',
-      messages: { empty: 'Empty', error: 'Failed' },
+      messages: { empty: 'Empty', error: 'Failed', loading: 'Loading' },
       postId: 7,
       signature: 'stored-signature'
     },
@@ -364,7 +364,7 @@ describe('parseEditorRootBootstrap', () => {
       preview: {
         features: { highlight: true, mermaid: false },
         html: '<p>Sanitized preview</p>',
-        messages: { empty: 'Empty', error: 'Failed' },
+        messages: { empty: 'Empty', error: 'Failed', loading: 'Loading' },
         postId: 7,
         signature: 'stored-signature'
       },

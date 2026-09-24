@@ -38,6 +38,7 @@ export type SafePreviewHtmlSinkScheduler = Readonly<{
 
 type SafePreviewHtmlSinkProps = Readonly<{
   ariaBusy?: boolean;
+  acceptedHtml?: boolean;
   className?: string;
   contentEditable?: boolean;
   error?: boolean;
@@ -64,6 +65,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   windowedCommit?: SafePreviewHtmlSinkWindowCommit | null;
   statusClassName?: string;
   statusMessage?: string;
+  statusRole?: string;
   style?: CSSProperties;
   surfaceRef: Ref<HTMLElement>;
 }>;
@@ -73,6 +75,7 @@ type AppliedSurfaceState = Readonly<{
   revision: number;
   statusClassName: string | undefined;
   statusMessage: string | undefined;
+  statusRole: string | undefined;
   materializeCommitKey: number | null;
   windowedCommitKey: number | null;
 }>;
@@ -134,6 +137,19 @@ function hasExactChildren(
 ): boolean {
   if (surface.childNodes.length !== nodes.length) return false;
   return nodes.every((node, index) => surface.childNodes[index] === node);
+}
+
+function appendStatusMessage(
+  surface: HTMLElement,
+  statusClassName: string | undefined,
+  statusMessage: string,
+  statusRole: string | undefined
+): void {
+  const message = surface.ownerDocument.createElement('p');
+  if (statusClassName) message.className = statusClassName;
+  if (statusRole) message.setAttribute('role', statusRole);
+  message.textContent = statusMessage;
+  surface.append(message);
 }
 
 function startMaterializeChildrenCommit(
@@ -310,6 +326,7 @@ function startWindowChildrenCommit(
 }
 
 export function SafePreviewHtmlSink({
+  acceptedHtml = false,
   ariaBusy = false,
   className,
   contentEditable,
@@ -333,6 +350,7 @@ export function SafePreviewHtmlSink({
   windowedCommit,
   statusClassName,
   statusMessage,
+  statusRole,
   style,
   surfaceRef
 }: SafePreviewHtmlSinkProps) {
@@ -365,6 +383,7 @@ export function SafePreviewHtmlSink({
       && appliedSurfaceState.html === html
       && appliedSurfaceState.statusClassName === statusClassName
       && appliedSurfaceState.statusMessage === statusMessage
+      && appliedSurfaceState.statusRole === statusRole
       && null === appliedSurfaceState.windowedCommitKey
     ) {
       return;
@@ -377,6 +396,7 @@ export function SafePreviewHtmlSink({
         && appliedSurfaceState.html === html
         && appliedSurfaceState.statusClassName === statusClassName
         && appliedSurfaceState.statusMessage === statusMessage
+        && appliedSurfaceState.statusRole === statusRole
         && appliedSurfaceState.materializeCommitKey === activeMaterializeCommit.key
       ) {
         return undefined;
@@ -394,6 +414,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: null
           };
           onMaterializeComplete?.(
@@ -408,6 +429,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: null
           };
           onMaterializeFailure?.(
@@ -425,6 +447,7 @@ export function SafePreviewHtmlSink({
           revision: htmlRevision,
           statusClassName,
           statusMessage,
+          statusRole,
           windowedCommitKey: null
         };
       };
@@ -437,6 +460,7 @@ export function SafePreviewHtmlSink({
         && appliedSurfaceState.html === html
         && appliedSurfaceState.statusClassName === statusClassName
         && appliedSurfaceState.statusMessage === statusMessage
+        && appliedSurfaceState.statusRole === statusRole
         && appliedSurfaceState.windowedCommitKey === windowCommit.key
       ) {
         return undefined;
@@ -451,6 +475,7 @@ export function SafePreviewHtmlSink({
             revision: htmlRevision,
             statusClassName,
             statusMessage,
+            statusRole,
             windowedCommitKey: windowCommit.key
           };
           onStagedCommit?.(windowCommit.revision);
@@ -462,12 +487,16 @@ export function SafePreviewHtmlSink({
       if (!hasExactChildren(surface, commit.nodes)) {
         surface.replaceChildren(...commit.nodes);
       }
+      if (statusMessage) {
+        appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
+      }
       appliedSurfaceStateRef.current = {
         html,
         materializeCommitKey: null,
         revision: htmlRevision,
         statusClassName,
         statusMessage,
+        statusRole,
         windowedCommitKey: null
       };
       onStagedCommit?.(commit.revision);
@@ -486,14 +515,12 @@ export function SafePreviewHtmlSink({
           revision: htmlRevision,
           statusClassName,
           statusMessage,
+          statusRole,
           windowedCommitKey: null
         };
         return undefined;
       }
-      const message = surface.ownerDocument.createElement('p');
-      if (statusClassName) message.className = statusClassName;
-      message.textContent = statusMessage;
-      surface.append(message);
+      appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
     }
     appliedSurfaceStateRef.current = {
       html,
@@ -501,6 +528,7 @@ export function SafePreviewHtmlSink({
       revision: htmlRevision,
       statusClassName,
       statusMessage,
+      statusRole,
       windowedCommitKey: null
     };
     return undefined;
@@ -515,11 +543,13 @@ export function SafePreviewHtmlSink({
     stagedCommit,
     statusClassName,
     statusMessage,
+    statusRole,
     windowedCommit
   ]);
 
   return (
     <article
+      data-easymde-preview-accepted={acceptedHtml ? '1' : undefined}
       aria-busy={ariaBusy ? 'true' : 'false'}
       aria-label={label}
       aria-live={contentEditable ? undefined : 'polite'}

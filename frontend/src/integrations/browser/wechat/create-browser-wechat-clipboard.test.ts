@@ -615,6 +615,57 @@ describe('createBrowserWechatClipboard', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
+  it('keeps a PNG copy current while only root Preview refresh flags change', async () => {
+    const pendingRasterization = deferred<{
+      file: File;
+      height: number;
+      pixelCount: number;
+      width: number;
+    }>();
+    const rasterize = vi.fn(() => pendingRasterization.promise);
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: '',
+      url: 'https://example.test/visual.png'
+    }));
+    const write = vi.fn(() => Promise.resolve());
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const preview = readyPreview();
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="20" height="10"></svg></div>';
+    const visual = preview.querySelector('.easymde-mermaid');
+    if (!visual) throw new Error('visual missing');
+    Object.defineProperty(visual, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 10, width: 20 })
+    });
+
+    const copy = clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never));
+    await vi.waitFor(() => expect(rasterize).toHaveBeenCalledOnce());
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+    pendingRasterization.resolve({
+      file: new File(['png'], 'visual.png', { type: 'image/png' }),
+      height: 10,
+      pixelCount: 200,
+      width: 20
+    });
+
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledOnce();
+  });
+
   it('rejects stale no-candidate markup after asynchronous theme preparation', async () => {
     const imageUrl = new URL(
       '/assets/images/fullstack-blue-h2.png',
@@ -792,12 +843,144 @@ describe('createBrowserWechatClipboard', () => {
       pageOffset: () => ({ x: 0, y: 0 })
     });
     const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
     preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.removeAttribute('data-easymde-preview-accepted');
 
     await expect(clipboard.copy(preview)).resolves.toEqual({
       code: 'wechat-preview-unavailable',
       status: 'failed'
     });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('copies the previously accepted Preview while its replacement is refreshing', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+    const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+
+    await expect(clipboard.copy(preview)).resolves.toMatchObject({ status: 'copied' });
+    expect(writes).toHaveLength(1);
+  });
+
+  it('reuses the prepared legacy payload when only refresh attributes change', async () => {
+    const preview = readyPreview();
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    await prepareClipboard(clipboard, preview);
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'legacy',
+      status: 'copied'
+    });
+    expect(execCommand).toHaveBeenCalledWith('copy');
+  });
+
+  it.each([
+    ['root style', (preview: HTMLElement) => preview.setAttribute('style', 'color: red')],
+    ['descendant text', (preview: HTMLElement) => {
+      const paragraph = preview.querySelector('p');
+      if (!paragraph) throw new Error('paragraph missing');
+      paragraph.textContent = 'Replaced';
+    }],
+    ['descendant class', (preview: HTMLElement) => {
+      const paragraph = preview.querySelector('p');
+      if (!paragraph) throw new Error('paragraph missing');
+      paragraph.classList.add('changed');
+    }],
+    ['descendant refresh-named attribute', (preview: HTMLElement) => {
+      const paragraph = preview.querySelector('p');
+      if (!paragraph) throw new Error('paragraph missing');
+      paragraph.setAttribute('data-easymde-preview-refreshing', '1');
+    }]
+  ])('invalidates a prepared legacy payload after %s changes', async (_, change) => {
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    const preview = readyPreview();
+    await prepareClipboard(clipboard, preview);
+    change(preview);
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it('rejects an accepted windowed Preview during refresh before resolving materialization', async () => {
+    const write = vi.fn();
+    const resolvePreview = vi.fn(async () => null);
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+    const spacer = document.createElement('div');
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    preview.append(spacer);
+
+    await expect(clipboard.copy(preview, { resolvePreview })).resolves.toEqual({
+      code: 'wechat-preview-unavailable',
+      status: 'failed'
+    });
+    expect(resolvePreview).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });
 

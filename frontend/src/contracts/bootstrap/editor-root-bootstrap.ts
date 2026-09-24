@@ -63,6 +63,7 @@ export type EditorRootPreviewBootstrap = Readonly<{
   messages: Readonly<{
     empty: string;
     error: string;
+    loading: string;
   }>;
   postId: number;
   signature: string;
@@ -283,7 +284,8 @@ function parsePreview(value: unknown): EditorRootPreviewBootstrap {
     ) as SafePreviewHtml,
     messages: {
       empty: boundedString(messages.empty, 'editor-root-preview-invalid'),
-      error: boundedString(messages.error, 'editor-root-preview-invalid')
+      error: boundedString(messages.error, 'editor-root-preview-invalid'),
+      loading: boundedString(messages.loading, 'editor-root-preview-invalid')
     },
     postId: Number(preview.postId),
     signature: boundedString(preview.signature, 'editor-root-preview-invalid', {

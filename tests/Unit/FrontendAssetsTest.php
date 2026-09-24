@@ -477,6 +477,73 @@ final class FrontendAssetsTest extends WP_UnitTestCase
         $this->assertSame(array(), wp_scripts()->registered['easymde-enhancements']->deps);
     }
 
+    public function test_editor_preview_build_asset_urls_use_their_manifest_versions()
+    {
+        $assets = new FrontendAssets(
+            new PostDocument(),
+            new ThemeStateRepository(new ArticleThemeRegistry(), new CodeThemeRegistry(), new CustomCssPolicy())
+        );
+        $post_id = self::factory()->post->create(array('post_type' => 'post'));
+        $assets->enqueue_editor_base_assets($post_id);
+        $preview_assets = $assets->get_editor_preview_assets();
+        $registered_enhancements = wp_scripts()->registered['easymde-enhancements'];
+        $registered_enhancements_url = add_query_arg(
+            'ver',
+            $registered_enhancements->ver,
+            $registered_enhancements->src
+        );
+
+        $this->assertSame($registered_enhancements_url, $preview_assets['mathRendererUrl']);
+        $this->assertSame($registered_enhancements_url, $preview_assets['mermaidRendererUrl']);
+
+        $enhancements_manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/frontend-enhancements/wordpress-manifest.json')),
+            true
+        );
+        $enhancements_entry = $enhancements_manifest['entries']['frontend/src/entrypoints/frontend-enhancements.ts'];
+        $enhancements_metadata = require Asset::path(
+            'assets/build/frontend-enhancements/' . $enhancements_entry['asset']
+        );
+
+        $mermaid_manifest = json_decode(
+            file_get_contents(Asset::path('assets/build/frontend-mermaid/wordpress-manifest.json')),
+            true
+        );
+        $mermaid_entry = $mermaid_manifest['entries']['frontend/src/entrypoints/frontend-mermaid-runtime.ts'];
+        $mermaid_metadata = require Asset::path(
+            'assets/build/frontend-mermaid/' . $mermaid_entry['asset']
+        );
+
+        $enhancement_query = array();
+        wp_parse_str(
+            (string) wp_parse_url($preview_assets['mathRendererUrl'], PHP_URL_QUERY),
+            $enhancement_query
+        );
+        $this->assertSame(
+            Asset::url('assets/build/frontend-enhancements/' . $enhancements_entry['file']),
+            remove_query_arg('ver', $preview_assets['mathRendererUrl'])
+        );
+        $this->assertSame($enhancements_metadata['version'], $enhancement_query['ver']);
+
+        $mermaid_query = array();
+        wp_parse_str(
+            (string) wp_parse_url($preview_assets['mermaidScriptUrl'], PHP_URL_QUERY),
+            $mermaid_query
+        );
+        $this->assertSame(
+            Asset::url('assets/build/frontend-mermaid/' . $mermaid_entry['file']),
+            remove_query_arg('ver', $preview_assets['mermaidScriptUrl'])
+        );
+        $this->assertSame($mermaid_metadata['version'], $mermaid_query['ver']);
+
+        $renderer_query = array();
+        wp_parse_str(
+            (string) wp_parse_url($preview_assets['mermaidRendererUrl'], PHP_URL_QUERY),
+            $renderer_query
+        );
+        $this->assertSame($enhancements_metadata['version'], $renderer_query['ver']);
+    }
+
     public function test_combined_render_assets_are_local_and_enqueued_once()
     {
         $assets = new FrontendAssets(

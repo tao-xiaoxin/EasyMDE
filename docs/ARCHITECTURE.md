@@ -259,6 +259,10 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Large candidate population and visual block marker passes yield when measured
+work reaches an eight-millisecond slice budget, checking cancellation and the
+current Preview owner after each yield. A large final handoff retains one paint
+barrier before the atomic sink commit.
 Layout-dependent code-frame variables are synchronized once against the active
 surface after that commit. Supported `beforeinput` edits use captured source
 and visual ranges to apply one localized canonical transaction. A cached

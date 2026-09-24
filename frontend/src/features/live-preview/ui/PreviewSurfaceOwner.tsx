@@ -492,6 +492,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     useRef<PreviewEnhancementCandidate | null>(null);
   const committedEnhancementCandidateRef =
     useRef<PreviewEnhancementCandidate | null>(null);
+  const acceptedHtmlRevisionRef = useRef<number | null>(null);
   const previewWindowRepositoryRef =
     useRef<PreviewWindowNodeRepository | null>(null);
   const pendingWindowCommitRef =
@@ -564,6 +565,17 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     if (candidate?.generation === revision) {
       candidate.surface.remove();
       committedEnhancementCandidateRef.current = null;
+    }
+    const committingState = stateRef.current;
+    if (
+      ownerActiveRef.current
+      && generationRef.current === revision
+      && 'html' === committingState.kind
+      && committingState.generation === revision
+      && committingState.htmlRevision === revision
+      && 'committing' === committingState.phase
+    ) {
+      acceptedHtmlRevisionRef.current = revision;
     }
     const finish = () => {
       if (!ownerActiveRef.current || generationRef.current !== revision) return;
@@ -1764,6 +1776,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       onMaterializeFailure={onMaterializeFailure}
       onStagedCommit={onStagedCommit}
       refreshing={busy}
+      acceptedHtml={
+        'html' === state.kind
+        && Boolean(state.html.trim())
+        && 'failed' !== state.phase
+        && acceptedHtmlRevisionRef.current === state.htmlRevision
+      }
       surfaceRef={surfaceRef}
       stagedCommit={'html' === state.kind ? state.stagedCommit : null}
       {...('empty' === state.kind

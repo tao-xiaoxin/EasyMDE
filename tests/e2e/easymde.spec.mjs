@@ -5278,7 +5278,12 @@ test.describe('EasyMDE editor workflows', () => {
       await expect.poll(() => previewCode.evaluate((code) => {
         const frame = code.parentElement;
         const root = code.closest('.easymde-rendered-content');
+        if (!(frame instanceof HTMLElement) || !(root instanceof HTMLElement)) {
+          return null;
+        }
         return {
+          accepted: root.getAttribute('data-easymde-preview-accepted'),
+          busy: root.getAttribute('aria-busy'),
           backgroundIsVisible: 'rgba(0, 0, 0, 0)' !== getComputedStyle(code).backgroundColor,
           frameFitsRoot: frame.getBoundingClientRect().width <= root.getBoundingClientRect().width + 1,
           preservesNewlines: code.textContent.split('\n').length > 1,
@@ -5286,7 +5291,9 @@ test.describe('EasyMDE editor workflows', () => {
           whiteSpace: getComputedStyle(code).whiteSpace
         };
       }), { message: id + ' associated code theme should preserve code semantics' }).toEqual({
+        accepted: '1',
         backgroundIsVisible: true,
+        busy: 'false',
         frameFitsRoot: true,
         preservesNewlines: true,
         scrollsLocally: true,

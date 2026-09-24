@@ -792,13 +792,39 @@ describe('createBrowserWechatClipboard', () => {
       pageOffset: () => ({ x: 0, y: 0 })
     });
     const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
     preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.removeAttribute('data-easymde-preview-accepted');
 
     await expect(clipboard.copy(preview)).resolves.toEqual({
       code: 'wechat-preview-unavailable',
       status: 'failed'
     });
     expect(write).not.toHaveBeenCalled();
+  });
+
+  it('copies the previously accepted Preview while its replacement is refreshing', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+    const preview = readyPreview();
+    preview.setAttribute('aria-busy', 'true');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+
+    await expect(clipboard.copy(preview)).resolves.toMatchObject({ status: 'copied' });
+    expect(writes).toHaveLength(1);
   });
 
   it('writes sanitized styled HTML and plain text through the modern Clipboard API', async () => {

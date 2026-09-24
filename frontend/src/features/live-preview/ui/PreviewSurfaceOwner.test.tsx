@@ -1209,8 +1209,11 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.textContent).not.toBe(messages.empty);
   });
 
-  it('keeps rendered content visible while the next request is loading', () => {
+  it('keeps the previously committed snapshot available while the next request is loading', async () => {
     const { session, surface } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     act(() => {
       session.schedule(request('# Updated'), true);
@@ -1218,6 +1221,7 @@ describe('PreviewSurfaceOwner', () => {
 
     expect(surface.getAttribute('aria-busy')).toBe('true');
     expect(surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+    expect(surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
     expect(surface.textContent).toContain('Initial preview');
     expect(surface.querySelector('[role="status"]')).toBeNull();
   });
@@ -1231,7 +1235,44 @@ describe('PreviewSurfaceOwner', () => {
 
     expect(current.surface.innerHTML).toBe('<p>Stable preview</p>');
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.getAttribute('data-easymde-preview-refreshing')).toBe('1');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
     expect(current.surface.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it('keeps only the previous enhanced snapshot accepted until its replacement commits', async () => {
+    const enhancement = deferred<void>();
+    const current = setup({
+      enhance: vi.fn()
+        .mockImplementationOnce(() => Promise.resolve())
+        .mockImplementationOnce(() => enhancement.promise),
+      initialHtml: '<p>Stable preview</p>'
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+
+    act(() => current.session.schedule(request('# Replacement', 'replacement'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        html: safeHtml('<p>Unenhanced replacement</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+    });
+
+    expect(current.surface.textContent).toContain('Stable preview');
+    expect(current.surface.textContent).not.toContain('Unenhanced replacement');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    expect(current.surface.textContent).toContain('Unenhanced replacement');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
   });
 
   it('renders accessible empty and error states without reporting readiness', async () => {
@@ -1420,7 +1461,7 @@ describe('PreviewSurfaceOwner', () => {
     setInnerHTML.mockRestore();
   });
 
-  it('reveals accepted initial HTML while enhancement is pending without reporting readiness', async () => {
+  it('keeps initial server HTML unaccepted while enhancement is pending', async () => {
     const enhancement = deferred<void>();
     const current = setup({
       enhance: () => enhancement.promise,
@@ -1437,6 +1478,7 @@ describe('PreviewSurfaceOwner', () => {
 
     expect(current.surface.textContent).toBe('First safe preview');
     expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBeNull();
     expect(current.surface.easymdePreviewSignature).toBe('');
 
     await act(async () => {
@@ -1444,6 +1486,7 @@ describe('PreviewSurfaceOwner', () => {
       await enhancement.promise;
     });
     expect(current.surface.easymdePreviewSignature).toBe('# First Preview');
+    expect(current.surface.getAttribute('data-easymde-preview-accepted')).toBe('1');
   });
 
   it('moves large server responses into connected staging in bounded batches before enhancement', async () => {

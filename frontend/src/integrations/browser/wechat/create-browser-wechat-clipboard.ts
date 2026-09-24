@@ -2050,13 +2050,16 @@ async function replaceVisualObjects(
 }
 
 function previewReady(preview: HTMLElement): boolean {
+  const refreshing = '1' === preview.getAttribute('data-easymde-preview-refreshing')
+    || 'true' === preview.getAttribute('aria-busy');
+  const acceptedDuringRefresh = refreshing
+    && '1' === preview.getAttribute('data-easymde-preview-accepted');
   return '' !== preview.innerHTML.trim()
     && !preview.querySelector(
       '.easymde-preview-empty, .easymde-preview-error, .easymde-render-error'
     )
     && '1' !== preview.getAttribute('data-easymde-preview-error')
-    && '1' !== preview.getAttribute('data-easymde-preview-refreshing')
-    && 'true' !== preview.getAttribute('aria-busy');
+    && (!refreshing || acceptedDuringRefresh);
 }
 
 function finalizeMarkup(

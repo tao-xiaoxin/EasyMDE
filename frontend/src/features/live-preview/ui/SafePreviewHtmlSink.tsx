@@ -38,6 +38,7 @@ export type SafePreviewHtmlSinkScheduler = Readonly<{
 
 type SafePreviewHtmlSinkProps = Readonly<{
   ariaBusy?: boolean;
+  acceptedHtml?: boolean;
   className?: string;
   contentEditable?: boolean;
   error?: boolean;
@@ -312,6 +313,7 @@ function startWindowChildrenCommit(
 }
 
 export function SafePreviewHtmlSink({
+  acceptedHtml = false,
   ariaBusy = false,
   className,
   contentEditable,
@@ -535,6 +537,7 @@ export function SafePreviewHtmlSink({
 
   return (
     <article
+      data-easymde-preview-accepted={acceptedHtml ? '1' : undefined}
       aria-busy={ariaBusy ? 'true' : 'false'}
       aria-label={label}
       aria-live={contentEditable ? undefined : 'polite'}

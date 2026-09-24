@@ -86,11 +86,13 @@ type PreviewStatusState = Readonly<{
 type PreviewSurfaceState = PreviewHtmlState | PreviewStatusState;
 
 export type PreviewSurfaceStagingScheduler = Readonly<{
+  now?: () => number;
   yield: () => Promise<void>;
 }>;
 
-const PREVIEW_STAGING_BATCH_SIZE = 32;
-const PREVIEW_HIDDEN_STAGING_BATCH_SIZE = 256;
+const PREVIEW_STAGING_SLICE_BUDGET_MS = 8;
+const PREVIEW_STAGING_DOM_APPEND_MAX_NODES = 32;
+const PREVIEW_ATOMIC_COMMIT_BARRIER_MIN_BLOCKS = 32;
 
 type PreviewEnhancementCandidate = Readonly<{
   codeTheme: string;
@@ -283,6 +285,7 @@ function defaultPreviewSurfaceStagingScheduler(
 ): PreviewSurfaceStagingScheduler {
   const windowRef = documentRef.defaultView;
   return {
+    now: () => windowRef?.performance?.now() ?? Date.now(),
     yield: () => new Promise<void>((resolve) => {
       if (windowRef?.requestAnimationFrame) {
         windowRef.requestAnimationFrame(() => resolve());
@@ -297,29 +300,50 @@ function defaultPreviewSurfaceStagingScheduler(
   };
 }
 
+function stagingTime(
+  scheduler: PreviewSurfaceStagingScheduler,
+  documentRef: Document
+): number {
+  return scheduler.now?.()
+    ?? documentRef.defaultView?.performance?.now()
+    ?? Date.now();
+}
+
 async function populateEnhancementCandidate(
   candidate: PreviewEnhancementCandidate,
   scheduler: PreviewSurfaceStagingScheduler,
   isCurrent: () => boolean,
   signal: AbortSignal
 ): Promise<boolean> {
-  const batchSize = 'none' === candidate.surface.style.display
-    ? PREVIEW_HIDDEN_STAGING_BATCH_SIZE
-    : PREVIEW_STAGING_BATCH_SIZE;
-  for (
-    let index = 0;
-    index < candidate.sourceNodes.length;
-    index += batchSize
-  ) {
-    if (signal.aborted || !isCurrent()) return false;
-    const batch = candidate.sourceNodes.slice(
-      index,
-      index + batchSize
+  const documentRef = candidate.surface.ownerDocument;
+  let sliceStartedAt = stagingTime(scheduler, documentRef);
+  let index = 0;
+  while (index < candidate.sourceNodes.length) {
+    const batch = documentRef.createDocumentFragment();
+    let batchSize = 0;
+    do {
+      if (signal.aborted || !isCurrent()) return false;
+      const node = candidate.sourceNodes[index];
+      if (!node) throw new Error('preview-staging-node-missing');
+      batch.append(node);
+      index += 1;
+      batchSize += 1;
+    } while (
+      index < candidate.sourceNodes.length
+      && batchSize < PREVIEW_STAGING_DOM_APPEND_MAX_NODES
+      && stagingTime(scheduler, documentRef) - sliceStartedAt
+        < PREVIEW_STAGING_SLICE_BUDGET_MS
     );
-    candidate.surface.append(...batch);
-    if (index + batch.length >= candidate.sourceNodes.length) continue;
-    await scheduler.yield();
-    if (signal.aborted || !isCurrent()) return false;
+    candidate.surface.append(batch);
+    if (
+      index < candidate.sourceNodes.length
+      && stagingTime(scheduler, documentRef) - sliceStartedAt
+        >= PREVIEW_STAGING_SLICE_BUDGET_MS
+    ) {
+      await scheduler.yield();
+      if (signal.aborted || !isCurrent()) return false;
+      sliceStartedAt = stagingTime(scheduler, documentRef);
+    }
   }
   return !signal.aborted && isCurrent();
 }
@@ -340,46 +364,43 @@ function capturePreviewBlockMarkers(
   | Promise<ReadonlyArray<VisualBlockMarker> | null> {
   validatePreviewWindowMarkup(surface, editMap);
   const markers: VisualBlockMarker[] = [];
+  const documentRef = surface.ownerDocument;
   const stale = (): null => {
     removePreviewBlockMarkers(markers);
     return null;
   };
-  const captureBatch = (
-    index: number
-  ): ReadonlyArray<VisualBlockMarker> | null
-    | Promise<ReadonlyArray<VisualBlockMarker> | null> => {
-    if (signal.aborted || !isCurrent()) return stale();
-    const end = Math.min(
-      editMap.blocks.length,
-      index + PREVIEW_STAGING_BATCH_SIZE
-    );
-    for (let blockIndex = index; blockIndex < end; blockIndex += 1) {
-      const block = editMap.blocks[blockIndex];
-      const root = surface.children[blockIndex];
-      if (!block || !(root instanceof HTMLElement)) {
-        throw new Error('preview-window-block-map-marker-mismatch');
+  const capture = async (): Promise<ReadonlyArray<VisualBlockMarker> | null> => {
+    let sliceStartedAt = stagingTime(scheduler, documentRef);
+    try {
+      for (let blockIndex = 0; blockIndex < editMap.blocks.length; blockIndex += 1) {
+        if (signal.aborted || !isCurrent()) return stale();
+        const block = editMap.blocks[blockIndex];
+        const root = surface.children[blockIndex];
+        if (!block || !(root instanceof HTMLElement)) {
+          throw new Error('preview-window-block-map-marker-mismatch');
+        }
+        const marker = documentRef.createComment(
+          `easymde-visual-block:${block.id}`
+        );
+        root.before(marker);
+        markers.push({ id: block.id, marker });
+        if (
+          blockIndex + 1 < editMap.blocks.length
+          && stagingTime(scheduler, documentRef) - sliceStartedAt
+            >= PREVIEW_STAGING_SLICE_BUDGET_MS
+        ) {
+          await scheduler.yield();
+          if (signal.aborted || !isCurrent()) return stale();
+          sliceStartedAt = stagingTime(scheduler, documentRef);
+        }
       }
-      const marker = surface.ownerDocument.createComment(
-        `easymde-visual-block:${block.id}`
-      );
-      root.before(marker);
-      markers.push({ id: block.id, marker });
+      return markers;
+    } catch (error) {
+      removePreviewBlockMarkers(markers);
+      throw error;
     }
-    if (end >= editMap.blocks.length) return markers;
-    return scheduler.yield().then(() => captureBatch(end));
   };
-  try {
-    const result = captureBatch(0);
-    return result instanceof Promise
-      ? result.catch((error: unknown) => {
-          removePreviewBlockMarkers(markers);
-          throw error;
-        })
-      : result;
-  } catch (error) {
-    removePreviewBlockMarkers(markers);
-    throw error;
-  }
+  return capture();
 }
 
 function removePreviewBlockMarkers(
@@ -394,32 +415,38 @@ function annotateEnhancedPreviewBlocks(
   isCurrent: () => boolean,
   signal: AbortSignal
 ): boolean | Promise<boolean> {
-  const annotateBatch = (index: number): boolean | Promise<boolean> => {
-    if (signal.aborted || !isCurrent()) return false;
-    const batch = markers.slice(index, index + PREVIEW_STAGING_BATCH_SIZE);
-    for (const { id, marker } of batch) {
-      const target = marker.nextElementSibling;
-      if (!(target instanceof HTMLElement)) {
-        throw new Error('preview-window-block-map-marker-mismatch');
-      }
-      target.setAttribute(VISUAL_BLOCK_ATTRIBUTE, id);
-    }
-    if (index + batch.length >= markers.length) {
-      return !signal.aborted && isCurrent();
-    }
-    return scheduler.yield().then(() => annotateBatch(index + batch.length));
-  };
-  try {
-    const result = annotateBatch(0);
-    if (result instanceof Promise) {
-      return result.finally(() => removePreviewBlockMarkers(markers));
-    }
+  const documentRef = markers[0]?.marker.ownerDocument;
+  if (!documentRef) {
     removePreviewBlockMarkers(markers);
-    return result;
-  } catch (error) {
-    removePreviewBlockMarkers(markers);
-    throw error;
+    return !signal.aborted && isCurrent();
   }
+  const annotate = async (): Promise<boolean> => {
+    let sliceStartedAt = stagingTime(scheduler, documentRef);
+    try {
+      for (let index = 0; index < markers.length; index += 1) {
+        if (signal.aborted || !isCurrent()) return false;
+        const entry = markers[index];
+        const target = entry?.marker.nextElementSibling;
+        if (!entry || !(target instanceof HTMLElement)) {
+          throw new Error('preview-window-block-map-marker-mismatch');
+        }
+        target.setAttribute(VISUAL_BLOCK_ATTRIBUTE, entry.id);
+        if (
+          index + 1 < markers.length
+          && stagingTime(scheduler, documentRef) - sliceStartedAt
+            >= PREVIEW_STAGING_SLICE_BUDGET_MS
+        ) {
+          await scheduler.yield();
+          if (signal.aborted || !isCurrent()) return false;
+          sliceStartedAt = stagingTime(scheduler, documentRef);
+        }
+      }
+      return !signal.aborted && isCurrent();
+    } finally {
+      removePreviewBlockMarkers(markers);
+    }
+  };
+  return annotate();
 }
 
 type VisualMarkdownSourceMarker = Readonly<{
@@ -1327,8 +1354,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           return;
         }
         if (
-          activeCandidate.sourceNodes.length > PREVIEW_STAGING_BATCH_SIZE
-          || blockMarkers.length > PREVIEW_STAGING_BATCH_SIZE
+          activeCandidate.sourceNodes.length
+            > PREVIEW_ATOMIC_COMMIT_BARRIER_MIN_BLOCKS
+          || blockMarkers.length > PREVIEW_ATOMIC_COMMIT_BARRIER_MIN_BLOCKS
         ) {
           await scheduler.yield();
           if (!isCurrent() || controller.signal.aborted) {

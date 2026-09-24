@@ -435,6 +435,14 @@ most one Long Task at or below 75 ms; every other deferred Preview or edit Long
 Task fails the test. The same test verifies exact canonical Markdown, one
 Preview request, bounded window mounting, lock synchronization, and the
 absence of browser errors without recording article content.
+A separate Chromium performance case pastes a generated 2,300-block document
+with 150 fenced code blocks after an existing paragraph. It asserts all 2,301
+Preview map blocks, exact canonical Markdown, one Preview request, an editable
+ready surface within 2.5 seconds, and no more than two Preview-phase Long
+Tasks of at most 75 ms each. The original 194 KB case keeps its stricter
+single-Preview-Long-Task limit and 60-interaction edit gate. Fresh bare `~~~`
+and triple-backtick cases verify the first Mac-framed code block, fence-family
+preservation, mobile geometry, and a warm PHP-rendered Preview.
 The Chromium test `parses the exact full-capability fixture after immersive
 unlock at empty and prefixed document ends` reads the unchanged
 `docs/examples/markdown-full-capability-test.md` file directly, verifies the

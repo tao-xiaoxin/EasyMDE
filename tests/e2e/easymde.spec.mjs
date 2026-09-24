@@ -6898,15 +6898,15 @@ test.describe('EasyMDE editor workflows', () => {
     await page.locator('[data-easymde-command="' + copyCommand + '"]').click();
     await expect.poll(() => page.evaluate(() => window.__easymdeClipboardWrites.length)).toBe(1);
     expect(await page.evaluate(() => window.__easymdeClipboardActivation)).toEqual([true]);
-    await expect.poll(
-      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
-    ).toBeGreaterThan(0);
     const editorMessageHost = page.locator(
       '.easymde-editor > .easymde-editor-message-alert-host'
     );
     await expect(editorMessageHost.getByRole('status')).toContainText(
       await page.evaluate(() => window.EasyMDEEditorRootBootstrap.wechatExport.strings.success)
     );
+    await expect.poll(
+      () => page.evaluate(() => window.__easymdeCupidBusyFetches.released)
+    ).toBeGreaterThan(0);
     const immersiveLabels = await page.evaluate(
       () => window.EasyMDEEditorRootBootstrap.strings.immersive
     );

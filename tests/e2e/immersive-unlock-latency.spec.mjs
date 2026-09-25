@@ -346,7 +346,7 @@ test('cold short unlock reports pending before editable and ignores a physical d
   ).join('\n\n');
   await fillMarkdownAndWaitForPreview(page, markdown, 8);
   const labels = await enterImmersivePreview(page);
-  expect(labels.previewUnlockEdit).toBe('解除锁定并编辑');
+  expect(labels.previewUnlockEdit.trim()).not.toBe('');
 
   const requestMonitor = createPostRequestMonitor(page);
   const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });

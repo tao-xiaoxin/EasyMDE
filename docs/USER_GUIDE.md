@@ -34,6 +34,14 @@ It does not save a browser preference or update WordPress settings. Its choice
 survives leaving and re-entering immersive writing in the same page, while a
 normal or hard refresh restores the Settings Center mode. The immersive
 Outline preference is separate and remains browser-persisted.
+In immersive Preview, the unlock control shows a busy state while the editable
+surface is being prepared. It becomes editable and receives focus only when
+preparation and any required long-document window are ready. Leaving Preview
+cancels a pending unlock.
+On narrow screens, the Outline opens over the writing area. It closes when
+Preview becomes editable or an editable Preview is resized into a narrow
+screen. Its show control can reopen it without changing the saved Outline
+preference.
 
 ## Toolbar And Shortcuts
 

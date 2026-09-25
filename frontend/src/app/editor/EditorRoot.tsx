@@ -578,6 +578,7 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewWindowUnlockRef =
     useRef<VisualPreviewWindowRequest | null>(null);
   const visualPreviewLockingRef = useRef(false);
+  const [visualPreviewUnlocking, setVisualPreviewUnlocking] = useState(false);
   const [visualPreviewPending, setVisualPreviewPending] = useState(false);
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
@@ -884,8 +885,10 @@ export function EditorRoot(props: EditorRootProps) {
     if (!visualPreviewWindowUnlockRef.current) return;
     visualPreviewWindowUnlockRef.current = null;
     visualPreviewWindowRequestedRef.current = false;
-    visualPreviewWindowUnlockRef.current = null;
-    if (rootActiveRef.current) setVisualPreviewWindowRequested(false);
+    if (rootActiveRef.current) {
+      setVisualPreviewWindowRequested(false);
+      setVisualPreviewUnlocking(false);
+    }
   }, []);
   const handlePreviewDispose = useCallback((runtime: PreviewSurfaceRuntime) => {
     cancelVisualPreviewWindowUnlock();
@@ -903,6 +906,7 @@ export function EditorRoot(props: EditorRootProps) {
     preparation.controller.abort();
     preparation.prepared?.cancel();
     codeThemePreparationRef.current = null;
+    if (rootActiveRef.current) setVisualPreviewUnlocking(false);
   }, []);
   const handlePreviewSnapshotReady = useCallback(
     (
@@ -959,6 +963,17 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [cancelScheduledWechatPreparation]
   );
+  const focusVisualPreview = useCallback(() => {
+    const surface = visualEditorSurface;
+    if (!surface?.isConnected || !surface.isContentEditable) {
+      props.onFailure('visual-editor-focus-surface-unavailable');
+      return false;
+    }
+    surface.focus({ preventScroll: true });
+    if (props.immersiveEnvironment.activeElement() === surface) return true;
+    props.onFailure('visual-editor-focus-surface-failed');
+    return false;
+  }, [props.immersiveEnvironment, props.onFailure, visualEditorSurface]);
   const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
@@ -1037,6 +1052,7 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualPreviewWindowRequested(false);
     visualPreviewEditingRef.current = false;
     setVisualPreviewEditing(false);
+    setVisualPreviewUnlocking(false);
     setVisualPreviewPending(false);
     setVisualPreviewChanged(false);
     previewRefreshPendingRef.current = true;
@@ -1090,6 +1106,7 @@ export function EditorRoot(props: EditorRootProps) {
       snapshot.editMap || '' === documentSession.document.getValue()
     );
     if (!hasEditableMap) return;
+    flushSync(() => setVisualPreviewUnlocking(true));
     const snapshotRevision = snapshot.revision;
     const snapshotSignature = snapshot.signature;
     const sourceMarkdown = documentSession.document.getValue();
@@ -1109,6 +1126,7 @@ export function EditorRoot(props: EditorRootProps) {
         setVisualPreviewWindowRequested(true);
         return;
       }
+      setVisualPreviewUnlocking(false);
       visualPreviewEditingRef.current = true;
       setVisualPreviewEditing(true);
     };
@@ -1155,6 +1173,7 @@ export function EditorRoot(props: EditorRootProps) {
         const current = isCurrent();
         clearPreparation();
         if (current) {
+          setVisualPreviewUnlocking(false);
           props.onFailure(previewEnhancementFailureCode(error));
         }
         return;
@@ -1172,6 +1191,7 @@ export function EditorRoot(props: EditorRootProps) {
         prepared.cancel();
         clearPreparation();
         if (current) {
+          setVisualPreviewUnlocking(false);
           props.onFailure(previewEnhancementFailureCode(error));
         }
         return;
@@ -1261,6 +1281,10 @@ export function EditorRoot(props: EditorRootProps) {
         ) {
           throw new Error('visual-editor-source-sync-failed');
         }
+        if (codeThemeChanged && visualPreviewWindowUnlockRef.current) {
+          cancelVisualPreviewWindowUnlock();
+        }
+        cancelVisualUnlockPreparation();
         codeThemePreparationRef.current?.controller.abort();
         codeThemePreparationRef.current?.prepared?.cancel();
         props.appearancePort.cancelPendingApply();
@@ -1366,6 +1390,8 @@ export function EditorRoot(props: EditorRootProps) {
         return true;
       },
       cancelPendingApply: () => {
+        cancelVisualPreviewWindowUnlock();
+        cancelVisualUnlockPreparation();
         codeThemePreparationRef.current?.controller.abort();
         codeThemePreparationRef.current?.prepared?.cancel();
         codeThemePreparationRef.current = null;
@@ -1414,6 +1440,8 @@ export function EditorRoot(props: EditorRootProps) {
       }
     }),
     [
+      cancelVisualPreviewWindowUnlock,
+      cancelVisualUnlockPreparation,
       documentSession,
       props.appearance.articleThemes,
       props.appearancePort,
@@ -2189,6 +2217,8 @@ export function EditorRoot(props: EditorRootProps) {
               ? immersivePreferences.preferences
               : null
           }
+          visualPreviewEditable={visualPreviewEditing}
+          focusVisualPreview={focusVisualPreview}
           mode={immersiveMode}
           direction={props.layout.direction}
           onCopyWechat={copyWechatFromImmersive}
@@ -2464,6 +2494,7 @@ export function EditorRoot(props: EditorRootProps) {
             editable={visualPreviewEditing}
             hasSnapshot={null !== visualPreviewSnapshot}
             ordinaryLabel={immersive ? props.labels.preview : null}
+            unlocking={visualPreviewUnlocking}
             onToggleEditable={() => {
               if (visualPreviewEditing) {
                 void prepareSourceMutationWithPreview();

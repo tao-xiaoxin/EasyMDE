@@ -405,11 +405,17 @@ export function prepareVisualTaskListMarkers(root: HTMLElement): void {
 
 type MarkdownCodeBlock = Readonly<{
   closed: boolean | null;
+  bodyEnd: number | null;
+  bodyStart: number | null;
+  closingLine: number | null;
+  emptyBodyLineCount: number | null;
   family: string | null;
   kind: 'fenced' | 'indented';
   info: string;
   language: string;
+  lineEnding: string | null;
   ordinal: number;
+  openingLine: number | null;
 }>;
 
 type MarkdownFenceOpening = Readonly<{
@@ -440,13 +446,31 @@ function markdownFenceClosing(line: string): string | null {
   return match?.[1] ?? null;
 }
 
+function markdownLineStarts(markdown: string): number[] {
+  const starts = [0];
+  for (let offset = 0; offset < markdown.length; offset += 1) {
+    if ('\r' === markdown[offset]) {
+      if ('\n' === markdown[offset + 1]) offset += 1;
+      starts.push(offset + 1);
+    } else if ('\n' === markdown[offset]) {
+      starts.push(offset + 1);
+    }
+  }
+  return starts;
+}
+
 function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> {
   if (!markdown.includes('```') && !markdown.includes('~~~')) return [];
   const blocks: MarkdownCodeBlock[] = [];
+  const lineStarts = markdownLineStarts(markdown);
   let active: {
     blockIndex: number;
+    bodyStart: number;
+    emptyBodyLineCount: number | null;
     family: string;
     language: string;
+    lineEnding: string;
+    openingLine: number;
   } | null = null;
   let inIndentedCode = false;
   let ordinal = 0;
@@ -467,8 +491,18 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
         if ('fenced' !== block?.kind) {
           throw new Error('visual-code-fence-map-invalid');
         }
-        blocks[active.blockIndex] = { ...block, closed: true };
+        blocks[active.blockIndex] = {
+          ...block,
+          bodyEnd: lineStarts[lineIndex] ?? markdown.length,
+          closingLine: lineIndex,
+          closed: true,
+          emptyBodyLineCount: active.emptyBodyLineCount
+        };
         active = null;
+      } else if (null !== active.emptyBodyLineCount) {
+        active.emptyBodyLineCount = '' === line
+          ? active.emptyBodyLineCount + 1
+          : null;
       }
       continue;
     }
@@ -481,11 +515,17 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
       if (!inIndentedCode) {
         blocks.push({
           closed: null,
+          bodyEnd: null,
+          bodyStart: null,
+          closingLine: null,
           family: null,
           kind: 'indented',
           info: '',
           language: '',
-          ordinal
+          emptyBodyLineCount: null,
+          lineEnding: null,
+          ordinal,
+          openingLine: null
         });
         ordinal += 1;
         inIndentedCode = true;
@@ -499,22 +539,454 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
     const opening = markdownFenceOpening(line);
     if (!opening) continue;
     const blockIndex = blocks.length;
+    const openingLineStart = lineStarts[lineIndex] ?? markdown.length;
+    const nextLineStart = lineStarts[lineIndex + 1] ?? markdown.length;
+    const lineEnding = markdown.slice(
+      openingLineStart + line.length,
+      nextLineStart
+    );
     active = {
       blockIndex,
+      bodyStart: nextLineStart,
+      emptyBodyLineCount: 0,
       family: opening.family,
-      language: opening.language
+      language: opening.language,
+      lineEnding,
+      openingLine: lineIndex
     };
     blocks.push({
+      bodyEnd: null,
+      bodyStart: active.bodyStart,
+      closingLine: null,
       closed: false,
       family: active.family,
       kind: 'fenced',
       info: opening.info,
       language: active.language,
-      ordinal
+      emptyBodyLineCount: 0,
+      lineEnding: active.lineEnding,
+      ordinal,
+      openingLine: active.openingLine
     });
     ordinal += 1;
   }
   return blocks;
+}
+
+export type VisualCodeBodyInterval = Readonly<{
+  bodyEnd: number;
+  bodyStart: number;
+  codeOrdinal: number;
+  emptyBodyLineCount: number | null;
+  fence: string;
+  info: string;
+  lineEnding: string;
+  sourceBlockEnd: number;
+  sourceBlockStart: number;
+}>;
+
+export function visualCodeBodyIntervalAtOrdinal(
+  markdown: string,
+  codeOrdinal: number
+): VisualCodeBodyInterval {
+  const codeBlock = markdownCodeBlocks(markdown)[codeOrdinal];
+  if (
+    !Number.isInteger(codeOrdinal)
+    || codeOrdinal < 0
+    || !codeBlock
+    || 'fenced' !== codeBlock.kind
+    || true !== codeBlock.closed
+    || null === codeBlock.openingLine
+    || null === codeBlock.closingLine
+    || null === codeBlock.bodyStart
+    || null === codeBlock.bodyEnd
+    || null === codeBlock.family
+    || null === codeBlock.lineEnding
+  ) {
+    throw new Error('visual-editor-code-body-map-invalid');
+  }
+  const lineStarts = markdownLineStarts(markdown);
+  const sourceBlockStart = lineStarts[codeBlock.openingLine];
+  const sourceBlockEnd = lineStarts[codeBlock.closingLine + 1]
+    ?? markdown.length;
+  if (undefined === sourceBlockStart) {
+    throw new Error('visual-editor-code-body-map-invalid');
+  }
+  return {
+    bodyEnd: codeBlock.bodyEnd,
+    bodyStart: codeBlock.bodyStart,
+    codeOrdinal: codeBlock.ordinal,
+    emptyBodyLineCount: codeBlock.emptyBodyLineCount,
+    fence: codeBlock.family,
+    info: codeBlock.info,
+    lineEnding: codeBlock.lineEnding,
+    sourceBlockEnd,
+    sourceBlockStart
+  };
+}
+
+export type VisualCodeBodySelectionBoundary = Readonly<{
+  node: Node;
+  offset: number;
+}>;
+
+export type VisualCodeBodySelectionProjection = Readonly<{
+  codeOrdinal: number;
+  localSelection: Readonly<{ end: number; start: number }>;
+  sourceInterval: VisualCodeBodyInterval;
+  sourceSelection: Readonly<{ end: number; start: number }>;
+  sourceText: string;
+  visualInterval: VisualCodeBodyInterval;
+  visualSelection: Readonly<{ end: number; start: number }>;
+  visualText: string;
+}>;
+
+function normalizeCodeBodyLineEndings(value: string): string {
+  return value.replace(/\r\n/g, '\n');
+}
+
+function isBrowserCodeColorFont(node: Node): node is HTMLElement {
+  if (!(node instanceof HTMLElement) || 'FONT' !== node.tagName) return false;
+  const color = node.getAttribute('color');
+  return 1 === node.attributes.length
+    && 'color' === node.attributes[0]?.name
+    && null !== color
+    && /^#(?:[\da-f]{3}|[\da-f]{6})$/i.test(color);
+}
+
+export function visualCodeBodyDomOffset(
+  code: HTMLElement,
+  boundary: VisualCodeBodySelectionBoundary
+): number | null {
+  if (boundary.node !== code && !code.contains(boundary.node)) return null;
+  const range = code.ownerDocument.createRange();
+  range.selectNodeContents(code);
+  range.setEnd(boundary.node, boundary.offset);
+  return range.cloneContents().textContent?.length ?? 0;
+}
+
+function hasUnsupportedCodeBodyMarkup(node: Node): boolean {
+  return Array.from(node.childNodes).some((child) => {
+    if (child instanceof Text) return false;
+    if (isBrowserCodeColorFont(child)) {
+      return hasUnsupportedCodeBodyMarkup(child);
+    }
+    if (
+      !(child instanceof HTMLSpanElement)
+      || !Array.from(child.classList).some((name) => (
+        /^hljs-[a-z0-9_.-]+$/i.test(name)
+      ))
+    ) return true;
+    return hasUnsupportedCodeBodyMarkup(child);
+  });
+}
+
+function unwrapBrowserCodeColorFonts(code: HTMLElement): void {
+  const fonts = Array.from(code.querySelectorAll('font')).reverse();
+  for (const font of fonts) {
+    if (!isBrowserCodeColorFont(font)) {
+      throw new Error('visual-editor-code-body-dom-shape-invalid');
+    }
+    const children = font.ownerDocument.createDocumentFragment();
+    while (font.firstChild) children.append(font.firstChild);
+    font.replaceWith(children);
+  }
+}
+
+function visualCodeBodyBoundaryAtOffset(
+  code: HTMLElement,
+  targetOffset: number
+): Readonly<{ node: Text; offset: number }> {
+  const walker = code.ownerDocument.createTreeWalker(
+    code,
+    NodeFilter.SHOW_TEXT
+  );
+  let visualOffset = 0;
+  let node = walker.nextNode();
+  let lastText: Text | null = null;
+  while (node) {
+    if (node instanceof Text) {
+      lastText = node;
+      let rawOffset = 0;
+      while (rawOffset < node.data.length) {
+        if (visualOffset === targetOffset) {
+          return { node, offset: rawOffset };
+        }
+        rawOffset += '\r' === node.data[rawOffset]
+          && '\n' === node.data[rawOffset + 1]
+          ? 2
+          : 1;
+        visualOffset += 1;
+      }
+      if (visualOffset === targetOffset) {
+        return { node, offset: rawOffset };
+      }
+    }
+    node = walker.nextNode();
+  }
+  if (visualOffset !== targetOffset) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  if (lastText) return { node: lastText, offset: lastText.length };
+  const emptyText = code.ownerDocument.createTextNode('');
+  code.append(emptyText);
+  return { node: emptyText, offset: 0 };
+}
+
+function reconcilePlainVisualCodeBodyDom(
+  code: HTMLElement,
+  expectedBody: string,
+  caretOffset: number,
+  selection: Selection | null | undefined
+): void {
+  const activeText = selection?.anchorNode instanceof Text
+    && code.contains(selection.anchorNode)
+    ? selection.anchorNode
+    : Array.from(code.childNodes).find((child): child is Text => child instanceof Text)
+      ?? code.ownerDocument.createTextNode('');
+  code.replaceChildren(activeText);
+  activeText.data = expectedBody;
+  const range = code.ownerDocument.createRange();
+  range.setStart(activeText, Math.min(caretOffset, activeText.length));
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function sourceOffsetForCodeText(body: string, textOffset: number): number {
+  let sourceOffset = 0;
+  let renderedOffset = 0;
+  while (renderedOffset < textOffset && sourceOffset < body.length) {
+    if ('\r' === body[sourceOffset] && '\n' === body[sourceOffset + 1]) {
+      sourceOffset += 2;
+    } else {
+      sourceOffset += 1;
+    }
+    renderedOffset += 1;
+  }
+  return sourceOffset;
+}
+
+export function projectVisualCodeBodySelection(
+  code: HTMLElement,
+  sourceMarkdown: string,
+  visualMarkdown: string,
+  codeOrdinal: number,
+  selection: Readonly<{
+    end: VisualCodeBodySelectionBoundary;
+    start: VisualCodeBodySelectionBoundary;
+  }>
+): VisualCodeBodySelectionProjection {
+  const sourceInterval = visualCodeBodyIntervalAtOrdinal(
+    sourceMarkdown,
+    codeOrdinal
+  );
+  const visualInterval = visualCodeBodyIntervalAtOrdinal(
+    visualMarkdown,
+    codeOrdinal
+  );
+  const sourceText = sourceMarkdown.slice(
+    sourceInterval.bodyStart,
+    sourceInterval.bodyEnd
+  );
+  const visualText = visualMarkdown.slice(
+    visualInterval.bodyStart,
+    visualInterval.bodyEnd
+  );
+  if (hasUnsupportedCodeBodyMarkup(code)) {
+    throw new Error('visual-editor-code-body-dom-shape-invalid');
+  }
+  const domText = visualCodeBodyDomText(code);
+  if (
+    normalizeCodeBodyLineEndings(sourceText) !== domText
+    || normalizeCodeBodyLineEndings(visualText) !== domText
+  ) {
+    throw new Error('visual-editor-code-body-projection-mismatch');
+  }
+  const start = visualCodeBodyDomOffset(code, selection.start);
+  const end = visualCodeBodyDomOffset(code, selection.end);
+  if (null === start || null === end) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  const localSelection = { end: Math.max(start, end), start: Math.min(start, end) };
+  const sourceStart = sourceInterval.bodyStart
+    + sourceOffsetForCodeText(sourceText, localSelection.start);
+  const sourceEnd = sourceInterval.bodyStart
+    + sourceOffsetForCodeText(sourceText, localSelection.end);
+  const visualStart = visualInterval.bodyStart
+    + sourceOffsetForCodeText(visualText, localSelection.start);
+  const visualEnd = visualInterval.bodyStart
+    + sourceOffsetForCodeText(visualText, localSelection.end);
+  return {
+    codeOrdinal,
+    localSelection,
+    sourceInterval,
+    sourceSelection: { end: sourceEnd, start: sourceStart },
+    sourceText,
+    visualInterval,
+    visualSelection: { end: visualEnd, start: visualStart },
+    visualText
+  };
+}
+
+export function reconcileVisualCodeBodyDom(
+  code: HTMLElement,
+  expectedBody: string,
+  caretOffset: number
+): void {
+  const currentBody = normalizeCodeBodyLineEndings(visualCodeBodyDomText(code));
+  const normalizedExpected = normalizeCodeBodyLineEndings(expectedBody);
+  if (!normalizedExpected.startsWith(currentBody)) {
+    throw new Error('visual-editor-code-body-dom-mismatch');
+  }
+  if (hasUnsupportedCodeBodyMarkup(code)) {
+    throw new Error('visual-editor-code-body-dom-shape-invalid');
+  }
+  if (
+    !Number.isInteger(caretOffset)
+    || caretOffset < 0
+    || caretOffset > normalizedExpected.length
+  ) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  const selection = code.ownerDocument.defaultView?.getSelection();
+  if (0 === code.querySelectorAll('*').length) {
+    reconcilePlainVisualCodeBodyDom(code, expectedBody, caretOffset, selection);
+    return;
+  }
+  unwrapBrowserCodeColorFonts(code);
+  if (0 === code.querySelectorAll('*').length) {
+    reconcilePlainVisualCodeBodyDom(code, expectedBody, caretOffset, selection);
+    return;
+  }
+  const missingSuffix = normalizedExpected.slice(currentBody.length);
+  if ('' !== missingSuffix) {
+    code.append(code.ownerDocument.createTextNode(missingSuffix));
+  }
+  if (
+    normalizeCodeBodyLineEndings(visualCodeBodyDomText(code))
+    !== normalizedExpected
+  ) {
+    throw new Error('visual-editor-code-body-dom-mismatch');
+  }
+  const boundary = visualCodeBodyBoundaryAtOffset(code, caretOffset);
+  const range = code.ownerDocument.createRange();
+  range.setStart(boundary.node, boundary.offset);
+  range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+export function createVisualCodeBodyOrdinalsForPreviewBlocks(
+  markdown: string,
+  editMap: PreviewEditMap
+): ReadonlyMap<string, number> {
+  if (1 !== editMap.version || 'line' !== editMap.coordinate) {
+    throw new Error('visual-editor-code-block-map-invalid');
+  }
+  const codeBlocks = markdownCodeBlocks(markdown);
+  const lineStarts = markdownLineStarts(markdown);
+  const ordinals = new Map<string, number>();
+  let codeIndex = 0;
+  let previousEndLine = 0;
+  for (const previewBlock of editMap.blocks) {
+    if (
+      !Number.isInteger(previewBlock.startLine)
+      || !Number.isInteger(previewBlock.endLine)
+      || previewBlock.startLine < previousEndLine
+      || previewBlock.startLine < 0
+      || previewBlock.endLine <= previewBlock.startLine
+      || previewBlock.endLine > lineStarts.length
+    ) {
+      throw new Error('visual-editor-code-block-map-invalid');
+    }
+    previousEndLine = previewBlock.endLine;
+    const start = lineStarts[previewBlock.startLine];
+    const end = lineStarts[previewBlock.endLine] ?? markdown.length;
+    if (undefined === start || end < start) {
+      throw new Error('visual-editor-code-block-map-invalid');
+    }
+    while (
+      codeIndex < codeBlocks.length
+      && (codeBlocks[codeIndex]?.openingLine ?? -1) < previewBlock.startLine
+    ) {
+      codeIndex += 1;
+    }
+    const candidates: MarkdownCodeBlock[] = [];
+    while (codeIndex < codeBlocks.length) {
+      const sourceBlock = codeBlocks[codeIndex];
+      if (!sourceBlock || null === sourceBlock.openingLine) {
+        codeIndex += 1;
+        continue;
+      }
+      if (sourceBlock.openingLine >= previewBlock.endLine) break;
+      if (
+        previewBlock.editable
+        && 'fenced' === sourceBlock.kind
+        && true === sourceBlock.closed
+        && null !== sourceBlock.closingLine
+        && null !== sourceBlock.bodyStart
+        && null !== sourceBlock.bodyEnd
+        && sourceBlock.openingLine >= previewBlock.startLine
+        && sourceBlock.closingLine < previewBlock.endLine
+        && sourceBlock.bodyStart >= start
+        && sourceBlock.bodyEnd <= end
+      ) {
+        candidates.push(sourceBlock);
+      }
+      codeIndex += 1;
+    }
+    if (candidates.length > 1) {
+      throw new Error('visual-editor-code-body-map-ambiguous');
+    }
+    const candidate = candidates[0];
+    if (candidate) ordinals.set(previewBlock.id, candidate.ordinal);
+  }
+  return ordinals;
+}
+
+export function createVisualCodeBodyIntervalForPreviewBlock(
+  markdown: string,
+  editMap: PreviewEditMap,
+  blockId: string
+): VisualCodeBodyInterval {
+  if (1 !== editMap.version || 'line' !== editMap.coordinate) {
+    throw new Error('visual-editor-code-block-map-invalid');
+  }
+  const matchingIndices = editMap.blocks.flatMap((block, index) => (
+    block.id === blockId ? [index] : []
+  ));
+  if (1 !== matchingIndices.length) {
+    throw new Error('visual-editor-code-block-map-unavailable');
+  }
+  const blockIndex = matchingIndices[0];
+  if (undefined === blockIndex) {
+    throw new Error('visual-editor-code-block-map-unavailable');
+  }
+  const mappedBlock = editMap.blocks[blockIndex];
+  if (!mappedBlock?.editable) {
+    throw new Error('visual-editor-code-block-not-editable');
+  }
+  const codeOrdinal = createVisualCodeBodyOrdinalsForPreviewBlocks(
+    markdown,
+    editMap
+  ).get(blockId);
+  if (undefined === codeOrdinal) {
+    throw new Error('visual-editor-code-body-map-ambiguous');
+  }
+  const mappedRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+    markdown,
+    editMap,
+    { end: blockIndex + 1, start: blockIndex }
+  );
+  const interval = visualCodeBodyIntervalAtOrdinal(markdown, codeOrdinal);
+  if (
+    interval.sourceBlockStart < mappedRange.start
+    || interval.sourceBlockEnd > mappedRange.end
+  ) {
+    throw new Error('visual-editor-code-body-map-invalid');
+  }
+  return interval;
 }
 
 type DirectCodeChildOptions = Readonly<{
@@ -601,6 +1073,10 @@ function strictVisualCodePlaceholder(code: HTMLElement): HTMLSpanElement | null 
   return candidate;
 }
 
+export function visualCodeBodyDomText(code: HTMLElement): string {
+  return code.textContent ?? '';
+}
+
 function createVisualCodePlaceholder(
   documentRef: Document
 ): HTMLSpanElement {
@@ -613,8 +1089,10 @@ function createVisualCodePlaceholder(
 export type VisualCodeInputSnapshot = Readonly<{
   code: HTMLElement;
   codeClassName: string;
+  codeText: string;
   fence: string | null;
   fenceInfo: string | null;
+  placeholder: HTMLSpanElement | null;
   pre: HTMLElement;
 }>;
 
@@ -627,8 +1105,10 @@ export function captureVisualCodeInputSnapshot(
   return {
     code,
     codeClassName: code.className,
+    codeText: code.textContent ?? '',
     fence: block.getAttribute(VISUAL_FENCE_ATTRIBUTE),
     fenceInfo: block.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE),
+    placeholder: strictVisualCodePlaceholder(code),
     pre: block
   };
 }
@@ -691,9 +1171,8 @@ function visualCodeFenceMarkdown(
   const baseFence = /^(?:`{3,}|~{3,})$/.test(configuredFence)
     ? configuredFence
     : '```';
-  const source = strictVisualCodePlaceholder(code)
-    ? ''
-    : code.textContent ?? '';
+  const placeholder = strictVisualCodePlaceholder(code);
+  const source = placeholder ? '' : code.textContent ?? '';
   const marker = baseFence[0] ?? '`';
   let longestBodyRun = 0;
   let currentBodyRun = 0;
@@ -712,7 +1191,12 @@ function visualCodeFenceMarkdown(
     .match(/^[a-zA-Z0-9_-]+$/)?.[0] ?? '';
   const configuredInfo = pre.getAttribute(VISUAL_FENCE_INFO_ATTRIBUTE);
   const info = null !== configuredInfo ? configuredInfo : language;
-  return `\n\n${fence}${info}\n${source}\n${fence}\n\n`;
+  const sourceBody = placeholder
+    ? '\n'
+    : source.endsWith('\n') || '' === source
+      ? source
+      : `${source}\n`;
+  return `\n\n${fence}${info}\n${sourceBody}${fence}\n\n`;
 }
 
 export function normalizeVisualCodePlaceholders(
@@ -780,10 +1264,11 @@ export function normalizeVisualCodePlaceholders(
       `[${VISUAL_CODE_PLACEHOLDER_ATTRIBUTE}]`
     ));
     if (deletion && '' === (code.textContent ?? '')) {
-      const existingPlaceholder = code.firstElementChild;
+      const existingPlaceholder = code.firstChild;
       if (
         code.childNodes.length === 1
-        && existingPlaceholder instanceof HTMLSpanElement
+        &&
+        existingPlaceholder instanceof HTMLSpanElement
         && existingPlaceholder.parentElement === code
         && existingPlaceholder.childNodes.length === 1
         && existingPlaceholder.firstChild instanceof Text
@@ -1660,6 +2145,8 @@ function visualMarkdownSerializer(): TurndownService {
         if (
           code
           && (
+            pre.hasAttribute(VISUAL_FENCE_ATTRIBUTE)
+            ||
             strictVisualCodePlaceholder(code)
             || ' ' === code.textContent
           )
@@ -2657,6 +3144,7 @@ const VISUAL_MARKDOWN_DIRECT_INPUT_TYPES: ReadonlySet<string> = new Set([
   'deleteWordBackward',
   'deleteWordForward',
   'insertFromComposition',
+  'insertCompositionText',
   'insertLineBreak',
   'insertReplacementText',
   'insertText'
@@ -2689,7 +3177,13 @@ export function applyVisualMarkdownEditIntent(
   sourceSelection: Readonly<{ end: number; start: number }>,
   visualSelection: Readonly<{ end: number; start: number }>,
   inputType: string,
-  data: string | null
+  data: string | null,
+  options: Readonly<{
+    sourceCaretLength?: number;
+    sourceReplacement?: string;
+    visualCaretLength?: number;
+    visualReplacement?: string;
+  }> = {}
 ): VisualMarkdownEditIntentResult | null {
   if (!VISUAL_MARKDOWN_DIRECT_INPUT_TYPES.has(inputType)) return null;
   if (
@@ -2700,18 +3194,22 @@ export function applyVisualMarkdownEditIntent(
   }
   const replacement =
     'insertLineBreak' === inputType && null === data ? '\n' : data ?? '';
+  const sourceReplacement = options.sourceReplacement ?? replacement;
+  const visualReplacement = options.visualReplacement ?? replacement;
   const sourceResult = replaceEditRange(
     sourceMarkdown,
     sourceSelection,
-    replacement
+    sourceReplacement
   );
   const visualResult = replaceEditRange(
     visualMarkdown,
     visualSelection,
-    replacement
+    visualReplacement
   );
-  const caret = sourceSelection.start + replacement.length;
-  const visualCaret = visualSelection.start + replacement.length;
+  const caret = sourceSelection.start
+    + (options.sourceCaretLength ?? sourceReplacement.length);
+  const visualCaret = visualSelection.start
+    + (options.visualCaretLength ?? visualReplacement.length);
 
   return {
     selection: { direction: 'none', end: caret, start: caret },

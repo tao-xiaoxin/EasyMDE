@@ -280,6 +280,15 @@ when mapping is unavailable. Focus restoration uses `preventScroll`, and a
 pending paste blocks `beforeinput` without toggling the active surface's
 `contenteditable` state. History and composition input never re-enter the
 shortcut parser.
+For a mapped fenced code block, the visual editor resolves the active Preview
+block to one Markdown source body interval. That interval owns blank-line and
+line-ending semantics for both ordinary and windowed immersive editing;
+browser-created code DOM nodes are reconciled to the source interval without
+using their child count as a Markdown line index. The document session remains
+the canonical value and history owner. Mapped code-body edits retain paired
+visual snapshots keyed to canonical Markdown, so Undo/Redo uses CodeMirror's
+actual history target to restore the code DOM and caret after browser-created
+formatting or a scripted terminal newline is normalized.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
@@ -416,6 +425,12 @@ browser-session immersive preferences own presentation only. The browser
 preference port persists only the immersive Outline choice. The Editor Root
 maps Settings Center `general.editingMode` from `live-preview` to immersive
 split, `source` to source, and `preview` to Preview when the Root mounts.
+At narrow widths, the Outline overlays a full-width workspace. A completed
+transition into editable immersive Preview, or a width crossing into narrow
+layout while Preview is already editable, closes that overlay once as local
+presentation state. Pending or failed unlocks do not close it; a manual reopen
+at the same width remains open. These changes never write the Outline
+preference.
 Changing the immersive mode is session-only: it survives exiting and re-entering
 immersive writing while that Root remains mounted, but a normal or hard refresh
 creates a new Root and restores the Settings Center mode. Legacy stored

@@ -3,6 +3,7 @@ import {
   flushSync,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useTransition
@@ -306,6 +307,8 @@ type Props = Readonly<{
   immersivePreferencesPort: ImmersivePreferencesPort;
   i18n: ImmersiveI18nPort;
   initialPreferences?: ImmersivePreferences | null;
+  visualPreviewEditable: boolean;
+  focusVisualPreview: () => boolean;
   revisionPort: RevisionPort | null;
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
@@ -695,6 +698,8 @@ export function ImmersiveEditor({
   i18n,
   immersivePreferencesPort,
   initialPreferences = null,
+  visualPreviewEditable,
+  focusVisualPreview,
   revisionPort,
   restoreRevision,
   styleControls,
@@ -718,6 +723,11 @@ export function ImmersiveEditor({
   );
   const [dirty, setDirty] = useState(() => documentSession.getSnapshot().dirty);
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const previousVisualPreviewEditableRef = useRef(visualPreviewEditable);
+  const responsivePreviewStateRef = useRef({ mode, visualPreviewEditable });
+  responsivePreviewStateRef.current = { mode, visualPreviewEditable };
+  const previousViewportCompactRef = useRef<boolean | null>(null);
+  const outlineAutoClosedInCompactVisitRef = useRef(false);
   const [activeOutline, setActiveOutline] = useState<number | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -732,6 +742,69 @@ export function ImmersiveEditor({
     outline: outlineEnabled,
     splitPreview: 'split' === mode
   };
+  const closeOutlineForCompactViewport = useCallback(() => {
+    const activeElement = environment.activeElement();
+    if (
+      activeElement?.closest('.easymde-immersive-outline')
+      && !focusVisualPreview()
+    ) return false;
+    setOutlineOpen(false);
+    return true;
+  }, [environment, focusVisualPreview]);
+
+  useLayoutEffect(() => {
+    const wasEditable = previousVisualPreviewEditableRef.current;
+    previousVisualPreviewEditableRef.current = visualPreviewEditable;
+    if (
+      wasEditable
+      || !visualPreviewEditable
+      || 'preview' !== mode
+    ) return;
+    const isCompactViewport = environment.viewportWidth() <= 640;
+    previousViewportCompactRef.current = isCompactViewport;
+    if (!isCompactViewport) {
+      outlineAutoClosedInCompactVisitRef.current = false;
+      return;
+    }
+    if (outlineAutoClosedInCompactVisitRef.current) return;
+    if (closeOutlineForCompactViewport()) {
+      outlineAutoClosedInCompactVisitRef.current = true;
+    }
+  }, [
+    closeOutlineForCompactViewport,
+    environment,
+    mode,
+    visualPreviewEditable
+  ]);
+
+  useLayoutEffect(() => {
+    const initialWidth = environment.viewportWidth();
+    previousViewportCompactRef.current = initialWidth <= 640;
+    if (initialWidth > 640) {
+      outlineAutoClosedInCompactVisitRef.current = false;
+    }
+
+    return environment.subscribeResize(() => {
+      const isCompactViewport = environment.viewportWidth() <= 640;
+      const wasCompactViewport = previousViewportCompactRef.current;
+      previousViewportCompactRef.current = isCompactViewport;
+      if (!isCompactViewport) {
+        outlineAutoClosedInCompactVisitRef.current = false;
+        return;
+      }
+      if (
+        false !== wasCompactViewport
+        || outlineAutoClosedInCompactVisitRef.current
+      ) return;
+
+      const current = responsivePreviewStateRef.current;
+      if (!current.visualPreviewEditable || 'preview' !== current.mode) return;
+
+      if (closeOutlineForCompactViewport()) {
+        outlineAutoClosedInCompactVisitRef.current = true;
+      }
+    });
+  }, [closeOutlineForCompactViewport, environment]);
 
   useEffect(() => environment.activateFavicon(), [environment]);
 

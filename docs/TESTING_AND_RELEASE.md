@@ -424,23 +424,45 @@ Preview paper, completed block and inline syntax, bounded visual-input
 coalescing, explicit selection-loss failure without end-of-document appends,
 consecutive full Markdown pastes through the server Preview owner, one Preview
 request per paste, and zero Preview requests for ordinary visual keystrokes.
+Fenced-code cases cover typed and pasted tilde and backtick fences, zero or
+multiple blank body lines, successive input, line endings, caret placement,
+Undo/Redo, highlighted code cleared and retyped, and windowed block offsets.
+They assert the canonical Markdown and
+editable DOM body agree after each transition while the shared Mac frame
+retains its full width and non-collapsing code area. The dedicated immersive
+unlock browser cases measure in-page click-to-pending, first visible pending
+frame, click-to-focused-editable timing, and Long Tasks. They also check
+repeated activation, cancellation, bounded window mounting, and absence of
+Preview or document writes. A private maintainer document is
+tested locally by native paste and exact source comparison; its content is not
+part of the public fixtures or test artifacts.
+The 390px immersive cases begin with Outline open. They check that its overlay
+does not narrow Source, Split, Preview, or the Mac frame, then verify pending
+unlock keeps the Outline open, editable readiness closes it without changing
+Markdown, Preview, or the preference, and manual reopen remains available.
+They also cover desktop-to-compact resize while Preview remains editable,
+repeated crossings after a manual reopen, focus and caret preservation, RTL
+placement, and page-level horizontal overflow.
 The `chromium-performance` test uses about 194 KB of synthetic Markdown with
 454 headings, language-free and explicit-language code fences, and a real
 Clipboard paste. It requires a paste handler below 50 ms, edit-handler p95 at
 or below 16 ms, first-double-frame and mutation-settled edit p95 values at or
 below 100 ms, semantic Preview settling within five seconds, CLS at or below
-0.01, and zero Long Tasks across 60 real input/delete interactions. The atomic
-formal Preview layout may contribute at
-most one Long Task at or below 75 ms; every other deferred Preview or edit Long
-Task fails the test. The same test verifies exact canonical Markdown, one
+0.01, and zero Long Tasks across 60 real input/delete interactions. A Long
+Task overlapping paste activation may occur once, at or below 75 ms and with
+at most 25 ms of blocking time above the 50 ms threshold. The Preview response
+may contribute at most two Long Tasks, each at or below 75 ms and with combined
+blocking time at or below 40 ms. Activation and response blocking time together
+must stay at or below 65 ms; any other overlapping or edit Long Task fails the
+test. The same test verifies exact canonical Markdown, one
 Preview request, bounded window mounting, lock synchronization, and the
 absence of browser errors without recording article content.
 A separate Chromium performance case pastes a generated 2,300-block document
 with 150 fenced code blocks after an existing paragraph. It asserts all 2,301
 Preview map blocks, exact canonical Markdown, one Preview request, an editable
-ready surface within 2.5 seconds, and no more than two Preview-phase Long
-Tasks of at most 75 ms each. The original 194 KB case keeps its stricter
-single-Preview-Long-Task limit and 60-interaction edit gate. Fresh bare `~~~`
+ready surface within 2.5 seconds, and the same paste-activation, Preview-response,
+and combined blocking-time limits. The 194 KB case additionally enforces its
+60-interaction zero-edit-Long-Task gate. Fresh bare `~~~`
 and triple-backtick cases verify the first Mac-framed code block, fence-family
 preservation, mobile geometry, and a warm PHP-rendered Preview.
 The Chromium test `parses the exact full-capability fixture after immersive

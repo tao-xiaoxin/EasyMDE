@@ -14,6 +14,7 @@ type Props = Readonly<{
   hasSnapshot: boolean;
   ordinaryLabel: string | null;
   onToggleEditable: () => void;
+  unlocking: boolean;
   status: PreviewSurfaceStatus;
   statusMessages: Readonly<{
     empty: string;
@@ -37,6 +38,7 @@ export function ImmersivePreviewSurface({
   hasSnapshot,
   ordinaryLabel,
   onToggleEditable,
+  unlocking,
   status,
   statusMessages,
   strings
@@ -95,14 +97,15 @@ export function ImmersivePreviewSurface({
             ) : null}
             <button
               type="button"
-              className={`easymde-immersive-preview-lock${editable ? ' is-editable' : ''}`}
+              className={`easymde-immersive-preview-lock${editable ? ' is-editable' : ''}${unlocking ? ' is-unlocking' : ''}`}
               aria-label={
                 editable
                   ? strings.previewLockReadOnly
                   : strings.previewUnlockEdit
               }
+              aria-busy={unlocking ? 'true' : undefined}
               aria-pressed={!editable}
-              disabled={!editable && !canEdit}
+              disabled={!editable && (!canEdit || unlocking)}
               title={
                 editable
                   ? strings.previewLockReadOnly
@@ -113,7 +116,12 @@ export function ImmersivePreviewSurface({
               }}
               onClick={onToggleEditable}
             >
-              {editable ? (
+              {unlocking ? (
+                <span
+                  className="easymde-immersive-preview-unlock-spinner"
+                  aria-hidden="true"
+                />
+              ) : editable ? (
                 <Unlock aria-hidden="true" size={13} />
               ) : (
                 <Lock aria-hidden="true" size={13} />

@@ -8,6 +8,8 @@ import { WindowedImmersiveVisualEditor } from './WindowedImmersiveVisualEditor';
 import type { ImmersiveVisualEditorRuntime } from './ImmersiveVisualEditor';
 
 function fixture(options: Readonly<{
+  blockOverrides?: Readonly<Record<number, string>>;
+  markupOverrides?: Readonly<Record<number, string>>;
   lineOverrides?: Readonly<Record<number, string>>;
   mounted?: ReadonlyArray<number>;
   nonEditable?: ReadonlyArray<number>;
@@ -15,16 +17,28 @@ function fixture(options: Readonly<{
 }> = {}) {
   const mounted = options.mounted ?? [160];
   const nonEditable = new Set(options.nonEditable ?? []);
-  let canonical = Array.from(
+  const sourceBlocks = Array.from(
     { length: 320 },
-    (_, index) => options.lineOverrides?.[index] ?? `Line ${index}`
-  ).join(options.paragraphBlocks ? '\n\n' : '\n');
+    (_, index) => options.blockOverrides?.[index]
+      ?? options.lineOverrides?.[index]
+      ?? `Line ${index}`
+  );
+  let canonical = sourceBlocks.join(options.paragraphBlocks ? '\n\n' : '\n');
+  const sourceRangesPreviousEnd: number[] = [];
+  const sourceRanges = sourceBlocks.map((block, index) => {
+    const startLine = index === 0
+      ? 0
+      : (sourceRangesPreviousEnd[index - 1] ?? 0);
+    const endLine = startLine + block.split(/\r?\n/).length;
+    sourceRangesPreviousEnd[index] = endLine
+      + (options.paragraphBlocks ? 1 : 0);
+    return { endLine, startLine };
+  });
   const editMap: PreviewEditMap = {
-    blocks: Array.from({ length: 320 }, (_, index) => {
-      const startLine = index * (options.paragraphBlocks ? 2 : 1);
+    blocks: sourceRanges.map(({ endLine, startLine }, index) => {
       return {
         editable: !nonEditable.has(index),
-        endLine: startLine + 1,
+        endLine,
         id: `b${index}`,
         startLine
       };
@@ -45,7 +59,8 @@ function fixture(options: Readonly<{
       ? '<div data-easymde-preview-window-spacer="1"></div>'
       : '',
     mounted.map((index) =>
-      `<p data-easymde-visual-block-id="b${index}">${options.lineOverrides?.[index] ?? `Line ${index}`}</p>`
+      options.markupOverrides?.[index]
+        ?? `<p data-easymde-visual-block-id="b${index}">${options.lineOverrides?.[index] ?? `Line ${index}`}</p>`
     ).join(''),
     lastMounted < 319
       ? '<div data-easymde-preview-window-spacer="1"></div>'
@@ -183,6 +198,100 @@ function mergeMountedBlocks(
 }
 
 describe('WindowedImmersiveVisualEditor', () => {
+  it.each([
+    {
+      blockIndex: 0,
+      blankLineCount: 0,
+      fence: '~~~',
+      lineIndex: 0,
+      nativeBody: 'A'
+    },
+    {
+      blockIndex: 0,
+      blankLineCount: 2,
+      fence: '~~~',
+      lineIndex: 0,
+      nativeBody: 'A\n\n'
+    },
+    {
+      blockIndex: 160,
+      blankLineCount: 2,
+      fence: '~~~',
+      lineIndex: 1,
+      nativeBody: '\nA'
+    }
+  ])(
+    'preserves $fence code body at line $lineIndex in mounted block b$blockIndex',
+    ({ blockIndex, blankLineCount, fence, lineIndex, nativeBody }) => {
+      const blockId = `b${blockIndex}`;
+      const initialFence = `${fence}\n${'\n'.repeat(blankLineCount)}${fence}`;
+      const codeText = '\n'.repeat(blankLineCount);
+      const current = fixture({
+        blockOverrides: { [blockIndex]: initialFence },
+        markupOverrides: {
+          [blockIndex]: `<pre data-easymde-visual-block-id="${blockId}"><code>${codeText}</code></pre>`
+        },
+        mounted: [blockIndex]
+      });
+      const requestPreview = vi.fn(() => 'unexpected-preview');
+      const { onFailure, view } = renderWindowEditor(current, { requestPreview });
+      const code = current.surface.querySelector<HTMLElement>(
+        `[data-easymde-visual-block-id="${blockId}"] > code`
+      );
+      if (!(code instanceof HTMLElement)) {
+        throw new Error('windowed-empty-fence-code-missing');
+      }
+      const initialMarkdown = current.canonical();
+      const initialStart = initialMarkdown.indexOf(initialFence);
+      if (initialStart < 0) throw new Error('windowed-empty-fence-source-missing');
+      const initialText = code.firstChild;
+      if (initialText instanceof Text) {
+        placeCaret(initialText, lineIndex);
+      } else {
+        const range = document.createRange();
+        range.setStart(code, 0);
+        range.collapse(true);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range);
+      }
+
+      current.surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      const nativeText = initialText instanceof Text
+        ? initialText
+        : document.createTextNode('');
+      code.replaceChildren(nativeText);
+      nativeText.data = nativeBody;
+      placeCaret(nativeText, lineIndex + 1);
+      current.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+
+      const expectedBodyLines = Array(Math.max(1, blankLineCount)).fill('');
+      expectedBodyLines[lineIndex] = 'A';
+      const expectedBody = `${expectedBodyLines.join('\n')}\n`;
+      const expectedFence = `${fence}\n${expectedBody}${fence}`;
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(current.canonical()).toBe(
+        initialMarkdown.slice(0, initialStart)
+        + expectedFence
+        + initialMarkdown.slice(initialStart + initialFence.length)
+      );
+      expect(code.textContent).toBe(expectedBody);
+      expect(window.getSelection()?.anchorNode).toBe(nativeText);
+      expect(window.getSelection()?.anchorOffset).toBe(lineIndex + 1);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+      expect(requestPreview).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  );
+
   it('keeps a keyboard fence shortcut local and editable in a windowed block', () => {
     const current = fixture({ lineOverrides: { 160: '~~~bash' } });
     const requestPreview = vi.fn(() => 'fence-preview');
@@ -218,6 +327,10 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(placeholder.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
+    expect(window.getSelection()?.anchorNode).toBe(placeholder.firstChild);
+    expect(window.getSelection()?.focusNode).toBe(placeholder.firstChild);
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+    expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(requestPreview).not.toHaveBeenCalled();
     expect(onPendingChange).not.toHaveBeenCalledWith(true);
     expect(prepareWindowBlockAdoption).toHaveBeenCalledWith(code.parentElement);
@@ -296,7 +409,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored?.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
-    expect(restored?.textContent).toBe(' ');
+    expect(restored?.textContent).toBe('');
     expect(current.canonical()).toContain('~~~bash\n\n~~~');
 
     const restoredText = restored?.firstChild;
@@ -449,7 +562,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored?.getAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe('');
-    expect(restored?.textContent).toBe(' ');
+    expect(restored?.textContent).toBe('');
     expect(current.canonical()).toContain('~~~bash\n\n~~~');
     expect(requestPreview).not.toHaveBeenCalled();
 
@@ -1901,6 +2014,82 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(current.applyTextChange).toHaveBeenCalledOnce();
     view.unmount();
   });
+
+  it.each(['~~~', '```'])(
+    'preserves the structural code newline after %s composition in a shifted block',
+    async (fence) => {
+      const blockIndex = 160;
+      const initialFence = `${fence}\n${fence}`;
+      const current = fixture({
+        blockOverrides: { [blockIndex]: initialFence },
+        markupOverrides: {
+          [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code></code></pre>`
+        },
+        mounted: [blockIndex]
+      });
+      const onFailure = vi.fn();
+      const requestPreview = vi.fn(() => 'unused-composition-preview');
+      const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+      const code = current.surface.querySelector<HTMLElement>(
+        `[data-easymde-visual-block-id="b${blockIndex}"] > code`
+      );
+      if (!(code instanceof HTMLElement)) {
+        throw new Error('windowed-ime-code-body-missing');
+      }
+      const initialMarkdown = current.canonical();
+      const initialStart = initialMarkdown.indexOf(initialFence);
+      if (initialStart < 0) throw new Error('windowed-ime-code-source-missing');
+      const startRange = document.createRange();
+      startRange.setStart(code, 0);
+      startRange.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(startRange);
+
+      current.surface.dispatchEvent(new CompositionEvent('compositionstart', {
+        bubbles: true,
+        data: ''
+      }));
+      current.surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '中',
+        inputType: 'insertCompositionText',
+        isComposing: true
+      }));
+      const text = document.createTextNode('中');
+      code.replaceChildren(text);
+      placeCaret(text, text.length);
+      current.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: '中',
+        inputType: 'insertCompositionText',
+        isComposing: true
+      }));
+      current.surface.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true,
+        data: '中'
+      }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      const expectedFence = `${fence}\n中\n${fence}`;
+      expect(current.canonical()).toBe(
+        initialMarkdown.slice(0, initialStart)
+        + expectedFence
+        + initialMarkdown.slice(initialStart + initialFence.length)
+      );
+      expect(code.textContent).toBe('中\n');
+      expect(code.firstChild).toBe(text);
+      expect(window.getSelection()?.anchorNode).toBe(text);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(current.applyTextChange).toHaveBeenCalledOnce();
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  );
 
   it('routes browser history Undo to the CodeMirror owner and requests formal Preview', () => {
     const current = fixture();

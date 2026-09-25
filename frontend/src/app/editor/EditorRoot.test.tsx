@@ -370,6 +370,7 @@ function fixture(): EditorRootProps &
       activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
       now: () => Date.now(),
+      viewportWidth: () => window.innerWidth,
       schedule: (callback, delay) => {
         const timer = window.setTimeout(callback, delay);
         return () => window.clearTimeout(timer);
@@ -1134,6 +1135,13 @@ describe('EditorRoot', () => {
 
     fireEvent.click(unlock);
 
+    expect(unlock.getAttribute('aria-label')).toBe('解除锁定并编辑');
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(true);
+    expect(unlock.classList.contains('is-unlocking')).toBe(true);
+    expect(
+      unlock.querySelector('.easymde-immersive-preview-unlock-spinner')
+    ).not.toBeNull();
     await waitFor(() =>
       expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1153,6 +1161,9 @@ describe('EditorRoot', () => {
       name: '可视化文章编辑器'
     });
     expect(visualEditor.innerHTML).toBe('<p><br></p>');
+    const lock = view.getByRole('button', { name: '锁定为只读' });
+    expect(lock.hasAttribute('aria-busy')).toBe(false);
+    expect(lock.hasAttribute('disabled')).toBe(false);
     expect(prepared.commit).toHaveBeenCalledOnce();
     expect(props.submissionField.value).toBe('');
   });
@@ -1299,6 +1310,8 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledTimes(1)
     );
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(true);
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
@@ -1307,6 +1320,9 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
     await waitFor(() => expect(unlockSignal?.aborted).toBe(true));
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
 
     await act(async () => pendingPreparation.resolve(prepared));
     expect(prepared.cancel).toHaveBeenCalledOnce();
@@ -1359,6 +1375,9 @@ describe('EditorRoot', () => {
         'preview-enhancement-resource-load-failed'
       )
     );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
@@ -1419,6 +1438,13 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const relockedPreview = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    expect(relockedPreview.hasAttribute('aria-busy')).toBe(false);
+    expect(relockedPreview.hasAttribute('disabled')).toBe(false);
   });
 
   it('does not enable a fresh unlock after its Preview snapshot becomes stale', async () => {
@@ -1467,6 +1493,9 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.submissionField.value).toBe('Snapshot changed')
     );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(true);
     expect(
       vi.mocked(props.enhancementPort.prepareCodeTheme).mock.calls[0]?.[0]
         .signal.aborted
@@ -1628,6 +1657,8 @@ describe('EditorRoot', () => {
     try {
       fireEvent.click(unlock);
       await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(0));
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(unlock.hasAttribute('disabled')).toBe(true);
 
       const source = view.getByRole('textbox', { name: 'Markdown source' });
       const sourceView = EditorView.findFromDOM(source);
@@ -1640,7 +1671,10 @@ describe('EditorRoot', () => {
       await waitFor(() =>
         expect(props.submissionField.value).toContain('\nSuperseded')
       );
+      expect(unlock.hasAttribute('aria-busy')).toBe(false);
+      expect(unlock.classList.contains('is-unlocking')).toBe(false);
       await drainAnimationFrames(frameCallbacks);
+      expect(unlock.hasAttribute('aria-busy')).toBe(false);
       expect(view.queryByRole('textbox', {
         name: '可视化文章编辑器'
       })).toBeNull();
@@ -1689,11 +1723,19 @@ describe('EditorRoot', () => {
     try {
       fireEvent.click(unlock);
       await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(0));
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(unlock.hasAttribute('disabled')).toBe(true);
       fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
       await drainAnimationFrames(frameCallbacks);
       expect(view.queryByRole('textbox', {
         name: '可视化文章编辑器'
       })).toBeNull();
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const relockedPreview = view.getByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      expect(relockedPreview.hasAttribute('aria-busy')).toBe(false);
+      expect(relockedPreview.hasAttribute('disabled')).toBe(false);
     } finally {
       requestAnimationFrame.mockRestore();
       cancelAnimationFrame.mockRestore();

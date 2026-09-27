@@ -126,6 +126,90 @@ describe('visual Markdown editing', () => {
     expect(projection.emptyBodyLineCount).toBe(2);
   });
 
+  it.each([
+    {
+      codeBody: 'Alpha\n',
+      label: 'closed backtick with LF',
+      markdown: '```js\nAlpha\n```'
+    },
+    {
+      codeBody: 'Alpha\n',
+      label: 'open backtick without a final LF',
+      markdown: '```js\nAlpha'
+    },
+    {
+      codeBody: 'Alpha\n',
+      label: 'open tilde with CRLF',
+      markdown: '~~~js\r\nAlpha\r\n'
+    },
+    {
+      codeBody: 'Alpha \n',
+      label: 'open tilde with trailing body space',
+      markdown: '~~~js\nAlpha \n'
+    },
+    {
+      codeBody: '',
+      label: 'bare open tilde',
+      markdown: '~~~'
+    },
+    {
+      codeBody: '\n',
+      label: 'open empty code body after one blank line',
+      markdown: '~~~js\n\n'
+    }
+  ])('serializes the $label from accepted EOF topology', ({
+    codeBody,
+    markdown
+  }) => {
+    const surface = editor('');
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'language-js';
+    code.textContent = codeBody;
+    pre.append(code);
+    surface.append(pre);
+    restoreVisualCodeFenceFamilies(surface, markdown);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      markdown.replace(/\r\n|\r/g, '\n')
+    );
+  });
+
+  it.each(['~~~', '```'])(
+    'keeps an expanded literal %s run open at EOF in both source and DOM serialization',
+    (fence) => {
+      const body = `Alpha\n${fence}x\n`;
+      const base = `${fence}\nAlpha\n\n`;
+      const outerFence = fence[0]?.repeat(fence.length + 1);
+      const expected = `${outerFence}\n${body}`;
+      const expanded = expandVisualCodeFenceForBody(base, 0, body);
+      const surface = editor('');
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = body;
+      pre.append(code);
+      surface.append(pre);
+      restoreVisualCodeFenceFamilies(surface, expected);
+
+      expect(expanded?.markdown).toBe(expected);
+      expect(serializeVisualMarkdown(surface)).toBe(expected);
+    }
+  );
+
+  it('discards forged open-EOF metadata when restoring a closed source fence', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence-open-eof="999999"><code class="language-js">Alpha\n</code></pre>'
+    );
+    const markdown = '~~~js\nAlpha\n~~~';
+
+    restoreVisualCodeFenceFamilies(surface, markdown);
+
+    expect(surface.querySelector('pre')?.hasAttribute(
+      'data-easymde-visual-fence-open-eof'
+    )).toBe(false);
+    expect(serializeVisualMarkdown(surface)).toBe(markdown);
+  });
+
   it.each(['~~~', '```'])(
     'expands the %s outer fence around a literal body run',
     (fence) => {
@@ -1416,6 +1500,69 @@ A--&gt;B</code></pre>
     expect(applyVisualBlockShortcut(surface, backspace)).toBe(true);
     expect(surface.querySelector('pre')).toBeNull();
     expect(surface.querySelector('p')).not.toBeNull();
+  });
+
+  it.each([
+    { body: '\n', empty: true, label: 'one LF terminal line ending' },
+    { body: '\r\n', empty: true, label: 'one CRLF terminal line ending' },
+    { body: '\n\n', empty: false, label: 'two blank body lines' },
+    { body: ' \n', empty: false, label: 'body space before a line ending' }
+  ])('treats only $label as an empty code body for Backspace', ({
+    body,
+    empty
+  }) => {
+    const surface = editor('');
+    const pre = document.createElement('pre');
+    pre.setAttribute('data-easymde-visual-fence', '~~~');
+    const code = document.createElement('code');
+    const source = document.createTextNode(`A${body}`);
+    code.append(source);
+    pre.append(code);
+    surface.append(pre);
+    placeCaret(source, 1);
+    const snapshot = captureVisualCodeInputSnapshot(pre);
+    if (!snapshot) throw new Error('visual-empty-body-snapshot-missing');
+
+    source.data = body;
+    placeCaret(source, 0);
+    normalizeVisualCodePlaceholders(
+      surface,
+      'deleteContentBackward',
+      snapshot
+    );
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+
+    expect(applyVisualBlockShortcut(surface, backspace)).toBe(empty);
+    expect(backspace.defaultPrevented).toBe(empty);
+    expect(surface.querySelector('pre')).toBe(empty ? null : pre);
+  });
+
+  it('does not flush pending input for a nonempty code-body Backspace', () => {
+    const surface = editor('<pre><code>body</code></pre>');
+    const codeText = surface.querySelector('pre > code')?.firstChild;
+    if (!(codeText instanceof Text)) {
+      throw new Error('visual-code-body-flush-guard-text-missing');
+    }
+    placeCaret(codeText, 2);
+    const beforeEmptyCodeFenceRemoval = vi.fn(() => true);
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+
+    expect(applyVisualBlockShortcut(
+      surface,
+      backspace,
+      beforeEmptyCodeFenceRemoval
+    )).toBe(false);
+    expect(beforeEmptyCodeFenceRemoval).not.toHaveBeenCalled();
+    expect(backspace.defaultPrevented).toBe(false);
+    expect(surface.querySelector('pre > code')?.textContent).toBe('body');
   });
 
   it('leaves a strict empty code fence on Enter and then forms a list marker', () => {

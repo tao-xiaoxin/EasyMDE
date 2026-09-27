@@ -5,9 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
 import { createCodeMirrorDocumentSession } from '../../document-source/adapters/code-mirror-document-session';
 import { createNativeTitleSession } from '../../document-source/adapters/native-title-session';
-import type { DocumentSelection } from '../../document-source/adapters/code-mirror-document-session';
+import type {
+  DocumentHistoryState,
+  DocumentSelection
+} from '../../document-source/adapters/code-mirror-document-session';
 import { createEditorDocumentSession } from '../../document-source/editor-document-session';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
+import { createVisualMarkdownSourceRangeFromPreviewEditMap } from '../visual-markdown';
 import { WindowedImmersiveVisualEditor } from './WindowedImmersiveVisualEditor';
 import type { ImmersiveVisualEditorRuntime } from './ImmersiveVisualEditor';
 
@@ -88,6 +92,7 @@ function fixture(
       applyTextChange,
       canRedo: vi.fn(() => false),
       canUndo: vi.fn(() => false),
+      getHistoryState: (): DocumentHistoryState => ({ redoDepth: 0, undoDepth: 0 }),
       getValue: () => canonical,
       getSelection: () => currentSelection,
       redo: vi.fn(() => false),
@@ -131,6 +136,18 @@ function textOffsetWithin(root: HTMLElement, node: Node, offset: number): number
 
 const testPrepareWindowBlockAdoption = (): (() => boolean) => () => true;
 
+const testDocumentEndPreviewRequest = (signature: string) => (_markdown: string) => ({
+  release: vi.fn(),
+  signature
+});
+
+const testDocumentEndPreviewRequestUsing = (
+  requestPreview: (markdown: string) => string
+) => (markdown: string) => ({
+  release: vi.fn(),
+  signature: requestPreview(markdown)
+});
+
 function dispatchBackspace(surface: HTMLElement): void {
   surface.dispatchEvent(new KeyboardEvent('keydown', {
     bubbles: true,
@@ -167,6 +184,10 @@ function renderWindowEditor(
   options: Readonly<{
     documentSession?: EditorDocumentSession;
     prepareWindowBlockAdoption?: (node: HTMLElement) => (() => boolean) | null;
+    requestPreviewAtDocumentEnd?: (markdown: string) => Readonly<{
+      release: () => void;
+      signature: string;
+    }>;
     onDiagnostic?: (code: string) => void;
     onFailure?: (code: string) => void;
     onCanonicalDocumentChange?: () => void;
@@ -179,6 +200,11 @@ function renderWindowEditor(
   const onDiagnostic = options.onDiagnostic ?? vi.fn();
   const onPendingChange = options.onPendingChange ?? vi.fn();
   const requestPreview = options.requestPreview ?? vi.fn(() => 'next');
+  const requestPreviewAtDocumentEnd = options.requestPreviewAtDocumentEnd
+    ?? ((markdown: string) => ({
+      release: vi.fn(),
+      signature: requestPreview(markdown)
+    }));
   const prepareBlock = options.prepareWindowBlockAdoption ?? (() => () => true);
   const componentProps = {
     documentSession: options.documentSession ?? current.documentSession,
@@ -198,6 +224,7 @@ function renderWindowEditor(
     previewStatus: 'ready' as const,
     prepareWindowBlockAdoption: prepareBlock,
     requestPreview,
+    requestPreviewAtDocumentEnd,
     surface: current.surface
   };
   const view = render(<WindowedImmersiveVisualEditor {...componentProps} />);
@@ -613,6 +640,491 @@ describe('WindowedImmersiveVisualEditor', () => {
     submissionField.remove();
   });
 
+  it.each([
+    { closed: true, fence: '~~~', targetRanges: 'explicit' },
+    { closed: true, fence: '```', targetRanges: 'explicit' },
+    { closed: false, fence: '~~~', targetRanges: 'missing' },
+    { closed: false, fence: '```', targetRanges: 'empty' }
+  ])('removes an empty $fence code frame with Backspace and preserves real history ($closed)', ({ closed, fence, targetRanges }) => {
+    const blockIndex = 160;
+    const initialFence = closed
+      ? `${fence}\nA\n${fence}`
+      : `${fence}\nA\n`;
+    const emptyFence = closed
+      ? `${fence}\n\n${fence}`
+      : `${fence}\n\n`;
+    const initialCodeText = 'A\n';
+    const previousFence = `~~~\nPREVIOUS\n~~~`;
+    const current = fixture({
+      blockOverrides: closed
+        ? { [blockIndex]: initialFence }
+        : { [blockIndex - 1]: previousFence, [blockIndex]: initialFence },
+      markupOverrides: {
+        ...(!closed ? {
+          [blockIndex - 1]: `<pre data-easymde-visual-block-id="b${blockIndex - 1}" data-easymde-visual-fence="~~~"><code class="hljs">PREVIOUS\n</code></pre>`
+        } : {}),
+        [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}" data-easymde-visual-fence="${fence}"><code class="hljs">${initialCodeText}</code></pre>`
+      },
+      mounted: closed ? [159, blockIndex, 161] : [159, blockIndex],
+      sourceBlockCount: closed ? 320 : blockIndex + 1
+    });
+    const initialMarkdown = current.canonical();
+    const fenceStart = initialMarkdown.indexOf(initialFence);
+    if (fenceStart < 0) throw new Error('windowed-empty-code-history-fence-missing');
+    const bodyStart = fenceStart + fence.length + 1;
+    const initialCaret = bodyStart + 1;
+    const emptyMarkdown = initialMarkdown.replace(initialFence, emptyFence);
+    const sourceAfterRemoval = closed
+      ? emptyMarkdown.slice(0, fenceStart)
+        + '\n'
+        + emptyMarkdown.slice(fenceStart + emptyFence.length + 1)
+      : emptyMarkdown.slice(0, fenceStart);
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    submissionField.setSelectionRange(initialCaret, initialCaret);
+    const container = document.createElement('div');
+    document.body.append(container, submissionField);
+    const codeMirrorDocument = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const documentSession = createEditorDocumentSession(
+      codeMirrorDocument,
+      createNativeTitleSession(null)
+    );
+    documentSession.registerSubmissionState({
+      appleFont: 'system',
+      codeTheme: 'dark',
+      codeThemeExplicit: false,
+      customCssId: '',
+      customFont: 'none',
+      markdownTheme: 'default',
+      serifFont: 'off',
+      windowsFont: 'system'
+    });
+    const onFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'unused-empty-code-history-preview');
+    const { view } = renderWindowEditor(current, {
+      documentSession,
+      onFailure,
+      requestPreview
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+
+    const pre = current.surface.querySelector<HTMLElement>(
+      `[data-easymde-visual-block-id="b${blockIndex}"]`
+    );
+    const previousPre = closed
+      ? null
+      : current.surface.querySelector<HTMLElement>(
+          `[data-easymde-visual-block-id="b${blockIndex - 1}"]`
+        );
+    const code = pre?.querySelector(':scope > code');
+    const text = code?.firstChild;
+    if (
+      !(pre instanceof HTMLElement)
+      || !(code instanceof HTMLElement)
+      || !(text instanceof Text)
+      || (!closed && !(previousPre instanceof HTMLElement))
+    ) {
+      throw new Error('windowed-empty-code-history-code-missing');
+    }
+    placeCaret(text, 1);
+
+    const deleteCharacter = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    current.surface.dispatchEvent(deleteCharacter);
+    expect(deleteCharacter.defaultPrevented).toBe(false);
+    if (previousPre instanceof HTMLElement) {
+      expect(previousPre.hasAttribute('data-easymde-visual-fence-open-eof')).toBe(false);
+    }
+    if (closed) {
+      expect(pre.hasAttribute('data-easymde-visual-fence-open-eof')).toBe(false);
+    } else {
+      expect(pre.getAttribute('data-easymde-visual-fence-open-eof')).toBe('1');
+    }
+    const deleteBeforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    const deleteTargetRange = document.createRange();
+    deleteTargetRange.setStart(text, 0);
+    deleteTargetRange.setEnd(text, 1);
+    if ('missing' !== targetRanges) {
+      Object.defineProperty(deleteBeforeInput, 'getTargetRanges', {
+        value: () => 'empty' === targetRanges ? [] : [deleteTargetRange]
+      });
+    }
+    current.surface.dispatchEvent(deleteBeforeInput);
+    expect(deleteBeforeInput.defaultPrevented).toBe(false);
+    text.deleteData(0, 1);
+    placeCaret(text, 0);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+
+    expect(documentSession.document.getValue()).toBe(emptyMarkdown);
+    expect(pre.isConnected).toBe(true);
+    expect(code.textContent).toBe('\n');
+    if (closed) {
+      expect(pre.hasAttribute('data-easymde-visual-fence-open-eof')).toBe(false);
+    } else {
+      expect(pre.getAttribute('data-easymde-visual-fence-open-eof')).toBe('2');
+    }
+    const emptyCaret = documentSession.document.getSelection();
+    expect(emptyCaret).toEqual({
+      direction: 'none',
+      end: bodyStart,
+      start: bodyStart
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+
+    const removeEmptyCode = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    current.surface.dispatchEvent(removeEmptyCode);
+    expect(removeEmptyCode.defaultPrevented).toBe(true);
+    const replacement = current.surface.querySelector<HTMLElement>(
+      `[data-easymde-visual-block-id="b${blockIndex}"]`
+    );
+    expect(replacement?.tagName).toBe('P');
+    const visualSelection = window.getSelection();
+    expect(visualSelection?.isCollapsed).toBe(true);
+    expect(Boolean(replacement && visualSelection?.anchorNode
+      && (visualSelection.anchorNode === replacement || replacement.contains(visualSelection.anchorNode))))
+      .toBe(true);
+    const removedCaret = documentSession.document.getSelection();
+    expect(removedCaret.direction).toBe('none');
+    expect(removedCaret.start).toBe(removedCaret.end);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(documentSession.document.getValue()).toBe(sourceAfterRemoval);
+
+    view.unmount();
+    expect(documentSession.document.undo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(emptyMarkdown);
+    expect(documentSession.document.getSelection()).toEqual(emptyCaret);
+    expect(documentSession.document.undo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(initialMarkdown);
+    expect(documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: initialCaret,
+      start: initialCaret
+    });
+    expect(documentSession.document.redo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(emptyMarkdown);
+    expect(documentSession.document.getSelection()).toEqual(emptyCaret);
+    expect(documentSession.document.redo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(sourceAfterRemoval);
+    expect(documentSession.document.getSelection()).toEqual(removedCaret);
+
+    documentSession.document.destroy();
+    container.remove();
+    submissionField.remove();
+  });
+
+  it.each(['~~~', '```'])(
+    'keeps the document-end history target mounted while adopting removal of an empty %s frame',
+    async (fence) => {
+      const blockIndex = 220;
+      const initialFence = `${fence}\nA\n`;
+      const current = fixture({
+        blockOverrides: { [blockIndex]: initialFence },
+        markupOverrides: {
+          [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code>A\n</code></pre>`
+        },
+        mounted: [blockIndex],
+        paragraphBlocks: true,
+        sourceBlockCount: blockIndex + 1
+      });
+      const initialMarkdown = current.canonical();
+      const fenceStart = initialMarkdown.lastIndexOf(initialFence);
+      if (fenceStart < 0) throw new Error('windowed-history-removal-fence-missing');
+      const bodyStart = fenceStart + fence.length + 1;
+      const emptyMarkdown = initialMarkdown.replace(initialFence, `${fence}\n\n`);
+      const frameRemovedMarkdown = emptyMarkdown.slice(0, fenceStart);
+      const submissionField = document.createElement('textarea');
+      submissionField.value = initialMarkdown;
+      submissionField.defaultValue = initialMarkdown;
+      submissionField.setSelectionRange(bodyStart + 1, bodyStart + 1);
+      const container = document.createElement('div');
+      document.body.append(container, submissionField);
+      const codeMirrorDocument = createCodeMirrorDocumentSession({
+        container,
+        label: 'Markdown source',
+        submissionField
+      });
+      const documentSession = createEditorDocumentSession(
+        codeMirrorDocument,
+        createNativeTitleSession(null)
+      );
+      documentSession.registerSubmissionState({
+        appleFont: 'system',
+        codeTheme: 'dark',
+        codeThemeExplicit: false,
+        customCssId: '',
+        customFont: 'none',
+        markdownTheme: 'default',
+        serifFont: 'off',
+        windowsFont: 'system'
+      });
+      const previewRequests: Array<Readonly<{ markdown: string }>> = [];
+      const requestPreview = vi.fn((markdown: string) => {
+        previewRequests.push({ markdown });
+        return `windowed-history-${previewRequests.length}`;
+      });
+      const pinReleases: Array<ReturnType<typeof vi.fn>> = [];
+      const requestPreviewAtDocumentEnd = vi.fn((markdown: string) => {
+        const release = vi.fn();
+        pinReleases.push(release);
+        return { release, signature: requestPreview(markdown) };
+      });
+      const onDiagnostic = vi.fn();
+      const onFailure = vi.fn();
+      const { rerenderPreview, view } = renderWindowEditor(current, {
+        documentSession,
+        onDiagnostic,
+        onFailure,
+        requestPreview,
+        requestPreviewAtDocumentEnd
+      });
+      current.surface.tabIndex = 0;
+      current.surface.setAttribute('contenteditable', 'true');
+      current.surface.focus();
+
+      const acceptLatestPreview = async (
+        markdown: string,
+        keepsFrame: boolean
+      ): Promise<void> => {
+        const request = previewRequests.at(-1);
+        const signature = requestPreview.mock.results.at(-1)?.value;
+        if (!request || request.markdown !== markdown || typeof signature !== 'string') {
+          throw new Error('windowed-history-removal-preview-request-missing');
+        }
+        const blocks = keepsFrame
+          ? current.editMap.blocks
+          : current.editMap.blocks.slice(0, blockIndex);
+        const editMap: PreviewEditMap = {
+          ...current.editMap,
+          blocks,
+          signature
+        };
+        if (keepsFrame) {
+          current.surface.innerHTML = [
+            '<div data-easymde-preview-window-spacer="1"></div>',
+            `<pre data-easymde-visual-block-id="b${blockIndex}"><code>${
+              markdown === initialMarkdown ? 'A\n' : '\n'
+            }</code></pre>`
+          ].join('');
+        } else if (requestPreviewAtDocumentEnd.mock.lastCall?.[0] === markdown) {
+          current.surface.innerHTML = [
+            '<div data-easymde-preview-window-spacer="1"></div>',
+            '<p data-easymde-visual-block-id="b211">Line 211</p>',
+            '<div data-easymde-preview-window-spacer="1"></div>',
+            '<p data-easymde-visual-block-id="b219">Line 219</p>'
+          ].join('');
+        } else {
+          current.surface.innerHTML = [
+            '<p data-easymde-visual-block-id="b0">Line 0</p>',
+            '<div data-easymde-preview-window-spacer="1"></div>',
+            '<p data-easymde-visual-block-id="b211">Line 211</p>',
+            '<div data-easymde-preview-window-spacer="1"></div>'
+          ].join('');
+          const selection = window.getSelection();
+          selection?.collapse(current.surface, 0);
+        }
+        await act(async () => {
+          rerenderPreview(editMap, {
+            revision: previewRequests.length + 1,
+            signature
+          });
+          await Promise.resolve();
+        });
+      };
+      const dispatchHistory = async (
+        inputType: 'historyRedo' | 'historyUndo',
+        expectedMarkdown: string,
+        keepsFrame: boolean
+      ): Promise<void> => {
+        const event = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType
+        });
+        current.surface.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+        expect(documentSession.document.getValue()).toBe(expectedMarkdown);
+        await acceptLatestPreview(expectedMarkdown, keepsFrame);
+      };
+
+      const pre = current.surface.querySelector<HTMLElement>(
+        `[data-easymde-visual-block-id="b${blockIndex}"]`
+      );
+      const code = pre?.querySelector(':scope > code');
+      const text = code?.firstChild;
+      if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement) || !(text instanceof Text)) {
+        throw new Error('windowed-history-removal-code-missing');
+      }
+      placeCaret(text, 1);
+      const deleteCharacter = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      const targetRange = document.createRange();
+      targetRange.setStart(text, 0);
+      targetRange.setEnd(text, 1);
+      Object.defineProperty(deleteCharacter, 'getTargetRanges', {
+        value: () => [targetRange]
+      });
+      current.surface.dispatchEvent(deleteCharacter);
+      expect(deleteCharacter.defaultPrevented).toBe(false);
+      text.deleteData(0, 1);
+      placeCaret(text, 0);
+      current.surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+      expect(documentSession.document.getValue()).toBe(emptyMarkdown);
+      expect(code.textContent).toBe('\n');
+      expect(onFailure).not.toHaveBeenCalled();
+
+      placeCaret(text, 0);
+      const removeFrame = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Backspace'
+      });
+      current.surface.dispatchEvent(removeFrame);
+      expect(removeFrame.defaultPrevented).toBe(true);
+      expect(documentSession.document.getValue()).toBe(frameRemovedMarkdown);
+      expect(requestPreview).not.toHaveBeenCalled();
+
+      await dispatchHistory('historyUndo', emptyMarkdown, true);
+      await dispatchHistory('historyUndo', initialMarkdown, true);
+      await dispatchHistory('historyRedo', emptyMarkdown, true);
+      await dispatchHistory('historyRedo', frameRemovedMarkdown, false);
+
+      expect(requestPreviewAtDocumentEnd).toHaveBeenCalledOnce();
+      expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(frameRemovedMarkdown);
+      expect(pinReleases).toHaveLength(1);
+      expect(pinReleases[0]).toHaveBeenCalledOnce();
+      expect(documentSession.document.getSelection()).toEqual({
+        direction: 'none',
+        end: frameRemovedMarkdown.length,
+        start: frameRemovedMarkdown.length
+      });
+      expect(current.surface.querySelectorAll('pre')).toHaveLength(0);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b219"]'
+      )).not.toBeNull();
+      const finalParagraph = current.surface.querySelector<HTMLElement>(
+        '[data-easymde-visual-block-id="b219"]'
+      );
+      const visualSelection = window.getSelection();
+      const visualAnchor = visualSelection?.anchorNode;
+      if (!(finalParagraph instanceof HTMLElement) || !visualAnchor) {
+        throw new Error('windowed-history-removal-visible-caret-missing');
+      }
+      expect(visualSelection?.isCollapsed).toBe(true);
+      expect(
+        visualAnchor === finalParagraph || finalParagraph.contains(visualAnchor)
+      ).toBe(true);
+      expect(textOffsetWithin(finalParagraph, visualAnchor, visualSelection.anchorOffset))
+        .toBe(finalParagraph.textContent?.length);
+      expect(onDiagnostic).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+
+      view.unmount();
+      documentSession.document.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  );
+
+  it('does not map a document-end history caret over hidden non-line-ending source', () => {
+    const current = fixture({
+      lineOverrides: { 0: 'Before' },
+      mounted: [0],
+      sourceBlockCount: 1
+    });
+    const markdown = 'Visible content\n\n[ref]: https://example.test\n';
+    current.setCanonical('Before');
+    let historySelection: DocumentSelection = {
+      direction: 'none',
+      end: 0,
+      start: 0
+    };
+    const redo = vi.fn(() => {
+      current.setCanonical(markdown);
+      historySelection = {
+        direction: 'none',
+        end: markdown.length,
+        start: markdown.length
+      };
+      return true;
+    });
+    Object.assign(current.documentSession.document, {
+      getSelection: () => historySelection,
+      redo
+    });
+    const requestPreview = vi.fn(() => 'hidden-source-history');
+    const onDiagnostic = vi.fn();
+    const onFailure = vi.fn();
+    const { rerenderPreview, view } = renderWindowEditor(current, {
+      onDiagnostic,
+      onFailure,
+      requestPreview
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+
+    const historyRedo = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyRedo'
+    });
+    current.surface.dispatchEvent(historyRedo);
+    expect(historyRedo.defaultPrevented).toBe(true);
+    expect(redo).toHaveBeenCalledOnce();
+    expect(current.canonical()).toBe(markdown);
+    expect(requestPreview).toHaveBeenCalledWith(markdown);
+
+    current.surface.innerHTML = '<p data-easymde-visual-block-id="b0">Visible content</p>';
+    rerenderPreview(
+      { ...current.editMap, signature: 'hidden-source-history' },
+      { revision: 2, signature: 'hidden-source-history' }
+    );
+
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      'visual-editor-window-history-selection-not-mounted'
+    );
+    expect(onFailure).toHaveBeenCalledWith(
+      'visual-editor-window-history-selection-not-mounted'
+    );
+    expect(onFailure).toHaveBeenCalledOnce();
+    expect(current.canonical()).toBe(markdown);
+    const visibleBlock = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    const anchor = window.getSelection()?.anchorNode;
+    expect(Boolean(visibleBlock && anchor && visibleBlock.contains(anchor))).toBe(false);
+    view.unmount();
+  });
+
   it('leaves an empty fence on a second Enter in a windowed block', () => {
     const current = fixture({ lineOverrides: { 160: '```js' } });
     const requestPreview = vi.fn(() => 'unexpected-preview');
@@ -866,6 +1378,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     });
     current.surface.dispatchEvent(beforeInput);
     expect(beforeInput.defaultPrevented).toBe(false);
+    const acceptedHtml = current.surface.innerHTML;
     pre.insertBefore(unknown, code);
     const input = new InputEvent('input', {
       bubbles: true,
@@ -875,10 +1388,16 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(() => current.surface.dispatchEvent(input)).not.toThrow();
 
     expect(onFailure).toHaveBeenCalledWith('visual-editor-code-shape-invalid');
-    expect(onFailure).toHaveBeenCalledOnce();
+    expect(onFailure.mock.calls).toEqual([['visual-editor-code-shape-invalid']]);
     expect(current.canonical()).toBe(canonicalBefore);
+    expect(current.surface.innerHTML).toBe(acceptedHtml);
     expect(current.documentChanges.mock.calls.length).toBe(applyCallsBefore);
     expect(requestPreview).not.toHaveBeenCalled();
+    const restoredCode = pre.querySelector(':scope > code');
+    const restoredPlaceholderText = restoredCode?.firstElementChild?.firstChild;
+    expect(restoredPlaceholderText).toBeInstanceOf(Text);
+    expect(window.getSelection()?.anchorNode).toBe(restoredPlaceholderText);
+    expect(window.getSelection()?.anchorOffset).toBe(codeText.length);
     view.unmount();
   });
 
@@ -1362,6 +1881,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={vi.fn(() => 'next')}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
         surface={current.surface}
       />
     );
@@ -1424,6 +1944,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={vi.fn(() => 'next')}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
         surface={current.surface}
       />
     );
@@ -1474,6 +1995,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={requestPreview}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
         surface={current.surface}
       />
     );
@@ -1618,6 +2140,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={vi.fn(() => 'next')}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
         surface={current.surface}
       />
     );
@@ -1937,6 +2460,7 @@ describe('WindowedImmersiveVisualEditor', () => {
             previewSnapshot={{ revision, signature: 'word-history' }}
             previewStatus="ready"
             requestPreview={requestPreview}
+            requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
             surface={current.surface}
           />
         );
@@ -2290,6 +2814,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={requestPreview}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
         surface={current.surface}
       />
     );
@@ -3359,9 +3884,87 @@ describe('WindowedImmersiveVisualEditor', () => {
     }
   );
 
-  it('rejects a noncancelable IME mutation when the source selection is outside CODE', async () => {
+  it('restores a noncancelable mutation when an open fence slice stops before canonical EOF', async () => {
     const blockIndex = 160;
     const initialFence = '~~~js\n';
+    const current = fixture({
+      blockOverrides: { [blockIndex]: initialFence },
+      markupOverrides: {
+        [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code class="language-js"></code></pre>`
+      },
+      mounted: [159, blockIndex, 161],
+      paragraphBlocks: true
+    });
+    const initialMarkdown = current.canonical();
+    const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+      initialMarkdown,
+      current.editMap,
+      { end: blockIndex + 1, start: blockIndex }
+    );
+    const sourceSlice = initialMarkdown.slice(sourceRange.start, sourceRange.end);
+    expect(sourceRange.end).toBeLessThan(initialMarkdown.length);
+    expect(sourceSlice.match(/\n*$/u)?.[0].length).toBe(2);
+
+    const onFailure = vi.fn();
+    const { view } = renderWindowEditor(current, { onFailure });
+    const pre = current.surface.querySelector<HTMLElement>(
+      `[data-easymde-visual-block-id="b${blockIndex}"]`
+    );
+    const code = pre?.querySelector(':scope > code');
+    if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+      throw new Error('windowed-partial-open-fence-code-missing');
+    }
+    expect(pre.getAttribute('data-easymde-visual-fence-open-eof')).toBe('0');
+    const initialHtml = current.surface.innerHTML;
+    const selectionRange = document.createRange();
+    selectionRange.setStart(code, 0);
+    selectionRange.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(selectionRange);
+
+    current.surface.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true, data: '' })
+    );
+    expect(onFailure).toHaveBeenCalledWith(
+      'visual-editor-window-open-fence-source-range-invalid'
+    );
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: false,
+      data: '中',
+      inputType: 'insertCompositionText',
+      isComposing: true
+    });
+    current.surface.dispatchEvent(beforeInput);
+    expect(beforeInput.defaultPrevented).toBe(false);
+    code.replaceChildren(document.createTextNode('中'));
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      data: '中',
+      inputType: 'insertCompositionText',
+      isComposing: true
+    }));
+    current.surface.dispatchEvent(new CompositionEvent('compositionend', {
+      bubbles: true,
+      data: '中'
+    }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(current.canonical()).toBe(initialMarkdown);
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(current.surface.innerHTML).toBe(initialHtml);
+    expect(pre.getAttribute('data-easymde-visual-fence-open-eof')).toBe('0');
+    expect(onFailure).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
+  it('rejects a noncancelable IME mutation when the source selection is outside CODE', async () => {
+    const blockIndex = 160;
+    const initialFence = '~~~js\n\n~~~';
     const current = fixture({
       blockOverrides: { [blockIndex]: initialFence },
       markupOverrides: {
@@ -3516,6 +4119,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       previewSnapshot: { revision: 1, signature: 'windowed' },
       previewStatus: 'ready' as const,
       requestPreview,
+      requestPreviewAtDocumentEnd: testDocumentEndPreviewRequestUsing(requestPreview),
       surface: current.surface
     };
     const view = render(<WindowedImmersiveVisualEditor {...componentProps} />);
@@ -3840,10 +4444,11 @@ describe('WindowedImmersiveVisualEditor', () => {
         prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
         onTransferFailure={vi.fn()}
         pending={false}
-        previewSnapshot={{ revision: 1, signature: 'windowed' }}
-        previewStatus="ready"
-        requestPreview={vi.fn(() => 'next')}
-        surface={current.surface}
+            previewSnapshot={{ revision: 1, signature: 'windowed' }}
+            previewStatus="ready"
+            requestPreview={vi.fn(() => 'next')}
+            requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
+            surface={current.surface}
       />
     );
     const text = current.surface.querySelector('p')?.firstChild;
@@ -3975,6 +4580,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={requestPreview}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
         surface={current.surface}
       />
     );
@@ -4022,6 +4628,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={requestPreview}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
         surface={current.surface}
       />
     );
@@ -4071,6 +4678,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="ready"
         requestPreview={requestPreview}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
         surface={current.surface}
       />
     );
@@ -4110,6 +4718,7 @@ describe('WindowedImmersiveVisualEditor', () => {
         previewSnapshot={{ revision: 1, signature: 'windowed' }}
         previewStatus="loading"
         requestPreview={vi.fn(() => 'next')}
+        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
         surface={current.surface}
       />
     );
@@ -4150,6 +4759,7 @@ describe('WindowedImmersiveVisualEditor', () => {
           previewSnapshot={{ revision: 1, signature: 'windowed' }}
           previewStatus="ready"
           requestPreview={vi.fn(() => 'next')}
+          requestPreviewAtDocumentEnd={testDocumentEndPreviewRequest('next')}
           surface={current.surface}
         />
       );

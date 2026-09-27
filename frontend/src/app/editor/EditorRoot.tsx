@@ -452,6 +452,20 @@ function previewRequest(
   };
 }
 
+export function schedulePreviewWithDocumentEndPin(
+  runtime: Pick<PreviewSurfaceRuntime, 'prepareDocumentEndWindowPin' | 'session'>,
+  request: PreviewRequest
+): Readonly<{ release: () => void; signature: string }> {
+  const lease = runtime.prepareDocumentEndWindowPin(request.signature);
+  try {
+    runtime.session.schedule(request, true);
+  } catch (error) {
+    lease.release();
+    throw error;
+  }
+  return { release: lease.release, signature: request.signature };
+}
+
 function previewScrollCanvas(surface: HTMLElement): HTMLElement {
   const canvas = surface.parentElement;
   if (!canvas?.classList.contains('easymde-immersive-preview-canvas')) {
@@ -1054,6 +1068,23 @@ export function EditorRoot(props: EditorRootProps) {
   const handleVisualPreviewRequest = useCallback(
     (markdown: string) => schedulePreviewMarkdown(markdown, true),
     [schedulePreviewMarkdown]
+  );
+  const handleVisualPreviewAtDocumentEnd = useCallback(
+    (markdown: string) => {
+      const runtime = previewRuntimeRef.current;
+      if (!runtime) {
+        throw new Error('preview-runtime-unavailable');
+      }
+      const revision = ++previewRevisionRef.current;
+      const request = previewRequest(
+        markdown,
+        props.preview,
+        previewAppearanceRef.current,
+        revision
+      );
+      return schedulePreviewWithDocumentEndPin(runtime, request);
+    },
+    [props.preview]
   );
   const leaveVisualPreview = useCallback(() => {
     if (
@@ -2585,6 +2616,7 @@ export function EditorRoot(props: EditorRootProps) {
                 previewStatus={previewSurfaceStatus}
                 prepareWindowBlockAdoption={prepareVisualWindowBlockAdoption}
                 requestPreview={handleVisualPreviewRequest}
+                requestPreviewAtDocumentEnd={handleVisualPreviewAtDocumentEnd}
                 surface={previewRuntimeRef.current.surface}
               />
               ) : (

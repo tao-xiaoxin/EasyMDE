@@ -56,6 +56,58 @@ function previewNeedsWindow(editMap: PreviewEditMap | null): boolean {
   return (editMap?.blocks.length ?? 0) > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
 }
 
+function previewDocumentEndBlockIndex(
+  markdown: string,
+  editMap: PreviewEditMap,
+  signature: string
+): number {
+  if (
+    editMap.signature !== signature
+    || 1 !== editMap.version
+    || 'line' !== editMap.coordinate
+  ) {
+    throw new PreviewWindowDomError('preview-window-document-end-map-invalid');
+  }
+
+  const lineStarts = [0];
+  for (let offset = 0; offset < markdown.length; offset += 1) {
+    if ('\n' === markdown[offset]) lineStarts.push(offset + 1);
+  }
+
+  const eofBlocks = editMap.blocks.flatMap((block, index) => {
+    if (
+      !Number.isInteger(block.startLine)
+      || !Number.isInteger(block.endLine)
+      || block.startLine < 0
+      || block.endLine <= block.startLine
+      || block.endLine > lineStarts.length
+    ) {
+      throw new PreviewWindowDomError('preview-window-document-end-range-invalid');
+    }
+    const start = lineStarts[block.startLine];
+    const end = block.endLine === lineStarts.length
+      ? markdown.length
+      : lineStarts[block.endLine];
+    if (undefined === start || undefined === end) {
+      throw new PreviewWindowDomError('preview-window-document-end-range-invalid');
+    }
+    const reachesDocumentEnd = end === markdown.length
+      || /^(?:\r\n|\n)+$/u.test(markdown.slice(end));
+    return block.editable && start < markdown.length && reachesDocumentEnd
+      ? [index]
+      : [];
+  });
+
+  if (
+    1 !== eofBlocks.length
+    || eofBlocks[0] !== editMap.blocks.length - 1
+    || editMap.blocks.length <= DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED
+  ) {
+    throw new PreviewWindowDomError('preview-window-document-end-block-unavailable');
+  }
+  return eofBlocks[0];
+}
+
 type PreviewMessages = Readonly<{
   empty: string;
   error: string;
@@ -100,6 +152,8 @@ type PreviewEnhancementCandidate = Readonly<{
   editMap: PreviewEditMap | null;
   features: PreviewFeatures;
   generation: number;
+  markdown: string;
+  requestRevision: number | null;
   serverHtml: SafePreviewHtml;
   signature: string;
   sourceNodes: ReadonlyArray<Node>;
@@ -107,6 +161,17 @@ type PreviewEnhancementCandidate = Readonly<{
 }>;
 
 export type PreviewSurfaceStatus = 'empty' | 'error' | 'loading' | 'ready';
+
+export type PreviewDocumentEndPinLease = Readonly<{
+  release: () => void;
+}>;
+
+type MutablePreviewDocumentEndPin = {
+  generation: number | null;
+  requestRevision: number | null;
+  signature: string;
+  targetIndex: number | null;
+};
 
 const VISUAL_MARKDOWN_SOURCE_ATTRIBUTE =
   'data-easymde-visual-markdown-source';
@@ -136,6 +201,9 @@ type PendingPreviewScrollRestore = Readonly<{
 
 export type PreviewSurfaceRuntime = Readonly<{
   materialize: () => Promise<boolean>;
+  prepareDocumentEndWindowPin: (
+    signature: string
+  ) => PreviewDocumentEndPinLease;
   prepareWindowBlockAdoption: (
     node: HTMLElement
   ) => (() => boolean) | null;
@@ -540,6 +608,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const materializationPendingRef = useRef(false);
   const materializedOverrideRef = useRef(false);
   const ownerActiveRef = useRef(false);
+  const documentEndPinRef = useRef<MutablePreviewDocumentEndPin | null>(null);
   const prepareWindowBlockAdoptionRef = useRef<
     (node: HTMLElement) => (() => boolean) | null
   >(() => null);
@@ -555,6 +624,80 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const [state, setState] = useState<PreviewSurfaceState>(() => initialState(props));
   const stateRef = useRef<PreviewSurfaceState>(state);
   stateRef.current = state;
+
+  function clearDocumentEndPin(
+    pin: MutablePreviewDocumentEndPin,
+    reconcile: boolean
+  ): void {
+    if (documentEndPinRef.current !== pin) return;
+    documentEndPinRef.current = null;
+    const repository = previewWindowRepositoryRef.current;
+    if (
+      reconcile
+      && ownerActiveRef.current
+      && pin.targetIndex !== null
+      && repository?.context.revision === pin.generation
+      && repository.context.signature === pin.signature
+    ) {
+      scheduleWindowRef.current();
+    }
+  }
+
+  function prepareDocumentEndWindowPin(
+    signature: string
+  ): PreviewDocumentEndPinLease {
+    if (!ownerActiveRef.current) {
+      throw new Error('preview-window-document-end-owner-inactive');
+    }
+    if (!windowedRef.current || !signature) {
+      throw new Error('preview-window-document-end-pin-unavailable');
+    }
+    if (documentEndPinRef.current) {
+      throw new Error('preview-window-document-end-pin-already-active');
+    }
+    const pin: MutablePreviewDocumentEndPin = {
+      generation: null,
+      requestRevision: null,
+      signature,
+      targetIndex: null
+    };
+    documentEndPinRef.current = pin;
+    let released = false;
+    return {
+      release: () => {
+        if (released) return;
+        released = true;
+        clearDocumentEndPin(pin, true);
+      }
+    };
+  }
+
+  function bindDocumentEndPin(
+    requestState: PreviewRequestState,
+    generation: number
+  ): void {
+    const pin = documentEndPinRef.current;
+    if (!pin) return;
+    if (
+      'loading' === requestState.kind
+      && null === pin.requestRevision
+      && requestState.request.signature === pin.signature
+    ) {
+      pin.requestRevision = requestState.revision;
+      pin.generation = generation;
+      return;
+    }
+    if (
+      'success' === requestState.kind
+      && pin.requestRevision === requestState.revision
+      && requestState.request.signature === pin.signature
+    ) {
+      pin.generation = generation;
+      return;
+    }
+    clearDocumentEndPin(pin, false);
+  }
+
   const windowStyleSignature = `${props.className ?? ''}:${JSON.stringify(
     props.style ?? {}
   )}`;
@@ -626,6 +769,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     };
     const fail = (error: unknown) => {
       if (!ownerActiveRef.current || generationRef.current !== revision) return;
+      const documentEndPin = documentEndPinRef.current;
+      if (documentEndPin?.generation === revision) {
+        clearDocumentEndPin(documentEndPin, false);
+      }
       if (scrollSnapshotRef.current?.generation === revision) {
         scrollSnapshotRef.current = null;
       }
@@ -976,6 +1123,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
   function publishRequestState(requestState: PreviewRequestState): void {
     const generation = ++generationRef.current;
+    bindDocumentEndPin(requestState, generation);
     if ('loading' === requestState.kind || 'success' === requestState.kind) {
       captureScroll(generation);
     } else {
@@ -1064,6 +1212,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     };
     const failCandidate = (error: unknown) => {
       if (!ownerActiveRef.current || generationRef.current !== generation) return;
+      const documentEndPin = documentEndPinRef.current;
+      if (documentEndPin?.generation === generation) {
+        clearDocumentEndPin(documentEndPin, false);
+      }
       if (scrollSnapshotRef.current?.generation === generation) {
         scrollSnapshotRef.current = null;
       }
@@ -1111,6 +1263,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         editMap: requestState.response.editMap ?? null,
         features,
         generation,
+        markdown: requestState.request.markdown,
+        requestRevision: requestState.revision,
         serverHtml: requestState.response.html,
         signature: requestState.request.signature,
         sourceNodes: candidateMarkup.sourceNodes,
@@ -1170,6 +1324,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     });
     const runtime = {
       materialize: () => materializeRef.current(),
+      prepareDocumentEndWindowPin,
       prepareWindowBlockAdoption: (node: HTMLElement) =>
         prepareWindowBlockAdoptionRef.current(node),
       session,
@@ -1184,6 +1339,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     }
     return () => {
       ownerActiveRef.current = false;
+      documentEndPinRef.current = null;
       scrollSnapshotRef.current = null;
       discardStaging();
       props.onDispose?.(runtime);
@@ -1307,6 +1463,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         editMap: state.editMap,
         features: state.features,
         generation,
+        markdown: '',
+        requestRevision: null,
         serverHtml: state.html,
         signature: state.signature,
         sourceNodes: candidateMarkup.sourceNodes,
@@ -1326,6 +1484,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
     const failEnhancement = (error: unknown) => {
       if (!isCurrent()) return;
+      const documentEndPin = documentEndPinRef.current;
+      if (documentEndPin?.generation === generation) {
+        clearDocumentEndPin(documentEndPin, false);
+      }
       if (scrollSnapshotRef.current?.generation === generation) {
         scrollSnapshotRef.current = null;
       }
@@ -1427,6 +1589,27 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         }
         const largeWindow = windowedRef.current
           && previewNeedsWindow(activeCandidate.editMap);
+        const preparedDocumentEndPin = documentEndPinRef.current;
+        const matchingDocumentEndPin = preparedDocumentEndPin
+          && preparedDocumentEndPin.generation === generation
+          && preparedDocumentEndPin.requestRevision
+            === activeCandidate.requestRevision
+          && preparedDocumentEndPin.signature === activeCandidate.signature
+          ? preparedDocumentEndPin
+          : null;
+        if (
+          preparedDocumentEndPin?.generation === generation
+          && !matchingDocumentEndPin
+        ) {
+          throw new PreviewWindowDomError(
+            'preview-window-document-end-pin-identity-mismatch'
+          );
+        }
+        if (matchingDocumentEndPin && !largeWindow) {
+          throw new PreviewWindowDomError(
+            'preview-window-document-end-pin-window-unavailable'
+          );
+        }
         const enhancedHtml = largeWindow
           ? activeCandidate.serverHtml
           : candidateSurface.innerHTML as SafePreviewHtml;
@@ -1455,15 +1638,36 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             }
           );
           repository = previewWindowRepositoryRef.current;
+          const documentEndIndex = matchingDocumentEndPin
+            ? previewDocumentEndBlockIndex(
+                activeCandidate.markdown,
+                activeCandidate.editMap,
+                activeCandidate.signature
+              )
+            : null;
+          if (matchingDocumentEndPin) {
+            matchingDocumentEndPin.targetIndex = documentEndIndex;
+          }
           await scheduler.yield();
           if (!isCurrent() || controller.signal.aborted) {
             previewWindowRepositoryRef.current = null;
             candidateSurface.remove();
             return;
           }
+          const currentDocumentEndPin = documentEndPinRef.current;
+          const initialPinnedIndices = matchingDocumentEndPin
+            && currentDocumentEndPin === matchingDocumentEndPin
+            && matchingDocumentEndPin.generation === repository.context.revision
+            && matchingDocumentEndPin.signature === repository.context.signature
+            && null !== matchingDocumentEndPin.targetIndex
+            ? [matchingDocumentEndPin.targetIndex]
+            : [];
           const initialWindow = repository.model.getWindow({
             context: repository.context,
-            pinnedIndices: [],
+            pinnedIndices: initialPinnedIndices,
+            ...(initialPinnedIndices.length > 0
+              ? { maxMaterialized: DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED }
+              : {}),
             viewport: viewportForCanvas(previewScrollCanvas(surface))
           });
           windowedCommit = {
@@ -1546,6 +1750,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     }
     if (!repository) {
       if (!state.editMap) {
+        const documentEndPin = documentEndPinRef.current;
+        if (documentEndPin?.generation === state.generation) {
+          clearDocumentEndPin(documentEndPin, false);
+        }
         props.onDiagnostic?.('preview-window-edit-map-missing');
         setState((current) =>
           'html' === current.kind && current.generation === state.generation
@@ -1574,6 +1782,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           }
         );
       } catch (error) {
+        const documentEndPin = documentEndPinRef.current;
+        if (documentEndPin?.generation === state.generation) {
+          clearDocumentEndPin(documentEndPin, false);
+        }
         props.onDiagnostic?.(previewFailureCode(error));
         setState((current) =>
           'html' === current.kind && current.generation === state.generation
@@ -1658,6 +1870,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           pins.add(activeRepository.nodes.length - 1);
         }
       }
+      const documentEndPin = documentEndPinRef.current;
+      if (
+        documentEndPin?.generation === activeRepository.context.revision
+        && documentEndPin.signature === activeRepository.context.signature
+        && null !== documentEndPin.targetIndex
+      ) {
+        pins.add(documentEndPin.targetIndex);
+      }
       return [...pins].sort((left, right) => left - right);
     };
 
@@ -1695,9 +1915,18 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         anchorCorrection += update.anchorCorrection;
       }
       if (0 !== anchorCorrection) canvas.scrollTop += anchorCorrection;
+      const documentEndPin = documentEndPinRef.current;
+      const documentEndPinApplies = Boolean(
+        documentEndPin?.generation === activeRepository.context.revision
+        && documentEndPin.signature === activeRepository.context.signature
+        && null !== documentEndPin.targetIndex
+      );
       const result = activeRepository.model.getWindow({
         context: activeRepository.context,
         pinnedIndices: pinnedIndices(),
+        ...(documentEndPinApplies
+          ? { maxMaterialized: DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED }
+          : {}),
         viewport: viewportForCanvas(canvas)
       });
       const commit: MutablePreviewWindowCommit = {

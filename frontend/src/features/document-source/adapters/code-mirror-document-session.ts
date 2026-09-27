@@ -2,6 +2,7 @@ import {
   defaultKeymap,
   history,
   historyKeymap,
+  isolateHistory,
   redo as redoCommand,
   redoDepth,
   undo as undoCommand,
@@ -38,6 +39,7 @@ export type DocumentTextChangeRange = Readonly<{
 export type DocumentTextChange = Readonly<{
   deferNativeBridge?: boolean;
   holdNativeBridge?: boolean;
+  isolateHistoryBefore?: boolean;
   /** Records the accepted post-edit selection in CodeMirror's history event. */
   recordHistorySelection?: boolean;
   selection: DocumentSelection;
@@ -48,6 +50,11 @@ export type DocumentTextChange = Readonly<{
 export type CodeMirrorDocumentSnapshot = Readonly<{
   savedValue: string;
   value: string;
+}>;
+
+export type DocumentHistoryState = Readonly<{
+  redoDepth: number;
+  undoDepth: number;
 }>;
 
 export type DocumentCursorPosition = Readonly<{
@@ -64,6 +71,7 @@ export type CodeMirrorDocumentSession = Readonly<{
   focus: () => void;
   getCursorPosition: () => DocumentCursorPosition;
   getInputElement: () => HTMLElement;
+  getHistoryState: () => DocumentHistoryState;
   getScrollElement: () => HTMLElement;
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
@@ -562,6 +570,7 @@ export function createCodeMirrorDocumentSession({
       changes,
       deferNativeBridge = false,
       holdNativeBridge = false,
+      isolateHistoryBefore = false,
       recordHistorySelection = false,
       selection,
       value
@@ -602,7 +611,10 @@ export function createCodeMirrorDocumentSession({
       const transactionSpec = {
         annotations: [
           Transaction.addToHistory.of(valueChanged),
-          Transaction.userEvent.of('input')
+          Transaction.userEvent.of('input'),
+          ...(valueChanged && isolateHistoryBefore
+            ? [isolateHistory.of('before')]
+            : [])
         ],
         ...(resolvedChanges ? { changes: resolvedChanges } : {}),
         selection: editorSelection(selection, value.length)
@@ -674,6 +686,14 @@ export function createCodeMirrorDocumentSession({
       };
     },
     getInputElement: () => view.contentDOM,
+    getHistoryState: () => {
+      if (destroyed) return { redoDepth: 0, undoDepth: 0 };
+      const state = authoritativeState();
+      return {
+        redoDepth: redoDepth(state),
+        undoDepth: undoDepth(state)
+      };
+    },
     getScrollElement: () => view.scrollDOM,
     getSelection: () => stateSelection(authoritativeState()),
     getSnapshot: () => snapshot,

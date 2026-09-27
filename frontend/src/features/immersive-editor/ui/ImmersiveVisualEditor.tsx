@@ -32,6 +32,7 @@ import {
   projectVisualCodeBodySelection,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
+  restoreVisualCodeFenceOpenEofMetadata,
   serializeVisualMarkdown,
   visualCodeBodyDomOffset,
   visualCodeBodyIntervalAtOrdinal,
@@ -78,13 +79,12 @@ export type ImmersiveVisualEditorProps = Readonly<{
 
 type PendingMarkdownTransfer = Readonly<{
   acceptedDocumentBoundary: AcceptedPasteDocumentBoundary | null;
+  historyState?: DocumentHistoryState;
+  historySlot?: VisualHistorySlot;
+  historySlotDepth?: number;
   markdown: string;
   phase: 'rendering' | 'requesting';
-  selection: Readonly<{
-    direction: 'none';
-    end: number;
-    start: number;
-  }>;
+  selection: VisualSelectionSourceRange;
   signature: string;
 }>;
 
@@ -96,6 +96,7 @@ type VisualSelectionSourceRange = Readonly<{
 
 type SynchronizeMarkdownOptions = Readonly<{
   acceptedDocumentBoundary?: AcceptedPasteDocumentBoundary;
+  isolateHistoryBefore?: boolean;
   localCodeBodyPre?: HTMLElement;
   localCodeBodyInputPre?: HTMLElement;
   mapSelectionWhenUnchanged?: boolean;
@@ -114,13 +115,31 @@ type VisualCodeStructureValidation = Readonly<{
 }>;
 
 type ApplyDocumentChangeOptions = Readonly<{
-  preserveVisualHistoryTransitions?: boolean;
+  isolateHistoryBefore?: boolean;
   rejectCodeStructureMismatch?: boolean;
   validatedCodeStructure?: VisualCodeStructureValidation;
 }>;
 
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
-const MAX_VISUAL_HISTORY_TRANSITIONS = 64;
+
+type DocumentHistoryState = ReturnType<
+  EditorDocumentSession['document']['getHistoryState']
+>;
+
+function documentHistoryState(
+  document: EditorDocumentSession['document']
+): DocumentHistoryState {
+  const state = document.getHistoryState();
+  if (
+    !Number.isSafeInteger(state.undoDepth)
+    || state.undoDepth < 0
+    || !Number.isSafeInteger(state.redoDepth)
+    || state.redoDepth < 0
+  ) {
+    throw new Error('visual-editor-history-state-invalid');
+  }
+  return state;
+}
 
 type VisualSelectionMemory = Readonly<{
   anchorNode: Text;
@@ -169,14 +188,19 @@ type VisualHistorySnapshot = Readonly<{
   codeBodyPreviewSourceMarkdown: string | null;
   codeBodyPreviewStructureSignature: string | null;
   html: string;
+  historyState: DocumentHistoryState;
   localCodeBodies: ReadonlyArray<IndexedLocalVisualCodeBodyProvenance>;
   markdown: string;
   selection: VisualHistorySelection | null;
 }>;
 
-type VisualHistoryTransition = Readonly<{
-  after: VisualHistorySnapshot;
-  before: VisualHistorySnapshot;
+type VisualHistorySlot = Readonly<{
+  kind: 'rematerialize';
+  markdown: string;
+}> | Readonly<{
+  kind: 'snapshot';
+  markdown: string;
+  snapshot: VisualHistorySnapshot;
 }>;
 
 type VisualInputIntent = Readonly<{
@@ -191,6 +215,8 @@ type VisualInputIntent = Readonly<{
     codeOrdinal: number;
     initialEmptyBody: boolean;
     lineEnding: string;
+    openEof: boolean;
+    sourceBlockStart: number;
     sourcePrefix: string;
     visualPrefix: string;
   }>;
@@ -220,6 +246,11 @@ type PendingVisualIntent = Readonly<{
     codeOrdinal: number;
     localPre?: HTMLElement;
     preserving: boolean;
+  }>;
+  codeBodyTopology?: Readonly<{
+    openEof: boolean;
+    pre: HTMLElement;
+    sourceBlockStart: number;
   }>;
   historyBefore?: VisualHistorySnapshot;
   memory: VisualSelectionMemory | null;
@@ -615,6 +646,8 @@ function visualCodeBodyInputIntent(
       codeOrdinal,
       initialEmptyBody,
       lineEnding,
+      openEof: !projection.sourceInterval.closed,
+      sourceBlockStart: projection.sourceInterval.sourceBlockStart,
       sourcePrefix: initialEmptyBody && !/(?:\r\n|\r|\n)$/.test(opening)
         ? lineEnding
         : '',
@@ -1083,12 +1116,11 @@ export function ImmersiveVisualEditor({
   const flushVisualInputRef = useRef<() => boolean>(() => true);
   const restoreFocusRef = useRef(false);
   const selfWriteRef = useRef(false);
-  const visualCommandTransactionRef = useRef(false);
-  const visualHistoryPreservationRef = useRef<VisualHistorySnapshot | null>(null);
   const readOnlySnapshotRef =
     useRef<VisualMarkdownReadOnlySnapshot | null>(null);
-  const visualHistoryBaselineRef = useRef<VisualHistorySnapshot | null>(null);
-  const visualHistoryTransitionsRef = useRef<VisualHistoryTransition[]>([]);
+  const visualHistorySnapshotsRef = useRef(
+    new Map<number, VisualHistorySlot>()
+  );
 
   const visualCodeStructureCandidate = (
     markdown: string
@@ -1437,11 +1469,12 @@ export function ImmersiveVisualEditor({
       codeBodyPreviewStructureSignature:
         visualCodeBodyPreviewStructureRef.current,
       html,
+      historyState: documentHistoryState(documentSession.document),
       localCodeBodies: visualLocalCodeBodyRecords(),
       markdown,
       selection: captureVisualHistorySelection(surface)
     }),
-    [surface]
+    [documentSession, surface]
   );
 
   const appendVisualHistoryTransition = useCallback((
@@ -1449,14 +1482,87 @@ export function ImmersiveVisualEditor({
     after: VisualHistorySnapshot
   ): void => {
     if (before.markdown === after.markdown) return;
-    visualHistoryTransitionsRef.current.push({ after, before });
+    const current = documentHistoryState(documentSession.document);
     if (
-      visualHistoryTransitionsRef.current.length
-      > MAX_VISUAL_HISTORY_TRANSITIONS
+      current.undoDepth !== after.historyState.undoDepth
+      || current.redoDepth !== after.historyState.redoDepth
     ) {
-      visualHistoryTransitionsRef.current.shift();
+      throw new Error('visual-editor-history-state-stale');
+    }
+    const beforeDepth = after.historyState.undoDepth < before.historyState.undoDepth
+      ? after.historyState.undoDepth - 1
+      : before.historyState.undoDepth;
+    if (beforeDepth !== current.undoDepth) {
+      const currentBeforeSlot = visualHistorySnapshotsRef.current.get(beforeDepth);
+      if (currentBeforeSlot?.kind !== 'rematerialize') {
+        visualHistorySnapshotsRef.current.set(beforeDepth, {
+          kind: 'snapshot',
+          markdown: before.markdown,
+          snapshot: before
+        });
+      }
+    }
+    visualHistorySnapshotsRef.current.set(current.undoDepth, {
+      kind: 'snapshot',
+      markdown: after.markdown,
+      snapshot: after
+    });
+  }, [documentSession]);
+
+  const recordVisualHistoryMutation = useCallback((
+    before: DocumentHistoryState,
+    after: DocumentHistoryState,
+    isolateHistoryBefore: boolean
+  ): void => {
+    const snapshots = visualHistorySnapshotsRef.current;
+    if (0 !== after.redoDepth) {
+      throw new Error('visual-editor-history-state-stale');
+    }
+    if (after.undoDepth > before.undoDepth + 1) {
+      throw new Error('visual-editor-history-state-invalid');
+    }
+    if (
+      isolateHistoryBefore
+      && after.undoDepth === before.undoDepth
+    ) {
+      throw new Error('visual-editor-history-boundary-not-isolated');
+    }
+    if (after.undoDepth < before.undoDepth) {
+      const prunedDepths = before.undoDepth - after.undoDepth + 1;
+      const rebased = new Map<number, VisualHistorySlot>();
+      for (const [depth, slot] of snapshots) {
+        if (depth < prunedDepths || depth > before.undoDepth) continue;
+        rebased.set(depth - prunedDepths, slot);
+      }
+      snapshots.clear();
+      for (const [depth, snapshot] of rebased) {
+        snapshots.set(depth, snapshot);
+      }
+    } else if (before.redoDepth > 0) {
+      for (const depth of snapshots.keys()) {
+        if (depth > before.undoDepth) snapshots.delete(depth);
+      }
     }
   }, []);
+
+  const recordCurrentVisualHistorySnapshot = useCallback((
+    markdown: string,
+    html?: string
+  ): void => {
+    const snapshot = captureVisualHistorySnapshot(
+      markdown,
+      html ?? surface.innerHTML
+    );
+    visualHistorySnapshotsRef.current.set(
+      snapshot.historyState.undoDepth,
+      {
+        kind: 'snapshot',
+        markdown: snapshot.markdown,
+        snapshot
+      }
+    );
+    acceptedHtmlRef.current = snapshot.html;
+  }, [captureVisualHistorySnapshot, surface]);
 
   const captureSnapshot = useCallback((
     sourceMarkdown: string,
@@ -1509,6 +1615,7 @@ export function ImmersiveVisualEditor({
       codeBodyPreviewStructureSignature:
         visualCodeBodyPreviewStructureRef.current,
       html,
+      historyState: documentHistoryState(documentSession.document),
       localCodeBodies: visualLocalCodeBodyRecords(),
       markdown: sourceMarkdown,
       selection: captureVisualHistorySelection(surface)
@@ -1516,10 +1623,17 @@ export function ImmersiveVisualEditor({
     acceptedHtmlRef.current = historySnapshot.html;
     acceptedCodeBodySnapshotsRef.current.clear();
     acceptedLocalCodeBodiesRef.current = historySnapshot.localCodeBodies;
-    visualHistoryBaselineRef.current = historySnapshot;
+    visualHistorySnapshotsRef.current.set(
+      historySnapshot.historyState.undoDepth,
+      {
+        kind: 'snapshot',
+        markdown: historySnapshot.markdown,
+        snapshot: historySnapshot
+      }
+    );
     visualBaselineMaterializedRef.current = true;
     capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
-  }, [surface]);
+  }, [documentSession, surface]);
 
   const captureAcceptedPasteSnapshot = useCallback((
     sourceMarkdown: string
@@ -1554,9 +1668,17 @@ export function ImmersiveVisualEditor({
     acceptedHtmlRef.current = null;
     acceptedCodeBodySnapshotsRef.current.clear();
     acceptedLocalCodeBodiesRef.current = [];
-    visualHistoryBaselineRef.current = captureVisualHistorySnapshot(
+    const historySnapshot = captureVisualHistorySnapshot(
       sourceMarkdown,
       surface.innerHTML
+    );
+    visualHistorySnapshotsRef.current.set(
+      historySnapshot.historyState.undoDepth,
+      {
+        kind: 'snapshot',
+        markdown: historySnapshot.markdown,
+        snapshot: historySnapshot
+      }
     );
     visualBaselineMaterializedRef.current = false;
     capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
@@ -1574,6 +1696,14 @@ export function ImmersiveVisualEditor({
   const restoreAcceptedSnapshot = useCallback((): boolean => {
     const acceptedHtml = acceptedHtmlRef.current;
     if (null === acceptedHtml) return false;
+    const markdown = sourceMarkdownRef.current ?? '';
+    const currentSlot = visualHistorySnapshotsRef.current.get(
+      documentHistoryState(documentSession.document).undoDepth
+    );
+    if (
+      currentSlot?.kind !== 'snapshot'
+      || currentSlot.markdown !== markdown
+    ) return false;
     const codeBodySnapshots = Array.from(
       acceptedCodeBodySnapshotsRef.current.entries()
     );
@@ -1589,12 +1719,17 @@ export function ImmersiveVisualEditor({
       }
       acceptedPre.replaceWith(preSnapshot.cloneNode(true) as HTMLElement);
     }
-    const markdown = sourceMarkdownRef.current ?? '';
     captureSnapshot(markdown);
     installVisualLocalCodeBodyProvenance(markdown, localCodeBodies);
     acceptedLocalCodeBodiesRef.current = localCodeBodies;
+    recordCurrentVisualHistorySnapshot(markdown);
     return true;
-  }, [captureSnapshot, surface]);
+  }, [
+    captureSnapshot,
+    documentSession,
+    recordCurrentVisualHistorySnapshot,
+    surface
+  ]);
 
   const applyDocumentChange = useCallback((
     change: Parameters<
@@ -1617,24 +1752,57 @@ export function ImmersiveVisualEditor({
     ) {
       throw new Error('visual-editor-code-body-map-stale');
     }
-    if (
-      !visualCommandTransactionRef.current
-      && !options.preserveVisualHistoryTransitions
-      && !visualHistoryPreservationRef.current
-      && change.value !== sourceMarkdownRef.current
-    ) {
-      visualHistoryTransitionsRef.current = [];
+    const historyBefore = sourceChanged
+      ? documentHistoryState(documentSession.document)
+      : null;
+    if (historyBefore) {
+      if (
+        documentSession.document.getValue() !== sourceMarkdownRef.current
+      ) {
+        throw new Error('visual-editor-history-document-stale');
+      }
+      const current = visualHistorySnapshotsRef.current.get(
+        historyBefore.undoDepth
+      );
+      if (!current) {
+        throw new Error('visual-editor-history-snapshot-missing');
+      }
+      if (current.markdown !== sourceMarkdownRef.current) {
+        throw new Error('visual-editor-history-snapshot-stale');
+      }
     }
+    const isolateHistoryBefore = Boolean(
+      sourceChanged
+      && (
+        options.isolateHistoryBefore
+        || change.isolateHistoryBefore
+      )
+    );
     selfWriteRef.current = true;
     try {
-      documentSession.document.applyTextChange(change);
+      documentSession.document.applyTextChange({
+        ...change,
+        ...(isolateHistoryBefore ? { isolateHistoryBefore: true } : {})
+      });
     } finally {
       selfWriteRef.current = false;
+    }
+    if (sourceChanged && historyBefore) {
+      recordVisualHistoryMutation(
+        historyBefore,
+        documentHistoryState(documentSession.document),
+        isolateHistoryBefore
+      );
     }
     if (codeStructureValidation) {
       visualCodeBodyStructureValidationRef.current = codeStructureValidation;
     }
-  }, [documentSession]);
+  }, [
+    captureVisualHistorySnapshot,
+    documentSession,
+    recordVisualHistoryMutation,
+    surface
+  ]);
 
   const codeOrdinalForInputBlock = (
     inputBlock: VisualCodeInputSnapshot,
@@ -1889,6 +2057,7 @@ export function ImmersiveVisualEditor({
         selection,
         value
       }, {
+        isolateHistoryBefore: Boolean(options.isolateHistoryBefore),
         rejectCodeStructureMismatch: Boolean(
           options.rejectCodeStructureMismatch
         ),
@@ -1922,6 +2091,11 @@ export function ImmersiveVisualEditor({
         : null;
       if (value !== sourceMarkdown) {
         acceptedPasteDocumentBoundaryRef.current = null;
+        const acceptedHtml = acceptedHtmlRef.current;
+        if (null === acceptedHtml) {
+          throw new Error('visual-editor-markdown-snapshot-missing');
+        }
+        recordCurrentVisualHistorySnapshot(value, acceptedHtml);
       }
       if (value !== sourceMarkdown) onMarkdownChange();
       return true;
@@ -1932,6 +2106,7 @@ export function ImmersiveVisualEditor({
     applyDocumentChange,
     failVisualSynchronization,
     onMarkdownChange,
+    recordCurrentVisualHistorySnapshot,
     surface
   ]);
 
@@ -2063,7 +2238,11 @@ export function ImmersiveVisualEditor({
   useLayoutEffect(() => {
     const pending = pendingTransferRef.current;
     if ('error' === previewStatus && pending) {
-      failPendingTransfer('visual-editor-markdown-paste-render-failed');
+      failPendingTransfer(
+        pending.historyState
+          ? 'visual-editor-history-preview-failed'
+          : 'visual-editor-markdown-paste-render-failed'
+      );
     }
   }, [
     failPendingTransfer,
@@ -2085,13 +2264,54 @@ export function ImmersiveVisualEditor({
       return;
     }
     if (pending.signature !== previewSnapshot.signature) {
-      failPendingTransfer('visual-editor-markdown-paste-superseded');
+      failPendingTransfer(
+        pending.historyState
+          ? 'visual-editor-history-preview-stale'
+          : 'visual-editor-markdown-paste-superseded'
+      );
       return;
     }
     let selectionDiagnostic: string | null = null;
     try {
       if (documentSession.document.getValue() !== pending.markdown) {
-        throw new Error('visual-editor-markdown-paste-document-stale');
+        throw new Error(
+          pending.historyState
+            ? 'visual-editor-history-preview-stale'
+            : 'visual-editor-markdown-paste-document-stale'
+        );
+      }
+      if (pending.historyState) {
+        const historyState = documentHistoryState(documentSession.document);
+        const selection = documentSession.document.getSelection();
+        if (
+          !historyState
+          || historyState.undoDepth !== pending.historyState.undoDepth
+          || historyState.redoDepth !== pending.historyState.redoDepth
+          || selection.direction !== pending.selection.direction
+          || selection.start !== pending.selection.start
+          || selection.end !== pending.selection.end
+        ) {
+          throw new Error('visual-editor-history-preview-stale');
+        }
+        if (pending.historySlot) {
+          const slot = visualHistorySnapshotsRef.current.get(
+            pending.historySlotDepth ?? -1
+          );
+          if (
+            slot !== pending.historySlot
+            || slot.kind !== 'rematerialize'
+            || slot.markdown !== pending.markdown
+            || pending.historySlotDepth !== historyState.undoDepth
+          ) {
+            throw new Error('visual-editor-history-preview-stale');
+          }
+        }
+        if (
+          pending.historySlotDepth !== undefined
+          && pending.historySlotDepth !== historyState.undoDepth
+        ) {
+          throw new Error('visual-editor-history-preview-stale');
+        }
       }
       try {
         if (pending.acceptedDocumentBoundary) {
@@ -2109,14 +2329,27 @@ export function ImmersiveVisualEditor({
           );
         }
       } catch (error) {
+        if (pending.historyState) throw error;
         selectionDiagnostic = visualEditorFailureCode(
           error,
           'visual-editor-selection-restore-failed'
         );
         placeSurfaceCaretAtEnd(surface);
       }
-      pendingTransferRef.current = null;
       captureAcceptedPasteSnapshot(pending.markdown);
+      if (pending.historyState) {
+        const adoptedSlot = visualHistorySnapshotsRef.current.get(
+          pending.historyState.undoDepth
+        );
+        if (
+          adoptedSlot?.kind !== 'snapshot'
+          || adoptedSlot.markdown !== pending.markdown
+          || adoptedSlot.snapshot.markdown !== pending.markdown
+        ) {
+          throw new Error('visual-editor-history-preview-stale');
+        }
+      }
+      pendingTransferRef.current = null;
       acceptedPasteDocumentBoundaryRef.current =
         pending.acceptedDocumentBoundary;
       lastSelectionRef.current = pending.selection;
@@ -2153,7 +2386,9 @@ export function ImmersiveVisualEditor({
     } catch (error) {
       failPendingTransfer(visualEditorFailureCode(
         error,
-        'visual-editor-markdown-paste-commit-failed'
+        pending.historyState
+          ? 'visual-editor-history-preview-failed'
+          : 'visual-editor-markdown-paste-commit-failed'
       ));
       return;
     }
@@ -2304,6 +2539,8 @@ export function ImmersiveVisualEditor({
       let mappedCodeStructureValidated = false;
       let acceptedCodeInputPreIndex: number | null = null;
       let acceptedCodeInputPre: HTMLElement | null = null;
+      let acceptedCodeInputOpenEof: boolean | null = null;
+      let acceptedCodeInputSourceBlockStart: number | null = null;
       let committedResult = pending.result;
       let committedMemory = pending.memory;
       let expandedPreviewSource: string | null = null;
@@ -2329,6 +2566,10 @@ export function ImmersiveVisualEditor({
             );
             acceptedCodeInputPreIndex = acceptedVisualCodePreIndex(localBlock.pre);
             acceptedCodeInputPre = localBlock.pre;
+            acceptedCodeInputOpenEof = pending.codeBodyTopology?.openEof
+              ?? (null !== localBlock.fenceOpenEof);
+            acceptedCodeInputSourceBlockStart =
+              pending.codeBodyTopology?.sourceBlockStart ?? 0;
           } catch (error) {
             return failVisualSynchronization(error);
           }
@@ -2374,6 +2615,19 @@ export function ImmersiveVisualEditor({
             >;
             let sourceInterval: ReturnType<typeof visualCodeBodyIntervalAtOrdinal>;
             try {
+              sourceInterval = visualCodeBodyIntervalAtOrdinal(
+                baseMarkdown,
+                pending.codeBlockStructure.codeOrdinal
+              );
+              acceptedCodeInputOpenEof = !sourceInterval.closed;
+              acceptedCodeInputSourceBlockStart =
+                sourceInterval.sourceBlockStart;
+              restoreVisualCodeFenceOpenEofMetadata(
+                mappedBlock.pre,
+                fenceExpansion.markdown,
+                sourceInterval.sourceBlockStart,
+                !sourceInterval.closed
+              );
               editedVisual = serializeVisualMarkdown(surface);
               visualExpansion = expandVisualCodeFenceForBody(
                 baselineVisual,
@@ -2386,10 +2640,6 @@ export function ImmersiveVisualEditor({
               );
               editedVisualInterval = visualCodeBodyIntervalAtOrdinal(
                 editedVisual,
-                pending.codeBlockStructure.codeOrdinal
-              );
-              sourceInterval = visualCodeBodyIntervalAtOrdinal(
-                baseMarkdown,
                 pending.codeBlockStructure.codeOrdinal
               );
             } catch (error) {
@@ -2490,6 +2740,10 @@ export function ImmersiveVisualEditor({
               }
               acceptedCodeInputPreIndex = acceptedVisualCodePreIndex(mappedBlock.pre);
               acceptedCodeInputPre = mappedBlock.pre;
+              acceptedCodeInputOpenEof = pending.codeBodyTopology?.openEof
+                ?? (null !== mappedBlock.fenceOpenEof);
+              acceptedCodeInputSourceBlockStart =
+                pending.codeBodyTopology?.sourceBlockStart ?? 0;
             } catch (error) {
               return failVisualSynchronization(error);
             }
@@ -2501,6 +2755,27 @@ export function ImmersiveVisualEditor({
         }
       }
       try {
+        const codeBodyPre = acceptedCodeInputPre
+          ?? pending.codeBodyTopology?.pre
+          ?? null;
+        if (codeBodyPre) {
+          const codeBodySnapshot = captureVisualCodeInputSnapshot(codeBodyPre);
+          if (!codeBodySnapshot) {
+            return failVisualSynchronization(
+              new Error('visual-editor-code-body-map-stale')
+            );
+          }
+          restoreVisualCodeFenceOpenEofMetadata(
+            codeBodyPre,
+            committedResult.sourceMarkdown,
+            acceptedCodeInputSourceBlockStart
+              ?? pending.codeBodyTopology?.sourceBlockStart
+              ?? 0,
+            acceptedCodeInputOpenEof
+              ?? pending.codeBodyTopology?.openEof
+              ?? (null !== codeBodySnapshot.fenceOpenEof)
+          );
+        }
         applyDocumentChange({
           selection: committedResult.selection,
           value: committedResult.sourceMarkdown,
@@ -2509,7 +2784,6 @@ export function ImmersiveVisualEditor({
             ? { changes: sourceChange }
             : {})
         }, {
-          preserveVisualHistoryTransitions: Boolean(pending.historyBefore),
           rejectCodeStructureMismatch: Boolean(
             pending.codeBlockStructure
             && !pending.codeBlockStructure.localPre
@@ -2526,18 +2800,6 @@ export function ImmersiveVisualEditor({
           visualCodeBlockStructureSignature(expandedPreviewSource);
         visualCodeBodyOrdinalsRef.current = null;
         visualCodeBodyDomOrderInvalidRef.current = true;
-      }
-      if (
-        pending.historyBefore
-        && pending.historyBefore.markdown === previousSource
-      ) {
-        appendVisualHistoryTransition(
-          pending.historyBefore,
-          captureVisualHistorySnapshot(
-            committedResult.sourceMarkdown,
-            surface.innerHTML
-          )
-        );
       }
       sourceMarkdownRef.current = committedResult.sourceMarkdown;
       visualMarkdownRef.current = committedResult.visualMarkdown;
@@ -2557,6 +2819,33 @@ export function ImmersiveVisualEditor({
         );
       }
       acceptedLocalCodeBodiesRef.current = visualLocalCodeBodyRecords();
+      if (
+        pending.historyBefore
+        && pending.historyBefore.markdown === previousSource
+      ) {
+        if (previousSource !== committedResult.sourceMarkdown) {
+          const after = captureVisualHistorySnapshot(
+            committedResult.sourceMarkdown,
+            surface.innerHTML
+          );
+          acceptedHtmlRef.current = after.html;
+          appendVisualHistoryTransition(pending.historyBefore, after);
+        }
+      } else if (previousSource !== committedResult.sourceMarkdown) {
+        if (
+          documentSession.document.getValue() !== committedResult.sourceMarkdown
+          || sourceMarkdownRef.current !== committedResult.sourceMarkdown
+        ) {
+          return failVisualSynchronization(
+            new Error('visual-editor-history-document-stale')
+          );
+        }
+        const historyState = documentHistoryState(documentSession.document);
+        visualHistorySnapshotsRef.current.set(historyState.undoDepth, {
+          kind: 'rematerialize',
+          markdown: committedResult.sourceMarkdown
+        });
+      }
       if (previousSource !== committedResult.sourceMarkdown) {
         onMarkdownChange();
       }
@@ -2610,56 +2899,6 @@ export function ImmersiveVisualEditor({
     };
     flushVisualInputRef.current = flushVisualInput;
 
-    const historySnapshotFor = (
-      currentMarkdown: string,
-      targetMarkdown: string,
-      redo: boolean
-    ): VisualHistorySnapshot | null => {
-      const transitions = visualHistoryTransitionsRef.current;
-      for (let index = transitions.length - 1; index >= 0; index -= 1) {
-        const transition = transitions[index];
-        if (!transition) continue;
-        if (
-          redo
-            ? transition.before.markdown === currentMarkdown
-              && transition.after.markdown === targetMarkdown
-            : transition.after.markdown === currentMarkdown
-              && transition.before.markdown === targetMarkdown
-        ) {
-          return redo ? transition.after : transition.before;
-        }
-      }
-      // CodeMirror can group several visual input transactions into one undo.
-      // Resolve its canonical target from any retained view snapshot.
-      for (let index = transitions.length - 1; index >= 0; index -= 1) {
-        const transition = transitions[index];
-        if (!transition) continue;
-        if (transition.after.markdown === targetMarkdown) {
-          return transition.after;
-        }
-        if (transition.before.markdown === targetMarkdown) {
-          return transition.before;
-        }
-      }
-      const baseline = visualHistoryBaselineRef.current;
-      return baseline?.markdown === targetMarkdown ? baseline : null;
-    };
-
-    const hasHistoryTransition = (
-      currentMarkdown: string,
-      redo: boolean
-    ): boolean => {
-      const available = redo
-        ? documentSession.document.canRedo
-        : documentSession.document.canUndo;
-      if ('function' === typeof available && !available()) return false;
-      return visualHistoryTransitionsRef.current.some(
-        (transition) => redo
-          ? transition.before.markdown === currentMarkdown
-          : transition.after.markdown === currentMarkdown
-      );
-    };
-
     const restoreHistorySnapshot = (
       snapshot: VisualHistorySnapshot
     ): void => {
@@ -2671,14 +2910,10 @@ export function ImmersiveVisualEditor({
       visualCodeBodyOrdinalsRef.current = null;
       visualCodeBodyDomOrderInvalidRef.current = true;
       surface.innerHTML = snapshot.html;
-      captureSnapshot(snapshot.markdown);
       installVisualLocalCodeBodyProvenance(
         snapshot.markdown,
         snapshot.localCodeBodies
       );
-      acceptedLocalCodeBodiesRef.current = snapshot.localCodeBodies;
-      acceptedHtmlRef.current = snapshot.html;
-      acceptedCodeBodySnapshotsRef.current.clear();
       for (const pre of visualCodePreOrder()) {
         if (pre.querySelector('[data-easymde-visual-code-placeholder]')) {
           normalizeVisualCodePlaceholders(surface, 'historyUndo', pre);
@@ -2687,6 +2922,22 @@ export function ImmersiveVisualEditor({
       if (!restoreVisualHistorySelection(surface, snapshot.selection)) {
         throw new Error('visual-editor-history-selection-restore-failed');
       }
+      captureSnapshot(snapshot.markdown);
+      acceptedLocalCodeBodiesRef.current = snapshot.localCodeBodies;
+      acceptedHtmlRef.current = surface.innerHTML;
+      acceptedCodeBodySnapshotsRef.current.clear();
+      const historyState = documentHistoryState(documentSession.document);
+      if (documentSession.document.getValue() !== snapshot.markdown) {
+        throw new Error('visual-editor-history-snapshot-stale');
+      }
+      visualHistorySnapshotsRef.current.set(
+        historyState.undoDepth,
+        {
+          kind: 'snapshot',
+          markdown: snapshot.markdown,
+          snapshot: captureVisualHistorySnapshot(snapshot.markdown, surface.innerHTML)
+        }
+      );
     };
 
     const runHistory = (redo: boolean): boolean => {
@@ -2702,13 +2953,41 @@ export function ImmersiveVisualEditor({
         onFailure('visual-editor-markdown-snapshot-missing');
         return false;
       }
-      if (!hasHistoryTransition(currentMarkdown, redo)) return false;
       if (documentSession.document.getValue() !== currentMarkdown) {
         onFailure('visual-editor-history-document-stale');
         return false;
       }
-      const previousSnapshot = captureVisualHistorySnapshot(currentMarkdown);
+      const historyBefore = documentHistoryState(documentSession.document);
+      const historyAvailable = redo
+        ? historyBefore.redoDepth > 0
+        : historyBefore.undoDepth > 0;
+      if (!historyAvailable) return false;
+      const currentSlot = visualHistorySnapshotsRef.current.get(
+        historyBefore.undoDepth
+      );
+      if (!currentSlot) {
+        onFailure('visual-editor-history-snapshot-missing');
+        return false;
+      }
+      if (currentSlot.markdown !== currentMarkdown) {
+        onFailure('visual-editor-history-snapshot-stale');
+        return false;
+      }
+      const previousSnapshot = captureVisualHistorySnapshot(
+        currentMarkdown,
+        surface.innerHTML
+      );
+      const targetDepth = historyBefore.undoDepth + (redo ? 1 : -1);
+      const targetSlot = visualHistorySnapshotsRef.current.get(targetDepth);
+      const minimumDepth = Math.min(
+        ...visualHistorySnapshotsRef.current.keys()
+      );
+      if (!targetSlot && targetDepth >= minimumDepth) {
+        onFailure('visual-editor-history-snapshot-missing');
+        return false;
+      }
       let changed = false;
+      let previewRequested = false;
       try {
         selfWriteRef.current = true;
         try {
@@ -2720,19 +2999,74 @@ export function ImmersiveVisualEditor({
         }
         if (!changed) return false;
         const targetMarkdown = documentSession.document.getValue();
-        const targetSnapshot = historySnapshotFor(
-          currentMarkdown,
-          targetMarkdown,
-          redo
-        );
-        if (!targetSnapshot) {
-          throw new Error('visual-editor-history-snapshot-missing');
+        const historyAfter = documentHistoryState(documentSession.document);
+        if (historyAfter.undoDepth !== targetDepth) {
+          throw new Error('visual-editor-history-state-stale');
         }
-        restoreHistorySnapshot(targetSnapshot);
+        if (!targetSlot || targetSlot.kind === 'rematerialize') {
+          if (targetSlot && targetSlot.markdown !== targetMarkdown) {
+            throw new Error('visual-editor-history-snapshot-stale');
+          }
+          sourceMarkdownRef.current = targetMarkdown;
+          const selection = documentSession.document.getSelection();
+          pendingTransferRef.current = {
+            acceptedDocumentBoundary: null,
+            historyState: historyAfter,
+            ...(targetSlot
+              ? {
+                  historySlot: targetSlot,
+                  historySlotDepth: targetDepth
+                }
+              : {}),
+            markdown: targetMarkdown,
+            phase: 'requesting',
+            selection,
+            signature: ''
+          };
+          onPendingChange(true);
+          onMarkdownChange();
+          previewRequested = true;
+          const signature = requestPreview(targetMarkdown);
+          pendingTransferRef.current = {
+            acceptedDocumentBoundary: null,
+            historyState: historyAfter,
+            ...(targetSlot
+              ? {
+                  historySlot: targetSlot,
+                  historySlotDepth: targetDepth
+                }
+              : {}),
+            markdown: targetMarkdown,
+            phase: 'rendering',
+            selection,
+            signature
+          };
+          return true;
+        }
+        if (
+          targetSlot.kind !== 'snapshot'
+          || targetSlot.markdown !== targetMarkdown
+          || targetSlot.snapshot.markdown !== targetMarkdown
+        ) {
+          throw new Error('visual-editor-history-snapshot-stale');
+        }
+        restoreHistorySnapshot(targetSlot.snapshot);
         sourceMarkdownRef.current = targetMarkdown;
         onMarkdownChange();
         return true;
       } catch (error) {
+        if (
+          previewRequested
+          || pendingTransferRef.current?.historyState
+        ) {
+          if (pendingTransferRef.current) {
+            failPendingTransfer('visual-editor-history-preview-failed');
+          } else {
+            onFailure('visual-editor-history-preview-failed');
+            onTransferFailure();
+          }
+          return false;
+        }
         try {
           selfWriteRef.current = true;
           try {
@@ -2891,10 +3225,7 @@ export function ImmersiveVisualEditor({
           );
           return;
         }
-        visualHistoryBaselineRef.current = captureVisualHistorySnapshot(
-          markdown,
-          surface.innerHTML
-        );
+        recordCurrentVisualHistorySnapshot(markdown);
         return;
       }
       composing = false;
@@ -2908,13 +3239,10 @@ export function ImmersiveVisualEditor({
       );
       queueMicrotask(() => {
         compositionCommitScheduled = false;
-        visualHistoryPreservationRef.current =
-          codeBodyContext?.historyBefore ?? null;
         let committed = false;
         try {
           committed = commitVisualInput();
         } finally {
-          visualHistoryPreservationRef.current = null;
           compositionCodeBodyCommit = false;
           compositionCodeBodyLocalPre = null;
         }
@@ -3070,22 +3398,23 @@ export function ImmersiveVisualEditor({
         'function' === typeof documentSession.document.undo
         && 'function' === typeof documentSession.document.redo;
       if (isHistoryInput && hasHistoryOwner) {
+        event.preventDefault();
         if (!flushVisualInput()) {
-          event.preventDefault();
           return;
         }
-        const currentMarkdown = sourceMarkdownRef.current;
-        if (
-          null !== currentMarkdown
-          && hasHistoryTransition(
-            currentMarkdown,
+        try {
+          const historyState = documentHistoryState(documentSession.document);
+          if (
             'historyRedo' === event.inputType
-          )
-        ) {
-          event.preventDefault();
-          runHistory('historyRedo' === event.inputType);
-          return;
+              ? historyState.redoDepth > 0
+              : historyState.undoDepth > 0
+          ) {
+            runHistory('historyRedo' === event.inputType);
+          }
+        } catch (error) {
+          failVisualSynchronization(error);
         }
+        return;
       }
       if (visualTransferFailureReportedRef.current) {
         event.preventDefault();
@@ -3560,6 +3889,15 @@ export function ImmersiveVisualEditor({
               : undefined;
             pendingVisualIntentResultRef.current = {
                 baseSourceMarkdown: sourceMarkdown,
+                ...(intent.codeBody && inputBlock
+                  ? {
+                      codeBodyTopology: {
+                        openEof: intent.codeBody.openEof,
+                        pre: inputBlock.pre,
+                        sourceBlockStart: intent.codeBody.sourceBlockStart
+                      }
+                    }
+                  : {}),
                 ...(codeBlockStructure ? { codeBlockStructure } : {}),
                 ...(intent.historyBefore
                   ? { historyBefore: intent.historyBefore }
@@ -3604,20 +3942,48 @@ export function ImmersiveVisualEditor({
         && !event.altKey
         && ('z' === key || ('y' === key && !event.shiftKey));
       if (historyShortcut) {
+        event.preventDefault();
         if (!flushVisualInput()) return;
-        const currentMarkdown = sourceMarkdownRef.current;
-        if (
-          null !== currentMarkdown
-          && hasHistoryTransition(currentMarkdown, 'y' === key || event.shiftKey)
-        ) {
-          event.preventDefault();
-          runHistory('y' === key || event.shiftKey);
+        try {
+          const redo = 'y' === key || event.shiftKey;
+          const historyState = documentHistoryState(documentSession.document);
+          if (redo ? historyState.redoDepth > 0 : historyState.undoDepth > 0) {
+            runHistory(redo);
+          }
+        } catch (error) {
+          failVisualSynchronization(error);
         }
         return;
       }
       if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
+      let canApplyShortcut = true;
+      let historyBefore: VisualHistorySnapshot | null = null;
+      const beforeEmptyCodeFenceRemoval = (): boolean => {
+        if (!flushVisualInput()) {
+          canApplyShortcut = false;
+          return false;
+        }
+        const beforeMarkdown = sourceMarkdownRef.current;
+        if (null === beforeMarkdown) {
+          canApplyShortcut = false;
+          failVisualSynchronization(
+            new Error('visual-editor-markdown-snapshot-missing')
+          );
+          return false;
+        }
+        historyBefore = captureVisualHistorySnapshot(
+          beforeMarkdown,
+          surface.innerHTML
+        );
+        return true;
+      };
       const codeBlocksBefore = new Set(visualCodePreOrder());
-      if (applyVisualBlockShortcut(surface, event)) {
+      if (applyVisualBlockShortcut(
+        surface,
+        event,
+        beforeEmptyCodeFenceRemoval
+      )) {
+        if (!canApplyShortcut) return;
         if (null !== visualInputTimerRef.current) {
           clearTimeout(visualInputTimerRef.current);
           visualInputTimerRef.current = null;
@@ -3635,9 +4001,19 @@ export function ImmersiveVisualEditor({
           failVisualSynchronization(error);
           return;
         }
-        synchronizeMarkdown(
-          localCodeBodyPre ? { localCodeBodyPre } : {}
-        );
+          if (!synchronizeMarkdown(
+            {
+              ...(localCodeBodyPre ? { localCodeBodyPre } : {}),
+              isolateHistoryBefore: Boolean(historyBefore)
+            }
+          )) return;
+        const afterMarkdown = sourceMarkdownRef.current;
+        if (historyBefore && null !== afterMarkdown) {
+          appendVisualHistoryTransition(
+            historyBefore,
+            captureVisualHistorySnapshot(afterMarkdown, surface.innerHTML)
+          );
+        }
       }
     };
     const handlePaste = (event: ClipboardEvent) => {
@@ -3675,34 +4051,23 @@ export function ImmersiveVisualEditor({
             throw new Error('visual-editor-markdown-snapshot-missing');
           }
           const before = captureVisualHistorySnapshot(beforeMarkdown);
-          visualCommandTransactionRef.current = true;
-          try {
-            const codeBlocksBefore = new Set(visualCodePreOrder());
-            if (!applyVisualToolbarCommand(surface, command)) return false;
-            const localCodeBodyPre = newlyCreatedVisualCodePre(
-              surface,
-              codeBlocksBefore
-            );
-            if (!synchronizeMarkdown({
-              preferVisualSelection: true,
-              ...(localCodeBodyPre ? { localCodeBodyPre } : {})
-            })) return false;
-          } finally {
-            visualCommandTransactionRef.current = false;
-          }
+          const codeBlocksBefore = new Set(visualCodePreOrder());
+          if (!applyVisualToolbarCommand(surface, command)) return false;
+          const localCodeBodyPre = newlyCreatedVisualCodePre(
+            surface,
+            codeBlocksBefore
+          );
+          if (!synchronizeMarkdown({
+            preferVisualSelection: true,
+            ...(localCodeBodyPre ? { localCodeBodyPre } : {})
+          })) return false;
           const afterMarkdown = sourceMarkdownRef.current;
           if (null === afterMarkdown) {
             throw new Error('visual-editor-markdown-snapshot-missing');
           }
           const after = captureVisualHistorySnapshot(afterMarkdown);
           if (before.markdown !== after.markdown) {
-            visualHistoryTransitionsRef.current.push({ after, before });
-            if (
-              visualHistoryTransitionsRef.current.length
-              > MAX_VISUAL_HISTORY_TRANSITIONS
-            ) {
-              visualHistoryTransitionsRef.current.shift();
-            }
+            appendVisualHistoryTransition(before, after);
           }
           focusVisualSurface(surface);
           return true;
@@ -3748,19 +4113,55 @@ export function ImmersiveVisualEditor({
           return synchronizeMarkdown({ mapSelectionWhenUnchanged: true });
         }
         try {
-          applyDocumentChange({
-            selection: pending.selection,
-            value: pending.markdown
-          });
-          pendingTransferRef.current = null;
-          onPendingChange(false);
+          if (documentSession.document.getValue() !== pending.markdown) {
+            throw new Error(
+              pending.historyState
+                ? 'visual-editor-history-preview-stale'
+                : 'visual-editor-markdown-paste-document-stale'
+            );
+          }
+          const canonicalSelection = documentSession.document.getSelection();
+          if (
+            canonicalSelection.direction !== pending.selection.direction
+            || canonicalSelection.start !== pending.selection.start
+            || canonicalSelection.end !== pending.selection.end
+          ) {
+            throw new Error(
+              pending.historyState
+                ? 'visual-editor-history-preview-stale'
+                : 'visual-editor-markdown-paste-selection-stale'
+            );
+          }
+          if (pending.historyState) {
+            const historyState = documentHistoryState(documentSession.document);
+            if (
+              historyState.undoDepth !== pending.historyState.undoDepth
+              || historyState.redoDepth !== pending.historyState.redoDepth
+            ) {
+              throw new Error('visual-editor-history-preview-stale');
+            }
+            if (pending.historySlot) {
+              const slot = visualHistorySnapshotsRef.current.get(
+                pending.historySlotDepth ?? -1
+              );
+              if (
+                slot !== pending.historySlot
+                || slot.kind !== 'rematerialize'
+                || slot.markdown !== pending.markdown
+                || pending.historySlotDepth !== historyState.undoDepth
+              ) {
+                throw new Error('visual-editor-history-preview-stale');
+              }
+            }
+          }
           return true;
         } catch (error) {
-          onFailure(
-            error instanceof Error
-              ? error.message
-              : 'visual-editor-selection-map-failed'
-          );
+          failPendingTransfer(visualEditorFailureCode(
+            error,
+            pending.historyState
+              ? 'visual-editor-history-preview-stale'
+              : 'visual-editor-markdown-paste-commit-failed'
+          ));
           return false;
         }
       },
@@ -3809,16 +4210,20 @@ export function ImmersiveVisualEditor({
     captureVisualHistorySnapshot,
     applyDocumentChange,
     failVisualSynchronization,
+    failPendingTransfer,
     documentSession,
     imageUploadEnabled,
     imagePasteUploadEnabled,
     onDispose,
     onFailure,
+    onMarkdownChange,
     onPendingChange,
     onReady,
     onTransferFailure,
     materializeVisualBaseline,
+    recordCurrentVisualHistorySnapshot,
     requestMarkdownTransfer,
+    requestPreview,
     surface,
     synchronizeMarkdown
   ]);

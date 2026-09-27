@@ -39,6 +39,9 @@ surface is being prepared. It becomes editable and receives focus only when
 preparation and any required long-document window are ready. Leaving Preview
 cancels a pending unlock. The busy control keeps keyboard focus while repeated
 activation is ignored.
+In editable immersive Preview, Backspace at the start of an empty fenced code
+block removes its frame and returns to a paragraph. Undo and Redo restore the
+source, frame and caret, including fences left open at the end of the document.
 On narrow screens, the Outline opens over the writing area. It closes when
 Preview becomes editable or an editable Preview is resized into a narrow
 screen. Its show control can reopen it without changing the saved Outline

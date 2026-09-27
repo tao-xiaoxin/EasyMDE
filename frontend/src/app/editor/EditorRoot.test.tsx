@@ -33,6 +33,7 @@ import {
   focusVisualPreviewRuntime,
   EditorRoot,
   isVisualPreviewWindowRequestCurrent,
+  schedulePreviewWithDocumentEndPin,
   type EditorRootProps
 } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -674,6 +675,60 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
+  it('acquires the exact Preview pin before scheduling and releases it when scheduling throws', () => {
+    const previewRequest: PreviewRequest = {
+      codeTheme: 'dark',
+      customCssId: '',
+      markdown: 'EOF',
+      markdownTheme: 'default',
+      postId: 7,
+      signature: '42:3'
+    };
+    const operations: string[] = [];
+    const release = vi.fn(() => operations.push('release'));
+    const schedule = vi.fn((request: PreviewRequest, immediate?: boolean) => {
+      operations.push(`schedule:${request.signature}:${String(immediate)}`);
+      return 9;
+    });
+    const runtime = {
+      prepareDocumentEndWindowPin: vi.fn((signature: string) => {
+        operations.push(`pin:${signature}`);
+        return { release };
+      }),
+      session: {
+        destroy: vi.fn(),
+        isCurrent: vi.fn(() => true),
+        schedule
+      }
+    };
+
+    const lease = schedulePreviewWithDocumentEndPin(runtime, previewRequest);
+
+    expect(operations).toEqual(['pin:42:3', 'schedule:42:3:true']);
+    expect(runtime.prepareDocumentEndWindowPin).toHaveBeenCalledOnce();
+    expect(schedule).toHaveBeenCalledWith(previewRequest, true);
+    expect(lease.signature).toBe(previewRequest.signature);
+    lease.release();
+    expect(release).toHaveBeenCalledOnce();
+
+    const failedRelease = vi.fn();
+    const failedRuntime = {
+      prepareDocumentEndWindowPin: vi.fn(() => ({ release: failedRelease })),
+      session: {
+        destroy: vi.fn(),
+        isCurrent: vi.fn(() => true),
+        schedule: vi.fn(() => {
+          throw new Error('preview-schedule-failed');
+        })
+      }
+    };
+    expect(() => schedulePreviewWithDocumentEndPin(
+      failedRuntime,
+      previewRequest
+    )).toThrow('preview-schedule-failed');
+    expect(failedRelease).toHaveBeenCalledOnce();
+  });
+
   it('focuses only the current visual runtime across disposal and replacement', () => {
     const createSurface = () => {
       const surface = document.createElement('div');

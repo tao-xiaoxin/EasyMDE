@@ -458,6 +458,37 @@ Exercise the exact accepted native-paste snapshot for both fence families and
 unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
 Verify neutral native spans retain Text identity, caret and exact code body;
 attributed or malformed spans must still fail explicitly.
+Exercise initial empty frames and code emptied one character at a time, then
+Backspace at the empty start followed by Undo and Redo. Cover both fence
+families, closed and open-EOF fences, bare pasted openers and pending input
+followed immediately by structural deletion. A single terminal LF is empty;
+additional blank lines and spaces remain content. Verify exact source, frame
+and connected caret restoration, preserved code-tail whitespace, and windowed
+source-range metadata when local and global code-block ordinals differ.
+After Undo restores an empty frame, type the first character through native
+beforeinput and verify exact source and no projection failure. Exercise the
+innerHTML round-trip that removes a placeholder's zero-length Text node.
+Use the real CodeMirror adapter for more than 120 visual edits, actual history
+pruning, all retained Undo/Redo targets, grouped input, Redo-branch replacement
+and Undo across the initial visual baseline. Verify same-value selection writes
+add no document history and native contenteditable history never takes over.
+Include ordinary paragraph and mixed paragraph/code history whose exact-source
+input records a rematerialization slot without an innerHTML getter. Preserve
+the existing zero-getter hot-path checks. Formal Preview acceptance must reject
+stale slot identity, source, signature, history depths or selection, and report
+render failure or teardown through the existing owner without fabricated HTML.
+For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
+the document-end pin before formal Preview, the mounted final editable block
+and exact canonical/visible caret after the final Redo. A mapped range may omit
+terminal line endings; non-line-ending gaps must remain explicit failures.
+Exercise the actual SafePreviewHtmlSink child replacement and first window
+commit: a root-end Selection can collapse to root offset zero while the leased
+target must remain mounted. Keep the 160-block cap while the EOF lease is
+active, and the exact full-document window/spacer partition. Releasing the
+lease restores the existing ordinary pinned-window limit. Acquire it before scheduling
+the request; verify cancellation, signature mismatch, supersession, rendering
+or scheduling error and teardown release, and that an older release cannot
+clear a newer token. Ordinary and non-EOF Preview paths acquire no lease.
 Verify a complete active fence run in the body followed immediately by another
 character widens the outer fence and preserves source, caret, Undo, and Redo.
 Use a noncancelable rejected composition mutation to prove accepted DOM/source
@@ -477,7 +508,8 @@ of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
 inputs appear in the code DOM, canonical Markdown converges within 150 ms of
 the last rapid input, five spaced inputs settle within the per-key budget,
 the first visible frame stays within 100 ms, and the edit window has no Long
-Tasks. It records only counts and timings.
+Tasks. It persists only counts, timings and input-phase indices as a JSON
+attachment and structured output so a failed CI task can be located.
 The 390px immersive cases begin with Outline open. They check that its overlay
 does not narrow Source, Split, Preview, or the Mac frame, then verify pending
 unlock keeps the Outline open, editable readiness closes it without changing

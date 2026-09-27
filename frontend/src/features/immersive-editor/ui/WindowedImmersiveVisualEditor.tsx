@@ -1,7 +1,10 @@
 import { useLayoutEffect, useRef } from '@wordpress/element';
 
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
-import type { DocumentSelection } from '../../document-source/adapters/code-mirror-document-session';
+import type {
+  DocumentHistoryState,
+  DocumentSelection
+} from '../../document-source/adapters/code-mirror-document-session';
 import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
@@ -14,6 +17,8 @@ import {
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   protectVisualMarkdownReadOnlyRegions,
+  visualCodeBodyDomOffset,
+  visualCodeBodyDomText,
   projectVisualCodeBodySelection,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
@@ -33,6 +38,7 @@ import type {
 const VISUAL_BLOCK_ATTRIBUTE = 'data-easymde-visual-block-id';
 const VISUAL_FENCE_ATTRIBUTE = 'data-easymde-visual-fence';
 const VISUAL_FENCE_INFO_ATTRIBUTE = 'data-easymde-visual-fence-info';
+const VISUAL_FENCE_OPEN_EOF_ATTRIBUTE = 'data-easymde-visual-fence-open-eof';
 const WINDOW_SPACER_ATTRIBUTE = 'data-easymde-preview-window-spacer';
 
 type Props = ImmersiveVisualEditorProps & Readonly<{
@@ -40,6 +46,10 @@ type Props = ImmersiveVisualEditorProps & Readonly<{
   prepareWindowBlockAdoption: (
     node: HTMLElement
   ) => (() => boolean) | null;
+  requestPreviewAtDocumentEnd: (markdown: string) => Readonly<{
+    release: () => void;
+    signature: string;
+  }>;
 }>;
 
 type MutableBlockRange = {
@@ -63,8 +73,11 @@ type WindowBlockSnapshot = Readonly<{
 
 type WindowSelectionBoundary = Readonly<{
   blockIndex: number;
+  node?: Node;
   nodePath: ReadonlyArray<number>;
   offset: number;
+  parent?: ParentNode;
+  textData?: string;
 }>;
 
 type WindowSelectionSnapshot = Readonly<{
@@ -123,7 +136,9 @@ type ActiveRegion = Readonly<{
 }>;
 
 type PendingHistorySelection = Readonly<{
+  historyState: DocumentHistoryState;
   markdown: string;
+  releaseDocumentEndPin: (() => void) | null;
   restoreFocus: boolean;
   selection: DocumentSelection;
   signature: string;
@@ -138,17 +153,80 @@ type CommitOptions = Readonly<{
 type WindowedCodeBodyInputIntent = Readonly<{
   blockId: string;
   code: HTMLElement;
+  codeTextBefore: string;
   data: string | null;
   directBodyEdit: boolean;
   initialEmptyBody: boolean;
   inputType: string;
   lineEnding: string;
   pre: HTMLElement;
+  recoveredCode: HTMLElement | null;
+  sourceCodeSnapshot: HTMLElement;
   sourcePrefix: string;
   sourceSelection: Readonly<{ end: number; start: number }>;
   visualBodyStart: number;
   visualSelection: Readonly<{ end: number; start: number }>;
 }>;
+
+function releasePendingHistorySelection(
+  pending: { current: PendingHistorySelection | null }
+): void {
+  const previous = pending.current;
+  pending.current = null;
+  previous?.releaseDocumentEndPin?.();
+}
+
+function sameDocumentSelection(
+  left: DocumentSelection,
+  right: DocumentSelection
+): boolean {
+  return left.direction === right.direction
+    && left.end === right.end
+    && left.start === right.start;
+}
+
+function sameDocumentHistoryState(
+  left: DocumentHistoryState,
+  right: DocumentHistoryState
+): boolean {
+  return left.redoDepth === right.redoDepth
+    && left.undoDepth === right.undoDepth;
+}
+
+type CodeBodyTextDelta = Readonly<{
+  end: number;
+  replacement: string;
+  start: number;
+}>;
+
+function codeBodyTextDelta(
+  before: string,
+  after: string
+): CodeBodyTextDelta | null {
+  let start = 0;
+  while (
+    start < before.length
+    && start < after.length
+    && before[start] === after[start]
+  ) start += 1;
+  if (start === before.length && start === after.length) return null;
+
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (
+    beforeEnd > start
+    && afterEnd > start
+    && before[beforeEnd - 1] === after[afterEnd - 1]
+  ) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  return {
+    end: beforeEnd,
+    replacement: after.slice(start, afterEnd),
+    start
+  };
+}
 
 function sourceLineEndingBefore(markdown: string, offset: number): string {
   const previous = markdown[offset - 1];
@@ -213,6 +291,13 @@ const WINDOWED_CODE_BODY_INPUT_TYPES: ReadonlySet<string> = new Set([
   'insertParagraph',
   'insertReplacementText',
   'insertText'
+]);
+const WINDOWED_CODE_BODY_DELETION_TYPES: ReadonlySet<string> = new Set([
+  'deleteByCut',
+  'deleteContentBackward',
+  'deleteContentForward',
+  'deleteWordBackward',
+  'deleteWordForward'
 ]);
 
 function windowedCodeBodyInputIntent(
@@ -291,18 +376,88 @@ function windowedCodeBodyInputIntent(
     && !/(?:\r\n|\r|\n)$/u.test(sourceOpening)
     ? lineEnding
     : '';
+  const isBodyDeletion = WINDOWED_CODE_BODY_DELETION_TYPES.has(event.inputType);
   return {
     blockId,
     code: inputBlock.code,
+    codeTextBefore: inputBlock.codeText,
     data: event.data,
-    directBodyEdit: codeBodyIsEmpty || 'insertParagraph' === event.inputType,
+    directBodyEdit: codeBodyIsEmpty
+      || 'insertParagraph' === event.inputType
+      || 'insertLineBreak' === event.inputType
+      || isBodyDeletion,
     initialEmptyBody: '' === projection.sourceText,
     inputType: event.inputType,
     lineEnding,
     pre: inputBlock.pre,
+    recoveredCode: null,
+    sourceCodeSnapshot: inputBlock.code.cloneNode(true) as HTMLElement,
     sourcePrefix,
     sourceSelection: projection.sourceSelection,
     visualBodyStart: projection.visualInterval.bodyStart,
+    visualSelection: projection.visualSelection
+  };
+}
+
+function inferWindowedCodeBodyDeletionSelection(
+  input: WindowedCodeBodyInputIntent,
+  sourceMarkdown: string,
+  visualMarkdown: string
+): Readonly<{
+  sourceSelection: Readonly<{ end: number; start: number }>;
+  visualSelection: Readonly<{ end: number; start: number }>;
+}> {
+  if (input.sourceSelection.start < input.sourceSelection.end) {
+    return {
+      sourceSelection: input.sourceSelection,
+      visualSelection: input.visualSelection
+    };
+  }
+  const delta = codeBodyTextDelta(
+    input.codeTextBefore,
+    visualCodeBodyDomText(input.code)
+  );
+  if (!delta) {
+    return {
+      sourceSelection: input.sourceSelection,
+      visualSelection: input.visualSelection
+    };
+  }
+  if (delta.start >= delta.end || '' !== delta.replacement) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  const domSelection = input.code.ownerDocument.defaultView?.getSelection();
+  if (!domSelection?.isCollapsed || !domSelection.anchorNode) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  const caretOffset = visualCodeBodyDomOffset(input.code, {
+    node: domSelection.anchorNode,
+    offset: domSelection.anchorOffset
+  });
+  if (caretOffset !== delta.start) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  if (visualCodeBodyDomText(input.sourceCodeSnapshot) !== input.codeTextBefore) {
+    throw new Error('visual-editor-code-body-map-stale');
+  }
+  const projection = projectVisualCodeBodySelection(
+    input.sourceCodeSnapshot,
+    sourceMarkdown,
+    visualMarkdown,
+    0,
+    {
+      end: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, delta.end),
+      start: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, delta.start)
+    }
+  );
+  if (
+    projection.sourceSelection.start >= projection.sourceSelection.end
+    || projection.visualSelection.start >= projection.visualSelection.end
+  ) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  return {
+    sourceSelection: projection.sourceSelection,
     visualSelection: projection.visualSelection
   };
 }
@@ -328,6 +483,32 @@ function reconcileWindowedCodeBodyDom(
     }
   }
   reconcileVisualCodeBodyDom(code, expectedBody, caretOffset);
+}
+
+function isWindowedParagraphCodeSplit(
+  input: WindowedCodeBodyInputIntent
+): boolean {
+  if ('insertParagraph' !== input.inputType) return false;
+  const codes = Array.from(input.pre.children).filter(
+    (child): child is HTMLElement =>
+      child instanceof HTMLElement && 'CODE' === child.tagName
+  );
+  if (2 !== codes.length) return false;
+  const originalAttributes = Array.from(input.sourceCodeSnapshot.attributes);
+  if (codes.some((code) => (
+    code.attributes.length !== originalAttributes.length
+    || originalAttributes.some(({ name, value }) => code.getAttribute(name) !== value)
+  ))) return false;
+  if (codes.map((code) => code.textContent ?? '').join('') !== input.codeTextBefore) {
+    return false;
+  }
+  const selection = input.pre.ownerDocument.defaultView?.getSelection();
+  const secondCode = codes[1];
+  if (!selection?.isCollapsed || !selection.anchorNode || !secondCode) return false;
+  return 0 === visualCodeBodyDomOffset(secondCode, {
+    node: selection.anchorNode,
+    offset: selection.anchorOffset
+  });
 }
 
 function focusSurface(surface: HTMLElement): void {
@@ -437,8 +618,15 @@ function captureWindowSelectionBoundary(
   if (!block) throw new Error('visual-editor-window-selection-invalid');
   return {
     blockIndex,
+    node,
     nodePath: nodePathWithin(block, node),
-    offset
+    offset,
+    ...(node instanceof Text
+      ? {
+          ...(node.parentNode ? { parent: node.parentNode } : {}),
+          textData: node.data
+        }
+      : {})
   };
 }
 
@@ -550,7 +738,8 @@ function blockPreElements(blocks: ReadonlyArray<HTMLElement>): HTMLElement[] {
 
 function restoreRegionCodeFenceMetadata(
   blocks: ReadonlyArray<HTMLElement>,
-  sourceSlice: string
+  sourceSlice: string,
+  sourceRange: Readonly<{ documentLength: number; end: number }>
 ): void {
   const livePres = blockPreElements(blocks);
   if (0 === livePres.length) return;
@@ -568,6 +757,20 @@ function restoreRegionCodeFenceMetadata(
   if (restoredPres.length !== livePres.length) {
     throw new Error('visual-editor-window-code-fence-map-invalid');
   }
+  if (
+    !Number.isInteger(sourceRange.end)
+    || !Number.isInteger(sourceRange.documentLength)
+    || sourceRange.end < 0
+    || sourceRange.end > sourceRange.documentLength
+  ) {
+    throw new Error('visual-editor-window-source-range-invalid');
+  }
+  if (
+    sourceRange.end !== sourceRange.documentLength
+    && restoredPres.some((pre) => pre.hasAttribute(VISUAL_FENCE_OPEN_EOF_ATTRIBUTE))
+  ) {
+    throw new Error('visual-editor-window-open-fence-source-range-invalid');
+  }
   restoredPres.forEach((restoredPre, index) => {
     const livePre = livePres[index];
     if (!livePre) {
@@ -575,7 +778,8 @@ function restoreRegionCodeFenceMetadata(
     }
     for (const attribute of [
       VISUAL_FENCE_ATTRIBUTE,
-      VISUAL_FENCE_INFO_ATTRIBUTE
+      VISUAL_FENCE_INFO_ATTRIBUTE,
+      VISUAL_FENCE_OPEN_EOF_ATTRIBUTE
     ]) {
       const value = restoredPre.getAttribute(attribute);
       if (null === value) {
@@ -590,15 +794,17 @@ function restoreRegionCodeFenceMetadata(
 function mountedSelectionRegion(
   surface: HTMLElement,
   ranges: SourceRangeLedger,
-  selection: DocumentSelection,
-  sourceLength: number
+  markdown: string,
+  selection: DocumentSelection
 ): Readonly<{
   blocks: ReadonlyArray<HTMLElement>;
   end: Readonly<{ block: HTMLElement; range: EffectiveBlockRange }>;
+  terminalDocumentEnd: boolean;
   sourceEnd: number;
   sourceStart: number;
   start: Readonly<{ block: HTMLElement; range: EffectiveBlockRange }>;
 }> | null {
+  const sourceLength = markdown.length;
   const mappedBlocks = Array.from(surface.children).flatMap((child) => {
     if (!(child instanceof HTMLElement) || child.hasAttribute(WINDOW_SPACER_ATTRIBUTE)) {
       return [];
@@ -615,7 +821,17 @@ function mountedSelectionRegion(
     const endingAtSourceEnd = mappedBlocks.filter(({ range }) => (
       range.end === sourceLength
     ));
-    return 1 === endingAtSourceEnd.length ? endingAtSourceEnd[0] : null;
+    if (1 === endingAtSourceEnd.length) return endingAtSourceEnd[0];
+    if (
+      selection.start !== sourceLength
+      || selection.end !== sourceLength
+    ) return null;
+    const endingAtDocumentEnd = mappedBlocks.filter(({ range }) => (
+      range.end < sourceLength
+      && /^(?:\r\n|\n)+$/u.test(markdown.slice(range.end))
+    ));
+    if (1 !== endingAtDocumentEnd.length) return null;
+    return endingAtDocumentEnd[0];
   };
   const start = blockForOffset(selection.start);
   const end = blockForOffset(selection.end);
@@ -647,12 +863,25 @@ function mountedSelectionRegion(
     !firstRange
     || !lastRange
     || selection.start < firstRange.start
-    || selection.end > lastRange.end
+    || (
+      selection.end > lastRange.end
+      && !(
+        selection.start === sourceLength
+        && selection.end === sourceLength
+        && /^(?:\r\n|\n)+$/u.test(markdown.slice(lastRange.end))
+      )
+    )
   ) return null;
+  const terminalDocumentEnd =
+    selection.start === sourceLength
+    && selection.end === sourceLength
+    && lastRange.end < sourceLength
+    && /^(?:\r\n|\n)+$/u.test(markdown.slice(lastRange.end));
   return {
     blocks,
     end: { block: end.block, range: end.range },
-    sourceEnd: lastRange.end,
+    terminalDocumentEnd,
+    sourceEnd: terminalDocumentEnd ? sourceLength : lastRange.end,
     sourceStart: firstRange.start,
     start: { block: start.block, range: start.range }
   };
@@ -759,16 +988,46 @@ function restoreMountedSourceSelection(
   const region = mountedSelectionRegion(
     surface,
     ranges,
-    selection,
-    markdown.length
+    markdown,
+    selection
   );
   if (!region) return false;
   const sourceSlice = markdown.slice(region.sourceStart, region.sourceEnd);
-  restoreRegionCodeFenceMetadata(region.blocks, sourceSlice);
+  restoreRegionCodeFenceMetadata(region.blocks, sourceSlice, {
+    documentLength: markdown.length,
+    end: region.sourceEnd
+  });
   const localSelection = {
     end: selection.end - region.sourceStart,
     start: selection.start - region.sourceStart
   };
+  if (region.terminalDocumentEnd && 'PRE' !== region.end.block.tagName) {
+    const clone = region.end.block.cloneNode(true) as HTMLElement;
+    const blockMarkdown = markdown.slice(
+      region.end.range.start,
+      region.end.range.end
+    ).replace(/(?:\r\n|\n)+$/u, '');
+    const baseline = serializeVisualMarkdownBlockFragment([clone]);
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      clone,
+      blockMarkdown,
+      baseline,
+      blockMarkdown.length
+    );
+    const liveBoundary = nodeAtPath(
+      region.end.block,
+      nodePathWithin(clone, boundary.node)
+    );
+    if (!liveBoundary.isConnected || liveBoundary.ownerDocument !== surface.ownerDocument) {
+      throw new Error('visual-editor-window-history-selection-map-failed');
+    }
+    const domSelection = surface.ownerDocument.defaultView?.getSelection();
+    if (!domSelection) {
+      throw new Error('visual-editor-window-history-selection-restore-failed');
+    }
+    domSelection.collapse(liveBoundary, boundary.offset);
+    return true;
+  }
   let codeOrdinal: number | null = null;
   try {
     codeOrdinal = visualCodeBodyOrdinalForSourceRange(
@@ -874,7 +1133,8 @@ function captureActiveRegion(
   surface: HTMLElement,
   ranges: SourceRangeLedger,
   sourceMarkdown: string,
-  deletionDirection?: DeletionDirection
+  deletionDirection?: DeletionDirection,
+  onInitialRegion?: (region: ActiveRegion) => void
 ): ActiveRegion {
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (!selection?.anchorNode || !selection.focusNode) {
@@ -953,18 +1213,9 @@ function captureActiveRegion(
   }
   const sourceStart = firstRange.start;
   const sourceEnd = lastRange.end;
-  const sourceSlice = sourceMarkdown.slice(sourceStart, sourceEnd);
-  restoreRegionCodeFenceMetadata(blocks, sourceSlice);
-  blocks.forEach((block) => {
-    protectVisualMarkdownReadOnlyRegions(block);
-  });
-  const readOnlySnapshot = captureVisualMarkdownReadOnlySnapshot(surface);
-  if (selectionIntersectsReadOnlyRegion(selection, readOnlySnapshot)) {
-    throw new Error('visual-editor-read-only-region-mutated');
-  }
-  return {
+  const initialRegion: ActiveRegion = {
     after: blocks[blocks.length - 1]?.nextSibling ?? null,
-    baseline: serializeVisualMarkdownBlockFragment(blocks),
+    baseline: '',
     blockSnapshots: blocks.map((block) => ({
       attributes: Array.from(block.attributes, ({ name, value }) => ({ name, value })),
       innerHTML: block.innerHTML,
@@ -974,10 +1225,33 @@ function captureActiveRegion(
     blockEnd,
     blockStart,
     blocks,
-    readOnlySnapshot,
+    readOnlySnapshot: captureVisualMarkdownReadOnlySnapshot(surface),
     selection: captureWindowSelection(blocks, selection),
     sourceEnd,
     sourceStart
+  };
+  onInitialRegion?.(initialRegion);
+  const sourceSlice = sourceMarkdown.slice(sourceStart, sourceEnd);
+  restoreRegionCodeFenceMetadata(blocks, sourceSlice, {
+    documentLength: sourceMarkdown.length,
+    end: sourceEnd
+  });
+  blocks.forEach((block) => {
+    protectVisualMarkdownReadOnlyRegions(block);
+  });
+  const readOnlySnapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+  if (selectionIntersectsReadOnlyRegion(selection, readOnlySnapshot)) {
+    throw new Error('visual-editor-read-only-region-mutated');
+  }
+  return {
+    ...initialRegion,
+    baseline: serializeVisualMarkdownBlockFragment(blocks),
+    blockSnapshots: blocks.map((block) => ({
+      attributes: Array.from(block.attributes, ({ name, value }) => ({ name, value })),
+      innerHTML: block.innerHTML,
+      node: block
+    })),
+    readOnlySnapshot
   };
 }
 
@@ -1050,20 +1324,79 @@ function restoreWindowRegion(
     const snapshot = region.blockSnapshots[boundary.blockIndex];
     if (!snapshot) throw new Error('visual-editor-window-selection-restore-failed');
     let node: Node = snapshot.node;
-    for (const index of boundary.nodePath) {
+    for (let pathIndex = 0; pathIndex < boundary.nodePath.length; pathIndex += 1) {
+      const index = boundary.nodePath[pathIndex];
+      if (undefined === index) {
+        throw new Error('visual-editor-window-selection-restore-failed');
+      }
       const child = node.childNodes[index];
-      if (!child) throw new Error('visual-editor-window-selection-restore-failed');
+      if (!child) {
+        if (pathIndex !== boundary.nodePath.length - 1) {
+          throw new Error('visual-editor-window-selection-restore-failed');
+        }
+        if (!(boundary.node instanceof Text) || '' !== boundary.textData) {
+          throw new Error('visual-editor-window-selection-restore-failed');
+        }
+        if (null !== boundary.node.parentNode) {
+          const restoreDetachedEmptyText =
+            boundary.node instanceof Text
+            && '' === boundary.textData
+            && boundary.node.ownerDocument === surface.ownerDocument
+            && !boundary.node.isConnected
+            && boundary.node.parentNode === boundary.parent
+            && boundary.parent instanceof HTMLSpanElement
+            && !boundary.parent.isConnected
+            && 1 === boundary.parent.childNodes.length
+            && boundary.parent.firstChild === boundary.node
+            && node instanceof HTMLSpanElement
+            && node.ownerDocument === surface.ownerDocument
+            && node.isConnected
+            && node.childNodes.length === index;
+          if (!restoreDetachedEmptyText) {
+            throw new Error('visual-editor-window-selection-restore-failed');
+          }
+        }
+        if (node.childNodes.length !== index) {
+          throw new Error('visual-editor-window-selection-restore-failed');
+        }
+        boundary.node.data = boundary.textData;
+        node.appendChild(boundary.node);
+        return boundary.node;
+      }
       node = child;
     }
     return node;
   };
+  const anchorNode = boundaryNode(region.selection.anchor);
+  const focusNode = boundaryNode(region.selection.focus);
+  const validOffset = (node: Node, offset: number): boolean =>
+    Number.isInteger(offset)
+    && offset >= 0
+    && offset <= (node instanceof Text ? node.length : node.childNodes.length);
+  if (
+    !anchorNode.isConnected
+    || !focusNode.isConnected
+    || anchorNode.ownerDocument !== surface.ownerDocument
+    || focusNode.ownerDocument !== surface.ownerDocument
+    || !validOffset(anchorNode, region.selection.anchor.offset)
+    || !validOffset(focusNode, region.selection.focus.offset)
+  ) {
+    throw new Error('visual-editor-window-selection-restore-failed');
+  }
   try {
-    selection.setBaseAndExtent(
-      boundaryNode(region.selection.anchor),
-      region.selection.anchor.offset,
-      boundaryNode(region.selection.focus),
-      region.selection.focus.offset
-    );
+    if (
+      anchorNode === focusNode
+      && region.selection.anchor.offset === region.selection.focus.offset
+    ) {
+      selection.collapse(anchorNode, region.selection.anchor.offset);
+    } else {
+      selection.setBaseAndExtent(
+        anchorNode,
+        region.selection.anchor.offset,
+        focusNode,
+        region.selection.focus.offset
+      );
+    }
   } catch {
     throw new Error('visual-editor-window-selection-restore-failed');
   }
@@ -1096,6 +1429,7 @@ export function WindowedImmersiveVisualEditor({
   previewSnapshot,
   previewStatus,
   requestPreview,
+  requestPreviewAtDocumentEnd,
   surface,
   prepareWindowBlockAdoption
 }: Props) {
@@ -1128,16 +1462,14 @@ export function WindowedImmersiveVisualEditor({
 
   useLayoutEffect(() => {
     if (externalChangeReportedRef.current) {
-      pendingHistorySelectionRef.current = null;
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       return;
     }
     const activePending = pendingRef.current;
     if (!activePending) return;
     if ('error' === previewStatus) {
       pendingRef.current = null;
-      if (pendingHistorySelectionRef.current?.signature === activePending.signature) {
-        pendingHistorySelectionRef.current = null;
-      }
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       onPendingChange(false);
       onFailure('visual-editor-markdown-paste-render-failed');
       onTransferFailure();
@@ -1146,9 +1478,7 @@ export function WindowedImmersiveVisualEditor({
     if ('ready' !== previewStatus) return;
     if (activePending.signature !== previewSnapshot.signature) {
       pendingRef.current = null;
-      if (pendingHistorySelectionRef.current?.signature === activePending.signature) {
-        pendingHistorySelectionRef.current = null;
-      }
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       onPendingChange(false);
       onFailure('visual-editor-markdown-paste-superseded');
       onTransferFailure();
@@ -1166,34 +1496,74 @@ export function WindowedImmersiveVisualEditor({
       && pendingHistorySelection.markdown === activePending.markdown
     ) {
       pendingHistorySelectionRef.current = null;
-      if (
-        pendingHistorySelection.restoreFocus
-        && surface.isConnected
-        && 'true' === surface.getAttribute('contenteditable')
-        && surface.ownerDocument.activeElement === surface
-        && !externalChangeReportedRef.current
-        && documentSession.document.getValue() === activePending.markdown
-      ) {
-        focusSurface(surface);
-        try {
-          if (!restoreMountedSourceSelection(
+      try {
+        const shouldRestoreFocus = Boolean(
+          pendingHistorySelection.restoreFocus
+          && surface.isConnected
+          && 'true' === surface.getAttribute('contenteditable')
+          && surface.ownerDocument.activeElement === surface
+          && !externalChangeReportedRef.current
+        );
+        if (shouldRestoreFocus) {
+          if (
+            documentSession.document.getValue() !== activePending.markdown
+            || !sameDocumentSelection(
+              documentSession.document.getSelection(),
+              pendingHistorySelection.selection
+            )
+            || !sameDocumentHistoryState(
+              documentSession.document.getHistoryState(),
+              pendingHistorySelection.historyState
+            )
+          ) {
+            throw new Error('visual-editor-window-history-selection-stale');
+          }
+          focusSurface(surface);
+          const restored = restoreMountedSourceSelection(
             surface,
             rangesRef.current,
             activePending.markdown,
             pendingHistorySelection.selection
-          )) {
-            onDiagnostic('visual-editor-window-history-selection-not-mounted');
-          }
-        } catch (error) {
-          onFailure(
-            error instanceof Error
-              ? error.message
-              : 'visual-editor-window-history-selection-restore-failed'
           );
-          onTransferFailure();
+          if (!restored) {
+            onDiagnostic('visual-editor-window-history-selection-not-mounted');
+            if (pendingHistorySelection.releaseDocumentEndPin) {
+              throw new Error('visual-editor-window-history-selection-not-mounted');
+            }
+          }
+          if (restored && pendingHistorySelection.releaseDocumentEndPin) {
+            const visualSelection = surface.ownerDocument.defaultView?.getSelection();
+            if (
+              !visualSelection?.isCollapsed
+              || !visualSelection.anchorNode?.isConnected
+              || !surface.contains(visualSelection.anchorNode)
+              || !pendingHistorySelection.historyState
+              || documentSession.document.getValue() !== activePending.markdown
+              || !sameDocumentSelection(
+                documentSession.document.getSelection(),
+                pendingHistorySelection.selection
+              )
+              || !sameDocumentHistoryState(
+                documentSession.document.getHistoryState(),
+                pendingHistorySelection.historyState
+              )
+            ) {
+              throw new Error('visual-editor-window-history-selection-restore-failed');
+            }
+          }
         }
+      } catch (error) {
+        onFailure(
+          error instanceof Error
+            ? error.message
+            : 'visual-editor-window-history-selection-restore-failed'
+        );
+        onTransferFailure();
+      } finally {
+        pendingHistorySelection.releaseDocumentEndPin?.();
       }
     } else {
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       focusSurface(surface);
     }
   }, [documentSession, editMap, onDiagnostic, onFailure, onPendingChange, onTransferFailure, previewSnapshot, previewStatus, surface]);
@@ -1231,11 +1601,15 @@ export function WindowedImmersiveVisualEditor({
       if (externalChangeReportedRef.current) {
         throw new Error('visual-editor-window-stale');
       }
+      regionRef.current = null;
       const region = captureActiveRegion(
         surface,
         rangesRef.current,
         sourceRef.current,
-        deletionDirection
+        deletionDirection,
+        (snapshot) => {
+          regionRef.current = snapshot;
+        }
       );
       regionRef.current = region;
       return region;
@@ -1340,6 +1714,20 @@ export function WindowedImmersiveVisualEditor({
         )) {
           throw new Error('visual-editor-code-body-map-stale');
         }
+        if (bodyInput) {
+          const currentCodes = Array.from(bodyInput.pre.children).filter(
+            (child): child is HTMLElement =>
+              child instanceof HTMLElement && 'CODE' === child.tagName
+          );
+          const expectedCode = bodyInput.recoveredCode ?? bodyInput.code;
+          const splitCodeBody = isWindowedParagraphCodeSplit(bodyInput);
+          if (
+            !splitCodeBody
+            && (1 !== currentCodes.length || currentCodes[0] !== expectedCode)
+          ) {
+            throw new Error('visual-editor-code-body-map-stale');
+          }
+        }
         const structuralChange = blocks.length !== region.blocks.length
           || blocks.some((block, index) => block !== region.blocks[index])
           || region.blockEnd - region.blockStart > 1;
@@ -1357,6 +1745,18 @@ export function WindowedImmersiveVisualEditor({
           start: number;
         }>;
         if (bodyInput?.directBodyEdit) {
+          const bodySelection = WINDOWED_CODE_BODY_DELETION_TYPES.has(
+            bodyInput.inputType
+          )
+            ? inferWindowedCodeBodyDeletionSelection(
+                bodyInput,
+                sourceSlice,
+                region.baseline
+              )
+            : {
+                sourceSelection: bodyInput.sourceSelection,
+                visualSelection: bodyInput.visualSelection
+              };
           const editInputType = 'insertParagraph' === bodyInput.inputType
             ? 'insertLineBreak'
             : bodyInput.inputType;
@@ -1397,8 +1797,8 @@ export function WindowedImmersiveVisualEditor({
           const result = applyVisualMarkdownEditIntent(
             sourceSlice,
             region.baseline,
-            bodyInput.sourceSelection,
-            bodyInput.visualSelection,
+            bodySelection.sourceSelection,
+            bodySelection.visualSelection,
             editInputType,
             editData,
             {
@@ -1475,7 +1875,10 @@ export function WindowedImmersiveVisualEditor({
           }
         }
         if (bodyInput) {
-          restoreRegionCodeFenceMetadata(blocks, replacementMarkdown);
+          restoreRegionCodeFenceMetadata(blocks, replacementMarkdown, {
+            documentLength: value.length,
+            end: region.sourceStart + replacementMarkdown.length
+          });
         }
         adoptionFinalized = adoptionTransaction;
         applyDocumentChange({
@@ -1519,24 +1922,42 @@ export function WindowedImmersiveVisualEditor({
     const requestFormalPreview = (
       markdown: string,
       historySelection?: Readonly<{
+        historyState: DocumentHistoryState;
         restoreFocus: boolean;
         selection: DocumentSelection;
       }>
     ): void => {
-      pendingHistorySelectionRef.current = null;
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       onPendingChange(true);
+      let releaseDocumentEndPin: (() => void) | null = null;
       try {
-        const signature = requestPreview(markdown);
+        const shouldPinDocumentEnd = Boolean(
+          historySelection?.restoreFocus
+          && historySelection.historyState
+          && historySelection.selection.start === markdown.length
+          && historySelection.selection.end === markdown.length
+        );
+        let signature: string;
+        if (shouldPinDocumentEnd) {
+          const previewRequest = requestPreviewAtDocumentEnd(markdown);
+          signature = previewRequest.signature;
+          releaseDocumentEndPin = previewRequest.release;
+        } else {
+          signature = requestPreview(markdown);
+        }
         pendingRef.current = { markdown, signature };
         if (historySelection) {
           pendingHistorySelectionRef.current = {
             markdown,
+            historyState: historySelection.historyState,
+            releaseDocumentEndPin,
             restoreFocus: historySelection.restoreFocus,
             selection: historySelection.selection,
             signature
           };
         }
       } catch (error) {
+        releaseDocumentEndPin?.();
         onPendingChange(false);
         throw error;
       }
@@ -1612,6 +2033,7 @@ export function WindowedImmersiveVisualEditor({
       sourceRef.current = markdown;
       onMarkdownChange();
       requestFormalPreview(markdown, {
+        historyState: documentSession.document.getHistoryState(),
         restoreFocus,
         selection: documentSession.document.getSelection()
       });
@@ -1684,8 +2106,9 @@ export function WindowedImmersiveVisualEditor({
         if (event.cancelable) {
           event.preventDefault();
           regionRef.current = null;
-        } else if (region) {
-          const rejectedRegion = region;
+        } else if (region || regionRef.current) {
+          const rejectedRegion = region ?? regionRef.current;
+          if (!rejectedRegion) throw new Error('visual-editor-window-region-missing');
           rejectedBeforeInput = rejectedRegion;
           queueMicrotask(() => restoreRejectedBeforeInput(rejectedRegion));
         } else {
@@ -1709,12 +2132,64 @@ export function WindowedImmersiveVisualEditor({
         || event.isComposing
         || pendingRef.current
       ) return;
+      let recoverDetachedCode = false;
+      if (
+        codeBodyInput
+        && codeBodyInput.code.parentElement !== codeBodyInput.pre
+        && !isWindowedParagraphCodeSplit(codeBodyInput)
+      ) {
+        const replacementCode = Array.from(codeBodyInput.pre.children).find(
+          (child): child is HTMLElement =>
+            child instanceof HTMLElement && 'CODE' === child.tagName
+        );
+        if (
+          replacementCode
+          || codeBodyInput.code.parentNode
+          || codeBodyInput.code.isConnected
+        ) {
+          const error = new Error('visual-editor-code-body-map-stale');
+          const region = regionRef.current;
+          if (region) {
+            rejectedBeforeInput = region;
+            restoreRejectedBeforeInput(region);
+          }
+          report(error);
+          return;
+        }
+        codeBodyInput = { ...codeBodyInput, directBodyEdit: false };
+        recoverDetachedCode = true;
+      }
+      if (
+        codeBodyInput?.directBodyEdit
+        && WINDOWED_CODE_BODY_DELETION_TYPES.has(codeBodyInput.inputType)
+        && '' === visualCodeBodyDomText(codeBodyInput.code)
+        && !codeBodyInput.pre.hasAttribute(VISUAL_FENCE_OPEN_EOF_ATTRIBUTE)
+      ) {
+        codeBodyInput = { ...codeBodyInput, directBodyEdit: false };
+      }
       try {
         if (!codeBodyInput?.directBodyEdit) {
           normalizeVisualCodePlaceholders(surface, event.inputType, inputBlock);
           unwrapWindowedCodePlaceholder(inputBlock);
+          if (recoverDetachedCode && codeBodyInput) {
+            const recovered = captureVisualCodeInputSnapshot(
+              codeBodyInput.pre
+            );
+            if (
+              !recovered?.placeholder
+              || recovered.codeClassName !== codeBodyInput.sourceCodeSnapshot.className
+            ) {
+              throw new Error('visual-editor-code-body-map-stale');
+            }
+            codeBodyInput = { ...codeBodyInput, recoveredCode: recovered.code };
+          }
         }
       } catch (error) {
+        const region = regionRef.current;
+        if (region) {
+          rejectedBeforeInput = region;
+          restoreRejectedBeforeInput(region);
+        }
         report(error);
         return;
       }
@@ -1759,8 +2234,9 @@ export function WindowedImmersiveVisualEditor({
         composing = true;
       } catch (error) {
         report(error);
-        if (region) {
-          rejectedComposition = region;
+        const rejectedRegion = region ?? regionRef.current;
+        if (rejectedRegion) {
+          rejectedComposition = rejectedRegion;
         }
       }
     };
@@ -1891,7 +2367,7 @@ export function WindowedImmersiveVisualEditor({
         && documentSession.document.getValue() !== sourceRef.current
       ) {
         externalChangeReportedRef.current = true;
-        pendingHistorySelectionRef.current = null;
+        releasePendingHistorySelection(pendingHistorySelectionRef);
         onCanonicalDocumentChange();
       }
     });
@@ -1968,7 +2444,7 @@ export function WindowedImmersiveVisualEditor({
     onReady(runtime);
     return () => {
       active = false;
-      pendingHistorySelectionRef.current = null;
+      releasePendingHistorySelection(pendingHistorySelectionRef);
       cancelPendingPaste?.();
       cancelPendingPaste = null;
       unsubscribe();
@@ -1996,6 +2472,7 @@ export function WindowedImmersiveVisualEditor({
     onReady,
     prepareWindowBlockAdoption,
     requestPreview,
+    requestPreviewAtDocumentEnd,
     surface
   ]);
 

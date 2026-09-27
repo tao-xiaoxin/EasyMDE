@@ -289,12 +289,34 @@ block to one Markdown source body interval. That interval owns blank-line and
 line-ending semantics for both ordinary and windowed immersive editing;
 browser-created code DOM nodes are reconciled to the source interval without
 using their child count as a Markdown line index. The document session remains
-the canonical value and history owner. Non-windowed mapped code-body edits retain paired
-visual snapshots keyed to canonical Markdown, so Undo/Redo uses CodeMirror's
-actual history target to restore the code DOM and caret after browser-created
-formatting or a scripted terminal newline is normalized. Restoring an empty
-code block rehydrates its placeholder text node before restoring the saved
-caret path; a failed caret restore rolls the canonical history change back.
+the canonical value and history owner. Non-windowed visual history slots follow
+CodeMirror's actual Undo/Redo depths, including grouped events, history pruning
+and replacement of a Redo branch. A slot retains an exact DOM snapshot or marks
+an accepted source state for formal Preview rematerialization. Ordinary exact
+text input does not serialize the whole DOM or reuse stale accepted HTML to
+manufacture a snapshot. Exact snapshots restore code DOM and caret after
+browser-created formatting or a scripted terminal newline is normalized.
+Targets without a local snapshot, including history before the visual baseline,
+use the formal Preview owner bound to source, signature, history state and
+selection; native contenteditable history never owns Markdown. Restoring an
+empty code block rehydrates its placeholder Text
+before capturing the visual Markdown baseline and restoring the caret. A
+failed snapshot caret restore rolls the canonical history change back.
+Accepted open-EOF fences retain source-derived ending metadata. Serialization
+removes its synthetic closing delimiter after Turndown, preserving code-tail
+whitespace and source-owned line endings. Code-body commits refresh this
+metadata; the windowed source-range adapter restores it for the active region.
+An actual empty-code Backspace shortcut flushes pending input before its
+structural change and records the corresponding canonical history transition.
+Focused windowed history at canonical EOF prepares a Preview-owned document-end
+window pin before scheduling its exact formal Preview request. The in-memory
+lease binds the request signature and accepted generation, preserves the
+validated final editable block in the initial and subsequent bounded windows,
+and releases after caret restoration or cancellation, error and teardown.
+Temporary browser Selection is not a pin across Safe HTML child replacement.
+After the final editable block mounts, a collapsed EOF
+caret may project to that block's text end when only source line endings remain
+outside its mapped range; omitted content or an unmounted final block fails.
 Mapped code Enter handles both `insertParagraph` and `insertLineBreak` in the
 existing code node before Chromium can split it into multiple `code` children.
 The projection accepts exactly one omitted terminal LF in editable code DOM;

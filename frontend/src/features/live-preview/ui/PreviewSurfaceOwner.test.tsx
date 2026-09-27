@@ -130,6 +130,54 @@ function windowedFixture(count: number, signature: string) {
   };
 }
 
+function documentEndFixture(
+  count: number,
+  signature: string,
+  terminalSuffix = ''
+) {
+  const markdown = [
+    ...Array.from({ length: count }, (_, index) => `line-${index}`)
+  ].join('\n') + terminalSuffix;
+  const blocks = Array.from({ length: count }, (_, index) => ({
+    id: `b${index}`,
+    startLine: index,
+    endLine: index + 1,
+    editable: true as const
+  }));
+  return {
+    editMap: {
+      version: 1 as const,
+      coordinate: 'line' as const,
+      signature,
+      blocks
+    },
+    html: blocks
+      .map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
+      .join('') as SafePreviewHtml,
+    markdown
+  };
+}
+
+function previewWindowRanges(children: ReadonlyArray<Element>): Array<{
+  end: number;
+  start: number;
+}> {
+  return children.map((child) => {
+    const spacer = child.getAttribute('data-easymde-preview-window-spacer');
+    if (null !== spacer) {
+      return {
+        end: Number(child.getAttribute('data-easymde-preview-window-end')),
+        start: Number(child.getAttribute('data-easymde-preview-window-start'))
+      };
+    }
+    const id = child.getAttribute('data-easymde-visual-block-id');
+    const index = id?.match(/^b(0|[1-9]\d*)$/)?.[1];
+    if (undefined === index) throw new Error('preview-window-test-block-id-invalid');
+    const start = Number(index);
+    return { end: start + 1, start };
+  });
+}
+
 function visualSourceMarkerCount(surface: HTMLElement): number {
   const walker = surface.ownerDocument.createTreeWalker(
     surface,
@@ -812,6 +860,308 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.querySelector(
       '[data-easymde-preview-window-spacer]'
     )).not.toBeNull();
+  });
+
+  it('commits a prepared document-end pin through the Safe Preview sink until release', async () => {
+    const signature = 'history-document-end';
+    const fixture = documentEndFixture(220, signature, '\n\n');
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 10_000
+    });
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    window.getSelection()?.removeAllRanges();
+
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    expect(() => current.runtime.prepareDocumentEndWindowPin(signature))
+      .toThrow('preview-window-document-end-pin-already-active');
+    replaceChildren.mockClear();
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    const initialCommit = replaceChildren.mock.calls[0];
+    expect(initialCommit).toBeDefined();
+    expect(initialCommit?.some((node) => node instanceof HTMLElement
+      && 'b219' === node.getAttribute('data-easymde-visual-block-id'))).toBe(true);
+    const initialElements = initialCommit?.filter(
+      (node): node is HTMLElement => node instanceof HTMLElement
+    ) ?? [];
+    const initialBlockCount = initialElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length;
+    expect(initialBlockCount).toBeGreaterThan(0);
+    expect(initialBlockCount).toBeLessThanOrEqual(160);
+    let coveredThrough = 0;
+    for (const range of previewWindowRanges(initialElements)) {
+      expect(range.start).toBe(coveredThrough);
+      expect(range.end).toBeGreaterThan(range.start);
+      coveredThrough = range.end;
+    }
+    expect(coveredThrough).toBe(220);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+
+    const rootCaret = document.createRange();
+    rootCaret.setStart(current.surface, 0);
+    rootCaret.collapse(true);
+    window.getSelection()?.addRange(rootCaret);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    await act(async () => flushAnimationFrames(2));
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    const pinnedElements = Array.from(current.surface.children);
+    expect(pinnedElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length).toBeLessThanOrEqual(160);
+    coveredThrough = 0;
+    for (const range of previewWindowRanges(pinnedElements)) {
+      expect(range.start).toBe(coveredThrough);
+      expect(range.end).toBeGreaterThan(range.start);
+      coveredThrough = range.end;
+    }
+    expect(coveredThrough).toBe(220);
+
+    const finalBlock = current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    );
+    const finalText = finalBlock?.firstChild;
+    if (!finalText) throw new Error('preview-test-document-end-text-missing');
+    const finalCaret = document.createRange();
+    finalCaret.setStart(finalText, 0);
+    finalCaret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(finalCaret);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    act(() => lease.release());
+    await act(async () => flushAnimationFrames(2));
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    const releasedElements = Array.from(current.surface.children);
+    const releasedBlockCount = releasedElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length;
+    expect(releasedBlockCount).toBeLessThanOrEqual(192);
+    expect(releasedBlockCount).toBeGreaterThan(160);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+    act(() => lease.release());
+    replaceChildren.mockRestore();
+  });
+
+  it('pins the final block when the document ends with a CRLF-only suffix', async () => {
+    const signature = 'history-document-end-crlf';
+    const fixture = documentEndFixture(220, signature, '\r\n\r\n');
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    window.getSelection()?.removeAllRanges();
+
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    replaceChildren.mockClear();
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    const initialCommit = replaceChildren.mock.calls[0];
+    expect(initialCommit).toBeDefined();
+    expect(initialCommit?.some((node) => node instanceof HTMLElement
+      && 'b219' === node.getAttribute('data-easymde-visual-block-id'))).toBe(true);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    expect(current.onDiagnostic).not.toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    lease.release();
+    replaceChildren.mockRestore();
+  });
+
+  it('invalidates a superseded document-end lease by token without clearing its replacement', async () => {
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const staleLease = current.runtime.prepareDocumentEndWindowPin('stale');
+    act(() => {
+      current.session.schedule(request('# Superseded', 'superseded'), true);
+    });
+    const signature = 'replacement';
+    const fixture = documentEndFixture(220, signature);
+    const replacementLease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+      staleLease.release();
+    });
+    await act(async () => {
+      current.responses[1]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    act(() => replacementLease.release());
+  });
+
+  it('rejects invalid document-end maps and releases the lease on enhancement failure', async () => {
+    const signature = 'invalid-document-end';
+    const fixture = documentEndFixture(220, signature);
+    const invalidMap = {
+      ...fixture.editMap,
+      blocks: fixture.editMap.blocks.map((block, index) =>
+        index === 219 ? { ...block, editable: false } : block
+      )
+    };
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: invalidMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    const nextLease = current.runtime.prepareDocumentEndWindowPin('next');
+    lease.release();
+    nextLease.release();
+  });
+
+  it('does not apply a cancelled document-end pin to a later matching request', async () => {
+    const signature = 'cancelled-document-end';
+    const fixture = documentEndFixture(220, signature);
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    lease.release();
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    expect(replaceChildren.mock.calls.some((nodes) =>
+      nodes.some((node) => node instanceof HTMLElement
+        && 'b219' === node.getAttribute('data-easymde-visual-block-id'))
+    )).toBe(false);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).toBeNull();
+    replaceChildren.mockRestore();
+  });
+
+  it('rejects an accepted Preview with a mismatched edit-map signature', async () => {
+    const signature = 'requested-document-end';
+    const fixture = documentEndFixture(220, 'stale-edit-map-signature');
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-edit-map-invalid'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
+  });
+
+  it('invalidates a prepared document-end lease on owner teardown', () => {
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin('teardown');
+
+    current.unmount();
+
+    expect(() => lease.release()).not.toThrow();
+    expect(() => current.runtime.prepareDocumentEndWindowPin('late'))
+      .toThrow('preview-window-document-end-owner-inactive');
   });
 
   it('materializes the complete Preview asynchronously for a same-activation consumer', async () => {

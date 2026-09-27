@@ -38,6 +38,8 @@ export type DocumentTextChangeRange = Readonly<{
 export type DocumentTextChange = Readonly<{
   deferNativeBridge?: boolean;
   holdNativeBridge?: boolean;
+  /** Records the accepted post-edit selection in CodeMirror's history event. */
+  recordHistorySelection?: boolean;
   selection: DocumentSelection;
   value: string;
   changes?: DocumentTextChangeRange;
@@ -472,6 +474,21 @@ export function createCodeMirrorDocumentSession({
     }
     view.dispatch(transaction);
   };
+  const recordCanonicalHistorySelection = (): void => {
+    const state = authoritativeState();
+    const transaction = state.update({
+      annotations: [
+        Transaction.addToHistory.of(true),
+        Transaction.userEvent.of('select.canonicalSelection')
+      ],
+      selection: state.selection
+    });
+    if (activeVisualState) {
+      activeVisualState = transaction.state;
+    } else {
+      view.dispatch(transaction);
+    }
+  };
 
   const mutationObserver = new MutationObserver(() => {
     if (destroyed) {
@@ -545,6 +562,7 @@ export function createCodeMirrorDocumentSession({
       changes,
       deferNativeBridge = false,
       holdNativeBridge = false,
+      recordHistorySelection = false,
       selection,
       value
     }: DocumentTextChange) {
@@ -599,6 +617,9 @@ export function createCodeMirrorDocumentSession({
         );
       } else {
         view.dispatch(transactionSpec);
+      }
+      if (recordHistorySelection && valueChanged) {
+        recordCanonicalHistorySelection();
       }
     },
     canUndo: () => !destroyed && undoDepth(authoritativeState()) > 0,

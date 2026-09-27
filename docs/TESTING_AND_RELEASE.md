@@ -427,15 +427,57 @@ request per paste, and zero Preview requests for ordinary visual keystrokes.
 Fenced-code cases cover typed and pasted tilde and backtick fences, zero or
 multiple blank body lines, successive input, line endings, caret placement,
 Undo/Redo, highlighted code cleared and retyped, and windowed block offsets.
+Native clipboard cases paste each bare three-character opener, assert that the
+initial source is unchanged, then type body text and check persistence, history,
+caret, and frame geometry. Unclosed EOF bodies retain their open state, including
+literal fence content that requires a wider opener.
 They assert the canonical Markdown and
 editable DOM body agree after each transition while the shared Mac frame
 retains its full width and non-collapsing code area. The dedicated immersive
 unlock browser cases measure in-page click-to-pending, first visible pending
 frame, click-to-focused-editable timing, and Long Tasks. They also check
-repeated activation, cancellation, bounded window mounting, and absence of
-Preview or document writes. A private maintainer document is
-tested locally by native paste and exact source comparison; its content is not
-part of the public fixtures or test artifacts.
+repeated pointer, Enter, and Space activation, focus retained on the pending
+control, focus handed to the ready editor, cancellation, bounded window
+mounting, and absence of Preview or document writes. A private maintainer
+document is tested locally by native paste and exact source comparison; its
+content is not part of the public fixtures or test artifacts.
+For code-map changes, test a locally typed fence without a Preview block ID,
+an accepted mapped empty fence, and a mapped block whose ID order or fence
+topology becomes stale. The stale input must be blocked without changing the
+canonical source or a different code block. A non-windowed synthetic document
+near the 160-block boundary must retain exact source under rapid and spaced
+code-body typing while keeping the first visible frame responsive and the edit
+window free of Long Tasks; windowed b160 coverage is separate.
+Also exercise Enter followed by a code character inside the debounce window,
+pending exact input followed by composition, rejected blank-code composition,
+and editing an older mapped block after creating a local fence. Code DOM may
+omit exactly one terminal LF under the projection contract; verify native next
+input, caret, Undo, Redo, and exact canonical Markdown rather than trimming
+arbitrary text differences.
+Exercise the exact accepted native-paste snapshot for both fence families and
+unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
+Verify neutral native spans retain Text identity, caret and exact code body;
+attributed or malformed spans must still fail explicitly.
+Verify a complete active fence run in the body followed immediately by another
+character widens the outer fence and preserves source, caret, Undo, and Redo.
+Use a noncancelable rejected composition mutation to prove accepted DOM/source
+restoration and a subsequent valid edit. The shifted windowed b160 case also
+checks native Enter followed by text, separate Undo/Redo steps, restored stale
+block identity, and the bounded mount count. Verify history Preview restores
+scroll only after its bounded DOM commit, keeping the selected block mounted.
+Ordinary paragraph history beyond the first windowed block also checks exact
+source, DOM/native caret, adjacent-block boundary ownership, and final EOF.
+Verify pre-edit visible-selection synchronization restores paragraph and IME
+carets on Undo/Redo, and stale PRE replacement after noncancelable text input
+restores the accepted DOM and caret without publishing a source change.
+The canonical adapter's post-edit selection option must preserve ordinary
+document Undo/Redo step counts and same-value updates.
+The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
+of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
+inputs appear in the code DOM, canonical Markdown converges within 150 ms of
+the last rapid input, five spaced inputs settle within the per-key budget,
+the first visible frame stays within 100 ms, and the edit window has no Long
+Tasks. It records only counts and timings.
 The 390px immersive cases begin with Outline open. They check that its overlay
 does not narrow Source, Split, Preview, or the Mac frame, then verify pending
 unlock keeps the Outline open, editable readiness closes it without changing

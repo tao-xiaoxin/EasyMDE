@@ -1,6 +1,6 @@
-import { undo } from '@codemirror/commands';
+import { undo, undoSelection } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
-import { EditorSelection } from '@codemirror/state';
+import { EditorSelection, Transaction } from '@codemirror/state';
 import { language } from '@codemirror/language';
 import { markdownLanguage } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
@@ -638,6 +638,173 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(session.getValue()).toBe('# Source edit visual');
     expect(undo(view)).toBe(true);
     expect(session.getValue()).toBe('# Source edit');
+
+    session.destroy();
+  });
+
+  it('keeps the first code body character separate from its fence in undo history', () => {
+    const { container, submissionField } = createFixture('~~~');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 9, start: 9 },
+      value: '~~~\n\n~~~'
+    });
+    session.applyTextChange({
+      changes: { from: 4, insert: 'x', to: 4 },
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: '~~~\nx\n~~~'
+    });
+
+    expect(session.getValue()).toBe('~~~\nx\n~~~');
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('~~~\n\n~~~');
+    expect(session.redo()).toBe(true);
+    expect(session.getValue()).toBe('~~~\nx\n~~~');
+
+    session.destroy();
+  });
+
+  it('records accepted visual post-selections in the canonical undo history', () => {
+    const { container, submissionField } = createFixture('~~~');
+    submissionField.setSelectionRange(3, 3);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const handleInput = vi.fn();
+    submissionField.addEventListener('input', handleInput);
+    session.setVisualEditingActive(true);
+
+    session.applyTextChange({
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 4, start: 4 },
+      value: '~~~\n\n~~~'
+    });
+    session.applyTextChange({
+      changes: { from: 4, insert: 'x', to: 4 },
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 5, start: 5 },
+      value: '~~~\nx\n~~~'
+    });
+
+    const expectDocumentAndSelection = (
+      value: string,
+      position: number
+    ): void => {
+      expect(session.getValue()).toBe(value);
+      expect(session.getSelection()).toEqual({
+        direction: 'none',
+        end: position,
+        start: position
+      });
+      session.flush();
+      expect(submissionField.value).toBe(value);
+      expect([
+        submissionField.selectionStart,
+        submissionField.selectionEnd,
+        submissionField.selectionDirection
+      ]).toEqual([position, position, 'none']);
+    };
+
+    expectDocumentAndSelection('~~~\nx\n~~~', 5);
+    expect(handleInput).toHaveBeenCalledTimes(2);
+    expect(session.canUndo()).toBe(true);
+    expect(session.canRedo()).toBe(false);
+    session.applyTextChange({
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 2, start: 2 },
+      value: '~~~\nx\n~~~'
+    });
+    session.applyTextChange({
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 2, start: 2 },
+      value: '~~~\nx\n~~~'
+    });
+    expectDocumentAndSelection('~~~\nx\n~~~', 2);
+    expect(handleInput).toHaveBeenCalledTimes(2);
+    expect(session.canUndo()).toBe(true);
+    expect(session.canRedo()).toBe(false);
+    expect(session.undo()).toBe(true);
+    expectDocumentAndSelection('~~~\n\n~~~', 4);
+    expect(handleInput).toHaveBeenCalledTimes(3);
+    expect(session.canUndo()).toBe(true);
+    expect(session.canRedo()).toBe(true);
+    expect(session.undo()).toBe(true);
+    expectDocumentAndSelection('~~~', 3);
+    expect(handleInput).toHaveBeenCalledTimes(4);
+    expect(session.canUndo()).toBe(false);
+    expect(session.canRedo()).toBe(true);
+    expect(session.redo()).toBe(true);
+    expectDocumentAndSelection('~~~\n\n~~~', 4);
+    expect(handleInput).toHaveBeenCalledTimes(5);
+    expect(session.canUndo()).toBe(true);
+    expect(session.canRedo()).toBe(true);
+    expect(session.redo()).toBe(true);
+    expectDocumentAndSelection('~~~\nx\n~~~', 5);
+    expect(handleInput).toHaveBeenCalledTimes(6);
+    expect(session.canUndo()).toBe(true);
+    expect(session.canRedo()).toBe(false);
+
+    session.setVisualEditingActive(false);
+    expectDocumentAndSelection('~~~\nx\n~~~', 5);
+    expect(handleInput).toHaveBeenCalledTimes(6);
+    session.destroy();
+  });
+
+  it('consumes the recorded selection with CodeMirror undoSelection before document undo', () => {
+    const { container, submissionField } = createFixture('~~~');
+    submissionField.setSelectionRange(3, 3);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    session.applyTextChange({
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 4, start: 4 },
+      value: '~~~\n\n~~~'
+    });
+    expect(session.getValue()).toBe('~~~\n\n~~~');
+    expect(session.getSelection().start).toBe(4);
+
+    view.dispatch({
+      annotations: Transaction.addToHistory.of(false),
+      selection: EditorSelection.cursor(8)
+    });
+    expect(session.getSelection().start).toBe(8);
+    expect(submissionField.selectionStart).toBe(8);
+
+    expect(undoSelection(view)).toBe(true);
+    expect(session.getValue()).toBe('~~~\n\n~~~');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 4,
+      start: 4
+    });
+    expect(submissionField.value).toBe('~~~\n\n~~~');
+    expect(submissionField.selectionStart).toBe(4);
+    expect(session.canUndo()).toBe(true);
+
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('~~~');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 3,
+      start: 3
+    });
+    expect(submissionField.value).toBe('~~~');
+    expect(submissionField.selectionStart).toBe(3);
+    expect(session.canUndo()).toBe(false);
+    expect(session.canRedo()).toBe(true);
 
     session.destroy();
   });

@@ -2086,6 +2086,245 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.textContent).toBe('Updated');
   });
 
+  it('restores the latest scroll ratio only after a windowed HTML commit is ready', async () => {
+    const fixture = windowedFixture(320, 'windowed-scroll');
+    const enhancement = deferred<void>();
+    const finishCommit = deferred<void>();
+    const statuses: PreviewSurfaceStatus[] = [];
+    let current!: ReturnType<typeof setup>;
+    let commitHeld = false;
+    let restoreMetrics: Readonly<{
+      busy: string | null;
+      hasWindowContent: boolean;
+      scrollHeight: number;
+      snapshotRatio: number;
+    }> | null = null;
+    const stagingScheduler = {
+      now: () => 0,
+      yield: () => {
+        const hasWindowContent = Boolean(current?.surface.querySelector(
+          '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+        ));
+        if (!commitHeld && hasWindowContent) {
+          commitHeld = true;
+          return finishCommit.promise;
+        }
+        return Promise.resolve();
+      }
+    };
+    const scrollPort: PreviewScrollPort = {
+      capture: (canvas) => {
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        return {
+          left: canvas.scrollLeft,
+          ratio: maxScroll ? canvas.scrollTop / maxScroll : 0,
+          top: canvas.scrollTop
+        };
+      },
+      restore: (canvas, snapshot) => {
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        restoreMetrics = {
+          busy: current.surface.getAttribute('aria-busy'),
+          hasWindowContent: Boolean(current.surface.querySelector(
+            '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+          )),
+          scrollHeight: canvas.scrollHeight,
+          snapshotRatio: snapshot.ratio
+        };
+        canvas.scrollLeft = snapshot.left;
+        canvas.scrollTop = maxScroll ? snapshot.ratio * maxScroll : snapshot.top;
+      }
+    };
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      () => enhancement.promise
+    );
+    current = setup({
+      enhance,
+      initialHtml: '',
+      onStatusChange: (status) => statuses.push(status),
+      scrollPort,
+      stagingScheduler,
+      windowed: true
+    });
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 100
+    });
+    Object.defineProperty(current.canvas, 'scrollHeight', {
+      configurable: true,
+      get: () => current.surface.querySelector(
+        '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+      ) ? 2000 : 1000
+    });
+    current.canvas.scrollTop = 450;
+
+    act(() => {
+      current.session.schedule(request('# Windowed', 'windowed-scroll'), true);
+    });
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledOnce();
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    current.canvas.scrollTop = 600;
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    expect(commitHeld).toBe(true);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    await act(async () => {
+      finishCommit.resolve();
+      await finishCommit.promise;
+    });
+
+    expect(statuses.at(-1)).toBe('ready');
+    expect(restoreMetrics).toEqual({
+      busy: 'false',
+      hasWindowContent: true,
+      scrollHeight: 2000,
+      snapshotRatio: 600 / 900
+    });
+    expect(current.canvas.scrollTop).toBeCloseTo((600 / 900) * 1900);
+  });
+
+  it('discards pending scroll restoration after empty, error, and failed requests', async () => {
+    const restore = vi.fn<PreviewScrollPort['restore']>();
+    const current = setup({
+      enhance: vi.fn().mockRejectedValue(new Error('enhancement failed')),
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore
+      }
+    });
+
+    act(() => current.session.schedule(request(''), true));
+    expect(restore).not.toHaveBeenCalled();
+
+    act(() => current.session.schedule(request('# Request error'), true));
+    await act(async () => {
+      current.responses[0]?.reject(new Error('private response detail'));
+      await Promise.resolve();
+    });
+    expect(current.surface.textContent).toBe(messages.error);
+    expect(restore).not.toHaveBeenCalled();
+
+    act(() => current.session.schedule(request('# Enhancement error'), true));
+    await act(async () => {
+      current.responses[1]?.resolve({
+        html: safeHtml('<p>Enhancement failure</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('ignores superseded enhancement completion and does not restore after teardown', async () => {
+    const firstEnhancement = deferred<void>();
+    const secondEnhancement = deferred<void>();
+    const enhance = vi
+      .fn<PreviewEnhancementPort['enhance']>()
+      .mockImplementationOnce(() => firstEnhancement.promise)
+      .mockImplementationOnce(() => secondEnhancement.promise);
+    const restore = vi.fn<PreviewScrollPort['restore']>();
+    const current = setup({
+      enhance,
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore
+      }
+    });
+
+    act(() => current.session.schedule(request('# First', 'first-scroll'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>First</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledTimes(1);
+
+    act(() => current.session.schedule(request('# Second', 'second-scroll'), true));
+    await act(async () => {
+      current.responses[1]?.resolve({ html: safeHtml('<p>Second</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledTimes(2);
+    expect(restore).not.toHaveBeenCalled();
+
+    await act(async () => {
+      secondEnhancement.resolve();
+      await secondEnhancement.promise;
+    });
+    expect(current.surface.textContent).toBe('Second');
+    expect(restore).toHaveBeenCalledOnce();
+
+    current.unmount();
+    await act(async () => {
+      firstEnhancement.resolve();
+      await firstEnhancement.promise;
+    });
+    expect(restore).toHaveBeenCalledOnce();
+
+    const lateEnhancement = deferred<void>();
+    const lateRestore = vi.fn<PreviewScrollPort['restore']>();
+    const lateEnhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      () => lateEnhancement.promise
+    );
+    const lateOwner = setup({
+      enhance: lateEnhance,
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore: lateRestore
+      }
+    });
+    act(() => lateOwner.session.schedule(request('# Late owner'), true));
+    await act(async () => {
+      lateOwner.responses[0]?.resolve({ html: safeHtml('<p>Late</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(lateEnhance).toHaveBeenCalledOnce();
+    lateOwner.unmount();
+    await act(async () => {
+      lateEnhancement.resolve();
+      await lateEnhancement.promise;
+    });
+    expect(lateRestore).not.toHaveBeenCalled();
+  });
+
   it('keeps sanitized HTML but marks the surface unavailable when enhancement fails', async () => {
     const current = setup({
       enhance: vi.fn().mockRejectedValue(new Error('enhancement failed')),

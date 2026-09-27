@@ -173,6 +173,22 @@ export function isVisualPreviewWindowRequestCurrent(
   );
 }
 
+export function focusVisualPreviewRuntime(
+  runtime: ImmersiveVisualEditorRuntime | null,
+  activeElement: () => HTMLElement | null,
+  onFailure: (code: string) => void
+): boolean {
+  const surface = runtime?.surface;
+  if (!surface?.isConnected || !surface.isContentEditable) {
+    onFailure('visual-editor-focus-surface-unavailable');
+    return false;
+  }
+  surface.focus({ preventScroll: true });
+  if (activeElement() === surface) return true;
+  onFailure('visual-editor-focus-surface-failed');
+  return false;
+}
+
 export type EditorRootProps = Readonly<{
   appearance: AppearanceBootstrap;
   appearancePort: AppearancePort;
@@ -964,16 +980,12 @@ export function EditorRoot(props: EditorRootProps) {
     [cancelScheduledWechatPreparation]
   );
   const focusVisualPreview = useCallback(() => {
-    const surface = visualEditorSurface;
-    if (!surface?.isConnected || !surface.isContentEditable) {
-      props.onFailure('visual-editor-focus-surface-unavailable');
-      return false;
-    }
-    surface.focus({ preventScroll: true });
-    if (props.immersiveEnvironment.activeElement() === surface) return true;
-    props.onFailure('visual-editor-focus-surface-failed');
-    return false;
-  }, [props.immersiveEnvironment, props.onFailure, visualEditorSurface]);
+    return focusVisualPreviewRuntime(
+      visualEditorRuntimeRef.current,
+      props.immersiveEnvironment.activeElement,
+      props.onFailure
+    );
+  }, [props.immersiveEnvironment, props.onFailure]);
   const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
@@ -2217,7 +2229,10 @@ export function EditorRoot(props: EditorRootProps) {
               ? immersivePreferences.preferences
               : null
           }
-          visualPreviewEditable={visualPreviewEditing}
+          visualPreviewEditable={
+            visualPreviewEditing
+            && Boolean(visualEditorRuntimeRef.current?.surface.isConnected)
+          }
           focusVisualPreview={focusVisualPreview}
           mode={immersiveMode}
           direction={props.layout.direction}

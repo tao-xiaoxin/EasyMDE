@@ -104,8 +104,9 @@ export function ImmersivePreviewSurface({
                   : strings.previewUnlockEdit
               }
               aria-busy={unlocking ? 'true' : undefined}
+              aria-disabled={!editable && unlocking ? 'true' : undefined}
               aria-pressed={!editable}
-              disabled={!editable && (!canEdit || unlocking)}
+              disabled={!editable && !canEdit}
               title={
                 editable
                   ? strings.previewLockReadOnly
@@ -114,7 +115,10 @@ export function ImmersivePreviewSurface({
               onMouseDown={(event) => {
                 if (editable) event.preventDefault();
               }}
-              onClick={onToggleEditable}
+              onClick={() => {
+                if (!editable && unlocking) return;
+                onToggleEditable();
+              }}
             >
               {unlocking ? (
                 <span

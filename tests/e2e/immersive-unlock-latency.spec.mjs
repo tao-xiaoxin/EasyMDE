@@ -73,22 +73,27 @@ async function fillMarkdownAndWaitForPreview(page, markdown, paragraphCount) {
   return preview;
 }
 
-async function enterImmersivePreview(page) {
+async function enterImmersivePreview(page, { compact = false } = {}) {
   const labels = await page.evaluate(() => {
     const strings = window.EasyMDEEditorRootBootstrap?.strings?.immersive;
     if (!strings) throw new Error('immersive-strings-unavailable');
     return {
       enter: strings.enter,
       preview: strings.preview,
+      previewMode: strings.previewMode,
       previewContentLoaded: strings.previewContentLoaded,
       previewEditorLabel: strings.previewEditorLabel,
       previewLockReadOnly: strings.previewLockReadOnly,
       previewUnlockEdit: strings.previewUnlockEdit,
+      showOutline: strings.showOutline,
       splitMode: strings.splitMode
     };
   });
   await page.getByRole('button', { name: labels.enter }).click();
-  await page.getByRole('button', { name: labels.preview, exact: true }).click();
+  await page.getByRole('button', {
+    name: compact ? labels.previewMode : labels.preview,
+    exact: true
+  }).click();
   await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
   await expect(page.getByRole('button', { name: labels.previewUnlockEdit })).toBeEnabled();
   return labels;
@@ -149,7 +154,7 @@ async function beginUnlockTiming(page, button, editorLabel) {
         const style = spinner ? getComputedStyle(spinner) : null;
         if (target.isConnected
           && target.getAttribute('aria-busy') === 'true'
-          && target.disabled
+          && target.getAttribute('aria-disabled') === 'true'
           && bounds?.width > 0
           && bounds.height > 0
           && style?.visibility !== 'hidden'
@@ -360,7 +365,9 @@ test('cold short unlock reports pending before editable and ignores a physical d
     bounds.y + bounds.height / 2
   );
   await expect(unlock).toHaveAttribute('aria-busy', 'true');
-  await expect(unlock).toBeDisabled();
+  await expect(unlock).toHaveAttribute('aria-disabled', 'true');
+  await expect(unlock).not.toHaveAttribute('disabled');
+  await expect(unlock).toBeFocused();
   await expect(unlock).toHaveClass(/is-unlocking/u);
   await expect(unlock.locator('.easymde-immersive-preview-unlock-spinner')).toBeVisible();
   await expect(unlock).toHaveAccessibleName(labels.previewUnlockEdit);
@@ -384,7 +391,7 @@ test('cold short unlock reports pending before editable and ignores a physical d
   expect(sample.clickToPendingMutationMs).toBeLessThanOrEqual(100);
   expect(sample.clickToPendingFrameMs).not.toBeNull();
   expect(sample.clickToPendingFrameMs).toBeLessThanOrEqual(100);
-  expect(sample.trustedClickCount).toBe(1);
+  expect(sample.trustedClickCount).toBe(2);
   expect(Math.abs(sample.scrollAnchorDelta.scrollTop)).toBeLessThanOrEqual(1);
   expectNoDocumentWrites([sample]);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
@@ -500,7 +507,9 @@ test('cancels a pending cold unlock when immersive mode changes', async ({ page 
     requestMonitor.start();
     await unlock.click();
     await expect(unlock).toHaveAttribute('aria-busy', 'true');
-    await expect(unlock).toBeDisabled();
+    await expect(unlock).toHaveAttribute('aria-disabled', 'true');
+    await expect(unlock).not.toHaveAttribute('disabled');
+    await expect(unlock).toBeFocused();
     const pendingFrameMs = await waitForPendingFrame(page);
     expect(pendingFrameMs).toBeLessThanOrEqual(100);
     await page.getByRole('button', { name: labels.splitMode }).click();
@@ -540,4 +549,101 @@ test('cancels a pending cold unlock when immersive mode changes', async ({ page 
     await cdp.send('Network.setCacheDisabled', { cacheDisabled: false });
     await cdp.detach();
   }
+});
+
+for (const activationKey of ['Enter', 'Space']) {
+  test(`keeps keyboard ${activationKey} unlock focused and ignores repeated keys`, async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const markdown = Array.from(
+      { length: 8 },
+      (_, index) => `Synthetic keyboard unlock paragraph ${index + 1}.`
+    ).join('\n\n');
+    await fillMarkdownAndWaitForPreview(page, markdown, 8);
+    const labels = await enterImmersivePreview(page);
+    const requestMonitor = createPostRequestMonitor(page);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+
+    try {
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+      await cdp.send('Network.emulateNetworkConditions', {
+        offline: false,
+        latency: 1000,
+        downloadThroughput: 200 * 1024,
+        uploadThroughput: 750 * 1024 / 8,
+        connectionType: 'cellular3g'
+      });
+
+      const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
+      await unlock.focus();
+      await beginUnlockTiming(page, unlock, labels.previewEditorLabel);
+      requestMonitor.start();
+      await page.keyboard.press(activationKey);
+      await expect(unlock).toHaveAttribute('aria-busy', 'true');
+      await expect(unlock).toHaveAttribute('aria-disabled', 'true');
+      await expect(unlock).not.toHaveAttribute('disabled');
+      await expect(unlock).toBeFocused();
+      await waitForPendingFrame(page);
+      await page.keyboard.press(activationKey);
+      await page.keyboard.press('Enter' === activationKey ? 'Space' : 'Enter');
+      await expect(unlock).toHaveAttribute('aria-busy', 'true');
+      await expect(unlock).toBeFocused();
+      const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
+      await expect(editor)
+        .toHaveAttribute('contenteditable', 'true', { timeout: 60_000 });
+      await expect(editor).toBeFocused();
+      const requests = requestMonitor.stop();
+      await stopUnlockTiming(page);
+
+      expectNoDocumentWrites([requests]);
+      await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+    } finally {
+      await cdp.send('Network.emulateNetworkConditions', {
+        offline: false,
+        latency: 0,
+        downloadThroughput: -1,
+        uploadThroughput: -1,
+        connectionType: 'none'
+      });
+      await cdp.send('Network.setCacheDisabled', { cacheDisabled: false });
+      await cdp.detach();
+    }
+  });
+}
+
+test('closes the ready compact Outline at 390px and on a 760px to 390px resize', async ({ page }) => {
+  await login(page);
+  await openNewPost(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const markdown = [
+    '# Synthetic heading',
+    ...Array.from({ length: 8 }, (_, index) => `Synthetic compact paragraph ${index + 1}.`)
+  ].join('\n\n');
+  await fillMarkdownAndWaitForPreview(page, markdown, 8);
+  const labels = await enterImmersivePreview(page, { compact: true });
+  const outline = page.locator('.easymde-immersive-outline');
+  await expect(outline).toBeVisible();
+  await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+  await expect(page.getByRole('textbox', { name: labels.previewEditorLabel }))
+    .toHaveAttribute('contenteditable', 'true', { timeout: 60_000 });
+  await expect(outline).toHaveCount(0);
+
+  await lockPreview(page, labels);
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.getByRole('button', { name: labels.showOutline }).click();
+  await expect(outline).toBeVisible();
+  await page.getByRole('button', { name: labels.previewUnlockEdit }).click();
+  const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
+  await expect(editor).toHaveAttribute('contenteditable', 'true', { timeout: 60_000 });
+  await expect(outline).toBeVisible();
+  const outlineHeading = page.getByRole('button', {
+    name: 'Synthetic heading',
+    exact: true
+  });
+  await outlineHeading.focus();
+  await expect(outlineHeading).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(outline).toHaveCount(0);
+  await expect(editor).toBeFocused();
 });

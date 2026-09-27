@@ -129,6 +129,11 @@ type MutablePreviewWindowCommit = {
   revision: number;
 };
 
+type PendingPreviewScrollRestore = Readonly<{
+  generation: number;
+  snapshot: PreviewScrollSnapshot;
+}>;
+
 export type PreviewSurfaceRuntime = Readonly<{
   materialize: () => Promise<boolean>;
   prepareWindowBlockAdoption: (
@@ -513,7 +518,7 @@ function annotateEnhancedVisualSources(
 
 export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
-  const scrollSnapshotRef = useRef<PreviewScrollSnapshot | null>(null);
+  const scrollSnapshotRef = useRef<PendingPreviewScrollRestore | null>(null);
   const generationRef = useRef(0);
   const enhancementCandidateRef =
     useRef<PreviewEnhancementCandidate | null>(null);
@@ -621,6 +626,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     };
     const fail = (error: unknown) => {
       if (!ownerActiveRef.current || generationRef.current !== revision) return;
+      if (scrollSnapshotRef.current?.generation === revision) {
+        scrollSnapshotRef.current = null;
+      }
       props.onDiagnostic?.(previewFailureCode(error));
       previewWindowRepositoryRef.current = null;
       setState((current) =>
@@ -955,17 +963,24 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     pending.resolve(false);
   }, [state]);
 
-  function captureScroll(): void {
+  function captureScroll(generation: number): void {
     if (surfaceRef.current) {
-      scrollSnapshotRef.current = props.scrollPort.capture(
-        previewScrollCanvas(surfaceRef.current)
-      );
+      scrollSnapshotRef.current = {
+        generation,
+        snapshot: props.scrollPort.capture(
+          previewScrollCanvas(surfaceRef.current)
+        )
+      };
     }
   }
 
   function publishRequestState(requestState: PreviewRequestState): void {
     const generation = ++generationRef.current;
-    captureScroll();
+    if ('loading' === requestState.kind || 'success' === requestState.kind) {
+      captureScroll(generation);
+    } else {
+      scrollSnapshotRef.current = null;
+    }
     discardPendingWork();
 
     if ('loading' === requestState.kind) {
@@ -1049,6 +1064,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     };
     const failCandidate = (error: unknown) => {
       if (!ownerActiveRef.current || generationRef.current !== generation) return;
+      if (scrollSnapshotRef.current?.generation === generation) {
+        scrollSnapshotRef.current = null;
+      }
       props.onDiagnostic?.(previewFailureCode(error));
       setState((current) => {
         const previousHtml = 'html' === current.kind ? current : null;
@@ -1166,6 +1184,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     }
     return () => {
       ownerActiveRef.current = false;
+      scrollSnapshotRef.current = null;
       discardStaging();
       props.onDispose?.(runtime);
       session.destroy();
@@ -1245,9 +1264,20 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     const snapshot = scrollSnapshotRef.current;
-    if (surface && snapshot) {
+    if (
+      surface
+      && snapshot
+      && 'html' === state.kind
+      && 'ready' === state.phase
+      && state.generation === snapshot.generation
+      && state.htmlRevision === snapshot.generation
+      && acceptedHtmlRevisionRef.current === state.htmlRevision
+    ) {
       scrollSnapshotRef.current = null;
-      props.scrollPort.restore(previewScrollCanvas(surface), snapshot);
+      props.scrollPort.restore(
+        previewScrollCanvas(surface),
+        snapshot.snapshot
+      );
     }
   }, [state]);
 
@@ -1296,6 +1326,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
     const failEnhancement = (error: unknown) => {
       if (!isCurrent()) return;
+      if (scrollSnapshotRef.current?.generation === generation) {
+        scrollSnapshotRef.current = null;
+      }
       removeVisualMarkdownSourceMarkers(visualSources);
       removePreviewBlockMarkers(blockMarkers);
       candidateSurface.remove();
@@ -1445,6 +1478,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             nodes: Array.from(candidateSurface.childNodes),
             revision: generation
           };
+        }
+        if (scrollSnapshotRef.current?.generation === generation) {
+          captureScroll(generation);
         }
         enhancementCandidateRef.current = null;
         committedEnhancementCandidateRef.current = activeCandidate;

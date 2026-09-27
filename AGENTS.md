@@ -520,6 +520,9 @@ follows the Skill's isolation and privacy rules. For the direct React cutover,
 use the EasyMDE Skill's browser owner inventory and removal evidence; do not
 introduce runtime handoff, fallback, or dual-owner architecture.
 
+Headless browser setup and locale font availability follow
+[Development](docs/DEVELOPMENT.md#headless-browser-fonts).
+
 Use live, scope-relevant commands only. Detailed current commands and release
 execution belong to `docs/TESTING_AND_RELEASE.md`; browser test selection and
 pre-delivery checks belong to the EasyMDE Skill; contribution validation and

@@ -11,6 +11,20 @@ This document covers local contributor setup. For release gates and packaging, s
 - GNU gettext tools for i18n commands.
 - ZIP tooling for release package validation.
 
+## Headless Browser Fonts
+
+The browser host needs a CJK system font when validating `zh_CN` text and
+layout. Verify that `fc-list :lang=zh family` returns a Chinese-capable family
+before taking screenshots. On Debian or Ubuntu, install it with:
+
+```bash
+apt-get install --no-install-recommends fonts-noto-cjk
+```
+
+Start a fresh browser process after installation so its font cache sees the
+new family. Check readable Chinese text, wrapping and control dimensions in
+the rendered page before accepting visual evidence.
+
 ## Composer
 
 Install PHP dependencies:

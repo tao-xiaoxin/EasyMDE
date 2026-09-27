@@ -259,6 +259,10 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Preview scroll snapshots belong to their request generation. The existing
+ratio-based restoration runs after that generation's accepted DOM commit reaches
+ready; loading and enhancement do not consume it. Failure, supersession, and
+teardown discard the snapshot.
 Large candidate population and visual block marker passes yield when measured
 work reaches an eight-millisecond slice budget, checking cancellation and the
 current Preview owner after each yield. A large final handoff retains one paint
@@ -285,10 +289,63 @@ block to one Markdown source body interval. That interval owns blank-line and
 line-ending semantics for both ordinary and windowed immersive editing;
 browser-created code DOM nodes are reconciled to the source interval without
 using their child count as a Markdown line index. The document session remains
-the canonical value and history owner. Mapped code-body edits retain paired
+the canonical value and history owner. Non-windowed mapped code-body edits retain paired
 visual snapshots keyed to canonical Markdown, so Undo/Redo uses CodeMirror's
 actual history target to restore the code DOM and caret after browser-created
-formatting or a scripted terminal newline is normalized.
+formatting or a scripted terminal newline is normalized. Restoring an empty
+code block rehydrates its placeholder text node before restoring the saved
+caret path; a failed caret restore rolls the canonical history change back.
+Mapped code Enter handles both `insertParagraph` and `insertLineBreak` in the
+existing code node before Chromium can split it into multiple `code` children.
+The projection accepts exactly one omitted terminal LF in editable code DOM;
+Markdown retains the delimiter line ending. Composition flushes pending exact
+input before it starts, and a rejected code-map composition remains rejected
+through its end. Successful exact code edits retain per-`pre` recovery snapshots
+so failure recovery restores DOM consistent with canonical Markdown without
+serializing the complete document on each keystroke.
+Native neutral code spans are accepted only when each has no attributes and
+exactly one direct Text child. Projection reads this shape without mutation;
+reconciliation unwraps it using the same Text node and preserves Selection.
+Other unsupported markup remains an explicit failure.
+The source reframe path and serializer share outer-fence length selection, so a
+literal complete fence run in the body remains content by widening the outer
+delimiter. The source interval, DOM fence family, caret, and history snapshot
+advance together. Both visual owners restore their accepted DOM or window
+region after rejected noncancelable composition, without writing that mutation
+to Markdown. Windowed code Enter reconciles Chromium's split code nodes through
+the captured body intent; Enter and a following character retain the canonical
+owner's separate history transactions.
+An unclosed fenced block is mappable only when its accepted editable Preview
+range and source interval both reach EOF. Pasting a bare opener preserves its
+bytes; the first body edit supplies a missing line ending without adding a
+closing fence. Literal fence content widens the opener while preserving that
+open state.
+Canonical and visual opener prefixes are computed independently: an accepted
+paste may retain a bare opener while the mounted visual snapshot already has
+its line ending. Each caret offset includes only its own inserted prefix.
+Before a native windowed edit or IME composition changes the DOM, its visible
+selection is synchronized through a same-value canonical update. Code
+selections use the accepted code-body source projection. This gives Undo the
+actual pre-edit caret without adding a document change. Nonempty code edits also validate the
+accepted PRE identity; a stale replacement is rejected and restored before
+source publication.
+Windowed visual document edits opt in to recording their post-edit selection
+through CodeMirror's selection history. This adds no document Undo step and
+keeps Undo/Redo selection with the canonical history owner. After the matching
+Preview is ready, the bounded mounted region receives that source selection;
+absolute offsets are converted once, with explicit adjacent-block and EOF
+ownership. Generic source-to-DOM lookup returns a node and offset without
+mutating Selection on detached clones.
+The accepted Preview source and ordered block IDs own mapped code ordinals.
+A fence created locally by a visual shortcut or toolbar command carries
+runtime-only provenance for its exact `pre` node and canonical body interval
+until a new Preview is accepted. A mapped `pre` missing its accepted identity,
+reordered mapped blocks, or changed fence topology invalidates the old mapping;
+code-body input then fails explicitly before it can write another block. Generic edits may
+change fence topology but cannot reuse the old Preview mapping afterward.
+An older mapped code block may retain its original ordinal when verified local
+code blocks were added strictly after it; moved identities and unverified
+topology changes still fail explicitly.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
@@ -431,6 +488,10 @@ layout while Preview is already editable, closes that overlay once as local
 presentation state. Pending or failed unlocks do not close it; a manual reopen
 at the same width remains open. These changes never write the Outline
 preference.
+The transition waits for the current visual-editor runtime surface to be
+connected before moving focus or closing the Outline. While unlocking, the
+control remains focusable and reports `aria-busy` and `aria-disabled`; only a
+capability-unavailable control uses native `disabled`.
 Changing the immersive mode is session-only: it survives exiting and re-entering
 immersive writing while that Root remains mounted, but a normal or hard refresh
 creates a new Root and restores the Settings Center mode. Legacy stored

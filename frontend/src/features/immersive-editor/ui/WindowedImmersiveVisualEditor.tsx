@@ -47,6 +47,7 @@ type Props = ImmersiveVisualEditorProps & Readonly<{
     node: HTMLElement
   ) => (() => boolean) | null;
   requestPreviewAtDocumentEnd: (markdown: string) => Readonly<{
+    onSelectionRestored?: () => void;
     release: () => void;
     signature: string;
   }>;
@@ -138,6 +139,7 @@ type ActiveRegion = Readonly<{
 type PendingHistorySelection = Readonly<{
   historyState: DocumentHistoryState;
   markdown: string;
+  onDocumentEndSelectionRestored: (() => void) | null;
   releaseDocumentEndPin: (() => void) | null;
   restoreFocus: boolean;
   selection: DocumentSelection;
@@ -1551,6 +1553,9 @@ export function WindowedImmersiveVisualEditor({
               throw new Error('visual-editor-window-history-selection-restore-failed');
             }
           }
+          if (restored) {
+            pendingHistorySelection.onDocumentEndSelectionRestored?.();
+          }
         }
       } catch (error) {
         onFailure(
@@ -1930,6 +1935,7 @@ export function WindowedImmersiveVisualEditor({
       releasePendingHistorySelection(pendingHistorySelectionRef);
       onPendingChange(true);
       let releaseDocumentEndPin: (() => void) | null = null;
+      let onDocumentEndSelectionRestored: (() => void) | null = null;
       try {
         const shouldPinDocumentEnd = Boolean(
           historySelection?.restoreFocus
@@ -1941,6 +1947,8 @@ export function WindowedImmersiveVisualEditor({
         if (shouldPinDocumentEnd) {
           const previewRequest = requestPreviewAtDocumentEnd(markdown);
           signature = previewRequest.signature;
+          onDocumentEndSelectionRestored =
+            previewRequest.onSelectionRestored ?? null;
           releaseDocumentEndPin = previewRequest.release;
         } else {
           signature = requestPreview(markdown);
@@ -1950,6 +1958,7 @@ export function WindowedImmersiveVisualEditor({
           pendingHistorySelectionRef.current = {
             markdown,
             historyState: historySelection.historyState,
+            onDocumentEndSelectionRestored,
             releaseDocumentEndPin,
             restoreFocus: historySelection.restoreFocus,
             selection: historySelection.selection,

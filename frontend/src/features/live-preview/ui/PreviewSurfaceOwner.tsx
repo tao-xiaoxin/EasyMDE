@@ -1590,7 +1590,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         const largeWindow = windowedRef.current
           && previewNeedsWindow(activeCandidate.editMap);
         const preparedDocumentEndPin = documentEndPinRef.current;
-        const matchingDocumentEndPin = preparedDocumentEndPin
+        let matchingDocumentEndPin = preparedDocumentEndPin
           && preparedDocumentEndPin.generation === generation
           && preparedDocumentEndPin.requestRevision
             === activeCandidate.requestRevision
@@ -1606,9 +1606,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
           );
         }
         if (matchingDocumentEndPin && !largeWindow) {
-          throw new PreviewWindowDomError(
-            'preview-window-document-end-pin-window-unavailable'
-          );
+          clearDocumentEndPin(matchingDocumentEndPin, false);
+          matchingDocumentEndPin = null;
         }
         const enhancedHtml = largeWindow
           ? activeCandidate.serverHtml

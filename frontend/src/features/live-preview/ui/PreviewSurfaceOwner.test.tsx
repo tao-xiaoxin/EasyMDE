@@ -1195,6 +1195,51 @@ describe('PreviewSurfaceOwner', () => {
     replaceChildren.mockRestore();
   });
 
+  it.each([8, 160] as const)(
+    'releases a matching document-end pin when the accepted Preview has %i blocks',
+    async (blockCount) => {
+      const signature = `history-document-end-small-${blockCount}`;
+      const fixture = documentEndFixture(blockCount, signature, '\n\n');
+      const current = setup({
+        contentEditable: true,
+        initialHtml: '<p>Initial preview</p>',
+        stagingScheduler: { yield: () => Promise.resolve() },
+        windowed: true
+      });
+      await act(async () => flushAnimationFrames());
+
+      const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+      act(() => {
+        current.session.schedule(request(fixture.markdown, signature), true);
+      });
+      await act(async () => {
+        current.responses[0]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+
+      expect(current.surface.getAttribute('aria-busy')).toBe('false');
+      expect(current.surface.getAttribute('contenteditable')).toBe('true');
+      expect(current.surface.easymdePreviewSignature).toBe(signature);
+      expect(current.surface.querySelectorAll(
+        '[data-easymde-visual-block-id]'
+      )).toHaveLength(blockCount);
+      expect(current.surface.querySelector(
+        '[data-easymde-preview-window-spacer]'
+      )).toBeNull();
+      expect(current.onDiagnostic).not.toHaveBeenCalled();
+
+      lease.release();
+      lease.release();
+      const nextLease = current.runtime.prepareDocumentEndWindowPin('next');
+      nextLease.release();
+    }
+  );
+
   it('pins the final block when the document ends with a CRLF-only suffix', async () => {
     const signature = 'history-document-end-crlf';
     const fixture = documentEndFixture(220, signature, '\r\n\r\n');

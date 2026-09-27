@@ -454,16 +454,78 @@ function previewRequest(
 
 export function schedulePreviewWithDocumentEndPin(
   runtime: Pick<PreviewSurfaceRuntime, 'prepareDocumentEndWindowPin' | 'session'>,
-  request: PreviewRequest
-): Readonly<{ release: () => void; signature: string }> {
-  const lease = runtime.prepareDocumentEndWindowPin(request.signature);
+  request: PreviewRequest,
+  onHistoryPendingChange?: (pending: boolean) => void,
+  onHistorySelectionRestored?: () => void
+): Readonly<{
+  onSelectionRestored: () => void;
+  release: () => void;
+  signature: string;
+}> {
+  onHistoryPendingChange?.(true);
+  let lease: ReturnType<PreviewSurfaceRuntime['prepareDocumentEndWindowPin']> | null = null;
   try {
+    lease = runtime.prepareDocumentEndWindowPin(request.signature);
     runtime.session.schedule(request, true);
   } catch (error) {
-    lease.release();
+    try {
+      lease?.release();
+    } finally {
+      onHistoryPendingChange?.(false);
+    }
     throw error;
   }
-  return { release: lease.release, signature: request.signature };
+  if (!lease) throw new Error('preview-document-end-pin-not-prepared');
+  let released = false;
+  let selectionRestored = false;
+  return {
+    onSelectionRestored: () => {
+      if (released || selectionRestored) return;
+      selectionRestored = true;
+      onHistorySelectionRestored?.();
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      try {
+        lease?.release();
+      } finally {
+        onHistoryPendingChange?.(false);
+      }
+    },
+    signature: request.signature
+  };
+}
+
+export function visualPreviewUsesWindowedOwner(
+  needsWindow: boolean,
+  historyOwnerPending: boolean,
+  editing: boolean,
+  requested: boolean
+): boolean {
+  return (needsWindow || historyOwnerPending) && (editing || requested);
+}
+
+export function visualPreviewSurfaceUsesWindowedOwner(
+  needsWindow: boolean,
+  historyOwnerPending: boolean,
+  previewPending: boolean,
+  editing: boolean,
+  requested: boolean
+): boolean {
+  return (needsWindow || historyOwnerPending || previewPending)
+    && (editing || requested);
+}
+
+export function scheduleVisualWindowedHistoryBranchRelease(
+  isDocumentEndHistoryPending: () => boolean,
+  hasRedo: () => boolean,
+  release: () => void,
+  enqueue: (callback: () => void) => void = queueMicrotask
+): void {
+  enqueue(() => {
+    if (!isDocumentEndHistoryPending() && !hasRedo()) release();
+  });
 }
 
 function previewScrollCanvas(surface: HTMLElement): HTMLElement {
@@ -610,6 +672,12 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewLockingRef = useRef(false);
   const [visualPreviewUnlocking, setVisualPreviewUnlocking] = useState(false);
   const [visualPreviewPending, setVisualPreviewPending] = useState(false);
+  const [visualDocumentEndHistoryPending, setVisualDocumentEndHistoryPending] =
+    useState(false);
+  const visualDocumentEndHistoryPendingRef = useRef(false);
+  visualDocumentEndHistoryPendingRef.current = visualDocumentEndHistoryPending;
+  const [visualWindowedHistoryBranchHeld, setVisualWindowedHistoryBranchHeld] =
+    useState(false);
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
@@ -663,12 +731,19 @@ export function EditorRoot(props: EditorRootProps) {
   const visualPreviewNeedsWindow =
     (visualPreviewSnapshot?.editMap?.blocks.length ?? 0)
       > DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED;
-  const visualPreviewWindowed = visualPreviewNeedsWindow
-    && (visualPreviewEditing || visualPreviewWindowRequested);
-  const visualPreviewSurfaceWindowed = (
-    visualPreviewNeedsWindow
-    || visualPreviewPending
-  ) && (visualPreviewEditing || visualPreviewWindowRequested);
+  const visualPreviewWindowed = visualPreviewUsesWindowedOwner(
+    visualPreviewNeedsWindow,
+    visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
+    visualPreviewEditing,
+    visualPreviewWindowRequested
+  );
+  const visualPreviewSurfaceWindowed = visualPreviewSurfaceUsesWindowedOwner(
+    visualPreviewNeedsWindow,
+    visualDocumentEndHistoryPending || visualWindowedHistoryBranchHeld,
+    visualPreviewPending,
+    visualPreviewEditing,
+    visualPreviewWindowRequested
+  );
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
       props.onFailure(immersivePreferences.code);
@@ -922,6 +997,11 @@ export function EditorRoot(props: EditorRootProps) {
   }, []);
   const handlePreviewDispose = useCallback((runtime: PreviewSurfaceRuntime) => {
     cancelVisualPreviewWindowUnlock();
+    if (rootActiveRef.current) {
+      visualDocumentEndHistoryPendingRef.current = false;
+      setVisualDocumentEndHistoryPending(false);
+      setVisualWindowedHistoryBranchHeld(false);
+    }
     if (previewRuntimeRef.current === runtime) {
       previewRuntimeRef.current = null;
       setPreviewRuntimeGeneration((generation) => generation + 1);
@@ -1040,6 +1120,19 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const handleVisualMarkdownChange = useCallback(
     () => {
+      if (
+        rootActiveRef.current
+        && !visualDocumentEndHistoryPendingRef.current
+        && documentSession?.document.getHistoryState().redoDepth === 0
+      ) {
+        scheduleVisualWindowedHistoryBranchRelease(
+          () => visualDocumentEndHistoryPendingRef.current,
+          () => (documentSession?.document.getHistoryState().redoDepth ?? 0) > 0,
+          () => {
+            if (rootActiveRef.current) setVisualWindowedHistoryBranchHeld(false);
+          }
+        );
+      }
       const surface = previewRuntimeRef.current?.surface;
       if (surface) {
         const codeFrames = Array.from(
@@ -1060,11 +1153,19 @@ export function EditorRoot(props: EditorRootProps) {
       }
       setVisualPreviewChanged(true);
     },
-    [props.enhancementPort, props.onFailure]
+    [documentSession, props.enhancementPort, props.onFailure]
   );
   const handleVisualPendingChange = useCallback((pending: boolean) => {
-    if (rootActiveRef.current) setVisualPreviewPending(pending);
-  }, []);
+    if (!rootActiveRef.current) return;
+    setVisualPreviewPending(pending);
+    if (
+      !pending
+      && !visualDocumentEndHistoryPendingRef.current
+      && documentSession?.document.getHistoryState().redoDepth === 0
+    ) {
+      setVisualWindowedHistoryBranchHeld(false);
+    }
+  }, [documentSession]);
   const handleVisualPreviewRequest = useCallback(
     (markdown: string) => schedulePreviewMarkdown(markdown, true),
     [schedulePreviewMarkdown]
@@ -1075,6 +1176,9 @@ export function EditorRoot(props: EditorRootProps) {
       if (!runtime) {
         throw new Error('preview-runtime-unavailable');
       }
+      if (!documentSession) {
+        throw new Error('editor-document-session-unavailable');
+      }
       const revision = ++previewRevisionRef.current;
       const request = previewRequest(
         markdown,
@@ -1082,9 +1186,25 @@ export function EditorRoot(props: EditorRootProps) {
         previewAppearanceRef.current,
         revision
       );
-      return schedulePreviewWithDocumentEndPin(runtime, request);
+      return schedulePreviewWithDocumentEndPin(
+        runtime,
+        request,
+        (pending) => {
+          if (rootActiveRef.current) {
+            visualDocumentEndHistoryPendingRef.current = pending;
+            setVisualDocumentEndHistoryPending(pending);
+          }
+        },
+        () => {
+          if (rootActiveRef.current) {
+            setVisualWindowedHistoryBranchHeld(
+              documentSession.document.getHistoryState().redoDepth > 0
+            );
+          }
+        }
+      );
     },
-    [props.preview]
+    [documentSession, props.preview]
   );
   const leaveVisualPreview = useCallback(() => {
     if (
@@ -1097,6 +1217,9 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualPreviewEditing(false);
     setVisualPreviewUnlocking(false);
     setVisualPreviewPending(false);
+    visualDocumentEndHistoryPendingRef.current = false;
+    setVisualDocumentEndHistoryPending(false);
+    setVisualWindowedHistoryBranchHeld(false);
     setVisualPreviewChanged(false);
     previewRefreshPendingRef.current = true;
     setPreviewRefreshRevision((revision) => revision + 1);

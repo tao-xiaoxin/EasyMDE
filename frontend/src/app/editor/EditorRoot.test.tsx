@@ -34,6 +34,9 @@ import {
   EditorRoot,
   isVisualPreviewWindowRequestCurrent,
   schedulePreviewWithDocumentEndPin,
+  scheduleVisualWindowedHistoryBranchRelease,
+  visualPreviewUsesWindowedOwner,
+  visualPreviewSurfaceUsesWindowedOwner,
   type EditorRootProps
 } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -675,6 +678,78 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
+  it.each([
+    [true, false, true, false, true],
+    [true, false, false, true, true],
+    [false, true, true, false, true],
+    [false, true, false, true, true],
+    [false, false, true, false, false],
+    [false, false, false, true, false],
+    [false, false, false, false, false]
+  ])(
+    'selects the correct visual owner for needsWindow=%s historyPending=%s editing=%s requested=%s',
+    (needsWindow, historyPending, editing, requested, expected) => {
+      expect(visualPreviewUsesWindowedOwner(
+        needsWindow,
+        historyPending,
+        editing,
+        requested
+      )).toBe(expected);
+    }
+  );
+
+  it.each([
+    [false, true, false, true, false, true],
+    [false, false, true, true, false, true],
+    [false, false, false, true, false, false],
+    [false, true, false, false, false, false],
+    [true, false, false, false, true, true]
+  ])(
+    'keeps the Preview surface Windowed for history and ordinary pending owners',
+    (needsWindow, historyOwnerPending, previewPending, editing, requested, expected) => {
+      expect(visualPreviewSurfaceUsesWindowedOwner(
+        needsWindow,
+        historyOwnerPending,
+        previewPending,
+        editing,
+        requested
+      )).toBe(expected);
+    }
+  );
+
+  it('keeps the Windowed history branch when a same-turn document-end lease is acquired', () => {
+    let documentEndHistoryPending = false;
+    let redoDepth = 0;
+    const queued: Array<() => void> = [];
+    const release = vi.fn();
+    const enqueue = (callback: () => void) => queued.push(callback);
+    const scheduleRelease = () => scheduleVisualWindowedHistoryBranchRelease(
+      () => documentEndHistoryPending,
+      () => redoDepth > 0,
+      release,
+      enqueue
+    );
+
+    scheduleRelease();
+    expect(release).not.toHaveBeenCalled();
+    documentEndHistoryPending = true;
+    queued.shift()?.();
+    expect(release).not.toHaveBeenCalled();
+    expect(visualPreviewUsesWindowedOwner(false, documentEndHistoryPending, true, false))
+      .toBe(true);
+
+    documentEndHistoryPending = false;
+    redoDepth = 1;
+    scheduleRelease();
+    queued.shift()?.();
+    expect(release).not.toHaveBeenCalled();
+
+    redoDepth = 0;
+    scheduleRelease();
+    queued.shift()?.();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('acquires the exact Preview pin before scheduling and releases it when scheduling throws', () => {
     const previewRequest: PreviewRequest = {
       codeTheme: 'dark',
@@ -686,6 +761,7 @@ describe('EditorRoot', () => {
     };
     const operations: string[] = [];
     const release = vi.fn(() => operations.push('release'));
+    const selectionRestored = vi.fn(() => operations.push('selection-restored'));
     const schedule = vi.fn((request: PreviewRequest, immediate?: boolean) => {
       operations.push(`schedule:${request.signature}:${String(immediate)}`);
       return 9;
@@ -702,16 +778,30 @@ describe('EditorRoot', () => {
       }
     };
 
-    const lease = schedulePreviewWithDocumentEndPin(runtime, previewRequest);
+    const historyPending: boolean[] = [];
+    const lease = schedulePreviewWithDocumentEndPin(
+      runtime,
+      previewRequest,
+      (pending) => historyPending.push(pending),
+      selectionRestored
+    );
 
     expect(operations).toEqual(['pin:42:3', 'schedule:42:3:true']);
+    expect(historyPending).toEqual([true]);
     expect(runtime.prepareDocumentEndWindowPin).toHaveBeenCalledOnce();
     expect(schedule).toHaveBeenCalledWith(previewRequest, true);
     expect(lease.signature).toBe(previewRequest.signature);
+    lease.onSelectionRestored();
+    lease.onSelectionRestored();
+    expect(selectionRestored).toHaveBeenCalledOnce();
+    lease.release();
     lease.release();
     expect(release).toHaveBeenCalledOnce();
+    expect(historyPending).toEqual([true, false]);
 
     const failedRelease = vi.fn();
+    const failedSelectionRestored = vi.fn();
+    const failedHistoryPending: boolean[] = [];
     const failedRuntime = {
       prepareDocumentEndWindowPin: vi.fn(() => ({ release: failedRelease })),
       session: {
@@ -724,9 +814,13 @@ describe('EditorRoot', () => {
     };
     expect(() => schedulePreviewWithDocumentEndPin(
       failedRuntime,
-      previewRequest
+      previewRequest,
+      (pending) => failedHistoryPending.push(pending),
+      failedSelectionRestored
     )).toThrow('preview-schedule-failed');
     expect(failedRelease).toHaveBeenCalledOnce();
+    expect(failedHistoryPending).toEqual([true, false]);
+    expect(failedSelectionRestored).not.toHaveBeenCalled();
   });
 
   it('focuses only the current visual runtime across disposal and replacement', () => {

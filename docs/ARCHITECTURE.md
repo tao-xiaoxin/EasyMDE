@@ -317,6 +317,15 @@ window pin before scheduling its exact formal Preview request. The in-memory
 lease binds the request signature and accepted generation, preserves the
 validated final editable block in the initial and subsequent bounded windows,
 and releases after caret restoration or cancellation, error and teardown.
+When that exact request resolves to a document at or below the Windowed
+threshold, the owner releases the matching lease and continues the normal full
+staged commit because the complete DOM already contains the editable EOF.
+Stale, superseded, or identity-mismatched leases still fail through the
+existing Preview error path.
+The Windowed visual owner and Preview surface remain paired until the restored
+history selection is committed. If the canonical history still has a Redo
+branch, that pair remains active until Redo obtains its next document-end lease
+or a new local edit discards the branch; failure, exit, and teardown clear it.
 Temporary browser Selection is not a pin across Safe HTML child replacement.
 After the final editable block mounts, a collapsed EOF
 caret may project to that block's text end when only source line endings remain

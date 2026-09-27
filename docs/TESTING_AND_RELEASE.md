@@ -506,6 +506,11 @@ lease restores the existing ordinary pinned-window limit. Acquire it before sche
 the request; verify cancellation, signature mismatch, supersession, rendering
 or scheduling error and teardown release, and that an older release cannot
 clear a newer token. Ordinary and non-EOF Preview paths acquire no lease.
+Also exercise a native EOF edit that expands a small document beyond the
+Windowed threshold, Undo to the accepted small target, and Redo to the large
+target. The small commit must mount every block without spacers, remain
+editable, and restore its connected collapsed EOF caret; Redo must restore the
+bounded Windowed partition and the same canonical EOF ownership.
 Verify a complete active fence run in the body followed immediately by another
 character widens the outer fence and preserves source, caret, Undo, and Redo.
 Use a noncancelable rejected composition mutation to prove accepted DOM/source

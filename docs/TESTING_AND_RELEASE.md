@@ -454,6 +454,10 @@ and editing an older mapped block after creating a local fence. Code DOM may
 omit exactly one terminal LF under the projection contract; verify native next
 input, caret, Undo, Redo, and exact canonical Markdown rather than trimming
 arbitrary text differences.
+Exercise an ordinary list-item split followed immediately by text before the
+debounce expires. Verify the first item remains canonical, the new text stays
+in the second item, the source and visual caret agree, and ordinary rapid text
+still uses the grouped exact-input path.
 Exercise the exact accepted native-paste snapshot for both fence families and
 unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
 Verify neutral native spans retain Text identity, caret and exact code body;
@@ -477,6 +481,19 @@ input records a rematerialization slot without an innerHTML getter. Preserve
 the existing zero-getter hot-path checks. Formal Preview acceptance must reject
 stale slot identity, source, signature, history depths or selection, and report
 render failure or teardown through the existing owner without fabricated HTML.
+For non-windowed rematerialization, exercise the real Preview owner and Safe
+HTML sink with TOC, footnote, rendered math, and Mermaid nodes. Exact equivalent
+protected output must retain node identity through the first staged commit, a
+same-commit rerender, and a later equivalent Preview. Attribute, child markup,
+path, or order changes must keep the fresh accepted node; cross-document staged
+nodes and replacement failure must preserve the sink's validation and rollback
+contracts.
+Local snapshot Cut, Undo, and Redo coverage must also preserve equivalent
+protected nodes when restoring an editable sibling shifts their absolute DOM
+path. Require equal protected-region count and order, exact meaningful
+attributes and markup, connected Selection, canonical source, and no Preview
+request for the local Undo. Missing or non-equivalent protected output remains
+fresh; blank or whitespace-only root `style` is the sole ignored layout artifact.
 For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
 the document-end pin before formal Preview, the mounted final editable block
 and exact canonical/visible caret after the final Redo. A mapped range may omit

@@ -14,6 +14,7 @@ import type {
 } from 'react';
 
 import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
+import { prepareVisualProtectedNodeAdoption } from '../../../shared/dom/visual-protected-node-adoption';
 
 export type SafePreviewHtmlSinkCommit = Readonly<{
   nodes: ReadonlyArray<Node>;
@@ -78,18 +79,29 @@ type AppliedSurfaceState = Readonly<{
   statusRole: string | undefined;
   materializeCommitKey: number | null;
   windowedCommitKey: number | null;
+  stagedCommit?: SafePreviewHtmlSinkCommit;
+  stagedCommitNodes?: ReadonlyArray<Node>;
 }>;
+
+function validateUniqueChildren(desiredNodes: ReadonlyArray<Node>): void {
+  const desired = new Set<Node>();
+  for (const node of desiredNodes) {
+    if (desired.has(node)) {
+      throw new Error('preview-window-node-sequence-invalid');
+    }
+    desired.add(node);
+  }
+}
 
 function validateWindowChildren(
   surface: HTMLElement,
   desiredNodes: ReadonlyArray<Node>
 ): void {
-  const desired = new Set<Node>();
-  for (const node of desiredNodes) {
-    if (desired.has(node) || node.ownerDocument !== surface.ownerDocument) {
-      throw new Error('preview-window-node-sequence-invalid');
-    }
-    desired.add(node);
+  validateUniqueChildren(desiredNodes);
+  if (desiredNodes.some((node) =>
+    node.ownerDocument !== surface.ownerDocument
+  )) {
+    throw new Error('preview-window-node-sequence-invalid');
   }
 }
 
@@ -483,9 +495,31 @@ export function SafePreviewHtmlSink({
       );
     }
 
+    if (commit && appliedSurfaceState?.stagedCommit === commit) {
+      const committedNodes = appliedSurfaceState.stagedCommitNodes;
+      if (!committedNodes) {
+        throw new Error('preview-staged-commit-state-incomplete');
+      }
+      if (!hasExactChildren(surface, committedNodes)) {
+        throw new Error('preview-staged-commit-surface-drifted');
+      }
+      return undefined;
+    }
+
     if (commit) {
-      if (!hasExactChildren(surface, commit.nodes)) {
-        surface.replaceChildren(...commit.nodes);
+      const protectedReuse = prepareVisualProtectedNodeAdoption(
+        Array.from(surface.childNodes),
+        commit.nodes,
+        Boolean(contentEditable)
+      );
+      try {
+        validateUniqueChildren(protectedReuse.nodes);
+        if (!hasExactChildren(surface, protectedReuse.nodes)) {
+          surface.replaceChildren(...protectedReuse.nodes);
+        }
+      } catch (error) {
+        protectedReuse.rollback();
+        throw error;
       }
       if (statusMessage) {
         appendStatusMessage(surface, statusClassName, statusMessage, statusRole);
@@ -497,7 +531,9 @@ export function SafePreviewHtmlSink({
         statusClassName,
         statusMessage,
         statusRole,
-        windowedCommitKey: null
+        windowedCommitKey: null,
+        stagedCommit: commit,
+        stagedCommitNodes: protectedReuse.nodes
       };
       onStagedCommit?.(commit.revision);
       return undefined;

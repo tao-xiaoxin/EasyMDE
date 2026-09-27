@@ -1,9 +1,17 @@
+import type { Change } from 'diff';
+import { diffChars, diffLines } from 'diff';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
-import { diffChars, diffLines } from 'diff';
-import type { Change } from 'diff';
 import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type { PreviewEditMap } from '../../contracts/ports/preview-request';
+import { VISUAL_MARKDOWN_READ_ONLY_SELECTOR } from '../../contracts/visual-markdown-read-only';
+import {
+  visualProtectedNodeAttributes,
+  visualProtectedNodeAttributesEqual,
+  type VisualProtectedNodeAttribute
+} from '../../shared/dom/visual-protected-node-adoption';
+
+export { VISUAL_MARKDOWN_READ_ONLY_SELECTOR };
 
 const PREVIEW_WINDOW_SPACER_SELECTOR =
   '[data-easymde-preview-window-spacer]';
@@ -13,14 +21,6 @@ const VISUAL_FENCE_OPEN_EOF_ATTRIBUTE =
   'data-easymde-visual-fence-open-eof';
 const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
   'data-easymde-visual-code-placeholder';
-const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
-  '.easymde-toc',
-  '.footnotes-sep',
-  '.footnotes',
-  '.easymde-math[data-easymde-rendered]',
-  '.easymde-mermaid'
-].join(', ');
-
 function placeCaretAtEnd(node: Node): void {
   const selection = window.getSelection();
   if (!selection) return;
@@ -2128,7 +2128,7 @@ export function protectVisualMarkdownReadOnlyRegions(
 }
 
 type VisualMarkdownReadOnlyRegion = Readonly<{
-  attributes: ReadonlyArray<Readonly<{ name: string; value: string }>>;
+  attributes: ReadonlyArray<VisualProtectedNodeAttribute>;
   innerHTML: string;
   node: HTMLElement;
 }>;
@@ -2146,34 +2146,11 @@ function visualMarkdownReadOnlyRegions(
   );
 }
 
-function visualMarkdownReadOnlyAttributes(
-  node: HTMLElement
-): ReadonlyArray<Readonly<{ name: string; value: string }>> {
-  return Array.from(node.attributes)
-    .filter(({ name, value }) => 'style' !== name || '' !== value.trim())
-    .map(({ name, value }) => ({ name, value }))
-    .sort((left, right) => left.name.localeCompare(right.name));
-}
-
-function visualMarkdownReadOnlyAttributesEqual(
-  current: ReadonlyArray<Readonly<{ name: string; value: string }>>,
-  expected: ReadonlyArray<Readonly<{ name: string; value: string }>>
-): boolean {
-  return current.length === expected.length
-    && current.every(
-      (attribute, index) => {
-        const expectedAttribute = expected[index];
-        return expectedAttribute?.name === attribute.name
-          && expectedAttribute.value === attribute.value;
-      }
-    );
-}
-
 export function captureVisualMarkdownReadOnlySnapshot(
   editor: HTMLElement
 ): VisualMarkdownReadOnlySnapshot {
   return visualMarkdownReadOnlyRegions(editor).map((node) => ({
-    attributes: visualMarkdownReadOnlyAttributes(node),
+    attributes: visualProtectedNodeAttributes(node),
     innerHTML: node.innerHTML,
     node
   }));
@@ -2191,8 +2168,8 @@ export function assertVisualMarkdownReadOnlySnapshot(
         current[index] !== region.node
         || !editor.contains(region.node)
         || region.node.innerHTML !== region.innerHTML
-        || !visualMarkdownReadOnlyAttributesEqual(
-          visualMarkdownReadOnlyAttributes(region.node),
+        || !visualProtectedNodeAttributesEqual(
+          visualProtectedNodeAttributes(region.node),
           region.attributes
         )
     )

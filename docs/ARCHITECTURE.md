@@ -283,7 +283,11 @@ or previously accepted visual selection and never silently appends at the end
 when mapping is unavailable. Focus restoration uses `preventScroll`, and a
 pending paste blocks `beforeinput` without toggling the active surface's
 `contenteditable` state. History and composition input never re-enter the
-shortcut parser.
+shortcut parser. Consecutive exact text input may continue through its pending
+source projection. When a prior browser mutation is pending without such a
+projection, the next `beforeinput` first synchronizes that structural DOM
+change. This keeps a rapid list split followed by text in the new item from
+mapping through the pre-split source interval.
 For a mapped fenced code block, the visual editor resolves the active Preview
 block to one Markdown source body interval. That interval owns blank-line and
 line-ending semantics for both ordinary and windowed immersive editing;
@@ -383,8 +387,21 @@ meaningful root attributes are compared exactly before serialization. An empty
 root `style` attribute introduced or removed by responsive browser layout is
 ignored because it has no declaration; non-empty style, content, attribute,
 identity, count, or order changes still fail with the stable visual-editor
-diagnostic. Local visual synchronization failures do not change the formal
-server Preview status or reuse the Preview failure message.
+diagnostic. During a new accepted non-windowed Preview commit, the Safe HTML
+sink preserves an existing protected node only at the same child-node path with
+the same tag, namespace, attributes, and child markup. Changed or reordered
+output uses the fresh server-authoritative node. The sink records the adopted
+node sequence as its committed identity, so later reconciliation cannot replace
+an equivalent protected subtree behind the visual editor's owner. Local visual
+synchronization failures do not change the formal server Preview status or
+reuse the Preview failure message.
+Local visual-history snapshot restoration uses the same equivalence owner after
+canonical history and snapshot validation. It matches protected regions by
+their protected-region order, allowing restored editable siblings to shift DOM
+paths without replacing unchanged renderer instances. Protected-region count,
+tag, namespace, meaningful attributes, and child markup must still agree; a
+mismatch keeps the fresh snapshot node. Blank root `style` remains the only
+nonsemantic attribute normalization for both paths.
 
 The Markdown feature detector and renderer share `MarkdownCodeRegionScanner`
 so math delimiters inside fenced, indented, or inline code remain literal and

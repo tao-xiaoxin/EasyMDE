@@ -3982,14 +3982,22 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('supports representative Typora visual shortcuts and repeated deletion', async ({ page }, testInfo) => {
     const browserFailures = [];
+    const recordFailure = (kind, message) => {
+      const code = String(message).match(/visual-editor-[a-z0-9-]+/u)?.[0];
+      browserFailures.push({ kind, code: code ?? `unclassified-${kind}` });
+    };
     await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
       status: 200,
       contentType: 'image/png',
       body: fullCapabilityImage
     }));
-    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('pageerror', (error) => {
+      recordFailure('pageerror', error.message);
+    });
     page.on('console', (message) => {
-      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+      if ('error' === message.type()) {
+        recordFailure('console-error', message.text());
+      }
     });
     await login(page, testInfo.easymdeUser);
     await openEasyMdeNewPost(page);
@@ -4027,31 +4035,75 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(visualEditor.locator('ul li')).toHaveCount(2);
 
     await page.keyboard.type('Undo target');
+    await expect.poll(() => source.inputValue()).toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-refreshing', '1');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect(visualEditor).toContainText('Undo target');
     await page.keyboard.press('ControlOrMeta+Z');
     await expect.poll(() => source.inputValue()).not.toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
     await page.keyboard.press('ControlOrMeta+Shift+Z');
     await expect.poll(() => source.inputValue()).toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-refreshing', '1');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect(visualEditor).toContainText('Undo target');
 
     const deleteText = 'delete '.repeat(24).trim();
-    const deleteParagraph = await visualEditor.locator('p').last();
-    await deleteParagraph.evaluate((paragraph) => {
-      paragraph.textContent = 'delete '.repeat(24).trim();
-      const text = paragraph.firstChild;
-      if (!(text instanceof Text)) throw new Error('issue232-delete-text-missing');
-      const range = document.createRange();
-      range.setStart(text, text.length);
-      range.collapse(true);
-      const selection = document.getSelection();
-      if (!selection) throw new Error('issue232-delete-selection-missing');
-      selection.removeAllRanges();
-      selection.addRange(range);
+    const replacementTarget = 'Undo target';
+    const sourceBeforeNativeTyping = await source.inputValue();
+    expect(sourceBeforeNativeTyping.split(replacementTarget).length - 1).toBe(1);
+    await visualEditor.focus();
+    await selectVisualText(visualEditor, replacementTarget);
+    const selectedText = await visualEditor.evaluate((surface) => {
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      return selection?.toString() ?? '';
     });
-    await page.keyboard.press('End');
+    expect(selectedText).toBe(replacementTarget);
+    const expectedSourceAfterNativeTyping = sourceBeforeNativeTyping.replace(
+      replacementTarget,
+      deleteText
+    );
+    const expectedCaretOffset = sourceBeforeNativeTyping.indexOf(replacementTarget)
+      + deleteText.length;
+    await page.keyboard.type(deleteText);
+    await expect.poll(() => source.inputValue()).toBe(expectedSourceAfterNativeTyping);
+    const visualCaretAfterTyping = await visualEditor.evaluate((surface) => {
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const focus = selection?.focusNode ?? null;
+      return {
+        anchorConnected: anchor?.isConnected ?? false,
+        collapsed: selection?.isCollapsed ?? false,
+        focusConnected: focus?.isConnected ?? false,
+        insideSurface: Boolean(
+          anchor && focus && surface.contains(anchor) && surface.contains(focus)
+        )
+      };
+    });
+    const nativeCaretAfterTyping = await source.evaluate((field) => ({
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }));
+    expect(visualCaretAfterTyping).toMatchObject({
+      anchorConnected: true,
+      collapsed: true,
+      focusConnected: true,
+      insideSurface: true
+    });
+    expect(nativeCaretAfterTyping).toEqual({
+      end: expectedCaretOffset,
+      start: expectedCaretOffset
+    });
     for (let index = 0; index < 24; index += 1) {
       await page.keyboard.press('Backspace');
     }
-    await expect.poll(() => source.inputValue()).toContain('delete');
-    await expect.poll(() => visualEditor.locator('p').last().textContent()).not.toBe(deleteText);
+    const expectedSourceAfterRepeatedDeletion = expectedSourceAfterNativeTyping.slice(
+      0,
+      expectedCaretOffset - 24
+    ) + expectedSourceAfterNativeTyping.slice(expectedCaretOffset);
+    await expect.poll(() => source.inputValue()).toBe(expectedSourceAfterRepeatedDeletion);
     expect(browserFailures).toEqual([]);
   });
 

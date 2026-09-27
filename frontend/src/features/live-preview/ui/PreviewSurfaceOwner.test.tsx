@@ -8,6 +8,7 @@ import type {
   PreviewResponse,
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
+import { VISUAL_MARKDOWN_READ_ONLY_SELECTOR } from '../../../contracts/visual-markdown-read-only';
 import type { PreviewRequestSession } from '../model/create-preview-request-session';
 import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../ports/preview-scroll-port';
@@ -155,6 +156,61 @@ function documentEndFixture(
       .map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
       .join('') as SafePreviewHtml,
     markdown
+  };
+}
+
+function protectedPreviewFixture(
+  paragraph: string,
+  signature: string,
+  options?: Readonly<{
+    footnote?: string;
+    mathWrapper?: boolean;
+    tocHref?: string;
+    order?: ReadonlyArray<'paragraph' | 'toc' | 'math' | 'footnote-separator' | 'footnotes'>;
+  }>
+) {
+  const htmlByBlock = {
+    paragraph: `<p data-easymde-visual-block-id="b0">${paragraph}</p>`,
+    toc: '<div data-easymde-visual-block-id="b1" class="easymde-toc">'
+      + `<ul><li><a href="${options?.tocHref ?? '#heading'}">Heading</a></li></ul>`
+      + '</div>',
+    math: '<p data-easymde-visual-block-id="b2">Result '
+      + (options?.mathWrapper ? '<span>' : '')
+      + '<span class="easymde-math" data-easymde-rendered="1">'
+      + '<span>2</span></span>'
+      + (options?.mathWrapper ? '</span>' : '')
+      + '</p>',
+    'footnote-separator': '<hr data-easymde-visual-block-id="b3" '
+      + 'class="footnotes-sep">',
+    footnotes: '<div data-easymde-visual-block-id="b4" class="footnotes">'
+      + `<ol><li>${options?.footnote ?? 'Note'}</li></ol></div>`
+  };
+  const order = options?.order ?? [
+    'paragraph',
+    'toc',
+    'math',
+    'footnote-separator',
+    'footnotes'
+  ];
+  return {
+    editMap: {
+      version: 1 as const,
+      coordinate: 'line' as const,
+      signature,
+      blocks: order.map((key, index) => ({
+        id: `b${{
+          paragraph: 0,
+          toc: 1,
+          math: 2,
+          'footnote-separator': 3,
+          footnotes: 4
+        }[key]}`,
+        startLine: index * 2,
+        endLine: index * 2 + 1,
+        editable: true
+      }))
+    },
+    html: order.map((key) => htmlByBlock[key]).join('') as SafePreviewHtml
   };
 }
 
@@ -315,6 +371,175 @@ function setup(options?: {
 }
 
 describe('PreviewSurfaceOwner', () => {
+  it('preserves accepted protected Preview nodes in real staged rematerializations', async () => {
+    const initialSignature = 'protected-identity-initial';
+    const initialFixture = protectedPreviewFixture(
+      'Paragraph',
+      initialSignature
+    );
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: initialFixture.editMap,
+      initialHtml: initialFixture.html,
+      initialSignature,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: false
+    });
+    await act(async () => {
+      for (let index = 0; index < 16; index += 1) await Promise.resolve();
+      await flushAnimationFrames(4);
+    });
+
+    const protectedNodes = Array.from(current.surface.querySelectorAll<HTMLElement>(
+      VISUAL_MARKDOWN_READ_ONLY_SELECTOR
+    ));
+    expect(protectedNodes).toHaveLength(4);
+    for (const node of protectedNodes) node.setAttribute('contenteditable', 'false');
+    const oldToc = current.surface.querySelector('.easymde-toc');
+    const oldMath = current.surface.querySelector('.easymde-math');
+    const oldFootnoteSeparator = current.surface.querySelector('.footnotes-sep');
+    const oldFootnotes = current.surface.querySelector('.footnotes');
+    if (!oldToc || !oldMath || !oldFootnoteSeparator || !oldFootnotes) {
+      throw new Error('preview-protected-test-node-missing');
+    }
+
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    const accept = async (
+      fixture: ReturnType<typeof protectedPreviewFixture>,
+      markdown: string
+    ): Promise<void> => {
+      const responseIndex = current.responses.length;
+      act(() => {
+        current.session.schedule(request(markdown, fixture.editMap.signature), true);
+      });
+      await act(async () => {
+        current.responses[responseIndex]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+    };
+
+    const firstFixture = protectedPreviewFixture(
+      'Paragraph!',
+      'protected-identity-first'
+    );
+    await accept(firstFixture, 'Paragraph!');
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
+    expect(current.surface.easymdePreviewSignature)
+      .toBe(firstFixture.editMap.signature);
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
+    expect(replaceChildren.mock.calls[0]).toEqual(expect.arrayContaining([
+      oldToc,
+      oldFootnoteSeparator,
+      oldFootnotes
+    ]));
+    expect(current.surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const secondFixture = protectedPreviewFixture(
+      'Paragraph!?',
+      'protected-identity-second'
+    );
+    await accept(secondFixture, 'Paragraph!?');
+    expect(current.surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const changedAttributeFixture = protectedPreviewFixture(
+      'Paragraph!?#',
+      'protected-identity-changed-attribute',
+      { tocHref: '#changed' }
+    );
+    await accept(changedAttributeFixture, 'Paragraph!?#');
+    const changedAttributeToc = current.surface.querySelector<HTMLElement>(
+      '.easymde-toc'
+    );
+    expect(changedAttributeToc).not.toBe(oldToc);
+    expect(changedAttributeToc?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const changedHtmlFixture = protectedPreviewFixture(
+      'Paragraph!?#$',
+      'protected-identity-changed-html',
+      { footnote: 'Changed note', tocHref: '#changed' }
+    );
+    await accept(changedHtmlFixture, 'Paragraph!?#$');
+    const changedHtmlFootnotes = current.surface.querySelector<HTMLElement>(
+      '.footnotes'
+    );
+    expect(changedHtmlFootnotes).not.toBe(oldFootnotes);
+    expect(changedHtmlFootnotes?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-toc'))
+      .toBe(changedAttributeToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    const changedPathFixture = protectedPreviewFixture(
+      'Paragraph!?#$%',
+      'protected-identity-changed-path',
+      { footnote: 'Changed note', mathWrapper: true, tocHref: '#changed' }
+    );
+    await accept(changedPathFixture, 'Paragraph!?#$%');
+    const changedPathMath = current.surface.querySelector<HTMLElement>(
+      '.easymde-math'
+    );
+    expect(changedPathMath).not.toBe(oldMath);
+    expect(changedPathMath?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-toc'))
+      .toBe(changedAttributeToc);
+    expect(current.surface.querySelector('.footnotes'))
+      .toBe(changedHtmlFootnotes);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    const reorderedFixture = protectedPreviewFixture(
+      'Paragraph!?#$%&',
+      'protected-identity-reordered',
+      {
+        footnote: 'Changed note',
+        mathWrapper: true,
+        order: [
+          'paragraph',
+          'footnotes',
+          'math',
+          'footnote-separator',
+          'toc'
+        ],
+        tocHref: '#changed'
+      }
+    );
+    await accept(reorderedFixture, 'Paragraph!?#$%&');
+    const reorderedToc = current.surface.querySelector<HTMLElement>(
+      '.easymde-toc'
+    );
+    const reorderedFootnotes = current.surface.querySelector<HTMLElement>(
+      '.footnotes'
+    );
+    expect(reorderedToc).not.toBe(changedAttributeToc);
+    expect(reorderedFootnotes).not.toBe(changedHtmlFootnotes);
+    expect(reorderedToc?.getAttribute('contenteditable')).toBe('false');
+    expect(reorderedFootnotes?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-math')).toBe(changedPathMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    replaceChildren.mockRestore();
+  });
+
   it('does not expose an editable visual surface as a live region', async () => {
     const editable = setup({ contentEditable: true });
 

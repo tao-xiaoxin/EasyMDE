@@ -8,6 +8,7 @@ import type { ToolbarCommand } from '../../../contracts/bootstrap/toolbar-bootst
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import type { PreviewSurfaceStatus } from '../../live-preview/ui/PreviewSurfaceOwner';
+import { prepareVisualProtectedNodeAdoption } from '../../../shared/dom/visual-protected-node-adoption';
 import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
@@ -1080,6 +1081,8 @@ export function ImmersiveVisualEditor({
     useRef<AcceptedPasteDocumentBoundary | null>(null);
   const lastSelectionRef = useRef<VisualSelectionSourceRange | null>(null);
   const visualInputPendingRef = useRef(false);
+  const pendingUnmappedVisualInputRef = useRef(false);
+  const continuingUnmappedVisualInputRef = useRef(false);
   const visualInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visualSelectionMemoryRef = useRef<VisualSelectionMemory | null>(null);
   const visualSourceIntervalMapRef = useRef<VisualMarkdownSourceIntervalMap | null>(null);
@@ -1594,6 +1597,8 @@ export function ImmersiveVisualEditor({
     visualSelectionMemoryRef.current = null;
     pendingVisualIntentRef.current = null;
     pendingVisualIntentResultRef.current = null;
+    pendingUnmappedVisualInputRef.current = false;
+    continuingUnmappedVisualInputRef.current = false;
     sourceMarkdownRef.current = sourceMarkdown;
     if (!options.acceptedPreviewSource) {
       visualCodeBodyStructureValidationRef.current =
@@ -1650,6 +1655,8 @@ export function ImmersiveVisualEditor({
     visualSelectionMemoryRef.current = null;
     pendingVisualIntentRef.current = null;
     pendingVisualIntentResultRef.current = null;
+    pendingUnmappedVisualInputRef.current = false;
+    continuingUnmappedVisualInputRef.current = false;
     sourceMarkdownRef.current = sourceMarkdown;
     visualCodeBodyPreviewSourceRef.current = sourceMarkdown;
     visualCodeBodyPreviewStructureRef.current =
@@ -2503,6 +2510,8 @@ export function ImmersiveVisualEditor({
       const pending = pendingVisualIntentResultRef.current;
       if (!pending) return false;
       pendingVisualIntentResultRef.current = null;
+      pendingUnmappedVisualInputRef.current = false;
+      continuingUnmappedVisualInputRef.current = false;
       if (
         !active
         || pendingTransferRef.current
@@ -2853,6 +2862,8 @@ export function ImmersiveVisualEditor({
     };
 
     const commitVisualInput = (): boolean => {
+      pendingUnmappedVisualInputRef.current = false;
+      continuingUnmappedVisualInputRef.current = false;
       if (visualTransferFailureReportedRef.current) {
         visualInputPendingRef.current = false;
         pendingVisualIntentResultRef.current = null;
@@ -2909,7 +2920,20 @@ export function ImmersiveVisualEditor({
         snapshot.codeBodyPreviewStructureSignature;
       visualCodeBodyOrdinalsRef.current = null;
       visualCodeBodyDomOrderInvalidRef.current = true;
-      surface.innerHTML = snapshot.html;
+      const template = surface.ownerDocument.createElement('template');
+      template.innerHTML = snapshot.html;
+      const adoption = prepareVisualProtectedNodeAdoption(
+        Array.from(surface.childNodes),
+        Array.from(template.content.childNodes),
+        true,
+        'protected-order'
+      );
+      try {
+        surface.replaceChildren(...adoption.nodes);
+      } catch (error) {
+        adoption.rollback();
+        throw error;
+      }
       installVisualLocalCodeBodyProvenance(
         snapshot.markdown,
         snapshot.localCodeBodies
@@ -3190,6 +3214,7 @@ export function ImmersiveVisualEditor({
         return;
       }
       composing = true;
+      continuingUnmappedVisualInputRef.current = false;
       compositionCommitScheduled = false;
       if (null !== visualInputTimerRef.current) {
         clearTimeout(visualInputTimerRef.current);
@@ -3204,6 +3229,8 @@ export function ImmersiveVisualEditor({
           visualInputTimerRef.current = null;
         }
         visualInputPendingRef.current = false;
+        pendingUnmappedVisualInputRef.current = false;
+        continuingUnmappedVisualInputRef.current = false;
         pendingVisualIntentRef.current = null;
         pendingVisualIntentResultRef.current = null;
         const restored = restoreAcceptedSnapshot();
@@ -3291,6 +3318,7 @@ export function ImmersiveVisualEditor({
       });
     };
     const handleBeforeInput = (event: InputEvent) => {
+      continuingUnmappedVisualInputRef.current = false;
       if (compositionRejected) {
         event.preventDefault();
         return;
@@ -3426,6 +3454,21 @@ export function ImmersiveVisualEditor({
       }
       if (composing || event.isComposing) {
         return;
+      }
+      const continuesUnmappedInput = Boolean(
+        visualInputPendingRef.current
+        && pendingUnmappedVisualInputRef.current
+        && !pendingVisualIntentResultRef.current
+      );
+      if (
+        continuesUnmappedInput
+        && !flushVisualInput()
+      ) {
+        event.preventDefault();
+        return;
+      }
+      if (continuesUnmappedInput) {
+        continuingUnmappedVisualInputRef.current = true;
       }
       if (
         'insertParagraph' === event.inputType
@@ -3681,6 +3724,9 @@ export function ImmersiveVisualEditor({
       }
     };
     const handleInput = (event: InputEvent) => {
+      const continuingUnmappedVisualInput =
+        continuingUnmappedVisualInputRef.current;
+      continuingUnmappedVisualInputRef.current = false;
       const inputBlock = visualInputBlock;
       visualInputBlock = null;
       let mappedRawCodeBody = null !== visualInputCodeOrdinal;
@@ -3877,6 +3923,8 @@ export function ImmersiveVisualEditor({
               );
           }
           if (result && domMatchesIntent) {
+            pendingUnmappedVisualInputRef.current = false;
+            continuingUnmappedVisualInputRef.current = false;
             const codeBlockStructure = intent.codeBlockStructure
               ? {
                   ...intent.codeBlockStructure,
@@ -3925,6 +3973,17 @@ export function ImmersiveVisualEditor({
       if (pendingVisualIntentResultRef.current) {
         commitPendingVisualIntent();
       }
+      pendingUnmappedVisualInputRef.current = [
+        'insertLineBreak',
+        'insertParagraph'
+      ].includes(event.inputType) || (
+        continuingUnmappedVisualInput
+        && !intent
+        && [
+          'insertReplacementText',
+          'insertText'
+        ].includes(event.inputType)
+      );
       scheduleVisualInput();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -3989,6 +4048,8 @@ export function ImmersiveVisualEditor({
           visualInputTimerRef.current = null;
         }
         visualInputPendingRef.current = false;
+        pendingUnmappedVisualInputRef.current = false;
+        continuingUnmappedVisualInputRef.current = false;
         pendingVisualIntentRef.current = null;
         pendingVisualIntentResultRef.current = null;
         let localCodeBodyPre: HTMLElement | undefined;
@@ -4198,6 +4259,8 @@ export function ImmersiveVisualEditor({
         visualInputTimerRef.current = null;
       }
       visualInputPendingRef.current = false;
+      pendingUnmappedVisualInputRef.current = false;
+      continuingUnmappedVisualInputRef.current = false;
       flushVisualInputRef.current = () => true;
       onPendingChange(false);
       if (cleanupError) {

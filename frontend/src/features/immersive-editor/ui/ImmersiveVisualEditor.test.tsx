@@ -2973,6 +2973,254 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('flushes a pending list split before mapping native input into the new item', () => {
+    vi.useFakeTimers();
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<h1>Heading</h1>',
+      '<p>Use <strong>bold</strong></p>',
+      '<ul><li>List item</li></ul>'
+    ].join('');
+    const initialMarkdown = serializeVisualMarkdown(surface);
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    document.body.append(surface, container, submissionField);
+    const history = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    history.applyTextChange({
+      selection: {
+        direction: 'none',
+        end: initialMarkdown.length,
+        start: initialMarkdown.length
+      },
+      value: initialMarkdown
+    });
+    const onFailure = vi.fn();
+    const props = {
+      documentSession: {
+        document: history
+      } as unknown as EditorDocumentSession,
+      imageUploadEnabled: false,
+      imagePasteUploadEnabled: false,
+      onCanonicalDocumentChange: vi.fn(),
+      onDiagnostic: vi.fn(),
+      onDispose: vi.fn(),
+      onFailure,
+      onMarkdownChange: vi.fn(),
+      onPendingChange: vi.fn(),
+      onReady: vi.fn(),
+      onTransferFailure: vi.fn(),
+      pending: false,
+      previewSnapshot: { revision: 1, signature: 'native-list-input' },
+      previewStatus: 'ready' as const,
+      requestPreview: vi.fn(() => 'unexpected-list-preview'),
+      surface
+    };
+    const view = render(<ImmersiveVisualEditor {...props} />);
+    const firstItem = surface.querySelector('li');
+    const firstText = firstItem?.firstChild;
+    if (!(firstItem instanceof HTMLLIElement) || !(firstText instanceof Text)) {
+      throw new Error('visual-native-list-split-fixture-missing');
+    }
+    placeCaretInText(firstText);
+
+    const typeNativeText = (parent: HTMLElement, value: string): Text => {
+      let text = parent.firstChild instanceof Text
+        ? parent.firstChild
+        : null;
+      for (const character of value) {
+        if (text) {
+          placeCaretInText(text);
+        } else {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.setStart(parent, 0);
+          range.collapse(true);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        }
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        });
+        surface.dispatchEvent(beforeInput);
+        expect(beforeInput.defaultPrevented).toBe(false);
+        if (!text) {
+          text = document.createTextNode('');
+          parent.replaceChildren(text);
+        }
+        const offset = text.length;
+        text.insertData(offset, character);
+        placeCaretInText(text, offset + character.length);
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          data: character,
+          inputType: 'insertText'
+        }));
+      }
+      act(() => vi.advanceTimersByTime(80));
+      expect(history.getValue()).toBe(serializeVisualMarkdown(surface));
+      if (!text) throw new Error('visual-native-list-text-missing');
+      return text;
+    };
+
+    try {
+      const enter = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      });
+      surface.dispatchEvent(enter);
+      expect(enter.defaultPrevented).toBe(false);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertParagraph'
+      }));
+      const secondItem = document.createElement('li');
+      secondItem.append(document.createElement('br'));
+      firstItem.after(secondItem);
+      const selection = window.getSelection();
+      const splitRange = document.createRange();
+      splitRange.setStart(secondItem, 0);
+      splitRange.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(splitRange);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertParagraph'
+      }));
+
+      const target = typeNativeText(secondItem, 'Undo target');
+
+      const expectedMarkdown = serializeVisualMarkdown(surface);
+      expect(expectedMarkdown).toContain('- List item\n- Undo target');
+      expect(history.getValue()).toBe(expectedMarkdown);
+      expect(target.isConnected).toBe(true);
+      expect(history.getSelection()).toEqual({
+        direction: 'none',
+        end: expectedMarkdown.length,
+        start: expectedMarkdown.length
+      });
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves raw underline markup during rapid mapped text replacement', () => {
+    vi.useFakeTimers();
+    const initialMarkdown = '<u>Underlined text</u>';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p><u>Underlined text</u></p>';
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    document.body.append(surface, container, submissionField);
+    const history = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    history.applyTextChange({
+      selection: {
+        direction: 'none',
+        end: initialMarkdown.length,
+        start: initialMarkdown.length
+      },
+      value: initialMarkdown
+    });
+    const onFailure = vi.fn();
+    const props = {
+      documentSession: {
+        document: history
+      } as unknown as EditorDocumentSession,
+      imageUploadEnabled: false,
+      imagePasteUploadEnabled: false,
+      onCanonicalDocumentChange: vi.fn(),
+      onDiagnostic: vi.fn(),
+      onDispose: vi.fn(),
+      onFailure,
+      onMarkdownChange: vi.fn(),
+      onPendingChange: vi.fn(),
+      onReady: vi.fn(),
+      onTransferFailure: vi.fn(),
+      pending: false,
+      previewSnapshot: { revision: 1, signature: 'raw-underline-input' },
+      previewStatus: 'ready' as const,
+      requestPreview: vi.fn(() => 'unexpected-underline-preview'),
+      surface
+    };
+    const view = render(<ImmersiveVisualEditor {...props} />);
+    const text = surface.querySelector('u')?.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-raw-underline-text-missing');
+    }
+    const selection = window.getSelection();
+    const selected = document.createRange();
+    selected.selectNodeContents(text);
+    selection?.removeAllRanges();
+    selection?.addRange(selected);
+    const innerHTML = vi.spyOn(surface, 'innerHTML', 'get');
+
+    try {
+      const replacement = 'replacement';
+      let start = 0;
+      let end = text.length;
+      for (const character of replacement) {
+        const targetRange = document.createRange();
+        targetRange.setStart(text, start);
+        targetRange.setEnd(text, end);
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        });
+        Object.defineProperty(beforeInput, 'getTargetRanges', {
+          value: () => [targetRange]
+        });
+        surface.dispatchEvent(beforeInput);
+        expect(beforeInput.defaultPrevented).toBe(false);
+
+        text.replaceData(start, end - start, character);
+        start += character.length;
+        end = start;
+        placeCaretInText(text, start);
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          data: character,
+          inputType: 'insertText'
+        }));
+      }
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(history.getValue()).toBe('<u>replacement</u>');
+      expect(text.textContent).toBe(replacement);
+      expect(innerHTML).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      innerHTML.mockRestore();
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
+      vi.useRealTimers();
+    }
+  });
+
   it('rematerializes a paragraph marker after a later code edit and Undo', () => {
     vi.useFakeTimers();
     const fence = '~~~';
@@ -3621,6 +3869,128 @@ describe('ImmersiveVisualEditor', () => {
       container.remove();
       submissionField.remove();
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves protected Preview nodes through local code Cut Undo', () => {
+    vi.useFakeTimers();
+    const markdown = '~~~\nx\n~~~';
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<pre><code>x\n</code></pre>',
+      '<div class="easymde-toc" style="  "><p>Contents</p></div>'
+    ].join('');
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = markdown;
+    submissionField.defaultValue = markdown;
+    document.body.append(surface, container, submissionField);
+    const initialCodeText = surface.querySelector('pre > code')?.firstChild;
+    if (!(initialCodeText instanceof Text)) {
+      throw new Error('visual-local-cut-code-text-missing');
+    }
+    placeCaretInText(initialCodeText, 0);
+    const history = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const requestPreview = vi.fn(() => 'unexpected-preview');
+    const onFailure = vi.fn();
+    const signature = 'local-code-cut-protected-preview';
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={{
+          document: history
+        } as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(markdown, signature),
+          revision: 1,
+          signature
+        }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+
+    try {
+      const code = surface.querySelector('pre > code');
+      const protectedNode = surface.querySelector('.easymde-toc');
+      if (
+        !(code instanceof HTMLElement)
+        || !(protectedNode instanceof HTMLElement)
+      ) throw new Error('visual-local-cut-fixture-missing');
+      const text = code.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('visual-local-cut-code-text-missing');
+      }
+
+      const selection = window.getSelection();
+      const selectedCharacter = document.createRange();
+      selectedCharacter.setStart(text, 0);
+      selectedCharacter.setEnd(text, 1);
+      selection?.removeAllRanges();
+      selection?.addRange(selectedCharacter);
+
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteByCut'
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      selectedCharacter.deleteContents();
+      placeCaretInText(text, 0);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteByCut'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      const emptyMarkdown = '~~~\n\n~~~';
+      expect(history.getValue()).toBe(emptyMarkdown);
+      expect(code.textContent).toBe('\n');
+      expect(surface.querySelector('.easymde-toc')).toBe(protectedNode);
+      expect(onFailure).not.toHaveBeenCalled();
+      protectedNode.removeAttribute('style');
+
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      surface.dispatchEvent(undo);
+
+      expect(undo.defaultPrevented).toBe(true);
+      expect(history.getValue()).toBe(markdown);
+      expect(surface.querySelector('pre > code')?.textContent).toBe('x\n');
+      expect(surface.querySelector('.easymde-toc')).toBe(protectedNode);
+      expect(protectedNode.hasAttribute('style')).toBe(false);
+      expect(selection?.rangeCount).toBeGreaterThan(0);
+      expect(surface.contains(selection?.anchorNode ?? null)).toBe(true);
+      expect(surface.contains(selection?.focusNode ?? null)).toBe(true);
+      expect(history.getHistoryState().redoDepth).toBe(1);
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
       vi.useRealTimers();
     }
   });

@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from './helpers/preview-request-evidence.mjs';
@@ -2706,6 +2707,30 @@ test.describe('EasyMDE editor workflows', () => {
         : state.longTasks.filter(({ start, duration }) => (
           start < interactionEnd && start + duration > interactionStart
         ));
+      const phaseWindows = [
+        ...(null !== interactionStart && null !== state.burstSettledAt
+          ? [{ end: state.burstSettledAt, phase: 'burst', start: interactionStart }]
+          : []),
+        ...state.spacedStartAt.flatMap((start, inputIndex) => {
+          const end = state.spacedSettledAt[inputIndex];
+          return Number.isFinite(end)
+            ? [{ end, inputIndex, phase: 'spaced', start }]
+            : [];
+        })
+      ];
+      const longTaskEvidence = longTasks
+        .sort((first, second) => first.start - second.start)
+        .map(({ start, duration }) => ({
+          durationMs: duration,
+          overlappingPhases: phaseWindows
+            .filter(({ start: phaseStart, end }) => (
+              start < end && start + duration > phaseStart
+            ))
+            .map(({ inputIndex, phase }) => Number.isInteger(inputIndex)
+              ? { inputIndex, phase }
+              : { phase }),
+          startTimeMs: start
+        }));
       const evidence = {
         burstEventCount: state.burstBeforeInputAt.length,
         initialCodeTextLength: state.initialCodeTextLength,
@@ -2728,7 +2753,8 @@ test.describe('EasyMDE editor workflows', () => {
         visibleCodeBodyMatchesExpected: finalCode?.textContent === expectedCodeBody,
         visibleCodeBodyLength: finalCode?.textContent?.length ?? -1,
         longTaskCount: longTasks.length,
-        longTaskDurationsMs: longTasks.map(({ duration }) => duration)
+        longTaskDurationsMs: longTasks.map(({ duration }) => duration),
+        longTasks: longTaskEvidence
       };
       holder.dispose();
       delete window[key];
@@ -2770,12 +2796,19 @@ test.describe('EasyMDE editor workflows', () => {
       expectedVisibleCodeBodyLength: expectedVisibleCodeBody.length,
       editLongTaskCount: performanceEvidence.longTaskCount,
       editLongTaskDurationsMs: performanceEvidence.longTaskDurationsMs,
+      editLongTasks: performanceEvidence.longTasks,
       browserFailureCount: browserFailures.length
     };
+    const evidenceJson = `${JSON.stringify(evidence)}\n`;
+    const evidencePath = testInfo.outputPath(
+      'immersive-nonwindowed-code-edit-performance.json'
+    );
+    await writeFile(evidencePath, evidenceJson, 'utf8');
     await testInfo.attach('immersive-nonwindowed-code-edit-performance.json', {
-      body: JSON.stringify(evidence),
+      path: evidencePath,
       contentType: 'application/json'
     });
+    process.stdout.write(`[EasyMDEPerf] ${evidenceJson}`);
 
     expect(await source.inputValue()).toBe(expectedMarkdown);
     expect(performanceEvidence.burstEventCount).toBe(burst.length);

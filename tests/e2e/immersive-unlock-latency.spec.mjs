@@ -5,12 +5,62 @@ const adminPassword = requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
 const previewSinkSelector = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
 const documentWritePath = /\/wp-admin\/post\.php$|\/wp-json\/wp\/v2\/(?:posts|pages)(?:\/\d+)?(?:\/autosaves?\/?$)?$/u;
 
-test.use({ viewport: { width: 1440, height: 1000 } });
+test.use({
+  viewport: { width: 1440, height: 1000 },
+  screenshot: 'only-on-failure',
+  trace: 'off',
+  video: 'off'
+});
 
 function requiredEnvironment(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} must be set in the root .env or process environment.`);
   return value;
+}
+
+const safeErrorNames = new Set([
+  'AggregateError',
+  'AssertionError',
+  'DOMException',
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TimeoutError',
+  'TypeError',
+  'URIError'
+]);
+
+function safeCaughtErrorType(error) {
+  try {
+    if (error instanceof Error) {
+      return safeErrorNames.has(error.name) ? error.name : 'Error';
+    }
+  } catch {}
+  return typeof error;
+}
+
+function createSafeLoginStageError(failureCode, caughtError) {
+  const safeCauseType = safeCaughtErrorType(caughtError);
+  const error = new Error(`${failureCode} (${safeCauseType})`);
+  error.name = 'WordPressLoginStageError';
+  error.code = failureCode;
+  error.safeCauseType = safeCauseType;
+  return error;
+}
+
+function createSafeLoginAggregateError(stageError, caughtCleanupError) {
+  const cleanupError = createSafeLoginStageError(
+    'wordpress-login-failure-state-cleanup-failed',
+    caughtCleanupError
+  );
+  const error = new AggregateError(
+    [stageError, cleanupError],
+    'wordpress-login-failure-state-aggregate-failed'
+  );
+  error.code = 'wordpress-login-failure-state-aggregate-failed';
+  return error;
 }
 
 function createPostRequestMonitor(page) {
@@ -46,13 +96,187 @@ function createPostRequestMonitor(page) {
   };
 }
 
-async function login(page) {
-  await page.goto('/wp-login.php');
-  await page.locator('#user_login').fill(adminUser);
-  await page.locator('#user_pass').fill(adminPassword);
-  await page.locator('#wp-submit').click();
-  await expect(page.locator('#wpadminbar')).toBeVisible();
+async function waitForLoginFocusQuiescence(page) {
+  const focusSettled = await page.evaluate(() => new Promise((resolve) => {
+    const quietPeriodMs = 250;
+    const timeoutMs = 2_000;
+    let quietTimer;
+    let timeoutTimer;
+
+    const cleanup = () => {
+      window.clearTimeout(quietTimer);
+      window.clearTimeout(timeoutTimer);
+      document.removeEventListener('focusin', observeFocus, true);
+    };
+    const finish = (settled) => {
+      cleanup();
+      resolve(settled);
+    };
+    const observeFocus = () => {
+      window.clearTimeout(quietTimer);
+      quietTimer = window.setTimeout(() => finish(true), quietPeriodMs);
+    };
+
+    document.addEventListener('focusin', observeFocus, true);
+    quietTimer = window.setTimeout(() => finish(true), quietPeriodMs);
+    timeoutTimer = window.setTimeout(() => finish(false), timeoutMs);
+  }));
+  if (!focusSettled) throw new Error('wordpress-login-focus-did-not-settle');
 }
+
+async function login(page) {
+  let failureCode = 'wordpress-login-page-unavailable';
+  try {
+    await page.goto('/wp-login.php');
+    failureCode = 'wordpress-login-focus-did-not-settle';
+    await waitForLoginFocusQuiescence(page);
+    failureCode = 'wordpress-login-credential-entry-failed';
+    await page.locator('#user_login').fill(adminUser);
+    failureCode = 'wordpress-login-state-monitor-unavailable';
+    const usernameMonitorInstalled = await page.evaluate(() => {
+      const username = document.querySelector('#user_login');
+      if (!(username instanceof HTMLInputElement)) return false;
+
+      const initialValue = username.value;
+      let usernameChangedAfterFill = false;
+      const inputListener = () => {
+        if (username.value !== initialValue) usernameChangedAfterFill = true;
+      };
+      username.addEventListener('input', inputListener);
+      window.__easymdeLoginEntryState = {
+        isUsernameUnchanged: () => (
+          !usernameChangedAfterFill
+          && username.value === initialValue
+          && document.querySelector('#user_login') === username
+        ),
+        cleanup: () => username.removeEventListener('input', inputListener)
+      };
+      return true;
+    });
+    if (!usernameMonitorInstalled) throw new Error('wordpress-login-state-monitor-unavailable');
+
+    failureCode = 'wordpress-login-credential-entry-failed';
+    const password = page.locator('#user_pass');
+    await password.focus();
+    await page.keyboard.type(adminPassword);
+    failureCode = 'wordpress-login-pre-submit-state-invalid';
+    const loginStateIsValid = await page.evaluate(() => {
+      const username = document.querySelector('#user_login');
+      const passwordField = document.querySelector('#user_pass');
+      const state = window.__easymdeLoginEntryState;
+      try {
+        return username instanceof HTMLInputElement
+          && passwordField instanceof HTMLInputElement
+          && state?.isUsernameUnchanged() === true
+          && username.value.length > 0
+          && passwordField.value.length > 0
+          && document.activeElement === passwordField;
+      } finally {
+        try {
+          state?.cleanup();
+        } finally {
+          delete window.__easymdeLoginEntryState;
+        }
+      }
+    });
+    if (!loginStateIsValid) throw new Error(failureCode);
+
+    failureCode = 'wordpress-login-submit-failed';
+    const submitRequested = await page.evaluate(() => {
+      const form = document.querySelector('#loginform');
+      const submit = document.querySelector('#wp-submit');
+      if (!(form instanceof HTMLFormElement)
+        || !(submit instanceof HTMLInputElement || submit instanceof HTMLButtonElement)) {
+        return false;
+      }
+      form.requestSubmit(submit);
+      return true;
+    });
+    if (!submitRequested) throw new Error(failureCode);
+
+    failureCode = 'wordpress-login-session-not-established';
+    await expect(page.locator('#wpadminbar')).toBeVisible();
+  } catch (caughtOperationError) {
+    const stageError = createSafeLoginStageError(failureCode, caughtOperationError);
+    try {
+      await page.evaluate(() => {
+        const username = document.querySelector('#user_login');
+        const password = document.querySelector('#user_pass');
+        if (username instanceof HTMLInputElement) username.value = '';
+        if (password instanceof HTMLInputElement) password.value = '';
+        const state = window.__easymdeLoginEntryState;
+        try {
+          state?.cleanup();
+        } finally {
+          delete window.__easymdeLoginEntryState;
+        }
+      });
+    } catch (caughtCleanupError) {
+      throw createSafeLoginAggregateError(stageError, caughtCleanupError);
+    }
+    throw stageError;
+  }
+}
+
+test('preserves a privacy-safe login failure when cleanup succeeds', async () => {
+  const page = {
+    goto: async () => { throw new TypeError('redacted-operation-detail'); },
+    evaluate: async () => undefined
+  };
+  let failure;
+  try {
+    await login(page);
+  } catch (caughtError) {
+    failure = caughtError;
+  }
+
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).not.toBeInstanceOf(AggregateError);
+  expect(failure).toMatchObject({
+    code: 'wordpress-login-page-unavailable',
+    name: 'WordPressLoginStageError',
+    safeCauseType: 'TypeError',
+    message: 'wordpress-login-page-unavailable (TypeError)'
+  });
+  expect(failure.cause).toBeUndefined();
+  expect(failure.stack).not.toContain('redacted-operation-detail');
+});
+
+test('preserves login and cleanup failures in a privacy-safe aggregate', async () => {
+  const page = {
+    goto: async () => { throw new TypeError('redacted-operation-detail'); },
+    evaluate: async () => { throw new RangeError('redacted-cleanup-detail'); }
+  };
+  let failure;
+  try {
+    await login(page);
+  } catch (caughtError) {
+    failure = caughtError;
+  }
+
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect(failure.code).toBe('wordpress-login-failure-state-aggregate-failed');
+  expect(failure.message).toBe('wordpress-login-failure-state-aggregate-failed');
+  expect(failure.errors.map(({ code, safeCauseType }) => ({ code, safeCauseType }))).toEqual([
+    {
+      code: 'wordpress-login-page-unavailable',
+      safeCauseType: 'TypeError'
+    },
+    {
+      code: 'wordpress-login-failure-state-cleanup-failed',
+      safeCauseType: 'RangeError'
+    }
+  ]);
+  expect(failure.errors.some(({ message }) => (
+    message.includes('redacted-operation-detail')
+      || message.includes('redacted-cleanup-detail')
+  ))).toBe(false);
+  expect(failure.errors.every(({ stack }) => (
+    !stack.includes('redacted-operation-detail')
+      && !stack.includes('redacted-cleanup-detail')
+  ))).toBe(true);
+  expect(failure.cause).toBeUndefined();
+});
 
 async function openNewPost(page) {
   await page.goto('/wp-admin/post-new.php');

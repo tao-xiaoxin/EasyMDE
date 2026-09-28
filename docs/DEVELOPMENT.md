@@ -18,7 +18,7 @@ layout. Verify that `fc-list :lang=zh family` returns a Chinese-capable family
 before taking screenshots. On Debian or Ubuntu, install it with:
 
 ```bash
-apt-get install --no-install-recommends fonts-noto-cjk
+apt-get update && apt-get install --no-install-recommends fonts-noto-cjk
 ```
 
 Start a fresh browser process after installation so its font cache sees the

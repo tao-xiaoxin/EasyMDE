@@ -725,7 +725,6 @@ export function ImmersiveEditor({
   const [outlineOpen, setOutlineOpen] = useState(true);
   const previousVisualPreviewEditableRef = useRef(visualPreviewEditable);
   const responsivePreviewStateRef = useRef({ mode, visualPreviewEditable });
-  responsivePreviewStateRef.current = { mode, visualPreviewEditable };
   const previousViewportCompactRef = useRef<boolean | null>(null);
   const outlineAutoClosedInCompactVisitRef = useRef(false);
   const [activeOutline, setActiveOutline] = useState<number | null>(null);
@@ -753,6 +752,7 @@ export function ImmersiveEditor({
   }, [environment, focusVisualPreview]);
 
   useLayoutEffect(() => {
+    responsivePreviewStateRef.current = { mode, visualPreviewEditable };
     const wasEditable = previousVisualPreviewEditableRef.current;
     previousVisualPreviewEditableRef.current = visualPreviewEditable;
     if (

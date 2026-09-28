@@ -126,6 +126,47 @@ describe('visual Markdown editing', () => {
     expect(projection.emptyBodyLineCount).toBe(2);
   });
 
+  it.each(['~~~', '```'])(
+    'restores a lone-CR %s fence from canonical Markdown',
+    (fence) => {
+      const markdown = `${fence}js\rAlpha\r${fence}`;
+      const surface = editor('<pre><code class="language-js">Alpha\n</code></pre>');
+
+      restoreVisualCodeFenceFamilies(surface, markdown);
+
+      expect(surface.querySelector('pre')?.getAttribute(
+        'data-easymde-visual-fence'
+      )).toBe(fence);
+      expect(serializeVisualMarkdown(surface)).toBe(
+        markdown.replace(/\r\n|\r/g, '\n')
+      );
+    }
+  );
+
+  it('maps lone-CR code body offsets without changing the source line ending', () => {
+    const markdown = 'Before\r\r~~~\r\r\r~~~\r\rAfter';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 6),
+      previewBlock('b2', 7, 8)
+    ]);
+    const projection = createVisualCodeBodyIntervalForPreviewBlock(
+      markdown,
+      editMap,
+      'b1'
+    );
+
+    expect(createVisualMarkdownSourceRangeFromPreviewEditMap(
+      markdown,
+      editMap,
+      { end: 2, start: 1 }
+    )).toEqual({ end: 18, start: 8 });
+    expect(markdown.slice(projection.bodyStart, projection.bodyEnd))
+      .toBe('\r\r');
+    expect(projection.lineEnding).toBe('\r');
+    expect(projection.emptyBodyLineCount).toBe(2);
+  });
+
   it.each([
     {
       codeBody: 'Alpha\n',
@@ -3081,7 +3122,8 @@ A--&gt;B</code></pre>
 
   it.each([
     { fence: '```', source: '```\nAlpha\n```' },
-    { fence: '~~~~~', source: '~~~~~\nAlpha\n~~~~~' }
+    { fence: '~~~~~', source: '~~~~~\nAlpha\n~~~~~' },
+    { fence: '~~~', source: '~~~\rAlpha\r~~~' }
   ])(
     'places an accepted document-end caret after a closed $fence fence without changing serialization',
     ({ fence, source }) => {
@@ -3102,7 +3144,9 @@ A--&gt;B</code></pre>
       const caret = paragraph?.firstChild;
       expect(caret).toBeInstanceOf(Text);
       expect(caret?.textContent).toBe('\u200b');
-      expect(serializeVisualMarkdown(surface)).toBe(source);
+      expect(serializeVisualMarkdown(surface)).toBe(
+        source.replace(/\r\n|\r/g, '\n')
+      );
       expect(window.getSelection()?.anchorNode).toBe(caret);
       expect(window.getSelection()?.anchorOffset).toBe(1);
       expect(window.getSelection()?.isCollapsed).toBe(true);

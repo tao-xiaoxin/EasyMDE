@@ -461,6 +461,10 @@ function markdownLineStarts(markdown: string): number[] {
   return starts;
 }
 
+function splitMarkdownLines(markdown: string): string[] {
+  return markdown.split(/\r\n|\r|\n/);
+}
+
 function trailingLineEndingCount(
   markdown: string,
   start: number,
@@ -508,7 +512,7 @@ function markdownCodeBlocks(markdown: string): ReadonlyArray<MarkdownCodeBlock> 
   } | null = null;
   let inIndentedCode = false;
   let ordinal = 0;
-  const lines = markdown.split(/\r?\n/);
+  const lines = splitMarkdownLines(markdown);
   const isIndentedCodeLine = (line: string): boolean =>
     /^(?: {4,}|\t+)\S/.test(line);
   const isBlankLine = (line: string): boolean => /^\s*$/.test(line);
@@ -2393,10 +2397,7 @@ export function createVisualMarkdownSourceRangeFromPreviewEditMap(
     || blockRange.end > editMap.blocks.length
   ) invalid();
 
-  const lineStarts = [0];
-  for (let offset = 0; offset < sourceMarkdown.length; offset += 1) {
-    if ('\n' === sourceMarkdown[offset]) lineStarts.push(offset + 1);
-  }
+  const lineStarts = markdownLineStarts(sourceMarkdown);
   const selected = editMap.blocks.slice(blockRange.start, blockRange.end);
   let previousEndLine: number | null = null;
   for (const block of selected) {
@@ -3268,7 +3269,7 @@ function closedMarkdownFenceAtDocumentEnd(
   }
   const family = lastBlock.family;
   if (!family) return null;
-  const lines = markdown.split(/\r?\n/);
+  const lines = splitMarkdownLines(markdown);
   let lastLineIndex = lines.length - 1;
   while (lastLineIndex >= 0 && /^\s*$/.test(lines[lastLineIndex] ?? '')) {
     lastLineIndex -= 1;

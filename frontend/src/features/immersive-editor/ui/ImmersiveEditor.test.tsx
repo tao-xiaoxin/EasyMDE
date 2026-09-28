@@ -1,5 +1,9 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react';
-import { createElement } from '@wordpress/element';
+import {
+  createElement,
+  startTransition,
+  Suspense
+} from '@wordpress/element';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
@@ -46,6 +50,8 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
   let currentViewportWidth = viewportWidth;
   let currentActiveElement: HTMLElement | null = null;
   let documentListener: (() => void) | null = null;
+  let stringReadSuspension: Promise<void> | null = null;
+  let stringReadSuspensionCount = 0;
   const resizeListeners = new Set<() => void>();
   const getValue = vi.fn(() => initial);
   const documentSubscribe = vi.fn((listener: () => void) => {
@@ -140,7 +146,15 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
   } satisfies GeneralSettings;
   const strings = new Proxy(
     {},
-    { get: (_target, property) => String(property) }
+    {
+      get: (_target, property) => {
+        if (stringReadSuspension) {
+          stringReadSuspensionCount += 1;
+          throw stringReadSuspension;
+        }
+        return String(property);
+      }
+    }
   ) as unknown as ImmersiveStrings;
   const publishSnapshot = {
     availableFields: {
@@ -178,8 +192,18 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
     focusVisualPreview,
     onFailure,
     readViewportWidth,
+    readActiveElement,
+    readStringReadSuspensionCount() {
+      return stringReadSuspensionCount;
+    },
+    resumeStringReads() {
+      stringReadSuspension = null;
+    },
     setActiveElement(element: HTMLElement | null) {
       currentActiveElement = element;
+    },
+    suspendStringReads(promise: Promise<void>) {
+      stringReadSuspension = promise;
     },
     revealPosition,
     resizeTo(width: number) {
@@ -703,5 +727,48 @@ describe('ImmersiveEditor document derivations', () => {
     expect(view.container.querySelector('.easymde-immersive-outline'))
       .toBeNull();
     expect(fixture.focusVisualPreview).toHaveBeenCalledOnce();
+  });
+
+  it('keeps resize decisions on committed Preview props during a suspended transition', async () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 760);
+    const editorElement = (visualPreviewEditable: boolean) => (
+      <Suspense fallback={<output data-testid="suspended-editor">pending</output>}>
+        <ImmersiveEditor
+          {...fixture.props}
+          mode="preview"
+          visualPreviewEditable={visualPreviewEditable}
+        />
+      </Suspense>
+    );
+    const view = render(editorElement(false));
+    let resumeSuspension = () => {};
+    const suspendedRender = new Promise<void>((resolve) => {
+      resumeSuspension = resolve;
+    });
+    fixture.suspendStringReads(suspendedRender);
+
+    act(() => {
+      startTransition(() => view.rerender(editorElement(true)));
+    });
+    expect(fixture.readStringReadSuspensionCount()).toBeGreaterThan(0);
+    expect(view.queryByTestId('suspended-editor')).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    fixture.readActiveElement.mockClear();
+    act(() => fixture.resizeTo(640));
+    expect(fixture.readActiveElement).not.toHaveBeenCalled();
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    fixture.resumeStringReads();
+    await act(async () => {
+      resumeSuspension();
+      await suspendedRender;
+    });
+    await waitFor(() => {
+      expect(view.container.querySelector('.easymde-immersive-outline'))
+        .toBeNull();
+    });
   });
 });

@@ -326,6 +326,13 @@ The Windowed visual owner and Preview surface remain paired until the restored
 history selection is committed. If the canonical history still has a Redo
 branch, that pair remains active until Redo obtains its next document-end lease
 or a new local edit discards the branch; failure, exit, and teardown clear it.
+Generated Preview roots may carry non-editable zero-width source ranges before
+or after editable roots. Code-body mapping skips those ranges, and document-end
+pinning selects the unique last editable root that reaches canonical EOF.
+For a transformed non-code final root, EOF restoration may collapse at that
+validated live root's DOM end only when every following mounted root is the
+corresponding protected non-editable output; ordinary and PRE mapping remain
+source-projected and fail explicitly on ambiguity.
 Temporary browser Selection is not a pin across Safe HTML child replacement.
 After the final editable block mounts, a collapsed EOF
 caret may project to that block's text end when only source line endings remain

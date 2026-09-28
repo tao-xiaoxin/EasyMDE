@@ -113,6 +113,12 @@ class SourceRangeLedger {
     }
   }
 
+  hasEditableAfter(index: number): boolean {
+    return Array.from(this.byId.values()).some(
+      (range) => range.index > index && range.editable
+    );
+  }
+
   private prefix(end: number): number {
     let total = 0;
     for (let cursor = end; cursor > 0; cursor -= cursor & -cursor) {
@@ -877,8 +883,7 @@ function mountedSelectionRegion(
   const terminalDocumentEnd =
     selection.start === sourceLength
     && selection.end === sourceLength
-    && lastRange.end < sourceLength
-    && /^(?:\r\n|\n)+$/u.test(markdown.slice(lastRange.end));
+    && /^(?:(?:\r\n|\n)+)?$/u.test(markdown.slice(lastRange.end));
   return {
     blocks,
     end: { block: end.block, range: end.range },
@@ -1004,30 +1009,46 @@ function restoreMountedSourceSelection(
     start: selection.start - region.sourceStart
   };
   if (region.terminalDocumentEnd && 'PRE' !== region.end.block.tagName) {
-    const clone = region.end.block.cloneNode(true) as HTMLElement;
-    const blockMarkdown = markdown.slice(
-      region.end.range.start,
-      region.end.range.end
-    ).replace(/(?:\r\n|\n)+$/u, '');
-    const baseline = serializeVisualMarkdownBlockFragment([clone]);
-    const boundary = visualCaretBoundaryFromSourceOffset(
-      clone,
-      blockMarkdown,
-      baseline,
-      blockMarkdown.length
-    );
-    const liveBoundary = nodeAtPath(
-      region.end.block,
-      nodePathWithin(clone, boundary.node)
-    );
-    if (!liveBoundary.isConnected || liveBoundary.ownerDocument !== surface.ownerDocument) {
+    const block = region.end.block;
+    const blockId = block.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+    const liveRange = blockId ? ranges.get(blockId) : null;
+    const surfaceChildren = Array.from(surface.childNodes);
+    const blockIndex = surfaceChildren.indexOf(block);
+    const trailingDomIsGenerated = blockIndex >= 0
+      && surfaceChildren.slice(blockIndex + 1).every((child) => {
+        if (child instanceof Text) return /^\s*$/u.test(child.data);
+        if (!(child instanceof HTMLElement)) return false;
+        if (child.hasAttribute(WINDOW_SPACER_ATTRIBUTE)) return true;
+        const childRange = ranges.get(
+          child.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? ''
+        );
+        return childRange?.editable !== true
+          && 'false' === child.getAttribute('contenteditable')?.toLowerCase();
+      });
+    if (
+      !block.isConnected
+      || block.parentElement !== surface
+      || block.ownerDocument !== surface.ownerDocument
+      || 'false' === block.getAttribute('contenteditable')?.toLowerCase()
+      || blockIndex < 0
+      || !liveRange?.editable
+      || liveRange.id !== region.end.range.id
+      || liveRange.index !== region.end.range.index
+      || liveRange.start !== region.end.range.start
+      || liveRange.end !== region.end.range.end
+      || selection.start !== markdown.length
+      || selection.end !== markdown.length
+      || !/^(?:(?:\r\n|\n)+)?$/u.test(markdown.slice(liveRange.end))
+      || (liveRange && ranges.hasEditableAfter(liveRange.index))
+      || !trailingDomIsGenerated
+    ) {
       throw new Error('visual-editor-window-history-selection-map-failed');
     }
     const domSelection = surface.ownerDocument.defaultView?.getSelection();
     if (!domSelection) {
       throw new Error('visual-editor-window-history-selection-restore-failed');
     }
-    domSelection.collapse(liveBoundary, boundary.offset);
+    domSelection.collapse(block, block.childNodes.length);
     return true;
   }
   let codeOrdinal: number | null = null;
@@ -1459,6 +1480,7 @@ export function WindowedImmersiveVisualEditor({
     }
     const sourceMarkdown = documentSession.document.getValue();
     restoreVisualCodeFenceFamilies(surface, sourceMarkdown);
+    protectVisualMarkdownReadOnlyRegions(surface);
     rangesRef.current = createBlockRanges(sourceMarkdown, editMap);
   }, [documentSession, editMap, onFailure, onTransferFailure, previewSnapshot.signature]);
 

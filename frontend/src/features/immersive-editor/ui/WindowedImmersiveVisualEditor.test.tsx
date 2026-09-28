@@ -2671,6 +2671,171 @@ describe('WindowedImmersiveVisualEditor', () => {
   });
 
   it.each([
+    { ending: 'exact block EOF', suffix: '', unprotectedRoot: false },
+    { ending: 'terminal line endings', suffix: '\n\n', unprotectedRoot: false },
+    { ending: 'an unprotected generated root', suffix: '', unprotectedRoot: true }
+  ])('restores a real Redo caret at EOF after a themed final link with $ending', ({ suffix, unprotectedRoot }) => {
+    const blockIndex = 319;
+    const finalSource = `[red-crimson](https://example.test/reference "Red crimson reference")${suffix}`;
+    const finalMarkup = '<p data-easymde-visual-block-id="b319"><span class="footnote-word">red-crimson</span><sup class="footnote-ref">[1]</sup></p>';
+    const current = fixture({
+      blockOverrides: { [blockIndex]: finalSource },
+      markupOverrides: {
+        [blockIndex]: finalMarkup
+      },
+      mounted: [blockIndex]
+    });
+    const targetMarkdown = current.canonical();
+    const alternateMarkdown = targetMarkdown.replace('Line 0', 'Edit 0');
+    const terminalBlock = current.editMap.blocks[blockIndex];
+    if (!terminalBlock) throw new Error('windowed-themed-history-range-missing');
+    current.editMap = {
+      ...current.editMap,
+      blocks: [
+        ...current.editMap.blocks.map((block, index) => index === blockIndex
+          ? { ...block, endLine: block.startLine + 1 }
+          : block),
+        {
+          editable: false,
+          endLine: terminalBlock.startLine + 1,
+          id: 'b320',
+          startLine: terminalBlock.startLine + 1
+        },
+        {
+          editable: false,
+          endLine: terminalBlock.startLine + 1,
+          id: 'b321',
+          startLine: terminalBlock.startLine + 1
+        }
+      ]
+    };
+    const generatedSeparatorClass = unprotectedRoot
+      ? 'unknown-generated-root'
+      : 'footnotes-sep';
+    const generatedRoots = `<section class="${generatedSeparatorClass}" data-easymde-visual-block-id="b320">\u200b</section><section class="footnotes" data-easymde-visual-block-id="b321"><span class="footnote-item" id="fn1"><span class="footnote-num">[1] </span><p>Red crimson reference: <em>https://example.test/reference</em>\u200b</p></span></section>`;
+    current.surface.insertAdjacentHTML('beforeend', generatedRoots);
+    const submissionField = document.createElement('textarea');
+    submissionField.value = targetMarkdown;
+    submissionField.defaultValue = targetMarkdown;
+    submissionField.setSelectionRange(targetMarkdown.length, targetMarkdown.length);
+    const container = document.createElement('div');
+    document.body.append(container, submissionField);
+    const codeMirrorDocument = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const documentSession = createEditorDocumentSession(
+      codeMirrorDocument,
+      createNativeTitleSession(null)
+    );
+    documentSession.registerSubmissionState({
+      appleFont: 'system',
+      codeTheme: 'dark',
+      codeThemeExplicit: false,
+      customCssId: '',
+      customFont: 'none',
+      markdownTheme: 'default',
+      serifFont: 'off',
+      windowsFont: 'system'
+    });
+    documentSession.document.applyTextChange({
+      changes: { from: 0, insert: 'Edit 0', to: 'Line 0'.length },
+      recordHistorySelection: true,
+      selection: {
+        direction: 'none',
+        end: alternateMarkdown.length,
+        start: alternateMarkdown.length
+      },
+      value: alternateMarkdown
+    });
+    expect(documentSession.document.undo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(targetMarkdown);
+
+    const signature = 'themed-document-end-redo';
+    const releasePin = vi.fn();
+    const requestPreviewAtDocumentEnd = vi.fn(() => ({
+      release: releasePin,
+      signature
+    }));
+    const onDiagnostic = vi.fn();
+    const onFailure = vi.fn();
+    const { rerenderPreview, view } = renderWindowEditor(current, {
+      documentSession,
+      onDiagnostic,
+      onFailure,
+      requestPreviewAtDocumentEnd
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+
+    const redo = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyRedo'
+    });
+    current.surface.dispatchEvent(redo);
+    expect(redo.defaultPrevented).toBe(true);
+    expect(documentSession.document.getValue()).toBe(alternateMarkdown);
+    expect(documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: alternateMarkdown.length,
+      start: alternateMarkdown.length
+    });
+    expect(requestPreviewAtDocumentEnd).toHaveBeenCalledOnce();
+    expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(alternateMarkdown);
+
+    current.surface.innerHTML = [
+      '<div data-easymde-preview-window-spacer="1"></div>',
+      finalMarkup,
+      generatedRoots
+    ].join('');
+    rerenderPreview(
+      { ...current.editMap, signature },
+      { revision: 2, signature }
+    );
+
+    expect(onDiagnostic).not.toHaveBeenCalled();
+    expect(releasePin).toHaveBeenCalledOnce();
+    if (unprotectedRoot) {
+      expect(onFailure).toHaveBeenCalledWith(
+        'visual-editor-window-history-selection-map-failed'
+      );
+      expect(onFailure).toHaveBeenCalledOnce();
+      view.unmount();
+      documentSession.destroy();
+      container.remove();
+      submissionField.remove();
+      return;
+    }
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b320"]'
+    )?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b321"]'
+    )?.getAttribute('contenteditable')).toBe('false');
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      `[data-easymde-visual-block-id="b${blockIndex}"]`
+    );
+    const selection = window.getSelection();
+    const anchor = selection?.anchorNode;
+    if (!(paragraph instanceof HTMLElement) || !anchor || !selection) {
+      throw new Error('windowed-themed-history-selection-missing');
+    }
+    expect(selection.isCollapsed).toBe(true);
+    expect(anchor === paragraph || paragraph.contains(anchor)).toBe(true);
+    expect(textOffsetWithin(paragraph, anchor, selection.anchorOffset))
+      .toBe(paragraph.textContent?.length);
+
+    view.unmount();
+    documentSession.destroy();
+    container.remove();
+    submissionField.remove();
+  });
+
+  it.each([
     {
       className: 'easymde-math',
       extraAttributes: 'data-easymde-rendered="1"',

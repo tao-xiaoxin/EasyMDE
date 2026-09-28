@@ -794,9 +794,14 @@ async function waitForPreviewRefresh(preview, previousSignature, message) {
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
 }
 
-function expectWindowedCoverage(state, totalBlockCount, targetBlockIndex) {
+function expectWindowedCoverage(
+  state,
+  totalBlockCount,
+  targetBlockIndex,
+  maxSpacerRanges = 2
+) {
   const { mountedBlockCount, mountedRanges, spacerRanges } = state;
-  expect(spacerRanges.length).toBeLessThanOrEqual(2);
+  expect(spacerRanges.length).toBeLessThanOrEqual(maxSpacerRanges);
   expect(mountedBlockCount).toBeGreaterThan(0);
   expect(mountedBlockCount).toBeLessThanOrEqual(160);
 
@@ -853,8 +858,8 @@ function expectWindowedCoverage(state, totalBlockCount, targetBlockIndex) {
   }
 }
 
-async function readVisualEndState(preview, markdown) {
-  return preview.evaluate((surface, expected) => {
+async function readVisualEndState(preview, markdown, lastEditableBlockId) {
+  return preview.evaluate((surface, { expectedMarkdown, lastEditableBlockId: editableBlockId }) => {
     const field = document.querySelector('#easymde-source');
     const canvas = document.querySelector('.easymde-immersive-preview-canvas');
     const selection = document.getSelection();
@@ -883,13 +888,14 @@ async function readVisualEndState(preview, markdown) {
       }
     }
     const anchorBlockId = anchorBlock?.getAttribute('data-easymde-visual-block-id') ?? null;
+    const anchorBlockRemainingTextLength = anchorBlockRemaining;
     const lastBlockId = Array.from(surface.querySelectorAll(
       '[data-easymde-visual-block-id]'
     )).at(-1)?.getAttribute('data-easymde-visual-block-id') ?? null;
     const anchorAtRootEnd = anchor === surface
       && selection?.anchorOffset === surface.childNodes.length;
-    const anchorAtFinalBlockEnd = anchorBlockId === lastBlockId
-      && anchorBlockRemaining === 0;
+    const anchorAtFinalEditableBlockEnd = anchorBlockId === editableBlockId
+      && 0 === anchorBlockRemainingTextLength;
     const indexes = Array.from(canvas?.querySelectorAll(
       '[data-easymde-visual-block-id]'
     ) ?? []).flatMap((node) => {
@@ -911,11 +917,12 @@ async function readVisualEndState(preview, markdown) {
     const remainingTrimmedLength = remainingText.trim().length;
     return {
       active: document.activeElement === surface,
-      anchorAtFinalBlockEnd,
+      anchorAtFinalEditableBlockEnd,
       anchorAtRootEnd,
       anchorBlockId,
+      anchorBlockRemainingTextLength,
       anchorConnected: Boolean(anchor?.isConnected),
-      canonical: field instanceof HTMLTextAreaElement && field.value === expected,
+      canonical: field instanceof HTMLTextAreaElement && field.value === expectedMarkdown,
       editable: surface.getAttribute('contenteditable') === 'true'
         && surface.getAttribute('aria-busy') === 'false'
         && !surface.hasAttribute('data-easymde-preview-error'),
@@ -926,21 +933,23 @@ async function readVisualEndState(preview, markdown) {
       remainingTrimmedLength,
       selectionCollapsed: Boolean(selection?.isCollapsed),
       sourceEOF: field instanceof HTMLTextAreaElement
-        && field.selectionStart === expected.length
-        && field.selectionEnd === expected.length,
+        && field.selectionStart === expectedMarkdown.length
+        && field.selectionEnd === expectedMarkdown.length,
       spacerRanges,
       visualEOF: Boolean(anchor?.isConnected
         && inside
         && selection?.isCollapsed
-        && 0 === remainingTrimmedLength
-        && (anchorAtRootEnd || anchorAtFinalBlockEnd))
+        && (anchorAtFinalEditableBlockEnd
+          || (anchorAtRootEnd
+            && editableBlockId === lastBlockId
+            && 0 === remainingTrimmedLength)))
     };
-  }, markdown);
+  }, { expectedMarkdown: markdown, lastEditableBlockId });
 }
 
-async function waitForVisualEnd(preview, markdown, message, errors) {
+async function waitForVisualEnd(preview, markdown, lastEditableBlockId, message, errors) {
   const read = async () => ({
-    ...await readVisualEndState(preview, markdown),
+    ...await readVisualEndState(preview, markdown, lastEditableBlockId),
     errorCodes: [...errors]
   });
   await expect.poll(read, { message }).toMatchObject({
@@ -4033,9 +4042,12 @@ test.describe('EasyMDE editor workflows', () => {
     const small = 'Small previous history target.';
     const transfer = Array.from(
       { length: 220 },
-      (_, index) => 'Synthetic history-window paragraph ' + (index + 1) + '.'
+      (_, index) => `Synthetic history-window paragraph ${index + 1}.`
     ).join('\n\n');
-    const large = small + '\n\n' + transfer;
+    const codeBody = 'ordinal-map-probe';
+    const codeBlock = ['```text', codeBody, '```'].join('\n');
+    const largeSuffix = `${transfer}\n\n${codeBlock}\n\n[Reference](https://example.test/reference "Reference title")`;
+    const large = `${small}\n\n${largeSuffix}`;
     const errors = [];
     page.on('pageerror', (error) => {
       const stableCode = error.message.match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1]
@@ -4057,12 +4069,41 @@ test.describe('EasyMDE editor workflows', () => {
     }, { timeout });
     await login(page, testInfo.easymdeUser);
     await openEasyMdeNewPost(page);
+    const catalog = await editorThemeCatalog(page);
+    const redCrimson = catalog.articleThemes.find(({ id }) => id === 'red-crimson');
+    if (!redCrimson) throw new Error('red-crimson-article-theme-unavailable');
+    const labels = await page.evaluate(() => ({
+      articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+      editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings
+    }));
+    const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.editorSettings, exact: true });
+    await settingsTrigger.click();
+    const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
+    await selectOrdinaryOption(
+      page,
+      settingsDialog.getByRole('combobox', {
+        name: labels.articleTheme,
+        exact: true
+      }),
+      redCrimson.label
+    );
+    await expect(page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    ))
+      .toHaveClass(/easymde-markdown-theme-red-crimson/);
+    await page.keyboard.press('Escape');
+    await expect(settingsDialog).toHaveCount(0);
     const initialPromise = previewResponseFor(small);
     void initialPromise.catch(() => undefined);
     await fillMarkdownAndWaitForPreview(page, small, small);
     const initialResponse = await initialPromise;
     expect(initialResponse.ok()).toBe(true);
-    expect((await initialResponse.json()).editMap?.blocks?.length).toBe(1);
+    const smallBlocks = (await initialResponse.json()).editMap?.blocks ?? [];
+    expect(smallBlocks).toHaveLength(1);
+    const smallLastEditableBlockIndex = smallBlocks.findLastIndex(({ editable }) => editable);
+    expect(smallLastEditableBlockIndex).toBe(0);
+    const smallLastEditableBlockId = smallBlocks[smallLastEditableBlockIndex].id;
     const editor = await enterImmersivePreviewAndUnlock(page);
     const visualEditor = editor.visualEditor;
     const source = editor.source;
@@ -4085,8 +4126,8 @@ test.describe('EasyMDE editor workflows', () => {
         targets.push(requestTarget(request));
       }
     });
-    const waitForEnd = (expected, message) =>
-      waitForVisualEnd(visualEditor, expected, message, errors);
+    const waitForEnd = (expected, lastEditableBlockId, message) =>
+      waitForVisualEnd(visualEditor, expected, lastEditableBlockId, message, errors);
 
     const largePromise = previewResponseFor(large);
     await visualEditor.focus();
@@ -4096,68 +4137,228 @@ test.describe('EasyMDE editor workflows', () => {
         throw new Error('windowed-history-clipboard-unavailable');
       }
       await navigator.clipboard.writeText(text);
-    }, '\n\n' + transfer);
+    }, `\n\n${largeSuffix}`);
     await page.keyboard.press('ControlOrMeta+V');
     const largeResponse = await largePromise;
     expect(largeResponse.ok()).toBe(true);
-    const largeCount = (await largeResponse.json()).editMap?.blocks?.length ?? 0;
-    expect(largeCount).toBe(221);
+    const largePreview = await largeResponse.json();
+    const largeEditMap = largePreview.editMap;
+    const largeBlocks = largeEditMap?.blocks ?? [];
+    const totalBlockCount = largeBlocks.length;
+    const lastEditableBlockIndex = largeBlocks.findLastIndex(({ editable }) => editable);
+    expect(totalBlockCount).toBeGreaterThan(160);
+    expect(lastEditableBlockIndex).toBeGreaterThanOrEqual(0);
+    const lastEditableBlock = largeBlocks[lastEditableBlockIndex];
+    const lastEditableBlockId = lastEditableBlock.id;
+    const trailingGeneratedRoots = largeBlocks.slice(lastEditableBlockIndex + 1);
+    const trailingGeneratedZeroWidthRoots = trailingGeneratedRoots.filter(
+      ({ editable, startLine, endLine }) => !editable && startLine === endLine
+    );
+    expect(trailingGeneratedZeroWidthRoots.length).toBeGreaterThan(0);
+    expect(trailingGeneratedRoots).toHaveLength(trailingGeneratedZeroWidthRoots.length);
+    const footnoteRootIds = await page.evaluate((html) => {
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      return Array.from(template.content.querySelectorAll('.footnotes, .footnotes-sep'))
+        .filter((node) => node.parentNode === template.content)
+        .map((node) => node.getAttribute('data-easymde-visual-block-id'));
+    }, largePreview.html);
+    expect(footnoteRootIds.length).toBeGreaterThan(0);
+    expect(footnoteRootIds).toEqual(
+      trailingGeneratedZeroWidthRoots.map(({ id }) => id)
+    );
+    const codeRootIds = await page.evaluate((html) => {
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      return Array.from(template.content.children)
+        .filter((root) => root.matches('pre') && root.querySelector(':scope > code'))
+        .map((root) => root.getAttribute('data-easymde-visual-block-id'));
+    }, largePreview.html);
+    expect(codeRootIds.length).toBeGreaterThan(0);
+    const editableCodeBlockIndex = largeBlocks.findIndex(({ id, editable }) => (
+      editable && codeRootIds.includes(id)
+    ));
+    expect(editableCodeBlockIndex).toBeGreaterThanOrEqual(0);
+    expect(editableCodeBlockIndex).toBeLessThan(lastEditableBlockIndex);
+    const editableCodeBlockId = largeBlocks[editableCodeBlockIndex].id;
+    const editedCodeBody = `${codeBody}X`;
+    const editedCodeMarkdown = large.replace(codeBody, editedCodeBody);
+    const readCodeCaret = (expectedMarkdown, expectedCodeBody) =>
+      visualEditor.evaluate((surface, expected) => {
+        const field = document.querySelector('#easymde-source');
+        const codeRoot = surface.querySelector(
+          `[data-easymde-visual-block-id="${expected.blockId}"]`
+        );
+        const code = codeRoot?.querySelector(':scope > code') ?? null;
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        let codeTextBeforeCaret = null;
+        if (code && anchor && selection?.isCollapsed && code.contains(anchor)) {
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(anchor, selection.anchorOffset);
+          codeTextBeforeCaret = range.toString();
+        }
+        return {
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideCode: Boolean(code && anchor && code.contains(anchor)),
+          canonical: field instanceof HTMLTextAreaElement
+            && field.value === expected.markdown,
+          codeTextMatchesExpected: code?.textContent?.trimEnd() === expected.codeBody,
+          codeText: code?.textContent?.trimEnd() ?? null,
+          codeTextBeforeCaret,
+          selectionCollapsed: Boolean(selection?.isCollapsed)
+        };
+      }, {
+        blockId: editableCodeBlockId,
+        markdown: expectedMarkdown,
+        codeBody: expectedCodeBody
+      });
     await expect(source).toHaveValue(large, { timeout: 30_000 });
     await waitForPreviewRefresh(visualEditor, smallSignature, 'large native paste should commit');
-    await visualEditor.press('ControlOrMeta+End');
-    const largeState = await waitForEnd(large, 'large paste should retain canonical EOF');
-    expectWindowedCoverage(largeState, largeCount, largeCount - 1);
+    await page.locator('.easymde-immersive-preview-canvas').evaluate((canvas) => {
+      canvas.scrollTop = canvas.scrollHeight;
+      canvas.dispatchEvent(new Event('scroll'));
+    });
+    await expect(visualEditor.locator(
+      `[data-easymde-visual-block-id="${lastEditableBlockId}"]`
+    )).toBeAttached({ timeout: 30_000 });
+    for (const { id } of trailingGeneratedZeroWidthRoots) {
+      const generatedRoot = visualEditor.locator(
+        `[data-easymde-visual-block-id="${id}"]`
+      );
+      if (0 === await generatedRoot.count()) continue;
+      await expect(generatedRoot).toHaveAttribute('contenteditable', 'false');
+    }
+    await visualEditor.evaluate((surface, blockId) => {
+      const block = surface.querySelector(
+        `[data-easymde-visual-block-id="${blockId}"]`
+      );
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!(block instanceof HTMLElement) || !selection) {
+        throw new Error('windowed-history-editable-eof-unavailable');
+      }
+      surface.focus({ preventScroll: true });
+      const range = surface.ownerDocument.createRange();
+      range.selectNodeContents(block);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    }, lastEditableBlockId);
+    const largeState = await waitForEnd(
+      large,
+      lastEditableBlockId,
+      'large paste should retain canonical EOF'
+    );
+    expectWindowedCoverage(
+      largeState,
+      totalBlockCount,
+      lastEditableBlockIndex,
+      3
+    );
     expect(largeState).toMatchObject({
-      anchorAtRootEnd: true,
-      anchorBlockId: 'b220',
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: lastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
       anchorConnected: true,
-      lastBlockId: 'b220',
-      remainingTextLength: 0,
       selectionCollapsed: true
     });
     expect(largeState.spacerRanges.length).toBeGreaterThan(0);
     expect(targets).toEqual(['large']);
 
+    const largeSignatureBeforeCodeEdit = await readyPreviewSignature(visualEditor);
+    const codeElement = visualEditor.locator(
+      `[data-easymde-visual-block-id="${editableCodeBlockId}"] > code`
+    );
+    await expect(codeElement).toHaveText(codeBody);
+    await visualEditor.focus();
+    await placeVisualCaretAfterText(visualEditor, codeBody);
+    await page.keyboard.type('X');
+    await expect(source).toHaveValue(editedCodeMarkdown, { timeout: 30_000 });
+    const editedCodeCaret = await readCodeCaret(editedCodeMarkdown, editedCodeBody);
+    expect(editedCodeCaret).toMatchObject({
+      anchorConnected: true,
+      anchorInsideCode: true,
+      canonical: true,
+      codeTextMatchesExpected: true,
+      codeTextBeforeCaret: editedCodeBody,
+      selectionCollapsed: true
+    });
+    expect(targets).toEqual(['large']);
+    expect(await readyPreviewSignature(visualEditor))
+      .toBe(largeSignatureBeforeCodeEdit);
+    expect(errors).toEqual([]);
+
+    const restoreLargePromise = previewResponseFor(large);
+    await page.keyboard.press('ControlOrMeta+Z');
+    const restoreLargeResponse = await restoreLargePromise;
+    expect(restoreLargeResponse.ok()).toBe(true);
+    expect((await restoreLargeResponse.json()).editMap?.blocks).toHaveLength(totalBlockCount);
+    await expect(source).toHaveValue(large, { timeout: 30_000 });
+    await waitForPreviewRefresh(
+      visualEditor,
+      largeSignatureBeforeCodeEdit,
+      'Undo should restore the large source before the small target'
+    );
+    expect(targets).toEqual(['large', 'large']);
     const largeSignature = await readyPreviewSignature(visualEditor);
+
     const undoPromise = previewResponseFor(small);
     await page.keyboard.press('ControlOrMeta+Z');
     const undoResponse = await undoPromise;
     expect(undoResponse.ok()).toBe(true);
-    expect((await undoResponse.json()).editMap?.blocks?.length).toBe(1);
+    expect((await undoResponse.json()).editMap?.blocks).toHaveLength(1);
     await expect(source).toHaveValue(small, { timeout: 30_000 });
     await waitForPreviewRefresh(visualEditor, largeSignature, 'Undo should Preview the small target');
-    const smallState = await waitForEnd(small, 'Undo should restore the small EOF caret');
+    const smallState = await waitForEnd(
+      small,
+      smallLastEditableBlockId,
+      'Undo should restore the small EOF caret'
+    );
     expectWindowedCoverage(smallState, 1, null);
     expect(smallState).toMatchObject({
-      anchorAtFinalBlockEnd: true,
-      anchorBlockId: 'b0',
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: smallLastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
       anchorConnected: true,
-      lastBlockId: 'b0',
       remainingTrimmedLength: 0,
       selectionCollapsed: true
     });
     expect(smallState.spacerRanges).toEqual([]);
-    expect(targets).toEqual(['large', 'small']);
+    expect(targets).toEqual(['large', 'large', 'small']);
 
     const smallSignatureAfterUndo = await readyPreviewSignature(visualEditor);
     const redoPromise = previewResponseFor(large);
     await page.keyboard.press('ControlOrMeta+Shift+Z');
     const redoResponse = await redoPromise;
     expect(redoResponse.ok()).toBe(true);
-    expect((await redoResponse.json()).editMap?.blocks?.length).toBe(largeCount);
+    const redoBlocks = (await redoResponse.json()).editMap?.blocks ?? [];
+    expect(redoBlocks).toHaveLength(totalBlockCount);
+    expect(redoBlocks[lastEditableBlockIndex]).toEqual(lastEditableBlock);
+    expect(redoBlocks.slice(lastEditableBlockIndex + 1)).toEqual(trailingGeneratedRoots);
     await expect(source).toHaveValue(large, { timeout: 30_000 });
     await waitForPreviewRefresh(visualEditor, smallSignatureAfterUndo, 'Redo should restore the large target');
-    const redoneState = await waitForEnd(large, 'Redo should restore the Windowed EOF caret');
-    expectWindowedCoverage(redoneState, largeCount, largeCount - 1);
+    const redoneState = await waitForEnd(
+      large,
+      lastEditableBlockId,
+      'Redo should restore the Windowed EOF caret'
+    );
+    expectWindowedCoverage(
+      redoneState,
+      totalBlockCount,
+      lastEditableBlockIndex,
+      3
+    );
     expect(redoneState).toMatchObject({
-      anchorBlockId: 'b220',
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: lastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
       anchorConnected: true,
-      lastBlockId: 'b220',
-      remainingTextLength: 0,
       selectionCollapsed: true
     });
     expect(redoneState.spacerRanges.length).toBeGreaterThan(0);
-    expect(targets).toEqual(['large', 'small', 'large']);
+    expect(targets).toEqual(['large', 'large', 'small', 'large']);
     expect(errors).toEqual([]);
   });
 

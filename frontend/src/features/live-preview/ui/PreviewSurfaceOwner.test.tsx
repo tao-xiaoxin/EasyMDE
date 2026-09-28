@@ -159,6 +159,38 @@ function documentEndFixture(
   };
 }
 
+function documentEndWithGeneratedRootsFixture(
+  count: number,
+  signature: string,
+  terminalSuffix = ''
+) {
+  const fixture = documentEndFixture(count, signature, terminalSuffix);
+  const generatedRoots = [
+    `<hr data-easymde-visual-block-id="b${count}" class="footnotes-sep">`,
+    `<div data-easymde-visual-block-id="b${count + 1}" class="footnotes">`
+      + '<ol><li>Generated note</li></ol></div>'
+  ];
+  const lastSourceBlock = fixture.editMap.blocks[count - 1];
+  if (!lastSourceBlock) throw new Error('preview-test-document-end-source-missing');
+
+  return {
+    ...fixture,
+    editMap: {
+      ...fixture.editMap,
+      blocks: [
+        ...fixture.editMap.blocks,
+        ...generatedRoots.map((_, index) => ({
+          id: `b${count + index}`,
+          startLine: lastSourceBlock.endLine,
+          endLine: lastSourceBlock.endLine,
+          editable: false
+        }))
+      ]
+    },
+    html: (fixture.html + generatedRoots.join('')) as SafePreviewHtml
+  };
+}
+
 function protectedPreviewFixture(
   paragraph: string,
   signature: string,
@@ -1280,6 +1312,99 @@ describe('PreviewSurfaceOwner', () => {
     );
     lease.release();
     replaceChildren.mockRestore();
+  });
+
+  it.each(['', '\n\n'])(
+    'pins the EOF source block before trailing generated zero-width roots with suffix %j',
+    async (terminalSuffix) => {
+      const signature = `history-document-end-generated-${terminalSuffix.length}`;
+      const fixture = documentEndWithGeneratedRootsFixture(
+        220,
+        signature,
+        terminalSuffix
+      );
+      const current = setup({
+        contentEditable: true,
+        initialHtml: '<p>Initial preview</p>',
+        stagingScheduler: { yield: () => Promise.resolve() },
+        windowed: true
+      });
+      await act(async () => flushAnimationFrames());
+      const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+      act(() => {
+        current.session.schedule(request(fixture.markdown, signature), true);
+      });
+      await act(async () => {
+        current.responses[0]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+
+      expect(current.surface.getAttribute('data-easymde-preview-error')).toBeNull();
+      expect(current.surface.easymdePreviewSignature).toBe(signature);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b219"]'
+      )).not.toBeNull();
+      let materialization!: Promise<boolean>;
+      act(() => {
+        materialization = current.runtime.materialize();
+      });
+      await act(async () => flushAnimationFrames(8));
+      await expect(materialization).resolves.toBe(true);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b220"]'
+      )?.getAttribute('contenteditable')).toBe('false');
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b221"]'
+      )?.getAttribute('contenteditable')).toBe('false');
+      expect(current.onDiagnostic).not.toHaveBeenCalled();
+      lease.release();
+    }
+  );
+
+  it('rejects an ambiguous EOF map with a trailing editable block', async () => {
+    const signature = 'history-document-end-trailing-editable';
+    const fixture = documentEndFixture(220, signature, '\n\n');
+    const trailingEditableBlock = {
+      id: 'b220',
+      startLine: 220,
+      endLine: 221,
+      editable: true
+    } as const;
+    const editMap = {
+      ...fixture.editMap,
+      blocks: [
+        ...fixture.editMap.blocks,
+        trailingEditableBlock
+      ]
+    };
+    const html = (fixture.html
+      + '<p data-easymde-visual-block-id="b220">Trailing source</p>') as SafePreviewHtml;
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({ editMap, features: {}, html });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
   });
 
   it('invalidates a superseded document-end lease by token without clearing its replacement', async () => {

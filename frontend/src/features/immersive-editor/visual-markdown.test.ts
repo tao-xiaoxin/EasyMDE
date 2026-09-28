@@ -301,6 +301,52 @@ describe('visual Markdown editing', () => {
     }
   );
 
+  it('maps source-backed code after a leading zero-line generated Preview root', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 0, false),
+      previewBlock('b1', 0, 3)
+    ]);
+
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(
+      markdown,
+      editMap
+    )).toEqual(new Map([['b1', 0]]));
+  });
+
+  it('skips a trailing generated root at the one-past-final source line', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 3),
+      previewBlock('b1', 3, 3, false)
+    ]);
+
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(
+      markdown,
+      editMap
+    )).toEqual(new Map([['b0', 0]]));
+  });
+
+  it.each([
+    {
+      blocks: [previewBlock('b0', 0, 3), previewBlock('b1', 4, 4, false)],
+      name: 'a generated range beyond the final line'
+    },
+    {
+      blocks: [previewBlock('b0', 0, 3), previewBlock('b1', 2, 2, false)],
+      name: 'an out-of-order generated range'
+    },
+    {
+      blocks: [previewBlock('b0', 3, 3)],
+      name: 'an editable zero-width range'
+    }
+  ])('rejects $name while mapping code body ordinals', ({ blocks }) => {
+    expect(() => createVisualCodeBodyOrdinalsForPreviewBlocks(
+      '~~~js\nAlpha\n~~~',
+      previewEditMap(blocks)
+    )).toThrow('visual-editor-code-block-map-invalid');
+  });
+
   it.each(['~~~', '```'])(
     'widens an open EOF %s fence around a literal body fence and stays open',
     (fence) => {

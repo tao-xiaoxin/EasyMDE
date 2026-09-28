@@ -511,6 +511,12 @@ Windowed threshold, Undo to the accepted small target, and Redo to the large
 target. The small commit must mount every block without spacers, remain
 editable, and restore its connected collapsed EOF caret; Redo must restore the
 bounded Windowed partition and the same canonical EOF ownership.
+Run that transition with a real Theme-generated footnote tail. Verify the REST
+map contains trailing non-editable zero-width roots, the final editable source
+root remains the EOF owner, the generated DOM roots are protected, and Redo
+restores the connected caret without source-to-transformed-DOM guesswork.
+Also cover a generated zero-width root before an unrelated fenced block so its
+code-body ordinal remains mappable.
 Verify a complete active fence run in the body followed immediately by another
 character widens the outer fence and preserves source, caret, Undo, and Redo.
 Use a noncancelable rejected composition mutation to prove accepted DOM/source

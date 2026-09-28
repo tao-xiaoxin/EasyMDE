@@ -74,17 +74,28 @@ function previewDocumentEndBlockIndex(
     if ('\n' === markdown[offset]) lineStarts.push(offset + 1);
   }
 
+  let lastEditableBlockIndex = -1;
+  editMap.blocks.forEach((block, index) => {
+    if (block.editable) lastEditableBlockIndex = index;
+  });
+
   const eofBlocks = editMap.blocks.flatMap((block, index) => {
+    const zeroWidthGeneratedBlock = !block.editable
+      && block.startLine === block.endLine;
     if (
       !Number.isInteger(block.startLine)
       || !Number.isInteger(block.endLine)
       || block.startLine < 0
-      || block.endLine <= block.startLine
+      || block.startLine > lineStarts.length
+      || block.endLine < block.startLine
+      || (block.endLine === block.startLine && !zeroWidthGeneratedBlock)
       || block.endLine > lineStarts.length
     ) {
       throw new PreviewWindowDomError('preview-window-document-end-range-invalid');
     }
-    const start = lineStarts[block.startLine];
+    const start = block.startLine === lineStarts.length
+      ? markdown.length
+      : lineStarts[block.startLine];
     const end = block.endLine === lineStarts.length
       ? markdown.length
       : lineStarts[block.endLine];
@@ -100,7 +111,7 @@ function previewDocumentEndBlockIndex(
 
   if (
     1 !== eofBlocks.length
-    || eofBlocks[0] !== editMap.blocks.length - 1
+    || eofBlocks[0] !== lastEditableBlockIndex
     || editMap.blocks.length <= DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED
   ) {
     throw new PreviewWindowDomError('preview-window-document-end-block-unavailable');

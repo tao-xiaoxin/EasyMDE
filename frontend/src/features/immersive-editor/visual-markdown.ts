@@ -1106,13 +1106,21 @@ export function createVisualCodeBodyOrdinalsForPreviewBlocks(
       || !Number.isInteger(previewBlock.endLine)
       || previewBlock.startLine < previousEndLine
       || previewBlock.startLine < 0
-      || previewBlock.endLine <= previewBlock.startLine
+      || previewBlock.endLine < previewBlock.startLine
+      || (
+        previewBlock.endLine === previewBlock.startLine
+        && previewBlock.editable
+      )
       || previewBlock.endLine > lineStarts.length
     ) {
       throw new Error('visual-editor-code-block-map-invalid');
     }
     blockIds.add(previewBlock.id);
     previousEndLine = previewBlock.endLine;
+    if (
+      !previewBlock.editable
+      && previewBlock.startLine === previewBlock.endLine
+    ) continue;
     const start = lineStarts[previewBlock.startLine];
     const end = lineStarts[previewBlock.endLine] ?? markdown.length;
     if (undefined === start || end < start) {

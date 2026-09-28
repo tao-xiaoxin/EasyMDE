@@ -68,11 +68,17 @@ describe('SafePreviewHtmlSink window commits', () => {
         htmlRevision={2}
         onStagedCommit={firstCompletion}
         stagedCommit={stagedCommit}
+        statusClassName="preview-status"
+        statusMessage="Updating Preview"
+        statusRole="status"
         surfaceRef={surfaceRef}
       />
     );
 
     expect(surface.querySelector('.easymde-toc')).toBe(oldToc);
+    const statusNode = surface.querySelector('.preview-status');
+    expect(statusNode?.textContent).toBe('Updating Preview');
+    expect(surface.querySelectorAll('.preview-status')).toHaveLength(1);
     expect(firstCompletion).toHaveBeenCalledOnce();
     expect(replaceChildren).toHaveBeenCalledOnce();
 
@@ -84,14 +90,101 @@ describe('SafePreviewHtmlSink window commits', () => {
         htmlRevision={2}
         onStagedCommit={laterCompletion}
         stagedCommit={stagedCommit}
+        statusClassName="preview-status"
+        statusMessage="Updating Preview"
         statusRole="status"
         surfaceRef={surfaceRef}
       />
     );
 
     expect(surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(surface.querySelector('.preview-status')).toBe(statusNode);
+    expect(surface.querySelectorAll('.preview-status')).toHaveLength(1);
     expect(replaceChildren).toHaveBeenCalledOnce();
     expect(laterCompletion).not.toHaveBeenCalled();
+  });
+
+  it('rejects external child drift after a staged status commit', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onError = vi.fn<(error: Error) => void>();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const initialHtml = '<p>Before</p>' as SafePreviewHtml;
+    const nextHtml = '<p>After</p>' as SafePreviewHtml;
+    const firstStagedCommit = vi.fn();
+    const nextStagedCommit = vi.fn();
+    const expectedWindowErrors: ErrorEvent[] = [];
+    const unexpectedWindowErrors: unknown[] = [];
+    const onWindowError = (event: ErrorEvent): void => {
+      if (
+        event.error instanceof Error
+        && 'preview-staged-commit-surface-drifted' === event.error.message
+      ) {
+        expectedWindowErrors.push(event);
+        event.preventDefault();
+        return;
+      }
+      unexpectedWindowErrors.push(event.error ?? event.message);
+    };
+    const template = document.createElement('template');
+    template.innerHTML = nextHtml;
+    const stagedCommit = {
+      nodes: Array.from(template.content.childNodes),
+      revision: 2
+    };
+    const view = render(
+      <TestErrorBoundary onError={onError}>
+        <SafePreviewHtmlSink
+          html={initialHtml}
+          htmlRevision={1}
+          surfaceRef={surfaceRef}
+        />
+      </TestErrorBoundary>
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('preview-staged-drift-surface-missing');
+
+    view.rerender(
+      <TestErrorBoundary onError={onError}>
+        <SafePreviewHtmlSink
+          html={nextHtml}
+          htmlRevision={2}
+          onStagedCommit={firstStagedCommit}
+          stagedCommit={stagedCommit}
+          statusClassName="preview-status"
+          statusMessage="Updating Preview"
+          statusRole="status"
+          surfaceRef={surfaceRef}
+        />
+      </TestErrorBoundary>
+    );
+    surface.append(document.createElement('span'));
+    window.addEventListener('error', onWindowError);
+
+    try {
+      view.rerender(
+        <TestErrorBoundary onError={onError}>
+          <SafePreviewHtmlSink
+            html={nextHtml}
+            htmlRevision={2}
+            onStagedCommit={nextStagedCommit}
+            stagedCommit={stagedCommit}
+            statusClassName="preview-status"
+            statusMessage="Updating Preview"
+            statusRole="status"
+            surfaceRef={surfaceRef}
+          />
+        </TestErrorBoundary>
+      );
+
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.lastCall?.[0].message)
+        .toBe('preview-staged-commit-surface-drifted');
+      expect(expectedWindowErrors).toHaveLength(1);
+      expect(unexpectedWindowErrors).toEqual([]);
+    } finally {
+      window.removeEventListener('error', onWindowError);
+      consoleError.mockRestore();
+    }
   });
 
   it('keeps a nested protected node adopted from inert staged markup', () => {

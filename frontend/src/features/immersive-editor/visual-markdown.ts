@@ -733,7 +733,7 @@ export type VisualCodeBodySelectionProjection = Readonly<{
 }>;
 
 function normalizeCodeBodyLineEndings(value: string): string {
-  return value.replace(/\r\n/g, '\n');
+  return value.replace(/\r\n|\r/g, '\n');
 }
 
 function codeBodyTextMatchesDom(markdownText: string, domText: string): boolean {

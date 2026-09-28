@@ -496,6 +496,43 @@ describe('visual Markdown editing', () => {
     expect(window.getSelection()?.anchorOffset).toBe(1);
   });
 
+  it('projects lone-CR code body source offsets through an LF Preview DOM', () => {
+    const sourceMarkdown = '~~~js\rAlpha\r~~~';
+    const visualMarkdown = '~~~js\nAlpha\n~~~';
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>Alpha\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-lone-cr-code-projection-fixture-missing');
+    }
+    placeCaret(text, 6);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      visualMarkdown,
+      0,
+      {
+        end: { node: text, offset: 6 },
+        start: { node: text, offset: 6 }
+      }
+    );
+
+    expect(projection.sourceText).toBe('Alpha\r');
+    expect(projection.visualText).toBe('Alpha\n');
+    expect(projection.localSelection).toEqual({ end: 6, start: 6 });
+    expect(projection.sourceSelection).toEqual({
+      end: projection.sourceInterval.bodyStart + 6,
+      start: projection.sourceInterval.bodyStart + 6
+    });
+    expect(projection.visualSelection).toEqual({
+      end: projection.visualInterval.bodyStart + 6,
+      start: projection.visualInterval.bodyStart + 6
+    });
+  });
+
   it('returns a caret boundary for a detached region without changing Selection', () => {
     const detached = document.createElement('article');
     detached.innerHTML = '<p>Markdown content</p>';
@@ -611,6 +648,11 @@ describe('visual Markdown editing', () => {
       markdown: '```js\n\n```',
       sourceBody: '\n',
       visualMarkdown: '```js\n\n```'
+    },
+    {
+      markdown: '~~~\r\r~~~',
+      sourceBody: '\r',
+      visualMarkdown: '~~~\n\n~~~'
     }
   ])('maps an accepted empty $markdown code placeholder to its source body', ({
     markdown,
@@ -764,6 +806,34 @@ describe('visual Markdown editing', () => {
     expect(code.firstChild).toBe(text);
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(3);
+  });
+
+  it('reconciles lone-CR source code through syntax spans and retains the LF DOM caret', () => {
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">Alpha</span>\nBeta\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const syntax = code?.querySelector('span.hljs-keyword');
+    const syntaxText = syntax?.firstChild;
+    const trailingText = syntax?.nextSibling;
+    if (
+      !(code instanceof HTMLElement)
+      || !(syntax instanceof HTMLSpanElement)
+      || !(syntaxText instanceof Text)
+      || !(trailingText instanceof Text)
+    ) {
+      throw new Error('visual-lone-cr-code-reconcile-fixture-missing');
+    }
+    placeCaret(trailingText, 2);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\rBeta\r', 7);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.firstChild).toBe(syntax);
+    expect(syntax.firstChild).toBe(syntaxText);
+    expect(syntax.textContent).toBe('Alpha');
+    expect(window.getSelection()?.anchorNode).toBe(trailingText);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
   });
 
   it('removes the renderer-only terminal newline while retaining syntax markup', () => {

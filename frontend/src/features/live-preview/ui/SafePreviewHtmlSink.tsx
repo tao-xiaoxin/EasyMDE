@@ -533,7 +533,7 @@ export function SafePreviewHtmlSink({
         statusRole,
         windowedCommitKey: null,
         stagedCommit: commit,
-        stagedCommitNodes: protectedReuse.nodes
+        stagedCommitNodes: Array.from(surface.childNodes)
       };
       onStagedCommit?.(commit.revision);
       return undefined;

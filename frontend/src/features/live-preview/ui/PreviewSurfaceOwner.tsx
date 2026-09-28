@@ -27,6 +27,10 @@ import {
 } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort, PreviewScrollSnapshot } from '../ports/preview-scroll-port';
 import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../../shared/markdown/markdown-line-model';
+import {
   SafePreviewHtmlSink,
   type SafePreviewHtmlSinkCommit,
   type SafePreviewHtmlSinkMaterializeCommit,
@@ -69,10 +73,7 @@ function previewDocumentEndBlockIndex(
     throw new PreviewWindowDomError('preview-window-document-end-map-invalid');
   }
 
-  const lineStarts = [0];
-  for (let offset = 0; offset < markdown.length; offset += 1) {
-    if ('\n' === markdown[offset]) lineStarts.push(offset + 1);
-  }
+  const lineStarts = markdownLineStarts(markdown);
 
   let lastEditableBlockIndex = -1;
   editMap.blocks.forEach((block, index) => {
@@ -103,7 +104,7 @@ function previewDocumentEndBlockIndex(
       throw new PreviewWindowDomError('preview-window-document-end-range-invalid');
     }
     const reachesDocumentEnd = end === markdown.length
-      || /^(?:\r\n|\n)+$/u.test(markdown.slice(end));
+      || isMarkdownTerminalWhitespaceSuffix(markdown.slice(end));
     return block.editable && start < markdown.length && reachesDocumentEnd
       ? [index]
       : [];

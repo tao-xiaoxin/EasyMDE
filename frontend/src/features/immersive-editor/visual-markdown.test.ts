@@ -4,6 +4,10 @@ import type {
   PreviewEditMap,
   PreviewEditMapBlock
 } from '../../contracts/ports/preview-request';
+import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../shared/markdown/markdown-line-model';
 
 import {
   applyVisualBlockShortcut,
@@ -77,6 +81,28 @@ function previewBlock(
 }
 
 describe('visual Markdown editing', () => {
+  it('maps CRLF, lone-CR, and LF line starts with the same UTF-16 offsets', () => {
+    expect(markdownLineStarts('A\r\nB\rC\n')).toEqual([0, 3, 5, 7]);
+  });
+
+  it.each([
+    { accepted: true, suffix: '' },
+    { accepted: true, suffix: ' \t' },
+    { accepted: true, suffix: '\r \t' },
+    { accepted: true, suffix: '\r\n\t\r\n' },
+    { accepted: true, suffix: '\n\r' },
+    { accepted: false, suffix: '\r visible' },
+    { accepted: false, suffix: '\u00a0' },
+    { accepted: false, suffix: '\r\u00a0\r' },
+    { accepted: false, suffix: '\u2028' },
+    { accepted: false, suffix: '\r\u2028\r' }
+  ])('recognizes only mapped terminal Markdown whitespace suffixes', ({
+    accepted,
+    suffix
+  }) => {
+    expect(isMarkdownTerminalWhitespaceSuffix(suffix)).toBe(accepted);
+  });
+
   it.each([
     { blankLineCount: 0, fence: '~~~' },
     { blankLineCount: 1, fence: '~~~' },

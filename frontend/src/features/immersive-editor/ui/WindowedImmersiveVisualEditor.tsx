@@ -6,6 +6,10 @@ import type {
   DocumentSelection
 } from '../../document-source/adapters/code-mirror-document-session';
 import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../../shared/markdown/markdown-line-model';
+import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
@@ -691,10 +695,7 @@ function createBlockRanges(
   editMap: PreviewEditMap
 ): SourceRangeLedger {
   const ranges: MutableBlockRange[] = [];
-  const lineStarts = [0];
-  for (let offset = 0; offset < markdown.length; offset += 1) {
-    if ('\n' === markdown[offset]) lineStarts.push(offset + 1);
-  }
+  const lineStarts = markdownLineStarts(markdown);
   let previousEndLine = 0;
   editMap.blocks.forEach((block, index) => {
     if (
@@ -836,7 +837,7 @@ function mountedSelectionRegion(
     ) return null;
     const endingAtDocumentEnd = mappedBlocks.filter(({ range }) => (
       range.end < sourceLength
-      && /^(?:\r\n|\n)+$/u.test(markdown.slice(range.end))
+      && isMarkdownTerminalWhitespaceSuffix(markdown.slice(range.end))
     ));
     if (1 !== endingAtDocumentEnd.length) return null;
     return endingAtDocumentEnd[0];
@@ -876,14 +877,14 @@ function mountedSelectionRegion(
       && !(
         selection.start === sourceLength
         && selection.end === sourceLength
-        && /^(?:\r\n|\n)+$/u.test(markdown.slice(lastRange.end))
+        && isMarkdownTerminalWhitespaceSuffix(markdown.slice(lastRange.end))
       )
     )
   ) return null;
   const terminalDocumentEnd =
     selection.start === sourceLength
     && selection.end === sourceLength
-    && /^(?:(?:\r\n|\n)+)?$/u.test(markdown.slice(lastRange.end));
+    && isMarkdownTerminalWhitespaceSuffix(markdown.slice(lastRange.end));
   return {
     blocks,
     end: { block: end.block, range: end.range },
@@ -1038,7 +1039,7 @@ function restoreMountedSourceSelection(
       || liveRange.end !== region.end.range.end
       || selection.start !== markdown.length
       || selection.end !== markdown.length
-      || !/^(?:(?:\r\n|\n)+)?$/u.test(markdown.slice(liveRange.end))
+      || !isMarkdownTerminalWhitespaceSuffix(markdown.slice(liveRange.end))
       || (liveRange && ranges.hasEditableAfter(liveRange.index))
       || !trailingDomIsGenerated
     ) {

@@ -189,6 +189,33 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
     }
 
+	public function test_preview_maps_mixed_line_endings_before_a_trailing_whitespace_only_line() {
+		$markdown = "# Heading\r\n\rParagraph\n \t";
+		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );
+		$blocks   = $preview['editMap']['blocks'];
+		$lines    = preg_split( '/\r\n|\r|\n/', $markdown );
+
+		$this->assertSame( array( 'b0', 'b1' ), array_column( $blocks, 'id' ) );
+		$this->assertSame(
+			array(
+				array( 'startLine' => 0, 'endLine' => 1 ),
+				array( 'startLine' => 2, 'endLine' => 3 ),
+			),
+			array_map(
+				static function ( $block ) {
+					return array(
+						'startLine' => $block['startLine'],
+						'endLine'   => $block['endLine'],
+					);
+				},
+				$blocks
+			)
+		);
+		$this->assertCount( 4, $lines );
+		$this->assertSame( " \t", $lines[3] );
+		$this->assertSame( true, $blocks[1]['editable'] );
+	}
+
     public function test_renders_basic_markdown_with_commonmark()
     {
         $html = MarkdownRenderer::render("# Hello\n\n**World**");

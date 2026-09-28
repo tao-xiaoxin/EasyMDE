@@ -1272,9 +1272,16 @@ describe('PreviewSurfaceOwner', () => {
     }
   );
 
-  it('pins the final block when the document ends with a CRLF-only suffix', async () => {
-    const signature = 'history-document-end-crlf';
-    const fixture = documentEndFixture(220, signature, '\r\n\r\n');
+  it.each([
+    { label: 'CRLF blank lines', signature: 'crlf', suffix: '\r\n\r\n' },
+    {
+      label: 'a lone-CR omitted whitespace-only line',
+      signature: 'lone-cr-whitespace',
+      suffix: '\r \t'
+    }
+  ])('pins the final block with $label', async ({ signature: caseSignature, suffix }) => {
+    const signature = `history-document-end-${caseSignature}`;
+    const fixture = documentEndFixture(220, signature, suffix);
     const current = setup({
       contentEditable: true,
       initialHtml: '<p>Initial preview</p>',
@@ -1312,6 +1319,41 @@ describe('PreviewSurfaceOwner', () => {
     );
     lease.release();
     replaceChildren.mockRestore();
+  });
+
+  it('rejects nonempty source after a lone-CR document-end block', async () => {
+    const signature = 'history-document-end-lone-cr-hidden-source';
+    const fixture = documentEndFixture(
+      220,
+      signature,
+      '\r\r[ref]: https://example.test\r'
+    );
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
   });
 
   it.each(['', '\n\n'])(

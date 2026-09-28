@@ -10,6 +10,7 @@ import {
   visualProtectedNodeAttributesEqual,
   type VisualProtectedNodeAttribute
 } from '../../shared/dom/visual-protected-node-adoption';
+import { markdownLineStarts } from '../../shared/markdown/markdown-line-model';
 
 export { VISUAL_MARKDOWN_READ_ONLY_SELECTOR };
 
@@ -446,19 +447,6 @@ function markdownFenceOpening(line: string): MarkdownFenceOpening | null {
 function markdownFenceClosing(line: string): string | null {
   const match = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
   return match?.[1] ?? null;
-}
-
-function markdownLineStarts(markdown: string): number[] {
-  const starts = [0];
-  for (let offset = 0; offset < markdown.length; offset += 1) {
-    if ('\r' === markdown[offset]) {
-      if ('\n' === markdown[offset + 1]) offset += 1;
-      starts.push(offset + 1);
-    } else if ('\n' === markdown[offset]) {
-      starts.push(offset + 1);
-    }
-  }
-  return starts;
 }
 
 function splitMarkdownLines(markdown: string): string[] {

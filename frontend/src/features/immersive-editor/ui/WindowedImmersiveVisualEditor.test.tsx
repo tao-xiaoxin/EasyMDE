@@ -37,7 +37,7 @@ function fixture(
   const sourceRangesPreviousEnd: number[] = [];
   const sourceRanges = sourceBlocks.map((block, index) => {
     const startLine = index === 0 ? 0 : (sourceRangesPreviousEnd[index - 1] ?? 0);
-    const endLine = startLine + block.split(/\r?\n/).length;
+    const endLine = startLine + block.split(/\r\n|\r|\n/).length;
     sourceRangesPreviousEnd[index] = endLine + (options.paragraphBlocks ? 1 : 0);
     return { endLine, startLine };
   });
@@ -252,6 +252,31 @@ function mergeMountedBlocks(
 }
 
 describe('WindowedImmersiveVisualEditor', () => {
+  it('maps lone-CR line ranges for a mounted fenced code block', () => {
+    const blockIndex = 160;
+    const sourceFence = '~~~\rAlpha\r~~~';
+    const current = fixture({
+      blockOverrides: { [blockIndex]: sourceFence },
+      markupOverrides: {
+        [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code>Alpha\n</code></pre>`
+      },
+      mounted: [blockIndex]
+    });
+    const onFailure = vi.fn();
+
+    const { view } = renderWindowEditor(current, { onFailure });
+
+    expect(current.editMap.blocks[blockIndex]).toMatchObject({
+      endLine: 163,
+      startLine: 160
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(current.surface.querySelector(
+      `[data-easymde-visual-block-id="b${blockIndex}"] > code`
+    )?.textContent).toBe('Alpha\n');
+    view.unmount();
+  });
+
   it.each([
     {
       blockIndex: 0,
@@ -1122,6 +1147,71 @@ describe('WindowedImmersiveVisualEditor', () => {
     );
     const anchor = window.getSelection()?.anchorNode;
     expect(Boolean(visibleBlock && anchor && visibleBlock.contains(anchor))).toBe(false);
+    view.unmount();
+  });
+
+  it('restores the document-end history caret after a lone-CR omitted whitespace line', () => {
+    const current = fixture({
+      lineOverrides: { 0: 'Before' },
+      mounted: [0],
+      sourceBlockCount: 1
+    });
+    const markdown = 'Before\r \t';
+    current.setCanonical('Before');
+    let historySelection: DocumentSelection = {
+      direction: 'none',
+      end: 0,
+      start: 0
+    };
+    const redo = vi.fn(() => {
+      current.setCanonical(markdown);
+      historySelection = {
+        direction: 'none',
+        end: markdown.length,
+        start: markdown.length
+      };
+      return true;
+    });
+    Object.assign(current.documentSession.document, {
+      getSelection: () => historySelection,
+      redo
+    });
+    const signature = 'lone-cr-whitespace-history';
+    const requestPreview = vi.fn(() => signature);
+    const onDiagnostic = vi.fn();
+    const onFailure = vi.fn();
+    const { rerenderPreview, view } = renderWindowEditor(current, {
+      onDiagnostic,
+      onFailure,
+      requestPreview
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+
+    current.surface.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyRedo'
+    }));
+    current.surface.innerHTML = '<p data-easymde-visual-block-id="b0">Before</p>';
+    rerenderPreview(
+      { ...current.editMap, signature },
+      { revision: 2, signature }
+    );
+
+    expect(onDiagnostic).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b0"]'
+    );
+    const selection = window.getSelection();
+    if (!(paragraph instanceof HTMLElement) || !selection?.anchorNode) {
+      throw new Error('windowed-lone-cr-whitespace-caret-missing');
+    }
+    expect(paragraph.contains(selection.anchorNode)).toBe(true);
+    expect(textOffsetWithin(paragraph, selection.anchorNode, selection.anchorOffset))
+      .toBe(paragraph.textContent?.length);
     view.unmount();
   });
 

@@ -691,6 +691,7 @@ describe('visual Markdown editing', () => {
       projection.sourceInterval.bodyStart,
       projection.sourceInterval.bodyEnd
     )).toBe(sourceBody);
+    expect(projection.visualText).toBe('\n');
     expect(projection.sourceSelection).toEqual({
       end: projection.sourceInterval.bodyStart,
       start: projection.sourceInterval.bodyStart
@@ -834,6 +835,50 @@ describe('visual Markdown editing', () => {
     expect(syntax.textContent).toBe('Alpha');
     expect(window.getSelection()?.anchorNode).toBe(trailingText);
     expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it('reconciles a plain LF DOM from CRLF source with a normalized caret offset', () => {
+    const surface = editor('<pre><code>Alpha\nBeta\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-crlf-plain-code-reconcile-fixture-missing');
+    }
+    placeCaret(text, 6);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\r\nBeta\r\n', 6);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(6);
+  });
+
+  it('normalizes CRLF after browser color FONT unwraps to plain code text', () => {
+    const surface = editor(
+      '<pre><code><font color="#c678dd">Alpha</font>\nBeta\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const font = code?.querySelector('font');
+    const trailingText = font?.nextSibling;
+    if (
+      !(code instanceof HTMLElement)
+      || !(font instanceof HTMLElement)
+      || !(trailingText instanceof Text)
+    ) {
+      throw new Error('visual-crlf-browser-font-reconcile-fixture-missing');
+    }
+    placeCaret(trailingText, 1);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\r\nBeta\r\n', 6);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.querySelector('font')).toBeNull();
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(trailingText);
+    expect(window.getSelection()?.anchorNode).toBe(trailingText);
+    expect(window.getSelection()?.anchorOffset).toBe(6);
   });
 
   it('removes the renderer-only terminal newline while retaining syntax markup', () => {

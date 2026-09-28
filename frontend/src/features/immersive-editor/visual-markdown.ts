@@ -1059,12 +1059,12 @@ export function reconcileVisualCodeBodyDom(
   const selection = code.ownerDocument.defaultView?.getSelection();
   unwrapPlainCodeTextSpans(code, selection);
   if (0 === code.querySelectorAll('*').length) {
-    reconcilePlainVisualCodeBodyDom(code, expectedBody, caretOffset, selection);
+    reconcilePlainVisualCodeBodyDom(code, normalizedExpected, caretOffset, selection);
     return;
   }
   unwrapBrowserCodeColorFonts(code);
   if (0 === code.querySelectorAll('*').length) {
-    reconcilePlainVisualCodeBodyDom(code, expectedBody, caretOffset, selection);
+    reconcilePlainVisualCodeBodyDom(code, normalizedExpected, caretOffset, selection);
     return;
   }
   if (rendererTerminalLine) {

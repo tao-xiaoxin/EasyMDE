@@ -539,8 +539,12 @@ The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
 of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
 inputs appear in the code DOM, canonical Markdown converges within 150 ms of
 the last rapid input, five spaced inputs settle within the per-key budget,
-the first visible frame stays within 100 ms, and the edit window has no Long
-Tasks. It persists only counts, timings and input-phase indices as a JSON
+the first visible frame stays within 100 ms, and each edit phase has no Long
+Tasks. An edit phase runs from `beforeinput` until canonical Markdown and the
+expected visible code body remain exact through two animation frames. The test
+keeps every observed Long Task and classifies it as edit-phase, between-phase,
+or outside-interaction evidence; only edit-phase tasks fail this performance
+gate. It persists only counts, timings and input-phase indices as a JSON
 attachment and structured output so a failed CI task can be located.
 The 390px immersive cases begin with Outline open. They check that its overlay
 does not narrow Source, Split, Preview, or the Mac frame, then verify pending

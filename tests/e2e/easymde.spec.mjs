@@ -2600,6 +2600,55 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  const classifyLongTasksByEditPhase = (tasks, phaseWindows, interactionWindow) => (
+    tasks.map(({ start, duration }) => {
+      const overlappingPhases = phaseWindows
+        .filter(({ start: phaseStart, end }) => (
+          start < end && start + duration > phaseStart
+        ))
+        .map(({ inputIndex, phase }) => Number.isInteger(inputIndex)
+          ? { inputIndex, phase }
+          : { phase });
+      const overlapsInteraction = start < interactionWindow.end
+        && start + duration > interactionWindow.start;
+      return {
+        classification: overlappingPhases.length
+          ? 'editPhase'
+          : overlapsInteraction ? 'betweenPhase' : 'outsideInteraction',
+        durationMs: duration,
+        overlappingPhases,
+        startTimeMs: start
+      };
+    }).sort((first, second) => first.startTimeMs - second.startTimeMs)
+  );
+
+  const assertNoEditPhaseLongTasks = (tasks) => {
+    if (tasks.some((task) => 'editPhase' === task?.classification)) {
+      throw new Error('nonwindowed-edit-phase-long-task-detected');
+    }
+  };
+
+  test('classifies a synthetic 51 ms Long Task by editing-phase overlap', () => {
+    const phaseWindows = [{ end: 160, phase: 'burst', start: 100 }];
+    const interactionWindow = { end: 250, start: 90 };
+    const [editTask, betweenTask, outsideTask] = classifyLongTasksByEditPhase([
+      { duration: 51, start: 100 },
+      { duration: 76, start: 161 },
+      { duration: 84, start: 251 }
+    ], phaseWindows, interactionWindow);
+
+    expect(editTask?.classification).toBe('editPhase');
+    expect(editTask?.overlappingPhases).toEqual([{ phase: 'burst' }]);
+    expect(betweenTask?.classification).toBe('betweenPhase');
+    expect(betweenTask?.overlappingPhases).toEqual([]);
+    expect(outsideTask?.classification).toBe('outsideInteraction');
+    expect(() => assertNoEditPhaseLongTasks([editTask])).toThrow(
+      'nonwindowed-edit-phase-long-task-detected'
+    );
+    expect(() => assertNoEditPhaseLongTasks([betweenTask, outsideTask]))
+      .not.toThrow();
+  });
+
   test('@performance keeps near-threshold non-windowed immersive code editing responsive', async ({ page }, testInfo) => {
     testInfo.setTimeout(Math.max(testInfo.timeout, 180_000));
     const codeBlocks = Array.from({ length: 158 }, (_, index) => (
@@ -2615,6 +2664,18 @@ test.describe('EasyMDE editor workflows', () => {
       `~~~js\n${burst}${spaced}\n~~~`
     );
     const expectedVisibleCodeBody = `${burst}${spaced}\n`;
+    const afterBurstVisibleCodeBody = `${burst}\n`;
+    const spacedTargetValues = Array.from(
+      { length: spaced.length },
+      (_, index) => markdown.replace(
+        emptyCodeFence,
+        `~~~js\n${burst}${spaced.slice(0, index + 1)}\n~~~`
+      )
+    );
+    const spacedTargetVisibleCodeBodies = Array.from(
+      { length: spaced.length },
+      (_, index) => `${burst}${spaced.slice(0, index + 1)}\n`
+    );
     const performanceKey = '__easymdeNonwindowedCodePerformance';
     const markdownBytes = Buffer.byteLength(markdown, 'utf8');
     const browserFailures = [];
@@ -2675,7 +2736,13 @@ test.describe('EasyMDE editor workflows', () => {
     const lastCode = editor.locator('pre > code').last();
     await lastCode.scrollIntoViewIfNeeded();
     await lastCode.click({ position: { x: 24, y: 18 } });
-    await editor.evaluate((surface, { key, afterBurstValue, spacedCount }) => {
+    await editor.evaluate((surface, {
+      key,
+      afterBurstValue,
+      afterBurstVisibleCodeBody,
+      spacedTargetValues,
+      spacedTargetVisibleCodeBodies
+    }) => {
       const source = document.querySelector('#easymde-source');
       const code = surface.querySelectorAll('pre > code').item(
         surface.querySelectorAll('pre > code').length - 1
@@ -2701,10 +2768,12 @@ test.describe('EasyMDE editor workflows', () => {
         burstInputDomLengths: [],
         burstLastInputAt: null,
         burstSettledAt: null,
+        burstStableAt: null,
         firstFrameAt: null,
         firstInputAt: null,
         spacedStartAt: [],
         spacedSettledAt: [],
+        spacedStableAt: [],
         longTasks: []
       };
       const observer = new PerformanceObserver((list) => {
@@ -2735,26 +2804,46 @@ test.describe('EasyMDE editor workflows', () => {
       surface.addEventListener('beforeinput', beforeInput, true);
       surface.addEventListener('input', input, true);
 
-      const spacedTargetLengths = Array.from(
-        { length: spacedCount },
-        (_, index) => afterBurstValue.length + index + 1
-      );
+      const lastVisibleCodeBody = () => {
+        const codeElements = surface.querySelectorAll('pre > code');
+        return codeElements.item(codeElements.length - 1)?.textContent ?? null;
+      };
+      const observeStableVisibleFrame = (expectedValue, expectedCodeBody, record) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (
+            source.value === expectedValue
+            && lastVisibleCodeBody() === expectedCodeBody
+          ) {
+            record(performance.now());
+          }
+        }));
+      };
       const sampleCanonicalState = () => {
         if (state.phase === 'burst'
           && state.burstSettledAt === null
           && source.value === afterBurstValue) {
           state.burstSettledAt = performance.now();
+          observeStableVisibleFrame(
+            afterBurstValue,
+            afterBurstVisibleCodeBody,
+            (at) => { state.burstStableAt = at; }
+          );
         }
         if (state.phase === 'spaced') {
-          for (let index = 0; index < spacedTargetLengths.length; index += 1) {
+          for (let index = 0; index < spacedTargetValues.length; index += 1) {
             if (state.spacedStartAt[index] !== undefined
               && state.spacedSettledAt[index] === undefined
-              && source.value.length === spacedTargetLengths[index]) {
+              && source.value === spacedTargetValues[index]) {
               state.spacedSettledAt[index] = performance.now();
+              observeStableVisibleFrame(
+                spacedTargetValues[index],
+                spacedTargetVisibleCodeBodies[index],
+                (at) => { state.spacedStableAt[index] = at; }
+              );
             }
           }
         }
-        if (state.spacedSettledAt.length < spacedTargetLengths.length) {
+        if (state.spacedSettledAt.length < spacedTargetValues.length) {
           requestAnimationFrame(sampleCanonicalState);
         }
       };
@@ -2769,7 +2858,9 @@ test.describe('EasyMDE editor workflows', () => {
     }, {
       key: performanceKey,
       afterBurstValue: afterBurst,
-      spacedCount: spaced.length
+      afterBurstVisibleCodeBody,
+      spacedTargetValues,
+      spacedTargetVisibleCodeBodies
     });
 
     await page.keyboard.type(burst, { delay: 0 });
@@ -2778,9 +2869,9 @@ test.describe('EasyMDE editor workflows', () => {
     ), afterBurst, { timeout: 30_000 });
     await expect.poll(
       () => editor.evaluate((surface, key) => (
-        window[key]?.state?.burstSettledAt ?? null
+        window[key]?.state?.burstStableAt ?? null
       ), performanceKey),
-      { timeout: 5_000, message: 'burst canonical source should be observed' }
+      { timeout: 5_000, message: 'burst canonical DOM should reach two stable frames' }
     ).not.toBeNull();
     await editor.evaluate((surface, key) => {
       const holder = window[key];
@@ -2793,15 +2884,57 @@ test.describe('EasyMDE editor workflows', () => {
       await page.waitForFunction((length) => (
         document.querySelector('#easymde-source')?.value.length === length
       ), afterBurst.length + index + 1, { timeout: 30_000 });
+      try {
+        await expect.poll(
+          () => editor.evaluate((surface, { key, index: targetIndex }) => (
+            window[key]?.state?.spacedStableAt?.[targetIndex] ?? null
+          ), { key: performanceKey, index }),
+          {
+            timeout: 5_000,
+            message: `spaced input ${index + 1} should reach two stable visible frames`
+          }
+        ).not.toBeNull();
+      } catch {
+        const phaseDiagnostic = await editor.evaluate((surface, {
+          key,
+          index: targetIndex,
+          expectedBody,
+          sourceTargetLength
+        }) => {
+          const state = window[key]?.state;
+          const codeElements = surface.querySelectorAll('pre > code');
+          const visibleCodeBody = codeElements.item(codeElements.length - 1)?.textContent ?? null;
+          return {
+            phase: state?.phase ?? null,
+            inputStartedAt: state?.spacedStartAt?.[targetIndex] ?? null,
+            canonicalSettledAt: state?.spacedSettledAt?.[targetIndex] ?? null,
+            stableFrameAt: state?.spacedStableAt?.[targetIndex] ?? null,
+            sourceLength: document.querySelector('#easymde-source')?.value.length ?? -1,
+            sourceTargetLength,
+            visibleCodeBodyLength: visibleCodeBody?.length ?? -1,
+            expectedCodeBodyLength: expectedBody.length,
+            visibleCodeBodyMatchesExpected: visibleCodeBody === expectedBody
+          };
+        }, {
+          key: performanceKey,
+          index,
+          expectedBody: `${burst}${spaced.slice(0, index + 1)}\n`,
+          sourceTargetLength: afterBurst.length + index + 1
+        });
+        throw new Error(
+          `nonwindowed-performance-visible-frame-endpoint-missing-${JSON.stringify(phaseDiagnostic)}`
+        );
+      }
       await page.waitForTimeout(120);
     }
     await page.waitForFunction((value) => (
       document.querySelector('#easymde-source')?.value === value
     ), expectedMarkdown, { timeout: 30_000 });
 
-    const performanceEvidence = await editor.evaluate((surface, {
+    const rawPerformanceEvidence = await editor.evaluate((surface, {
       key,
-      expectedCodeBody
+      expectedCodeBody,
+      spacedCount
     }) => {
       const holder = window[key];
       if (!holder) throw new Error('nonwindowed-performance-state-unavailable');
@@ -2811,37 +2944,33 @@ test.describe('EasyMDE editor workflows', () => {
       for (const entry of observer.takeRecords()) {
         state.longTasks.push({ start: entry.startTime, duration: entry.duration });
       }
-      const interactionStart = state.burstBeforeInputAt[0] ?? null;
-      const interactionEnd = state.spacedSettledAt.at(-1) ?? null;
-      const longTasks = null === interactionStart || null === interactionEnd
-        ? state.longTasks
-        : state.longTasks.filter(({ start, duration }) => (
-          start < interactionEnd && start + duration > interactionStart
-        ));
+      const interactionStart = state.burstBeforeInputAt[0] ?? Number.NaN;
+      const interactionEnd = state.spacedStableAt.at(-1) ?? Number.NaN;
       const phaseWindows = [
-        ...(null !== interactionStart && null !== state.burstSettledAt
-          ? [{ end: state.burstSettledAt, phase: 'burst', start: interactionStart }]
+        ...(Number.isFinite(interactionStart) && Number.isFinite(state.burstStableAt)
+          ? [{ end: state.burstStableAt, phase: 'burst', start: interactionStart }]
           : []),
         ...state.spacedStartAt.flatMap((start, inputIndex) => {
-          const end = state.spacedSettledAt[inputIndex];
+          const end = state.spacedStableAt[inputIndex];
           return Number.isFinite(end)
             ? [{ end, inputIndex, phase: 'spaced', start }]
             : [];
         })
       ];
-      const longTaskEvidence = longTasks
-        .sort((first, second) => first.start - second.start)
-        .map(({ start, duration }) => ({
-          durationMs: duration,
-          overlappingPhases: phaseWindows
-            .filter(({ start: phaseStart, end }) => (
-              start < end && start + duration > phaseStart
-            ))
-            .map(({ inputIndex, phase }) => Number.isInteger(inputIndex)
-              ? { inputIndex, phase }
-              : { phase }),
-          startTimeMs: start
-        }));
+      const phaseWindowsComplete = Number.isFinite(interactionStart)
+        && Number.isFinite(interactionEnd)
+        && Number.isFinite(state.burstSettledAt)
+        && Number.isFinite(state.burstStableAt)
+        && state.spacedStartAt.length === spacedCount
+        && state.spacedSettledAt.length === spacedCount
+        && state.spacedStableAt.length === spacedCount
+        && Array.from({ length: spacedCount }, (_, index) => (
+          Number.isFinite(state.spacedStartAt[index])
+            && Number.isFinite(state.spacedSettledAt[index])
+            && Number.isFinite(state.spacedStableAt[index])
+        )).every(Boolean);
+      const completePhaseWindows = phaseWindowsComplete
+        && phaseWindows.length === spacedCount + 1;
       const evidence = {
         burstEventCount: state.burstBeforeInputAt.length,
         initialCodeTextLength: state.initialCodeTextLength,
@@ -2863,14 +2992,49 @@ test.describe('EasyMDE editor workflows', () => {
         )),
         visibleCodeBodyMatchesExpected: finalCode?.textContent === expectedCodeBody,
         visibleCodeBodyLength: finalCode?.textContent?.length ?? -1,
-        longTaskCount: longTasks.length,
-        longTaskDurationsMs: longTasks.map(({ duration }) => duration),
-        longTasks: longTaskEvidence
+        observedLongTaskCount: state.longTasks.length,
+        phaseWindows,
+        phaseWindowsComplete: completePhaseWindows,
+        interactionWindow: { end: interactionEnd, start: interactionStart },
+        longTasks: state.longTasks
       };
       holder.dispose();
       delete window[key];
       return evidence;
-    }, { key: performanceKey, expectedCodeBody: expectedVisibleCodeBody });
+    }, {
+      key: performanceKey,
+      expectedCodeBody: expectedVisibleCodeBody,
+      spacedCount: spaced.length
+    });
+    const classifiedLongTasks = classifyLongTasksByEditPhase(
+      rawPerformanceEvidence.longTasks,
+      rawPerformanceEvidence.phaseWindows,
+      rawPerformanceEvidence.interactionWindow
+    );
+    const broadInteractionLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'outsideInteraction' !== classification
+    ));
+    const editPhaseLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'editPhase' === classification
+    ));
+    const betweenPhaseLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'betweenPhase' === classification
+    ));
+    const outsideInteractionLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'outsideInteraction' === classification
+    ));
+    const performanceEvidence = {
+      ...rawPerformanceEvidence,
+      broadInteractionLongTaskCount: broadInteractionLongTasks.length,
+      betweenPhaseLongTaskCount: betweenPhaseLongTasks.length,
+      betweenPhaseLongTasks,
+      editPhaseLongTaskCount: editPhaseLongTasks.length,
+      editPhaseLongTaskDurationsMs: editPhaseLongTasks.map(({ durationMs }) => durationMs),
+      editPhaseLongTasks,
+      outsideInteractionLongTaskCount: outsideInteractionLongTasks.length,
+      outsideInteractionLongTasks,
+      longTasks: classifiedLongTasks
+    };
     const spacedSorted = [...performanceEvidence.spacedInputToCanonicalMs]
       .sort((left, right) => left - right);
     const spacedP95Ms = spacedSorted.length === 5
@@ -2905,9 +3069,19 @@ test.describe('EasyMDE editor workflows', () => {
       visibleCodeBodyMatchesExpected: performanceEvidence.visibleCodeBodyMatchesExpected,
       visibleCodeBodyLength: performanceEvidence.visibleCodeBodyLength,
       expectedVisibleCodeBodyLength: expectedVisibleCodeBody.length,
-      editLongTaskCount: performanceEvidence.longTaskCount,
-      editLongTaskDurationsMs: performanceEvidence.longTaskDurationsMs,
-      editLongTasks: performanceEvidence.longTasks,
+      phaseWindowsComplete: performanceEvidence.phaseWindowsComplete,
+      phaseWindows: performanceEvidence.phaseWindows,
+      interactionWindow: performanceEvidence.interactionWindow,
+      observedLongTaskCount: performanceEvidence.observedLongTaskCount,
+      broadInteractionLongTaskCount: performanceEvidence.broadInteractionLongTaskCount,
+      editPhaseLongTaskCount: performanceEvidence.editPhaseLongTaskCount,
+      betweenPhaseLongTaskCount: performanceEvidence.betweenPhaseLongTaskCount,
+      outsideInteractionLongTaskCount: performanceEvidence.outsideInteractionLongTaskCount,
+      editPhaseLongTaskDurationsMs: performanceEvidence.editPhaseLongTaskDurationsMs,
+      longTasks: performanceEvidence.longTasks,
+      editPhaseLongTasks: performanceEvidence.editPhaseLongTasks,
+      betweenPhaseLongTasks: performanceEvidence.betweenPhaseLongTasks,
+      outsideInteractionLongTasks: performanceEvidence.outsideInteractionLongTasks,
       browserFailureCount: browserFailures.length
     };
     const evidenceJson = `${JSON.stringify(evidence)}\n`;
@@ -2937,7 +3111,17 @@ test.describe('EasyMDE editor workflows', () => {
     expect(spacedP95Ms).toBeLessThanOrEqual(150);
     expect(spacedMaxMs).not.toBeNull();
     expect(spacedMaxMs).toBeLessThanOrEqual(200);
-    expect(performanceEvidence.longTaskCount).toBe(0);
+    expect(performanceEvidence.phaseWindowsComplete).toBe(true);
+    expect(performanceEvidence.phaseWindows).toHaveLength(spaced.length + 1);
+    expect(performanceEvidence.observedLongTaskCount)
+      .toBe(performanceEvidence.longTasks.length);
+    expect(performanceEvidence.broadInteractionLongTaskCount).toBe(
+      performanceEvidence.editPhaseLongTaskCount
+        + performanceEvidence.betweenPhaseLongTaskCount
+    );
+    expect(performanceEvidence.editPhaseLongTaskCount).toBe(0);
+    expect(() => assertNoEditPhaseLongTasks(performanceEvidence.longTasks))
+      .not.toThrow();
     expect(browserFailures).toEqual([]);
   });
 

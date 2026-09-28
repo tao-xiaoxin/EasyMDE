@@ -288,6 +288,9 @@ source projection. When a prior browser mutation is pending without such a
 projection, the next `beforeinput` first synchronizes that structural DOM
 change. This keeps a rapid list split followed by text in the new item from
 mapping through the pre-split source interval.
+When the generic map cannot project a collapsed caret inside CODE, the existing
+code-body projection owns only that caret input; non-collapsed selections retain
+the generic owner.
 For a mapped fenced code block, the visual editor resolves the active Preview
 block to one Markdown source body interval. That interval owns blank-line and
 line-ending semantics for both ordinary and windowed immersive editing;
@@ -339,8 +342,10 @@ caret may project to that block's text end when only source line endings remain
 outside its mapped range; omitted content or an unmounted final block fails.
 Mapped code Enter handles both `insertParagraph` and `insertLineBreak` in the
 existing code node before Chromium can split it into multiple `code` children.
-The projection accepts exactly one omitted terminal LF in editable code DOM;
-Markdown retains the delimiter line ending. Composition flushes pending exact
+The projection and reconciliation accept exactly one renderer-only terminal LF
+difference in either direction between editable code DOM and Markdown; multiple
+line-ending differences or changed content remain explicit failures. Markdown
+retains the delimiter line ending. Composition flushes pending exact
 input before it starts, and a rejected code-map composition remains rejected
 through its end. Successful exact code edits retain per-`pre` recovery snapshots
 so failure recovery restores DOM consistent with canonical Markdown without

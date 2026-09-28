@@ -450,10 +450,10 @@ code-body typing while keeping the first visible frame responsive and the edit
 window free of Long Tasks; windowed b160 coverage is separate.
 Also exercise Enter followed by a code character inside the debounce window,
 pending exact input followed by composition, rejected blank-code composition,
-and editing an older mapped block after creating a local fence. Code DOM may
-omit exactly one terminal LF under the projection contract; verify native next
-input, caret, Undo, Redo, and exact canonical Markdown rather than trimming
-arbitrary text differences.
+and editing an older mapped block after creating a local fence. Code DOM may add
+or omit exactly one renderer-only terminal LF under the projection contract;
+verify native next input, caret, Undo, Redo, and exact canonical Markdown while
+rejecting multiple line-ending or content differences.
 Exercise an ordinary list-item split followed immediately by text before the
 debounce expires. Verify the first item remains canonical, the new text stays
 in the second item, the source and visual caret agree, and ordinary rapid text
@@ -465,7 +465,11 @@ attributed or malformed spans must still fail explicitly.
 Exercise initial empty frames and code emptied one character at a time, then
 Backspace at the empty start followed by Undo and Redo. Cover both fence
 families, closed and open-EOF fences, bare pasted openers and pending input
-followed immediately by structural deletion. A single terminal LF is empty;
+followed immediately by structural deletion. Include an open-EOF body with
+three blank lines and last-line text, then use trusted repeated Backspace
+keydowns without source reads, paint waits, or settle delays between keys; the
+frame must be absent immediately and through eight frames, 80 ms, and 250 ms.
+A single terminal LF is empty;
 additional blank lines and spaces remain content. Verify exact source, frame
 and connected caret restoration, preserved code-tail whitespace, and windowed
 source-range metadata when local and global code-block ordinals differ.

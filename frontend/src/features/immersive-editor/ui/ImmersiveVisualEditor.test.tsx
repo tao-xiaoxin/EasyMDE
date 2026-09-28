@@ -1173,6 +1173,7 @@ describe('ImmersiveVisualEditor', () => {
         canonicalValue = value;
       });
       const requestPreview = vi.fn(() => 'unexpected-preview');
+      const onFailure = vi.fn();
       const documentSession = {
         document: {
           applyTextChange,
@@ -1189,7 +1190,7 @@ describe('ImmersiveVisualEditor', () => {
           onCanonicalDocumentChange={vi.fn()}
           onDiagnostic={vi.fn()}
           onDispose={vi.fn()}
-          onFailure={vi.fn()}
+          onFailure={onFailure}
           onMarkdownChange={vi.fn()}
           onPendingChange={vi.fn()}
           onReady={vi.fn()}
@@ -1218,11 +1219,15 @@ describe('ImmersiveVisualEditor', () => {
       selectedCode.selectNodeContents(code);
       selection?.removeAllRanges();
       selection?.addRange(selectedCode);
-      surface.dispatchEvent(new InputEvent('beforeinput', {
+      expect(selection?.isCollapsed).toBe(false);
+      expect(selection?.anchorNode).toBe(code);
+      const beforeInput = new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
         inputType: 'deleteContentBackward'
-      }));
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
       code.remove();
       pre.append(document.createElement('br'));
       const normalizedSelection = document.createRange();
@@ -1249,6 +1254,17 @@ describe('ImmersiveVisualEditor', () => {
       )).toBe('');
       expect(placeholder?.textContent).toBe('');
       expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(applyTextChange).toHaveBeenLastCalledWith({
+        selection: { direction: 'none', end: 8, start: 8 },
+        value: '~~~bash\n\n~~~'
+      });
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+      const restoredSelectionAnchor = window.getSelection()?.anchorNode;
+      if (!restoredSelectionAnchor) {
+        throw new Error('visual-full-delete-selection-anchor-missing');
+      }
+      expect(pre.contains(restoredSelectionAnchor)).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
       expect(requestPreview).not.toHaveBeenCalled();
 
       if (!(placeholder instanceof HTMLSpanElement)
@@ -1274,6 +1290,7 @@ describe('ImmersiveVisualEditor', () => {
         'data-easymde-visual-code-placeholder'
       )).toBe(false);
       expect(canonicalValue).toBe('~~~bash\ny\n~~~');
+      expect(onFailure).not.toHaveBeenCalled();
       view.unmount();
     } finally {
       vi.useRealTimers();
@@ -2069,6 +2086,106 @@ describe('ImmersiveVisualEditor', () => {
       expect(history.redo).toHaveBeenCalledTimes(2);
       expect(history.document.getValue()).toBe('');
       expect(surface.querySelector('pre')).toBeNull();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps consecutive code-body Backspace intents mapped through an open EOF fence with three blank lines', () => {
+    vi.useFakeTimers();
+    try {
+      const markdown = '~~~\n\n\n\nA';
+      const signature = 'repeated-backspace-open-eof-blank-lines';
+      const surface = document.createElement('article');
+      surface.innerHTML = [
+        '<pre data-easymde-visual-block-id="b0" data-easymde-visual-fence="~~~">',
+        '<code>\n\n\nA\n</code>',
+        '</pre>'
+      ].join('');
+      document.body.append(surface);
+      const history = createHistoryDocument(markdown);
+      const onFailure = vi.fn();
+      const onDiagnostic = vi.fn();
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={history as unknown as EditorDocumentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={onDiagnostic}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{
+            editMap: oneFencedBlockEditMap(markdown, signature),
+            revision: 1,
+            signature
+          }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'unexpected-preview')}
+          surface={surface}
+        />
+      );
+      const code = surface.querySelector('pre > code');
+      const codeText = code?.firstChild;
+      if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+        throw new Error('visual-repeated-backspace-code-missing');
+      }
+      expect(codeText.data).toBe('\n\n\nA\n');
+      placeCaretInText(codeText, codeText.length - 1);
+
+      const dispatchBackspace = (): InputEvent => {
+        const selection = window.getSelection();
+        const anchor = selection?.anchorNode;
+        if (
+          !selection
+          || !(anchor instanceof Text)
+          || !code.contains(anchor)
+        ) {
+          throw new Error('visual-repeated-backspace-selection-missing');
+        }
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'deleteContentBackward'
+        });
+        const offset = selection.anchorOffset;
+        Object.defineProperty(beforeInput, 'getTargetRanges', {
+          value: () => [{
+            endContainer: anchor,
+            endOffset: offset,
+            startContainer: anchor,
+            startOffset: offset - 1
+          }]
+        });
+        surface.dispatchEvent(beforeInput);
+        if (beforeInput.defaultPrevented) return beforeInput;
+        deleteTextRange(anchor, offset - 1, offset);
+        placeCaretInText(anchor, offset - 1);
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'deleteContentBackward'
+        }));
+        return beforeInput;
+      };
+
+      const firstBackspace = dispatchBackspace();
+      expect(firstBackspace.defaultPrevented).toBe(false);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getValue()).toBe(markdown);
+      const secondBackspace = dispatchBackspace();
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(onDiagnostic.mock.calls).toEqual([]);
+      expect(secondBackspace.defaultPrevented).toBe(false);
+      expect(code.textContent).toBe('\n\n');
+      act(() => vi.advanceTimersByTime(80));
+      expect(history.document.getValue()).toBe('~~~\n\n\n');
+      expect(onFailure).not.toHaveBeenCalled();
       view.unmount();
     } finally {
       vi.useRealTimers();

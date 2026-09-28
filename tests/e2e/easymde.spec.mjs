@@ -6916,6 +6916,135 @@ test.describe('EasyMDE editor workflows', () => {
     };
   };
 
+  const startContinuousBackspaceProbe = async (
+    visualEditor,
+    fence,
+    finalBackspaceSequence = 2
+  ) => {
+    const key = '__easymdeOpenFenceContinuousBackspace';
+    await visualEditor.evaluate((surface, { traceKey, marker, targetSequence }) => {
+      if (window[traceKey]) throw new Error('continuous-backspace-probe-already-active');
+      const events = [];
+      const samples = [];
+      let sequence = 0;
+      const snapshot = () => {
+        const code = surface.querySelector('pre > code');
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const source = document.querySelector('#easymde-source');
+        const markdown = source instanceof HTMLTextAreaElement ? source.value : '';
+        return {
+          codeCount: surface.querySelectorAll('pre > code').length,
+          preCount: surface.querySelectorAll('pre').length,
+          selection: selection ? {
+            anchorConnected: anchor?.isConnected ?? false,
+            anchorInsideCode: Boolean(code && anchor && code.contains(anchor)),
+            collapsed: selection.isCollapsed
+          } : null,
+          sourceFenceLineCount: markdown.split(/\r?\n/u).filter((line) => line === marker).length,
+          sourceLength: markdown.length
+        };
+      };
+      const record = (event) => {
+        if ('keydown' === event.type) {
+          if ('Backspace' !== event.key) return;
+          sequence += 1;
+        } else if (
+          !['beforeinput', 'input'].includes(event.type)
+          || 'deleteContentBackward' !== event.inputType
+        ) {
+          return;
+        }
+        events.push({
+          defaultPrevented: event.defaultPrevented,
+          inputType: event.inputType ?? null,
+          key: 'keydown' === event.type ? event.key : null,
+          phase: event.type,
+          repeat: 'keydown' === event.type ? event.repeat : null,
+          sequence
+        });
+        if ('keydown' !== event.type || targetSequence !== sequence) return;
+        let frame = 0;
+        const sample = () => {
+          samples.push({ frame: ++frame, state: snapshot() });
+          if (frame < 8) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+        setTimeout(() => samples.push({ frame: '80ms', state: snapshot() }), 80);
+        setTimeout(() => samples.push({ frame: '250ms', state: snapshot() }), 250);
+      };
+      for (const type of ['keydown', 'beforeinput', 'input']) {
+        surface.addEventListener(type, record, true);
+      }
+      window[traceKey] = {
+        dispose: () => {
+          for (const type of ['keydown', 'beforeinput', 'input']) {
+            surface.removeEventListener(type, record, true);
+          }
+        },
+        events,
+        samples,
+        snapshot
+      };
+    }, { traceKey: key, marker: fence, targetSequence: finalBackspaceSequence });
+
+    return {
+      immediate: () => visualEditor.evaluate((surface, traceKey) => {
+        const trace = window[traceKey];
+        if (!trace) throw new Error('continuous-backspace-probe-missing');
+        return trace.snapshot();
+      }, key),
+      finish: () => visualEditor.evaluate((surface, traceKey) => {
+        const trace = window[traceKey];
+        if (!trace) throw new Error('continuous-backspace-probe-missing');
+        trace.dispose();
+        delete window[traceKey];
+        return { events: trace.events, final: trace.snapshot(), samples: trace.samples };
+      }, key)
+    };
+  };
+
+  const completeHeldBackspaceSequence = async (page, probe, count) => {
+    for (let index = 0; index < count; index += 1) {
+      await page.keyboard.down('Backspace');
+    }
+    await page.keyboard.up('Backspace');
+    const immediate = await probe.immediate();
+    await page.waitForTimeout(300);
+    return { immediate, trace: await probe.finish() };
+  };
+
+  const expectHeldBackspaceCompletion = ({
+    backspaceCount,
+    failureCodes,
+    finalSource,
+    immediate,
+    pageErrors,
+    sourceBeforeFence,
+    trace
+  }) => {
+    const backspaces = trace.events.filter(({ phase, key }) => (
+      'keydown' === phase && 'Backspace' === key
+    ));
+    expect(backspaces).toHaveLength(backspaceCount);
+    expect(backspaces.map(({ repeat }) => repeat))
+      .toEqual(Array.from({ length: backspaceCount }, (_, index) => 0 !== index));
+    expect(trace.samples.filter(({ frame }) => Number.isInteger(frame))
+      .map(({ frame }) => frame).sort((left, right) => left - right))
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(trace.samples.filter(({ frame }) => '80ms' === frame)).toHaveLength(1);
+    expect(trace.samples.filter(({ frame }) => '250ms' === frame)).toHaveLength(1);
+    expect(immediate).toMatchObject({ codeCount: 0, preCount: 0 });
+    expect(trace.samples.every(({ state }) => (
+      0 === state.codeCount && 0 === state.preCount
+    ))).toBe(true);
+    expect(trace.final).toMatchObject({ codeCount: 0, preCount: 0 });
+    expect(finalSource).toBe(sourceBeforeFence);
+    expect(failureCodes).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  };
+
+
   for (const fence of ['~~~', '```']) {
     const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
     test(`persists code-body input after native paste of the bare ${fenceLabel} fence`, async ({ page, context }, testInfo) => {
@@ -7695,6 +7824,64 @@ test.describe('EasyMDE editor workflows', () => {
       expect(evidence.history.redoRestoresBlockRemoval).toBe(true);
       expect(failureCodes).toEqual([]);
       expect(pageErrors).toEqual([]);
+    });
+  }
+
+
+  for (const fence of ['~~~', String.fromCharCode(96).repeat(3)]) {
+    const fenceName = '~~~' === fence ? 'tilde' : 'backtick';
+    test('deletes last-line text and three blank lines from a bare ' + fenceName + ' EOF fence while holding Backspace', async ({ page }, testInfo) => {
+      const markdown = fence + '\n\n\n\nA';
+      const failureCodes = [];
+      const pageErrors = [];
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const source = page.locator('#easymde-source');
+      const sourceBeforeFence = await source.inputValue();
+      await fillMarkdownAndWaitForPreview(page, markdown, 'A');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      const codeText = await code.textContent();
+      expect(codeText).toBe('\n\n\nA\n');
+      await clickCodeLine(page, code, 3);
+      await page.keyboard.press('End');
+      const caret = await readCodeBodyState(editor.visualEditor);
+      expect(caret.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: codeText.length - 1
+      });
+      const backspaceCount = caret.selection.codeOffset + 1;
+      const probe = await startContinuousBackspaceProbe(
+        editor.visualEditor,
+        fence,
+        backspaceCount
+      );
+      const { immediate, trace } = await completeHeldBackspaceSequence(
+        page,
+        probe,
+        backspaceCount
+      );
+      const finalSource = await source.inputValue();
+      await testInfo.attach('three-blank-lines-held-backspace-' + fenceName, {
+        body: JSON.stringify({ caret: caret.selection, immediate, trace }),
+        contentType: 'application/json'
+      });
+      expectHeldBackspaceCompletion({
+        backspaceCount,
+        failureCodes,
+        finalSource,
+        immediate,
+        pageErrors,
+        sourceBeforeFence,
+        trace
+      });
     });
   }
 

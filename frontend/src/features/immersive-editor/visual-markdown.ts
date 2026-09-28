@@ -744,6 +744,12 @@ function normalizeCodeBodyLineEndings(value: string): string {
   return value.replace(/\r\n/g, '\n');
 }
 
+function codeBodyTextMatchesDom(markdownText: string, domText: string): boolean {
+  return markdownText === domText
+    || markdownText === `${domText}\n`
+    || domText === `${markdownText}\n`;
+}
+
 function isBrowserCodeColorFont(node: Node): node is HTMLElement {
   if (!(node instanceof HTMLElement) || 'FONT' !== node.tagName) return false;
   const color = node.getAttribute('color');
@@ -999,10 +1005,8 @@ export function projectVisualCodeBodySelection(
   const domText = visualCodeBodyDomText(code);
   const normalizedSourceText = normalizeCodeBodyLineEndings(sourceText);
   const normalizedVisualText = normalizeCodeBodyLineEndings(visualText);
-  const domMatchesSource = normalizedSourceText === domText
-    || normalizedSourceText === `${domText}\n`;
-  const domMatchesVisual = normalizedVisualText === domText
-    || normalizedVisualText === `${domText}\n`;
+  const domMatchesSource = codeBodyTextMatchesDom(normalizedSourceText, domText);
+  const domMatchesVisual = codeBodyTextMatchesDom(normalizedVisualText, domText);
   if (
     !domMatchesSource
     || !domMatchesVisual
@@ -1042,7 +1046,11 @@ export function reconcileVisualCodeBodyDom(
 ): void {
   const currentBody = normalizeCodeBodyLineEndings(visualCodeBodyDomText(code));
   const normalizedExpected = normalizeCodeBodyLineEndings(expectedBody);
-  if (!normalizedExpected.startsWith(currentBody)) {
+  const rendererTerminalLine = currentBody === `${normalizedExpected}\n`;
+  if (
+    !normalizedExpected.startsWith(currentBody)
+    && !rendererTerminalLine
+  ) {
     throw new Error('visual-editor-code-body-dom-mismatch');
   }
   removeInsertedVisualCodePlaceholder(code);
@@ -1066,6 +1074,20 @@ export function reconcileVisualCodeBodyDom(
   if (0 === code.querySelectorAll('*').length) {
     reconcilePlainVisualCodeBodyDom(code, expectedBody, caretOffset, selection);
     return;
+  }
+  if (rendererTerminalLine) {
+    const start = visualCodeBodyBoundaryAtOffset(
+      code,
+      normalizedExpected.length
+    );
+    const end = visualCodeBodyBoundaryAtOffset(
+      code,
+      normalizedExpected.length + 1
+    );
+    const range = code.ownerDocument.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
+    range.deleteContents();
   }
   const missingSuffix = normalizedExpected.slice(currentBody.length);
   if ('' !== missingSuffix) {

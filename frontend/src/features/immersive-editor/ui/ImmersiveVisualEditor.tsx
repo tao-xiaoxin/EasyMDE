@@ -3618,7 +3618,7 @@ export function ImmersiveVisualEditor({
           return;
         }
       } else {
-        pendingVisualIntentRef.current = visualInputIntent(
+        const genericIntent = visualInputIntent(
           surface,
           event,
           memory,
@@ -3627,6 +3627,55 @@ export function ImmersiveVisualEditor({
           visualMarkdown,
           sourceIntervalMap
         );
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const collapsedCodeCaret = Boolean(
+          visualInputBlock
+          && selection?.isCollapsed
+          && selection.anchorNode
+          && (
+            selection.anchorNode === visualInputBlock.code
+            || visualInputBlock.code.contains(selection.anchorNode)
+          )
+        );
+        if (
+          genericIntent
+          || !visualInputBlock
+          || !collapsedCodeCaret
+          || ![
+            'deleteByCut',
+            'deleteContentBackward',
+            'deleteContentForward',
+            'deleteWordBackward',
+            'deleteWordForward',
+            'insertCompositionText',
+            'insertFromComposition',
+            'insertReplacementText',
+            'insertText'
+          ].includes(event.inputType)
+        ) {
+          pendingVisualIntentRef.current = genericIntent;
+        } else {
+          try {
+            const codeOrdinal = null !== visualInputCodeOrdinal
+              ? visualInputCodeOrdinal
+              : codeOrdinalForInputBlock(visualInputBlock, sourceMarkdown, true);
+            if (null === codeOrdinal) {
+              throw new Error('visual-editor-code-body-map-ambiguous');
+            }
+            pendingVisualIntentRef.current = visualCodeBodyInputIntent(
+              event,
+              visualInputBlock,
+              sourceMarkdown,
+              visualMarkdown,
+              codeOrdinal
+            );
+            visualInputCodeOrdinal = codeOrdinal;
+          } catch (error) {
+            event.preventDefault();
+            failVisualSynchronization(error);
+            return;
+          }
+        }
       }
       if (
         pendingVisualIntentRef.current

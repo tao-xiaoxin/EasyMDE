@@ -475,6 +475,55 @@ describe('visual Markdown editing', () => {
     expect(projection.sourceSelection).toEqual({ end: 8, start: 8 });
   });
 
+  it('maps an open EOF code body when rendered code adds a terminal newline after blank lines', () => {
+    const sourceMarkdown = '~~~\n\n\n\n';
+    const visualMarkdown = '~~~\n\n\n\n\n';
+    const surface = editor('<pre><code>\n\n\n\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-open-code-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 3);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      visualMarkdown,
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    );
+
+    expect(projection.sourceText).toBe('\n\n\n');
+    expect(projection.visualText).toBe('\n\n\n\n');
+    expect(projection.localSelection).toEqual({ end: 3, start: 3 });
+    expect(projection.sourceSelection).toEqual({ end: 7, start: 7 });
+    expect(projection.visualSelection).toEqual({ end: 7, start: 7 });
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      '~~~\n\n\n\n\n\n\n',
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    )).toThrow('visual-editor-code-body-projection-mismatch');
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      '~~~\n\nX\n',
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    )).toThrow('visual-editor-code-body-projection-mismatch');
+  });
+
   it.each([
     {
       markdown: '~~~\n~~~',
@@ -630,6 +679,64 @@ describe('visual Markdown editing', () => {
     expect(code.firstChild).toBe(text);
     expect(window.getSelection()?.anchorNode).toBe(text);
     expect(window.getSelection()?.anchorOffset).toBe(caretOffset);
+  });
+
+  it('normalizes one renderer-only terminal newline after a code-body deletion', () => {
+    const surface = editor('<pre><code>\n\n\n\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-code-body-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 3);
+
+    reconcileVisualCodeBodyDom(code, '\n\n\n', 3);
+
+    expect(code.textContent).toBe('\n\n\n');
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(3);
+  });
+
+  it('removes the renderer-only terminal newline while retaining syntax markup', () => {
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">\n\n</span>\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const syntax = code?.querySelector('span.hljs-keyword');
+    const text = syntax?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(syntax instanceof HTMLSpanElement)
+      || !(text instanceof Text)
+    ) {
+      throw new Error('visual-highlighted-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 2);
+
+    reconcileVisualCodeBodyDom(code, '\n\n', 2);
+
+    expect(code.textContent).toBe('\n\n');
+    expect(code.contains(syntax)).toBe(true);
+    expect(syntax.textContent).toBe('\n\n');
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it.each([
+    { body: '\n\n\n\n\n', label: 'two trailing newlines' },
+    { body: '\n\nX\n', label: 'non-newline content drift' }
+  ])('rejects $label while reconciling code-body text', ({ body }) => {
+    const surface = editor(`<pre><code>${body}</code></pre>`);
+    const code = surface.querySelector('pre > code');
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('visual-code-body-reconcile-negative-fixture-missing');
+    }
+
+    expect(() => reconcileVisualCodeBodyDom(code, '\n\n\n', 3)).toThrow(
+      'visual-editor-code-body-dom-mismatch'
+    );
   });
 
   it('unwraps a mutated empty marker while retaining the browser Text node', () => {

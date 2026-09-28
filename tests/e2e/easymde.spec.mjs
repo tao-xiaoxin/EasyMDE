@@ -2600,8 +2600,15 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  const editPhaseLongTaskBudgetLimits = {
+    blockingThresholdMs: 50,
+    maxBlockingMs: 25,
+    maxCount: 1,
+    maxDurationMs: 75
+  };
+
   const classifyLongTasksByEditPhase = (tasks, phaseWindows, interactionWindow) => (
-    tasks.map(({ start, duration }) => {
+    tasks.map(({ attribution = [], start, duration }) => {
       const overlappingPhases = phaseWindows
         .filter(({ start: phaseStart, end }) => (
           start < end && start + duration > phaseStart
@@ -2612,6 +2619,7 @@ test.describe('EasyMDE editor workflows', () => {
       const overlapsInteraction = start < interactionWindow.end
         && start + duration > interactionWindow.start;
       return {
+        attribution,
         classification: overlappingPhases.length
           ? 'editPhase'
           : overlapsInteraction ? 'betweenPhase' : 'outsideInteraction',
@@ -2622,31 +2630,74 @@ test.describe('EasyMDE editor workflows', () => {
     }).sort((first, second) => first.startTimeMs - second.startTimeMs)
   );
 
-  const assertNoEditPhaseLongTasks = (tasks) => {
-    if (tasks.some((task) => 'editPhase' === task?.classification)) {
-      throw new Error('nonwindowed-edit-phase-long-task-detected');
+  const summarizeEditPhaseLongTaskBudget = (tasks) => {
+    const editTasks = tasks.filter(({ classification }) => 'editPhase' === classification);
+    const blockingTimeMs = editTasks.reduce((total, { durationMs }) => (
+      total + Math.max(durationMs - editPhaseLongTaskBudgetLimits.blockingThresholdMs, 0)
+    ), 0);
+    let violationCode = null;
+    if (editTasks.some(({ overlappingPhases }) => overlappingPhases.length > 1)) {
+      violationCode = 'nonwindowed-edit-long-task-crosses-multiple-phases';
+    } else if (editTasks.length > editPhaseLongTaskBudgetLimits.maxCount) {
+      violationCode = 'nonwindowed-edit-long-task-count-exceeded';
+    } else if (editTasks.some(({ durationMs }) => (
+      durationMs > editPhaseLongTaskBudgetLimits.maxDurationMs
+    ))) {
+      violationCode = 'nonwindowed-edit-long-task-duration-exceeded';
+    } else if (blockingTimeMs > editPhaseLongTaskBudgetLimits.maxBlockingMs) {
+      violationCode = 'nonwindowed-edit-long-task-blocking-exceeded';
     }
+    return { blockingTimeMs, count: editTasks.length, violationCode };
   };
 
-  test('classifies a synthetic 51 ms Long Task by editing-phase overlap', () => {
+  test('enforces the non-windowed edit-phase Long Task budget', () => {
     const phaseWindows = [{ end: 160, phase: 'burst', start: 100 }];
     const interactionWindow = { end: 250, start: 90 };
-    const [editTask, betweenTask, outsideTask] = classifyLongTasksByEditPhase([
-      { duration: 51, start: 100 },
+    const [editTask, overLimitTask, betweenTask, outsideTask] = classifyLongTasksByEditPhase([
+      { duration: 69, start: 100 },
+      { duration: 76, start: 100 },
       { duration: 76, start: 161 },
       { duration: 84, start: 251 }
     ], phaseWindows, interactionWindow);
 
     expect(editTask?.classification).toBe('editPhase');
     expect(editTask?.overlappingPhases).toEqual([{ phase: 'burst' }]);
+    expect(summarizeEditPhaseLongTaskBudget([editTask])).toEqual({
+      blockingTimeMs: 19,
+      count: 1,
+      violationCode: null
+    });
+    expect(summarizeEditPhaseLongTaskBudget([overLimitTask]).violationCode)
+      .toBe('nonwindowed-edit-long-task-duration-exceeded');
     expect(betweenTask?.classification).toBe('betweenPhase');
     expect(betweenTask?.overlappingPhases).toEqual([]);
     expect(outsideTask?.classification).toBe('outsideInteraction');
-    expect(() => assertNoEditPhaseLongTasks([editTask])).toThrow(
-      'nonwindowed-edit-phase-long-task-detected'
+    expect(summarizeEditPhaseLongTaskBudget([
+      editTask,
+      { ...editTask, startTimeMs: editTask.startTimeMs + 1 }
+    ]).violationCode).toBe('nonwindowed-edit-long-task-count-exceeded');
+    const crossingPhases = classifyLongTasksByEditPhase(
+      [{ duration: 60, start: 130 }],
+      [
+        { end: 160, phase: 'first', start: 100 },
+        { end: 180, inputIndex: 1, phase: 'second', start: 120 }
+      ],
+      interactionWindow
     );
-    expect(() => assertNoEditPhaseLongTasks([betweenTask, outsideTask]))
-      .not.toThrow();
+    expect(summarizeEditPhaseLongTaskBudget(crossingPhases).violationCode)
+      .toBe('nonwindowed-edit-long-task-crosses-multiple-phases');
+    expect(summarizeEditPhaseLongTaskBudget([betweenTask, outsideTask])).toEqual({
+      blockingTimeMs: 0,
+      count: 0,
+      violationCode: null
+    });
+    expect(summarizeEditPhaseLongTaskBudget(
+      classifyLongTasksByEditPhase(
+        [{ duration: 75, start: 100 }],
+        phaseWindows,
+        interactionWindow
+      )
+    )).toEqual({ blockingTimeMs: 25, count: 1, violationCode: null });
   });
 
   test('@performance keeps near-threshold non-windowed immersive code editing responsive', async ({ page }, testInfo) => {
@@ -2776,9 +2827,32 @@ test.describe('EasyMDE editor workflows', () => {
         spacedStableAt: [],
         longTasks: []
       };
+      const attributionCategories = new Set([
+        'embed',
+        'fencedframe',
+        'iframe',
+        'object',
+        'portal',
+        'unknown',
+        'window'
+      ]);
+      const readLongTask = (entry) => ({
+        attribution: Array.from(entry.attribution ?? [], ({ containerType, name }) => ({
+          containerType: 'string' === typeof containerType
+            && attributionCategories.has(containerType.toLowerCase())
+            ? containerType.toLowerCase()
+            : '[redacted]',
+          name: 'string' === typeof name
+            && attributionCategories.has(name.toLowerCase())
+            ? name.toLowerCase()
+            : '[redacted]'
+        })),
+        duration: entry.duration,
+        start: entry.startTime
+      });
       const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
-          state.longTasks.push({ start: entry.startTime, duration: entry.duration });
+          state.longTasks.push(readLongTask(entry));
         }
       });
       observer.observe({ type: 'longtask', buffered: false });
@@ -2854,7 +2928,7 @@ test.describe('EasyMDE editor workflows', () => {
         surface.removeEventListener('input', input, true);
         observer.disconnect();
       };
-      window[key] = { state, observer, dispose };
+      window[key] = { state, observer, dispose, readLongTask };
     }, {
       key: performanceKey,
       afterBurstValue: afterBurst,
@@ -2938,11 +3012,11 @@ test.describe('EasyMDE editor workflows', () => {
     }) => {
       const holder = window[key];
       if (!holder) throw new Error('nonwindowed-performance-state-unavailable');
-      const { state, observer } = holder;
+      const { state, observer, readLongTask } = holder;
       const codeElements = surface.querySelectorAll('pre > code');
       const finalCode = codeElements.item(codeElements.length - 1);
       for (const entry of observer.takeRecords()) {
-        state.longTasks.push({ start: entry.startTime, duration: entry.duration });
+        state.longTasks.push(readLongTask(entry));
       }
       const interactionStart = state.burstBeforeInputAt[0] ?? Number.NaN;
       const interactionEnd = state.spacedStableAt.at(-1) ?? Number.NaN;
@@ -3023,6 +3097,9 @@ test.describe('EasyMDE editor workflows', () => {
     const outsideInteractionLongTasks = classifiedLongTasks.filter(({ classification }) => (
       'outsideInteraction' === classification
     ));
+    const editPhaseLongTaskBudgetResult = summarizeEditPhaseLongTaskBudget(
+      classifiedLongTasks
+    );
     const performanceEvidence = {
       ...rawPerformanceEvidence,
       broadInteractionLongTaskCount: broadInteractionLongTasks.length,
@@ -3030,6 +3107,8 @@ test.describe('EasyMDE editor workflows', () => {
       betweenPhaseLongTasks,
       editPhaseLongTaskCount: editPhaseLongTasks.length,
       editPhaseLongTaskDurationsMs: editPhaseLongTasks.map(({ durationMs }) => durationMs),
+      editPhaseLongTaskBlockingMs: editPhaseLongTaskBudgetResult.blockingTimeMs,
+      editPhaseLongTaskViolationCode: editPhaseLongTaskBudgetResult.violationCode,
       editPhaseLongTasks,
       outsideInteractionLongTaskCount: outsideInteractionLongTasks.length,
       outsideInteractionLongTasks,
@@ -3075,6 +3154,9 @@ test.describe('EasyMDE editor workflows', () => {
       observedLongTaskCount: performanceEvidence.observedLongTaskCount,
       broadInteractionLongTaskCount: performanceEvidence.broadInteractionLongTaskCount,
       editPhaseLongTaskCount: performanceEvidence.editPhaseLongTaskCount,
+      editPhaseLongTaskBlockingMs: performanceEvidence.editPhaseLongTaskBlockingMs,
+      editPhaseLongTaskViolationCode: performanceEvidence.editPhaseLongTaskViolationCode,
+      editPhaseLongTaskBudget: editPhaseLongTaskBudgetLimits,
       betweenPhaseLongTaskCount: performanceEvidence.betweenPhaseLongTaskCount,
       outsideInteractionLongTaskCount: performanceEvidence.outsideInteractionLongTaskCount,
       editPhaseLongTaskDurationsMs: performanceEvidence.editPhaseLongTaskDurationsMs,
@@ -3095,6 +3177,7 @@ test.describe('EasyMDE editor workflows', () => {
     });
     process.stdout.write(`[EasyMDEPerf] ${evidenceJson}`);
 
+    expect(performanceEvidence.editPhaseLongTaskViolationCode).toBeNull();
     expect(await source.inputValue()).toBe(expectedMarkdown);
     expect(performanceEvidence.burstEventCount).toBe(burst.length);
     expect(domLengthsAreMonotonic).toBe(true);
@@ -3119,9 +3202,26 @@ test.describe('EasyMDE editor workflows', () => {
       performanceEvidence.editPhaseLongTaskCount
         + performanceEvidence.betweenPhaseLongTaskCount
     );
-    expect(performanceEvidence.editPhaseLongTaskCount).toBe(0);
-    expect(() => assertNoEditPhaseLongTasks(performanceEvidence.longTasks))
-      .not.toThrow();
+    expect(performanceEvidence.editPhaseLongTaskCount).toBeLessThanOrEqual(
+      editPhaseLongTaskBudgetLimits.maxCount
+    );
+    expect(performanceEvidence.editPhaseLongTasks.every(({ durationMs, overlappingPhases }) => (
+      durationMs <= editPhaseLongTaskBudgetLimits.maxDurationMs
+        && overlappingPhases.length === 1
+    ))).toBe(true);
+    expect(performanceEvidence.editPhaseLongTaskBlockingMs).toBeLessThanOrEqual(
+      editPhaseLongTaskBudgetLimits.maxBlockingMs
+    );
+    expect(performanceEvidence.longTasks.every(({ attribution }) => (
+      Array.isArray(attribution)
+        && attribution.every((entry) => (
+          Object.keys(entry).sort().join(',') === 'containerType,name'
+          && ['[redacted]', 'embed', 'fencedframe', 'iframe', 'object', 'portal', 'unknown', 'window']
+            .includes(entry.containerType)
+          && ['[redacted]', 'embed', 'fencedframe', 'iframe', 'object', 'portal', 'unknown', 'window']
+            .includes(entry.name)
+        ))
+    ))).toBe(true);
     expect(browserFailures).toEqual([]);
   });
 

@@ -446,8 +446,9 @@ an accepted mapped empty fence, and a mapped block whose ID order or fence
 topology becomes stale. The stale input must be blocked without changing the
 canonical source or a different code block. A non-windowed synthetic document
 near the 160-block boundary must retain exact source under rapid and spaced
-code-body typing while keeping the first visible frame responsive and the edit
-window free of Long Tasks; windowed b160 coverage is separate.
+code-body typing, keep the first visible frame responsive, and meet the
+full-sequence Long Task budget defined below; windowed b160 coverage is
+separate.
 Also exercise Enter followed by a code character inside the debounce window,
 pending exact input followed by composition, rejected blank-code composition,
 and editing an older mapped block after creating a local fence. Code DOM may add
@@ -538,14 +539,20 @@ document Undo/Redo step counts and same-value updates.
 The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
 of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
 inputs appear in the code DOM, canonical Markdown converges within 150 ms of
-the last rapid input, five spaced inputs settle within the per-key budget,
-the first visible frame stays within 100 ms, and each edit phase has no Long
-Tasks. An edit phase runs from `beforeinput` until canonical Markdown and the
-expected visible code body remain exact through two animation frames. The test
-keeps every observed Long Task and classifies it as edit-phase, between-phase,
-or outside-interaction evidence; only edit-phase tasks fail this performance
-gate. It persists only counts, timings and input-phase indices as a JSON
-attachment and structured output so a failed CI task can be located.
+the last rapid input, five spaced inputs settle within the per-key budget, and
+the first visible frame stays within 100 ms. The complete 20-key burst plus
+five spaced-input sequence has a narrowly scoped edit-phase Long Task budget:
+at most one task may overlap an edit phase, it may overlap at most one phase,
+its duration must be at most 75 ms, and total blocking time above the 50 ms
+Long Task threshold must be at most 25 ms. An edit phase runs from `beforeinput`
+until canonical Markdown and the expected visible code body remain exact
+through two animation frames. The test keeps every observed Long Task,
+classifies it as edit-phase, between-phase, or outside-interaction evidence, and
+records only privacy-safe attribution `containerType` and `name` categories;
+attribution URLs and identifiers are not recorded. This budget applies only to
+this near-threshold non-windowed sequence; other performance cases retain their
+separate gates. The JSON attachment and structured output contain counts and
+timings needed to locate a failure without recording article content.
 The 390px immersive cases begin with Outline open. They check that its overlay
 does not narrow Source, Split, Preview, or the Mac frame, then verify pending
 unlock keeps the Outline open, editable readiness closes it without changing

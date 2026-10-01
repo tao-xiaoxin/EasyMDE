@@ -1503,6 +1503,30 @@ body:has(.easymde-editor.is-immersive) .wrap {
     color: #356ae6;
 }
 .easymde-immersive-preview-status > .easymde-immersive-preview-lock.is-editable:hover { background: #eaf0ff; }
+.easymde-immersive-preview-status > .easymde-immersive-preview-lock.is-unlocking,
+.easymde-immersive-preview-status > .easymde-immersive-preview-lock.is-unlocking:disabled {
+    border-color: #c9d7fa;
+    background: #f4f7ff;
+    color: #356ae6;
+    cursor: progress;
+    opacity: 1;
+}
+.easymde-immersive-preview-unlock-spinner {
+    display: block;
+    box-sizing: border-box;
+    width: 13px;
+    height: 13px;
+    border: 1.5px solid currentColor;
+    border-inline-start-color: transparent;
+    border-radius: 50%;
+    animation: easymde-immersive-preview-unlock-spin .7s linear infinite;
+}
+@keyframes easymde-immersive-preview-unlock-spin {
+    to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .easymde-immersive-preview-unlock-spinner { animation: none; }
+}
 .easymde-immersive-preview-status > .easymde-immersive-preview-lock:focus-visible {
     outline: 2px solid #93b4ff;
     outline-offset: 2px;
@@ -2573,4 +2597,56 @@ body:has(.easymde-editor.is-immersive) .wrap {
         margin-left: 0;
     }
 
+}
+
+@media (max-width: 640px) {
+    .easymde-editor.is-immersive {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .easymde-editor.is-immersive-preview .easymde-pane-preview > .easymde-immersive-preview-canvas {
+        padding-inline: 18px;
+    }
+
+    .easymde-editor.is-immersive > .easymde-workspace {
+        grid-column: 1;
+        min-width: 0;
+        width: auto;
+    }
+
+    .easymde-editor.is-immersive.is-immersive-split > .easymde-workspace.is-split-resizable {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+            "source"
+            "preview";
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline {
+        position: absolute;
+        z-index: 5;
+        inset-block: calc(76px + 52.5px + 11.25px) 11.25px;
+        inset-inline-start: 11.25px;
+        min-width: 0;
+        max-width: min(240px, calc(100% - 22.5px));
+        margin: 0;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-show {
+        position: absolute;
+        z-index: 6;
+        inset-block-start: calc(76px + 52.5px + 11.25px);
+        inset-inline-start: 11.25px;
+        width: 33.75px;
+        height: 33.75px;
+        min-height: 33.75px;
+        margin: 0;
+        align-self: auto;
+    }
+
+    .easymde-editor.is-immersive .easymde-immersive-outline-resizer,
+    .easymde-editor.is-immersive .easymde-immersive-pane-divider {
+        display: none;
+    }
 }

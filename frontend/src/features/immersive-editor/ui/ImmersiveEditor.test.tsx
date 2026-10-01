@@ -1,5 +1,9 @@
-import { act, render, waitFor } from '@testing-library/react';
-import { createElement } from '@wordpress/element';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import {
+  createElement,
+  startTransition,
+  Suspense
+} from '@wordpress/element';
 import type { ImmersiveEnvironmentPort } from '../../../contracts/ports/immersive-environment-port';
 import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-port';
 import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
@@ -41,9 +45,14 @@ function DerivationProbe({
   );
 }
 
-function createImmersiveEditorFixture(initial: string) {
+function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
   let documentSnapshot = { savedValue: initial, value: initial };
+  let currentViewportWidth = viewportWidth;
+  let currentActiveElement: HTMLElement | null = null;
   let documentListener: (() => void) | null = null;
+  let stringReadSuspension: Promise<void> | null = null;
+  let stringReadSuspensionCount = 0;
+  const resizeListeners = new Set<() => void>();
   const getValue = vi.fn(() => initial);
   const documentSubscribe = vi.fn((listener: () => void) => {
     documentListener = listener;
@@ -52,6 +61,14 @@ function createImmersiveEditorFixture(initial: string) {
     };
   });
   const revealPosition = vi.fn();
+  const readActiveElement = vi.fn(() => currentActiveElement);
+  const readViewportWidth = vi.fn(() => currentViewportWidth);
+  const focusVisualPreview = vi.fn(() => true);
+  const onFailure = vi.fn();
+  const subscribeResize = vi.fn((listener: () => void) => {
+    resizeListeners.add(listener);
+    return () => resizeListeners.delete(listener);
+  });
   const documentSession = {
     document: {
       applyTextChange: vi.fn(),
@@ -92,7 +109,7 @@ function createImmersiveEditorFixture(initial: string) {
 
   const cleanup = () => {};
   const environment = {
-    activeElement: () => null,
+    activeElement: readActiveElement,
     activateFavicon: () => cleanup,
     activateFocusBoundary: () => cleanup,
     hasOpenToolbarPopover: () => false,
@@ -100,7 +117,8 @@ function createImmersiveEditorFixture(initial: string) {
     observePreviewLayout: () => cleanup,
     schedule: scheduleDerivation,
     subscribeKeydown: () => cleanup,
-    subscribeResize: () => cleanup
+    subscribeResize,
+    viewportWidth: readViewportWidth
   } as unknown as ImmersiveEnvironmentPort;
   const i18n = {
     characters: (count: number) => `characters:${count}`,
@@ -128,7 +146,15 @@ function createImmersiveEditorFixture(initial: string) {
   } satisfies GeneralSettings;
   const strings = new Proxy(
     {},
-    { get: (_target, property) => String(property) }
+    {
+      get: (_target, property) => {
+        if (stringReadSuspension) {
+          stringReadSuspensionCount += 1;
+          throw stringReadSuspension;
+        }
+        return String(property);
+      }
+    }
   ) as unknown as ImmersiveStrings;
   const publishSnapshot = {
     availableFields: {
@@ -163,21 +189,43 @@ function createImmersiveEditorFixture(initial: string) {
     generalSettings,
     i18n,
     immersivePreferencesPort,
+    focusVisualPreview,
+    onFailure,
+    readViewportWidth,
+    readActiveElement,
+    readStringReadSuspensionCount() {
+      return stringReadSuspensionCount;
+    },
+    resumeStringReads() {
+      stringReadSuspension = null;
+    },
+    setActiveElement(element: HTMLElement | null) {
+      currentActiveElement = element;
+    },
+    suspendStringReads(promise: Promise<void>) {
+      stringReadSuspension = promise;
+    },
     revealPosition,
+    resizeTo(width: number) {
+      currentViewportWidth = width;
+      for (const listener of resizeListeners) listener();
+    },
     props: {
       direction: 'ltr' as const,
       documentSession,
       environment,
+      focusVisualPreview,
       generalSettings,
       i18n,
       immersivePreferencesPort,
       initialPreferences: { outline: true },
+      visualPreviewEditable: false,
       mode: 'source' as const,
       onBeforeSourceMutation: () => true,
       onConfirmPublish: () => true,
       onCopyWechat: async () => true,
       onExit: () => {},
-      onFailure: () => {},
+      onFailure,
       onSelectFeaturedImage: async () => null,
       onViewModeChange: () => {},
       readPublishSnapshot: () => publishSnapshot,
@@ -529,5 +577,198 @@ describe('ImmersiveEditor document derivations', () => {
     expect(currentHeading).toBe(heading);
     act(() => currentHeading.click());
     expect(fixture.revealPosition).toHaveBeenCalledWith(8);
+  });
+
+  it('keeps the mobile outline open while Preview is not editable', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 390);
+    const view = render(
+      <ImmersiveEditor {...fixture.props} mode="preview" />
+    );
+
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    view.rerender(
+      <ImmersiveEditor
+        {...fixture.props}
+        mode="preview"
+        visualPreviewEditable={false}
+      />
+    );
+
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    expect(fixture.readViewportWidth).toHaveBeenCalledOnce();
+  });
+
+  it('closes the mobile outline once on the editable Preview transition and preserves manual reopen', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 390);
+    const view = render(
+      <ImmersiveEditor {...fixture.props} mode="preview" />
+    );
+
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    const outlineControl = view.container.querySelector<HTMLButtonElement>(
+      '.easymde-immersive-outline button'
+    );
+    if (!outlineControl) throw new Error('test-outline-control-unavailable');
+    fixture.setActiveElement(outlineControl);
+    fixture.readViewportWidth.mockClear();
+    view.rerender(
+      <ImmersiveEditor
+        {...fixture.props}
+        mode="preview"
+        visualPreviewEditable
+      />
+    );
+
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .toBeNull();
+    expect(fixture.readViewportWidth).toHaveBeenCalledOnce();
+    expect(fixture.focusVisualPreview).toHaveBeenCalledOnce();
+
+    fireEvent.click(view.getByRole('button', { name: 'showOutline' }));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    view.rerender(
+      <ImmersiveEditor
+        {...fixture.props}
+        mode="preview"
+        visualPreviewEditable
+      />
+    );
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    expect(fixture.readViewportWidth).toHaveBeenCalledOnce();
+    expect(fixture.focusVisualPreview).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { mode: 'preview' as const, viewportWidth: 641 },
+    { mode: 'preview' as const, viewportWidth: 1280 },
+    { mode: 'source' as const, viewportWidth: 390 },
+    { mode: 'split' as const, viewportWidth: 390 }
+  ])(
+    'keeps the outline open for $mode at $viewportWidth pixels',
+    ({ mode, viewportWidth }) => {
+      const fixture = createImmersiveEditorFixture(
+        '# Heading\n\nbody',
+        viewportWidth
+      );
+      const view = render(<ImmersiveEditor {...fixture.props} mode={mode} />);
+      fixture.readViewportWidth.mockClear();
+      view.rerender(
+        <ImmersiveEditor
+          {...fixture.props}
+          mode={mode}
+          visualPreviewEditable
+        />
+      );
+
+      expect(view.container.querySelector('.easymde-immersive-outline'))
+        .not.toBeNull();
+      if ('preview' === mode) {
+        expect(fixture.readViewportWidth).toHaveBeenCalledOnce();
+      } else {
+        expect(fixture.readViewportWidth).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('closes once for each wide-to-compact editable Preview visit', () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 760);
+    const view = render(
+      <ImmersiveEditor
+        {...fixture.props}
+        mode="preview"
+        visualPreviewEditable={false}
+      />
+    );
+    view.rerender(
+      <ImmersiveEditor
+        {...fixture.props}
+        mode="preview"
+        visualPreviewEditable
+      />
+    );
+    fixture.setActiveElement(document.createElement('article'));
+
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    act(() => fixture.resizeTo(641));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    act(() => fixture.resizeTo(640));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .toBeNull();
+    expect(fixture.focusVisualPreview).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole('button', { name: 'showOutline' }));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    act(() => fixture.resizeTo(640));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    act(() => fixture.resizeTo(760));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+    const focusedOutlineControl = view.container.querySelector<HTMLButtonElement>(
+      '.easymde-immersive-outline button'
+    );
+    if (!focusedOutlineControl) {
+      throw new Error('test-focused-outline-control-unavailable');
+    }
+    fixture.setActiveElement(focusedOutlineControl);
+    act(() => fixture.resizeTo(640));
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .toBeNull();
+    expect(fixture.focusVisualPreview).toHaveBeenCalledOnce();
+  });
+
+  it('keeps resize decisions on committed Preview props during a suspended transition', async () => {
+    const fixture = createImmersiveEditorFixture('# Heading\n\nbody', 760);
+    const editorElement = (visualPreviewEditable: boolean) => (
+      <Suspense fallback={<output data-testid="suspended-editor">pending</output>}>
+        <ImmersiveEditor
+          {...fixture.props}
+          mode="preview"
+          visualPreviewEditable={visualPreviewEditable}
+        />
+      </Suspense>
+    );
+    const view = render(editorElement(false));
+    let resumeSuspension = () => {};
+    const suspendedRender = new Promise<void>((resolve) => {
+      resumeSuspension = resolve;
+    });
+    fixture.suspendStringReads(suspendedRender);
+
+    act(() => {
+      startTransition(() => view.rerender(editorElement(true)));
+    });
+    expect(fixture.readStringReadSuspensionCount()).toBeGreaterThan(0);
+    expect(view.queryByTestId('suspended-editor')).toBeNull();
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    fixture.readActiveElement.mockClear();
+    act(() => fixture.resizeTo(640));
+    expect(fixture.readActiveElement).not.toHaveBeenCalled();
+    expect(view.container.querySelector('.easymde-immersive-outline'))
+      .not.toBeNull();
+
+    fixture.resumeStringReads();
+    await act(async () => {
+      resumeSuspension();
+      await suspendedRender;
+    });
+    await waitFor(() => {
+      expect(view.container.querySelector('.easymde-immersive-outline'))
+        .toBeNull();
+    });
   });
 });

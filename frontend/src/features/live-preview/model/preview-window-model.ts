@@ -43,6 +43,7 @@ export type PreviewWindowLayoutRun = Readonly<{
 
 export type PreviewWindowRequest = Readonly<{
   context: PreviewWindowContext;
+  maxMaterialized?: number;
   viewport: PreviewWindowViewport;
   pinnedIndices?: readonly number[];
 }>;
@@ -461,11 +462,21 @@ export class PreviewWindowModel {
   getWindow(request: PreviewWindowRequest): PreviewWindowResult {
     this.assertCurrent(request.context);
     validateViewport(request.viewport);
+    if (
+      undefined !== request.maxMaterialized
+      && (!Number.isInteger(request.maxMaterialized) || request.maxMaterialized < 1)
+    ) {
+      fail('preview-window-cap-invalid', 'maxMaterialized must be a positive integer');
+    }
     const pinnedIndices = this.normalizePinnedIndices(request.pinnedIndices ?? []);
     const blockCount = this.blockValues.length;
-    const materializedLimit = pinnedIndices.length > 0
+    const configuredLimit = pinnedIndices.length > 0
       ? this.options.pinnedMax
       : this.options.maxMounted;
+    const materializedLimit = Math.min(
+      configuredLimit,
+      request.maxMaterialized ?? configuredLimit
+    );
 
     if (0 === blockCount) {
       const zeroRange = emptyRange(0);

@@ -28,9 +28,15 @@ import {
 } from '../../test/fixtures/appearance-bootstrap';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
+import type { ImmersiveVisualEditorRuntime } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import {
+  focusVisualPreviewRuntime,
   EditorRoot,
   isVisualPreviewWindowRequestCurrent,
+  schedulePreviewWithDocumentEndPin,
+  scheduleVisualWindowedHistoryBranchRelease,
+  visualPreviewUsesWindowedOwner,
+  visualPreviewSurfaceUsesWindowedOwner,
   type EditorRootProps
 } from './EditorRoot';
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
@@ -370,6 +376,7 @@ function fixture(): EditorRootProps &
       activateFocusBoundary: vi.fn(() => vi.fn()),
       hasOpenToolbarPopover: () => false,
       now: () => Date.now(),
+      viewportWidth: () => window.innerWidth,
       schedule: (callback, delay) => {
         const timer = window.setTimeout(callback, delay);
         return () => window.clearTimeout(timer);
@@ -671,6 +678,208 @@ afterEach(() => {
 });
 
 describe('EditorRoot', () => {
+  it.each([
+    [true, false, true, false, true],
+    [true, false, false, true, true],
+    [false, true, true, false, true],
+    [false, true, false, true, true],
+    [false, false, true, false, false],
+    [false, false, false, true, false],
+    [false, false, false, false, false]
+  ])(
+    'selects the correct visual owner for needsWindow=%s historyPending=%s editing=%s requested=%s',
+    (needsWindow, historyPending, editing, requested, expected) => {
+      expect(visualPreviewUsesWindowedOwner(
+        needsWindow,
+        historyPending,
+        editing,
+        requested
+      )).toBe(expected);
+    }
+  );
+
+  it.each([
+    [false, true, false, true, false, true],
+    [false, false, true, true, false, true],
+    [false, false, false, true, false, false],
+    [false, true, false, false, false, false],
+    [true, false, false, false, true, true]
+  ])(
+    'keeps the Preview surface Windowed for history and ordinary pending owners',
+    (needsWindow, historyOwnerPending, previewPending, editing, requested, expected) => {
+      expect(visualPreviewSurfaceUsesWindowedOwner(
+        needsWindow,
+        historyOwnerPending,
+        previewPending,
+        editing,
+        requested
+      )).toBe(expected);
+    }
+  );
+
+  it('keeps the Windowed history branch when a same-turn document-end lease is acquired', () => {
+    let documentEndHistoryPending = false;
+    let redoDepth = 0;
+    const queued: Array<() => void> = [];
+    const release = vi.fn();
+    const enqueue = (callback: () => void) => queued.push(callback);
+    const scheduleRelease = () => scheduleVisualWindowedHistoryBranchRelease(
+      () => documentEndHistoryPending,
+      () => redoDepth > 0,
+      release,
+      enqueue
+    );
+
+    scheduleRelease();
+    expect(release).not.toHaveBeenCalled();
+    documentEndHistoryPending = true;
+    queued.shift()?.();
+    expect(release).not.toHaveBeenCalled();
+    expect(visualPreviewUsesWindowedOwner(false, documentEndHistoryPending, true, false))
+      .toBe(true);
+
+    documentEndHistoryPending = false;
+    redoDepth = 1;
+    scheduleRelease();
+    queued.shift()?.();
+    expect(release).not.toHaveBeenCalled();
+
+    redoDepth = 0;
+    scheduleRelease();
+    queued.shift()?.();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('acquires the exact Preview pin before scheduling and releases it when scheduling throws', () => {
+    const previewRequest: PreviewRequest = {
+      codeTheme: 'dark',
+      customCssId: '',
+      markdown: 'EOF',
+      markdownTheme: 'default',
+      postId: 7,
+      signature: '42:3'
+    };
+    const operations: string[] = [];
+    const release = vi.fn(() => operations.push('release'));
+    const selectionRestored = vi.fn(() => operations.push('selection-restored'));
+    const schedule = vi.fn((request: PreviewRequest, immediate?: boolean) => {
+      operations.push(`schedule:${request.signature}:${String(immediate)}`);
+      return 9;
+    });
+    const runtime = {
+      prepareDocumentEndWindowPin: vi.fn((signature: string) => {
+        operations.push(`pin:${signature}`);
+        return { release };
+      }),
+      session: {
+        destroy: vi.fn(),
+        isCurrent: vi.fn(() => true),
+        schedule
+      }
+    };
+
+    const historyPending: boolean[] = [];
+    const lease = schedulePreviewWithDocumentEndPin(
+      runtime,
+      previewRequest,
+      (pending) => historyPending.push(pending),
+      selectionRestored
+    );
+
+    expect(operations).toEqual(['pin:42:3', 'schedule:42:3:true']);
+    expect(historyPending).toEqual([true]);
+    expect(runtime.prepareDocumentEndWindowPin).toHaveBeenCalledOnce();
+    expect(schedule).toHaveBeenCalledWith(previewRequest, true);
+    expect(lease.signature).toBe(previewRequest.signature);
+    lease.onSelectionRestored();
+    lease.onSelectionRestored();
+    expect(selectionRestored).toHaveBeenCalledOnce();
+    lease.release();
+    lease.release();
+    expect(release).toHaveBeenCalledOnce();
+    expect(historyPending).toEqual([true, false]);
+
+    const failedRelease = vi.fn();
+    const failedSelectionRestored = vi.fn();
+    const failedHistoryPending: boolean[] = [];
+    const failedRuntime = {
+      prepareDocumentEndWindowPin: vi.fn(() => ({ release: failedRelease })),
+      session: {
+        destroy: vi.fn(),
+        isCurrent: vi.fn(() => true),
+        schedule: vi.fn(() => {
+          throw new Error('preview-schedule-failed');
+        })
+      }
+    };
+    expect(() => schedulePreviewWithDocumentEndPin(
+      failedRuntime,
+      previewRequest,
+      (pending) => failedHistoryPending.push(pending),
+      failedSelectionRestored
+    )).toThrow('preview-schedule-failed');
+    expect(failedRelease).toHaveBeenCalledOnce();
+    expect(failedHistoryPending).toEqual([true, false]);
+    expect(failedSelectionRestored).not.toHaveBeenCalled();
+  });
+
+  it('focuses only the current visual runtime across disposal and replacement', () => {
+    const createSurface = () => {
+      const surface = document.createElement('div');
+      surface.tabIndex = -1;
+      surface.setAttribute('contenteditable', 'true');
+      Object.defineProperty(surface, 'isContentEditable', { value: true });
+      document.body.append(surface);
+      return surface;
+    };
+    const surfaceA = createSurface();
+    const surfaceB = createSurface();
+    const runtimeA: ImmersiveVisualEditorRuntime = {
+      executeCommand: () => false,
+      prepareMediaSelection: () => false,
+      prepareToolbarFallback: () => false,
+      surface: surfaceA
+    };
+    const runtimeB: ImmersiveVisualEditorRuntime = {
+      executeCommand: () => false,
+      prepareMediaSelection: () => false,
+      prepareToolbarFallback: () => false,
+      surface: surfaceB
+    };
+    const neutralControl = document.createElement('button');
+    document.body.append(neutralControl);
+    const activeElement = () =>
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const onFailure = vi.fn();
+
+    try {
+      expect(focusVisualPreviewRuntime(runtimeA, activeElement, onFailure))
+        .toBe(true);
+      expect(document.activeElement).toBe(surfaceA);
+
+      neutralControl.focus();
+      expect(document.activeElement).toBe(neutralControl);
+
+      expect(focusVisualPreviewRuntime(null, activeElement, onFailure))
+        .toBe(false);
+      expect(document.activeElement).toBe(neutralControl);
+      expect(onFailure).toHaveBeenLastCalledWith(
+        'visual-editor-focus-surface-unavailable'
+      );
+
+      expect(focusVisualPreviewRuntime(runtimeB, activeElement, onFailure))
+        .toBe(true);
+      expect(document.activeElement).toBe(surfaceB);
+      expect(onFailure).toHaveBeenCalledOnce();
+    } finally {
+      neutralControl.remove();
+      surfaceA.remove();
+      surfaceB.remove();
+    }
+  });
+
   it('rejects a queued windowed unlock after its Preview snapshot is superseded', () => {
     const queued = { revision: 3, signature: 'queued-preview' };
     const superseding = { revision: 4, signature: 'new-preview' };
@@ -1132,8 +1341,19 @@ describe('EditorRoot', () => {
     });
     await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
 
+    unlock.focus();
+    expect(document.activeElement).toBe(unlock);
     fireEvent.click(unlock);
 
+    expect(unlock.getAttribute('aria-label')).toBe('解除锁定并编辑');
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.getAttribute('aria-disabled')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(document.activeElement).toBe(unlock);
+    expect(unlock.classList.contains('is-unlocking')).toBe(true);
+    expect(
+      unlock.querySelector('.easymde-immersive-preview-unlock-spinner')
+    ).not.toBeNull();
     await waitFor(() =>
       expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1153,8 +1373,99 @@ describe('EditorRoot', () => {
       name: '可视化文章编辑器'
     });
     expect(visualEditor.innerHTML).toBe('<p><br></p>');
+    const lock = view.getByRole('button', { name: '锁定为只读' });
+    expect(lock.hasAttribute('aria-busy')).toBe(false);
+    expect(lock.hasAttribute('disabled')).toBe(false);
     expect(prepared.commit).toHaveBeenCalledOnce();
     expect(props.submissionField.value).toBe('');
+  });
+
+  it('waits for the visual surface before handing compact Outline focus to Preview', async () => {
+    const baseProps = fixture();
+    const markdown = '# Heading';
+    baseProps.submissionField.value = markdown;
+    baseProps.submissionField.defaultValue = markdown;
+    const previewHtml = '<h1>Heading</h1>' as SafePreviewHtml;
+    const props = {
+      ...baseProps,
+      preview: {
+        ...baseProps.preview,
+        html: previewHtml,
+        signature: 'compact-focus'
+      }
+    };
+    const preparation = deferred<Readonly<{
+      cancel: () => void;
+      commit: () => void;
+    }>>();
+    const prepared = { cancel: vi.fn(), commit: vi.fn() };
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(createPreviewResponse(request, previewHtml, {}))
+    );
+    vi.mocked(props.enhancementPort.prepareCodeTheme).mockReturnValue(
+      preparation.promise
+    );
+    vi.spyOn(props.immersiveEnvironment, 'viewportWidth').mockReturnValue(390);
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(
+      await view.findByRole('button', { name: '进入沉浸写作' })
+    );
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const outlineControl = view.container.querySelector<HTMLButtonElement>(
+      '.easymde-immersive-outline button'
+    );
+    if (!outlineControl) throw new Error('compact-test-outline-control-unavailable');
+    outlineControl.focus();
+    expect(document.activeElement).toBe(outlineControl);
+
+    const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    const nativeFocus = HTMLElement.prototype.focus;
+    let visualSurfaceFocusAttempts = 0;
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus')
+      .mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+        if (this.classList.contains('easymde-immersive-visual-editor')) {
+          visualSurfaceFocusAttempts += 1;
+        }
+        nativeFocus.call(this, options);
+      });
+
+    try {
+      fireEvent.click(unlock);
+      await waitFor(() =>
+        expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledOnce()
+      );
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(view.container.querySelector('.easymde-immersive-outline'))
+        .not.toBeNull();
+      expect(document.activeElement).toBe(outlineControl);
+
+      await act(async () => preparation.resolve(prepared));
+
+      expect(prepared.commit).toHaveBeenCalledOnce();
+      const visualSurface = view.container.querySelector<HTMLElement>(
+        '.easymde-immersive-visual-editor'
+      );
+      if (!visualSurface) throw new Error('compact-test-visual-surface-unavailable');
+      expect(visualSurface.getAttribute('contenteditable')).toBe('true');
+      expect(visualSurface.getAttribute('role')).toBe('textbox');
+      expect(visualSurface.getAttribute('aria-label')).toBe('可视化文章编辑器');
+      await waitFor(() =>
+        expect(view.container.querySelector('.easymde-immersive-outline'))
+          .toBeNull()
+      );
+      expect(visualSurfaceFocusAttempts).toBe(1);
+      expect(document.activeElement).toBe(visualSurface);
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'visual-editor-focus-surface-unavailable'
+      );
+      expect(props.onFailure).not.toHaveBeenCalledWith(
+        'visual-editor-focus-surface-failed'
+      );
+    } finally {
+      focusSpy.mockRestore();
+    }
   });
 
   it('prepares code resources for a non-empty visual document and syncs each new code frame once', async () => {
@@ -1299,6 +1610,9 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.enhancementPort.prepareCodeTheme).toHaveBeenCalledTimes(1)
     );
+    expect(unlock.getAttribute('aria-busy')).toBe('true');
+    expect(unlock.getAttribute('aria-disabled')).toBe('true');
+    expect(unlock.hasAttribute('disabled')).toBe(false);
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
@@ -1307,6 +1621,9 @@ describe('EditorRoot', () => {
     fireEvent.click(view.getByRole('button', { name: 'Code theme' }));
     fireEvent.click(view.getByRole('option', { name: 'GitHub' }));
     await waitFor(() => expect(unlockSignal?.aborted).toBe(true));
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
 
     await act(async () => pendingPreparation.resolve(prepared));
     expect(prepared.cancel).toHaveBeenCalledOnce();
@@ -1359,6 +1676,9 @@ describe('EditorRoot', () => {
         'preview-enhancement-resource-load-failed'
       )
     );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
@@ -1419,6 +1739,13 @@ describe('EditorRoot', () => {
     expect(view.queryByRole('textbox', {
       name: '可视化文章编辑器'
     })).toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    const relockedPreview = view.getByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    expect(relockedPreview.hasAttribute('aria-busy')).toBe(false);
+    expect(relockedPreview.hasAttribute('disabled')).toBe(false);
   });
 
   it('does not enable a fresh unlock after its Preview snapshot becomes stale', async () => {
@@ -1467,6 +1794,9 @@ describe('EditorRoot', () => {
     await waitFor(() =>
       expect(props.submissionField.value).toBe('Snapshot changed')
     );
+    expect(unlock.hasAttribute('aria-busy')).toBe(false);
+    expect(unlock.classList.contains('is-unlocking')).toBe(false);
+    expect(unlock.hasAttribute('disabled')).toBe(true);
     expect(
       vi.mocked(props.enhancementPort.prepareCodeTheme).mock.calls[0]?.[0]
         .signal.aborted
@@ -1628,6 +1958,9 @@ describe('EditorRoot', () => {
     try {
       fireEvent.click(unlock);
       await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(0));
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(unlock.getAttribute('aria-disabled')).toBe('true');
+      expect(unlock.hasAttribute('disabled')).toBe(false);
 
       const source = view.getByRole('textbox', { name: 'Markdown source' });
       const sourceView = EditorView.findFromDOM(source);
@@ -1640,7 +1973,10 @@ describe('EditorRoot', () => {
       await waitFor(() =>
         expect(props.submissionField.value).toContain('\nSuperseded')
       );
+      expect(unlock.hasAttribute('aria-busy')).toBe(false);
+      expect(unlock.classList.contains('is-unlocking')).toBe(false);
       await drainAnimationFrames(frameCallbacks);
+      expect(unlock.hasAttribute('aria-busy')).toBe(false);
       expect(view.queryByRole('textbox', {
         name: '可视化文章编辑器'
       })).toBeNull();
@@ -1689,11 +2025,20 @@ describe('EditorRoot', () => {
     try {
       fireEvent.click(unlock);
       await waitFor(() => expect(frameCallbacks.length).toBeGreaterThan(0));
+      expect(unlock.getAttribute('aria-busy')).toBe('true');
+      expect(unlock.getAttribute('aria-disabled')).toBe('true');
+      expect(unlock.hasAttribute('disabled')).toBe(false);
       fireEvent.click(view.getByRole('button', { name: '分屏模式' }));
       await drainAnimationFrames(frameCallbacks);
       expect(view.queryByRole('textbox', {
         name: '可视化文章编辑器'
       })).toBeNull();
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const relockedPreview = view.getByRole('button', {
+        name: '解除锁定并编辑'
+      });
+      expect(relockedPreview.hasAttribute('aria-busy')).toBe(false);
+      expect(relockedPreview.hasAttribute('disabled')).toBe(false);
     } finally {
       requestAnimationFrame.mockRestore();
       cancelAnimationFrame.mockRestore();

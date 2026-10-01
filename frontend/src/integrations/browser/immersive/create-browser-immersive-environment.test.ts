@@ -165,6 +165,12 @@ describe('createBrowserImmersiveEnvironment', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('reports the browser layout viewport width through its environment port', () => {
+    const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
+
+    expect(environment.viewportWidth()).toBe(window.innerWidth);
+  });
+
   it('observes preview image layout changes and cleans up listeners', () => {
     const environment = createBrowserImmersiveEnvironment(document, faviconUrl);
     const surface = document.createElement('article');

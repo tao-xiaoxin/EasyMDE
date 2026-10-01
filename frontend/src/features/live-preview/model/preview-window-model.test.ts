@@ -80,6 +80,12 @@ describe('PreviewWindowModel', () => {
       viewport: viewport(0, 10_000),
       pinnedIndices: [3, 250, 599]
     });
+    const boundedPinned = model.getWindow({
+      context,
+      maxMaterialized: 160,
+      viewport: viewport(0, 10_000),
+      pinnedIndices: [3, 250, 599]
+    });
 
     expect(ordinary.mountedIndexRange.end - ordinary.mountedIndexRange.start).toBe(160);
     expect(result.mountedIndexRange.end - result.mountedIndexRange.start).toBeLessThanOrEqual(192);
@@ -90,7 +96,13 @@ describe('PreviewWindowModel', () => {
     }
     expect(result.materializedIndices).toEqual([...expectedMaterialized].sort((left, right) => left - right));
     expect(result.materializedCount).toBe(result.materializedIndices.length);
-    expect(result.materializedCount).toBeLessThanOrEqual(192);
+    expect(result.materializedCount).toBe(192);
+    expect(boundedPinned.materializedCount).toBe(160);
+    expect(model.getWindow({
+      context,
+      viewport: viewport(0, 10_000),
+      pinnedIndices: [3, 250, 599]
+    }).materializedCount).toBe(192);
     expect(result.layoutRuns.filter((run) => 'materialized' === run.kind).reduce(
       (count, run) => count + (run.range.end - run.range.start),
       0
@@ -146,6 +158,11 @@ describe('PreviewWindowModel', () => {
       .toThrow('preview-window-pin-out-of-bounds');
     expect(() => model.getWindow({ context, viewport: viewport(0, 20), pinnedIndices: [4] }))
       .toThrow('preview-window-pin-out-of-bounds');
+    expect(() => model.getWindow({
+      context,
+      maxMaterialized: 0,
+      viewport: viewport(0, 20)
+    })).toThrow('preview-window-cap-invalid');
   });
 
   it('returns exact anchor correction for dynamic height updates', () => {

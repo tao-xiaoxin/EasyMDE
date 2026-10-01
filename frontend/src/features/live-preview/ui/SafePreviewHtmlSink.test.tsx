@@ -1,11 +1,386 @@
-import { createElement, createRef } from '@wordpress/element';
+import { Component, createElement, createRef } from '@wordpress/element';
 import { act, render } from '@testing-library/react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SafePreviewHtml } from '../../../contracts/ports/preview-request';
 import { SafePreviewHtmlSink } from './SafePreviewHtmlSink';
 
+type TestErrorBoundaryProps = Readonly<{
+  children: ReactNode;
+  onError: (error: Error) => void;
+}>;
+
+type TestErrorBoundaryState = Readonly<{ failed: boolean }>;
+
+class TestErrorBoundary extends Component<
+  TestErrorBoundaryProps,
+  TestErrorBoundaryState
+> {
+  public override state: TestErrorBoundaryState = { failed: false };
+
+  public static getDerivedStateFromError(): TestErrorBoundaryState {
+    return { failed: true };
+  }
+
+  public override componentDidCatch(error: Error, _info: ErrorInfo): void {
+    this.props.onError(error);
+  }
+
+  public override render(): ReactNode {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
 describe('SafePreviewHtmlSink window commits', () => {
+  it('keeps adopted protected references when the same staged commit reconciles again', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initialHtml = '<p>Before</p><div class="easymde-toc"><ul>'
+      + '<li><a href="#heading">Heading</a></li></ul></div>';
+    const nextHtml = '<p>After</p><div class="easymde-toc"><ul>'
+      + '<li><a href="#heading">Heading</a></li></ul></div>';
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={initialHtml as SafePreviewHtml}
+        htmlRevision={1}
+        surfaceRef={surfaceRef}
+      />
+    );
+    const surface = surfaceRef.current;
+    const oldToc = surface?.querySelector('.easymde-toc');
+    if (!surface || !oldToc) throw new Error('test-protected-node-missing');
+    oldToc.setAttribute('contenteditable', 'false');
+    const template = document.createElement('template');
+    template.innerHTML = nextHtml;
+    const stagedCommit = {
+      nodes: Array.from(template.content.childNodes),
+      revision: 2
+    };
+    const firstCompletion = vi.fn();
+    const laterCompletion = vi.fn();
+    const replaceChildren = vi.spyOn(surface, 'replaceChildren');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={nextHtml as SafePreviewHtml}
+        htmlRevision={2}
+        onStagedCommit={firstCompletion}
+        stagedCommit={stagedCommit}
+        statusClassName="preview-status"
+        statusMessage="Updating Preview"
+        statusRole="status"
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    expect(surface.querySelector('.easymde-toc')).toBe(oldToc);
+    const statusNode = surface.querySelector('.preview-status');
+    expect(statusNode?.textContent).toBe('Updating Preview');
+    expect(surface.querySelectorAll('.preview-status')).toHaveLength(1);
+    expect(firstCompletion).toHaveBeenCalledOnce();
+    expect(replaceChildren).toHaveBeenCalledOnce();
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        ariaBusy
+        contentEditable={false}
+        html={nextHtml as SafePreviewHtml}
+        htmlRevision={2}
+        onStagedCommit={laterCompletion}
+        stagedCommit={stagedCommit}
+        statusClassName="preview-status"
+        statusMessage="Updating Preview"
+        statusRole="status"
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    expect(surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(surface.querySelector('.preview-status')).toBe(statusNode);
+    expect(surface.querySelectorAll('.preview-status')).toHaveLength(1);
+    expect(replaceChildren).toHaveBeenCalledOnce();
+    expect(laterCompletion).not.toHaveBeenCalled();
+  });
+
+  it('rejects external child drift after a staged status commit', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onError = vi.fn<(error: Error) => void>();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const initialHtml = '<p>Before</p>' as SafePreviewHtml;
+    const nextHtml = '<p>After</p>' as SafePreviewHtml;
+    const firstStagedCommit = vi.fn();
+    const nextStagedCommit = vi.fn();
+    const expectedWindowErrors: ErrorEvent[] = [];
+    const unexpectedWindowErrors: unknown[] = [];
+    const onWindowError = (event: ErrorEvent): void => {
+      if (
+        event.error instanceof Error
+        && 'preview-staged-commit-surface-drifted' === event.error.message
+      ) {
+        expectedWindowErrors.push(event);
+        event.preventDefault();
+        return;
+      }
+      unexpectedWindowErrors.push(event.error ?? event.message);
+    };
+    const template = document.createElement('template');
+    template.innerHTML = nextHtml;
+    const stagedCommit = {
+      nodes: Array.from(template.content.childNodes),
+      revision: 2
+    };
+    const view = render(
+      <TestErrorBoundary onError={onError}>
+        <SafePreviewHtmlSink
+          html={initialHtml}
+          htmlRevision={1}
+          surfaceRef={surfaceRef}
+        />
+      </TestErrorBoundary>
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('preview-staged-drift-surface-missing');
+
+    view.rerender(
+      <TestErrorBoundary onError={onError}>
+        <SafePreviewHtmlSink
+          html={nextHtml}
+          htmlRevision={2}
+          onStagedCommit={firstStagedCommit}
+          stagedCommit={stagedCommit}
+          statusClassName="preview-status"
+          statusMessage="Updating Preview"
+          statusRole="status"
+          surfaceRef={surfaceRef}
+        />
+      </TestErrorBoundary>
+    );
+    surface.append(document.createElement('span'));
+    window.addEventListener('error', onWindowError);
+
+    try {
+      view.rerender(
+        <TestErrorBoundary onError={onError}>
+          <SafePreviewHtmlSink
+            html={nextHtml}
+            htmlRevision={2}
+            onStagedCommit={nextStagedCommit}
+            stagedCommit={stagedCommit}
+            statusClassName="preview-status"
+            statusMessage="Updating Preview"
+            statusRole="status"
+            surfaceRef={surfaceRef}
+          />
+        </TestErrorBoundary>
+      );
+
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.lastCall?.[0].message)
+        .toBe('preview-staged-commit-surface-drifted');
+      expect(expectedWindowErrors).toHaveLength(1);
+      expect(unexpectedWindowErrors).toEqual([]);
+    } finally {
+      window.removeEventListener('error', onWindowError);
+      consoleError.mockRestore();
+    }
+  });
+
+  it('keeps a nested protected node adopted from inert staged markup', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initialHtml = '<p>Result <span class="easymde-math" '
+      + 'data-easymde-rendered="1"><span>2</span></span></p>';
+    const nextHtml = '<p>Updated result <span class="easymde-math" '
+      + 'data-easymde-rendered="1"><span>2</span></span></p>';
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={initialHtml as SafePreviewHtml}
+        htmlRevision={1}
+        surfaceRef={surfaceRef}
+      />
+    );
+    const surface = surfaceRef.current;
+    const oldMath = surface?.querySelector('.easymde-math');
+    if (!surface || !oldMath) throw new Error('test-protected-node-missing');
+    oldMath.setAttribute('contenteditable', 'false');
+    const template = document.createElement('template');
+    template.innerHTML = nextHtml;
+    const stagedCommit = {
+      nodes: Array.from(template.content.childNodes),
+      revision: 2
+    };
+    const replaceChildren = vi.spyOn(surface, 'replaceChildren');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={nextHtml as SafePreviewHtml}
+        htmlRevision={2}
+        stagedCommit={stagedCommit}
+        surfaceRef={surfaceRef}
+      />
+    );
+
+    expect(surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(oldMath.ownerDocument).toBe(surface.ownerDocument);
+    expect(replaceChildren).toHaveBeenCalledOnce();
+  });
+
+  it('uses canonical protected attributes for staged DOM adoption', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initialHtml = '<p>Start</p><div class="easymde-toc" style="">'
+      + '<ul><li>Same</li></ul></div>';
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={initialHtml as SafePreviewHtml}
+        htmlRevision={1}
+        surfaceRef={surfaceRef}
+      />
+    );
+    const surface = surfaceRef.current;
+    const originalToc = surface?.querySelector<HTMLElement>('.easymde-toc');
+    if (!surface || !originalToc) {
+      throw new Error('test-protected-node-missing');
+    }
+    originalToc.setAttribute('contenteditable', 'false');
+
+    const commit = (markup: string, revision: number) => {
+      const template = document.createElement('template');
+      template.innerHTML = markup;
+      return {
+        nodes: Array.from(template.content.childNodes),
+        revision
+      };
+    };
+    const renderCommit = (markup: string, revision: number): void => {
+      view.rerender(
+        <SafePreviewHtmlSink
+          contentEditable
+          html={markup as SafePreviewHtml}
+          htmlRevision={revision}
+          stagedCommit={commit(markup, revision)}
+          surfaceRef={surfaceRef}
+        />
+      );
+    };
+
+    renderCommit(
+      '<p>Absent style</p><div class="easymde-toc">'
+        + '<ul><li>Same</li></ul></div>',
+      2
+    );
+    expect(surface.querySelector('.easymde-toc')).toBe(originalToc);
+
+    renderCommit(
+      '<p>Whitespace style</p><div class="easymde-toc" style=" \t\n ">'
+        + '<ul><li>Same</li></ul></div>',
+      3
+    );
+    expect(surface.querySelector('.easymde-toc')).toBe(originalToc);
+
+    renderCommit(
+      '<p>Non-empty style</p><div class="easymde-toc" style="color: red">'
+        + '<ul><li>Same</li></ul></div>',
+      4
+    );
+    const styledToc = surface.querySelector<HTMLElement>('.easymde-toc');
+    expect(styledToc).not.toBe(originalToc);
+    expect(styledToc?.getAttribute('contenteditable')).toBe('false');
+
+    renderCommit(
+      '<p>Other attribute</p><div class="easymde-toc" '
+        + 'style="color: red" aria-label="Changed">'
+        + '<ul><li>Same</li></ul></div>',
+      5
+    );
+    const changedAttributeToc = surface.querySelector<HTMLElement>('.easymde-toc');
+    expect(changedAttributeToc).not.toBe(styledToc);
+    expect(changedAttributeToc?.getAttribute('contenteditable')).toBe('false');
+  });
+
+  it('restores nested protected nodes when an inert staged commit fails', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const initialHtml = '<p>Result <span class="easymde-math" '
+      + 'data-easymde-rendered="1"><span>2</span></span> after</p>';
+    const nextHtml = '<p>Updated result <span class="easymde-math" '
+      + 'data-easymde-rendered="1"><span>2</span></span> after</p>';
+    const onError = vi.fn<(error: Error) => void>();
+    const view = render(
+      <TestErrorBoundary onError={onError}>
+        <SafePreviewHtmlSink
+          contentEditable
+          html={initialHtml as SafePreviewHtml}
+          htmlRevision={1}
+          surfaceRef={surfaceRef}
+        />
+      </TestErrorBoundary>
+    );
+    const surface = surfaceRef.current;
+    const oldMath = surface?.querySelector('.easymde-math');
+    const oldParent = oldMath?.parentNode;
+    const oldNextSibling = oldMath?.nextSibling;
+    if (!surface || !oldMath || !oldParent) {
+      throw new Error('test-protected-node-missing');
+    }
+    oldMath.setAttribute('contenteditable', 'false');
+    const template = document.createElement('template');
+    template.innerHTML = nextHtml;
+    const stagedCommit = {
+      nodes: Array.from(template.content.childNodes),
+      revision: 2
+    };
+    const expectedFailure = new Error('preview-test-sink-replace-failed');
+    const expectedWindowErrors: ErrorEvent[] = [];
+    const unexpectedWindowErrors: unknown[] = [];
+    const onWindowError = (event: ErrorEvent): void => {
+      if (
+        event.error === expectedFailure
+        || event.message === expectedFailure.message
+      ) {
+        expectedWindowErrors.push(event);
+        event.preventDefault();
+        return;
+      }
+      unexpectedWindowErrors.push(event.error ?? event.message);
+    };
+    const replaceChildren = vi.spyOn(surface, 'replaceChildren')
+      .mockImplementation(() => {
+        throw expectedFailure;
+      });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    window.addEventListener('error', onWindowError);
+
+    try {
+      view.rerender(
+        <TestErrorBoundary onError={onError}>
+          <SafePreviewHtmlSink
+            contentEditable
+            html={nextHtml as SafePreviewHtml}
+            htmlRevision={2}
+            stagedCommit={stagedCommit}
+            surfaceRef={surfaceRef}
+          />
+        </TestErrorBoundary>
+      );
+
+      expect(onError).toHaveBeenCalledOnce();
+      expect(onError.mock.lastCall?.[0]).toBe(expectedFailure);
+      expect(expectedWindowErrors).toHaveLength(1);
+      expect(unexpectedWindowErrors).toEqual([]);
+      expect(oldMath.parentNode).toBe(oldParent);
+      expect(oldMath.nextSibling).toBe(oldNextSibling);
+      expect(oldMath.ownerDocument).toBe(surface.ownerDocument);
+      expect(replaceChildren).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener('error', onWindowError);
+      replaceChildren.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   it('preserves a root-end caret while pinning the document-end Block', () => {
     const surfaceRef = createRef<HTMLElement>();
     const first = document.createElement('p');

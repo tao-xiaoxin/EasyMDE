@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
 import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from './helpers/preview-request-evidence.mjs';
@@ -44,10 +45,13 @@ const syntheticDensePreviewRootCount =
   + syntheticDenseCodeBlockCount;
 const syntheticLargeEditSettledLimitMs = 100;
 const syntheticLargePasteSettledLimitMs = 5_000;
+const syntheticLargePasteActivationTaskCountLimit = 1;
+const syntheticLargePasteActivationTotalBlockingTimeLimitMs = 25;
 const syntheticLargePreviewLayoutTaskLimitMs = 75;
+const syntheticLargePreviewLayoutTaskCountLimit = 2;
+const syntheticLargePreviewTotalBlockingTimeLimitMs = 40;
+const syntheticLargePasteTotalBlockingTimeLimitMs = 65;
 const syntheticDensePasteSettledLimitMs = 2_500;
-const syntheticDensePreviewTaskCountLimit = 2;
-const syntheticDensePreviewLayoutTaskLimitMs = 75;
 const WORDPRESS_SESSION_REFRESH_INTERVAL_MS = 60_000;
 const managedRuntimeAssets = [
   {
@@ -788,6 +792,236 @@ async function waitForPreviewRefresh(preview, previousSignature, message) {
   }, { message }).toBe(true);
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
+}
+
+function expectWindowedCoverage(
+  state,
+  totalBlockCount,
+  targetBlockIndex,
+  maxSpacerRanges = 2
+) {
+  const { mountedBlockCount, mountedRanges, spacerRanges } = state;
+  expect(spacerRanges.length).toBeLessThanOrEqual(maxSpacerRanges);
+  expect(mountedBlockCount).toBeGreaterThan(0);
+  expect(mountedBlockCount).toBeLessThanOrEqual(160);
+
+  for (let index = 0; index < spacerRanges.length; index += 1) {
+    const range = spacerRanges[index];
+    expect(Number.isInteger(range.start)).toBe(true);
+    expect(Number.isInteger(range.end)).toBe(true);
+    expect(range.start).toBeGreaterThanOrEqual(0);
+    expect(range.start).toBeLessThan(range.end);
+    expect(range.end).toBeLessThanOrEqual(totalBlockCount);
+    if (index > 0) {
+      expect(spacerRanges[index - 1].end).toBeLessThanOrEqual(range.start);
+    }
+  }
+
+  const mountedCountFromRanges = mountedRanges.reduce((count, range) => {
+    expect(Number.isInteger(range.start)).toBe(true);
+    expect(Number.isInteger(range.end)).toBe(true);
+    expect(range.start).toBeGreaterThanOrEqual(0);
+    expect(range.end).toBeGreaterThanOrEqual(range.start);
+    expect(range.end).toBeLessThan(totalBlockCount);
+    return count + range.end - range.start + 1;
+  }, 0);
+  const hiddenCount = spacerRanges.reduce(
+    (count, range) => count + range.end - range.start,
+    0
+  );
+  expect(mountedCountFromRanges).toBe(mountedBlockCount);
+  expect(mountedBlockCount + hiddenCount).toBe(totalBlockCount);
+
+  const ranges = [
+    ...mountedRanges.map((range) => ({ ...range, kind: 'mounted' })),
+    ...spacerRanges.map(({ start, end }) => ({
+      end: end - 1,
+      kind: 'hidden',
+      start
+    }))
+  ].sort((first, second) => first.start - second.start);
+  let nextBlockIndex = 0;
+  for (const range of ranges) {
+    expect(range.start).toBe(nextBlockIndex);
+    expect(range.end).toBeGreaterThanOrEqual(range.start);
+    nextBlockIndex = range.end + 1;
+  }
+  expect(nextBlockIndex).toBe(totalBlockCount);
+
+  if (Number.isInteger(targetBlockIndex)) {
+    expect(mountedRanges.some(({ start, end }) => (
+      start <= targetBlockIndex && targetBlockIndex <= end
+    ))).toBe(true);
+    expect(spacerRanges.some(({ start, end }) => (
+      start <= targetBlockIndex && targetBlockIndex < end
+    ))).toBe(false);
+  }
+}
+
+async function readVisualEndState(preview, markdown, lastEditableBlockId) {
+  return preview.evaluate((surface, { expectedMarkdown, lastEditableBlockId: editableBlockId }) => {
+    const field = document.querySelector('#easymde-source');
+    const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+    const selection = document.getSelection();
+    const anchor = selection?.anchorNode ?? null;
+    const inside = Boolean(anchor && (anchor === surface || surface.contains(anchor)));
+    const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+    const previous = anchor === surface && selection?.anchorOffset > 0
+      ? surface.childNodes[selection.anchorOffset - 1]
+      : null;
+    const anchorBlock = anchorElement?.closest('[data-easymde-visual-block-id]')
+      ?? (previous instanceof Element
+        ? previous.closest('[data-easymde-visual-block-id]')
+        : null);
+    let remainingText = '';
+    let anchorBlockRemaining = null;
+    if (inside && selection?.isCollapsed) {
+      const range = document.createRange();
+      range.setStart(anchor, selection.anchorOffset);
+      range.setEnd(surface, surface.childNodes.length);
+      remainingText = range.toString();
+      if (anchorBlock?.contains(anchor)) {
+        const blockRange = document.createRange();
+        blockRange.selectNodeContents(anchorBlock);
+        blockRange.setStart(anchor, selection.anchorOffset);
+        anchorBlockRemaining = blockRange.toString().length;
+      }
+    }
+    const anchorBlockId = anchorBlock?.getAttribute('data-easymde-visual-block-id') ?? null;
+    const anchorBlockRemainingTextLength = anchorBlockRemaining;
+    const lastBlockId = Array.from(surface.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    )).at(-1)?.getAttribute('data-easymde-visual-block-id') ?? null;
+    const anchorAtRootEnd = anchor === surface
+      && selection?.anchorOffset === surface.childNodes.length;
+    const anchorAtFinalEditableBlockEnd = anchorBlockId === editableBlockId
+      && 0 === anchorBlockRemainingTextLength;
+    const indexes = Array.from(canvas?.querySelectorAll(
+      '[data-easymde-visual-block-id]'
+    ) ?? []).flatMap((node) => {
+      const match = /^b(\d+)$/u.exec(node.getAttribute('data-easymde-visual-block-id') ?? '');
+      return match ? [Number(match[1])] : [];
+    });
+    const mountedRanges = [];
+    for (const index of indexes) {
+      const previousRange = mountedRanges.at(-1);
+      if (previousRange && previousRange.end + 1 === index) previousRange.end = index;
+      else mountedRanges.push({ end: index, start: index });
+    }
+    const spacerRanges = Array.from(canvas?.querySelectorAll(
+      '[data-easymde-preview-window-spacer]'
+    ) ?? []).map((node) => ({
+      end: Number(node.getAttribute('data-easymde-preview-window-end')),
+      start: Number(node.getAttribute('data-easymde-preview-window-start'))
+    }));
+    const remainingTrimmedLength = remainingText.trim().length;
+    return {
+      active: document.activeElement === surface,
+      anchorAtFinalEditableBlockEnd,
+      anchorAtRootEnd,
+      anchorBlockId,
+      anchorBlockRemainingTextLength,
+      anchorConnected: Boolean(anchor?.isConnected),
+      canonical: field instanceof HTMLTextAreaElement && field.value === expectedMarkdown,
+      editable: surface.getAttribute('contenteditable') === 'true'
+        && surface.getAttribute('aria-busy') === 'false'
+        && !surface.hasAttribute('data-easymde-preview-error'),
+      lastBlockId,
+      mountedBlockCount: indexes.length,
+      mountedRanges,
+      remainingTextLength: remainingText.length,
+      remainingTrimmedLength,
+      selectionCollapsed: Boolean(selection?.isCollapsed),
+      sourceEOF: field instanceof HTMLTextAreaElement
+        && field.selectionStart === expectedMarkdown.length
+        && field.selectionEnd === expectedMarkdown.length,
+      spacerRanges,
+      visualEOF: Boolean(anchor?.isConnected
+        && inside
+        && selection?.isCollapsed
+        && (anchorAtFinalEditableBlockEnd
+          || (anchorAtRootEnd
+            && editableBlockId === lastBlockId
+            && 0 === remainingTrimmedLength)))
+    };
+  }, { expectedMarkdown: markdown, lastEditableBlockId });
+}
+
+async function waitForVisualEnd(preview, markdown, lastEditableBlockId, message, errors) {
+  const read = async () => ({
+    ...await readVisualEndState(preview, markdown, lastEditableBlockId),
+    errorCodes: [...errors]
+  });
+  await expect.poll(read, { message }).toMatchObject({
+    active: true,
+    canonical: true,
+    editable: true,
+    errorCodes: [],
+    selectionCollapsed: true,
+    sourceEOF: true,
+    visualEOF: true
+  });
+  return read();
+}
+
+async function waitForImmersiveEditCommit(
+  source,
+  visualEditor,
+  expectedMarkdown,
+  acceptedPreviewSignature,
+  message
+) {
+  await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+  await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+  await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+  await expect.poll(async () => visualEditor.evaluate(async (surface, expected) => {
+    const selectionPath = (node) => {
+      const path = [];
+      let current = node;
+      while (current && current !== surface) {
+        const parent = current.parentNode;
+        if (!parent) return null;
+        path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+        current = parent;
+      }
+      return current === surface ? path : null;
+    };
+    const sample = () => {
+      const sourceField = document.querySelector('#easymde-source');
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const focus = selection?.focusNode ?? null;
+      return {
+        contentEditable: surface.getAttribute('contenteditable'),
+        html: surface.innerHTML,
+        previewSignature: surface.easymdePreviewSignature ?? '',
+        source: sourceField instanceof HTMLTextAreaElement
+          ? sourceField.value
+          : null,
+        surfaceBusy: surface.getAttribute('aria-busy'),
+        selection: selection ? {
+          anchor: selectionPath(anchor),
+          anchorOffset: selection.anchorOffset,
+          collapsed: selection.isCollapsed,
+          focus: selectionPath(focus),
+          focusOffset: selection.focusOffset
+        } : null
+      };
+    };
+    const before = sample();
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+    const after = sample();
+    return before.source === expected.markdown
+      && before.contentEditable === 'true'
+      && before.surfaceBusy === 'false'
+      && before.previewSignature === expected.previewSignature
+      && JSON.stringify(before) === JSON.stringify(after);
+  }, {
+    markdown: expectedMarkdown,
+    previewSignature: acceptedPreviewSignature
+  }), { timeout: 30_000, message }).toBe(true);
 }
 
 async function waitForArticleThemeTransition(
@@ -2366,6 +2600,631 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  const editPhaseLongTaskBudgetLimits = {
+    blockingThresholdMs: 50,
+    maxBlockingMs: 25,
+    maxCount: 1,
+    maxDurationMs: 75
+  };
+
+  const classifyLongTasksByEditPhase = (tasks, phaseWindows, interactionWindow) => (
+    tasks.map(({ attribution = [], start, duration }) => {
+      const overlappingPhases = phaseWindows
+        .filter(({ start: phaseStart, end }) => (
+          start < end && start + duration > phaseStart
+        ))
+        .map(({ inputIndex, phase }) => Number.isInteger(inputIndex)
+          ? { inputIndex, phase }
+          : { phase });
+      const overlapsInteraction = start < interactionWindow.end
+        && start + duration > interactionWindow.start;
+      return {
+        attribution,
+        classification: overlappingPhases.length
+          ? 'editPhase'
+          : overlapsInteraction ? 'betweenPhase' : 'outsideInteraction',
+        durationMs: duration,
+        overlappingPhases,
+        startTimeMs: start
+      };
+    }).sort((first, second) => first.startTimeMs - second.startTimeMs)
+  );
+
+  const summarizeEditPhaseLongTaskBudget = (tasks) => {
+    const editTasks = tasks.filter(({ classification }) => 'editPhase' === classification);
+    const blockingTimeMs = editTasks.reduce((total, { durationMs }) => (
+      total + Math.max(durationMs - editPhaseLongTaskBudgetLimits.blockingThresholdMs, 0)
+    ), 0);
+    let violationCode = null;
+    if (editTasks.some(({ overlappingPhases }) => overlappingPhases.length > 1)) {
+      violationCode = 'nonwindowed-edit-long-task-crosses-multiple-phases';
+    } else if (editTasks.length > editPhaseLongTaskBudgetLimits.maxCount) {
+      violationCode = 'nonwindowed-edit-long-task-count-exceeded';
+    } else if (editTasks.some(({ durationMs }) => (
+      durationMs > editPhaseLongTaskBudgetLimits.maxDurationMs
+    ))) {
+      violationCode = 'nonwindowed-edit-long-task-duration-exceeded';
+    } else if (blockingTimeMs > editPhaseLongTaskBudgetLimits.maxBlockingMs) {
+      violationCode = 'nonwindowed-edit-long-task-blocking-exceeded';
+    }
+    return { blockingTimeMs, count: editTasks.length, violationCode };
+  };
+
+  test('enforces the non-windowed edit-phase Long Task budget', () => {
+    const phaseWindows = [{ end: 160, phase: 'burst', start: 100 }];
+    const interactionWindow = { end: 250, start: 90 };
+    const [editTask, overLimitTask, betweenTask, outsideTask] = classifyLongTasksByEditPhase([
+      { duration: 69, start: 100 },
+      { duration: 76, start: 100 },
+      { duration: 76, start: 161 },
+      { duration: 84, start: 251 }
+    ], phaseWindows, interactionWindow);
+
+    expect(editTask?.classification).toBe('editPhase');
+    expect(editTask?.overlappingPhases).toEqual([{ phase: 'burst' }]);
+    expect(summarizeEditPhaseLongTaskBudget([editTask])).toEqual({
+      blockingTimeMs: 19,
+      count: 1,
+      violationCode: null
+    });
+    expect(summarizeEditPhaseLongTaskBudget([overLimitTask]).violationCode)
+      .toBe('nonwindowed-edit-long-task-duration-exceeded');
+    expect(betweenTask?.classification).toBe('betweenPhase');
+    expect(betweenTask?.overlappingPhases).toEqual([]);
+    expect(outsideTask?.classification).toBe('outsideInteraction');
+    expect(summarizeEditPhaseLongTaskBudget([
+      editTask,
+      { ...editTask, startTimeMs: editTask.startTimeMs + 1 }
+    ]).violationCode).toBe('nonwindowed-edit-long-task-count-exceeded');
+    const crossingPhases = classifyLongTasksByEditPhase(
+      [{ duration: 60, start: 130 }],
+      [
+        { end: 160, phase: 'first', start: 100 },
+        { end: 180, inputIndex: 1, phase: 'second', start: 120 }
+      ],
+      interactionWindow
+    );
+    expect(summarizeEditPhaseLongTaskBudget(crossingPhases).violationCode)
+      .toBe('nonwindowed-edit-long-task-crosses-multiple-phases');
+    expect(summarizeEditPhaseLongTaskBudget([betweenTask, outsideTask])).toEqual({
+      blockingTimeMs: 0,
+      count: 0,
+      violationCode: null
+    });
+    expect(summarizeEditPhaseLongTaskBudget(
+      classifyLongTasksByEditPhase(
+        [{ duration: 75, start: 100 }],
+        phaseWindows,
+        interactionWindow
+      )
+    )).toEqual({ blockingTimeMs: 25, count: 1, violationCode: null });
+  });
+
+  test('@performance keeps near-threshold non-windowed immersive code editing responsive', async ({ page }, testInfo) => {
+    testInfo.setTimeout(Math.max(testInfo.timeout, 180_000));
+    const codeBlocks = Array.from({ length: 158 }, (_, index) => (
+      `~~~js\nconst block${index + 1} = '${'x'.repeat(560)}';\n~~~`
+    ));
+    const emptyCodeFence = '~~~js\n\n~~~';
+    const markdown = [...codeBlocks, emptyCodeFence].join('\n\n');
+    const burst = 'abcdefghijklmnopqrst';
+    const spaced = 'UVWXY';
+    const afterBurst = markdown.replace(emptyCodeFence, `~~~js\n${burst}\n~~~`);
+    const expectedMarkdown = markdown.replace(
+      emptyCodeFence,
+      `~~~js\n${burst}${spaced}\n~~~`
+    );
+    const expectedVisibleCodeBody = `${burst}${spaced}\n`;
+    const afterBurstVisibleCodeBody = `${burst}\n`;
+    const spacedTargetValues = Array.from(
+      { length: spaced.length },
+      (_, index) => markdown.replace(
+        emptyCodeFence,
+        `~~~js\n${burst}${spaced.slice(0, index + 1)}\n~~~`
+      )
+    );
+    const spacedTargetVisibleCodeBodies = Array.from(
+      { length: spaced.length },
+      (_, index) => `${burst}${spaced.slice(0, index + 1)}\n`
+    );
+    const performanceKey = '__easymdeNonwindowedCodePerformance';
+    const markdownBytes = Buffer.byteLength(markdown, 'utf8');
+    const browserFailures = [];
+
+    expect(codeBlocks).toHaveLength(158);
+    expect(markdownBytes).toBeGreaterThanOrEqual(90_000);
+    expect(markdownBytes).toBeLessThan(100_000);
+    expect(markdown.endsWith(emptyCodeFence)).toBe(true);
+    page.on('pageerror', (error) => browserFailures.push({
+      type: 'pageerror',
+      name: error.name || 'Error'
+    }));
+    page.on('console', (message) => {
+      if ('error' === message.type()) browserFailures.push({ type: 'console-error' });
+    });
+    await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, null);
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.getByRole('button', { name: immersiveLabels.enter }).click();
+    await page.getByRole('button', { name: immersiveLabels.preview, exact: true }).click();
+    await expect(page.getByText(immersiveLabels.previewContentLoaded)).toBeVisible();
+    await page.getByRole('button', { name: immersiveLabels.previewUnlockEdit }).click();
+
+    const editor = page.getByRole('textbox', {
+      name: immersiveLabels.previewEditorLabel
+    });
+    const source = page.locator('#easymde-source');
+    await expect(editor).toHaveAttribute('contenteditable', 'true');
+    await expect(editor).toHaveAttribute('aria-busy', 'false');
+    await expect(editor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    const fixtureShape = await editor.evaluate((surface) => {
+      const code = surface.querySelectorAll('pre > code');
+      return {
+        preCount: surface.querySelectorAll('pre').length,
+        spacerCount: surface.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ).length,
+        lastCodeTextLength: code.item(code.length - 1)?.textContent?.length ?? -1,
+        lastCodeIsBlank: 0 === (code.item(code.length - 1)?.textContent ?? '').trim().length
+      };
+    });
+    expect(fixtureShape).toMatchObject({
+      preCount: 159,
+      spacerCount: 0,
+      lastCodeIsBlank: true
+    });
+
+    const lastCode = editor.locator('pre > code').last();
+    await lastCode.scrollIntoViewIfNeeded();
+    await lastCode.click({ position: { x: 24, y: 18 } });
+    await editor.evaluate((surface, {
+      key,
+      afterBurstValue,
+      afterBurstVisibleCodeBody,
+      spacedTargetValues,
+      spacedTargetVisibleCodeBodies
+    }) => {
+      const source = document.querySelector('#easymde-source');
+      const code = surface.querySelectorAll('pre > code').item(
+        surface.querySelectorAll('pre > code').length - 1
+      );
+      if (!(source instanceof HTMLTextAreaElement)
+        || !(code instanceof HTMLElement)
+        || !(surface instanceof HTMLElement)) {
+        throw new Error('nonwindowed-performance-owner-unavailable');
+      }
+      const initialCodeTextLength = code.textContent?.length ?? -1;
+      if ((code.textContent ?? '').trim().length > 0) {
+        throw new Error('nonwindowed-performance-target-code-is-not-blank');
+      }
+      if (!Array.isArray(PerformanceObserver.supportedEntryTypes)
+        || !PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+        throw new Error('nonwindowed-performance-longtask-observer-unavailable');
+      }
+
+      const state = {
+        phase: 'burst',
+        initialCodeTextLength,
+        burstBeforeInputAt: [],
+        burstInputDomLengths: [],
+        burstLastInputAt: null,
+        burstSettledAt: null,
+        burstStableAt: null,
+        firstFrameAt: null,
+        firstInputAt: null,
+        spacedStartAt: [],
+        spacedSettledAt: [],
+        spacedStableAt: [],
+        longTasks: []
+      };
+      const attributionCategories = new Set([
+        'embed',
+        'fencedframe',
+        'iframe',
+        'object',
+        'portal',
+        'unknown',
+        'window'
+      ]);
+      const readLongTask = (entry) => ({
+        attribution: Array.from(entry.attribution ?? [], ({ containerType, name }) => ({
+          containerType: 'string' === typeof containerType
+            && attributionCategories.has(containerType.toLowerCase())
+            ? containerType.toLowerCase()
+            : '[redacted]',
+          name: 'string' === typeof name
+            && attributionCategories.has(name.toLowerCase())
+            ? name.toLowerCase()
+            : '[redacted]'
+        })),
+        duration: entry.duration,
+        start: entry.startTime
+      });
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          state.longTasks.push(readLongTask(entry));
+        }
+      });
+      observer.observe({ type: 'longtask', buffered: false });
+
+      const beforeInput = (event) => {
+        if (event.inputType !== 'insertText' || event.isComposing) return;
+        const at = performance.now();
+        if (state.phase === 'burst') state.burstBeforeInputAt.push(at);
+        if (state.phase === 'spaced') state.spacedStartAt.push(at);
+      };
+      const input = (event) => {
+        if (event.inputType !== 'insertText' || event.isComposing) return;
+        const at = performance.now();
+        if (state.phase === 'burst') {
+          state.burstLastInputAt = at;
+          state.burstInputDomLengths.push(code.textContent?.length ?? -1);
+          if (state.firstInputAt === null) {
+            state.firstInputAt = at;
+            requestAnimationFrame(() => { state.firstFrameAt = performance.now(); });
+          }
+        }
+      };
+      surface.addEventListener('beforeinput', beforeInput, true);
+      surface.addEventListener('input', input, true);
+
+      const lastVisibleCodeBody = () => {
+        const codeElements = surface.querySelectorAll('pre > code');
+        return codeElements.item(codeElements.length - 1)?.textContent ?? null;
+      };
+      const observeStableVisibleFrame = (expectedValue, expectedCodeBody, record) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (
+            source.value === expectedValue
+            && lastVisibleCodeBody() === expectedCodeBody
+          ) {
+            record(performance.now());
+          }
+        }));
+      };
+      const sampleCanonicalState = () => {
+        if (state.phase === 'burst'
+          && state.burstSettledAt === null
+          && source.value === afterBurstValue) {
+          state.burstSettledAt = performance.now();
+          observeStableVisibleFrame(
+            afterBurstValue,
+            afterBurstVisibleCodeBody,
+            (at) => { state.burstStableAt = at; }
+          );
+        }
+        if (state.phase === 'spaced') {
+          for (let index = 0; index < spacedTargetValues.length; index += 1) {
+            if (state.spacedStartAt[index] !== undefined
+              && state.spacedSettledAt[index] === undefined
+              && source.value === spacedTargetValues[index]) {
+              state.spacedSettledAt[index] = performance.now();
+              observeStableVisibleFrame(
+                spacedTargetValues[index],
+                spacedTargetVisibleCodeBodies[index],
+                (at) => { state.spacedStableAt[index] = at; }
+              );
+            }
+          }
+        }
+        if (state.spacedSettledAt.length < spacedTargetValues.length) {
+          requestAnimationFrame(sampleCanonicalState);
+        }
+      };
+      requestAnimationFrame(sampleCanonicalState);
+
+      const dispose = () => {
+        surface.removeEventListener('beforeinput', beforeInput, true);
+        surface.removeEventListener('input', input, true);
+        observer.disconnect();
+      };
+      window[key] = { state, observer, dispose, readLongTask };
+    }, {
+      key: performanceKey,
+      afterBurstValue: afterBurst,
+      afterBurstVisibleCodeBody,
+      spacedTargetValues,
+      spacedTargetVisibleCodeBodies
+    });
+
+    await page.keyboard.type(burst, { delay: 0 });
+    await page.waitForFunction((value) => (
+      document.querySelector('#easymde-source')?.value === value
+    ), afterBurst, { timeout: 30_000 });
+    await expect.poll(
+      () => editor.evaluate((surface, key) => (
+        window[key]?.state?.burstStableAt ?? null
+      ), performanceKey),
+      { timeout: 5_000, message: 'burst canonical DOM should reach two stable frames' }
+    ).not.toBeNull();
+    await editor.evaluate((surface, key) => {
+      const holder = window[key];
+      if (!holder) throw new Error('nonwindowed-performance-state-unavailable');
+      holder.state.phase = 'spaced';
+    }, performanceKey);
+
+    for (let index = 0; index < spaced.length; index += 1) {
+      await page.keyboard.type(spaced[index], { delay: 0 });
+      await page.waitForFunction((length) => (
+        document.querySelector('#easymde-source')?.value.length === length
+      ), afterBurst.length + index + 1, { timeout: 30_000 });
+      try {
+        await expect.poll(
+          () => editor.evaluate((surface, { key, index: targetIndex }) => (
+            window[key]?.state?.spacedStableAt?.[targetIndex] ?? null
+          ), { key: performanceKey, index }),
+          {
+            timeout: 5_000,
+            message: `spaced input ${index + 1} should reach two stable visible frames`
+          }
+        ).not.toBeNull();
+      } catch {
+        const phaseDiagnostic = await editor.evaluate((surface, {
+          key,
+          index: targetIndex,
+          expectedBody,
+          sourceTargetLength
+        }) => {
+          const state = window[key]?.state;
+          const codeElements = surface.querySelectorAll('pre > code');
+          const visibleCodeBody = codeElements.item(codeElements.length - 1)?.textContent ?? null;
+          return {
+            phase: state?.phase ?? null,
+            inputStartedAt: state?.spacedStartAt?.[targetIndex] ?? null,
+            canonicalSettledAt: state?.spacedSettledAt?.[targetIndex] ?? null,
+            stableFrameAt: state?.spacedStableAt?.[targetIndex] ?? null,
+            sourceLength: document.querySelector('#easymde-source')?.value.length ?? -1,
+            sourceTargetLength,
+            visibleCodeBodyLength: visibleCodeBody?.length ?? -1,
+            expectedCodeBodyLength: expectedBody.length,
+            visibleCodeBodyMatchesExpected: visibleCodeBody === expectedBody
+          };
+        }, {
+          key: performanceKey,
+          index,
+          expectedBody: `${burst}${spaced.slice(0, index + 1)}\n`,
+          sourceTargetLength: afterBurst.length + index + 1
+        });
+        throw new Error(
+          `nonwindowed-performance-visible-frame-endpoint-missing-${JSON.stringify(phaseDiagnostic)}`
+        );
+      }
+      await page.waitForTimeout(120);
+    }
+    await page.waitForFunction((value) => (
+      document.querySelector('#easymde-source')?.value === value
+    ), expectedMarkdown, { timeout: 30_000 });
+
+    const rawPerformanceEvidence = await editor.evaluate((surface, {
+      key,
+      expectedCodeBody,
+      spacedCount
+    }) => {
+      const holder = window[key];
+      if (!holder) throw new Error('nonwindowed-performance-state-unavailable');
+      const { state, observer, readLongTask } = holder;
+      const codeElements = surface.querySelectorAll('pre > code');
+      const finalCode = codeElements.item(codeElements.length - 1);
+      for (const entry of observer.takeRecords()) {
+        state.longTasks.push(readLongTask(entry));
+      }
+      const interactionStart = state.burstBeforeInputAt[0] ?? Number.NaN;
+      const interactionEnd = state.spacedStableAt.at(-1) ?? Number.NaN;
+      const phaseWindows = [
+        ...(Number.isFinite(interactionStart) && Number.isFinite(state.burstStableAt)
+          ? [{ end: state.burstStableAt, phase: 'burst', start: interactionStart }]
+          : []),
+        ...state.spacedStartAt.flatMap((start, inputIndex) => {
+          const end = state.spacedStableAt[inputIndex];
+          return Number.isFinite(end)
+            ? [{ end, inputIndex, phase: 'spaced', start }]
+            : [];
+        })
+      ];
+      const phaseWindowsComplete = Number.isFinite(interactionStart)
+        && Number.isFinite(interactionEnd)
+        && Number.isFinite(state.burstSettledAt)
+        && Number.isFinite(state.burstStableAt)
+        && state.spacedStartAt.length === spacedCount
+        && state.spacedSettledAt.length === spacedCount
+        && state.spacedStableAt.length === spacedCount
+        && Array.from({ length: spacedCount }, (_, index) => (
+          Number.isFinite(state.spacedStartAt[index])
+            && Number.isFinite(state.spacedSettledAt[index])
+            && Number.isFinite(state.spacedStableAt[index])
+        )).every(Boolean);
+      const completePhaseWindows = phaseWindowsComplete
+        && phaseWindows.length === spacedCount + 1;
+      const evidence = {
+        burstEventCount: state.burstBeforeInputAt.length,
+        initialCodeTextLength: state.initialCodeTextLength,
+        burstInputDomLengths: state.burstInputDomLengths,
+        firstInputToFrameMs: null === state.firstFrameAt || null === state.firstInputAt
+          ? null
+          : state.firstFrameAt - state.firstInputAt,
+        lastBurstInputToCanonicalMs: null === state.burstSettledAt
+          || null === state.burstLastInputAt
+          ? null
+          : state.burstSettledAt - state.burstLastInputAt,
+        spacedInputToCanonicalMs: state.spacedStartAt.map((startedAt, index) => (
+          undefined === state.spacedSettledAt[index]
+            ? null
+            : state.spacedSettledAt[index] - startedAt
+        )),
+        spacedKeyGapsMs: state.spacedStartAt.slice(1).map((startedAt, index) => (
+          startedAt - state.spacedStartAt[index]
+        )),
+        visibleCodeBodyMatchesExpected: finalCode?.textContent === expectedCodeBody,
+        visibleCodeBodyLength: finalCode?.textContent?.length ?? -1,
+        observedLongTaskCount: state.longTasks.length,
+        phaseWindows,
+        phaseWindowsComplete: completePhaseWindows,
+        interactionWindow: { end: interactionEnd, start: interactionStart },
+        longTasks: state.longTasks
+      };
+      holder.dispose();
+      delete window[key];
+      return evidence;
+    }, {
+      key: performanceKey,
+      expectedCodeBody: expectedVisibleCodeBody,
+      spacedCount: spaced.length
+    });
+    const classifiedLongTasks = classifyLongTasksByEditPhase(
+      rawPerformanceEvidence.longTasks,
+      rawPerformanceEvidence.phaseWindows,
+      rawPerformanceEvidence.interactionWindow
+    );
+    const broadInteractionLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'outsideInteraction' !== classification
+    ));
+    const editPhaseLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'editPhase' === classification
+    ));
+    const betweenPhaseLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'betweenPhase' === classification
+    ));
+    const outsideInteractionLongTasks = classifiedLongTasks.filter(({ classification }) => (
+      'outsideInteraction' === classification
+    ));
+    const editPhaseLongTaskBudgetResult = summarizeEditPhaseLongTaskBudget(
+      classifiedLongTasks
+    );
+    const performanceEvidence = {
+      ...rawPerformanceEvidence,
+      broadInteractionLongTaskCount: broadInteractionLongTasks.length,
+      betweenPhaseLongTaskCount: betweenPhaseLongTasks.length,
+      betweenPhaseLongTasks,
+      editPhaseLongTaskCount: editPhaseLongTasks.length,
+      editPhaseLongTaskDurationsMs: editPhaseLongTasks.map(({ durationMs }) => durationMs),
+      editPhaseLongTaskBlockingMs: editPhaseLongTaskBudgetResult.blockingTimeMs,
+      editPhaseLongTaskViolationCode: editPhaseLongTaskBudgetResult.violationCode,
+      editPhaseLongTasks,
+      outsideInteractionLongTaskCount: outsideInteractionLongTasks.length,
+      outsideInteractionLongTasks,
+      longTasks: classifiedLongTasks
+    };
+    const spacedSorted = [...performanceEvidence.spacedInputToCanonicalMs]
+      .sort((left, right) => left - right);
+    const spacedP95Ms = spacedSorted.length === 5
+      ? spacedSorted[Math.ceil(spacedSorted.length * 0.95) - 1]
+      : null;
+    const spacedMaxMs = spacedSorted.at(-1) ?? null;
+    const domLengthsAreMonotonic = performanceEvidence.burstInputDomLengths.length === burst.length
+      && performanceEvidence.burstInputDomLengths.every((length, index, lengths) => (
+        index === 0 || length > lengths[index - 1]
+      ));
+    const evidence = {
+      markdownBytes,
+      previewPreCount: fixtureShape.preCount,
+      windowSpacerCount: fixtureShape.spacerCount,
+      lastCodeTextLengthBeforeEdit: fixtureShape.lastCodeTextLength,
+      initialCodeTextLength: performanceEvidence.initialCodeTextLength,
+      burstCharacters: burst.length,
+      burstInputCount: performanceEvidence.burstEventCount,
+      burstDomLengths: performanceEvidence.burstInputDomLengths,
+      domLengthsAreMonotonic,
+      firstInputToFrameMs: performanceEvidence.firstInputToFrameMs,
+      firstInputToFrameLimitMs: 100,
+      lastBurstInputToCanonicalMs: performanceEvidence.lastBurstInputToCanonicalMs,
+      lastBurstInputToCanonicalLimitMs: 150,
+      spacedInputToCanonicalMs: performanceEvidence.spacedInputToCanonicalMs,
+      spacedKeyGapsMs: performanceEvidence.spacedKeyGapsMs,
+      spacedKeyMinimumGapMs: 80,
+      spacedP95Ms,
+      spacedP95LimitMs: 150,
+      spacedMaxMs,
+      spacedMaxLimitMs: 200,
+      visibleCodeBodyMatchesExpected: performanceEvidence.visibleCodeBodyMatchesExpected,
+      visibleCodeBodyLength: performanceEvidence.visibleCodeBodyLength,
+      expectedVisibleCodeBodyLength: expectedVisibleCodeBody.length,
+      phaseWindowsComplete: performanceEvidence.phaseWindowsComplete,
+      phaseWindows: performanceEvidence.phaseWindows,
+      interactionWindow: performanceEvidence.interactionWindow,
+      observedLongTaskCount: performanceEvidence.observedLongTaskCount,
+      broadInteractionLongTaskCount: performanceEvidence.broadInteractionLongTaskCount,
+      editPhaseLongTaskCount: performanceEvidence.editPhaseLongTaskCount,
+      editPhaseLongTaskBlockingMs: performanceEvidence.editPhaseLongTaskBlockingMs,
+      editPhaseLongTaskViolationCode: performanceEvidence.editPhaseLongTaskViolationCode,
+      editPhaseLongTaskBudget: editPhaseLongTaskBudgetLimits,
+      betweenPhaseLongTaskCount: performanceEvidence.betweenPhaseLongTaskCount,
+      outsideInteractionLongTaskCount: performanceEvidence.outsideInteractionLongTaskCount,
+      editPhaseLongTaskDurationsMs: performanceEvidence.editPhaseLongTaskDurationsMs,
+      longTasks: performanceEvidence.longTasks,
+      editPhaseLongTasks: performanceEvidence.editPhaseLongTasks,
+      betweenPhaseLongTasks: performanceEvidence.betweenPhaseLongTasks,
+      outsideInteractionLongTasks: performanceEvidence.outsideInteractionLongTasks,
+      browserFailureCount: browserFailures.length
+    };
+    const evidenceJson = `${JSON.stringify(evidence)}\n`;
+    const evidencePath = testInfo.outputPath(
+      'immersive-nonwindowed-code-edit-performance.json'
+    );
+    await writeFile(evidencePath, evidenceJson, 'utf8');
+    await testInfo.attach('immersive-nonwindowed-code-edit-performance.json', {
+      path: evidencePath,
+      contentType: 'application/json'
+    });
+    process.stdout.write(`[EasyMDEPerf] ${evidenceJson}`);
+
+    expect(performanceEvidence.editPhaseLongTaskViolationCode).toBeNull();
+    expect(await source.inputValue()).toBe(expectedMarkdown);
+    expect(performanceEvidence.burstEventCount).toBe(burst.length);
+    expect(domLengthsAreMonotonic).toBe(true);
+    expect(performanceEvidence.visibleCodeBodyMatchesExpected).toBe(true);
+    expect(performanceEvidence.firstInputToFrameMs).not.toBeNull();
+    expect(performanceEvidence.firstInputToFrameMs).toBeLessThanOrEqual(100);
+    expect(performanceEvidence.lastBurstInputToCanonicalMs).not.toBeNull();
+    expect(performanceEvidence.lastBurstInputToCanonicalMs).toBeLessThanOrEqual(150);
+    expect(performanceEvidence.spacedInputToCanonicalMs).toHaveLength(spaced.length);
+    expect(performanceEvidence.spacedInputToCanonicalMs.every(Number.isFinite)).toBe(true);
+    expect(performanceEvidence.spacedKeyGapsMs).toHaveLength(spaced.length - 1);
+    expect(performanceEvidence.spacedKeyGapsMs.every((gap) => gap > 80)).toBe(true);
+    expect(spacedP95Ms).not.toBeNull();
+    expect(spacedP95Ms).toBeLessThanOrEqual(150);
+    expect(spacedMaxMs).not.toBeNull();
+    expect(spacedMaxMs).toBeLessThanOrEqual(200);
+    expect(performanceEvidence.phaseWindowsComplete).toBe(true);
+    expect(performanceEvidence.phaseWindows).toHaveLength(spaced.length + 1);
+    expect(performanceEvidence.observedLongTaskCount)
+      .toBe(performanceEvidence.longTasks.length);
+    expect(performanceEvidence.broadInteractionLongTaskCount).toBe(
+      performanceEvidence.editPhaseLongTaskCount
+        + performanceEvidence.betweenPhaseLongTaskCount
+    );
+    expect(performanceEvidence.editPhaseLongTaskCount).toBeLessThanOrEqual(
+      editPhaseLongTaskBudgetLimits.maxCount
+    );
+    expect(performanceEvidence.editPhaseLongTasks.every(({ durationMs, overlappingPhases }) => (
+      durationMs <= editPhaseLongTaskBudgetLimits.maxDurationMs
+        && overlappingPhases.length === 1
+    ))).toBe(true);
+    expect(performanceEvidence.editPhaseLongTaskBlockingMs).toBeLessThanOrEqual(
+      editPhaseLongTaskBudgetLimits.maxBlockingMs
+    );
+    expect(performanceEvidence.longTasks.every(({ attribution }) => (
+      Array.isArray(attribution)
+        && attribution.every((entry) => (
+          Object.keys(entry).sort().join(',') === 'containerType,name'
+          && ['[redacted]', 'embed', 'fencedframe', 'iframe', 'object', 'portal', 'unknown', 'window']
+            .includes(entry.containerType)
+          && ['[redacted]', 'embed', 'fencedframe', 'iframe', 'object', 'portal', 'unknown', 'window']
+            .includes(entry.name)
+        ))
+    ))).toBe(true);
+    expect(browserFailures).toEqual([]);
+  });
+
   test('@performance keeps a synthetic large Markdown paste and windowed visual editing responsive', async ({ page, context }, testInfo) => {
     const browserFailures = [];
     const previewRequests = [];
@@ -2466,6 +3325,7 @@ test.describe('EasyMDE editor workflows', () => {
         handlerDurations: [],
         inputEvents: 0,
         longTasks: [],
+        longTaskObservationStartedAt: null,
         measurementStartedAt: null,
         mutationSerial: 0,
         phase: 'idle',
@@ -2519,9 +3379,12 @@ test.describe('EasyMDE editor workflows', () => {
       const isTrackedInput = (event) => editInputTypes.has(event.inputType)
         && !event.isComposing;
       const recordLongTasks = (entries) => {
-        if (null === state.measurementStartedAt) return;
         for (const entry of entries) {
-          if (entry.startTime >= state.measurementStartedAt && entry.duration > 50) {
+          if (
+            state.longTaskObservationStartedAt !== null
+            && entry.startTime >= state.longTaskObservationStartedAt
+            && entry.duration > 50
+          ) {
             state.longTasks.push({
               duration: entry.duration,
               startTime: entry.startTime
@@ -2545,6 +3408,7 @@ test.describe('EasyMDE editor workflows', () => {
       const longTaskObserver = new PerformanceObserver((list) => {
         recordLongTasks(list.getEntries());
       });
+      state.longTaskObservationStartedAt = performance.now();
       longTaskObserver.observe({ type: 'longtask', buffered: true });
       const layoutShiftObserver = new PerformanceObserver((list) => {
         recordLayoutShifts(list.getEntries());
@@ -2585,7 +3449,12 @@ test.describe('EasyMDE editor workflows', () => {
                 requestAnimationFrame(settleInput);
                 return;
               }
-              state.editWindows.push({ end: performance.now(), start: startedAt });
+              state.editWindows.push({
+                end: performance.now(),
+                inputType: event.inputType,
+                ordinal: state.editWindows.length + 1,
+                start: startedAt
+              });
             };
             requestAnimationFrame(settleInput);
           }
@@ -2761,8 +3630,8 @@ test.describe('EasyMDE editor workflows', () => {
       const state = window[key];
       if (!state) throw new Error('immersive-edit-performance-state-missing');
       for (const entry of state.longTaskObserver?.takeRecords?.() ?? []) {
-        if (state.measurementStartedAt !== null
-          && entry.startTime >= state.measurementStartedAt
+        if (state.longTaskObservationStartedAt !== null
+          && entry.startTime >= state.longTaskObservationStartedAt
           && entry.duration > 50) {
           state.longTasks.push({
             duration: entry.duration,
@@ -2792,10 +3661,21 @@ test.describe('EasyMDE editor workflows', () => {
           const transition = [...state.transitions]
             .reverse()
             .find(({ at }) => at <= task.startTime);
+          const overlapsPasteStart = task.startTime < state.pasteStartedAt
+            && task.startTime + task.duration > state.pasteStartedAt;
+          const editWindows = state.editWindows.flatMap((window) => (
+            task.startTime < window.end
+            && task.startTime + task.duration > window.start
+              ? [{ inputType: window.inputType, ordinal: window.ordinal }]
+              : []
+          ));
           return {
             duration: task.duration,
-            offset: Math.round(task.startTime - state.measurementStartedAt),
-            phase: transition?.phase ?? state.phase
+            editWindows,
+            offset: Math.round(task.startTime - state.pasteStartedAt),
+            phase: overlapsPasteStart
+              ? 'paste-activation'
+              : transition?.phase ?? state.phase
           };
         });
       const result = {
@@ -2841,6 +3721,31 @@ test.describe('EasyMDE editor workflows', () => {
       settledEditDurations,
       'mutation-settled edit durations'
     );
+    const maxDuration = (values) => Math.max(...values);
+    const activationTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'paste-activation'
+    );
+    const editLongTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'edit'
+    );
+    const previewResponseTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'preview-response'
+    );
+    const unexpectedLongTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => ![
+        'paste-activation',
+        'preview-response',
+        'edit'
+      ].includes(phase)
+    );
+    const totalBlockingTime = (tasks) => tasks.reduce(
+      (total, { duration }) => total + Math.max(0, duration - 50),
+      0
+    );
+    const activationBlockingTimeMs = totalBlockingTime(activationTasks);
+    const previewResponseBlockingTimeMs = totalBlockingTime(previewResponseTasks);
+    const combinedPasteBlockingTimeMs = activationBlockingTimeMs
+      + previewResponseBlockingTimeMs;
     await testInfo.attach('immersive-synthetic-long-performance', {
       body: JSON.stringify({
         document: expectedMarkdownEvidence,
@@ -2852,9 +3757,26 @@ test.describe('EasyMDE editor workflows', () => {
         pasteFirstDoubleRaf: performanceEvidence.pasteFirstDoubleRaf,
         pasteToSettled,
         pasteSettledLimit: syntheticLargePasteSettledLimitMs,
+        activationTaskCount: activationTasks.length,
+        activationTaskCountLimit: syntheticLargePasteActivationTaskCountLimit,
+        activationTasks,
+        activationBlockingTimeMs,
+        activationBlockingTimeLimitMs: syntheticLargePasteActivationTotalBlockingTimeLimitMs,
+        previewResponseTaskCount: previewResponseTasks.length,
+        previewResponseTaskCountLimit: syntheticLargePreviewLayoutTaskCountLimit,
+        previewResponseTasks,
+        previewResponseBlockingTimeMs,
+        previewResponseBlockingTimeLimitMs: syntheticLargePreviewTotalBlockingTimeLimitMs,
+        combinedPasteBlockingTimeMs,
+        combinedPasteBlockingTimeLimitMs: syntheticLargePasteTotalBlockingTimeLimitMs,
+        unexpectedLongTasks,
         p95HandlerDuration,
+        maxHandlerDuration: maxDuration(performanceEvidence.handlerDurations),
         p95SettledEditDuration,
+        maxSettledEditDuration: maxDuration(settledEditDurations),
         p95StableFrameDuration,
+        maxStableFrameDuration: maxDuration(performanceEvidence.stableFrameDurations),
+        editLongTasks,
         previewRequests: previewRequests.length - baselinePreviewRequestCount,
         settledEditCount: settledEditDurations.length,
         settledEditLimit: syntheticLargeEditSettledLimitMs,
@@ -2877,16 +3799,33 @@ test.describe('EasyMDE editor workflows', () => {
     expect(p95HandlerDuration).toBeLessThanOrEqual(16);
     expect(p95SettledEditDuration).toBeLessThanOrEqual(syntheticLargeEditSettledLimitMs);
     expect(p95StableFrameDuration).toBeLessThanOrEqual(100);
-    const editLongTasks = performanceEvidence.longTasks.filter(
-      ({ phase }) => phase === 'edit'
-    );
-    const previewLayoutTasks = performanceEvidence.longTasks.filter(
-      ({ phase }) => phase !== 'edit'
-    );
     expect(editLongTasks).toEqual([]);
-    expect(previewLayoutTasks.length).toBeLessThanOrEqual(1);
-    for (const task of previewLayoutTasks) {
-      expect(task.phase).toBe('preview-response');
+    expect(
+      unexpectedLongTasks,
+      `unexpected paste-window long tasks: ${JSON.stringify(unexpectedLongTasks)}`
+    ).toEqual([]);
+    expect(activationTasks.length).toBeLessThanOrEqual(
+      syntheticLargePasteActivationTaskCountLimit
+    );
+    expect(
+      activationBlockingTimeMs,
+      `paste activation blocking time: ${JSON.stringify(activationTasks)}`
+    ).toBeLessThanOrEqual(syntheticLargePasteActivationTotalBlockingTimeLimitMs);
+    expect(previewResponseTasks.length).toBeLessThanOrEqual(
+      syntheticLargePreviewLayoutTaskCountLimit
+    );
+    expect(
+      previewResponseBlockingTimeMs,
+      `preview response blocking time: ${JSON.stringify(previewResponseTasks)}`
+    ).toBeLessThanOrEqual(syntheticLargePreviewTotalBlockingTimeLimitMs);
+    expect(
+      combinedPasteBlockingTimeMs,
+      `combined paste blocking time: ${JSON.stringify({
+        activationTasks,
+        previewResponseTasks
+      })}`
+    ).toBeLessThanOrEqual(syntheticLargePasteTotalBlockingTimeLimitMs);
+    for (const task of [...activationTasks, ...previewResponseTasks]) {
       expect(task.duration)
         .toBeLessThanOrEqual(syntheticLargePreviewLayoutTaskLimitMs);
     }
@@ -3000,7 +3939,7 @@ test.describe('EasyMDE editor workflows', () => {
       const state = {
         baselineSignature: surface.easymdePreviewSignature ?? '',
         longTasks: [],
-        measurementStartedAt: null,
+        longTaskObservationStartedAt: null,
         pasteHandlerDuration: null,
         pasteFirstDoubleRaf: null,
         pasteSettledAt: null,
@@ -3035,10 +3974,10 @@ test.describe('EasyMDE editor workflows', () => {
         });
       };
       const longTaskObserver = new PerformanceObserver((list) => {
-        if (state.measurementStartedAt === null) return;
         for (const entry of list.getEntries()) {
           if (
-            entry.startTime >= state.measurementStartedAt
+            state.longTaskObservationStartedAt !== null
+            && entry.startTime >= state.longTaskObservationStartedAt
             && entry.duration > 50
           ) {
             state.longTasks.push({
@@ -3051,6 +3990,7 @@ test.describe('EasyMDE editor workflows', () => {
       if (!PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
         throw new Error('immersive-performance-observer-unavailable');
       }
+      state.longTaskObservationStartedAt = performance.now();
       longTaskObserver.observe({ type: 'longtask', buffered: true });
       state.longTaskObserver = longTaskObserver;
       const mutationObserver = new MutationObserver(scheduleSettlement);
@@ -3066,7 +4006,6 @@ test.describe('EasyMDE editor workflows', () => {
       const onPaste = (event) => {
         if (!hasPlainText(event)) return;
         state.pasteStartedAt = performance.now();
-        state.measurementStartedAt = state.pasteStartedAt;
         state.setPhase('paste');
         requestAnimationFrame(() => requestAnimationFrame(() => {
           state.pasteFirstDoubleRaf = performance.now() - state.pasteStartedAt;
@@ -3146,8 +4085,8 @@ test.describe('EasyMDE editor workflows', () => {
       if (!state) throw new Error('immersive-dense-paste-performance-state-missing');
       for (const entry of state.longTaskObserver?.takeRecords?.() ?? []) {
         if (
-          state.measurementStartedAt !== null
-          && entry.startTime >= state.measurementStartedAt
+          state.longTaskObservationStartedAt !== null
+          && entry.startTime >= state.longTaskObservationStartedAt
           && entry.duration > 50
         ) {
           state.longTasks.push({
@@ -3165,10 +4104,14 @@ test.describe('EasyMDE editor workflows', () => {
           const transition = [...state.transitions]
             .reverse()
             .find(({ at }) => at <= startTime);
+          const overlapsPasteStart = startTime < state.pasteStartedAt
+            && startTime + duration > state.pasteStartedAt;
           return {
             duration,
-            offset: Math.round(startTime - state.measurementStartedAt),
-            phase: transition?.phase ?? state.phase
+            offset: Math.round(startTime - state.pasteStartedAt),
+            phase: overlapsPasteStart
+              ? 'paste-activation'
+              : transition?.phase ?? state.phase
           };
         });
       const evidence = {
@@ -3184,31 +4127,73 @@ test.describe('EasyMDE editor workflows', () => {
     }, performanceKey);
     expect(performanceEvidence.pasteHandlerDuration).toBeLessThan(50);
     expect(performanceEvidence.pasteFirstDoubleRaf).toBeLessThanOrEqual(100);
-    const previewTasks = performanceEvidence.longTasks.filter(
-      ({ phase }) => phase !== 'paste-settled'
+    const activationTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'paste-activation'
     );
-    expect(previewTasks.length)
-      .toBeLessThanOrEqual(syntheticDensePreviewTaskCountLimit);
-    for (const task of previewTasks) {
-      expect(task.phase).toBe('preview-response');
-      expect(task.duration)
-        .toBeLessThanOrEqual(syntheticDensePreviewLayoutTaskLimitMs);
-    }
+    const previewTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => phase === 'preview-response'
+    );
+    const unexpectedTasks = performanceEvidence.longTasks.filter(
+      ({ phase }) => ![
+        'paste-activation',
+        'preview-response'
+      ].includes(phase)
+    );
+    const totalBlockingTime = (tasks) => tasks.reduce(
+      (total, { duration }) => total + Math.max(0, duration - 50),
+      0
+    );
+    const activationBlockingTimeMs = totalBlockingTime(activationTasks);
+    const previewBlockingTimeMs = totalBlockingTime(previewTasks);
+    const combinedBlockingTimeMs = activationBlockingTimeMs + previewBlockingTimeMs;
     await testInfo.attach('immersive-synthetic-dense-preview-performance', {
       body: JSON.stringify({
         document: expectedMarkdownEvidence,
         longTasks: performanceEvidence.longTasks,
+        activationTaskCount: activationTasks.length,
+        activationTaskCountLimit: syntheticLargePasteActivationTaskCountLimit,
+        activationTasks,
+        activationBlockingTimeMs,
+        activationBlockingTimeLimitMs: syntheticLargePasteActivationTotalBlockingTimeLimitMs,
+        previewTaskCount: previewTasks.length,
+        previewTaskCountLimit: syntheticLargePreviewLayoutTaskCountLimit,
+        previewTasks,
+        previewBlockingTimeMs,
+        previewBlockingTimeLimitMs: syntheticLargePreviewTotalBlockingTimeLimitMs,
+        combinedBlockingTimeMs,
+        combinedBlockingTimeLimitMs: syntheticLargePasteTotalBlockingTimeLimitMs,
+        unexpectedTasks,
         pasteFirstDoubleRaf: performanceEvidence.pasteFirstDoubleRaf,
         pasteHandlerDuration: performanceEvidence.pasteHandlerDuration,
         pasteToSettled,
         pasteSettledLimit: syntheticDensePasteSettledLimitMs,
         previewRootBlocks: response.editMap.blocks.length,
         previewCodeBlocks: (response.html.match(/<pre\b/g) ?? []).length,
-        previewTaskCountLimit: syntheticDensePreviewTaskCountLimit,
-        previewTaskDurationLimit: syntheticDensePreviewLayoutTaskLimitMs
+        previewTaskDurationLimit: syntheticLargePreviewLayoutTaskLimitMs
       }),
       contentType: 'application/json'
     });
+    expect(unexpectedTasks, JSON.stringify(unexpectedTasks)).toEqual([]);
+    expect(
+      activationTasks.length,
+      JSON.stringify(activationTasks)
+    ).toBeLessThanOrEqual(syntheticLargePasteActivationTaskCountLimit);
+    expect(
+      activationBlockingTimeMs,
+      JSON.stringify(activationTasks)
+    ).toBeLessThanOrEqual(syntheticLargePasteActivationTotalBlockingTimeLimitMs);
+    expect(previewTasks.length, JSON.stringify(previewTasks))
+      .toBeLessThanOrEqual(syntheticLargePreviewLayoutTaskCountLimit);
+    expect(previewBlockingTimeMs, JSON.stringify(previewTasks))
+      .toBeLessThanOrEqual(syntheticLargePreviewTotalBlockingTimeLimitMs);
+    expect(combinedBlockingTimeMs, JSON.stringify({
+      activationTasks,
+      previewTasks
+    })).toBeLessThanOrEqual(syntheticLargePasteTotalBlockingTimeLimitMs);
+    for (const task of [...activationTasks, ...previewTasks]) {
+      expect(task.duration, JSON.stringify(task))
+        .toBeLessThanOrEqual(syntheticLargePreviewLayoutTaskLimitMs);
+    }
     expect(browserFailures).toEqual([]);
   });
 
@@ -3337,6 +4322,330 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  test('restores a small document-end Preview after native paste expands history past the Windowed threshold', async ({ page, context }, testInfo) => {
+    const small = 'Small previous history target.';
+    const transfer = Array.from(
+      { length: 220 },
+      (_, index) => `Synthetic history-window paragraph ${index + 1}.`
+    ).join('\n\n');
+    const codeBody = 'ordinal-map-probe';
+    const codeBlock = ['```text', codeBody, '```'].join('\n');
+    const largeSuffix = `${transfer}\n\n${codeBlock}\n\n[Reference](https://example.test/reference "Reference title")`;
+    const large = `${small}\n\n${largeSuffix}`;
+    const errors = [];
+    page.on('pageerror', (error) => {
+      const stableCode = error.message.match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1]
+        ?? error.message.match(/^[a-z0-9-]+$/u)?.[0];
+      errors.push(stableCode ?? `pageerror:${error.name}`);
+    });
+    page.on('console', (message) => 'error' === message.type()
+      && errors.push(message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1] ?? 'console-error'));
+    const previewPath = '/wp-json/easymde/v1/preview';
+    const previewResponseFor = (markdown, timeout = 30_000) => page.waitForResponse((response) => {
+      const request = response.request();
+      if ('POST' !== request.method()
+        || !new URL(response.url()).pathname.endsWith(previewPath)) return false;
+      try {
+        return request.postDataJSON()?.markdown === markdown;
+      } catch {
+        return false;
+      }
+    }, { timeout });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const catalog = await editorThemeCatalog(page);
+    const redCrimson = catalog.articleThemes.find(({ id }) => id === 'red-crimson');
+    if (!redCrimson) throw new Error('red-crimson-article-theme-unavailable');
+    const labels = await page.evaluate(() => ({
+      articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+      editorSettings: window.EasyMDEEditorRootBootstrap.strings.immersive.editorSettings
+    }));
+    const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+      .getByRole('button', { name: labels.editorSettings, exact: true });
+    await settingsTrigger.click();
+    const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
+    await selectOrdinaryOption(
+      page,
+      settingsDialog.getByRole('combobox', {
+        name: labels.articleTheme,
+        exact: true
+      }),
+      redCrimson.label
+    );
+    await expect(page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    ))
+      .toHaveClass(/easymde-markdown-theme-red-crimson/);
+    await page.keyboard.press('Escape');
+    await expect(settingsDialog).toHaveCount(0);
+    const initialPromise = previewResponseFor(small);
+    void initialPromise.catch(() => undefined);
+    await fillMarkdownAndWaitForPreview(page, small, small);
+    const initialResponse = await initialPromise;
+    expect(initialResponse.ok()).toBe(true);
+    const smallBlocks = (await initialResponse.json()).editMap?.blocks ?? [];
+    expect(smallBlocks).toHaveLength(1);
+    const smallLastEditableBlockIndex = smallBlocks.findLastIndex(({ editable }) => editable);
+    expect(smallLastEditableBlockIndex).toBe(0);
+    const smallLastEditableBlockId = smallBlocks[smallLastEditableBlockIndex].id;
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const visualEditor = editor.visualEditor;
+    const source = editor.source;
+    const smallSignature = await readyPreviewSignature(visualEditor);
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+      origin: new URL(page.url()).origin
+    });
+    const targets = [];
+    const requestTarget = (request) => {
+      try {
+        const markdown = request.postDataJSON()?.markdown;
+        return markdown === small ? 'small' : markdown === large ? 'large' : 'other';
+      } catch {
+        return 'other';
+      }
+    };
+    page.on('request', (request) => {
+      if ('POST' === request.method()
+        && new URL(request.url()).pathname.endsWith(previewPath)) {
+        targets.push(requestTarget(request));
+      }
+    });
+    const waitForEnd = (expected, lastEditableBlockId, message) =>
+      waitForVisualEnd(visualEditor, expected, lastEditableBlockId, message, errors);
+
+    const largePromise = previewResponseFor(large);
+    await visualEditor.focus();
+    await visualEditor.press('ControlOrMeta+End');
+    await page.evaluate(async (text) => {
+      if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+        throw new Error('windowed-history-clipboard-unavailable');
+      }
+      await navigator.clipboard.writeText(text);
+    }, `\n\n${largeSuffix}`);
+    await page.keyboard.press('ControlOrMeta+V');
+    const largeResponse = await largePromise;
+    expect(largeResponse.ok()).toBe(true);
+    const largePreview = await largeResponse.json();
+    const largeEditMap = largePreview.editMap;
+    const largeBlocks = largeEditMap?.blocks ?? [];
+    const totalBlockCount = largeBlocks.length;
+    const lastEditableBlockIndex = largeBlocks.findLastIndex(({ editable }) => editable);
+    expect(totalBlockCount).toBeGreaterThan(160);
+    expect(lastEditableBlockIndex).toBeGreaterThanOrEqual(0);
+    const lastEditableBlock = largeBlocks[lastEditableBlockIndex];
+    const lastEditableBlockId = lastEditableBlock.id;
+    const trailingGeneratedRoots = largeBlocks.slice(lastEditableBlockIndex + 1);
+    const trailingGeneratedZeroWidthRoots = trailingGeneratedRoots.filter(
+      ({ editable, startLine, endLine }) => !editable && startLine === endLine
+    );
+    expect(trailingGeneratedZeroWidthRoots.length).toBeGreaterThan(0);
+    expect(trailingGeneratedRoots).toHaveLength(trailingGeneratedZeroWidthRoots.length);
+    const footnoteRootIds = await page.evaluate((html) => {
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      return Array.from(template.content.querySelectorAll('.footnotes, .footnotes-sep'))
+        .filter((node) => node.parentNode === template.content)
+        .map((node) => node.getAttribute('data-easymde-visual-block-id'));
+    }, largePreview.html);
+    expect(footnoteRootIds.length).toBeGreaterThan(0);
+    expect(footnoteRootIds).toEqual(
+      trailingGeneratedZeroWidthRoots.map(({ id }) => id)
+    );
+    const codeRootIds = await page.evaluate((html) => {
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      return Array.from(template.content.children)
+        .filter((root) => root.matches('pre') && root.querySelector(':scope > code'))
+        .map((root) => root.getAttribute('data-easymde-visual-block-id'));
+    }, largePreview.html);
+    expect(codeRootIds.length).toBeGreaterThan(0);
+    const editableCodeBlockIndex = largeBlocks.findIndex(({ id, editable }) => (
+      editable && codeRootIds.includes(id)
+    ));
+    expect(editableCodeBlockIndex).toBeGreaterThanOrEqual(0);
+    expect(editableCodeBlockIndex).toBeLessThan(lastEditableBlockIndex);
+    const editableCodeBlockId = largeBlocks[editableCodeBlockIndex].id;
+    const editedCodeBody = `${codeBody}X`;
+    const editedCodeMarkdown = large.replace(codeBody, editedCodeBody);
+    const readCodeCaret = (expectedMarkdown, expectedCodeBody) =>
+      visualEditor.evaluate((surface, expected) => {
+        const field = document.querySelector('#easymde-source');
+        const codeRoot = surface.querySelector(
+          `[data-easymde-visual-block-id="${expected.blockId}"]`
+        );
+        const code = codeRoot?.querySelector(':scope > code') ?? null;
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        let codeTextBeforeCaret = null;
+        if (code && anchor && selection?.isCollapsed && code.contains(anchor)) {
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(anchor, selection.anchorOffset);
+          codeTextBeforeCaret = range.toString();
+        }
+        return {
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideCode: Boolean(code && anchor && code.contains(anchor)),
+          canonical: field instanceof HTMLTextAreaElement
+            && field.value === expected.markdown,
+          codeTextMatchesExpected: code?.textContent?.trimEnd() === expected.codeBody,
+          codeText: code?.textContent?.trimEnd() ?? null,
+          codeTextBeforeCaret,
+          selectionCollapsed: Boolean(selection?.isCollapsed)
+        };
+      }, {
+        blockId: editableCodeBlockId,
+        markdown: expectedMarkdown,
+        codeBody: expectedCodeBody
+      });
+    await expect(source).toHaveValue(large, { timeout: 30_000 });
+    await waitForPreviewRefresh(visualEditor, smallSignature, 'large native paste should commit');
+    await page.locator('.easymde-immersive-preview-canvas').evaluate((canvas) => {
+      canvas.scrollTop = canvas.scrollHeight;
+      canvas.dispatchEvent(new Event('scroll'));
+    });
+    await expect(visualEditor.locator(
+      `[data-easymde-visual-block-id="${lastEditableBlockId}"]`
+    )).toBeAttached({ timeout: 30_000 });
+    for (const { id } of trailingGeneratedZeroWidthRoots) {
+      const generatedRoot = visualEditor.locator(
+        `[data-easymde-visual-block-id="${id}"]`
+      );
+      if (0 === await generatedRoot.count()) continue;
+      await expect(generatedRoot).toHaveAttribute('contenteditable', 'false');
+    }
+    await visualEditor.evaluate((surface, blockId) => {
+      const block = surface.querySelector(
+        `[data-easymde-visual-block-id="${blockId}"]`
+      );
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!(block instanceof HTMLElement) || !selection) {
+        throw new Error('windowed-history-editable-eof-unavailable');
+      }
+      surface.focus({ preventScroll: true });
+      const range = surface.ownerDocument.createRange();
+      range.selectNodeContents(block);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    }, lastEditableBlockId);
+    const largeState = await waitForEnd(
+      large,
+      lastEditableBlockId,
+      'large paste should retain canonical EOF'
+    );
+    expectWindowedCoverage(
+      largeState,
+      totalBlockCount,
+      lastEditableBlockIndex,
+      3
+    );
+    expect(largeState).toMatchObject({
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: lastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
+      anchorConnected: true,
+      selectionCollapsed: true
+    });
+    expect(largeState.spacerRanges.length).toBeGreaterThan(0);
+    expect(targets).toEqual(['large']);
+
+    const largeSignatureBeforeCodeEdit = await readyPreviewSignature(visualEditor);
+    const codeElement = visualEditor.locator(
+      `[data-easymde-visual-block-id="${editableCodeBlockId}"] > code`
+    );
+    await expect(codeElement).toHaveText(codeBody);
+    await visualEditor.focus();
+    await placeVisualCaretAfterText(visualEditor, codeBody);
+    await page.keyboard.type('X');
+    await expect(source).toHaveValue(editedCodeMarkdown, { timeout: 30_000 });
+    const editedCodeCaret = await readCodeCaret(editedCodeMarkdown, editedCodeBody);
+    expect(editedCodeCaret).toMatchObject({
+      anchorConnected: true,
+      anchorInsideCode: true,
+      canonical: true,
+      codeTextMatchesExpected: true,
+      codeTextBeforeCaret: editedCodeBody,
+      selectionCollapsed: true
+    });
+    expect(targets).toEqual(['large']);
+    expect(await readyPreviewSignature(visualEditor))
+      .toBe(largeSignatureBeforeCodeEdit);
+    expect(errors).toEqual([]);
+
+    const restoreLargePromise = previewResponseFor(large);
+    await page.keyboard.press('ControlOrMeta+Z');
+    const restoreLargeResponse = await restoreLargePromise;
+    expect(restoreLargeResponse.ok()).toBe(true);
+    expect((await restoreLargeResponse.json()).editMap?.blocks).toHaveLength(totalBlockCount);
+    await expect(source).toHaveValue(large, { timeout: 30_000 });
+    await waitForPreviewRefresh(
+      visualEditor,
+      largeSignatureBeforeCodeEdit,
+      'Undo should restore the large source before the small target'
+    );
+    expect(targets).toEqual(['large', 'large']);
+    const largeSignature = await readyPreviewSignature(visualEditor);
+
+    const undoPromise = previewResponseFor(small);
+    await page.keyboard.press('ControlOrMeta+Z');
+    const undoResponse = await undoPromise;
+    expect(undoResponse.ok()).toBe(true);
+    expect((await undoResponse.json()).editMap?.blocks).toHaveLength(1);
+    await expect(source).toHaveValue(small, { timeout: 30_000 });
+    await waitForPreviewRefresh(visualEditor, largeSignature, 'Undo should Preview the small target');
+    const smallState = await waitForEnd(
+      small,
+      smallLastEditableBlockId,
+      'Undo should restore the small EOF caret'
+    );
+    expectWindowedCoverage(smallState, 1, null);
+    expect(smallState).toMatchObject({
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: smallLastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
+      anchorConnected: true,
+      remainingTrimmedLength: 0,
+      selectionCollapsed: true
+    });
+    expect(smallState.spacerRanges).toEqual([]);
+    expect(targets).toEqual(['large', 'large', 'small']);
+
+    const smallSignatureAfterUndo = await readyPreviewSignature(visualEditor);
+    const redoPromise = previewResponseFor(large);
+    await page.keyboard.press('ControlOrMeta+Shift+Z');
+    const redoResponse = await redoPromise;
+    expect(redoResponse.ok()).toBe(true);
+    const redoBlocks = (await redoResponse.json()).editMap?.blocks ?? [];
+    expect(redoBlocks).toHaveLength(totalBlockCount);
+    expect(redoBlocks[lastEditableBlockIndex]).toEqual(lastEditableBlock);
+    expect(redoBlocks.slice(lastEditableBlockIndex + 1)).toEqual(trailingGeneratedRoots);
+    await expect(source).toHaveValue(large, { timeout: 30_000 });
+    await waitForPreviewRefresh(visualEditor, smallSignatureAfterUndo, 'Redo should restore the large target');
+    const redoneState = await waitForEnd(
+      large,
+      lastEditableBlockId,
+      'Redo should restore the Windowed EOF caret'
+    );
+    expectWindowedCoverage(
+      redoneState,
+      totalBlockCount,
+      lastEditableBlockIndex,
+      3
+    );
+    expect(redoneState).toMatchObject({
+      anchorAtFinalEditableBlockEnd: true,
+      anchorBlockId: lastEditableBlockId,
+      anchorBlockRemainingTextLength: 0,
+      anchorConnected: true,
+      selectionCollapsed: true
+    });
+    expect(redoneState.spacerRanges.length).toBeGreaterThan(0);
+    expect(targets).toEqual(['large', 'large', 'small', 'large']);
+    expect(errors).toEqual([]);
+  });
+
   test('rebuilds the current Preview window after lock refresh and a second unlock', async ({ page }, testInfo) => {
     const browserFailures = [];
     page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
@@ -3392,14 +4701,22 @@ test.describe('EasyMDE editor workflows', () => {
 
   test('supports representative Typora visual shortcuts and repeated deletion', async ({ page }, testInfo) => {
     const browserFailures = [];
+    const recordFailure = (kind, message) => {
+      const code = String(message).match(/visual-editor-[a-z0-9-]+/u)?.[0];
+      browserFailures.push({ kind, code: code ?? `unclassified-${kind}` });
+    };
     await page.route('https://secure.gravatar.com/**', (route) => route.fulfill({
       status: 200,
       contentType: 'image/png',
       body: fullCapabilityImage
     }));
-    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.message}`));
+    page.on('pageerror', (error) => {
+      recordFailure('pageerror', error.message);
+    });
     page.on('console', (message) => {
-      if ('error' === message.type()) browserFailures.push(`console:${message.text()}`);
+      if ('error' === message.type()) {
+        recordFailure('console-error', message.text());
+      }
     });
     await login(page, testInfo.easymdeUser);
     await openEasyMdeNewPost(page);
@@ -3437,31 +4754,75 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(visualEditor.locator('ul li')).toHaveCount(2);
 
     await page.keyboard.type('Undo target');
+    await expect.poll(() => source.inputValue()).toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-refreshing', '1');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect(visualEditor).toContainText('Undo target');
     await page.keyboard.press('ControlOrMeta+Z');
     await expect.poll(() => source.inputValue()).not.toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
     await page.keyboard.press('ControlOrMeta+Shift+Z');
     await expect.poll(() => source.inputValue()).toContain('Undo target');
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-refreshing', '1');
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await expect(visualEditor).toContainText('Undo target');
 
     const deleteText = 'delete '.repeat(24).trim();
-    const deleteParagraph = await visualEditor.locator('p').last();
-    await deleteParagraph.evaluate((paragraph) => {
-      paragraph.textContent = 'delete '.repeat(24).trim();
-      const text = paragraph.firstChild;
-      if (!(text instanceof Text)) throw new Error('issue232-delete-text-missing');
-      const range = document.createRange();
-      range.setStart(text, text.length);
-      range.collapse(true);
-      const selection = document.getSelection();
-      if (!selection) throw new Error('issue232-delete-selection-missing');
-      selection.removeAllRanges();
-      selection.addRange(range);
+    const replacementTarget = 'Undo target';
+    const sourceBeforeNativeTyping = await source.inputValue();
+    expect(sourceBeforeNativeTyping.split(replacementTarget).length - 1).toBe(1);
+    await visualEditor.focus();
+    await selectVisualText(visualEditor, replacementTarget);
+    const selectedText = await visualEditor.evaluate((surface) => {
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      return selection?.toString() ?? '';
     });
-    await page.keyboard.press('End');
+    expect(selectedText).toBe(replacementTarget);
+    const expectedSourceAfterNativeTyping = sourceBeforeNativeTyping.replace(
+      replacementTarget,
+      deleteText
+    );
+    const expectedCaretOffset = sourceBeforeNativeTyping.indexOf(replacementTarget)
+      + deleteText.length;
+    await page.keyboard.type(deleteText);
+    await expect.poll(() => source.inputValue()).toBe(expectedSourceAfterNativeTyping);
+    const visualCaretAfterTyping = await visualEditor.evaluate((surface) => {
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const focus = selection?.focusNode ?? null;
+      return {
+        anchorConnected: anchor?.isConnected ?? false,
+        collapsed: selection?.isCollapsed ?? false,
+        focusConnected: focus?.isConnected ?? false,
+        insideSurface: Boolean(
+          anchor && focus && surface.contains(anchor) && surface.contains(focus)
+        )
+      };
+    });
+    const nativeCaretAfterTyping = await source.evaluate((field) => ({
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }));
+    expect(visualCaretAfterTyping).toMatchObject({
+      anchorConnected: true,
+      collapsed: true,
+      focusConnected: true,
+      insideSurface: true
+    });
+    expect(nativeCaretAfterTyping).toEqual({
+      end: expectedCaretOffset,
+      start: expectedCaretOffset
+    });
     for (let index = 0; index < 24; index += 1) {
       await page.keyboard.press('Backspace');
     }
-    await expect.poll(() => source.inputValue()).toContain('delete');
-    await expect.poll(() => visualEditor.locator('p').last().textContent()).not.toBe(deleteText);
+    const expectedSourceAfterRepeatedDeletion = expectedSourceAfterNativeTyping.slice(
+      0,
+      expectedCaretOffset - 24
+    ) + expectedSourceAfterNativeTyping.slice(expectedCaretOffset);
+    await expect.poll(() => source.inputValue()).toBe(expectedSourceAfterRepeatedDeletion);
     expect(browserFailures).toEqual([]);
   });
 
@@ -3743,13 +5104,13 @@ test.describe('EasyMDE editor workflows', () => {
     const mermaid = visualEditor.locator('.easymde-mermaid').first();
     await expect(mermaid).toHaveAttribute('contenteditable', 'false');
     await expectProtectedMarkup();
+    await page.locator('.easymde-immersive-outline-close').click();
+    await expect(page.locator('.easymde-immersive-outline')).toHaveCount(0);
 
     await testInfo.attach('immersive-full-fixture-edit-desktop', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png'
     });
-    await page.locator('.easymde-immersive-outline-close').click();
-    await expect(page.locator('.easymde-immersive-outline')).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(visualEditor).toBeVisible();
     const mobileGeometry = await visualEditor.evaluate((surface) => ({
@@ -4185,12 +5546,26 @@ test.describe('EasyMDE editor workflows', () => {
     test(`forms a fresh ${fixture.id} code fence with the Mac frame on the first PRE`, async ({ page }, testInfo) => {
       const runtimeRequests = collectRuntimeAssetRequests(page);
       const previewRequests = collectPreviewRequestOutcomes(page);
+      const failureCodes = [];
+      const pageErrors = [];
       const baseMarkdown = fixture.windowed
         ? syntheticWindowedMarkdown()
         : null;
       const observationKey = `__easymdeCodeFrameEvidence${fixture.id}`;
       let observationInstalled = false;
       let freshEvidence = null;
+      let inputAttempted = false;
+      let inputAccepted = false;
+
+      page.on('console', (message) => {
+        const prefix = '[EasyMDE] ';
+        const text = message.text();
+        const failureCode = text.startsWith(prefix) ? text.slice(prefix.length) : '';
+        if ('error' === message.type() && /^[a-z0-9-]+$/u.test(failureCode)) {
+          failureCodes.push(failureCode);
+        }
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
 
       await login(page, testInfo.easymdeUser);
       await openEasyMdeNewPost(page);
@@ -4238,6 +5613,7 @@ test.describe('EasyMDE editor workflows', () => {
           { message: `${fixture.id} should preserve its fence family` }
         ).toBe(true);
 
+        inputAttempted = true;
         await page.keyboard.type('Alpha');
         await expect.poll(
           () => source.inputValue().then((value) => fixture.windowed
@@ -4245,18 +5621,147 @@ test.describe('EasyMDE editor workflows', () => {
             : value.endsWith(`${fixture.fence}\nAlpha\n${fixture.closingFence}`)),
           { message: `${fixture.id} should accept immediate code input` }
         ).toBe(true);
+        inputAccepted = true;
         const requestEvidence = await previewRequests.evidence(
           previewRequestBaseline,
           markdownTheme
         );
         expect(requestEvidence.observed).toHaveLength(0);
       } finally {
-        if (observationInstalled) {
-          freshEvidence = await stopCodeFrameEvidence(
-            visualEditor,
-            observationKey
-          );
-          observationInstalled = false;
+        try {
+          if (fixture.windowed && inputAttempted && !inputAccepted) {
+            const failureState = await page.evaluate((expected) => {
+              const surface = document.querySelector('.easymde-immersive-visual-editor');
+              const source = document.querySelector('#easymde-source');
+              const pre = surface?.querySelector('pre') ?? null;
+              const code = pre?.querySelector(':scope > code') ?? null;
+              const selection = document.getSelection();
+              const anchor = selection?.anchorNode ?? null;
+              const anchorElement = anchor instanceof Element
+                ? anchor
+                : anchor?.parentElement ?? null;
+              const sourceText = source instanceof HTMLTextAreaElement ? source.value : '';
+              const codeText = code?.textContent ?? '';
+              const attributeNames = (node) => node instanceof Element
+                ? Array.from(node.attributes, ({ name }) => name).sort()
+                : [];
+              const shape = (node, depth = 0) => {
+                if (!node) return null;
+                const children = Array.from(node.childNodes);
+                return {
+                  attributeNames: attributeNames(node),
+                  childNodeNames: children.map(({ nodeName }) => nodeName),
+                  directTextNodeCount: children.filter(({ nodeType }) => (
+                    Node.TEXT_NODE === nodeType
+                  )).length,
+                  elementChildren: depth < 3
+                    ? children
+                      .filter(({ nodeType }) => Node.ELEMENT_NODE === nodeType)
+                      .slice(0, 12)
+                      .map((child) => shape(child, depth + 1))
+                    : [],
+                  nodeName: node.nodeName
+                };
+              };
+              const parentChain = [];
+              for (let node = anchor; node && parentChain.length < 8; node = node.parentNode) {
+                parentChain.push({
+                  attributeNames: attributeNames(node),
+                  nodeName: node.nodeName
+                });
+              }
+              const markerElements = pre
+                ? Array.from(pre.querySelectorAll(
+                  'br, font, span, [data-placeholder], [class*="placeholder"]'
+                )).slice(0, 16).map((node) => ({
+                  attributeNames: attributeNames(node),
+                  childNodeNames: Array.from(node.childNodes, ({ nodeName }) => nodeName),
+                  directTextNodeCount: Array.from(node.childNodes).filter(({ nodeType }) => (
+                    Node.TEXT_NODE === nodeType
+                  )).length,
+                  nodeName: node.nodeName,
+                  placeholderLike: node.matches('[data-placeholder], [class*="placeholder"]')
+                }))
+                : [];
+              let codeOffset = null;
+              if (selection && anchor && code && (anchor === code || code.contains(anchor))) {
+                const range = document.createRange();
+                range.selectNodeContents(code);
+                range.setEnd(anchor, selection.anchorOffset);
+                codeOffset = range.toString().length;
+              }
+              return {
+                canonical: {
+                  containsAlpha: sourceText.includes(expected.body),
+                  length: sourceText.length,
+                  matchesExpectedPrefix: sourceText.startsWith(expected.prefix),
+                  present: source instanceof HTMLTextAreaElement
+                },
+                caret: selection ? {
+                  anchorConnected: anchor?.isConnected ?? false,
+                  anchorName: anchor?.nodeName ?? null,
+                  anchorOffset: selection.anchorOffset,
+                  anchorParentName: anchor?.parentNode?.nodeName ?? null,
+                  closestBlockId: anchorElement?.closest(
+                    '[data-easymde-visual-block-id]'
+                  )?.getAttribute('data-easymde-visual-block-id') ?? null,
+                  codeOffset,
+                  collapsed: selection.isCollapsed,
+                  insideCode: Boolean(code && anchor && (anchor === code || code.contains(anchor))),
+                  parentChain
+                } : null,
+              contentEditable: surface?.getAttribute('contenteditable') ?? null,
+              domShape: {
+                code: shape(code),
+                markerCounts: {
+                  br: pre?.querySelectorAll('br').length ?? 0,
+                  font: pre?.querySelectorAll('font').length ?? 0,
+                  placeholderLike: pre?.querySelectorAll(
+                    '[data-placeholder], [class*="placeholder"]'
+                  ).length ?? 0,
+                  span: pre?.querySelectorAll('span').length ?? 0
+                },
+                markerElements,
+                pre: shape(pre)
+              },
+              preCount: surface?.querySelectorAll('pre').length ?? 0,
+                surfaceBusy: surface?.getAttribute('aria-busy') ?? null,
+                surfaceCount: document.querySelectorAll(
+                  '.easymde-immersive-visual-editor'
+                ).length,
+                visual: {
+                  activeElementName: document.activeElement?.nodeName ?? null,
+                  bodyContainsAlpha: codeText.includes(expected.body),
+                  bodyEndsWithLineFeed: codeText.endsWith(String.fromCharCode(10)),
+                  bodyLength: codeText.length,
+                  codeCount: pre?.querySelectorAll(':scope > code').length ?? 0
+                }
+              };
+            }, {
+              body: 'Alpha',
+              prefix: fixture.windowed
+                ? `${fixture.fence}${String.fromCharCode(10)}Alpha${String.fromCharCode(10)}${fixture.closingFence}`
+                : ''
+            });
+            await testInfo.attach(`windowed-${fixture.id}-first-input-failure-state`, {
+              body: JSON.stringify({
+                failureCodes: [...new Set(failureCodes)],
+                inputAccepted,
+                inputAttempted,
+                pageErrorCount: pageErrors.length,
+                state: failureState
+              }),
+              contentType: 'application/json'
+            });
+          }
+        } finally {
+          if (observationInstalled) {
+            freshEvidence = await stopCodeFrameEvidence(
+              visualEditor,
+              observationKey
+            );
+            observationInstalled = false;
+          }
         }
       }
 
@@ -4336,6 +5841,6863 @@ test.describe('EasyMDE editor workflows', () => {
       });
     });
   }
+
+  for (const { fence, structuralCharacter, label } of [
+    { fence: '~~~', label: 'tilde', structuralCharacter: '~' },
+    { fence: '```', label: 'backtick', structuralCharacter: '`' }
+  ]) {
+    test(`commits Enter before immediate ${label} input in immersive code`, async ({ page }, testInfo) => {
+      const failures = [];
+      const pageErrors = [];
+      const traceKey = '__easymdeRapidCodeStructuralInput';
+      const initialMarkdown = `${fence}js\nExisting\n${fence}`;
+      const expectedMarkdown = `${fence}js\nExisting\n${structuralCharacter}\n${fence}`;
+      const expectedCodeText = `Existing\n${structuralCharacter}\n`;
+      const expectedFollowupMarkdown = `${fence}js\nExisting\n${structuralCharacter}Z\n${fence}`;
+      const expectedFollowupCodeText = `Existing\n${structuralCharacter}Z\n`;
+      const expectProjectedCodeText = (actual, expected) => {
+        expect(
+          actual === expected || `${actual}\n` === expected,
+          'code body projection may omit only its single canonical terminal newline'
+        ).toBe(true);
+      };
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failures.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Existing');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      await clickCodeLine(page, code, 0);
+      await page.keyboard.press('End');
+      await editor.visualEditor.evaluate((surface, { key, character }) => {
+        const events = [];
+        const record = (event) => {
+          const isStructural = [
+            'insertLineBreak',
+            'insertParagraph'
+          ].includes(event.inputType);
+          const isCharacter = 'insertText' === event.inputType
+            && event.data === character;
+          if (!isStructural && !isCharacter) return;
+          events.push({
+            at: performance.now(),
+            defaultPrevented: event.defaultPrevented,
+            inputType: event.inputType,
+            isCharacter,
+            phase: event.type
+          });
+        };
+        for (const type of ['beforeinput', 'input']) {
+          surface.addEventListener(type, record, true);
+        }
+        window[key] = {
+          dispose: () => {
+            for (const type of ['beforeinput', 'input']) {
+              surface.removeEventListener(type, record, true);
+            }
+          },
+          events
+        };
+      }, { key: traceKey, character: structuralCharacter });
+
+      await page.keyboard.press('Enter');
+      await page.keyboard.insertText(structuralCharacter);
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'a code character typed within the 80 ms structural-input window should commit'
+      );
+      const inputEvents = await editor.visualEditor.evaluate((surface, key) => {
+        const trace = window[key];
+        if (!trace) throw new Error('rapid-code-structural-trace-missing');
+        trace.dispose();
+        delete window[key];
+        return trace.events;
+      }, traceKey);
+      const state = await readCodeBodyState(editor.visualEditor);
+      const structuralInput = inputEvents.find((event) => (
+        'input' === event.phase
+        && ['insertLineBreak', 'insertParagraph'].includes(event.inputType)
+      ));
+      const characterBeforeInput = inputEvents.find((event) => (
+        'beforeinput' === event.phase
+        && 'insertText' === event.inputType
+        && event.isCharacter
+      ));
+
+      expect(await editor.source.inputValue()).toBe(expectedMarkdown);
+      expectProjectedCodeText(state.codeText, expectedCodeText);
+      expect(state.active).toBe(true);
+      expect(state.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'Existing\n'.length + structuralCharacter.length
+      });
+      expect(structuralInput).toBeDefined();
+      expect(characterBeforeInput).toBeDefined();
+      expect(characterBeforeInput.at - structuralInput.at).toBeGreaterThanOrEqual(0);
+      expect(characterBeforeInput.at - structuralInput.at).toBeLessThan(80);
+      expect(failures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+
+      await page.keyboard.type('Z', { delay: 0 });
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedFollowupMarkdown,
+        acceptedPreviewSignature,
+        'a native code character after the structural edit should preserve the exact source body'
+      );
+      const followupState = await readCodeBodyState(editor.visualEditor);
+      expect(await editor.source.inputValue()).toBe(expectedFollowupMarkdown);
+      expectProjectedCodeText(followupState.codeText, expectedFollowupCodeText);
+      expect(followupState.selection).toMatchObject({
+        anchorInsideCode: true,
+        anchorName: '#text',
+        collapsed: true,
+        codeOffset: expectedFollowupCodeText.length - 1
+      });
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'undo should restore the exact structural edit before the follow-up character'
+      );
+      const undoneState = await readCodeBodyState(editor.visualEditor);
+      expect(await editor.source.inputValue()).toBe(expectedMarkdown);
+      expectProjectedCodeText(undoneState.codeText, expectedCodeText);
+      expect(undoneState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'Existing\n'.length + structuralCharacter.length
+      });
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedFollowupMarkdown,
+        acceptedPreviewSignature,
+        'redo should restore the exact follow-up code character and projected body'
+      );
+      const redoneState = await readCodeBodyState(editor.visualEditor);
+      expect(await editor.source.inputValue()).toBe(expectedFollowupMarkdown);
+      expectProjectedCodeText(redoneState.codeText, expectedFollowupCodeText);
+      expect(redoneState.selection).toMatchObject({
+        anchorInsideCode: true,
+        anchorName: '#text',
+        collapsed: true,
+        codeOffset: expectedFollowupCodeText.length - 1
+      });
+      expect(failures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const { fence, label } of [
+    { fence: '~~~', label: 'tilde' },
+    { fence: '```', label: 'backtick' }
+  ]) {
+    test(`preserves a full ${label} fence run and immediate x in a code body`, async ({ page }, testInfo) => {
+      const marker = fence[0];
+      const widenedFence = `${fence}${marker}`;
+      const initialMarkdown = `${fence}js\nBefore\n\nAfter\n${fence}`;
+      const expectedMarkdown = `${widenedFence}js\nBefore\n${fence}x\nAfter\n${widenedFence}`;
+      const initialCodeText = 'Before\n\nAfter\n';
+      const expectedCodeText = `Before\n${fence}x\nAfter\n`;
+      const expectedBodyStart = `${widenedFence}js\n`.length;
+      const expectedCaretOffset = 'Before\n'.length + fence.length + 1;
+      const failureCodes = [];
+      const pageErrors = [];
+      const traceKey = '__easymdeCompleteFenceRunInput';
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Before');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      expect(await code.textContent()).toBe(initialCodeText);
+      const clickEvidence = await clickCodeLine(page, code, 1);
+      expect(clickEvidence.afterClick.hit.insideCode).toBe(true);
+      expect(clickEvidence.afterClick.selection).toMatchObject({
+        collapsed: true,
+        codeOffset: 'Before\n'.length
+      });
+      const initialNativeSourceSelection = await editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }));
+      await editor.visualEditor.evaluate((surface, key) => {
+        const events = [];
+        const record = (event) => {
+          const isFenceCharacter = 'insertText' === event.inputType
+            && event.data === key.marker;
+          const isFollowup = 'insertText' === event.inputType
+            && 'x' === event.data;
+          if (!isFenceCharacter && !isFollowup) return;
+          events.push({
+            at: performance.now(),
+            fenceCharacter: isFenceCharacter,
+            followup: isFollowup,
+            inputType: event.inputType,
+            phase: event.type
+          });
+        };
+        for (const type of ['beforeinput', 'input']) {
+          surface.addEventListener(type, record, true);
+        }
+        window[key.traceKey] = {
+          dispose: () => {
+            for (const type of ['beforeinput', 'input']) {
+              surface.removeEventListener(type, record, true);
+            }
+          },
+          events
+        };
+      }, { marker, traceKey });
+
+      await page.keyboard.type(fence, { delay: 0 });
+      await page.keyboard.type('x', { delay: 0 });
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'a complete body fence followed by x should persist inside a widened outer fence'
+      );
+      const inputEvents = await editor.visualEditor.evaluate((surface, key) => {
+        const trace = window[key];
+        if (!trace) throw new Error('complete-fence-run-trace-missing');
+        trace.dispose();
+        delete window[key];
+        return trace.events;
+      }, traceKey);
+      const fenceInputs = inputEvents.filter((event) => (
+        'beforeinput' === event.phase && event.fenceCharacter
+      ));
+      const xInput = inputEvents.find((event) => (
+        'beforeinput' === event.phase && event.followup
+      ));
+      expect(await editor.source.inputValue()).toBe(expectedMarkdown);
+      expect(await code.textContent()).toBe(expectedCodeText);
+      const finalState = await readCodeBodyState(editor.visualEditor);
+      expect(finalState.selection).toMatchObject({
+        anchorInsideCode: true,
+        anchorName: '#text',
+        collapsed: true,
+        codeOffset: expectedCaretOffset
+      });
+      expect(await editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }))).toEqual({
+        end: expectedBodyStart + expectedCaretOffset,
+        start: expectedBodyStart + expectedCaretOffset
+      });
+      expect(fenceInputs).toHaveLength(fence.length);
+      expect(xInput).toBeDefined();
+      expect(xInput.at - fenceInputs.at(-1).at).toBeGreaterThanOrEqual(0);
+      expect(xInput.at - fenceInputs.at(-1).at).toBeLessThan(80);
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        initialMarkdown,
+        acceptedPreviewSignature,
+        'Undo should restore the original code fence and body'
+      );
+      expect(await code.textContent()).toBe(initialCodeText);
+      const undoneState = await readCodeBodyState(editor.visualEditor);
+      expect(undoneState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'Before\n'.length
+      });
+      expect(await editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }))).toEqual(initialNativeSourceSelection);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'Redo should restore the widened fence, literal body line, and caret'
+      );
+      expect(await code.textContent()).toBe(expectedCodeText);
+      const redoneState = await readCodeBodyState(editor.visualEditor);
+      expect(redoneState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: expectedCaretOffset
+      });
+      await page.getByRole('button', { name: editor.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: editor.labels.immersive
+      })).toHaveCount(0);
+      const sourceEditor = page.locator('.easymde-source-react .cm-content');
+      await expect(sourceEditor).toBeVisible();
+      await expect(editor.source).toHaveValue(expectedMarkdown);
+      expect(await editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }))).toEqual({
+        end: expectedBodyStart + expectedCaretOffset,
+        start: expectedBodyStart + expectedCaretOffset
+      });
+      await sourceEditor.focus();
+      await expect(sourceEditor).toBeFocused();
+      await waitForBrowserPaint(page);
+      const sourceModeCaret = await sourceEditor.evaluate((content) => {
+        const selection = content.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const line = anchorElement?.closest('.cm-line') ?? null;
+        const lines = Array.from(content.querySelectorAll('.cm-line'));
+        const lineIndex = lines.indexOf(line);
+        if (!selection || !anchor || !line || lineIndex < 0) return null;
+        const range = content.ownerDocument.createRange();
+        range.selectNodeContents(line);
+        range.setEnd(anchor, selection.anchorOffset);
+        const priorLinesLength = lines.slice(0, lineIndex).reduce(
+          (total, currentLine) => total + (currentLine.textContent ?? '').length + 1,
+          0
+        );
+        return {
+          collapsed: selection.isCollapsed,
+          offset: priorLinesLength + range.toString().length
+        };
+      });
+      expect(sourceModeCaret).toEqual({
+        collapsed: true,
+        offset: expectedBodyStart + expectedCaretOffset
+      });
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const { fence, label } of [
+    { fence: '~~~', label: 'tilde' },
+    { fence: '```', label: 'backtick' }
+  ]) {
+    test(`persists the first body input after native paste into a windowed bare ${label} EOF fence`, async ({ page, context }, testInfo) => {
+      const paragraphPrefix = syntheticWindowedMarkdown();
+      const markdownBefore = `${paragraphPrefix}${fence}`;
+      const firstBodyCharacter = 'x';
+      const secondBodyCharacter = 'y';
+      const bodyAfterFirstInput = `${firstBodyCharacter}\n`;
+      const body = `${firstBodyCharacter}${secondBodyCharacter}\n`;
+      const targetBlockId = 'b220';
+      const bodyStart = markdownBefore.length + 1;
+      const markdownAfterFirstInput = `${markdownBefore}\n${bodyAfterFirstInput}`;
+      const markdownAfter = `${markdownBefore}\n${body}`;
+      const failureCodes = [];
+      const pageErrors = [];
+      let previewPosts = 0;
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      page.on('request', (request) => {
+        if (
+          'POST' === request.method()
+          && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+        ) previewPosts += 1;
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const surface = page.locator('.easymde-immersive-visual-editor');
+      const canvas = page.locator('.easymde-immersive-preview-canvas');
+      const block = surface.locator(
+        `[data-easymde-visual-block-id="${targetBlockId}"]`
+      );
+      const code = block.locator(':scope > code');
+      const readCanonicalSource = async () => page.evaluate(() => {
+        const source = document.querySelector('#easymde-source');
+        return source instanceof HTMLTextAreaElement ? source.value : null;
+      });
+      const readNativeSourceCaret = async () => editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }));
+      const readSafeState = async (expectedMarkdown, previousSignature) => page.evaluate(
+        (expected) => {
+          const surface = document.querySelector('.easymde-immersive-visual-editor');
+          const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+          const previewSink = document.querySelector(
+            '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+          );
+          const source = document.querySelector('#easymde-source');
+          const targetPre = surface?.querySelector(
+            '[data-easymde-visual-block-id="b220"]'
+          ) ?? null;
+          const targetCode = targetPre?.querySelector(':scope > code') ?? null;
+          const selection = document.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          let codeOffset = null;
+          if (
+            selection
+            && anchor
+            && targetCode
+            && (anchor === targetCode || targetCode.contains(anchor))
+          ) {
+            const range = document.createRange();
+            range.selectNodeContents(targetCode);
+            range.setEnd(anchor, selection.anchorOffset);
+            codeOffset = range.toString().length;
+          }
+          const mountedIds = Array.from(canvas?.querySelectorAll(
+            '[data-easymde-visual-block-id]'
+          ) ?? []).map((node) => node.getAttribute('data-easymde-visual-block-id'))
+            .filter((id) => null !== id);
+          const mountedIndices = mountedIds.flatMap((id) => {
+            const match = /^b(\d+)$/u.exec(id);
+            return match ? [Number(match[1])] : [];
+          });
+          const mountedRanges = [];
+          for (const index of mountedIndices) {
+            const previous = mountedRanges.at(-1);
+            if (previous && previous.end + 1 === index) previous.end = index;
+            else mountedRanges.push({ end: index, start: index });
+          }
+          const spacers = Array.from(canvas?.querySelectorAll(
+            '[data-easymde-preview-window-spacer]'
+          ) ?? []);
+          const signature = surface?.easymdePreviewSignature
+            ?? previewSink?.easymdePreviewSignature
+            ?? '';
+          const [revisionText, markdownLengthText] = signature.split(':', 2);
+          const sourceText = source instanceof HTMLTextAreaElement ? source.value : '';
+          return {
+            activeElementName: document.activeElement?.nodeName ?? null,
+            activeElementInsideSurface: Boolean(
+              surface
+              && document.activeElement
+              && surface.contains(document.activeElement)
+            ),
+            canvas: canvas instanceof HTMLElement ? {
+              clientHeight: canvas.clientHeight,
+              scrollHeight: canvas.scrollHeight,
+              scrollTop: canvas.scrollTop
+            } : null,
+            codeBlockAttached: Boolean(targetCode?.isConnected),
+            codeBlockContainsBody: (targetCode?.textContent ?? '').includes(expected.body),
+            codeBlockEndsWithLineFeed: (targetCode?.textContent ?? '').endsWith('\n'),
+            codeBlockTextLength: targetCode?.textContent?.length ?? null,
+            codeOffset,
+            contentEditable: surface?.getAttribute('contenteditable') ?? null,
+            failureCodes: expected.failureCodes,
+            immersiveSurfaceCount: document.querySelectorAll(
+              '.easymde-immersive-visual-editor'
+            ).length,
+            mountedBlockCount: mountedIds.length,
+            mountedBlockIds: mountedIds,
+            mountedRanges,
+            nativeCaret: source instanceof HTMLTextAreaElement ? {
+              end: source.selectionEnd,
+              start: source.selectionStart
+            } : null,
+            pageErrorCount: expected.pageErrorCount,
+            preview: {
+              errorPresent: Boolean(previewSink?.hasAttribute('data-easymde-preview-error')),
+              ownerBusy: previewSink?.getAttribute('aria-busy') ?? null,
+              signatureChangedFromPrevious: Boolean(signature)
+                && signature !== expected.previousSignature,
+              signatureMarkdownLength: /^\d+$/u.test(markdownLengthText ?? '')
+                ? Number(markdownLengthText)
+                : null,
+              signatureRevision: /^\d+$/u.test(revisionText ?? '')
+                ? Number(revisionText)
+                : null,
+              surfaceBusy: surface?.getAttribute('aria-busy') ?? null
+            },
+            selection: selection ? {
+              anchorConnected: anchor?.isConnected ?? false,
+              anchorInsideCode: Boolean(
+                targetCode && anchor && (anchor === targetCode || targetCode.contains(anchor))
+              ),
+              anchorName: anchor?.nodeName ?? null,
+              anchorOffset: selection.anchorOffset,
+              anchorParentName: anchor?.parentNode?.nodeName ?? null,
+              collapsed: selection.isCollapsed
+            } : null,
+            source: {
+              length: sourceText.length,
+              matchesExpected: sourceText === expected.markdown,
+              present: source instanceof HTMLTextAreaElement
+            },
+            spacerCount: spacers.length,
+            spacerRanges: spacers.map((spacer) => ({
+              end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+              start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+            })),
+            targetPreAttached: Boolean(targetPre?.isConnected),
+            targetPreCount: surface?.querySelectorAll(
+              '[data-easymde-visual-block-id="b220"]'
+            ).length ?? 0
+          };
+        },
+        {
+          body,
+          failureCodes: [...new Set(failureCodes)],
+          markdown: expectedMarkdown,
+          pageErrorCount: pageErrors.length,
+          previousSignature
+        }
+      );
+      const assertBoundedWindow = async (
+        expectedMarkdown = markdownBefore,
+        previousSignature = initialPreviewSignature
+      ) => {
+        await expect(block).toBeAttached({ timeout: 30_000 });
+        const state = await readSafeState(expectedMarkdown, previousSignature);
+        expectWindowedCoverage({
+          mountedBlockCount: state.mountedBlockCount,
+          mountedRanges: state.mountedRanges,
+          spacerRanges: state.spacerRanges
+        }, 221, 220);
+      };
+      const expectCodeBodyProjection = (actual, expected) => {
+        expect(
+          actual === expected || `${actual}\n` === expected,
+          'Windowed EOF code projection may omit only its single canonical terminal newline'
+        ).toBe(true);
+      };
+      const settlePreview = async (
+        expectedMarkdown,
+        previousSignature,
+        phase,
+        postsBefore,
+        requireBoundedWindow = true
+      ) => {
+        let ready = false;
+        try {
+          await waitForPreviewRefresh(
+            surface,
+            previousSignature,
+            `${phase} should adopt the exact open EOF fence source`
+          );
+          await expect(editor.source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+          await waitForBrowserPaint(page);
+          await expect(surface).toHaveAttribute('contenteditable', 'true');
+          await expect(surface).toHaveAttribute('aria-busy', 'false');
+          if (requireBoundedWindow) await assertBoundedWindow(expectedMarkdown, previousSignature);
+          ready = true;
+        } finally {
+          await testInfo.attach(`windowed-eof-${label}-${phase}-preview-state`, {
+            body: JSON.stringify({
+              postsAfter: previewPosts,
+              postsBefore,
+              postDelta: previewPosts - postsBefore,
+              ready,
+              state: await readSafeState(expectedMarkdown, previousSignature)
+            }),
+            contentType: 'application/json'
+          });
+        }
+        expect(previewPosts).toBeGreaterThan(postsBefore);
+        return await readyPreviewSignature(surface);
+      };
+      const assertCodeBodyState = async (
+        expectedMarkdown,
+        expectedCodeText,
+        expectedCodeOffset,
+        expectedSourceCaret,
+        phase
+      ) => {
+        await expect(editor.source).toHaveValue(expectedMarkdown);
+        await expect(surface).toHaveAttribute('contenteditable', 'true');
+        await expect(surface).toHaveAttribute('aria-busy', 'false');
+        const state = await readCodeBodyState(surface);
+        expectCodeBodyProjection(state.codeText, expectedCodeText);
+        expect(state.selection).toMatchObject({
+          anchorInsideCode: true,
+          collapsed: true,
+          codeOffset: expectedCodeOffset
+        });
+        expect(await readNativeSourceCaret()).toEqual({
+          end: expectedSourceCaret,
+          start: expectedSourceCaret
+        });
+        expectCodeBodyFrame(state);
+        await assertBoundedWindow(expectedMarkdown, previewSignature);
+        await testInfo.attach(`windowed-eof-${label}-${phase}-code-state`, {
+          body: JSON.stringify(await readSafeState(expectedMarkdown, previewSignature)),
+          contentType: 'application/json'
+        });
+        return state;
+      };
+      const settleCodeInput = async (
+        expectedMarkdown,
+        expectedCodeText,
+        expectedCodeOffset,
+        previousSignature,
+        postsBefore,
+        phase
+      ) => {
+        await expect.poll(
+          () => readCanonicalSource(),
+          { timeout: 15_000, message: `${phase} should persist the exact open EOF code source` }
+        ).toBe(expectedMarkdown);
+        await waitForBrowserPaint(page);
+        const state = await assertCodeBodyState(
+          expectedMarkdown,
+          expectedCodeText,
+          expectedCodeOffset,
+          bodyStart + expectedCodeOffset,
+          phase
+        );
+        expect(previewPosts).toBe(postsBefore);
+        expect(await readyPreviewSignature(surface)).toBe(previousSignature);
+        expect(failureCodes).toEqual([]);
+        expect(pageErrors).toEqual([]);
+        return state;
+      };
+
+      const initialPreviewSignature = await readyPreviewSignature(surface);
+      const origin = new URL(page.url()).origin;
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+      await surface.focus();
+      await surface.press('ControlOrMeta+End');
+      await page.evaluate(async (value) => {
+        if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+          throw new Error('native-clipboard-write-unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+      }, markdownBefore);
+      const previewPostsBeforePaste = previewPosts;
+      await page.keyboard.press('ControlOrMeta+V');
+      await expect.poll(
+        () => readCanonicalSource(),
+        { timeout: 30_000, message: 'native paste should insert the full windowed EOF fixture' }
+      ).toBe(markdownBefore);
+      let previewSignature = await settlePreview(
+        markdownBefore,
+        initialPreviewSignature,
+        'paste',
+        previewPostsBeforePaste,
+        false
+      );
+
+      const targetScrollEvidence = await canvas.evaluate((element, targetIndex) => {
+        if (!(element instanceof HTMLElement)) {
+          throw new Error('windowed-eof-canvas-unavailable');
+        }
+        const alreadyMounted = element.querySelector(
+          `[data-easymde-visual-block-id="b${targetIndex}"]`
+        );
+        const omittedRange = Array.from(element.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        )).find((candidate) => {
+          const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+          const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+          return start <= targetIndex && targetIndex < end;
+        });
+        if (!alreadyMounted && !omittedRange) {
+          throw new Error('windowed-eof-code-block-not-represented');
+        }
+        const canvasRect = element.getBoundingClientRect();
+        const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
+        const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+        const targetScrollTop = alreadyMounted
+          ? element.scrollTop
+          : Math.min(
+              maxScrollTop,
+              element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
+            );
+        element.scrollTop = targetScrollTop;
+        element.dispatchEvent(new Event('scroll'));
+        return {
+          alreadyMounted: Boolean(alreadyMounted),
+          maxScrollTop,
+          range: omittedRange ? {
+            end: Number(omittedRange.getAttribute('data-easymde-preview-window-end')),
+            start: Number(omittedRange.getAttribute('data-easymde-preview-window-start'))
+          } : null,
+          scrollTop: element.scrollTop,
+          targetScrollTop
+        };
+      }, 220);
+      await testInfo.attach(`windowed-eof-${label}-scroll-target`, {
+        body: JSON.stringify(targetScrollEvidence),
+        contentType: 'application/json'
+      });
+      await expect(block).toBeAttached({ timeout: 30_000 });
+      await block.scrollIntoViewIfNeeded();
+      await waitForBrowserPaint(page);
+      await assertBoundedWindow(markdownBefore, previewSignature);
+      await expect(code).toHaveCount(1);
+      expect(await code.textContent()).not.toContain(body);
+
+      const initialCaret = await surface.evaluate((root, id) => {
+        const pre = root.querySelector(`[data-easymde-visual-block-id="${id}"]`);
+        const targetCode = pre?.querySelector(':scope > code');
+        if (!(targetCode instanceof HTMLElement)) {
+          throw new Error('windowed-eof-code-caret-unavailable');
+        }
+        root.focus({ preventScroll: true });
+        const walker = root.ownerDocument.createTreeWalker(targetCode, NodeFilter.SHOW_TEXT);
+        const text = walker.nextNode();
+        const target = text instanceof Text ? text : targetCode;
+        const range = root.ownerDocument.createRange();
+        range.setStart(target, 0);
+        range.collapse(true);
+        const selection = root.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('windowed-eof-code-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return {
+          anchorInsideCode: target === targetCode || targetCode.contains(target),
+          anchorName: target.nodeName,
+          anchorOffset: 0,
+          collapsed: selection.isCollapsed,
+          targetPreBlockId: pre?.getAttribute('data-easymde-visual-block-id') ?? null
+        };
+      }, targetBlockId);
+      expect(initialCaret).toMatchObject({
+        anchorInsideCode: true,
+        anchorOffset: 0,
+        collapsed: true,
+        targetPreBlockId: targetBlockId
+      });
+      await waitForBrowserPaint(page);
+      const nativeCaretAtBodyStart = await readNativeSourceCaret();
+      expect(nativeCaretAtBodyStart.start).toBe(nativeCaretAtBodyStart.end);
+      const beforeInputState = await readSafeState(markdownBefore, previewSignature);
+      await testInfo.attach(`windowed-eof-${label}-before-body-input`, {
+        body: JSON.stringify(beforeInputState),
+        contentType: 'application/json'
+      });
+      const initialBodyState = await readCodeBodyState(surface);
+      expectCodeBodyProjection(initialBodyState.codeText, '');
+      expect(initialBodyState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 0
+      });
+
+      const previewPostsBeforeFirstInput = previewPosts;
+      const previewSignatureBeforeFirstInput = previewSignature;
+      await page.keyboard.type(firstBodyCharacter, { delay: 0 });
+      await settleCodeInput(
+        markdownAfterFirstInput,
+        bodyAfterFirstInput,
+        firstBodyCharacter.length,
+        previewSignatureBeforeFirstInput,
+        previewPostsBeforeFirstInput,
+        'first-input'
+      );
+
+      const previewPostsBeforeUndoFirstInput = previewPosts;
+      const previewSignatureBeforeUndoFirstInput = previewSignature;
+      await page.keyboard.press('ControlOrMeta+z');
+      previewSignature = await settlePreview(
+        markdownBefore,
+        previewSignatureBeforeUndoFirstInput,
+        'undo-first-input',
+        previewPostsBeforeUndoFirstInput
+      );
+      await assertCodeBodyState(
+        markdownBefore,
+        '',
+        0,
+        nativeCaretAtBodyStart.start,
+        'undo-first-input'
+      );
+
+      const previewPostsBeforeRedoFirstInput = previewPosts;
+      const previewSignatureBeforeRedoFirstInput = previewSignature;
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      previewSignature = await settlePreview(
+        markdownAfterFirstInput,
+        previewSignatureBeforeRedoFirstInput,
+        'redo-first-input',
+        previewPostsBeforeRedoFirstInput
+      );
+      await assertCodeBodyState(
+        markdownAfterFirstInput,
+        bodyAfterFirstInput,
+        firstBodyCharacter.length,
+        bodyStart + firstBodyCharacter.length,
+        'redo-first-input'
+      );
+
+      const previewPostsBeforeSecondInput = previewPosts;
+      const previewSignatureBeforeSecondInput = previewSignature;
+      await page.keyboard.type(secondBodyCharacter, { delay: 0 });
+      await settleCodeInput(
+        markdownAfter,
+        body,
+        firstBodyCharacter.length + secondBodyCharacter.length,
+        previewSignatureBeforeSecondInput,
+        previewPostsBeforeSecondInput,
+        'second-input'
+      );
+
+      const previewPostsBeforeUndoSecondInput = previewPosts;
+      const previewSignatureBeforeUndoSecondInput = previewSignature;
+      await page.keyboard.press('ControlOrMeta+z');
+      previewSignature = await settlePreview(
+        markdownAfterFirstInput,
+        previewSignatureBeforeUndoSecondInput,
+        'undo-second-input',
+        previewPostsBeforeUndoSecondInput
+      );
+      await assertCodeBodyState(
+        markdownAfterFirstInput,
+        bodyAfterFirstInput,
+        firstBodyCharacter.length,
+        bodyStart + firstBodyCharacter.length,
+        'undo-second-input'
+      );
+
+      const previewPostsBeforeRedoSecondInput = previewPosts;
+      const previewSignatureBeforeRedoSecondInput = previewSignature;
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      previewSignature = await settlePreview(
+        markdownAfter,
+        previewSignatureBeforeRedoSecondInput,
+        'redo-second-input',
+        previewPostsBeforeRedoSecondInput
+      );
+      await assertCodeBodyState(
+        markdownAfter,
+        body,
+        firstBodyCharacter.length + secondBodyCharacter.length,
+        bodyStart + firstBodyCharacter.length + secondBodyCharacter.length,
+        'redo-second-input'
+      );
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test(`keeps immersive ${fence} typed and pasted caret/frame state`, async ({ page }, testInfo) => {
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const evidence = {
+        fence,
+        typed: null,
+        typedAfterInput: null,
+        typedAfterUndo: null,
+        typedAfterRedo: null,
+        typedAfterReentry: null,
+        typedMobile: null,
+        pasted: null,
+        pastedMobile: null,
+        pastedContent: null,
+        pastedContentAfterInput: null,
+        pastedContentAfterRedo: null,
+        pastedContentAfterReentry: null,
+        pastedContentMobile: null
+      };
+
+      const readEvidence = async (visualEditor) => visualEditor.evaluate((surface) => {
+        const pre = surface.querySelector('pre');
+        const code = pre?.querySelector(':scope > code');
+        if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+          throw new Error('immersive-code-fence-evidence-unavailable');
+        }
+        const rootStyle = getComputedStyle(surface);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const rootBox = surface.getBoundingClientRect();
+        const paddingLeft = Number.parseFloat(rootStyle.paddingLeft);
+        const paddingRight = Number.parseFloat(rootStyle.paddingRight);
+        const anchorNode = selection?.anchorNode ?? null;
+        const focusNode = selection?.focusNode ?? null;
+        return {
+          active: surface.ownerDocument.activeElement === surface,
+          caretColor: rootStyle.caretColor,
+          codeWidth: code.getBoundingClientRect().width,
+          contentWidth: surface.clientWidth - paddingLeft - paddingRight,
+          markerCount: surface.querySelectorAll(
+            '[data-easymde-visual-code-placeholder]'
+          ).length,
+          preWidth: pre.getBoundingClientRect().width,
+          selection: selection ? {
+            anchorInsideCode: anchorNode === code || Boolean(
+              anchorNode && code.contains(anchorNode)
+            ),
+            anchorInsideSurface: anchorNode === surface || Boolean(
+              anchorNode && surface.contains(anchorNode)
+            ),
+            anchorNode: anchorNode?.nodeName ?? null,
+            anchorParentIsPlaceholder: anchorNode instanceof Element
+              ? anchorNode.hasAttribute('data-easymde-visual-code-placeholder')
+              : anchorNode?.parentElement?.hasAttribute(
+                'data-easymde-visual-code-placeholder'
+              ) ?? false,
+            anchorOffset: selection.anchorOffset,
+            collapsed: selection.isCollapsed,
+            focusInsideCode: focusNode === code || Boolean(
+              focusNode && code.contains(focusNode)
+            ),
+            focusInsideSurface: focusNode === surface || Boolean(
+              focusNode && surface.contains(focusNode)
+            ),
+            focusNode: focusNode?.nodeName ?? null,
+            focusOffset: selection.focusOffset,
+          } : null,
+          surfaceWidth: rootBox.width
+        };
+      });
+
+      const expectFullWidthFrameAndCaret = (sample) => {
+        expect(Math.abs(sample.preWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(Math.abs(sample.codeWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(sample.active).toBe(true);
+        expect(sample.caretColor).not.toBe('auto');
+        expect(sample.selection?.collapsed).toBe(true);
+        expect(sample.selection?.anchorInsideCode).toBe(true);
+        expect(sample.selection?.focusInsideCode).toBe(true);
+      };
+
+      const expectFullWidthFrame = (sample) => {
+        expect(Math.abs(sample.preWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+        expect(Math.abs(sample.codeWidth - sample.contentWidth)).toBeLessThanOrEqual(1);
+      };
+
+      const expectCollapsedSurfaceCaret = (sample) => {
+        expect(sample.active).toBe(true);
+        expect(sample.caretColor).not.toBe('auto');
+        expect(sample.selection?.collapsed).toBe(true);
+        expect(sample.selection?.anchorInsideSurface).toBe(true);
+        expect(sample.selection?.focusInsideSurface).toBe(true);
+      };
+
+      await openEasyMdeNewPost(page);
+      const typed = await enterImmersivePreviewAndUnlock(page);
+      await typed.visualEditor.focus();
+      await typed.visualEditor.press('ControlOrMeta+End');
+      await page.keyboard.type(fence);
+      await page.keyboard.press('Enter');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\n\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.typed = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typed);
+      expect(evidence.typed.markerCount).toBe(1);
+      expect(evidence.typed.selection.anchorParentIsPlaceholder).toBe(true);
+      await page.keyboard.type('x');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\nx\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
+      evidence.typedAfterInput = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterInput);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\n\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.typedAfterUndo = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterUndo);
+      expect(evidence.typedAfterUndo.markerCount).toBe(1);
+      expect(evidence.typedAfterUndo.selection.anchorParentIsPlaceholder).toBe(true);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(() => typed.source.inputValue()).toBe(
+        `${fence}\nx\n${fence}`
+      );
+      await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
+      evidence.typedAfterRedo = await readEvidence(typed.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.typedAfterRedo);
+
+      await page.getByRole('button', { name: typed.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: typed.labels.immersive
+      })).toHaveCount(0);
+      await expect(typed.source).toHaveValue(`${fence}\nx\n${fence}`);
+      const typedReentered = await enterImmersivePreviewAndUnlock(page);
+      await expect(typedReentered.source).toHaveValue(`${fence}\nx\n${fence}`);
+      await expect(typedReentered.visualEditor.locator('pre > code'))
+        .toContainText('x');
+      evidence.typedAfterReentry = await readEvidence(typedReentered.visualEditor);
+      expectFullWidthFrame(evidence.typedAfterReentry);
+      expectCollapsedSurfaceCaret(evidence.typedAfterReentry);
+
+      const hideTypedOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', {
+        name: hideTypedOutlineLabel
+      }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await typedReentered.visualEditor.focus();
+      evidence.typedMobile = await readEvidence(typedReentered.visualEditor);
+      expectFullWidthFrame(evidence.typedMobile);
+      expectCollapsedSurfaceCaret(evidence.typedMobile);
+      await page.setViewportSize({ width: 1280, height: 720 });
+
+      await openEasyMdeNewPost(page);
+      const pasted = await enterImmersivePreviewAndUnlock(page);
+      await pasted.visualEditor.evaluate((surface, value) => {
+        surface.focus();
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-code-fence-paste-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, fence);
+      await expect.poll(() => pasted.source.inputValue(), { timeout: 30_000 }).toBe(
+        fence
+      );
+      await expect(pasted.visualEditor.locator('pre > code')).toHaveCount(1);
+      evidence.pasted = await readEvidence(pasted.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.pasted);
+      expect(evidence.pasted.markerCount).toBe(0);
+      const hideOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', { name: hideOutlineLabel }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await pasted.visualEditor.focus();
+      evidence.pastedMobile = await readEvidence(pasted.visualEditor);
+      expectFullWidthFrameAndCaret(evidence.pastedMobile);
+      await page.setViewportSize({ width: 1280, height: 720 });
+
+      await openEasyMdeNewPost(page);
+      const pastedContent = await enterImmersivePreviewAndUnlock(page);
+      const pastedMarkdown = `${fence}\nAlpha\n${fence}`;
+      await pastedContent.visualEditor.evaluate((surface, value) => {
+        surface.focus();
+        const range = document.createRange();
+        range.selectNodeContents(surface);
+        range.collapse(false);
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('immersive-code-fence-paste-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const transfer = new DataTransfer();
+        transfer.setData('text/plain', value);
+        surface.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: transfer
+        }));
+      }, pastedMarkdown);
+      await expect.poll(() => pastedContent.source.inputValue(), { timeout: 30_000 })
+        .toBe(pastedMarkdown);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      evidence.pastedContent = await readEvidence(pastedContent.visualEditor);
+      expectFullWidthFrame(evidence.pastedContent);
+      expectCollapsedSurfaceCaret(evidence.pastedContent);
+      expect(evidence.pastedContent.markerCount).toBe(0);
+
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('After');
+      const pastedWithTrailingParagraph = `${pastedMarkdown}\n\nAfter`;
+      await expect.poll(() => pastedContent.source.inputValue())
+        .toBe(pastedWithTrailingParagraph);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContent.visualEditor.locator('p')).toContainText('After');
+      evidence.pastedContentAfterInput = await readEvidence(
+        pastedContent.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterInput);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterInput);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(() => pastedContent.source.inputValue()).toBe(pastedMarkdown);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(() => pastedContent.source.inputValue())
+        .toBe(pastedWithTrailingParagraph);
+      await expect(pastedContent.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContent.visualEditor.locator('p')).toContainText('After');
+      evidence.pastedContentAfterRedo = await readEvidence(
+        pastedContent.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterRedo);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterRedo);
+
+      await page.getByRole('button', { name: pastedContent.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: pastedContent.labels.immersive
+      })).toHaveCount(0);
+      await expect(pastedContent.source).toHaveValue(pastedWithTrailingParagraph);
+      const pastedContentReentered = await enterImmersivePreviewAndUnlock(page);
+      await expect(pastedContentReentered.source)
+        .toHaveValue(pastedWithTrailingParagraph);
+      await expect(pastedContentReentered.visualEditor.locator('pre > code'))
+        .toContainText('Alpha');
+      await expect(pastedContentReentered.visualEditor.locator('p'))
+        .toContainText('After');
+      evidence.pastedContentAfterReentry = await readEvidence(
+        pastedContentReentered.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentAfterReentry);
+      expectCollapsedSurfaceCaret(evidence.pastedContentAfterReentry);
+
+      const hideContentOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', {
+        name: hideContentOutlineLabel
+      }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await pastedContentReentered.visualEditor.focus();
+      evidence.pastedContentMobile = await readEvidence(
+        pastedContentReentered.visualEditor
+      );
+      expectFullWidthFrame(evidence.pastedContentMobile);
+      expectCollapsedSurfaceCaret(evidence.pastedContentMobile);
+
+      await testInfo.attach(`immersive-code-fence-caret-${fence === '~~~' ? 'tilde' : 'backtick'}`, {
+        body: JSON.stringify(evidence, null, 2),
+        contentType: 'application/json'
+      });
+    });
+  }
+
+  const startNativeDeleteTargetRangeProbe = async (page) => {
+    const key = '__easymdeNativeDeleteTargetRangeProbe';
+    await page.evaluate((probeKey) => {
+      if (window[probeKey]) throw new Error('native-delete-target-range-probe-already-active');
+      const events = [];
+      const record = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (
+          'beforeinput' !== event.type
+          || 'string' !== typeof event.inputType
+          || !event.inputType.startsWith('delete')
+          || !target?.closest('.easymde-immersive-visual-editor')
+        ) return;
+        const ranges = 'function' === typeof event.getTargetRanges
+          ? Array.from(event.getTargetRanges())
+          : null;
+        events.push({
+          targetRangeCount: ranges?.length ?? null,
+          targetRangesCollapsed: ranges?.length
+            ? ranges.every((range) => range.collapsed)
+            : null
+        });
+      };
+      document.addEventListener('beforeinput', record, true);
+      window[probeKey] = {
+        dispose: () => document.removeEventListener('beforeinput', record, true),
+        events
+      };
+    }, key);
+    return {
+      dispose: () => page.evaluate((probeKey) => {
+        const probe = window[probeKey];
+        if (!probe) return;
+        probe.dispose();
+        delete window[probeKey];
+      }, key),
+      read: () => page.evaluate((probeKey) => (
+        window[probeKey]?.events ?? []
+      ), key)
+    };
+  };
+  const summarizeNativeDeleteTargetRanges = (events) => ({
+    beforeInputCount: events.length,
+    targetRangeCount: events.reduce((count, event) => (
+      count + (event.targetRangeCount ?? 0)
+    ), 0),
+    targetRangesCollapsed: events.map((event) => event.targetRangesCollapsed)
+  });
+
+  const readCodeBodyState = (visualEditor) => visualEditor.evaluate((surface) => {
+    const pre = surface.querySelector('pre');
+    const code = pre?.querySelector(':scope > code');
+    if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+      throw new Error('immersive-code-body-state-unavailable');
+    }
+    const selection = surface.ownerDocument.defaultView?.getSelection();
+    const anchor = selection?.anchorNode ?? null;
+    let codeOffset = null;
+    if (selection && anchor && (anchor === code || code.contains(anchor))) {
+      const range = surface.ownerDocument.createRange();
+      range.selectNodeContents(code);
+      range.setEnd(anchor, selection.anchorOffset);
+      codeOffset = range.toString().length;
+    }
+    const style = getComputedStyle(surface);
+    return {
+      active: surface.ownerDocument.activeElement === surface,
+      codeText: code.textContent,
+      frame: {
+        codeWidth: code.getBoundingClientRect().width,
+        contentWidth: surface.clientWidth
+          - Number.parseFloat(style.paddingLeft)
+          - Number.parseFloat(style.paddingRight),
+        preWidth: pre.getBoundingClientRect().width
+      },
+      selection: selection ? {
+        anchorInsideCode: anchor === code || Boolean(
+          anchor && code.contains(anchor)
+        ),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection.anchorOffset,
+        collapsed: selection.isCollapsed,
+        codeOffset
+      } : null
+    };
+  });
+  const expectCodeBodyFrame = (state) => {
+    expect(Math.abs(state.frame.preWidth - state.frame.contentWidth))
+      .toBeLessThanOrEqual(1);
+    expect(Math.abs(state.frame.codeWidth - state.frame.contentWidth))
+      .toBeLessThanOrEqual(1);
+  };
+  const expectCodeBodyCaret = (state, offset) => {
+    expect(state.active).toBe(true);
+    expect(state.selection?.collapsed).toBe(true);
+    expect(state.selection?.anchorInsideCode).toBe(true);
+    expect(state.selection?.anchorName).toBe('#text');
+    expect(state.selection?.anchorOffset).toBe(offset);
+  };
+  const clickCodeLine = async (page, code, lineIndex) => {
+    const box = await code.boundingBox();
+    if (!box) throw new Error('immersive-code-body-box-unavailable');
+    const metrics = await code.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const pixels = (value) => Number.parseFloat(value);
+      const lineHeight = pixels(style.lineHeight);
+      if (!Number.isFinite(lineHeight)) {
+        throw new Error('immersive-code-body-line-height-unavailable');
+      }
+      return {
+        borderBottom: pixels(style.borderBottomWidth),
+        borderTop: pixels(style.borderTopWidth),
+        lineHeight,
+        paddingBottom: pixels(style.paddingBottom),
+        paddingTop: pixels(style.paddingTop)
+      };
+    });
+    const textTop = metrics.borderTop + metrics.paddingTop;
+    const textBottom = box.height - metrics.borderBottom - metrics.paddingBottom;
+    const y = Math.min(
+      textTop + metrics.lineHeight * (lineIndex + 0.5),
+      textBottom - 1
+    );
+    await page.mouse.click(box.x + 8, box.y + y);
+    const afterClick = await code.evaluate((element, point) => {
+      const hit = element.ownerDocument.elementFromPoint(point.x, point.y);
+      const selection = element.ownerDocument.defaultView?.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      let codeOffset = null;
+      if (selection && anchor && (anchor === element || element.contains(anchor))) {
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        range.setEnd(anchor, selection.anchorOffset);
+        codeOffset = range.toString().length;
+      }
+      const lineRects = [];
+      const walker = element.ownerDocument.createTreeWalker(
+        element,
+        NodeFilter.SHOW_TEXT
+      );
+      let documentOffset = 0;
+      let node = walker.nextNode();
+      while (node) {
+        if (node instanceof Text) {
+          for (let offset = 0; offset <= node.length; offset += 1) {
+            const range = element.ownerDocument.createRange();
+            range.setStart(node, offset);
+            range.collapse(true);
+            const rect = range.getBoundingClientRect();
+            lineRects.push({
+              documentOffset: documentOffset + offset,
+              rect: {
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                top: rect.top
+              }
+            });
+          }
+          documentOffset += node.length;
+        }
+        node = walker.nextNode();
+      }
+      const style = getComputedStyle(element);
+      return {
+        codeText: element.textContent ?? '',
+        hit: {
+          insideCode: Boolean(hit && (hit === element || element.contains(hit))),
+          className: hit instanceof Element ? hit.className : '',
+          nodeName: hit?.nodeName ?? null
+        },
+        lineRects,
+        selection: selection ? {
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection.anchorOffset,
+          codeOffset,
+          collapsed: selection.isCollapsed
+        } : null,
+        styles: {
+          borderBottom: style.borderBottomWidth,
+          borderTop: style.borderTopWidth,
+          height: style.height,
+          lineHeight: style.lineHeight,
+          paddingBottom: style.paddingBottom,
+          paddingTop: style.paddingTop,
+          whiteSpace: style.whiteSpace
+        }
+      };
+    }, { x: box.x + 8, y: box.y + y });
+    return {
+      box,
+      click: { x: box.x + 8, y: box.y + y, localY: y },
+      metrics,
+      afterClick
+    };
+  };
+
+  const startContinuousBackspaceProbe = async (
+    visualEditor,
+    fence,
+    finalBackspaceSequence = 2
+  ) => {
+    const key = '__easymdeOpenFenceContinuousBackspace';
+    await visualEditor.evaluate((surface, { traceKey, marker, targetSequence }) => {
+      if (window[traceKey]) throw new Error('continuous-backspace-probe-already-active');
+      const events = [];
+      const samples = [];
+      let sequence = 0;
+      const snapshot = () => {
+        const code = surface.querySelector('pre > code');
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const source = document.querySelector('#easymde-source');
+        const markdown = source instanceof HTMLTextAreaElement ? source.value : '';
+        return {
+          codeCount: surface.querySelectorAll('pre > code').length,
+          preCount: surface.querySelectorAll('pre').length,
+          selection: selection ? {
+            anchorConnected: anchor?.isConnected ?? false,
+            anchorInsideCode: Boolean(code && anchor && code.contains(anchor)),
+            collapsed: selection.isCollapsed
+          } : null,
+          sourceFenceLineCount: markdown.split(/\r?\n/u).filter((line) => line === marker).length,
+          sourceLength: markdown.length
+        };
+      };
+      const record = (event) => {
+        if ('keydown' === event.type) {
+          if ('Backspace' !== event.key) return;
+          sequence += 1;
+        } else if (
+          !['beforeinput', 'input'].includes(event.type)
+          || 'deleteContentBackward' !== event.inputType
+        ) {
+          return;
+        }
+        events.push({
+          defaultPrevented: event.defaultPrevented,
+          inputType: event.inputType ?? null,
+          key: 'keydown' === event.type ? event.key : null,
+          phase: event.type,
+          repeat: 'keydown' === event.type ? event.repeat : null,
+          sequence
+        });
+        if ('keydown' !== event.type || targetSequence !== sequence) return;
+        let frame = 0;
+        const sample = () => {
+          samples.push({ frame: ++frame, state: snapshot() });
+          if (frame < 8) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+        setTimeout(() => samples.push({ frame: '80ms', state: snapshot() }), 80);
+        setTimeout(() => samples.push({ frame: '250ms', state: snapshot() }), 250);
+      };
+      for (const type of ['keydown', 'beforeinput', 'input']) {
+        surface.addEventListener(type, record, true);
+      }
+      window[traceKey] = {
+        dispose: () => {
+          for (const type of ['keydown', 'beforeinput', 'input']) {
+            surface.removeEventListener(type, record, true);
+          }
+        },
+        events,
+        samples,
+        snapshot
+      };
+    }, { traceKey: key, marker: fence, targetSequence: finalBackspaceSequence });
+
+    return {
+      immediate: () => visualEditor.evaluate((surface, traceKey) => {
+        const trace = window[traceKey];
+        if (!trace) throw new Error('continuous-backspace-probe-missing');
+        return trace.snapshot();
+      }, key),
+      finish: () => visualEditor.evaluate((surface, traceKey) => {
+        const trace = window[traceKey];
+        if (!trace) throw new Error('continuous-backspace-probe-missing');
+        trace.dispose();
+        delete window[traceKey];
+        return { events: trace.events, final: trace.snapshot(), samples: trace.samples };
+      }, key)
+    };
+  };
+
+  const completeHeldBackspaceSequence = async (page, probe, count) => {
+    for (let index = 0; index < count; index += 1) {
+      await page.keyboard.down('Backspace');
+    }
+    await page.keyboard.up('Backspace');
+    const immediate = await probe.immediate();
+    await page.waitForTimeout(300);
+    return { immediate, trace: await probe.finish() };
+  };
+
+  const expectHeldBackspaceCompletion = ({
+    backspaceCount,
+    failureCodes,
+    finalSource,
+    immediate,
+    pageErrors,
+    sourceBeforeFence,
+    trace
+  }) => {
+    const backspaces = trace.events.filter(({ phase, key }) => (
+      'keydown' === phase && 'Backspace' === key
+    ));
+    expect(backspaces).toHaveLength(backspaceCount);
+    expect(backspaces.map(({ repeat }) => repeat))
+      .toEqual(Array.from({ length: backspaceCount }, (_, index) => 0 !== index));
+    expect(trace.samples.filter(({ frame }) => Number.isInteger(frame))
+      .map(({ frame }) => frame).sort((left, right) => left - right))
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(trace.samples.filter(({ frame }) => '80ms' === frame)).toHaveLength(1);
+    expect(trace.samples.filter(({ frame }) => '250ms' === frame)).toHaveLength(1);
+    expect(immediate).toMatchObject({ codeCount: 0, preCount: 0 });
+    expect(trace.samples.every(({ state }) => (
+      0 === state.codeCount && 0 === state.preCount
+    ))).toBe(true);
+    expect(trace.final).toMatchObject({ codeCount: 0, preCount: 0 });
+    expect(finalSource).toBe(sourceBeforeFence);
+    expect(failureCodes).toEqual([]);
+    expect(pageErrors).toEqual([]);
+  };
+
+
+  for (const fence of ['~~~', '```']) {
+    const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
+    test(`persists code-body input after native paste of the bare ${fenceLabel} fence`, async ({ page, context }, testInfo) => {
+      const body = 'Alpha12Z';
+      const failureCodes = [];
+      const pageErrors = [];
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const visualSurface = page.locator('.easymde-immersive-visual-editor');
+      await expect(visualSurface).toBeVisible();
+      const readCanonicalSource = async () => page.evaluate(() => {
+        const source = document.querySelector('#easymde-source');
+        return source instanceof HTMLTextAreaElement ? source.value : null;
+      });
+      const origin = new URL(page.url()).origin;
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+      await visualSurface.focus();
+      await visualSurface.press('ControlOrMeta+End');
+      await page.evaluate(async (value) => {
+        if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+          throw new Error('native-clipboard-write-unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+      }, fence);
+      await page.keyboard.press('ControlOrMeta+V');
+      await expect.poll(
+        async () => {
+          const sourceText = await readCanonicalSource();
+          return 'string' === typeof sourceText && sourceText.includes(fence);
+        },
+        { timeout: 15_000, message: 'native bare-fence paste should reach canonical source' }
+      ).toBe(true);
+      await expect(visualSurface.locator('pre > code')).toHaveCount(1);
+      await expect(visualSurface).toHaveAttribute('contenteditable', 'true');
+      await expect(visualSurface).toHaveAttribute('aria-busy', 'false');
+
+      const classifySource = (sourceText) => {
+        const lines = sourceText.split(/\r?\n/u);
+        const fenceLineIndexes = lines.flatMap((line, index) => (
+          line === fence ? [index] : []
+        ));
+        const bodyLineIndexes = lines.flatMap((line, index) => (
+          line === body ? [index] : []
+        ));
+        const openBody = `${fence}\n${body}`;
+        const openBodyWithLf = `${openBody}\n`;
+        const closedBody = `${openBody}\n${fence}`;
+        return {
+          bodyLineIndexes,
+          bodySequencePresent: sourceText.includes(body),
+          canonicalShape: sourceText === closedBody
+            ? 'closed'
+            : sourceText === `${closedBody}\n`
+              ? 'closed-terminal-lf'
+              : sourceText === openBody
+                ? 'open'
+                : sourceText === openBodyWithLf
+                  ? 'open-terminal-lf'
+                  : 'other',
+          endsWithLineFeed: sourceText.endsWith('\n'),
+          fenceLineIndexes,
+          lineCount: lines.length,
+          sourceBeginsWithFence: lines[0] === fence,
+          sourceLength: sourceText.length
+        };
+      };
+      const readSafeState = async () => {
+        const safeEvidence = await page.evaluate((typedBody) => {
+          const surface = document.querySelector('.easymde-immersive-visual-editor');
+          const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+          const source = document.querySelector('#easymde-source');
+          const selection = document.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const previewRoot = document.querySelector('.easymde-pane-preview');
+          const codeNodes = Array.from(new Set([
+            ...Array.from(previewRoot?.querySelectorAll('pre > code') ?? []),
+            ...Array.from(canvas?.querySelectorAll('pre > code') ?? [])
+          ]));
+          const code = codeNodes[0] ?? null;
+          const pre = code?.parentElement ?? null;
+          const style = surface ? getComputedStyle(surface) : null;
+          let codeOffset = null;
+          if (selection && anchor && code && (anchor === code || code.contains(anchor))) {
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            range.setEnd(anchor, selection.anchorOffset);
+            codeOffset = range.toString().length;
+          }
+          return {
+            sourceText: source instanceof HTMLTextAreaElement ? source.value : '',
+            visual: {
+              activeElementName: document.activeElement?.nodeName ?? null,
+              active: Boolean(surface && document.activeElement === surface),
+              ariaBusy: surface?.getAttribute('aria-busy') ?? null,
+              canvasCount: document.querySelectorAll(
+                '.easymde-immersive-preview-canvas'
+              ).length,
+              codeBodyContainsInput: (code?.textContent ?? '').includes(typedBody),
+              codeBodyEndsWithLineFeed: (code?.textContent ?? '').endsWith('\n'),
+              codeBodyLength: code?.textContent?.length ?? null,
+              codeWidth: code?.getBoundingClientRect().width ?? null,
+              contentEditable: surface?.getAttribute('contenteditable') ?? null,
+              contentWidth: surface && style
+                ? surface.clientWidth
+                  - Number.parseFloat(style.paddingLeft)
+                  - Number.parseFloat(style.paddingRight)
+                : null,
+              immersiveSurfaceCount: document.querySelectorAll(
+                '.easymde-immersive-visual-editor'
+              ).length,
+              previewHtmlSinkCount: document.querySelectorAll(
+                '[data-easymde-preview-html-sink="1"]'
+              ).length,
+              preCount: previewRoot?.querySelectorAll('pre').length ?? 0,
+              preWidth: pre?.getBoundingClientRect().width ?? null,
+              role: surface?.getAttribute('role') ?? null,
+              selection: selection ? {
+                anchorConnected: anchor?.isConnected ?? false,
+                anchorInsideCode: Boolean(code && anchor && (anchor === code || code.contains(anchor))),
+                anchorName: anchor?.nodeName ?? null,
+                anchorOffset: selection.anchorOffset,
+                anchorParentName: anchor?.parentNode?.nodeName ?? null,
+                collapsed: selection.isCollapsed,
+                codeOffset
+              } : null,
+              sourcePresent: source instanceof HTMLTextAreaElement,
+              sourceSelectionEnd: source instanceof HTMLTextAreaElement
+                ? source.selectionEnd
+                : null,
+              sourceSelectionStart: source instanceof HTMLTextAreaElement
+                ? source.selectionStart
+                : null
+            }
+          };
+        }, body);
+        return {
+          canonical: classifySource(safeEvidence.sourceText),
+          failureCodes: [...new Set(failureCodes)],
+          pageErrorCount: pageErrors.length,
+          visual: safeEvidence.visual
+        };
+      };
+
+      const pastedSource = await readCanonicalSource();
+      const pastedState = await readSafeState();
+      await testInfo.attach(`native-bare-fence-${fenceLabel}-paste-state`, {
+        body: JSON.stringify(pastedState),
+        contentType: 'application/json'
+      });
+      expect(pastedSource).toBe(fence);
+      expect(pastedState.visual.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true
+      });
+      expectCodeBodyFrame(await readCodeBodyState(visualSurface));
+
+      const deleteTargetRangeProbe = await startNativeDeleteTargetRangeProbe(page);
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(120);
+      const sourceAfterEmptyBackspace = await readCanonicalSource();
+      const afterEmptyBackspace = await readSafeState();
+      const initialEmptyDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        await deleteTargetRangeProbe.read()
+      );
+      await page.keyboard.press('ControlOrMeta+z');
+      await page.waitForTimeout(120);
+      const sourceAfterEmptyUndo = await readCanonicalSource();
+      const afterEmptyUndo = await readSafeState();
+      const emptyFrameHistory = {
+        backspaceRemovedFrame: sourceAfterEmptyBackspace !== pastedSource
+          && 0 === afterEmptyBackspace.visual.preCount,
+        undoRestoredExactSource: sourceAfterEmptyUndo === pastedSource,
+        undoRestoredCaret: 1 === afterEmptyUndo.visual.preCount
+          && afterEmptyUndo.visual.selection?.anchorInsideCode === true
+          && afterEmptyUndo.visual.selection?.codeOffset
+            === pastedState.visual.selection.codeOffset
+      };
+      await testInfo.attach(`native-bare-fence-${fenceLabel}-empty-frame-history`, {
+        body: JSON.stringify({
+          afterEmptyBackspace,
+          afterEmptyUndo,
+          emptyFrameHistory,
+          failureCodes: [...new Set(failureCodes)],
+          pageErrorCount: pageErrors.length,
+          nativeDeleteTargetRanges: initialEmptyDeleteTargetRanges,
+          sourceChangedByBackspace: sourceAfterEmptyBackspace !== pastedSource,
+          sourceLengthBeforeBackspace: pastedSource.length
+        }),
+        contentType: 'application/json'
+      });
+      process.stdout.write(`[EasyMDECodeDelete] ${JSON.stringify({
+        fenceLabel,
+        afterEmptyBackspace,
+        afterEmptyUndo,
+        emptyFrameHistory,
+        failureCodes: [...new Set(failureCodes)],
+        nativeDeleteTargetRanges: initialEmptyDeleteTargetRanges,
+        pageErrorCount: pageErrors.length
+      })}\n`);
+      expect(emptyFrameHistory.backspaceRemovedFrame).toBe(true);
+      expect(emptyFrameHistory.undoRestoredExactSource).toBe(true);
+      expect(emptyFrameHistory.undoRestoredCaret).toBe(true);
+
+      const inputTraceKey = '__easymdeNativeBareFenceBodyInput';
+      await visualSurface.evaluate((surface, key) => {
+        const events = [];
+        const readSelection = () => {
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const pre = surface.querySelector('pre');
+          const code = pre?.querySelector(':scope > code') ?? null;
+          let codeOffset = null;
+          if (selection && anchor && code && (anchor === code || code.contains(anchor))) {
+            const range = surface.ownerDocument.createRange();
+            range.selectNodeContents(code);
+            range.setEnd(anchor, selection.anchorOffset);
+            codeOffset = range.toString().length;
+          }
+          return {
+            anchorConnected: anchor?.isConnected ?? false,
+            anchorInsideCode: Boolean(code && anchor && (anchor === code || code.contains(anchor))),
+            anchorName: anchor?.nodeName ?? null,
+            anchorOffset: selection?.anchorOffset ?? null,
+            anchorParentName: anchor?.parentNode?.nodeName ?? null,
+            codeOffset,
+            collapsed: selection?.isCollapsed ?? null,
+            codeTextLength: code?.textContent?.length ?? null,
+            preBlockId: pre?.getAttribute('data-easymde-visual-block-id') ?? null
+          };
+        };
+        const record = (event) => {
+          if (!['beforeinput', 'input'].includes(event.type)) return;
+          if ('insertText' !== event.inputType) return;
+          events.push({
+            cancelable: event.cancelable,
+            dataLength: 'string' === typeof event.data ? event.data.length : null,
+            defaultPrevented: event.defaultPrevented,
+            inputType: event.inputType,
+            isComposing: event.isComposing,
+            phase: event.type,
+            selection: 'beforeinput' === event.type ? readSelection() : null
+          });
+        };
+        for (const type of ['beforeinput', 'input']) {
+          surface.addEventListener(type, record, true);
+        }
+        window[key] = {
+          dispose: () => {
+            for (const type of ['beforeinput', 'input']) {
+              surface.removeEventListener(type, record, true);
+            }
+          },
+          events
+        };
+      }, inputTraceKey);
+      await page.keyboard.type(body, { delay: 0 });
+      const immediateInputState = await readSafeState();
+      const immediateInputEvents = await page.evaluate((key) => (
+        window[key]?.events ?? []
+      ), inputTraceKey);
+      await testInfo.attach(`native-bare-fence-${fenceLabel}-immediate-input`, {
+        body: JSON.stringify({ inputEvents: immediateInputEvents, state: immediateInputState }),
+        contentType: 'application/json'
+      });
+      let sourceAfterInput = '';
+      let inputState;
+      try {
+        await expect.poll(async () => {
+          sourceAfterInput = await readCanonicalSource() ?? '';
+          const codeContainsInput = await page.evaluate((value) => (
+            Array.from(document.querySelectorAll(
+              '.easymde-pane-preview pre > code, .easymde-immersive-preview-canvas pre > code'
+            )).some((code) => (code.textContent ?? '').includes(value))
+          ), body);
+          return sourceAfterInput.includes(body) && codeContainsInput;
+        }, {
+          timeout: 15_000,
+          message: 'native pasted fence body text should persist in source and visual code'
+        }).toBe(true);
+      } finally {
+        const inputTrace = await page.evaluate((key) => {
+          const trace = window[key];
+          if (!trace) return { present: false, events: [] };
+          trace.dispose();
+          delete window[key];
+          return { present: true, events: trace.events };
+        }, inputTraceKey);
+        inputState = await readSafeState();
+        await testInfo.attach(`native-bare-fence-${fenceLabel}-after-input`, {
+          body: JSON.stringify({ inputTrace, state: inputState }),
+          contentType: 'application/json'
+        });
+      }
+      await expect.poll(() => page.evaluate(() => {
+        const surface = document.querySelector('.easymde-immersive-visual-editor');
+        return surface instanceof HTMLElement
+          && 'true' === surface.getAttribute('contenteditable')
+          && 'false' === surface.getAttribute('aria-busy');
+      }), { timeout: 15_000, message: 'immersive code surface should be ready after body input' })
+        .toBe(true);
+      const typedState = await readCodeBodyState(visualSurface);
+      expect(sourceAfterInput).not.toBe(pastedSource);
+      expect(sourceAfterInput).toContain(body);
+      expect(typedState.codeText).toContain(body);
+      expect(typedState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true
+      });
+      expectCodeBodyFrame(typedState);
+
+      const hideOutlineLabel = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive.hideOutline
+      );
+      await page.getByRole('button', { name: hideOutlineLabel }).first().click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await visualSurface.focus();
+      await waitForBrowserPaint(page);
+      const mobileState = await readCodeBodyState(visualSurface);
+      expect(mobileState.codeText).toContain(body);
+      expect(mobileState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true
+      });
+      expectCodeBodyFrame(mobileState);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await visualSurface.focus();
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(
+        () => readCanonicalSource(),
+        { timeout: 15_000, message: 'Undo should restore the bare pasted fence' }
+      ).toBe(pastedSource);
+      const undoneState = await readCodeBodyState(visualSurface);
+      expect(undoneState.codeText).not.toContain(body);
+      expectCodeBodyFrame(undoneState);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(
+        () => readCanonicalSource(),
+        { timeout: 15_000, message: 'Redo should restore the pasted fence body input' }
+      ).toBe(sourceAfterInput);
+      const redoneState = await readCodeBodyState(visualSurface);
+      expect(redoneState.codeText).toContain(body);
+      expect(redoneState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true
+      });
+      expectCodeBodyFrame(redoneState);
+
+      const bodyDeleteRangeStart = (await deleteTargetRangeProbe.read()).length;
+      const bodyDeletionStates = [];
+      for (let index = 0; index < body.length; index += 1) {
+        await page.keyboard.press('Backspace');
+        await waitForBrowserPaint(page);
+        bodyDeletionStates.push(await readSafeState());
+      }
+      const bodyDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(bodyDeleteRangeStart)
+      );
+      await expect.poll(async () => {
+        const state = await readSafeState();
+        return !state.canonical.bodySequencePresent
+          && !state.visual.codeBodyContainsInput;
+      }, { timeout: 15_000 }).toBe(true);
+      const emptyBodyCodeState = await readCodeBodyState(visualSurface);
+      expect(emptyBodyCodeState.codeText.trim()).toBe('');
+      const sourceWithEmptyBody = await readCanonicalSource();
+
+      const emptyBoundaryDeleteRangeStart = (await deleteTargetRangeProbe.read()).length;
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(120);
+      const sourceAfterBlockBackspace = await readCanonicalSource();
+      const afterBlockBackspace = await readSafeState();
+      const emptyBoundaryDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(emptyBoundaryDeleteRangeStart)
+      );
+      await deleteTargetRangeProbe.dispose();
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await page.waitForTimeout(120);
+      const sourceAfterBlockUndo = await readCanonicalSource();
+      const afterBlockUndo = await readSafeState();
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.waitForTimeout(120);
+      const sourceAfterBlockRedo = await readCanonicalSource();
+      const afterBlockRedo = await readSafeState();
+      const deletionEvidence = {
+        afterBlockBackspace: {
+          canonical: afterBlockBackspace.canonical,
+          visual: afterBlockBackspace.visual
+        },
+        afterBlockRedo: {
+          canonical: afterBlockRedo.canonical,
+          visual: afterBlockRedo.visual
+        },
+        afterBlockUndo: {
+          canonical: afterBlockUndo.canonical,
+          visual: afterBlockUndo.visual
+        },
+        bodyDeletionStates: bodyDeletionStates.map(({ canonical, visual }) => ({
+          bodyLineIndexes: canonical.bodyLineIndexes,
+          codeBodyContainsInput: visual.codeBodyContainsInput,
+          codeBodyLength: visual.codeBodyLength,
+          codeBodyEndsWithLineFeed: visual.codeBodyEndsWithLineFeed,
+          preCount: visual.preCount,
+          sourceLength: canonical.sourceLength
+        })),
+        emptyBodyCodeTextLength: emptyBodyCodeState.codeText.length,
+        emptyBodyCaretOffset: emptyBodyCodeState.selection?.codeOffset ?? null,
+        frameUndoRestoredEmptyCode: sourceAfterBlockUndo === sourceWithEmptyBody
+          && afterBlockUndo.visual.preCount === 1
+          && !afterBlockUndo.visual.codeBodyContainsInput,
+        frameRedoRestoredRemoval: sourceAfterBlockRedo === sourceAfterBlockBackspace
+          && afterBlockRedo.visual.preCount === 0,
+        nativeDeleteTargetRanges: {
+          bodyCharacters: bodyDeleteTargetRanges,
+          emptyBoundary: emptyBoundaryDeleteTargetRanges,
+          initialEmptyBoundary: initialEmptyDeleteTargetRanges
+        },
+        sourceChangedByBlockBackspace: sourceAfterBlockBackspace !== sourceWithEmptyBody
+      };
+      await testInfo.attach(`native-bare-fence-${fenceLabel}-block-delete-history`, {
+        body: JSON.stringify(deletionEvidence),
+        contentType: 'application/json'
+      });
+      process.stdout.write(`[EasyMDECodeDelete] ${JSON.stringify({
+        fenceLabel,
+        ...deletionEvidence
+      })}\n`);
+
+      expect(afterBlockBackspace.visual.preCount).toBe(0);
+      expect(deletionEvidence.sourceChangedByBlockBackspace).toBe(true);
+      expect(deletionEvidence.frameUndoRestoredEmptyCode).toBe(true);
+      expect(deletionEvidence.frameRedoRestoredRemoval).toBe(true);
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
+    test(`deletes an empty typed ${fenceLabel} code block with Undo and Redo`, async ({ page }, testInfo) => {
+      const failureCodes = [];
+      const pageErrors = [];
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const sourceBeforeFence = await editor.source.inputValue();
+      await editor.visualEditor.focus();
+      await editor.visualEditor.press('ControlOrMeta+End');
+      await page.keyboard.type(fence);
+      await page.keyboard.press('Enter');
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      const sourceWithFence = await editor.source.inputValue();
+      expect(sourceWithFence.split(/\r?\n/u).filter((line) => line === fence))
+        .toHaveLength(2);
+
+      const readSafeState = async () => {
+        const preCount = await editor.visualEditor.locator('pre').count();
+        const codeCount = await code.count();
+        if (1 !== preCount || 1 !== codeCount) {
+          return {
+            bodyIsEmpty: null,
+            caretInsideCode: false,
+            caretOffset: null,
+            codeCount,
+            codeTextEndsWithLineFeed: null,
+            codeTextLength: null,
+            preCount
+          };
+        }
+        const state = await readCodeBodyState(editor.visualEditor);
+        return {
+          bodyIsEmpty: '' === state.codeText.trim(),
+          caretInsideCode: state.selection?.anchorInsideCode ?? false,
+          caretOffset: state.selection?.codeOffset ?? null,
+          codeCount,
+          codeTextEndsWithLineFeed: state.codeText.endsWith('\n'),
+          codeTextLength: state.codeText.length,
+          preCount
+        };
+      };
+
+      const initialEmptyState = await readSafeState();
+      const deleteTargetRangeProbe = await startNativeDeleteTargetRangeProbe(page);
+      const initialDeleteRangeStart = (await deleteTargetRangeProbe.read()).length;
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(120);
+      const sourceAfterInitialBackspace = await editor.source.inputValue();
+      const afterInitialBackspace = await readSafeState();
+      const initialEmptyDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(initialDeleteRangeStart)
+      );
+      await page.keyboard.press('ControlOrMeta+z');
+      await page.waitForTimeout(120);
+      const sourceAfterInitialUndo = await editor.source.inputValue();
+      const afterInitialUndo = await readSafeState();
+      const initialEmptyHistory = {
+        backspaceRemovedFrame: sourceAfterInitialBackspace !== sourceWithFence
+          && afterInitialBackspace.preCount === 0,
+        undoRestoredSource: sourceAfterInitialUndo === sourceWithFence,
+        undoRestoredVisibleCaret: afterInitialUndo.preCount === 1
+          && afterInitialUndo.caretInsideCode
+          && afterInitialUndo.caretOffset === initialEmptyState.caretOffset
+      };
+
+      const bodyInputTraceKey = '__easymdeTypedFenceAfterUndoInput';
+      await editor.visualEditor.evaluate((surface, key, bareSource) => {
+        const events = [];
+        const snapshot = () => {
+          const pre = surface.querySelector('pre');
+          const code = pre?.querySelector(':scope > code') ?? null;
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const source = document.querySelector('#easymde-source');
+          return {
+            code: {
+              childNodes: Array.from(code?.childNodes ?? []).map((node) => ({
+                nodeName: node.nodeName,
+                textLength: node instanceof Text ? node.data.length : null
+              })),
+              present: Boolean(code),
+              textLength: code?.textContent?.length ?? null
+            },
+            pre: {
+              childNodeNames: Array.from(pre?.childNodes ?? [], (node) => node.nodeName),
+              present: Boolean(pre)
+            },
+            selection: selection ? {
+              anchorConnected: anchor?.isConnected ?? false,
+              anchorInsideCode: Boolean(
+                code && anchor && (anchor === code || code.contains(anchor))
+              ),
+              anchorName: anchor?.nodeName ?? null,
+              anchorOffset: selection.anchorOffset,
+              anchorParentName: anchor?.parentNode?.nodeName ?? null,
+              collapsed: selection.isCollapsed
+            } : null,
+            source: source instanceof HTMLTextAreaElement ? {
+              containsBody: source.value.includes('A'),
+              length: source.value.length,
+              matchesBareFence: source.value === bareSource
+            } : null
+          };
+        };
+        const record = (event, stage) => {
+          const target = event.target instanceof Element ? event.target : null;
+          if (!target || !surface.contains(target)) return;
+          if (
+            'keydown' !== event.type
+            && (!['beforeinput', 'input'].includes(event.type)
+              || 'insertText' !== event.inputType)
+          ) return;
+          if ('keydown' === event.type && 'A' !== event.key) return;
+          const ranges = 'function' === typeof event.getTargetRanges
+            ? Array.from(event.getTargetRanges())
+            : null;
+          events.push({
+            cancelable: event.cancelable,
+            dataLength: 'string' === typeof event.data ? event.data.length : null,
+            defaultPrevented: event.defaultPrevented,
+            inputType: 'string' === typeof event.inputType ? event.inputType : null,
+            keyExpected: 'keydown' === event.type ? 'A' === event.key : null,
+            phase: event.type + '-' + stage,
+            targetRangeCount: ranges?.length ?? null,
+            targetRangesCollapsed: ranges?.length
+              ? ranges.every((range) => range.collapsed)
+              : null,
+            state: snapshot()
+          });
+        };
+        const capture = (event) => record(event, 'capture');
+        const bubble = (event) => record(event, 'bubble');
+        for (const type of ['keydown', 'beforeinput', 'input']) {
+          document.addEventListener(type, capture, true);
+          document.addEventListener(type, bubble);
+        }
+        window[key] = {
+          dispose: () => {
+            for (const type of ['keydown', 'beforeinput', 'input']) {
+              document.removeEventListener(type, capture, true);
+              document.removeEventListener(type, bubble);
+            }
+          },
+          events,
+          snapshot
+        };
+      }, bodyInputTraceKey, sourceWithFence);
+      await page.keyboard.type('A', { delay: 0 });
+      const sourceAfterInputImmediately = await editor.source.inputValue();
+      const stateAfterInputImmediately = await readSafeState();
+      const failureCodesAfterInputImmediately = [...new Set(failureCodes)];
+      const pageErrorCountAfterInputImmediately = pageErrors.length;
+      await page.waitForTimeout(80);
+      const sourceAfterInput80Ms = await editor.source.inputValue();
+      const stateAfterInput80Ms = await readSafeState();
+      const failureCodesAfterInput80Ms = [...new Set(failureCodes)];
+      const pageErrorCountAfterInput80Ms = pageErrors.length;
+      const immediateInputTrace = await editor.visualEditor.evaluate((surface, key) => {
+        const trace = window[key];
+        if (!trace) throw new Error('typed-fence-after-undo-input-trace-missing');
+        return { events: trace.events, final: trace.snapshot() };
+      }, bodyInputTraceKey);
+      process.stdout.write(`[EasyMDETypedCodeInputImmediate] ${JSON.stringify({
+        afterEnterLength: sourceWithFence.length,
+        afterInitialBackspaceLength: sourceAfterInitialBackspace.length,
+        afterUndoLength: sourceAfterInitialUndo.length,
+        afterAImmediately: {
+          containsBody: sourceAfterInputImmediately.includes('A'),
+          failureCodes: failureCodesAfterInputImmediately,
+          length: sourceAfterInputImmediately.length,
+          pageErrorCount: pageErrorCountAfterInputImmediately,
+          state: stateAfterInputImmediately
+        },
+        afterA80Ms: {
+          containsBody: sourceAfterInput80Ms.includes('A'),
+          failureCodes: failureCodesAfterInput80Ms,
+          length: sourceAfterInput80Ms.length,
+          pageErrorCount: pageErrorCountAfterInput80Ms,
+          state: stateAfterInput80Ms
+        },
+        beforeFenceLength: sourceBeforeFence.length,
+        inputTrace: immediateInputTrace
+      })}\n`);
+      let bodyInputCommitted = false;
+      try {
+        await expect.poll(() => editor.source.inputValue().then((value) => value.includes('A')))
+          .toBe(true);
+        bodyInputCommitted = true;
+      } catch {
+        bodyInputCommitted = false;
+      } finally {
+        const bodyInputTrace = await editor.visualEditor.evaluate((surface, key) => {
+          const trace = window[key];
+          if (!trace) throw new Error('typed-fence-after-undo-input-trace-missing');
+          trace.dispose();
+          const result = { events: trace.events, final: trace.snapshot() };
+          delete window[key];
+          return result;
+        }, bodyInputTraceKey);
+        const bodyInputState = await readSafeState();
+        const bodyInputEvidence = {
+          afterUndo: afterInitialUndo,
+          bodyInputCommitted,
+          failureCodes: [...new Set(failureCodes)],
+          inputTrace: bodyInputTrace,
+          pageErrorCount: pageErrors.length,
+          sourceStages: {
+            afterAImmediately: {
+              containsBody: sourceAfterInputImmediately.includes('A'),
+              failureCodes: failureCodesAfterInputImmediately,
+              length: sourceAfterInputImmediately.length,
+              pageErrorCount: pageErrorCountAfterInputImmediately,
+              state: stateAfterInputImmediately
+            },
+            afterA80Ms: {
+              containsBody: sourceAfterInput80Ms.includes('A'),
+              failureCodes: failureCodesAfterInput80Ms,
+              length: sourceAfterInput80Ms.length,
+              pageErrorCount: pageErrorCountAfterInput80Ms,
+              state: stateAfterInput80Ms
+            },
+            afterEnterLength: sourceWithFence.length,
+            afterInitialBackspaceLength: sourceAfterInitialBackspace.length,
+            afterUndoLength: sourceAfterInitialUndo.length,
+            beforeFenceLength: sourceBeforeFence.length
+          },
+          stateAfterInput: bodyInputState
+        };
+        await testInfo.attach(`typed-empty-code-delete-${fenceLabel}-after-undo-input`, {
+          body: JSON.stringify(bodyInputEvidence),
+          contentType: 'application/json'
+        });
+        process.stdout.write(`[EasyMDETypedCodeInput] ${JSON.stringify(bodyInputEvidence)}\n`);
+      }
+      expect(bodyInputCommitted).toBe(true);
+      const sourceWithBody = await editor.source.inputValue();
+      const bodyDeleteRangeStart = (await deleteTargetRangeProbe.read()).length;
+      await page.keyboard.press('Backspace');
+      await waitForBrowserPaint(page);
+      await expect.poll(() => editor.source.inputValue()).not.toContain('A');
+      const sourceWithEmptyBody = await editor.source.inputValue();
+      const afterBodyBackspace = await readSafeState();
+      const bodyDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(bodyDeleteRangeStart)
+      );
+
+      const emptyBoundaryDeleteRangeStart = (await deleteTargetRangeProbe.read()).length;
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(120);
+      const sourceAfterBlockBackspace = await editor.source.inputValue();
+      const afterBlockBackspace = await readSafeState();
+      const emptyBoundaryDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(emptyBoundaryDeleteRangeStart)
+      );
+      await deleteTargetRangeProbe.dispose();
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await page.waitForTimeout(120);
+      const sourceAfterUndo = await editor.source.inputValue();
+      const afterUndo = await readSafeState();
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await page.waitForTimeout(120);
+      const sourceAfterRedo = await editor.source.inputValue();
+      const afterRedo = await readSafeState();
+      const evidence = {
+        afterBodyBackspace,
+        afterBodyInput: {
+          sourceLength: sourceWithBody.length,
+          sourceHasBody: sourceWithBody.includes('A')
+        },
+        afterInitialBackspace,
+        afterInitialUndo,
+        afterBlockBackspace,
+        afterRedo,
+        afterUndo,
+        failureCodes: [...new Set(failureCodes)],
+        initialEmptyHistory,
+        history: {
+          redoRestoresBlockRemoval: sourceAfterRedo === sourceAfterBlockBackspace
+            && afterRedo.preCount === afterBlockBackspace.preCount,
+          undoRestoresEmptyBlock: sourceAfterUndo === sourceWithEmptyBody
+            && 1 === afterUndo.preCount
+            && true === afterUndo.bodyIsEmpty
+        },
+        nativeDeleteTargetRanges: {
+          bodyCharacter: bodyDeleteTargetRanges,
+          emptyBoundary: emptyBoundaryDeleteTargetRanges,
+          initialEmptyBoundary: initialEmptyDeleteTargetRanges
+        },
+        pageErrorCount: pageErrors.length,
+        sourceChangedByBlockBackspace: sourceAfterBlockBackspace !== sourceWithEmptyBody,
+        sourceWithFenceLength: sourceWithFence.length
+      };
+      await testInfo.attach(`typed-empty-code-delete-${fenceLabel}`, {
+        body: JSON.stringify(evidence),
+        contentType: 'application/json'
+      });
+      process.stdout.write(`[EasyMDECodeDelete] ${JSON.stringify(evidence)}\n`);
+
+      expect(evidence.afterBodyInput.sourceHasBody).toBe(true);
+      expect(initialEmptyHistory.backspaceRemovedFrame).toBe(true);
+      expect(initialEmptyHistory.undoRestoredSource).toBe(true);
+      expect(initialEmptyHistory.undoRestoredVisibleCaret).toBe(true);
+      expect(afterBodyBackspace.preCount).toBe(1);
+      expect(afterBodyBackspace.bodyIsEmpty).toBe(true);
+      expect(afterBlockBackspace.preCount).toBe(0);
+      expect(evidence.sourceChangedByBlockBackspace).toBe(true);
+      expect(evidence.history.undoRestoresEmptyBlock).toBe(true);
+      expect(evidence.history.redoRestoresBlockRemoval).toBe(true);
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+
+  for (const fence of ['~~~', String.fromCharCode(96).repeat(3)]) {
+    const fenceName = '~~~' === fence ? 'tilde' : 'backtick';
+    test('deletes last-line text and three blank lines from a bare ' + fenceName + ' EOF fence while holding Backspace', async ({ page }, testInfo) => {
+      const markdown = fence + '\n\n\n\nA';
+      const failureCodes = [];
+      const pageErrors = [];
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const source = page.locator('#easymde-source');
+      const sourceBeforeFence = await source.inputValue();
+      await fillMarkdownAndWaitForPreview(page, markdown, 'A');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      const codeText = await code.textContent();
+      expect(codeText).toBe('\n\n\nA\n');
+      await clickCodeLine(page, code, 3);
+      await page.keyboard.press('End');
+      const caret = await readCodeBodyState(editor.visualEditor);
+      expect(caret.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: codeText.length - 1
+      });
+      const backspaceCount = caret.selection.codeOffset + 1;
+      const probe = await startContinuousBackspaceProbe(
+        editor.visualEditor,
+        fence,
+        backspaceCount
+      );
+      const { immediate, trace } = await completeHeldBackspaceSequence(
+        page,
+        probe,
+        backspaceCount
+      );
+      const finalSource = await source.inputValue();
+      await testInfo.attach('three-blank-lines-held-backspace-' + fenceName, {
+        body: JSON.stringify({ caret: caret.selection, immediate, trace }),
+        contentType: 'application/json'
+      });
+      expectHeldBackspaceCompletion({
+        backspaceCount,
+        failureCodes,
+        finalSource,
+        immediate,
+        pageErrors,
+        sourceBeforeFence,
+        trace
+      });
+    });
+  }
+
+  for (const fence of ['~~~', String.fromCharCode(96).repeat(3)]) {
+    const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
+    test('deletes a Windowed open EOF ' + fenceLabel + ' fence with native Backspace and history', async ({ page }, testInfo) => {
+      const blockCountBeforeTarget = 220;
+      const previousFenceBlockIndex = 40;
+      const targetBlockIndex = blockCountBeforeTarget;
+      const previousFenceBlockId = 'b' + previousFenceBlockIndex;
+      const targetBlockId = 'b' + targetBlockIndex;
+      const blocks = Array.from(
+        { length: blockCountBeforeTarget },
+        (_, index) => 'Windowed deletion paragraph ' + (index + 1) + '.'
+      );
+      const previousFenceSource = fence
+        + 'js\nconst previousFence = 1;\n'
+        + fence;
+      const targetFenceSource = fence + '\nA\n';
+      blocks[previousFenceBlockIndex] = previousFenceSource;
+      const prefix = blocks.join('\n\n');
+      const initialMarkdown = prefix + '\n\n' + targetFenceSource;
+      const emptyBodyMarkdown = prefix + '\n\n' + fence + '\n\n';
+      const targetFenceStart = initialMarkdown.lastIndexOf(fence + '\nA\n');
+      if (targetFenceStart < 0) throw new Error('windowed-code-delete-fence-source-missing');
+      const markdownAfterFrameRemoval = emptyBodyMarkdown.slice(0, targetFenceStart);
+      const bodySourceStart = targetFenceStart + fence.length + 1;
+      const failureCodes = [];
+      const pageErrors = [];
+      const frameRemovedPreviewResponses = [];
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      const initialPreviewResponse = page.waitForResponse((response) => {
+        const request = response.request();
+        if (
+          'POST' !== request.method()
+          || !new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+          || !response.ok()
+        ) return false;
+        try {
+          return request.postDataJSON()?.markdown === initialMarkdown;
+        } catch {
+          return false;
+        }
+      });
+      void initialPreviewResponse.catch(() => undefined);
+      await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Windowed deletion paragraph 1.');
+      const previewPayload = await (await initialPreviewResponse).json();
+      const sourceLines = initialMarkdown.split(/\r?\n/u);
+      const readMappedSourceBlock = (id, markdownBlock) => {
+        const sourceStart = initialMarkdown.indexOf(markdownBlock);
+        if (sourceStart < 0) throw new Error('windowed-code-delete-source-map-block-missing');
+        const expectedStartLine = initialMarkdown.slice(0, sourceStart)
+          .split(/\r?\n/u).length - 1;
+        const expectedSourceVariants = [{
+          endLine: expectedStartLine + markdownBlock.split(/\r?\n/u).length,
+          source: markdownBlock
+        }];
+        if (markdownBlock.endsWith('\n')) {
+          const withoutTerminalLineFeed = markdownBlock.slice(0, -1);
+          expectedSourceVariants.push({
+            endLine: expectedStartLine + withoutTerminalLineFeed.split(/\r?\n/u).length,
+            source: withoutTerminalLineFeed
+          });
+        }
+        const mapped = previewPayload.editMap?.blocks?.find((block) => block.id === id);
+        const hasValidRange = mapped
+          && Number.isInteger(mapped.startLine)
+          && Number.isInteger(mapped.endLine)
+          && mapped.startLine <= mapped.endLine;
+        const mappedSource = hasValidRange
+          ? sourceLines.slice(mapped.startLine, mapped.endLine).join('\n')
+          : null;
+        const mappedRangeMatchesSource = hasValidRange && expectedSourceVariants.some((variant) => (
+          mapped.startLine === expectedStartLine
+          && mapped.endLine === variant.endLine
+          && mappedSource === variant.source
+        ));
+        return {
+          editable: mapped?.editable ?? null,
+          endLine: mapped?.endLine ?? null,
+          id: mapped?.id ?? null,
+          lineCount: hasValidRange ? mapped.endLine - mapped.startLine : null,
+          matchesExactSourceBlock: hasValidRange && mappedSource === markdownBlock,
+          matchesExpectedRange: mappedRangeMatchesSource,
+          matchesOneTerminalLineFeedOmitted: markdownBlock.endsWith('\n')
+            && hasValidRange
+            && mappedSource === markdownBlock.slice(0, -1),
+          startLine: mapped?.startLine ?? null
+        };
+      };
+      const sourceMapEvidence = {
+        blockCount: previewPayload.editMap?.blocks?.length ?? null,
+        coordinate: previewPayload.editMap?.coordinate ?? null,
+        previousFence: readMappedSourceBlock(previousFenceBlockId, previousFenceSource),
+        targetFence: readMappedSourceBlock(targetBlockId, targetFenceSource),
+        version: previewPayload.editMap?.version ?? null
+      };
+      await testInfo.attach('windowed-code-delete-' + fenceLabel + '-source-map', {
+        body: JSON.stringify(sourceMapEvidence),
+        contentType: 'application/json'
+      });
+      expect(sourceMapEvidence).toMatchObject({
+        blockCount: blockCountBeforeTarget + 1,
+        coordinate: 'line',
+        previousFence: {
+          editable: true,
+          id: previousFenceBlockId,
+          matchesExactSourceBlock: true,
+          matchesExpectedRange: true
+        },
+        targetFence: {
+          editable: true,
+          id: targetBlockId,
+          matchesExpectedRange: true
+        },
+        version: 1
+      });
+      expect(
+        sourceMapEvidence.targetFence.matchesExactSourceBlock
+          || sourceMapEvidence.targetFence.matchesOneTerminalLineFeedOmitted
+      ).toBe(true);
+      page.on('response', (response) => {
+        const request = response.request();
+        if (
+          !response.ok()
+          || 'POST' !== request.method()
+          || !new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+        ) return;
+        if (request.postDataJSON()?.markdown === markdownAfterFrameRemoval) {
+          frameRemovedPreviewResponses.push(response);
+        }
+      });
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const surface = page.locator('.easymde-immersive-visual-editor');
+      const canvas = page.locator('.easymde-immersive-preview-canvas');
+      const targetBlock = surface.locator(
+        '[data-easymde-visual-block-id="' + targetBlockId + '"]'
+      );
+      const previousFenceBlock = surface.locator(
+        '[data-easymde-visual-block-id="' + previousFenceBlockId + '"]'
+      );
+      const readWindow = async () => canvas.evaluate((element, expected) => {
+        if (!(element instanceof HTMLElement)) {
+          throw new Error('windowed-code-delete-canvas-unavailable');
+        }
+        const ids = Array.from(element.querySelectorAll('[data-easymde-visual-block-id]'))
+          .map((block) => block.getAttribute('data-easymde-visual-block-id'))
+          .filter((id) => null !== id);
+        const indexes = ids.flatMap((id) => {
+          const match = /^b(\d+)$/u.exec(id);
+          return match ? [Number(match[1])] : [];
+        });
+        const mountedRanges = [];
+        for (const index of indexes) {
+          const previous = mountedRanges.at(-1);
+          if (previous && previous.end + 1 === index) previous.end = index;
+          else mountedRanges.push({ end: index, start: index });
+        }
+        const spacers = Array.from(element.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        )).map((spacer) => ({
+          end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+          height: spacer.getBoundingClientRect().height,
+          start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+        }));
+        return {
+          mountedBlockCount: ids.length,
+          mountedIds: ids,
+          mountedRanges,
+          previousFenceInHiddenRange: spacers.some(({ end, start }) => (
+            start <= expected.previousIndex && expected.previousIndex < end
+          )),
+          previousFenceMounted: ids.includes(expected.previousId),
+          spacerRanges: spacers,
+          targetBlockMounted: ids.includes(expected.targetId)
+        };
+      }, {
+        previousId: previousFenceBlockId,
+        previousIndex: previousFenceBlockIndex,
+        targetId: targetBlockId
+      });
+      const readNativeCaret = () => editor.source.evaluate((field) => ({
+        end: field.selectionEnd,
+        start: field.selectionStart
+      }));
+      const expectSource = async (expected) => {
+        await expect.poll(
+          () => editor.source.inputValue().then((value) => value === expected),
+          { timeout: 30_000 }
+        ).toBe(true);
+      };
+      const expectHealthy = async () => {
+        await expect(surface).toHaveAttribute('contenteditable', 'true');
+        await expect(surface).toHaveAttribute('aria-busy', 'false');
+        await expect(page.locator(
+          '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+        )).not.toHaveAttribute('data-easymde-preview-error', '1');
+        expect(failureCodes).toEqual([]);
+        expect(pageErrors).toEqual([]);
+      };
+      const expectCodeState = async (
+        expectedSource,
+        expectedBody,
+        codeOffset,
+        sourceOffset,
+        originalFrame
+      ) => {
+        await expectSource(expectedSource);
+        await expect(targetBlock).toBeAttached({ timeout: 30_000 });
+        await expect.poll(async () => {
+          if (1 !== await targetBlock.locator(':scope > code').count()) return false;
+          return (await readCodeBodyState(surface)).codeText === expectedBody;
+        }, { timeout: 30_000 }).toBe(true);
+        await waitForBrowserPaint(page);
+        await expectHealthy();
+        const state = await readCodeBodyState(surface);
+        expect(state.codeText).toBe(expectedBody);
+        expectCodeBodyCaret(state, codeOffset);
+        expectCodeBodyFrame(state);
+        if (originalFrame) {
+          expect(Math.abs(state.frame.preWidth - originalFrame.preWidth)).toBeLessThanOrEqual(1);
+          expect(Math.abs(state.frame.codeWidth - originalFrame.codeWidth)).toBeLessThanOrEqual(1);
+          expect(Math.abs(state.frame.contentWidth - originalFrame.contentWidth)).toBeLessThanOrEqual(1);
+        }
+        const nativeCaret = await readNativeCaret();
+        expect(nativeCaret.start).toBe(nativeCaret.end);
+        if (Number.isInteger(sourceOffset)) {
+          expect(nativeCaret).toEqual({ end: sourceOffset, start: sourceOffset });
+        }
+        const window = await readWindow();
+        expectWindowedCoverage(window, blockCountBeforeTarget + 1, targetBlockIndex);
+        expect(window.previousFenceMounted).toBe(false);
+        expect(window.previousFenceInHiddenRange).toBe(true);
+        return state;
+      };
+      const readVisualCaret = () => surface.evaluate((root) => {
+        const selection = root.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement ?? null;
+        return {
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorAtTextEnd: anchor instanceof Element
+            ? anchor.childNodes.length > 0
+              && selection?.anchorOffset === anchor.childNodes.length
+              && anchor.lastChild instanceof Text
+            : anchor instanceof Text && selection?.anchorOffset === anchor.data.length,
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          collapsed: selection?.isCollapsed ?? false,
+          direction: selection?.isCollapsed ? 'none' : null,
+          focusConnected: focus?.isConnected ?? false,
+          focusName: focus?.nodeName ?? null,
+          focusOffset: selection?.focusOffset ?? null,
+          insideSurface: Boolean(anchor && root.contains(anchor)),
+          closestBlockId: anchorElement?.closest(
+            '[data-easymde-visual-block-id]'
+          )?.getAttribute('data-easymde-visual-block-id') ?? null
+        };
+      });
+      const readRemovedState = async (expectedSource, totalBlockCount, targetIndex) => {
+        await expectSource(expectedSource);
+        await expect(surface.locator('pre')).toHaveCount(0);
+        const caret = await readVisualCaret();
+        expect(caret).toMatchObject({
+          anchorConnected: true,
+          collapsed: true,
+          insideSurface: true
+        });
+        const nativeCaret = await readNativeCaret();
+        const sourceSelectionDirection = await editor.source.evaluate((field) => (
+          field.selectionDirection
+        ));
+        const actualSource = await editor.source.inputValue();
+        const sourceState = {
+          length: actualSource.length,
+          matchesExpected: actualSource === expectedSource,
+          selectionAtEnd: nativeCaret.start === actualSource.length
+            && nativeCaret.end === actualSource.length
+        };
+        const window = await readWindow();
+        const removalEvidence = {
+          failureCodes: [...new Set(failureCodes)],
+          nativeCaret,
+          pageErrorCount: pageErrors.length,
+          sourceSelectionDirection,
+          source: sourceState,
+          sourceMap: {
+            previousFence: sourceMapEvidence.previousFence,
+            targetFence: sourceMapEvidence.targetFence
+          },
+          visualCaret: caret,
+          window
+        };
+        if (failureCodes.includes('visual-editor-window-history-selection-not-mounted')) {
+          await testInfo.attach('windowed-code-delete-' + fenceLabel + '-history-selection-failure', {
+            body: JSON.stringify(removalEvidence),
+            contentType: 'application/json'
+          });
+          process.stdout.write(`[EasyMDEWindowedHistoryFailure] ${JSON.stringify(removalEvidence)}\n`);
+        }
+        expect(nativeCaret.start).toBe(nativeCaret.end);
+        expect(nativeCaret).toEqual({
+          end: actualSource.length,
+          start: actualSource.length
+        });
+        expect(sourceState.selectionAtEnd).toBe(true);
+        expectWindowedCoverage(window, totalBlockCount, targetIndex);
+        expect(window.previousFenceMounted).toBe(false);
+        expect(window.previousFenceInHiddenRange).toBe(true);
+        await expectHealthy();
+        return { caret, nativeCaret, window };
+      };
+
+      await canvas.evaluate((element) => {
+        element.scrollTop = 0;
+        element.dispatchEvent(new Event('scroll'));
+      });
+      await waitForBrowserPaint(page);
+      await expect(previousFenceBlock).toBeAttached({ timeout: 30_000 });
+      const previousCode = previousFenceBlock.locator(':scope > code');
+      await expect(previousCode).toHaveCount(1);
+      expect(await previousCode.evaluate((code) => (
+        code.textContent?.includes('const previousFence = 1;') ?? false
+      ))).toBe(true);
+      await expect(targetBlock).not.toBeAttached();
+      const topWindow = await readWindow();
+      expectWindowedCoverage(topWindow, blockCountBeforeTarget + 1, previousFenceBlockIndex);
+      expect(topWindow.previousFenceMounted).toBe(true);
+
+      await canvas.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.dispatchEvent(new Event('scroll'));
+      });
+      await expect(targetBlock).toBeAttached({ timeout: 30_000 });
+      await targetBlock.scrollIntoViewIfNeeded();
+      await waitForBrowserPaint(page);
+      await expect(previousFenceBlock).not.toBeAttached({ timeout: 30_000 });
+      const initialCaret = await surface.evaluate((root, blockId) => {
+        const code = root.querySelector(
+          '[data-easymde-visual-block-id="' + blockId + '"] > code'
+        );
+        if (!(code instanceof HTMLElement)) {
+          throw new Error('windowed-code-delete-target-unavailable');
+        }
+        const walker = root.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        let text = walker.nextNode();
+        while (text instanceof Text && !text.data.includes('A')) text = walker.nextNode();
+        if (!(text instanceof Text)) throw new Error('windowed-code-delete-body-text-unavailable');
+        const selection = root.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('windowed-code-delete-selection-unavailable');
+        root.focus({ preventScroll: true });
+        const range = root.ownerDocument.createRange();
+        range.setStart(text, text.data.indexOf('A') + 1);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const codeRange = root.ownerDocument.createRange();
+        codeRange.selectNodeContents(code);
+        codeRange.setEnd(selection.anchorNode, selection.anchorOffset);
+        return {
+          anchorConnected: selection.anchorNode?.isConnected ?? false,
+          anchorInsideCode: code.contains(selection.anchorNode),
+          collapsed: selection.isCollapsed,
+          codeOffset: codeRange.toString().length
+        };
+      }, targetBlockId);
+      expect(initialCaret).toEqual({
+        anchorConnected: true,
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 1
+      });
+      const initialCodeState = await expectCodeState(
+        initialMarkdown,
+        'A\n',
+        1,
+        null,
+        null
+      );
+      const originalFrame = initialCodeState.frame;
+
+      const deleteTargetRangeProbe = await startNativeDeleteTargetRangeProbe(page);
+      const bodyDeleteStart = (await deleteTargetRangeProbe.read()).length;
+      await page.keyboard.press('Backspace');
+      const bodyDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(bodyDeleteStart)
+      );
+      process.stdout.write(`[EasyMDEWindowedDelete] ${JSON.stringify({
+        fenceLabel,
+        phase: 'body-character',
+        ...bodyDeleteTargetRanges
+      })}\n`);
+      const bodyDeleteState = await expectCodeState(
+        emptyBodyMarkdown,
+        '\n',
+        0,
+        bodySourceStart,
+        originalFrame
+      );
+      expect(bodyDeleteTargetRanges.beforeInputCount).toBeGreaterThan(0);
+
+      const emptyBoundaryDeleteStart = (await deleteTargetRangeProbe.read()).length;
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      const emptyBoundaryDeleteTargetRanges = summarizeNativeDeleteTargetRanges(
+        (await deleteTargetRangeProbe.read()).slice(emptyBoundaryDeleteStart)
+      );
+      process.stdout.write(`[EasyMDEWindowedDelete] ${JSON.stringify({
+        fenceLabel,
+        phase: 'empty-frame',
+        ...emptyBoundaryDeleteTargetRanges
+      })}\n`);
+      const frameDeleteState = await readRemovedState(
+        markdownAfterFrameRemoval,
+        blockCountBeforeTarget + 1,
+        targetBlockIndex
+      );
+      expect(emptyBoundaryDeleteTargetRanges.beforeInputCount).toBe(0);
+      await deleteTargetRangeProbe.dispose();
+
+      const waitForHistory = async (redo, phase, expectedSource, expectedBody, codeOffset, sourceOffset) => {
+        const previousSignature = await readyPreviewSignature(surface);
+        await page.keyboard.press(redo ? 'ControlOrMeta+Shift+z' : 'ControlOrMeta+z');
+        await waitForPreviewRefresh(
+          surface,
+          previousSignature,
+          'Windowed ' + phase + ' should adopt the exact Markdown'
+        );
+        if (null === expectedBody) {
+          const removed = await readRemovedState(
+            expectedSource,
+            blockCountBeforeTarget,
+            undefined
+          );
+          expect(removed.nativeCaret).toEqual(frameDeleteState.nativeCaret);
+          return removed;
+        }
+        return expectCodeState(
+          expectedSource,
+          expectedBody,
+          codeOffset,
+          sourceOffset,
+          originalFrame
+        );
+      };
+
+      const undoFrameState = await waitForHistory(
+        false, 'undo-frame', emptyBodyMarkdown, '\n', 0, bodySourceStart
+      );
+      const undoBodyState = await waitForHistory(
+        false, 'undo-body', initialMarkdown, 'A\n', 1, bodySourceStart + 1
+      );
+      const redoBodyState = await waitForHistory(
+        true, 'redo-body', emptyBodyMarkdown, '\n', 0, bodySourceStart
+      );
+      const redoFrameState = await waitForHistory(
+        true, 'redo-frame', markdownAfterFrameRemoval, null, null, null
+      );
+      expect(frameRemovedPreviewResponses.length).toBeGreaterThan(0);
+      const finalPreviewResponse = frameRemovedPreviewResponses.at(-1);
+      expect(finalPreviewResponse).toBeTruthy();
+      expect(finalPreviewResponse.ok()).toBe(true);
+      const finalPreviewPayload = await finalPreviewResponse.json();
+      expect(finalPreviewPayload.editMap).toMatchObject({ coordinate: 'line', version: 1 });
+      expect(finalPreviewPayload.editMap.blocks).toHaveLength(blockCountBeforeTarget);
+      const finalSourceLines = markdownAfterFrameRemoval.split(/\r?\n/u);
+      const finalSourceBlock = blocks.at(-1);
+      const finalSourceBlockStart = markdownAfterFrameRemoval.lastIndexOf(finalSourceBlock);
+      if (finalSourceBlockStart < 0) {
+        throw new Error('windowed-code-delete-final-source-block-missing');
+      }
+      const expectedFinalBlockStartLine = markdownAfterFrameRemoval.slice(0, finalSourceBlockStart)
+        .split(/\r?\n/u).length - 1;
+      const finalEditableBlock = [...finalPreviewPayload.editMap.blocks]
+        .reverse()
+        .find((block) => block.editable);
+      expect(finalEditableBlock).toBeTruthy();
+      expect(finalEditableBlock).toMatchObject({
+        editable: true,
+        endLine: expectedFinalBlockStartLine + finalSourceBlock.split(/\r?\n/u).length,
+        id: 'b' + (blockCountBeforeTarget - 1),
+        startLine: expectedFinalBlockStartLine
+      });
+      expect(finalSourceLines.slice(
+        finalEditableBlock.startLine,
+        finalEditableBlock.endLine
+      ).join('\n')).toBe(finalSourceBlock);
+      expect(finalPreviewPayload.editMap.blocks.some((block) => (
+        block.id === targetBlockId
+      ))).toBe(false);
+      expect(redoFrameState.nativeCaret).toEqual({
+        end: markdownAfterFrameRemoval.length,
+        start: markdownAfterFrameRemoval.length
+      });
+      expect(redoFrameState.caret).toMatchObject({
+        anchorAtTextEnd: true,
+        anchorConnected: true,
+        anchorName: 'P',
+        anchorOffset: 1,
+        collapsed: true,
+        focusConnected: true,
+        focusName: 'P',
+        focusOffset: 1,
+        insideSurface: true
+      });
+      expect(redoFrameState.caret.closestBlockId).toBe(finalEditableBlock.id);
+
+      await testInfo.attach('windowed-code-delete-' + fenceLabel, {
+        body: JSON.stringify({
+          bodyDeleteTargetRanges,
+          emptyBoundaryDeleteTargetRanges,
+          failureCodes: [...new Set(failureCodes)],
+          frameWidths: {
+            code: originalFrame.codeWidth,
+            content: originalFrame.contentWidth,
+            pre: originalFrame.preWidth
+          },
+          historySourceLengths: {
+            initial: initialMarkdown.length,
+            emptyBody: emptyBodyMarkdown.length,
+            frameRemoved: markdownAfterFrameRemoval.length
+          },
+          pageErrorCount: pageErrors.length,
+          sourceCaretOffsets: {
+            afterBodyBackspace: bodySourceStart,
+            afterUndoBody: bodySourceStart + 1
+          }
+        }),
+        contentType: 'application/json'
+      });
+      expect(undoFrameState).toBeTruthy();
+      expect(undoBodyState).toBeTruthy();
+      expect(redoBodyState).toBeTruthy();
+      expect(redoFrameState).toBeTruthy();
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test('keeps the mobile workspace full-width with the outline open for ' + fence, async ({ page }, testInfo) => {
+      let mutationRequestCount = 0;
+      let previewPostRequestCount = 0;
+      page.on('request', (request) => {
+        if ('POST' !== request.method()) return;
+        const url = new URL(request.url());
+        const isPreview = /\/wp-json\/easymde\/v1\/preview\/?$/u.test(url.pathname);
+        if (isPreview) previewPostRequestCount += 1;
+        const body = request.postData() ?? '';
+        const isHeartbeat = url.searchParams.get('action') === 'heartbeat'
+          || /(?:^|&)action=heartbeat(?:&|$)/u.test(body);
+        const isDocumentOrSettingsMutation =
+          /\/wp-admin\/post\.php$/u.test(url.pathname)
+          || /\/wp-json\/wp\/v2\/(?:posts|pages)(?:\/\d+)?(?:\/autosaves?\/?$)?$/u.test(url.pathname)
+          || /\/wp-json\/wp\/v2\/settings\/?$/u.test(url.pathname)
+          || /\/wp-json\/easymde\/v1\/settings\/?$/u.test(url.pathname)
+          || (url.pathname.endsWith('/wp-admin/admin-ajax.php') && !isHeartbeat);
+        if (isDocumentOrSettingsMutation) mutationRequestCount += 1;
+      });
+      await page.addInitScript(() => {
+        const originalSetItem = Storage.prototype.setItem;
+        window.__easymdeImmersivePreferenceWriteCount = 0;
+        Storage.prototype.setItem = function (key, value) {
+          if (String(key).startsWith('easymde:immersive-preferences:v1:')) {
+            window.__easymdeImmersivePreferenceWriteCount += 1;
+          }
+          return Reflect.apply(originalSetItem, this, [key, value]);
+        };
+      });
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openEasyMdeNewPost(page);
+      const initialMarkdown = `# Mobile outline heading\n\n${fence}\n${fence}`;
+      await fillMarkdownAndWaitForPreview(
+        page,
+        initialMarkdown,
+        'Mobile outline heading'
+      );
+      const immersiveLabels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.getByRole('button', { name: immersiveLabels.enter }).click();
+      await page.getByRole('button', {
+        name: immersiveLabels.previewMode,
+        exact: true
+      }).click();
+      await expect(
+        page.getByText(immersiveLabels.previewContentLoaded)
+      ).toBeVisible();
+      const visualEditor = page.getByRole('textbox', {
+        name: immersiveLabels.previewEditorLabel
+      });
+      const editorOwner = page.locator('.easymde-editor.is-immersive');
+      const outline = page.locator('.easymde-immersive-outline');
+      const outlineResizer = page.locator('.easymde-immersive-outline-resizer');
+      const previewArticle = page.locator(
+        '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+      );
+      await expect(previewArticle).toHaveAttribute('aria-busy', 'false');
+      const editor = {
+        labels: immersiveLabels,
+        source: page.locator('#easymde-source'),
+        previewArticle,
+        visualEditor
+      };
+      const readLayout = async () => editorOwner.evaluate((root) => {
+        const workspace = root.querySelector('.easymde-workspace');
+        const source = root.querySelector('.easymde-pane-source');
+        const preview = root.querySelector('.easymde-pane-preview');
+        if (!(workspace instanceof HTMLElement)) {
+          throw new Error('mobile-workspace-unavailable');
+        }
+        const boxWidth = (element) => element instanceof HTMLElement
+          ? element.getBoundingClientRect().width
+          : 0;
+        return {
+          editorWidth: root.getBoundingClientRect().width,
+          pageOverflow: document.documentElement.scrollWidth
+            - document.documentElement.clientWidth,
+          previewWidth: boxWidth(preview),
+          sourceWidth: boxWidth(source),
+          workspaceWidth: workspace.getBoundingClientRect().width
+        };
+      });
+
+      await expect(editorOwner).toHaveClass(/is-immersive-preview/);
+      await expect(outline).toBeVisible();
+      await expect(outline).toHaveAttribute('aria-label', editor.labels.outline);
+      await expect(outlineResizer).toBeHidden();
+      await expect(page.getByRole('separator', {
+        name: editor.labels.resizeOutline
+      })).toHaveCount(0);
+      const initialPreviewSignature = await readyPreviewSignature(
+        editor.previewArticle
+      );
+      const initialMutationRequestCount = mutationRequestCount;
+      const initialPreviewPostRequestCount = previewPostRequestCount;
+      const initialPreferenceWriteCount = await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ));
+
+      const outlineHeading = outline.getByRole('button', {
+        name: 'Mobile outline heading'
+      });
+      await expect(outlineHeading).toBeVisible();
+      await outlineHeading.click();
+      await expect(outlineHeading).toHaveAttribute('aria-current', 'location');
+      await expect(editor.source).toHaveValue(initialMarkdown);
+      await expect(previewArticle).toHaveAttribute('aria-busy', 'false');
+      expect(await readyPreviewSignature(editor.previewArticle))
+        .toBe(initialPreviewSignature);
+      expect(mutationRequestCount).toBe(initialMutationRequestCount);
+      expect(previewPostRequestCount).toBe(initialPreviewPostRequestCount);
+      expect(await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ))).toBe(initialPreferenceWriteCount);
+
+      const openLayout = await readLayout();
+      expect(openLayout.editorWidth).toBeGreaterThanOrEqual(280);
+      expect(openLayout.workspaceWidth).toBeGreaterThanOrEqual(280);
+      expect(openLayout.previewWidth).toBeGreaterThanOrEqual(280);
+      expect(openLayout.pageOverflow).toBeLessThanOrEqual(1);
+
+      const openCodeState = await readCodeBodyState(editor.previewArticle);
+      expect(openCodeState.frame.preWidth).toBeGreaterThanOrEqual(280);
+      expectCodeBodyFrame(openCodeState);
+      await testInfo.attach(
+        `mobile-outline-open-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        {
+          body: await editorOwner.screenshot(),
+          contentType: 'image/png'
+        }
+      );
+      await testInfo.attach(
+        `mobile-outline-geometry-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        {
+          body: JSON.stringify({
+            openCodeFrame: openCodeState.frame,
+            openLayout
+          }),
+          contentType: 'application/json'
+        }
+      );
+
+      await editorOwner.evaluate((root) => root.setAttribute('dir', 'rtl'));
+      const rtlOutlineBox = await outline.boundingBox();
+      const rtlEditorBox = await editorOwner.boundingBox();
+      if (!rtlOutlineBox || !rtlEditorBox) {
+        throw new Error('mobile-rtl-outline-box-unavailable');
+      }
+      expect(Math.abs(
+        rtlEditorBox.x + rtlEditorBox.width - rtlOutlineBox.x
+        - rtlOutlineBox.width - 11.25
+      )).toBeLessThanOrEqual(1);
+      await editorOwner.evaluate((root) => root.removeAttribute('dir'));
+
+      await page.getByRole('button', {
+        name: editor.labels.editMode,
+        exact: true
+      }).click();
+      await expect(editorOwner).toHaveClass(/is-immersive-source/);
+      const sourceLayout = await readLayout();
+      expect(sourceLayout.workspaceWidth).toBeGreaterThanOrEqual(280);
+      expect(sourceLayout.sourceWidth).toBeGreaterThanOrEqual(280);
+      expect(sourceLayout.pageOverflow).toBeLessThanOrEqual(1);
+
+      await page.getByRole('button', {
+        name: editor.labels.splitMode,
+        exact: true
+      }).click();
+      await expect(editorOwner).toHaveClass(/is-immersive-split/);
+      await expect(page.getByRole('separator', {
+        name: editor.labels.resizeSplit
+      })).toHaveCount(0);
+      const splitLayout = await readLayout();
+      expect(splitLayout.workspaceWidth).toBeGreaterThanOrEqual(280);
+      expect(splitLayout.sourceWidth).toBeGreaterThanOrEqual(280);
+      expect(splitLayout.previewWidth).toBeGreaterThanOrEqual(280);
+      expect(splitLayout.pageOverflow).toBeLessThanOrEqual(1);
+
+      await page.getByRole('button', {
+        name: editor.labels.previewMode,
+        exact: true
+      }).click();
+      await expect(editorOwner).toHaveClass(/is-immersive-preview/);
+      await expect(outline).toBeVisible();
+      const unlockPreview = page.getByRole('button', {
+        name: editor.labels.previewUnlockEdit
+      });
+      await expect(unlockPreview).toHaveAttribute('aria-pressed', 'true');
+
+      const lockedPreviewSignature = await readyPreviewSignature(
+        editor.previewArticle
+      );
+      if (!lockedPreviewSignature) {
+        throw new Error('mobile-outline-preview-signature-unavailable');
+      }
+      const mutationRequestsBeforeUnlock = mutationRequestCount;
+      const previewPostsBeforeUnlock = previewPostRequestCount;
+      const preferenceWritesBeforeUnlock = await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ));
+      await unlockPreview.click();
+      await expect(editor.visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(outline).toHaveCount(0);
+      const showOutline = page.getByRole('button', {
+        name: editor.labels.showOutline,
+        exact: true
+      });
+      await expect(showOutline).toBeVisible();
+      await expect.poll(() => editor.visualEditor.evaluate((surface) => (
+        surface.ownerDocument.activeElement === surface
+      )), { message: 'mobile Preview unlock should leave focus in the editable surface' })
+        .toBe(true);
+      const unlockedVisibility = await editor.visualEditor.locator('pre').evaluate((pre) => {
+        const rect = pre.getBoundingClientRect();
+        const viewportWidth = document.documentElement.clientWidth;
+        const viewportHeight = document.documentElement.clientHeight;
+        const samples = 9;
+        let visibleSamples = 0;
+        let viewportSamples = 0;
+        for (let row = 0; row < samples; row += 1) {
+          for (let column = 0; column < samples; column += 1) {
+            const x = rect.left + rect.width * (column + 0.5) / samples;
+            const y = rect.top + rect.height * (row + 0.5) / samples;
+            if (x < 0 || y < 0 || x >= viewportWidth || y >= viewportHeight) {
+              continue;
+            }
+            viewportSamples += 1;
+            const hit = document.elementFromPoint(x, y);
+            if (hit && (hit === pre || pre.contains(hit))) visibleSamples += 1;
+          }
+        }
+        const viewportArea = Math.max(
+          0,
+          Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0)
+        ) * Math.max(
+          0,
+          Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)
+        );
+        const area = rect.width * rect.height;
+        return {
+          rect: {
+            bottom: rect.bottom,
+            height: rect.height,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            width: rect.width
+          },
+          ratio: area > 0 && viewportSamples > 0
+            ? (viewportArea / area) * (visibleSamples / viewportSamples)
+            : 0
+        };
+      });
+      expect(unlockedVisibility.ratio).toBeGreaterThanOrEqual(0.98);
+      await expect(editor.source).toHaveValue(initialMarkdown);
+      expect(await readyPreviewSignature(editor.previewArticle))
+        .toBe(lockedPreviewSignature);
+      expect(mutationRequestCount).toBe(mutationRequestsBeforeUnlock);
+      expect(previewPostRequestCount).toBe(previewPostsBeforeUnlock);
+      expect(await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ))).toBe(preferenceWritesBeforeUnlock);
+      const previewLayout = await readLayout();
+      expect(previewLayout.workspaceWidth).toBe(openLayout.workspaceWidth);
+      const unlockedCodeState = await readCodeBodyState(editor.visualEditor);
+      expect(unlockedCodeState.frame.preWidth).toBeGreaterThanOrEqual(280);
+      expectCodeBodyFrame(unlockedCodeState);
+      await testInfo.attach(
+        `mobile-outline-unlocked-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        {
+          body: await editorOwner.screenshot(),
+          contentType: 'image/png'
+        }
+      );
+
+      const closedLayout = await readLayout();
+      expect(closedLayout.workspaceWidth).toBe(openLayout.workspaceWidth);
+      expect(closedLayout.pageOverflow).toBeLessThanOrEqual(1);
+
+      await expect(showOutline).toBeVisible();
+      await showOutline.click();
+      await expect(outline).toBeVisible();
+      await expect(editor.visualEditor).toHaveAttribute('contenteditable', 'true');
+      await outline.getByRole('button', {
+        name: 'Mobile outline heading'
+      }).click();
+      await expect(outline).toBeVisible();
+      await expect(editor.source).toHaveValue(initialMarkdown);
+      expect(await readyPreviewSignature(editor.previewArticle))
+        .toBe(lockedPreviewSignature);
+      expect(mutationRequestCount).toBe(mutationRequestsBeforeUnlock);
+      expect(previewPostRequestCount).toBe(previewPostsBeforeUnlock);
+      expect(await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ))).toBe(preferenceWritesBeforeUnlock);
+      const reopenedLayout = await readLayout();
+      expect(reopenedLayout.workspaceWidth).toBe(openLayout.workspaceWidth);
+      await outline.locator('.easymde-immersive-outline-close').click();
+      await expect(outline).toHaveCount(0);
+
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      await code.scrollIntoViewIfNeeded();
+      const clickEvidence = await clickCodeLine(page, code, 0);
+      if (!clickEvidence.afterClick.hit.insideCode) {
+        throw new Error('mobile-code-hit-target-unavailable');
+      }
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+      await page.keyboard.type('Alpha', { delay: 0 });
+      const expectedMarkdown = `# Mobile outline heading\n\n${fence}\nAlpha\n${fence}`;
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'mobile typing with the outline closed should preserve the empty fenced code body'
+      );
+      expect(await code.textContent()).toBe('Alpha\n');
+      expectCodeBodyCaret(await readCodeBodyState(editor.visualEditor), 5);
+      const finalLayout = await readLayout();
+      expect(finalLayout.pageOverflow).toBeLessThanOrEqual(1);
+      await testInfo.attach(
+        `mobile-outline-layout-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        {
+          body: JSON.stringify({
+            closedLayout,
+            finalLayout,
+            openCodeFrame: openCodeState.frame,
+            openLayout,
+            previewLayout,
+            reopenedLayout,
+            sourceLayout,
+            splitLayout
+          }),
+          contentType: 'application/json'
+        }
+      );
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test('closes Outline on each compact-width crossing after desktop unlock for ' + fence, async ({ page }, testInfo) => {
+      let mutationRequestCount = 0;
+      let previewPostRequestCount = 0;
+      page.on('request', (request) => {
+        if ('POST' !== request.method()) return;
+        const url = new URL(request.url());
+        if (/\/wp-json\/easymde\/v1\/preview\/?$/u.test(url.pathname)) {
+          previewPostRequestCount += 1;
+        }
+        const body = request.postData() ?? '';
+        const isHeartbeat = url.searchParams.get('action') === 'heartbeat'
+          || /(?:^|&)action=heartbeat(?:&|$)/u.test(body);
+        if (
+          /\/wp-admin\/post\.php$/u.test(url.pathname)
+          || /\/wp-json\/wp\/v2\/(?:posts|pages)(?:\/\d+)?(?:\/autosaves?\/?$)?$/u.test(url.pathname)
+          || /\/wp-json\/wp\/v2\/settings\/?$/u.test(url.pathname)
+          || /\/wp-json\/easymde\/v1\/settings\/?$/u.test(url.pathname)
+          || (url.pathname.endsWith('/wp-admin/admin-ajax.php') && !isHeartbeat)
+        ) {
+          mutationRequestCount += 1;
+        }
+      });
+      await page.addInitScript(() => {
+        const originalSetItem = Storage.prototype.setItem;
+        window.__easymdeImmersivePreferenceWriteCount = 0;
+        Storage.prototype.setItem = function (key, value) {
+          if (String(key).startsWith('easymde:immersive-preferences:v1:')) {
+            window.__easymdeImmersivePreferenceWriteCount += 1;
+          }
+          return Reflect.apply(originalSetItem, this, [key, value]);
+        };
+      });
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 760, height: 900 });
+      await openEasyMdeNewPost(page);
+      const initialMarkdown = `# Resize outline heading\n\n${fence}\n${fence}`;
+      await fillMarkdownAndWaitForPreview(
+        page,
+        initialMarkdown,
+        'Resize outline heading'
+      );
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.getByRole('button', { name: labels.enter }).click();
+      await page.getByRole('button', {
+        name: labels.previewMode,
+        exact: true
+      }).click();
+      await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+
+      const editorOwner = page.locator('.easymde-editor.is-immersive');
+      const outline = page.locator('.easymde-immersive-outline');
+      const visualEditor = page.getByRole('textbox', {
+        name: labels.previewEditorLabel
+      });
+      const source = page.locator('#easymde-source');
+      const unlock = page.getByRole('button', { name: labels.previewUnlockEdit });
+      await expect(outline).toBeVisible();
+      await expect(unlock).toHaveAttribute('aria-pressed', 'true');
+      await unlock.click();
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toBeFocused();
+      await expect(outline).toBeVisible();
+      const desktopCode = visualEditor.locator('pre > code');
+      await expect(desktopCode).toHaveCount(1);
+      const desktopClick = await clickCodeLine(page, desktopCode, 0);
+      if (!desktopClick.afterClick.hit.insideCode) {
+        throw new Error('resize-outline-desktop-code-hit-unavailable');
+      }
+      const caretBeforeFirstCrossing = await readCodeBodyState(visualEditor);
+      expect(caretBeforeFirstCrossing.active).toBe(true);
+      expect(caretBeforeFirstCrossing.selection?.collapsed).toBe(true);
+      expect(caretBeforeFirstCrossing.selection?.anchorInsideCode).toBe(true);
+      const originalCodeCaretOffset =
+        caretBeforeFirstCrossing.selection?.codeOffset;
+      const originalCodeCaretAnchor =
+        caretBeforeFirstCrossing.selection?.anchorName;
+      if (undefined === originalCodeCaretOffset || null === originalCodeCaretOffset) {
+        throw new Error('resize-outline-desktop-code-caret-unavailable');
+      }
+      if (!originalCodeCaretAnchor) {
+        throw new Error('resize-outline-desktop-code-anchor-unavailable');
+      }
+
+      const acceptedSignature = await readyPreviewSignature(visualEditor);
+      if (!acceptedSignature) {
+        throw new Error('resize-outline-preview-signature-unavailable');
+      }
+      const baselineMutationRequests = mutationRequestCount;
+      const baselinePreviewRequests = previewPostRequestCount;
+      const baselinePreferenceWrites = await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ));
+      const assertStableDocument = async () => {
+        await expect(source).toHaveValue(initialMarkdown);
+        expect(await readyPreviewSignature(visualEditor)).toBe(acceptedSignature);
+        expect(mutationRequestCount).toBe(baselineMutationRequests);
+        expect(previewPostRequestCount).toBe(baselinePreviewRequests);
+        expect(await page.evaluate(() => (
+          window.__easymdeImmersivePreferenceWriteCount
+        ))).toBe(baselinePreferenceWrites);
+      };
+      const readUnobscuredFrame = async () => visualEditor.locator('pre').evaluate((pre) => {
+        const rect = pre.getBoundingClientRect();
+        const viewportWidth = document.documentElement.clientWidth;
+        const viewportHeight = document.documentElement.clientHeight;
+        const samples = 9;
+        let visibleSamples = 0;
+        let viewportSamples = 0;
+        for (let row = 0; row < samples; row += 1) {
+          for (let column = 0; column < samples; column += 1) {
+            const x = rect.left + rect.width * (column + 0.5) / samples;
+            const y = rect.top + rect.height * (row + 0.5) / samples;
+            if (x < 0 || y < 0 || x >= viewportWidth || y >= viewportHeight) {
+              continue;
+            }
+            viewportSamples += 1;
+            const hit = document.elementFromPoint(x, y);
+            if (hit && (hit === pre || pre.contains(hit))) visibleSamples += 1;
+          }
+        }
+        const visibleArea = Math.max(
+          0,
+          Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0)
+        ) * Math.max(
+          0,
+          Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0)
+        );
+        const area = rect.width * rect.height;
+        return {
+          box: { height: rect.height, width: rect.width },
+          ratio: area > 0 && viewportSamples > 0
+            ? (visibleArea / area) * (visibleSamples / viewportSamples)
+            : 0
+        };
+      });
+
+      await editorOwner.evaluate((root) => root.setAttribute('dir', 'rtl'));
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(outline).toHaveCount(0);
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toBeFocused();
+      const caretAfterFirstCrossing = await readCodeBodyState(visualEditor);
+      expect(caretAfterFirstCrossing.active).toBe(true);
+      expect(caretAfterFirstCrossing.selection?.collapsed).toBe(true);
+      expect(caretAfterFirstCrossing.selection?.anchorInsideCode).toBe(true);
+      expect(caretAfterFirstCrossing.selection?.codeOffset)
+        .toBe(originalCodeCaretOffset);
+      expect(caretAfterFirstCrossing.selection?.anchorName)
+        .toBe(originalCodeCaretAnchor);
+      const firstCompactFrame = await readUnobscuredFrame();
+      expect(firstCompactFrame.box.width).toBeGreaterThanOrEqual(280);
+      expect(firstCompactFrame.ratio).toBeGreaterThanOrEqual(0.98);
+      expectCodeBodyFrame(await readCodeBodyState(visualEditor));
+      await assertStableDocument();
+      await testInfo.attach(
+        `desktop-to-mobile-outline-closed-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        { body: await editorOwner.screenshot(), contentType: 'image/png' }
+      );
+
+      const showOutline = page.getByRole('button', {
+        name: labels.showOutline,
+        exact: true
+      });
+      await showOutline.click();
+      await expect(outline).toBeVisible();
+      const rtlOutlineBox = await outline.boundingBox();
+      const rtlEditorBox = await editorOwner.boundingBox();
+      if (!rtlOutlineBox || !rtlEditorBox) {
+        throw new Error('resize-outline-rtl-box-unavailable');
+      }
+      expect(Math.abs(
+        rtlEditorBox.x + rtlEditorBox.width - rtlOutlineBox.x
+        - rtlOutlineBox.width - 11.25
+      )).toBeLessThanOrEqual(1);
+      await testInfo.attach(
+        `desktop-to-mobile-outline-open-${'~~~' === fence ? 'tilde' : 'backtick'}`,
+        { body: await editorOwner.screenshot(), contentType: 'image/png' }
+      );
+
+      await page.setViewportSize({ width: 390, height: 800 });
+      await expect(outline).toBeVisible();
+      await outline.getByRole('button', { name: 'Resize outline heading' }).click();
+      await expect(outline).toBeVisible();
+      const caretBeforeSecondCrossing = await readCodeBodyState(visualEditor);
+      expect(caretBeforeSecondCrossing.selection?.collapsed).toBe(true);
+      expect(caretBeforeSecondCrossing.selection?.anchorInsideCode).toBe(true);
+      const secondCodeCaretOffset = caretBeforeSecondCrossing.selection?.codeOffset;
+      const secondCodeCaretAnchor = caretBeforeSecondCrossing.selection?.anchorName;
+      if (
+        undefined === secondCodeCaretOffset
+        || null === secondCodeCaretOffset
+        || !secondCodeCaretAnchor
+      ) {
+        throw new Error('resize-outline-second-code-caret-unavailable');
+      }
+      await assertStableDocument();
+
+      await page.setViewportSize({ width: 760, height: 900 });
+      await expect(outline).toBeVisible();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(outline).toHaveCount(0);
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toBeFocused();
+      const caretAfterSecondCrossing = await readCodeBodyState(visualEditor);
+      expect(caretAfterSecondCrossing.active).toBe(true);
+      expect(caretAfterSecondCrossing.selection?.collapsed).toBe(true);
+      expect(caretAfterSecondCrossing.selection?.anchorInsideCode).toBe(true);
+      expect(caretAfterSecondCrossing.selection?.codeOffset)
+        .toBe(secondCodeCaretOffset);
+      expect(caretAfterSecondCrossing.selection?.anchorName)
+        .toBe(secondCodeCaretAnchor);
+      const secondCompactFrame = await readUnobscuredFrame();
+      expect(secondCompactFrame.box.width).toBeGreaterThanOrEqual(280);
+      expect(secondCompactFrame.ratio).toBeGreaterThanOrEqual(0.98);
+      await assertStableDocument();
+      await page.keyboard.type('Q', { delay: 0 });
+      const expectedAfterRetype = `# Resize outline heading\n\n${fence}\nQ\n${fence}`;
+      await waitForImmersiveEditCommit(
+        source,
+        visualEditor,
+        expectedAfterRetype,
+        acceptedSignature,
+        'typing after the second compact crossing should use the preserved code caret'
+      );
+      expect(await visualEditor.locator('pre > code').textContent()).toBe('Q\n');
+      expect(mutationRequestCount).toBe(baselineMutationRequests);
+      expect(previewPostRequestCount).toBe(baselinePreviewRequests);
+      expect(await page.evaluate(() => (
+        window.__easymdeImmersivePreferenceWriteCount
+      ))).toBe(baselinePreferenceWrites);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test('preserves pasted code body source, DOM, caret, and history for ' + fence, async ({ page }, testInfo) => {
+      test.setTimeout(8 * 60_000);
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      const pageErrors = [];
+      const ownerFailures = [];
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      page.on('console', (message) => {
+        const text = message.text();
+        if (
+          'error' === message.type()
+          && /^\[EasyMDE\] [a-z0-9-]+$/.test(text)
+        ) ownerFailures.push(text);
+      });
+      const origin = new URL(page.url()).origin;
+      await page.context().grantPermissions(
+        ['clipboard-read', 'clipboard-write'],
+        { origin }
+      );
+
+      const scenarios = [
+        { blankLineCount: 3, lineIndex: 2 },
+        { blankLineCount: 0, lineIndex: 0 },
+        { blankLineCount: 1, lineIndex: 0 },
+        { blankLineCount: 2, lineIndex: 0 },
+        { blankLineCount: 2, lineIndex: 1 }
+      ];
+      const emptyFenceMarkdown = (blankLineCount) => (
+        fence + '\n' + '\n'.repeat(blankLineCount) + fence
+      );
+      const bodyMarkdown = (blankLineCount, lineIndex, value) => {
+        const lines = Array(Math.max(1, blankLineCount)).fill('');
+        lines[lineIndex] = value;
+        return fence + '\n' + lines.join('\n') + '\n' + fence;
+      };
+
+      for (const { blankLineCount, lineIndex } of scenarios) {
+        await openEasyMdeNewPost(page);
+        const editor = await enterImmersivePreviewAndUnlock(page);
+        const initialMarkdown = emptyFenceMarkdown(blankLineCount);
+        const initialSignature = await readyPreviewSignature(editor.visualEditor);
+        await editor.visualEditor.focus();
+        await editor.visualEditor.press('ControlOrMeta+End');
+        await page.evaluate(async (value) => {
+          if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+            throw new Error('native-clipboard-write-unavailable');
+          }
+          await navigator.clipboard.writeText(value);
+        }, initialMarkdown);
+        await page.keyboard.press('ControlOrMeta+V');
+        await expect(editor.source).toHaveValue(initialMarkdown, { timeout: 30_000 });
+        await waitForPreviewRefresh(
+          editor.visualEditor,
+          initialSignature,
+          'native-pasted fence should render before editing'
+        );
+        const acceptedPreviewSignature = await readyPreviewSignature(
+          editor.visualEditor
+        );
+
+        const code = editor.visualEditor.locator('pre > code');
+        await expect(code).toHaveCount(1);
+        const initialState = await readCodeBodyState(editor.visualEditor);
+        expect(initialState.codeText).toBe('\n'.repeat(blankLineCount));
+        expectCodeBodyFrame(initialState);
+
+        const clickEvidence = await clickCodeLine(page, code, lineIndex);
+        const clickedState = await readCodeBodyState(editor.visualEditor);
+        expect(clickedState.selection?.collapsed).toBe(true);
+        expect(clickedState.selection?.anchorInsideCode).toBe(true);
+
+        const lastLineScenario = 3 === blankLineCount && 2 === lineIndex;
+        const traceKey = '__easymdeLastBlankLineInput';
+        if (lastLineScenario) {
+          await editor.visualEditor.evaluate((surface, key) => {
+            const code = surface.querySelector('pre > code');
+            const source = document.querySelector('#easymde-source');
+            if (!(code instanceof HTMLElement) || !(source instanceof HTMLTextAreaElement)) {
+              throw new Error('last-blank-line-trace-state-unavailable');
+            }
+            const boundary = (node, offset) => ({
+              dataLength: node instanceof Text ? node.data.length : null,
+              nodeName: node?.nodeName ?? null,
+              offset
+            });
+            const snapshot = () => {
+              const selection = surface.ownerDocument.defaultView?.getSelection();
+              const anchor = selection?.anchorNode ?? null;
+              let codeOffset = null;
+              if (anchor && (anchor === code || code.contains(anchor))) {
+                const range = surface.ownerDocument.createRange();
+                range.selectNodeContents(code);
+                range.setEnd(anchor, selection.anchorOffset);
+                codeOffset = range.toString().length;
+              }
+              return {
+                ariaBusy: surface.getAttribute('aria-busy'),
+                codeChildren: Array.from(code.childNodes, (node) => ({
+                  dataLength: node instanceof Text ? node.data.length : null,
+                  nodeName: node.nodeName
+                })),
+                codeHtml: code.innerHTML,
+                codeText: code.textContent ?? '',
+                selection: selection ? {
+                  anchor: boundary(selection.anchorNode, selection.anchorOffset),
+                  codeOffset,
+                  collapsed: selection.isCollapsed,
+                  focus: boundary(selection.focusNode, selection.focusOffset)
+                } : null,
+                source: source.value
+              };
+            };
+            const events = [];
+            const record = (event) => {
+              events.push({
+                data: event.data,
+                inputType: event.inputType,
+                phase: event.type,
+                snapshot: snapshot(),
+                targetRanges: Array.from(event.getTargetRanges?.() ?? [], (range) => ({
+                  end: boundary(range.endContainer, range.endOffset),
+                  start: boundary(range.startContainer, range.startOffset)
+                }))
+              });
+            };
+            surface.addEventListener('beforeinput', record, true);
+            surface.addEventListener('input', record, true);
+            window[key] = {
+              dispose: () => {
+                surface.removeEventListener('beforeinput', record, true);
+                surface.removeEventListener('input', record, true);
+              },
+              events,
+              snapshot
+            };
+          }, traceKey);
+        }
+
+        await page.keyboard.type('A', { delay: 0 });
+        const firstMarkdown = bodyMarkdown(blankLineCount, lineIndex, 'A');
+        const firstBody = '\n'.repeat(lineIndex) + 'A'
+          + '\n'.repeat(Math.max(1, blankLineCount) - lineIndex);
+        if (lastLineScenario) {
+          let inputFailure = null;
+          try {
+            await expect(editor.source).toHaveValue(firstMarkdown, { timeout: 5_000 });
+          } catch {
+            inputFailure = 'canonical-source-not-committed';
+          }
+          const inputTrace = await editor.visualEditor.evaluate((surface, key) => {
+            const trace = window[key];
+            if (!trace) throw new Error('last-blank-line-trace-missing');
+            trace.dispose();
+            const result = { events: trace.events, final: trace.snapshot() };
+            delete window[key];
+            return result;
+          }, traceKey);
+          await testInfo.attach('last-blank-line-click-state', {
+            body: JSON.stringify({
+              clickEvidence,
+              clickedState,
+              expectedMarkdown: firstMarkdown,
+              failure: inputFailure,
+              ownerFailures,
+              pageErrors,
+              trace: inputTrace
+            }),
+            contentType: 'application/json'
+          });
+          expect(inputFailure).toBeNull();
+        }
+        await waitForImmersiveEditCommit(
+          editor.source,
+          editor.visualEditor,
+          firstMarkdown,
+          acceptedPreviewSignature,
+          'first native code character should persist with its body line'
+        );
+        const firstState = await readCodeBodyState(editor.visualEditor);
+        expectCodeBodyFrame(firstState);
+        expect(firstState.codeText).toBe(firstBody);
+        expectCodeBodyCaret(firstState, lineIndex + 1);
+
+        if (0 === blankLineCount && 0 === lineIndex) {
+          const undoTraceKey = '__easymdeZeroBodyUndoTrace';
+          await editor.visualEditor.evaluate((surface, key) => {
+            const code = surface.querySelector('pre > code');
+            const source = document.querySelector('#easymde-source');
+            if (!(code instanceof HTMLElement) || !(source instanceof HTMLTextAreaElement)) {
+              throw new Error('zero-body-undo-trace-state-unavailable');
+            }
+            const boundary = (node, offset) => ({
+              dataLength: node instanceof Text ? node.data.length : null,
+              nodeName: node?.nodeName ?? null,
+              offset
+            });
+            const snapshot = () => {
+              const selection = surface.ownerDocument.defaultView?.getSelection();
+              return {
+                codeChildren: Array.from(code.childNodes, (node) => ({
+                  dataLength: node instanceof Text ? node.data.length : null,
+                  nodeName: node.nodeName
+                })),
+                codeHtml: code.innerHTML,
+                codeText: code.textContent ?? '',
+                selection: selection ? {
+                  anchor: boundary(selection.anchorNode, selection.anchorOffset),
+                  collapsed: selection.isCollapsed,
+                  focus: boundary(selection.focusNode, selection.focusOffset)
+                } : null,
+                source: source.value
+              };
+            };
+            const events = [];
+            const keydown = (event) => events.push({
+              ctrlKey: event.ctrlKey,
+              key: event.key,
+              metaKey: event.metaKey,
+              phase: 'keydown',
+              snapshot: snapshot()
+            });
+            const record = (event) => events.push({
+              data: event.data,
+              inputType: event.inputType,
+              phase: event.type,
+              snapshot: snapshot(),
+              targetRanges: Array.from(event.getTargetRanges?.() ?? [], (range) => ({
+                end: boundary(range.endContainer, range.endOffset),
+                start: boundary(range.startContainer, range.startOffset)
+              }))
+            });
+            surface.addEventListener('keydown', keydown, true);
+            surface.addEventListener('beforeinput', record, true);
+            surface.addEventListener('input', record, true);
+            window[key] = {
+              dispose: () => {
+                surface.removeEventListener('keydown', keydown, true);
+                surface.removeEventListener('beforeinput', record, true);
+                surface.removeEventListener('input', record, true);
+              },
+              events,
+              snapshot
+            };
+          }, undoTraceKey);
+          await page.keyboard.press('ControlOrMeta+z');
+          let undoFailure = null;
+          try {
+            await expect(editor.source).toHaveValue(initialMarkdown, { timeout: 5_000 });
+          } catch {
+            undoFailure = 'history-source-not-restored';
+          }
+          const zeroUndoTrace = await editor.visualEditor.evaluate((surface, key) => {
+            const trace = window[key];
+            if (!trace) throw new Error('zero-body-undo-trace-missing');
+            trace.dispose();
+            const result = { events: trace.events, final: trace.snapshot() };
+            delete window[key];
+            return result;
+          }, undoTraceKey);
+          await testInfo.attach('zero-body-native-undo-state', {
+            body: JSON.stringify({
+              expectedSource: initialMarkdown,
+              failure: undoFailure,
+              ownerFailures,
+              pageErrors,
+              trace: zeroUndoTrace
+            }),
+            contentType: 'application/json'
+          });
+          expect(undoFailure).toBeNull();
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            initialMarkdown,
+            acceptedPreviewSignature,
+            'Undo should restore the original zero-body fence'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('');
+
+          await page.keyboard.press('ControlOrMeta+Shift+z');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            firstMarkdown,
+            acceptedPreviewSignature,
+            'Redo should restore the inserted code character'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('A\n');
+
+          await page.keyboard.press('Backspace');
+          const oneBlankBody = emptyFenceMarkdown(1);
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            oneBlankBody,
+            acceptedPreviewSignature,
+            'Backspace after insertion should retain its created blank body line'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('\n');
+
+          await page.keyboard.press('ControlOrMeta+z');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            firstMarkdown,
+            acceptedPreviewSignature,
+            'Undo Backspace should restore the inserted character'
+          );
+          await page.keyboard.press('ControlOrMeta+z');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            initialMarkdown,
+            acceptedPreviewSignature,
+            'Undo insertion should restore adjacent fences'
+          );
+          await page.keyboard.type('B', { delay: 0 });
+          const branchedMarkdown = bodyMarkdown(0, 0, 'B');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            branchedMarkdown,
+            acceptedPreviewSignature,
+            'typing after Undo should establish a new history branch'
+          );
+          await page.keyboard.press('ControlOrMeta+Shift+z');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            branchedMarkdown,
+            acceptedPreviewSignature,
+            'Redo must not restore the abandoned branch'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('B\n');
+
+          await page.keyboard.press('Backspace');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            oneBlankBody,
+            acceptedPreviewSignature,
+            'deleting the branch character should preserve the blank body'
+          );
+          await clickCodeLine(page, code, 0);
+          await page.keyboard.type('Alpha12', { delay: 0 });
+          const rapidMarkdown = bodyMarkdown(1, 0, 'Alpha12');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            rapidMarkdown,
+            acceptedPreviewSignature,
+            'rapid typing after Undo, Redo, deletion, and reclick should retain the first character'
+          );
+          const rapidState = await readCodeBodyState(editor.visualEditor);
+          expectCodeBodyFrame(rapidState);
+          expect(rapidState.codeText).toBe('Alpha12\n');
+          expectCodeBodyCaret(rapidState, 7);
+
+          await page.keyboard.type('Z', { delay: 0 });
+          const settledMarkdown = bodyMarkdown(1, 0, 'Alpha12Z');
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            settledMarkdown,
+            acceptedPreviewSignature,
+            'typing after commit should remain in the code block'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText)
+            .toBe('Alpha12Z\n');
+
+          for (let index = 0; index < 'Alpha12Z'.length; index += 1) {
+            await page.keyboard.press('Backspace');
+          }
+          await waitForImmersiveEditCommit(
+            editor.source,
+            editor.visualEditor,
+            oneBlankBody,
+            acceptedPreviewSignature,
+            'deleting code back to empty should preserve the exact body line'
+          );
+          expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('\n');
+
+          await page.getByRole('button', { name: editor.labels.exit }).click();
+          await expect(page.getByRole('region', {
+            name: editor.labels.immersive
+          })).toHaveCount(0);
+          await expect(editor.source).toHaveValue(oneBlankBody);
+          const reentered = await enterImmersivePreviewAndUnlock(page);
+          await expect(reentered.source).toHaveValue(oneBlankBody);
+          const reenteredState = await readCodeBodyState(reentered.visualEditor);
+          expectCodeBodyFrame(reenteredState);
+          expect(reenteredState.codeText).toBe('\n');
+        }
+      }
+    });
+
+    test('accepts rapid input after clearing highlighted ' + fence + 'js code', async ({ page }, testInfo) => {
+      await login(page, testInfo.easymdeUser);
+      const browserErrors = [];
+      page.on('pageerror', () => browserErrors.push('pageerror'));
+      const origin = new URL(page.url()).origin;
+      await page.context().grantPermissions(
+        ['clipboard-read', 'clipboard-write'],
+        { origin }
+      );
+      const editor = await openEasyMdeNewPost(page)
+        .then(() => enterImmersivePreviewAndUnlock(page));
+      const openingFence = fence + 'js';
+      const closingFence = fence;
+      const initialMarkdown = openingFence + '\nconst value = 1;\n' + closingFence;
+      const initialSignature = await readyPreviewSignature(editor.visualEditor);
+      await editor.visualEditor.focus();
+      await editor.visualEditor.press('ControlOrMeta+End');
+      await page.evaluate(async (value) => {
+        if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+          throw new Error('native-clipboard-write-unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+      }, initialMarkdown);
+      await page.keyboard.press('ControlOrMeta+V');
+      await expect(editor.source).toHaveValue(initialMarkdown, { timeout: 30_000 });
+      await waitForPreviewRefresh(
+        editor.visualEditor,
+        initialSignature,
+        'syntax-highlighted fence should render before editing'
+      );
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      const highlightedKeyword = code.locator('span[class*="hljs-keyword"]').first();
+      await expect(highlightedKeyword).toHaveCount(1);
+
+      await highlightedKeyword.click();
+      const clickedState = await code.evaluate((element) => {
+        const selection = element.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        if (!selection || !anchor || !element.contains(anchor)) {
+          throw new Error('highlighted-code-selection-unavailable');
+        }
+        const range = element.ownerDocument.createRange();
+        range.selectNodeContents(element);
+        range.setEnd(anchor, selection.anchorOffset);
+        return {
+          anchorName: anchor.nodeName,
+          collapsed: selection.isCollapsed,
+          offset: range.cloneContents().textContent?.length ?? 0,
+          text: element.textContent ?? ''
+        };
+      });
+      expect(clickedState.anchorName).toBe('#text');
+      expect(clickedState.collapsed).toBe(true);
+      await page.keyboard.type('Alpha12Z', { delay: 0 });
+      const expectedBody = clickedState.text.slice(0, clickedState.offset)
+        + 'Alpha12Z'
+        + clickedState.text.slice(clickedState.offset);
+      const expectedMarkdown = openingFence + '\n' + expectedBody + closingFence;
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'rapid input in a highlighted token should preserve source and selection'
+      );
+      const state = await readCodeBodyState(editor.visualEditor);
+      expectCodeBodyFrame(state);
+      expect(state.codeText).toBe(expectedBody);
+      expect(state.selection?.collapsed).toBe(true);
+      expect(state.selection?.anchorInsideCode).toBe(true);
+      expect(browserErrors).toEqual([]);
+      expect(await code.locator('span[class*="hljs-"]').count())
+        .toBeGreaterThan(0);
+
+      const populatedText = state.codeText;
+      if (!populatedText.endsWith('\n')) {
+        throw new Error('highlighted-code-terminal-newline-missing');
+      }
+      const selectedCodeText = await code.evaluate((element) => {
+        const walker = element.ownerDocument.createTreeWalker(
+          element,
+          NodeFilter.SHOW_TEXT
+        );
+        const textNodes = [];
+        let node = walker.nextNode();
+        while (node) {
+          if (node instanceof Text && node.data.length > 0) textNodes.push(node);
+          node = walker.nextNode();
+        }
+        const lastText = textNodes.at(-1);
+        if (!lastText || !lastText.data.endsWith('\n')) {
+          throw new Error('highlighted-code-terminal-text-unavailable');
+        }
+        const range = element.ownerDocument.createRange();
+        range.setStart(textNodes[0], 0);
+        range.setEnd(lastText, lastText.length - 1);
+        const selectedText = range.toString();
+        if (selectedText !== (element.textContent ?? '').slice(0, -1)) {
+          throw new Error('highlighted-code-selection-content-mismatch');
+        }
+        const selection = element.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('highlighted-code-selection-unavailable');
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return selectedText;
+      });
+      expect(selectedCodeText).toBe(populatedText.slice(0, -1));
+      await page.keyboard.press('Backspace');
+      const oneBlankBody = openingFence + '\n\n' + closingFence;
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        oneBlankBody,
+        acceptedPreviewSignature,
+        'native Backspace should leave the fenced body line intact'
+      );
+      const clearedState = await readCodeBodyState(editor.visualEditor);
+      expect(clearedState.codeText).toBe('\n');
+      expect(await code.locator('span[class*="hljs-"]').count())
+        .toBe(0);
+
+      const ownerDiagnostics = [];
+      page.on('console', (message) => {
+        const text = message.text();
+        if (
+          'error' === message.type()
+          && /^\[EasyMDE\] [a-z0-9-]+$/.test(text)
+        ) ownerDiagnostics.push(text);
+      });
+      const traceKey = '__easymdeHighlightedCodeReentry';
+      await editor.visualEditor.evaluate((surface, key) => {
+        const code = surface.querySelector('pre > code');
+        const source = document.querySelector('#easymde-source');
+        if (!(code instanceof HTMLElement) || !(source instanceof HTMLTextAreaElement)) {
+          throw new Error('highlighted-code-reentry-state-unavailable');
+        }
+        const boundary = (node, offset) => ({
+          dataLength: node instanceof Text ? node.data.length : null,
+          nodeName: node?.nodeName ?? null,
+          offset
+        });
+        const summarizeNode = (node) => ({
+          classes: node instanceof Element
+            ? Array.from(node.classList).filter((name) => name.startsWith('hljs-'))
+            : [],
+          dataLength: node instanceof Text ? node.data.length : null,
+          nodeName: node.nodeName
+        });
+        const snapshot = () => {
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          let codeOffset = null;
+          if (anchor && (anchor === code || code.contains(anchor))) {
+            const range = surface.ownerDocument.createRange();
+            range.selectNodeContents(code);
+            range.setEnd(anchor, selection.anchorOffset);
+            codeOffset = range.toString().length;
+          }
+          return {
+            ariaBusy: surface.getAttribute('aria-busy'),
+            codeChildren: Array.from(code.childNodes, summarizeNode),
+            codeHtml: code.innerHTML,
+            codeText: code.textContent ?? '',
+            contentEditable: surface.getAttribute('contenteditable'),
+            previewSignature: surface.easymdePreviewSignature ?? '',
+            selection: selection ? {
+              anchor: boundary(selection.anchorNode, selection.anchorOffset),
+              codeOffset,
+              collapsed: selection.isCollapsed,
+              focus: boundary(selection.focusNode, selection.focusOffset)
+            } : null,
+            source: source.value
+          };
+        };
+        const events = [];
+        const record = (event) => {
+          events.push({
+            data: event.data,
+            inputType: event.inputType,
+            phase: event.type,
+            snapshot: snapshot(),
+            targetRanges: Array.from(event.getTargetRanges?.() ?? [], (range) => ({
+              end: boundary(range.endContainer, range.endOffset),
+              start: boundary(range.startContainer, range.startOffset)
+            }))
+          });
+        };
+        surface.addEventListener('beforeinput', record, true);
+        surface.addEventListener('input', record, true);
+        window[key] = {
+          dispose: () => {
+            surface.removeEventListener('beforeinput', record, true);
+            surface.removeEventListener('input', record, true);
+          },
+          events,
+          snapshot
+        };
+      }, traceKey);
+      await clickCodeLine(page, code, 0);
+      await page.keyboard.type('A', { delay: 0 });
+      const retypedMarkdown = openingFence + '\nA\n' + closingFence;
+      let reentryFailure = null;
+      try {
+        await expect(editor.source).toHaveValue(retypedMarkdown, { timeout: 5_000 });
+      } catch {
+        reentryFailure = 'canonical-source-not-committed';
+      }
+      const reentryTrace = await editor.visualEditor.evaluate((surface, key) => {
+        const trace = window[key];
+        if (!trace) throw new Error('highlighted-code-reentry-trace-missing');
+        trace.dispose();
+        const result = {
+          events: trace.events,
+          final: trace.snapshot(),
+          previewSignature: surface.easymdePreviewSignature ?? ''
+        };
+        delete window[key];
+        return result;
+      }, traceKey);
+      await testInfo.attach('highlighted-code-reentry-state', {
+        body: JSON.stringify({
+          expectedSource: retypedMarkdown,
+          failure: reentryFailure,
+          ownerDiagnostics,
+          pageErrors: browserErrors,
+          trace: reentryTrace
+        }),
+        contentType: 'application/json'
+      });
+      expect(reentryFailure).toBeNull();
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        retypedMarkdown,
+        acceptedPreviewSignature,
+        'input should remain editable after the browser removes empty token spans'
+      );
+      const retypedState = await readCodeBodyState(editor.visualEditor);
+      expect(retypedState.codeText).toBe('A\n');
+      expectCodeBodyCaret(retypedState, 1);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        oneBlankBody,
+        acceptedPreviewSignature,
+        'Undo after wrapped-text reentry should restore the empty code body'
+      );
+      expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('\n');
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        retypedMarkdown,
+        acceptedPreviewSignature,
+        'Redo after wrapped-text reentry should restore its code character'
+      );
+      expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('A\n');
+
+      await page.keyboard.press('Backspace');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        oneBlankBody,
+        acceptedPreviewSignature,
+        'Backspace after wrapped-text reentry should preserve the structural line'
+      );
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        retypedMarkdown,
+        acceptedPreviewSignature,
+        'Undo Backspace should restore wrapped code input'
+      );
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        oneBlankBody,
+        acceptedPreviewSignature,
+        'Undo insertion should return to its one-empty-line source'
+      );
+      expect(browserErrors).toEqual([]);
+    });
+
+    test('commits insertCompositionText inside native-pasted ' + fence + ' code', async ({ page }, testInfo) => {
+      await login(page, testInfo.easymdeUser);
+      const origin = new URL(page.url()).origin;
+      await page.context().grantPermissions(
+        ['clipboard-read', 'clipboard-write'],
+        { origin }
+      );
+      const editor = await openEasyMdeNewPost(page)
+        .then(() => enterImmersivePreviewAndUnlock(page));
+      const initialMarkdown = fence + '\n' + fence;
+      const initialSignature = await readyPreviewSignature(editor.visualEditor);
+      await editor.visualEditor.focus();
+      await editor.visualEditor.press('ControlOrMeta+End');
+      await page.evaluate(async (value) => {
+        if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+          throw new Error('native-clipboard-write-unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+      }, initialMarkdown);
+      await page.keyboard.press('ControlOrMeta+V');
+      await expect(editor.source).toHaveValue(initialMarkdown, { timeout: 30_000 });
+      await waitForPreviewRefresh(
+        editor.visualEditor,
+        initialSignature,
+        'native-pasted fence should render before composition'
+      );
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      const codeBox = await code.boundingBox();
+      if (!codeBox) throw new Error('immersive-composition-code-box-unavailable');
+      await page.mouse.click(codeBox.x + 8, codeBox.y + 8);
+      const compositionEvidence = await editor.visualEditor.evaluate((surface) => {
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection || selection.rangeCount === 0) {
+          throw new Error('immersive-composition-selection-unavailable');
+        }
+        surface.dispatchEvent(new CompositionEvent('compositionstart', {
+          bubbles: true,
+          data: ''
+        }));
+        const activeSelection = surface.ownerDocument.defaultView?.getSelection();
+        if (!activeSelection || activeSelection.rangeCount === 0) {
+          throw new Error('immersive-composition-selection-lost');
+        }
+        const range = activeSelection.getRangeAt(0);
+        const compositionBeforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: '中',
+          inputType: 'insertCompositionText',
+          isComposing: true
+        });
+        surface.dispatchEvent(compositionBeforeInput);
+        if (!compositionBeforeInput.defaultPrevented) {
+          range.deleteContents();
+          const text = surface.ownerDocument.createTextNode('中');
+          range.insertNode(text);
+          range.setStart(text, text.length);
+          range.collapse(true);
+          activeSelection.removeAllRanges();
+          activeSelection.addRange(range);
+          surface.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            data: '中',
+            inputType: 'insertCompositionText',
+            isComposing: true
+          }));
+        }
+        surface.dispatchEvent(new CompositionEvent('compositionend', {
+          bubbles: true,
+          data: '中'
+        }));
+        return { compositionBeforeInputPrevented: compositionBeforeInput.defaultPrevented };
+      });
+      expect(compositionEvidence.compositionBeforeInputPrevented).toBe(false);
+
+      const composedMarkdown = fence + '\n中\n' + fence;
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        composedMarkdown,
+        acceptedPreviewSignature,
+        'committed composition text should persist in canonical Markdown'
+      );
+      const composedState = await readCodeBodyState(editor.visualEditor);
+      expect(composedState.codeText).toBe('中\n');
+      expectCodeBodyCaret(composedState, 1);
+
+      await page.keyboard.type('Z', { delay: 0 });
+      const afterNextCharacter = fence + '\n中Z\n' + fence;
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        afterNextCharacter,
+        acceptedPreviewSignature,
+        'ordinary input after composition should remain in code'
+      );
+      expect((await readCodeBodyState(editor.visualEditor)).codeText).toBe('中Z\n');
+    });
+
+    test(`keeps pending ${fence} code input when IME starts before the debounce`, async ({ page }, testInfo) => {
+      const failures = [];
+      const pageErrors = [];
+      const traceKey = '__easymdePendingCodeComposition';
+      const initialMarkdown = `${fence}js\nAlpha\n${fence}`;
+      const expectedMarkdown = `${fence}js\nAlphaX中\n${fence}`;
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failures.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, initialMarkdown, null);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+      const code = editor.visualEditor.locator('pre > code');
+      await expect(code).toHaveCount(1);
+      await clickCodeLine(page, code, 0);
+      await page.keyboard.press('End');
+      await editor.visualEditor.evaluate((surface, key) => {
+        const evidence = {
+          compositionBeforeInputPrevented: null,
+          compositionStarted: false
+        };
+        const startCompositionAfterInput = (event) => {
+          if ('insertText' !== event.inputType || 'X' !== event.data) return;
+          surface.removeEventListener('input', startCompositionAfterInput);
+          evidence.compositionStarted = true;
+          surface.dispatchEvent(new CompositionEvent('compositionstart', {
+            bubbles: true,
+            data: ''
+          }));
+          const compositionBeforeInput = new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            data: '中',
+            inputType: 'insertCompositionText',
+            isComposing: true
+          });
+          surface.dispatchEvent(compositionBeforeInput);
+          evidence.compositionBeforeInputPrevented = compositionBeforeInput.defaultPrevented;
+          if (!compositionBeforeInput.defaultPrevented) {
+            const selection = surface.ownerDocument.defaultView?.getSelection();
+            if (!selection?.rangeCount) {
+              throw new Error('immersive-pending-composition-selection-unavailable');
+            }
+            const range = selection.getRangeAt(0);
+            range.deleteContents();
+            const text = surface.ownerDocument.createTextNode('中');
+            range.insertNode(text);
+            range.setStart(text, text.length);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            surface.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              data: '中',
+              inputType: 'insertCompositionText',
+              isComposing: true
+            }));
+          }
+          surface.dispatchEvent(new CompositionEvent('compositionend', {
+            bubbles: true,
+            data: '中'
+          }));
+        };
+        surface.addEventListener('input', startCompositionAfterInput);
+        window[key] = evidence;
+      }, traceKey);
+
+      await page.keyboard.type('X', { delay: 0 });
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'IME input started inside the 80 ms window should preserve both code characters'
+      );
+      const compositionEvidence = await editor.visualEditor.evaluate((surface, key) => {
+        const evidence = window[key];
+        if (!evidence) throw new Error('immersive-pending-composition-evidence-missing');
+        delete window[key];
+        return evidence;
+      }, traceKey);
+      const state = await readCodeBodyState(editor.visualEditor);
+      expect(compositionEvidence).toEqual({
+        compositionBeforeInputPrevented: false,
+        compositionStarted: true
+      });
+      expect(await editor.source.inputValue()).toBe(expectedMarkdown);
+      expect(state.codeText).toBe('AlphaX中\n');
+      expect(state.active).toBe(true);
+      expect(state.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'AlphaX中'.length
+      });
+      expect(failures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test(`rejects composition for a blank ${fence} PRE after its accepted mapping goes stale`, async ({ page }, testInfo) => {
+      const mapFailures = [];
+      const pageErrors = [];
+      const markdown = [
+        `${fence}js`,
+        'Existing',
+        fence,
+        '',
+        `${fence}js`,
+        '',
+        fence
+      ].join('\n');
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) mapFailures.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, 'Existing');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const codes = editor.visualEditor.locator('pre > code');
+      await expect(codes).toHaveCount(2);
+      await editor.visualEditor.evaluate((surface) => {
+        const pres = Array.from(surface.querySelectorAll('pre'));
+        if (pres.length !== 2 || pres[0].parentElement !== pres[1].parentElement) {
+          throw new Error('blank-code-identity-fixture-unavailable');
+        }
+        pres[0].before(pres[1]);
+      });
+      await editor.visualEditor.evaluate((surface) => new Promise((resolve) => {
+        requestAnimationFrame(resolve);
+      }));
+      await editor.visualEditor.focus();
+      const selectionBeforeComposition = await editor.visualEditor.evaluate((surface) => {
+        const pres = Array.from(surface.querySelectorAll('pre'));
+        const selectedPre = pres[0];
+        const code = selectedPre?.querySelector(':scope > code');
+        if (!(selectedPre instanceof HTMLElement)
+          || !(code instanceof HTMLElement)
+          || (code.textContent ?? '').trim() !== '') {
+          throw new Error('blank-code-identity-selection-unavailable');
+        }
+        const placeholder = code.querySelector('[data-easymde-visual-code-placeholder]');
+        const target = placeholder?.firstChild ?? code.firstChild;
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection || !target) {
+          throw new Error('blank-code-identity-selection-unavailable');
+        }
+        const range = surface.ownerDocument.createRange();
+        range.setStart(target, 0);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const anchor = selection.anchorNode;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const anchorPre = anchorElement?.closest('pre') ?? null;
+        return {
+          anchorInsideFirstPre: anchorPre === selectedPre,
+          anchorPreIndex: pres.indexOf(anchorPre),
+          collapsed: selection.isCollapsed
+        };
+      });
+      const compositionEvidence = await editor.visualEditor.evaluate((surface) => {
+        const preElements = Array.from(surface.querySelectorAll('pre'));
+        const selectedPre = preElements[0];
+        const selectionAtStart = surface.ownerDocument.defaultView?.getSelection();
+        const anchorAtStart = selectionAtStart?.anchorNode ?? null;
+        const anchorElement = anchorAtStart instanceof Element
+          ? anchorAtStart
+          : anchorAtStart?.parentElement ?? null;
+        const anchorPre = anchorElement?.closest('pre') ?? null;
+        const anchorPreIndex = preElements.indexOf(anchorPre);
+        const selectionAtCompositionStart = selectionAtStart ? {
+          anchorInsideSelectedPre: anchorPre === selectedPre,
+          anchorPreIndex,
+          collapsed: selectionAtStart.isCollapsed
+        } : null;
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: '中',
+          inputType: 'insertCompositionText',
+          isComposing: true
+        });
+        surface.dispatchEvent(new CompositionEvent('compositionstart', {
+          bubbles: true,
+          data: ''
+        }));
+        surface.dispatchEvent(beforeInput);
+        surface.dispatchEvent(new CompositionEvent('compositionend', {
+          bubbles: true,
+          data: '中'
+        }));
+        return {
+          beforeInputPrevented: beforeInput.defaultPrevented,
+          selectionAtCompositionStart
+        };
+      });
+      await editor.visualEditor.evaluate((surface) => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+
+      expect(selectionBeforeComposition).toMatchObject({
+        anchorInsideFirstPre: true,
+        anchorPreIndex: 0,
+        collapsed: true
+      });
+      expect(compositionEvidence.selectionAtCompositionStart).toMatchObject({
+        anchorInsideSelectedPre: true,
+        anchorPreIndex: 0,
+        collapsed: true
+      });
+      await expect(editor.source).toHaveValue(markdown);
+      expect(compositionEvidence.beforeInputPrevented).toBe(true);
+      expect(await codes.allTextContents()).toEqual(['Existing\n', '\n']);
+      expect(mapFailures.some((code) => [
+        'visual-editor-code-block-map-unavailable',
+        'visual-editor-code-body-map-ambiguous',
+        'visual-editor-code-body-map-stale'
+      ].includes(code))).toBe(true);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fence of ['~~~', '```']) {
+    test(`edits an older mapped ${fence} PRE after completing a local fence`, async ({ page }, testInfo) => {
+      const mapFailures = [];
+      const pageErrors = [];
+      const localFenceParagraph = 'Local fence marker';
+      const initialMarkdown = `${fence}js\nExisting\n${fence}\n\n${localFenceParagraph}`;
+      const openLocalFenceMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py`;
+      const emptyLocalFenceMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py\n\n${fence}`;
+      const localBodyMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py\nA\n${fence}`;
+      const editedMarkdown = `${fence}js\nExistingX\n${fence}\n\n${fence}py\nA\n${fence}`;
+
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] (visual-editor-code-body-map-[a-z-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) mapFailures.push(failureCode);
+      });
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, initialMarkdown, 'Existing');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(
+        editor.visualEditor
+      );
+
+      await expect(editor.visualEditor.locator('pre > code')).toHaveCount(1);
+      await expect(editor.visualEditor.locator('p').last())
+        .toHaveText(localFenceParagraph);
+      await editor.visualEditor.focus();
+      await selectVisualText(editor.visualEditor, localFenceParagraph);
+      await page.keyboard.insertText(`${fence}py`);
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        openLocalFenceMarkdown,
+        acceptedPreviewSignature,
+        'a normal paragraph should retain its raw fence marker before Enter completes the local fence'
+      );
+      await editor.visualEditor.focus();
+      await placeVisualCaretAfterText(editor.visualEditor, `${fence}py`);
+      await page.keyboard.press('Enter');
+      await expect(editor.source).toHaveValue(emptyLocalFenceMarkdown);
+      await expect(editor.visualEditor.locator('pre > code')).toHaveCount(2);
+      await page.keyboard.type('A', { delay: 0 });
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        localBodyMarkdown,
+        acceptedPreviewSignature,
+        'typing in a locally completed fence should establish its source before older mapped input'
+      );
+      expect(await editor.visualEditor.locator('pre > code').last().textContent())
+        .toBe('A\n');
+
+      await editor.visualEditor.focus();
+      await placeVisualCaretAfterText(editor.visualEditor, 'Existing');
+      await page.keyboard.insertText('X');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        editedMarkdown,
+        acceptedPreviewSignature,
+        'an older accepted PRE should remain editable after a local fence is added'
+      );
+      const editedState = await readCodeBodyState(editor.visualEditor);
+      expect(await editor.source.inputValue()).toBe(editedMarkdown);
+      expect(editedState.codeText).toBe('ExistingX\n');
+      expect(editedState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'ExistingX'.length
+      });
+      expect(await editor.visualEditor.locator('pre > code').last().textContent())
+        .toBe('A\n');
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        localBodyMarkdown,
+        acceptedPreviewSignature,
+        'Undo should restore the older mapped code body exactly'
+      );
+      expect(await editor.visualEditor.locator('pre > code').first().textContent())
+        .toBe('Existing\n');
+      expect(await editor.visualEditor.locator('pre > code').last().textContent())
+        .toBe('A\n');
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        editedMarkdown,
+        acceptedPreviewSignature,
+        'Redo should restore the older mapped code edit exactly'
+      );
+      expect(await editor.visualEditor.locator('pre > code').first().textContent())
+        .toBe('ExistingX\n');
+      expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: 'ExistingX'.length
+      });
+      expect(await editor.visualEditor.locator('pre > code').last().textContent())
+        .toBe('A\n');
+      expect(mapFailures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+
+    test(`blocks code input after same-shape mapped PRE reorder for ${fence}`, async ({ page }, testInfo) => {
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const markdown = [
+        `${fence}js`,
+        'first block',
+        fence,
+        '',
+        `${fence}js`,
+        '',
+        fence
+      ].join('\n');
+      await fillMarkdownAndWaitForPreview(page, markdown, 'first block');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const codes = editor.visualEditor.locator('pre > code');
+      await expect(codes).toHaveCount(2);
+      const originalCodeTexts = await codes.allTextContents();
+      const failureCodes = [];
+      const pageErrors = [];
+      let previewPosts = 0;
+      page.on('console', (message) => {
+        if (message.type() === 'error'
+          && message.text().startsWith('[EasyMDE] visual-editor-code-body-map-')) {
+          failureCodes.push(message.text());
+        }
+      });
+      page.on('pageerror', (error) => pageErrors.push(error.message));
+      page.on('request', (request) => {
+        if (request.method() === 'POST'
+          && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
+          previewPosts += 1;
+        }
+      });
+
+      await editor.visualEditor.evaluate((surface) => {
+        const blocks = Array.from(surface.querySelectorAll('pre'));
+        if (blocks.length !== 2 || blocks[0].parentElement !== blocks[1].parentElement) {
+          throw new Error('mapped-code-reorder-fixture-unavailable');
+        }
+        blocks[0].before(blocks[1]);
+      });
+      await codes.first().click({ position: { x: 24, y: 18 } });
+      await page.keyboard.type('T', { delay: 0 });
+
+      await expect.poll(() => failureCodes).toContain(
+        '[EasyMDE] visual-editor-code-body-map-stale'
+      );
+      await expect(editor.source).toHaveValue(markdown);
+      await expect.poll(() => codes.allTextContents()).toEqual(originalCodeTexts);
+      expect(previewPosts).toBe(0);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  test('maps repeated-run Windowed native deletes with empty target ranges', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(failureCode ?? 'console-error');
+    });
+    page.on('pageerror', () => browserFailures.push('pageerror'));
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const codeBlock = '~~~js\nAAAAAA\n~~~';
+    const blocks = Array.from({ length: 220 }, (_, index) => (
+      160 === index ? codeBlock : `Repeated-delete paragraph ${index}.`
+    ));
+    const markdown = blocks.join('\n\n');
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Repeated-delete paragraph 0.');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const block = editor.visualEditor.locator(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    await canvas.evaluate((element, index) => {
+      const spacer = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= index && index < end;
+      });
+      const target = element.querySelector(`[data-easymde-visual-block-id="b${index}"]`);
+      if (!spacer && !target) throw new Error('windowed-repeated-delete-target-unavailable');
+      if (!spacer) return;
+      const canvasTop = element.getBoundingClientRect().top;
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = Math.min(
+        maxScrollTop,
+        element.scrollTop + spacer.getBoundingClientRect().top - canvasTop + 1
+      );
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+    }, 160);
+    await expect(block).toBeAttached({ timeout: 30_000 });
+    await expect(block).toBeVisible({ timeout: 30_000 });
+
+    const setCodeCaret = async (body, offset) => editor.visualEditor.evaluate((surface, state) => {
+      const code = surface.querySelector('[data-easymde-visual-block-id="b160"] > code');
+      if (!(code instanceof HTMLElement) || code.textContent !== `${state.body}\n`) {
+        throw new Error('windowed-repeated-delete-code-unavailable');
+      }
+      const walker = surface.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      let remaining = state.offset;
+      let text = walker.nextNode();
+      while (text instanceof Text && remaining > text.length) {
+        remaining -= text.length;
+        text = walker.nextNode();
+      }
+      if (!(text instanceof Text) || remaining > text.length) {
+        throw new Error('windowed-repeated-delete-caret-unavailable');
+      }
+      const range = surface.ownerDocument.createRange();
+      range.setStart(text, remaining);
+      range.collapse(true);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('windowed-repeated-delete-selection-unavailable');
+      surface.focus({ preventScroll: true });
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, { body, offset });
+    const traceKey = '__easymdeWindowedRepeatedDeleteFallback';
+    const fallbackInstalled = await page.evaluate((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        InputEvent.prototype,
+        'getTargetRanges'
+      );
+      if (!descriptor || 'function' !== typeof descriptor.value || !descriptor.configurable) {
+        throw new Error('windowed-repeated-delete-target-range-override-unavailable');
+      }
+      Object.defineProperty(InputEvent.prototype, 'getTargetRanges', {
+        ...descriptor,
+        value: () => []
+      });
+      const events = [];
+      const record = (event) => {
+        if (!event.inputType?.startsWith('delete')) return;
+        events.push({
+          inputType: event.inputType,
+          targetRangeCount: event.getTargetRanges().length,
+          trusted: event.isTrusted
+        });
+      };
+      document.addEventListener('beforeinput', record, true);
+      window[key] = {
+        dispose: () => document.removeEventListener('beforeinput', record, true),
+        events
+      };
+      return 0 === new InputEvent('beforeinput').getTargetRanges().length;
+    }, traceKey);
+    expect(fallbackInstalled).toBe(true);
+
+    const codeStart = markdown.indexOf(codeBlock);
+    if (codeStart < 0) throw new Error('windowed-repeated-delete-source-block-missing');
+    const bodyStart = codeStart + codeBlock.indexOf('\n') + 1;
+    const sourceForBody = (body) => (
+      markdown.slice(0, bodyStart) + body + markdown.slice(bodyStart + 'AAAAAA'.length)
+    );
+    const expectWindowedCaret = async (body, offset) => {
+      const codeState = await block.evaluate((pre) => {
+        const code = pre.querySelector(':scope > code');
+        const surface = pre.closest('.easymde-immersive-visual-editor');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        if (!(code instanceof HTMLElement) || !(surface instanceof HTMLElement)) {
+          throw new Error('windowed-repeated-delete-caret-state-unavailable');
+        }
+        const anchorInsideCode = Boolean(
+          anchor && (anchor === code || code.contains(anchor))
+        );
+        let codeOffset = null;
+        if (selection && anchor && anchorInsideCode) {
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(anchor, selection.anchorOffset);
+          codeOffset = range.toString().length;
+        }
+        return {
+          active: document.activeElement === surface,
+          codeText: code.textContent,
+          selection: {
+            anchorInsideCode,
+            collapsed: selection?.isCollapsed ?? null,
+            codeOffset
+          }
+        };
+      });
+      expect(codeState.codeText).toBe(`${body}\n`);
+      expect(codeState.active).toBe(true);
+      expect(codeState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: offset
+      });
+      const mountedCount = await editor.visualEditor.locator(
+        '[data-easymde-visual-block-id]'
+      ).count();
+      expect(mountedCount).toBeGreaterThan(0);
+      expect(mountedCount).toBeLessThanOrEqual(160);
+    };
+    const expectLatestFallbackDelete = async (inputType) => {
+      const event = await page.evaluate((key) => (
+        window[key]?.events.at(-1) ?? null
+      ), traceKey);
+      expect(event).toEqual({ inputType, targetRangeCount: 0, trusted: true });
+    };
+    const pressAndVerify = async (key, body, offset, message) => {
+      await page.keyboard.press(key);
+      if ('Backspace' === key) await expectLatestFallbackDelete('deleteContentBackward');
+      if ('Delete' === key) await expectLatestFallbackDelete('deleteContentForward');
+      await expect(editor.source).toHaveValue(sourceForBody(body), { timeout: 30_000 });
+      await expect.poll(
+        () => editor.visualEditor.getAttribute('aria-busy'),
+        { message }
+      ).toBe('false');
+      await waitForBrowserPaint(page);
+      await expect(block).toBeAttached({ timeout: 30_000 });
+      await expectWindowedCaret(body, offset);
+    };
+
+    const originalBody = 'AAAAAA';
+    await setCodeCaret(originalBody, 3);
+    await expectWindowedCaret(originalBody, 3);
+    let currentBody = originalBody;
+    let currentCaret = 3;
+    for (const { key, removeAt, caretAfter } of [
+      { caretAfter: 2, key: 'Backspace', removeAt: 2 },
+      { caretAfter: 2, key: 'Delete', removeAt: 2 }
+    ]) {
+      await setCodeCaret(currentBody, currentCaret);
+      const editedBody = currentBody.slice(0, removeAt) + currentBody.slice(removeAt + 1);
+      await pressAndVerify(key, editedBody, caretAfter, `${key} should map to canonical Markdown`);
+      await pressAndVerify(
+        'ControlOrMeta+z',
+        currentBody,
+        currentCaret,
+        `Undo ${key} should restore the exact source and caret`
+      );
+      await pressAndVerify(
+        'ControlOrMeta+Shift+z',
+        editedBody,
+        caretAfter,
+        `Redo ${key} should restore the exact source and caret`
+      );
+      currentBody = editedBody;
+      currentCaret = caretAfter;
+    }
+
+    const nativeDeletes = await page.evaluate((key) => {
+      const trace = window[key];
+      if (!trace) throw new Error('windowed-repeated-delete-trace-unavailable');
+      trace.dispose();
+      delete window[key];
+      return trace.events;
+    }, traceKey);
+    expect(nativeDeletes.map(({ inputType }) => inputType)).toEqual([
+      'deleteContentBackward',
+      'deleteContentForward'
+    ]);
+    expect(nativeDeletes.every(({ targetRangeCount, trusted }) => (
+      0 === targetRangeCount && true === trusted
+    ))).toBe(true);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('maps Windowed code edits to source block b160', async ({ page }, testInfo) => {
+    const failureCodes = [];
+    const pageErrors = [];
+    let previewPosts = 0;
+    page.on('console', (message) => {
+      const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+    });
+    page.on('pageerror', () => pageErrors.push('pageerror'));
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) previewPosts += 1;
+    });
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const codeMarkdown = '~~~js\n\n~~~';
+    const blocks = Array.from({ length: 220 }, (_, index) => (
+      160 === index ? codeMarkdown : `Windowed paragraph ${index + 1}.`
+    ));
+    const markdown = blocks.join('\n\n');
+    const initialPreviewResponse = page.waitForResponse((response) => {
+      const request = response.request();
+      if (
+        'POST' !== request.method()
+        || !new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) return false;
+      try {
+        return request.postDataJSON()?.markdown === markdown;
+      } catch {
+        return false;
+      }
+    });
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Windowed paragraph 1.');
+    const initialPreviewResponseValue = await initialPreviewResponse;
+    const initialPreviewPayload = await initialPreviewResponseValue.json();
+    const sourceLines = markdown.split('\n');
+    const expectedBlockStartLine = markdown.slice(0, markdown.indexOf(codeMarkdown))
+      .split('\n').length - 1;
+    const expectedBlockEndLine = expectedBlockStartLine + codeMarkdown.split('\n').length;
+    const mappedBlock = initialPreviewPayload.editMap?.blocks?.find((candidate) => (
+      'b160' === candidate.id
+    ));
+    const mappedLines = mappedBlock
+      && Number.isInteger(mappedBlock.startLine)
+      && Number.isInteger(mappedBlock.endLine)
+      && mappedBlock.startLine <= mappedBlock.endLine
+      ? sourceLines.slice(mappedBlock.startLine, mappedBlock.endLine)
+      : [];
+    const mapEvidence = {
+      editMap: {
+        blockCount: initialPreviewPayload.editMap?.blocks?.length ?? null,
+        coordinate: initialPreviewPayload.editMap?.coordinate ?? null,
+        version: initialPreviewPayload.editMap?.version ?? null
+      },
+      mappedBlock: mappedBlock ? {
+        editable: mappedBlock.editable,
+        endLine: mappedBlock.endLine,
+        id: mappedBlock.id,
+        lineCount: mappedLines.length,
+        mappedRangeCoversTarget: mappedBlock.startLine <= expectedBlockStartLine
+          && mappedBlock.endLine >= expectedBlockEndLine,
+        mappedRangeMatchesTarget: mappedBlock.startLine === expectedBlockStartLine
+          && mappedBlock.endLine === expectedBlockEndLine,
+        mappedSliceHasClosingFence: mappedLines.at(-1) === '~~~',
+        mappedSliceHasOpeningFence: mappedLines[0]?.startsWith('~~~') ?? false,
+        mappedSliceLength: mappedLines.join('\n').length,
+        startLine: mappedBlock.startLine
+      } : null,
+      responseOk: initialPreviewResponseValue.ok(),
+      targetRange: {
+        endLine: expectedBlockEndLine,
+        lineCount: expectedBlockEndLine - expectedBlockStartLine,
+        startLine: expectedBlockStartLine
+      }
+    };
+    await testInfo.attach('windowed-b160-preview-map-structure', {
+      body: JSON.stringify(mapEvidence),
+      contentType: 'application/json'
+    });
+    expect(mapEvidence).toMatchObject({
+      editMap: {
+        blockCount: 220,
+        coordinate: 'line',
+        version: 1
+      },
+      mappedBlock: {
+        editable: true,
+        endLine: 323,
+        id: 'b160',
+        lineCount: 3,
+        mappedRangeCoversTarget: true,
+        mappedRangeMatchesTarget: true,
+        mappedSliceHasClosingFence: true,
+        mappedSliceHasOpeningFence: true,
+        startLine: 320
+      },
+      responseOk: true,
+      targetRange: {
+        endLine: 323,
+        lineCount: 3,
+        startLine: 320
+      }
+    });
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const acceptedPreviewSignature = await readyPreviewSignature(
+      editor.visualEditor
+    );
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const spacer = editor.visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    );
+    let currentPreviewSignature = acceptedPreviewSignature;
+    await expect(spacer.first()).toBeAttached({ timeout: 30_000 });
+    const scrollEvidence = await canvas.evaluate((element, targetIndex) => {
+      if (!(element instanceof HTMLElement)) {
+        throw new Error('windowed-code-canvas-unavailable');
+      }
+      const alreadyMounted = element.querySelector(
+        `[data-easymde-visual-block-id="b${targetIndex}"]`
+      );
+      const omittedRange = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= targetIndex && targetIndex < end;
+      });
+      if (!alreadyMounted && !omittedRange) {
+        throw new Error('windowed-target-block-not-represented');
+      }
+      const canvasRect = element.getBoundingClientRect();
+      const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = alreadyMounted
+        ? element.scrollTop
+        : Math.min(
+            maxScrollTop,
+            element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
+          );
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+      return {
+        alreadyMounted: Boolean(alreadyMounted),
+        maxScrollTop,
+        mountedIds: Array.from(element.querySelectorAll('[data-easymde-visual-block-id]'))
+          .map((node) => node.getAttribute('data-easymde-visual-block-id')),
+        range: omittedRange ? {
+          end: omittedRange.getAttribute('data-easymde-preview-window-end'),
+          height: omittedRange.getBoundingClientRect().height,
+          start: omittedRange.getAttribute('data-easymde-preview-window-start'),
+          top: rangeRect?.top ?? null
+        } : null,
+        scrollTop: element.scrollTop,
+        targetFraction: 0 === maxScrollTop ? 0 : targetScrollTop / maxScrollTop,
+        targetScrollTop
+      };
+    }, 160);
+    await testInfo.attach('windowed-b160-scroll-state', {
+      body: JSON.stringify(scrollEvidence),
+      contentType: 'application/json'
+    });
+    const block = editor.visualEditor.locator(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const mountedBlocks = editor.visualEditor.locator(
+      '[data-easymde-visual-block-id]'
+    );
+    await expect(block).toBeAttached({ timeout: 30_000 });
+    await expect(block).toBeVisible({ timeout: 30_000 });
+    const code = block.locator(':scope > code');
+    await expect(code).toHaveCount(1);
+    const expectBoundedWindow = async (expectedMarkdown = markdown) => {
+      await expect(block).toBeAttached({ timeout: 30_000 });
+      const state = await readWindowedMountedState(
+        expectedMarkdown,
+        currentPreviewSignature
+      );
+      expect(state.targetPreAttached).toBe(true);
+      expect(state.targetPreCount).toBe(1);
+      expectWindowedCoverage({
+        mountedBlockCount: state.mountedBlockCount,
+        mountedRanges: state.mountedIdRanges,
+        spacerRanges: state.spacerRanges
+      }, blocks.length, 160);
+    };
+    const expectCanonicalSource = async (expected, message) => {
+      await expect.poll(
+        () => editor.source.evaluate((field, value) => field.value === value, expected),
+        { timeout: 30_000, message }
+      ).toBe(true);
+      await expect(editor.visualEditor).toHaveAttribute('aria-busy', 'false');
+    };
+    const waitForWindowedCommit = async (expected, signature, message) => {
+      await expect.poll(async () => editor.visualEditor.evaluate(async (surface, state) => {
+        const source = document.querySelector('#easymde-source');
+        const sample = () => ({
+          contentEditable: surface.getAttribute('contenteditable'),
+          html: surface.innerHTML,
+          previewSignature: surface.easymdePreviewSignature ?? '',
+          sourceMatches: source instanceof HTMLTextAreaElement
+            && source.value === state.markdown,
+          surfaceBusy: surface.getAttribute('aria-busy')
+        });
+        const before = sample();
+        await new Promise((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(resolve));
+        });
+        const after = sample();
+        return before.contentEditable === 'true'
+          && before.previewSignature === state.previewSignature
+          && before.sourceMatches
+          && before.surfaceBusy === 'false'
+          && JSON.stringify(before) === JSON.stringify(after);
+      }, { markdown: expected, previewSignature: signature }), {
+        timeout: 30_000,
+        message
+      }).toBe(true);
+    };
+    const readNativeSourceCaret = async () => editor.source.evaluate((field) => ({
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }));
+    const readWindowedMountedState = async (expectedMarkdown, previousSignature) => {
+      const domState = await editor.visualEditor.evaluate((surface, expected) => {
+        const canvas = surface.closest('.easymde-immersive-preview-canvas');
+        const source = document.querySelector('#easymde-source');
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const allPres = Array.from(surface.querySelectorAll('pre'));
+        const targetPre = surface.querySelector(
+          '[data-easymde-visual-block-id="b160"]'
+        );
+        const targetCode = targetPre?.querySelector(':scope > code') ?? null;
+        const closestPre = anchorElement?.closest('pre') ?? null;
+        const closestCode = anchorElement?.closest('code') ?? null;
+        const mountedIds = canvas instanceof HTMLElement
+          ? Array.from(canvas.querySelectorAll('[data-easymde-visual-block-id]'))
+            .map((block) => block.getAttribute('data-easymde-visual-block-id'))
+            .filter((id) => null !== id)
+          : [];
+        const mountedIndices = mountedIds.flatMap((id) => {
+          const match = /^b(\d+)$/u.exec(id);
+          return match ? [Number(match[1])] : [];
+        });
+        const mountedIdRanges = [];
+        for (const index of mountedIndices) {
+          const previous = mountedIdRanges.at(-1);
+          if (previous && previous.end + 1 === index) {
+            previous.end = index;
+          } else {
+            mountedIdRanges.push({ end: index, start: index });
+          }
+        }
+        const spacerRanges = canvas instanceof HTMLElement
+          ? Array.from(canvas.querySelectorAll(
+              '[data-easymde-preview-window-spacer]'
+            )).map((spacer) => ({
+              end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+              start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+            }))
+          : [];
+        let targetCodeOffset = null;
+        if (
+          selection
+          && anchor
+          && targetCode
+          && (anchor === targetCode || targetCode.contains(anchor))
+        ) {
+          const range = surface.ownerDocument.createRange();
+          range.selectNodeContents(targetCode);
+          range.setEnd(anchor, selection.anchorOffset);
+          targetCodeOffset = range.toString().length;
+        }
+        const signature = surface.easymdePreviewSignature ?? '';
+        const activeElement = surface.ownerDocument.activeElement;
+        return {
+          activeElementInsideSurface: Boolean(
+            activeElement && surface.contains(activeElement)
+          ),
+          activeElementIsSurface: activeElement === surface,
+          activeElementName: activeElement?.nodeName ?? null,
+          anchorClosestPreBlockId: closestPre?.getAttribute(
+            'data-easymde-visual-block-id'
+          ) ?? null,
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorInsideTargetCode: Boolean(
+            targetCode && anchor && (anchor === targetCode || targetCode.contains(anchor))
+          ),
+          anchorInsideTargetPre: Boolean(
+            targetPre && anchor && (anchor === targetPre || targetPre.contains(anchor))
+          ),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorParentName: anchor?.parentNode?.nodeName ?? null,
+          anchorPreIndex: closestPre ? allPres.indexOf(closestPre) : -1,
+          canvas: canvas instanceof HTMLElement ? {
+            clientHeight: canvas.clientHeight,
+            scrollHeight: canvas.scrollHeight,
+            scrollTop: canvas.scrollTop
+          } : null,
+          closestCodeConnected: closestCode?.isConnected ?? false,
+          collapsed: selection?.isCollapsed ?? null,
+          contentEditable: surface.getAttribute('contenteditable'),
+          mountedBlockCount: mountedIds.length,
+          mountedBlockIds: mountedIds,
+          mountedIdRanges,
+          preCount: allPres.length,
+          source: source instanceof HTMLTextAreaElement ? {
+            length: source.value.length,
+            matchesExpected: source.value === expected.markdown,
+            selectionEnd: source.selectionEnd,
+            selectionStart: source.selectionStart
+          } : null,
+          spacerRanges,
+          surfaceBusy: surface.getAttribute('aria-busy'),
+          targetCodeCount: targetPre?.querySelectorAll(':scope > code').length ?? 0,
+          targetCodeOffset,
+          targetCodeTextEndsWithLineFeed: (targetCode?.textContent ?? '').endsWith('\n'),
+          targetCodeTextLength: targetCode?.textContent?.length ?? null,
+          targetPreAttached: Boolean(targetPre?.isConnected),
+          targetPreCount: surface.querySelectorAll(
+            '[data-easymde-visual-block-id="b160"]'
+          ).length,
+          targetPreIndex: targetPre ? allPres.indexOf(targetPre) : -1,
+          preview: {
+            signatureChangedFromPrevious: Boolean(signature)
+              && signature !== expected.previousSignature,
+            signatureLength: 'string' === typeof signature ? signature.length : null,
+            signatureMatchesPrevious: signature === expected.previousSignature,
+            signaturePresent: Boolean(signature)
+          }
+        };
+      }, { markdown: expectedMarkdown, previousSignature });
+      return { previewPosts, ...domState };
+    };
+    const readWindowedRedoState = async (expectedMarkdown, previousSignature) => {
+      const domState = await page.evaluate((expected) => {
+        const surface = document.querySelector('.easymde-immersive-visual-editor');
+        const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+        const previewRoot = document.querySelector('.easymde-pane-preview');
+        const previewSink = previewRoot?.querySelector(
+          '[data-easymde-preview-html-sink="1"]'
+        ) ?? null;
+        const source = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const blockRoot = canvas ?? surface ?? previewRoot;
+        const allPres = Array.from(blockRoot?.querySelectorAll('pre') ?? []);
+        const targetPre = blockRoot?.querySelector(
+          '[data-easymde-visual-block-id="b160"]'
+        ) ?? null;
+        const targetCode = targetPre?.querySelector(':scope > code') ?? null;
+        const closestPre = anchorElement?.closest('pre') ?? null;
+        const closestCode = anchorElement?.closest('code') ?? null;
+        const mountedIds = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-visual-block-id]'
+        ) ?? []).map((block) => block.getAttribute('data-easymde-visual-block-id'))
+          .filter((id) => null !== id);
+        const mountedIndices = mountedIds.flatMap((id) => {
+          const match = /^b(\d+)$/u.exec(id);
+          return match ? [Number(match[1])] : [];
+        });
+        const mountedIdRanges = [];
+        for (const index of mountedIndices) {
+          const previous = mountedIdRanges.at(-1);
+          if (previous && previous.end + 1 === index) previous.end = index;
+          else mountedIdRanges.push({ end: index, start: index });
+        }
+        const spacerRanges = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ) ?? []).map((spacer) => ({
+          end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+          start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+        }));
+        let targetCodeOffset = null;
+        if (
+          selection
+          && anchor
+          && targetCode
+          && (anchor === targetCode || targetCode.contains(anchor))
+        ) {
+          const range = document.createRange();
+          range.selectNodeContents(targetCode);
+          range.setEnd(anchor, selection.anchorOffset);
+          targetCodeOffset = range.toString().length;
+        }
+        const signature = surface?.easymdePreviewSignature
+          ?? previewSink?.easymdePreviewSignature
+          ?? '';
+        const [revisionText, markdownLengthText] = signature.split(':', 2);
+        const activeElement = document.activeElement;
+        return {
+          activeElementInsideSurface: Boolean(
+            surface && activeElement && surface.contains(activeElement)
+          ),
+          activeElementIsSurface: activeElement === surface,
+          activeElementName: activeElement?.nodeName ?? null,
+          anchorClosestPreBlockId: closestPre?.getAttribute(
+            'data-easymde-visual-block-id'
+          ) ?? null,
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorInsideTargetCode: Boolean(
+            targetCode && anchor && (anchor === targetCode || targetCode.contains(anchor))
+          ),
+          anchorInsideTargetPre: Boolean(
+            targetPre && anchor && (anchor === targetPre || targetPre.contains(anchor))
+          ),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorParentName: anchor?.parentNode?.nodeName ?? null,
+          anchorPreIndex: closestPre ? allPres.indexOf(closestPre) : -1,
+          canvas: canvas instanceof HTMLElement ? {
+            clientHeight: canvas.clientHeight,
+            scrollHeight: canvas.scrollHeight,
+            scrollTop: canvas.scrollTop
+          } : null,
+          closestCodeConnected: closestCode?.isConnected ?? false,
+          collapsed: selection?.isCollapsed ?? null,
+          contentEditable: surface?.getAttribute('contenteditable') ?? null,
+          immersiveSurfaceCount: document.querySelectorAll(
+            '.easymde-immersive-visual-editor'
+          ).length,
+          mountedBlockCount: mountedIds.length,
+          mountedBlockIds: mountedIds,
+          mountedIdRanges,
+          preCount: allPres.length,
+          preview: {
+            errorPresent: Boolean(previewSink?.hasAttribute('data-easymde-preview-error')),
+            ownerBusy: previewSink?.getAttribute('aria-busy') ?? null,
+            signatureChangedFromPrevious: Boolean(signature)
+              && signature !== expected.previousSignature,
+            signatureLength: 'string' === typeof signature ? signature.length : null,
+            signatureMarkdownLength: /^\d+$/u.test(markdownLengthText ?? '')
+              ? Number(markdownLengthText)
+              : null,
+            signatureMatchesPrevious: signature === expected.previousSignature,
+            signaturePresent: Boolean(signature),
+            signatureRevision: /^\d+$/u.test(revisionText ?? '')
+              ? Number(revisionText)
+              : null,
+            surfaceBusy: surface?.getAttribute('aria-busy') ?? null
+          },
+          source: source instanceof HTMLTextAreaElement ? {
+            length: source.value.length,
+            matchesExpected: source.value === expected.markdown,
+            selectionEnd: source.selectionEnd,
+            selectionStart: source.selectionStart
+          } : null,
+          spacerRanges,
+          targetCodeCount: targetPre?.querySelectorAll(':scope > code').length ?? 0,
+          targetCodeOffset,
+          targetCodeTextEndsWithLineFeed: (targetCode?.textContent ?? '').endsWith('\n'),
+          targetCodeTextLength: targetCode?.textContent?.length ?? null,
+          targetPreAttached: Boolean(targetPre?.isConnected),
+          targetPreCount: blockRoot?.querySelectorAll(
+            '[data-easymde-visual-block-id="b160"]'
+          ).length ?? 0,
+          targetPreIndex: targetPre ? allPres.indexOf(targetPre) : -1
+        };
+      }, { markdown: expectedMarkdown, previousSignature });
+      return { previewPosts, ...domState };
+    };
+    const waitForWindowedHistory = async (expected, previousSignature, message) => {
+      await waitForPreviewRefresh(editor.visualEditor, previousSignature, message);
+      await expectCanonicalSource(expected, message);
+      await waitForBrowserPaint(page);
+      await expectBoundedWindow(expected);
+      currentPreviewSignature = await readyPreviewSignature(editor.visualEditor);
+      return currentPreviewSignature;
+    };
+    const initialPreviewPosts = previewPosts;
+    await expectBoundedWindow(markdown);
+    const canvasBox = await canvas.boundingBox();
+    if (!canvasBox) throw new Error('windowed-code-canvas-box-unavailable');
+    await page.mouse.move(
+      canvasBox.x + canvasBox.width / 2,
+      canvasBox.y + canvasBox.height / 2
+    );
+    const windowedScrollSteps = [];
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const geometry = await code.evaluate((element) => {
+        const canvas = element.closest('.easymde-immersive-preview-canvas');
+        if (!(canvas instanceof HTMLElement)) {
+          throw new Error('windowed-code-canvas-unavailable');
+        }
+        const codeRect = element.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
+        const desiredTop = canvasRect.top + canvas.clientTop
+          + Math.max(0, (canvas.clientHeight - codeRect.height) / 2);
+        return {
+          canvasBottom: canvasRect.bottom,
+          canvasScrollTop: canvas.scrollTop,
+          canvasTop: canvasRect.top,
+          codeBottom: codeRect.bottom,
+          codeTop: codeRect.top,
+          desiredTop,
+          intersectionHeight: Math.max(
+            0,
+            Math.min(codeRect.bottom, canvasRect.bottom)
+              - Math.max(codeRect.top, canvasRect.top)
+          ),
+          scrollStep: Math.sign(codeRect.top - desiredTop) * Math.min(
+            Math.abs(codeRect.top - desiredTop),
+            Math.max(48, canvas.clientHeight * 0.65)
+          )
+        };
+      });
+      windowedScrollSteps.push(geometry);
+      if (geometry.intersectionHeight > 0) break;
+      if (0 === geometry.scrollStep) {
+        throw new Error('windowed-code-scroll-target-unreachable');
+      }
+      await page.mouse.wheel(0, geometry.scrollStep);
+      await page.evaluate(() => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      }));
+    }
+    await expect(block).toBeAttached({ timeout: 30_000 });
+    await expect(block).toBeVisible({ timeout: 30_000 });
+    const visibleState = await code.evaluate((element) => {
+      const canvas = element.closest('.easymde-immersive-preview-canvas');
+      if (!(canvas instanceof HTMLElement)) {
+        throw new Error('windowed-code-canvas-unavailable');
+      }
+      const codeRect = element.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const intersectionTop = Math.max(codeRect.top, canvasRect.top);
+      const intersectionBottom = Math.min(codeRect.bottom, canvasRect.bottom);
+      return {
+        canvasBottom: canvasRect.bottom,
+        canvasScrollTop: canvas.scrollTop,
+        canvasTop: canvasRect.top,
+        codeBottom: codeRect.bottom,
+        codeTop: codeRect.top,
+        intersectionHeight: Math.max(0, intersectionBottom - intersectionTop),
+        pageScrollY: window.scrollY
+      };
+    });
+    await testInfo.attach('windowed-b160-visible-state', {
+      body: JSON.stringify({ scrollEvidence, visibleState, windowedScrollSteps }),
+      contentType: 'application/json'
+    });
+    expect(
+      visibleState.intersectionHeight,
+      JSON.stringify({ scrollEvidence, visibleState, windowedScrollSteps })
+    ).toBeGreaterThan(0);
+    const codeBlockStart = markdown.indexOf(codeMarkdown);
+    if (codeBlockStart < 0) throw new Error('windowed-code-source-block-missing');
+    const replaceCodeBlock = (source, before, after) => {
+      const start = source.indexOf(before);
+      if (start < 0) throw new Error('windowed-code-source-block-missing');
+      return source.slice(0, start) + after + source.slice(start + before.length);
+    };
+    const expectCodeBodyProjection = (actual, expected) => {
+      expect(
+        actual === expected || `${actual}\n` === expected,
+        'Windowed code projection may omit only its single canonical terminal newline'
+      ).toBe(true);
+    };
+
+    // Synthetic noncancelable events exercise rollback; they are not trusted IME evidence.
+    const compositionEvidence = await editor.visualEditor.evaluate(async (surface) => {
+      const pre = surface.querySelector('[data-easymde-visual-block-id="b160"]');
+      const code = pre?.querySelector(':scope > code');
+      const source = document.querySelector('#easymde-source');
+      if (
+        !(pre instanceof HTMLElement)
+        || !(code instanceof HTMLElement)
+        || !(source instanceof HTMLTextAreaElement)
+      ) throw new Error('windowed-ime-rejection-state-unavailable');
+      const acceptedSource = source.value;
+      const acceptedPreChildrenHtml = pre.innerHTML;
+      const acceptedCodeText = code.textContent;
+      const readFenceDomShape = (targetPre, targetCode) => {
+        const configuredFence = targetPre.getAttribute('data-easymde-visual-fence');
+        const configuredInfo = targetPre.getAttribute('data-easymde-visual-fence-info');
+        const fenceFamily = configuredFence && /^~{3,}$/u.test(configuredFence)
+          ? 'tilde'
+          : configuredFence && /^`{3,}$/u.test(configuredFence)
+            ? 'backtick'
+            : configuredFence
+              ? 'invalid'
+              : 'missing';
+        return {
+          codeHasExpectedLanguageClass: targetCode.classList.contains('language-js'),
+          fenceAttributeLength: configuredFence?.length ?? 0,
+          fenceAttributePresent: null !== configuredFence,
+          fenceFamily,
+          fenceInfoAttributePresent: null !== configuredInfo,
+          fenceInfoMatchesExpectedLanguage: 'js' === configuredInfo,
+          fenceInfoMatchesLanguageClass: null === configuredInfo
+            || configuredInfo === (Array.from(targetCode.classList)
+              .find((className) => className.startsWith('language-'))
+              ?.slice('language-'.length) ?? null)
+        };
+      };
+      const range = surface.ownerDocument.createRange();
+      range.setStart(pre, 0);
+      range.collapse(true);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('windowed-ime-rejection-selection-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const anchorAtStart = selection.anchorNode;
+      const selectionAtStart = {
+        anchorNodeIsPre: anchorAtStart === pre,
+        anchorNodeName: anchorAtStart?.nodeName ?? null,
+        anchorOffset: selection.anchorOffset,
+        anchorParentName: anchorAtStart?.parentElement?.nodeName ?? null,
+        anchorResolvesToTargetPre: anchorAtStart instanceof Element
+          ? anchorAtStart.closest('pre') === pre
+          : anchorAtStart?.parentElement?.closest('pre') === pre,
+        targetBlockId: pre.getAttribute('data-easymde-visual-block-id')
+      };
+      const acceptedDomShape = {
+        codeChildNodeNames: Array.from(code.childNodes).map((node) => node.nodeName),
+        codeEndsWithLineFeed: (code.textContent ?? '').endsWith('\n'),
+        codeTextLength: code.textContent?.length ?? 0,
+        preAttributeNames: Array.from(pre.attributes).map((attribute) => attribute.name),
+        preChildNodeNames: Array.from(pre.childNodes).map((node) => node.nodeName),
+        preElementChildNames: Array.from(pre.children).map((node) => node.nodeName),
+        preTagName: pre.tagName,
+        ...readFenceDomShape(pre, code)
+      };
+
+      surface.dispatchEvent(new CompositionEvent('compositionstart', {
+        bubbles: true,
+        data: ''
+      }));
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: false,
+        data: '中',
+        inputType: 'insertCompositionText',
+        isComposing: true
+      });
+      surface.dispatchEvent(beforeInput);
+      const browserMayApplyDefault = !beforeInput.cancelable
+        || !beforeInput.defaultPrevented;
+      let simulatedNativeMutation = false;
+      if (browserMayApplyDefault) {
+        const compositionText = surface.ownerDocument.createTextNode('中');
+        code.replaceChildren(compositionText);
+        const compositionRange = surface.ownerDocument.createRange();
+        compositionRange.setStart(compositionText, compositionText.length);
+        compositionRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(compositionRange);
+        simulatedNativeMutation = true;
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          cancelable: false,
+          data: '中',
+          inputType: 'insertCompositionText',
+          isComposing: true
+        }));
+      }
+      const domDivergedBeforeEnd = pre.innerHTML !== acceptedPreChildrenHtml;
+      surface.dispatchEvent(new CompositionEvent('compositionend', {
+        bubbles: true,
+        data: '中'
+      }));
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      const restoredPre = surface.querySelector(
+        '[data-easymde-visual-block-id="b160"]'
+      );
+      const restoredSelection = surface.ownerDocument.defaultView?.getSelection();
+      const restoredAnchor = restoredSelection?.anchorNode ?? null;
+      const restoredCode = restoredPre?.querySelector(':scope > code') ?? null;
+      const restoredDomShape = {
+        acceptedCodeTextRestored: restoredCode?.textContent === acceptedCodeText,
+        acceptedPreChildrenRestored: restoredPre?.innerHTML === acceptedPreChildrenHtml,
+        codeChildNodeNames: restoredCode
+          ? Array.from(restoredCode.childNodes).map((node) => node.nodeName)
+          : [],
+        codeEndsWithLineFeed: (restoredCode?.textContent ?? '').endsWith('\n'),
+        codeTextLength: restoredCode?.textContent?.length ?? 0,
+        preChildNodeNames: restoredPre
+          ? Array.from(restoredPre.childNodes).map((node) => node.nodeName)
+          : [],
+        preElementChildNames: restoredPre
+          ? Array.from(restoredPre.children).map((node) => node.nodeName)
+          : [],
+        preTagName: restoredPre?.tagName ?? null,
+        ...(restoredPre && restoredCode
+          ? readFenceDomShape(restoredPre, restoredCode)
+          : {
+            codeHasExpectedLanguageClass: false,
+            fenceAttributeLength: 0,
+            fenceAttributePresent: false,
+            fenceFamily: 'missing',
+            fenceInfoAttributePresent: false,
+            fenceInfoMatchesExpectedLanguage: false,
+            fenceInfoMatchesLanguageClass: false
+          })
+      };
+      return {
+        acceptedDomShape,
+        acceptedDomRestored: restoredPre?.innerHTML === acceptedPreChildrenHtml
+          && restoredCode?.textContent === acceptedCodeText,
+        acceptedPreIdentityRestored: restoredPre === pre,
+        acceptedSourceRestored: source.value === acceptedSource,
+        beforeInputCancelable: beforeInput.cancelable,
+        beforeInputDefaultPrevented: beforeInput.defaultPrevented,
+        domDivergedBeforeEnd,
+        restoredDomShape,
+        restoredCaretAtPreBoundary: restoredAnchor === pre
+          && 0 === restoredSelection?.anchorOffset,
+        simulatedNativeMutation,
+        selectionAtStart,
+        targetBlockCount: surface.querySelectorAll(
+          '[data-easymde-visual-block-id="b160"]'
+        ).length
+      };
+    });
+    await testInfo.attach('windowed-b160-composition-shape', {
+      body: JSON.stringify({
+        acceptedDomShape: compositionEvidence.acceptedDomShape,
+        acceptedTargetDomRestored: compositionEvidence.acceptedDomRestored,
+        acceptedPreIdentityRestored: compositionEvidence.acceptedPreIdentityRestored,
+        acceptedSourceRestored: compositionEvidence.acceptedSourceRestored,
+        beforeInputCancelable: compositionEvidence.beforeInputCancelable,
+        beforeInputDefaultPrevented: compositionEvidence.beforeInputDefaultPrevented,
+        domDivergedBeforeEnd: compositionEvidence.domDivergedBeforeEnd,
+        failureCodes: [...new Set(failureCodes)],
+        pageErrorCount: pageErrors.length,
+        restoredDomShape: compositionEvidence.restoredDomShape,
+        restoredCaretAtPreBoundary: compositionEvidence.restoredCaretAtPreBoundary,
+        selectionAtStart: compositionEvidence.selectionAtStart,
+        simulatedNativeMutation: compositionEvidence.simulatedNativeMutation,
+        targetBlockCount: compositionEvidence.targetBlockCount
+      }),
+      contentType: 'application/json'
+    });
+    expect(compositionEvidence).toMatchObject({
+      acceptedDomRestored: true,
+      restoredDomShape: {
+        acceptedCodeTextRestored: true,
+        acceptedPreChildrenRestored: true,
+        codeEndsWithLineFeed: true,
+        codeTextLength: 1,
+        preElementChildNames: ['CODE'],
+        preTagName: 'PRE'
+      },
+      acceptedPreIdentityRestored: true,
+      acceptedSourceRestored: true,
+      beforeInputCancelable: false,
+      beforeInputDefaultPrevented: false,
+      domDivergedBeforeEnd: true,
+      restoredCaretAtPreBoundary: true,
+      simulatedNativeMutation: true,
+      selectionAtStart: {
+        anchorNodeIsPre: true,
+        anchorOffset: 0,
+        targetBlockId: 'b160'
+      },
+      targetBlockCount: 1
+    });
+    expect(failureCodes).toContain('visual-editor-code-body-selection-invalid');
+    expect(await editor.source.evaluate((field, value) => field.value === value, markdown))
+      .toBe(true);
+    expect(previewPosts).toBe(initialPreviewPosts);
+    await expectBoundedWindow(markdown);
+
+    const validCodeMarkdown = '~~~js\nA\n~~~';
+    const validMarkdown = replaceCodeBlock(markdown, codeMarkdown, validCodeMarkdown);
+    const validCodeStart = validMarkdown.indexOf(validCodeMarkdown);
+    if (validCodeStart < 0) throw new Error('windowed-code-source-block-missing');
+    const validBodyStart = validCodeStart + validCodeMarkdown.indexOf('\n') + 1;
+    const setCodeCaret = async () => editor.visualEditor.evaluate((surface) => {
+      const pre = surface.querySelector('[data-easymde-visual-block-id="b160"]');
+      const code = pre?.querySelector(':scope > code');
+      if (!(code instanceof HTMLElement)) {
+        throw new Error('windowed-code-caret-unavailable');
+      }
+      const walker = surface.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      const text = walker.nextNode();
+      const target = text instanceof Text ? text : code;
+      const range = surface.ownerDocument.createRange();
+      range.setStart(target, 0);
+      range.collapse(true);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('windowed-code-caret-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return {
+        anchorInsideCode: target === code || code.contains(target),
+        anchorName: target.nodeName
+      };
+    });
+    expect(await setCodeCaret()).toMatchObject({ anchorInsideCode: true });
+    await page.keyboard.type('A', { delay: 0 });
+    await waitForWindowedCommit(
+      validMarkdown,
+      currentPreviewSignature,
+      'valid Windowed code input should work after composition rollback'
+    );
+    await expectBoundedWindow(validMarkdown);
+    expectCodeBodyProjection(await code.textContent(), 'A\n');
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 1
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 1,
+      start: validBodyStart + 1
+    });
+    expect(previewPosts).toBe(initialPreviewPosts);
+
+    const validBody = 'A\n';
+    const sourceBodyPrefix = validMarkdown.slice(0, validBodyStart);
+    const sourceBodySuffix = validMarkdown.slice(validBodyStart + validBody.length);
+    const markdownWithBody = (body) => sourceBodyPrefix + body + sourceBodySuffix;
+    const clickEvidence = await clickCodeLine(page, code, 0);
+    await testInfo.attach('windowed-b160-click-state', {
+      body: JSON.stringify({ clickEvidence, scrollEvidence, visibleState }),
+      contentType: 'application/json'
+    });
+    await page.keyboard.press('End');
+    const beforeEnterState = await readCodeBodyState(editor.visualEditor);
+    expect(beforeEnterState.selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 1
+    });
+
+    const structuralTraceKey = '__easymdeWindowedB160StructuralInput';
+    await editor.visualEditor.evaluate((surface, key) => {
+      const events = [];
+      const readSelection = () => {
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const targetPre = surface.querySelector(
+          '[data-easymde-visual-block-id="b160"]'
+        );
+        const targetCode = targetPre?.querySelector(':scope > code') ?? null;
+        const allPres = Array.from(surface.querySelectorAll('pre'));
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const anchorPre = anchorElement?.closest('pre') ?? null;
+        const anchorCode = anchorElement?.closest('code') ?? null;
+        let targetCodeOffset = null;
+        if (
+          selection
+          && anchor
+          && targetCode
+          && (anchor === targetCode || targetCode.contains(anchor))
+        ) {
+          const range = surface.ownerDocument.createRange();
+          range.selectNodeContents(targetCode);
+          range.setEnd(anchor, selection.anchorOffset);
+          targetCodeOffset = range.toString().length;
+        }
+        const genericPre = surface.querySelector('pre');
+        const genericCode = genericPre?.querySelector(':scope > code') ?? null;
+        const activeElement = surface.ownerDocument.activeElement;
+        return {
+          activeElementInsideSurface: Boolean(
+            activeElement && surface.contains(activeElement)
+          ),
+          activeElementIsSurface: activeElement === surface,
+          activeElementName: activeElement?.nodeName ?? null,
+          anchorClosestCodeConnected: anchorCode?.isConnected ?? false,
+          anchorClosestPreBlockId: anchorPre?.getAttribute(
+            'data-easymde-visual-block-id'
+          ) ?? null,
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorInsideTargetCode: Boolean(
+            targetCode && anchor && (anchor === targetCode || targetCode.contains(anchor))
+          ),
+          anchorInsideTargetPre: Boolean(
+            targetPre && anchor && (anchor === targetPre || targetPre.contains(anchor))
+          ),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorParentName: anchor?.parentNode?.nodeName ?? null,
+          anchorPreIndex: anchorPre ? allPres.indexOf(anchorPre) : -1,
+          collapsed: selection?.isCollapsed ?? null,
+          genericReaderUsesTarget: Boolean(
+            targetPre && targetCode && genericPre === targetPre && genericCode === targetCode
+          ),
+          preCount: allPres.length,
+          targetCodeCount: targetPre?.querySelectorAll(':scope > code').length ?? 0,
+          targetCodeOffset,
+          targetCodeTextLength: targetCode?.textContent?.length ?? null,
+          targetPreCount: surface.querySelectorAll(
+            '[data-easymde-visual-block-id="b160"]'
+          ).length,
+          targetPreIndex: targetPre ? allPres.indexOf(targetPre) : -1
+        };
+      };
+      const record = (event) => {
+        const isStructural = ['insertLineBreak', 'insertParagraph']
+          .includes(event.inputType);
+        const isFollowup = 'insertText' === event.inputType && 'X' === event.data;
+        if (!isStructural && !isFollowup) return;
+        events.push({
+          at: performance.now(),
+          followup: isFollowup,
+          inputType: event.inputType,
+          phase: event.type,
+          selection: isFollowup && 'beforeinput' === event.type
+            ? readSelection()
+            : null
+        });
+      };
+      for (const type of ['beforeinput', 'input']) {
+        surface.addEventListener(type, record, true);
+      }
+      window[key] = {
+        dispose: () => {
+          for (const type of ['beforeinput', 'input']) {
+            surface.removeEventListener(type, record, true);
+          }
+        },
+        events,
+        readSelection
+      };
+    }, structuralTraceKey);
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('X', { delay: 0 });
+    const afterEnterBody = `${validBody.slice(0, 1)}\n${validBody.slice(1)}`;
+    const afterEnterMarkdown = markdownWithBody(afterEnterBody);
+    const expectedBody = `${afterEnterBody.slice(0, 2)}X${afterEnterBody.slice(2)}`;
+    const expectedMarkdown = markdownWithBody(expectedBody);
+    await waitForWindowedCommit(
+      expectedMarkdown,
+      currentPreviewSignature,
+      'Windowed b160 should commit Enter before its immediate native code character'
+    );
+    const structuralTrace = await editor.visualEditor.evaluate((surface, key) => {
+      const trace = window[key];
+      if (!trace) throw new Error('windowed-structural-input-trace-missing');
+      trace.dispose();
+      return {
+        events: trace.events,
+        selectionAfterFollowup: trace.readSelection()
+      };
+    }, structuralTraceKey);
+    const structuralEvents = structuralTrace.events;
+    await testInfo.attach('windowed-b160-enter-followup-selection', {
+      body: JSON.stringify(structuralTrace),
+      contentType: 'application/json'
+    });
+    const structuralBeforeInput = structuralEvents.find((event) => (
+      'beforeinput' === event.phase
+      && ['insertLineBreak', 'insertParagraph'].includes(event.inputType)
+    ));
+    const followupBeforeInput = structuralEvents.find((event) => (
+      'beforeinput' === event.phase && event.followup
+    ));
+    expect(await editor.source.evaluate((field, value) => field.value === value, expectedMarkdown))
+      .toBe(true);
+    expectCodeBodyProjection(await code.textContent(), expectedBody);
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 3
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 3,
+      start: validBodyStart + 3
+    });
+    expect(structuralBeforeInput).toBeDefined();
+    expect(followupBeforeInput).toBeDefined();
+    expect(followupBeforeInput.at - structuralBeforeInput.at).toBeGreaterThanOrEqual(0);
+    expect(followupBeforeInput.at - structuralBeforeInput.at).toBeLessThan(80);
+    expect(followupBeforeInput.selection).toMatchObject({
+      activeElementIsSurface: true,
+      anchorClosestPreBlockId: 'b160',
+      anchorConnected: true,
+      anchorInsideTargetCode: true,
+      anchorName: '#text',
+      anchorOffset: 2,
+      anchorParentName: 'CODE',
+      anchorPreIndex: 0,
+      collapsed: true,
+      genericReaderUsesTarget: true,
+      preCount: 1,
+      targetCodeCount: 1,
+      targetCodeOffset: 2,
+      targetPreCount: 1,
+      targetPreIndex: 0
+    });
+    await expectBoundedWindow(expectedMarkdown);
+    expect(previewPosts).toBe(initialPreviewPosts);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    currentPreviewSignature = await waitForWindowedHistory(
+      afterEnterMarkdown,
+      currentPreviewSignature,
+      'Undo X should restore the Windowed Enter-only source state'
+    );
+    const afterUndoXSelection = await editor.visualEditor.evaluate((surface, key) => {
+      const trace = window[key];
+      if (!trace) throw new Error('windowed-undo-x-selection-trace-missing');
+      const evidence = trace.readSelection();
+      delete window[key];
+      return evidence;
+    }, structuralTraceKey);
+    const afterUndoXCodeState = await readCodeBodyState(editor.visualEditor);
+    await testInfo.attach('windowed-b160-after-undo-x-selection', {
+      body: JSON.stringify({
+        codeBodyTextLength: afterUndoXCodeState.codeText.length,
+        codeBodySelection: afterUndoXCodeState.selection,
+        codeBodySurfaceActive: afterUndoXCodeState.active,
+        nativeSourceCaret: await readNativeSourceCaret(),
+        selection: afterUndoXSelection
+      }),
+      contentType: 'application/json'
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 2,
+      start: validBodyStart + 2
+    });
+    expect(afterUndoXSelection).toMatchObject({
+      genericReaderUsesTarget: true,
+      preCount: 1,
+      targetCodeCount: 1,
+      targetPreCount: 1,
+      targetPreIndex: 0
+    });
+    expectCodeBodyProjection(await code.textContent(), afterEnterBody);
+    expect(afterUndoXCodeState.selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 2
+    });
+
+    const previewPostsBeforeUndoEnter = previewPosts;
+    const previewSignatureBeforeUndoEnter = currentPreviewSignature;
+    const beforeUndoEnterState = await readWindowedMountedState(
+      afterEnterMarkdown,
+      previewSignatureBeforeUndoEnter
+    );
+    await testInfo.attach('windowed-b160-before-undo-enter-state', {
+      body: JSON.stringify({
+        previewPostsBeforeUndoEnter,
+        previewSignatureBeforeUndoEnterLength: previewSignatureBeforeUndoEnter.length,
+        state: beforeUndoEnterState
+      }),
+      contentType: 'application/json'
+    });
+    await page.keyboard.press('ControlOrMeta+z');
+    await waitForPreviewRefresh(
+      editor.visualEditor,
+      previewSignatureBeforeUndoEnter,
+      'Undo Enter should refresh Preview to the original accepted b160 source'
+    );
+    await expectCanonicalSource(
+      validMarkdown,
+      'Undo Enter should restore the original accepted b160 source'
+    );
+    await waitForBrowserPaint(page);
+    const afterUndoEnterState = await readWindowedMountedState(
+      validMarkdown,
+      previewSignatureBeforeUndoEnter
+    );
+    await testInfo.attach('windowed-b160-after-undo-enter-state', {
+      body: JSON.stringify({
+        previewPostsAfterUndoEnter: previewPosts,
+        previewPostsBeforeUndoEnter,
+        previewPostDelta: previewPosts - previewPostsBeforeUndoEnter,
+        previewSignatureBeforeUndoEnterLength: previewSignatureBeforeUndoEnter.length,
+        state: afterUndoEnterState
+      }),
+      contentType: 'application/json'
+    });
+    await expectBoundedWindow(validMarkdown);
+    currentPreviewSignature = await readyPreviewSignature(editor.visualEditor);
+    expectCodeBodyProjection(await code.textContent(), validBody);
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 1
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 1,
+      start: validBodyStart + 1
+    });
+
+    const previewSignatureBeforeRedoEnter = currentPreviewSignature;
+    const previewPostsBeforeRedoEnter = previewPosts;
+    const beforeRedoEnterState = await readWindowedRedoState(
+      validMarkdown,
+      previewSignatureBeforeRedoEnter
+    );
+    await testInfo.attach('windowed-b160-before-redo-enter', {
+      body: JSON.stringify({
+        previewPostsBeforeRedoEnter,
+        previewSignatureBeforeRedoEnterLength: previewSignatureBeforeRedoEnter.length,
+        state: beforeRedoEnterState
+      }),
+      contentType: 'application/json'
+    });
+
+    const redoTraceKey = '__easymdeWindowedB160RedoRoute';
+    await page.evaluate((key) => {
+      const events = [];
+      const surface = document.querySelector('.easymde-immersive-visual-editor');
+      const record = (phase) => (event) => {
+        const keyboardRedo = 'keydown' === event.type
+          && 'z' === event.key?.toLowerCase()
+          && (event.ctrlKey || event.metaKey)
+          && event.shiftKey;
+        const inputRedo = ['beforeinput', 'input'].includes(event.type)
+          && 'historyRedo' === event.inputType;
+        if (!keyboardRedo && !inputRedo) return;
+        const anchor = document.getSelection()?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        const activeElement = document.activeElement;
+        events.push({
+          activeElementInsideSurface: Boolean(
+            surface && activeElement && surface.contains(activeElement)
+          ),
+          activeElementName: activeElement?.nodeName ?? null,
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorInsideTargetCode: Boolean(
+            surface
+            && anchorElement
+            && surface.querySelector('[data-easymde-visual-block-id="b160"] > code')
+              ?.contains(anchor)
+          ),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: document.getSelection()?.anchorOffset ?? null,
+          cancelable: event.cancelable,
+          defaultPrevented: event.defaultPrevented,
+          inputType: inputRedo ? event.inputType : null,
+          phase,
+          route: keyboardRedo ? 'keyboard-redo' : 'input-history-redo',
+          targetName: event.target instanceof Node ? event.target.nodeName : null,
+          targetInsideSurface: Boolean(
+            surface && event.target instanceof Node && surface.contains(event.target)
+          )
+        });
+      };
+      const listeners = [];
+      for (const type of ['keydown', 'beforeinput', 'input']) {
+        const capture = record('capture');
+        const bubble = record('bubble');
+        document.addEventListener(type, capture, true);
+        document.addEventListener(type, bubble);
+        listeners.push([type, capture, bubble]);
+      }
+      window[key] = {
+        dispose: () => {
+          for (const [type, capture, bubble] of listeners) {
+            document.removeEventListener(type, capture, true);
+            document.removeEventListener(type, bubble);
+          }
+        },
+        events
+      };
+    }, redoTraceKey);
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    const immediateRedoEnterState = await readWindowedRedoState(
+      afterEnterMarkdown,
+      previewSignatureBeforeRedoEnter
+    );
+    const immediateRedoEvents = await page.evaluate((key) => (
+      window[key]?.events ?? []
+    ), redoTraceKey);
+    await testInfo.attach('windowed-b160-after-redo-enter-immediate', {
+      body: JSON.stringify({
+        events: immediateRedoEvents,
+        previewPostsAfterKey: previewPosts,
+        previewPostsBeforeRedoEnter,
+        previewPostDelta: previewPosts - previewPostsBeforeRedoEnter,
+        state: immediateRedoEnterState
+      }),
+      contentType: 'application/json'
+    });
+
+    let redoRefreshWaitPassed = false;
+    try {
+      currentPreviewSignature = await waitForWindowedHistory(
+        afterEnterMarkdown,
+        previewSignatureBeforeRedoEnter,
+        'Redo Enter should restore its exact intermediate source and caret'
+      );
+      redoRefreshWaitPassed = true;
+    } finally {
+      const settledRedoEnterState = await readWindowedRedoState(
+        afterEnterMarkdown,
+        previewSignatureBeforeRedoEnter
+      );
+      const redoTrace = await page.evaluate((key) => {
+        const trace = window[key];
+        if (!trace) return { events: [], present: false };
+        trace.dispose();
+        delete window[key];
+        return { events: trace.events, present: true };
+      }, redoTraceKey);
+      await testInfo.attach('windowed-b160-after-redo-enter-settled', {
+        body: JSON.stringify({
+          events: redoTrace.events,
+          failureCodes: [...new Set(failureCodes)],
+          pageErrorCount: pageErrors.length,
+          previewPostsAfterRedoEnter: previewPosts,
+          previewPostsBeforeRedoEnter,
+          previewPostDelta: previewPosts - previewPostsBeforeRedoEnter,
+          redoRefreshWaitPassed,
+          tracePresent: redoTrace.present,
+          state: settledRedoEnterState
+        }),
+        contentType: 'application/json'
+      });
+    }
+    expectCodeBodyProjection(await code.textContent(), afterEnterBody);
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 2
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 2,
+      start: validBodyStart + 2
+    });
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    currentPreviewSignature = await waitForWindowedHistory(
+      expectedMarkdown,
+      currentPreviewSignature,
+      'Redo X should restore the exact final source and caret'
+    );
+    expectCodeBodyProjection(await code.textContent(), expectedBody);
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 3
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 3,
+      start: validBodyStart + 3
+    });
+    await expectBoundedWindow(expectedMarkdown);
+
+    const sourceBeforeStaleInput = expectedMarkdown;
+    const previewPostsBeforeStaleInput = previewPosts;
+    // Model a noncancelable edit replacing the captured PRE before its input event.
+    const staleIdentityEvidence = await editor.visualEditor.evaluate(async (surface) => {
+      const pre = surface.querySelector('[data-easymde-visual-block-id="b160"]');
+      const code = pre?.querySelector(':scope > code');
+      const source = document.querySelector('#easymde-source');
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      if (
+        !(pre instanceof HTMLElement)
+        || !(code instanceof HTMLElement)
+        || !(source instanceof HTMLTextAreaElement)
+        || !selection
+        || !anchor
+        || (anchor !== code && !code.contains(anchor))
+        || !selection.isCollapsed
+      ) throw new Error('windowed-stale-input-state-unavailable');
+      const acceptedHtml = surface.innerHTML;
+      const acceptedPreHtml = pre.outerHTML;
+      const acceptedSource = source.value;
+      const acceptedCodeText = code.textContent;
+      const canvas = surface.closest('.easymde-immersive-preview-canvas');
+      const attributeNames = (node) => node instanceof Element
+        ? Array.from(node.attributes, ({ name }) => name).sort()
+        : [];
+      const captureWindowDom = () => {
+        const targetPre = surface.querySelector(
+          '[data-easymde-visual-block-id="b160"]'
+        );
+        const targetCode = targetPre?.querySelector(':scope > code') ?? null;
+        const mountedBlocks = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-visual-block-id]'
+        ) ?? []);
+        const mountedBlockMarkup = Object.fromEntries(mountedBlocks.flatMap((block) => {
+          const id = block.getAttribute('data-easymde-visual-block-id');
+          return id ? [[id, block.outerHTML]] : [];
+        }));
+        const spacerRangesAndHeights = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ) ?? []).map((spacer) => ({
+          end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+          height: spacer.getBoundingClientRect().height,
+          start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+        }));
+        return {
+          mountedBlockMarkup,
+          mountedIds: mountedBlocks.map((block) => (
+            block.getAttribute('data-easymde-visual-block-id')
+          )),
+          surfaceHtml: surface.innerHTML,
+          spacerRangesAndHeights,
+          targetCodeAttributeNames: attributeNames(targetCode),
+          targetCodeDirectChildNodeNames: targetCode
+            ? Array.from(targetCode.childNodes, ({ nodeName }) => nodeName)
+            : [],
+          targetCodePresent: Boolean(targetCode),
+          targetCodeText: targetCode?.textContent ?? null,
+          targetPreAttributeNames: attributeNames(targetPre),
+          targetPreChildNodeNames: targetPre
+            ? Array.from(targetPre.childNodes, ({ nodeName }) => nodeName)
+            : [],
+          targetPreOuterHtml: targetPre?.outerHTML ?? null,
+          targetPrePresent: Boolean(targetPre)
+        };
+      };
+      const acceptedWindowDom = captureWindowDom();
+      const compareWindowDom = (snapshot) => {
+        const mountedIds = new Set(snapshot.mountedIds);
+        const acceptedMountedIds = new Set(acceptedWindowDom.mountedIds);
+        const mountedBlockIds = new Set([
+          ...Object.keys(acceptedWindowDom.mountedBlockMarkup),
+          ...Object.keys(snapshot.mountedBlockMarkup)
+        ]);
+        return {
+          mountedBlockCount: snapshot.mountedIds.length,
+          mountedIdsAdded: [...mountedIds]
+            .filter((id) => !acceptedMountedIds.has(id))
+            .sort(),
+          mountedIdsMatchBaseline: JSON.stringify(snapshot.mountedIds)
+            === JSON.stringify(acceptedWindowDom.mountedIds),
+          mountedIdsRemoved: [...acceptedMountedIds]
+            .filter((id) => !mountedIds.has(id))
+            .sort(),
+          mountedBlockHtmlChangedIds: [...mountedBlockIds]
+            .filter((id) => acceptedWindowDom.mountedBlockMarkup[id]
+              !== snapshot.mountedBlockMarkup[id])
+            .sort(),
+          wholeSurfaceHtmlExactMatchToBaseline: snapshot.surfaceHtml === acceptedHtml,
+          spacerRangesAndHeights: snapshot.spacerRangesAndHeights,
+          spacerRangesAndHeightsMatchBaseline: JSON.stringify(
+            snapshot.spacerRangesAndHeights
+          ) === JSON.stringify(acceptedWindowDom.spacerRangesAndHeights),
+          targetCodeAttributeNames: snapshot.targetCodeAttributeNames,
+          targetCodeAttributeNamesMatchBaseline: JSON.stringify(
+            snapshot.targetCodeAttributeNames
+          ) === JSON.stringify(acceptedWindowDom.targetCodeAttributeNames),
+          targetCodeDirectChildNodeNames: snapshot.targetCodeDirectChildNodeNames,
+          targetCodePresent: snapshot.targetCodePresent,
+          targetCodeTextExactMatch: snapshot.targetCodeText
+            === acceptedWindowDom.targetCodeText,
+          targetCodeTextLength: snapshot.targetCodeText?.length ?? null,
+          targetPreAttributeNames: snapshot.targetPreAttributeNames,
+          targetPreAttributeNamesMatchBaseline: JSON.stringify(
+            snapshot.targetPreAttributeNames
+          ) === JSON.stringify(acceptedWindowDom.targetPreAttributeNames),
+          targetPreChildNodeNames: snapshot.targetPreChildNodeNames,
+          targetPreOuterHtmlExactMatch: snapshot.targetPreOuterHtml
+            === acceptedWindowDom.targetPreOuterHtml,
+          targetPrePresent: snapshot.targetPrePresent
+        };
+      };
+      const codeRange = surface.ownerDocument.createRange();
+      codeRange.selectNodeContents(code);
+      codeRange.setEnd(anchor, selection.anchorOffset);
+      const caretOffset = codeRange.toString().length;
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: false,
+        data: 'Q',
+        inputType: 'insertText'
+      });
+      surface.dispatchEvent(beforeInput);
+      const afterBeforeInputWindowDom = captureWindowDom();
+      const browserMayApplyDefault = !beforeInput.cancelable
+        || !beforeInput.defaultPrevented;
+      let cloneReplaced = false;
+      if (browserMayApplyDefault) {
+        const mutatedBody = (code.textContent ?? '').slice(0, caretOffset)
+          + 'Q'
+          + (code.textContent ?? '').slice(caretOffset);
+        const replacementPre = pre.cloneNode(false);
+        const replacementCode = code.cloneNode(false);
+        replacementCode.textContent = mutatedBody;
+        replacementPre.append(replacementCode);
+        pre.replaceWith(replacementPre);
+        const replacementText = replacementCode.firstChild;
+        if (!(replacementText instanceof Text)) {
+          throw new Error('windowed-stale-input-mutation-unavailable');
+        }
+        const replacementRange = surface.ownerDocument.createRange();
+        replacementRange.setStart(replacementText, caretOffset + 1);
+        replacementRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(replacementRange);
+        cloneReplaced = true;
+        surface.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          cancelable: false,
+          data: 'Q',
+          inputType: 'insertText'
+        }));
+      }
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      const afterRollbackWindowDom = captureWindowDom();
+      const restoredPre = surface.querySelector(
+        '[data-easymde-visual-block-id="b160"]'
+      );
+      const restoredCode = restoredPre?.querySelector(':scope > code');
+      const restoredSelection = surface.ownerDocument.defaultView?.getSelection();
+      const restoredAnchor = restoredSelection?.anchorNode ?? null;
+      let restoredCaretOffset = null;
+      if (restoredCode && restoredSelection && restoredAnchor
+        && (restoredAnchor === restoredCode || restoredCode.contains(restoredAnchor))) {
+        const restoredRange = surface.ownerDocument.createRange();
+        restoredRange.selectNodeContents(restoredCode);
+        restoredRange.setEnd(restoredAnchor, restoredSelection.anchorOffset);
+        restoredCaretOffset = restoredRange.toString().length;
+      }
+      return {
+        acceptedTargetCodeRestored: restoredCode?.textContent === acceptedCodeText,
+        acceptedTargetPreRestored: restoredPre?.outerHTML === acceptedPreHtml,
+        acceptedPreIdentityRestored: restoredPre === pre,
+        acceptedSourceRestored: source.value === acceptedSource,
+        beforeInputCancelable: beforeInput.cancelable,
+        beforeInputDefaultPrevented: beforeInput.defaultPrevented,
+        browserMutationApplied: browserMayApplyDefault,
+        cloneReplaced,
+        domSnapshots: {
+          acceptedBaseline: {
+            mountedBlockCount: acceptedWindowDom.mountedIds.length,
+            mountedIds: acceptedWindowDom.mountedIds,
+            spacerRangesAndHeights: acceptedWindowDom.spacerRangesAndHeights,
+            targetCodeAttributeNames: acceptedWindowDom.targetCodeAttributeNames,
+            targetCodeDirectChildNodeNames: acceptedWindowDom.targetCodeDirectChildNodeNames,
+            targetCodeTextLength: acceptedWindowDom.targetCodeText?.length ?? null,
+            targetPreAttributeNames: acceptedWindowDom.targetPreAttributeNames,
+            targetPreChildNodeNames: acceptedWindowDom.targetPreChildNodeNames,
+            targetPrePresent: acceptedWindowDom.targetPrePresent
+          },
+          afterBeforeInput: compareWindowDom(afterBeforeInputWindowDom),
+          afterRollback: compareWindowDom(afterRollbackWindowDom)
+        },
+        restoredCaretOffset,
+        restoredSelectionInCode: Boolean(
+          restoredCode
+          && restoredAnchor
+          && (restoredAnchor === restoredCode || restoredCode.contains(restoredAnchor))
+        )
+      };
+    });
+    await testInfo.attach('windowed-b160-stale-input-dom-diagnostics', {
+      body: JSON.stringify(staleIdentityEvidence.domSnapshots),
+      contentType: 'application/json'
+    });
+    const { domSnapshots, ...staleIdentityAssertions } = staleIdentityEvidence;
+    expect(staleIdentityAssertions).toEqual({
+      acceptedTargetCodeRestored: true,
+      acceptedTargetPreRestored: true,
+      acceptedPreIdentityRestored: true,
+      acceptedSourceRestored: true,
+      beforeInputCancelable: false,
+      beforeInputDefaultPrevented: false,
+      browserMutationApplied: true,
+      cloneReplaced: true,
+      restoredCaretOffset: 3,
+      restoredSelectionInCode: true
+    });
+    expect(failureCodes).toContain('visual-editor-code-body-map-stale');
+    expect(await editor.source.evaluate((field, value) => field.value === value, sourceBeforeStaleInput))
+      .toBe(true);
+    expect(previewPosts).toBe(previewPostsBeforeStaleInput);
+    await expectBoundedWindow(expectedMarkdown);
+    await expect(block).toBeVisible({ timeout: 30_000 });
+    const restoredWindowState = await readWindowedMountedState(
+      expectedMarkdown,
+      currentPreviewSignature
+    );
+    expect(restoredWindowState.anchorInsideTargetCode).toBe(true);
+    expect(restoredWindowState.anchorClosestPreBlockId).toBe('b160');
+    expect(restoredWindowState.targetCodeOffset).toBe(3);
+
+    const recoveredBody = `${expectedBody.slice(0, 3)}R${expectedBody.slice(3)}`;
+    const recoveredMarkdown = markdownWithBody(recoveredBody);
+    await page.keyboard.type('R', { delay: 0 });
+    await waitForWindowedCommit(
+      recoveredMarkdown,
+      currentPreviewSignature,
+      'a fresh valid Windowed input should succeed after stale PRE identity recovery'
+    );
+    expectCodeBodyProjection(await code.textContent(), recoveredBody);
+    expect((await readCodeBodyState(editor.visualEditor)).selection).toMatchObject({
+      anchorInsideCode: true,
+      collapsed: true,
+      codeOffset: 4
+    });
+    expect(await readNativeSourceCaret()).toEqual({
+      end: validBodyStart + 4,
+      start: validBodyStart + 4
+    });
+    expect(previewPosts).toBe(previewPostsBeforeStaleInput);
+    await expectBoundedWindow(recoveredMarkdown);
+    expect(pageErrors).toEqual([]);
+  });
+
+  test('restores ordinary paragraph history for a mounted Windowed block after b0', async ({ page }, testInfo) => {
+    const failureCodes = [];
+    const pageErrors = [];
+    const paragraphText = 'Windowed paragraph 160.';
+    const insertedText = 'X';
+    const codeMarkdown = '~~~js\n\n~~~';
+    const blocks = Array.from({ length: 220 }, (_, index) => (
+      160 === index ? codeMarkdown : `Windowed paragraph ${index + 1}.`
+    ));
+    const markdown = blocks.join('\n\n');
+    const paragraphStart = markdown.indexOf(paragraphText);
+    if (paragraphStart < 0) throw new Error('windowed-paragraph-source-block-missing');
+    const updatedParagraph = `${insertedText}${paragraphText}`;
+    const updatedMarkdown = markdown.slice(0, paragraphStart)
+      + insertedText
+      + markdown.slice(paragraphStart);
+
+    page.on('console', (message) => {
+      const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+    });
+    page.on('pageerror', () => pageErrors.push('pageerror'));
+    let previewPosts = 0;
+    page.on('request', (request) => {
+      if (
+        'POST' === request.method()
+        && new URL(request.url()).pathname.endsWith('/wp-json/easymde/v1/preview')
+      ) previewPosts += 1;
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Windowed paragraph 1.');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const surface = page.locator('.easymde-immersive-visual-editor');
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const block = surface.locator('[data-easymde-visual-block-id="b159"]');
+    const paragraph = surface.locator('[data-easymde-visual-block-id="b159"]');
+    const spacerRangeEvidence = await canvas.evaluate((element, targetIndex) => {
+      if (!(element instanceof HTMLElement)) {
+        throw new Error('windowed-paragraph-canvas-unavailable');
+      }
+      const alreadyMounted = element.querySelector(
+        `[data-easymde-visual-block-id="b${targetIndex}"]`
+      );
+      const omittedRange = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= targetIndex && targetIndex < end;
+      });
+      if (!alreadyMounted && !omittedRange) {
+        throw new Error('windowed-paragraph-block-not-represented');
+      }
+      const canvasRect = element.getBoundingClientRect();
+      const rangeRect = omittedRange?.getBoundingClientRect() ?? null;
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = alreadyMounted
+        ? element.scrollTop
+        : Math.min(
+            maxScrollTop,
+            element.scrollTop + (rangeRect?.top ?? canvasRect.top) - canvasRect.top + 1
+          );
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+      return {
+        alreadyMounted: Boolean(alreadyMounted),
+        maxScrollTop,
+        range: omittedRange ? {
+          end: Number(omittedRange.getAttribute('data-easymde-preview-window-end')),
+          start: Number(omittedRange.getAttribute('data-easymde-preview-window-start'))
+        } : null,
+        scrollTop: element.scrollTop,
+        targetScrollTop
+      };
+    }, 159);
+    await testInfo.attach('windowed-b159-scroll-target', {
+      body: JSON.stringify(spacerRangeEvidence),
+      contentType: 'application/json'
+    });
+    await expect(block).toBeAttached({ timeout: 30_000 });
+    await paragraph.scrollIntoViewIfNeeded();
+    await waitForBrowserPaint(page);
+
+    const readParagraphState = async (
+      expectedMarkdown,
+      expectedParagraph,
+      previousSignature
+    ) => page.evaluate(
+      (expected) => {
+        const surface = document.querySelector('.easymde-immersive-visual-editor');
+        const canvas = document.querySelector('.easymde-immersive-preview-canvas');
+        const source = document.querySelector('#easymde-source');
+        const previewSink = document.querySelector(
+          '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+        );
+        const blockRoot = surface ?? canvas;
+        const targetParagraph = blockRoot?.querySelector(
+          '[data-easymde-visual-block-id="b159"]'
+        ) ?? null;
+        const code = blockRoot?.querySelector(
+          '[data-easymde-visual-block-id="b160"] > code'
+        ) ?? null;
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        let paragraphOffset = null;
+        if (
+          selection
+          && anchor
+          && targetParagraph
+          && (anchor === targetParagraph || targetParagraph.contains(anchor))
+        ) {
+          const range = document.createRange();
+          range.selectNodeContents(targetParagraph);
+          range.setEnd(anchor, selection.anchorOffset);
+          paragraphOffset = range.toString().length;
+        }
+        const mountedIds = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-visual-block-id]'
+        ) ?? []).map((node) => node.getAttribute('data-easymde-visual-block-id'))
+          .filter((id) => null !== id);
+        const mountedIndices = mountedIds.flatMap((id) => {
+          const match = /^b(\d+)$/u.exec(id);
+          return match ? [Number(match[1])] : [];
+        });
+        const mountedRanges = [];
+        for (const index of mountedIndices) {
+          const previous = mountedRanges.at(-1);
+          if (previous && previous.end + 1 === index) previous.end = index;
+          else mountedRanges.push({ end: index, start: index });
+        }
+        const spacers = Array.from(canvas?.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ) ?? []);
+        const signature = surface?.easymdePreviewSignature
+          ?? previewSink?.easymdePreviewSignature
+          ?? '';
+        const [revisionText, markdownLengthText] = signature.split(':', 2);
+        const activeElement = document.activeElement;
+        const sourceText = source instanceof HTMLTextAreaElement ? source.value : '';
+        const sourceSelection = source instanceof HTMLTextAreaElement ? {
+          end: source.selectionEnd,
+          start: source.selectionStart
+        } : null;
+        return {
+          activeElementInsideSurface: Boolean(
+            surface && activeElement && surface.contains(activeElement)
+          ),
+          activeElementIsSurface: activeElement === surface,
+          activeElementName: activeElement?.nodeName ?? null,
+          anchorClosestBlockId: anchorElement?.closest(
+            '[data-easymde-visual-block-id]'
+          )?.getAttribute('data-easymde-visual-block-id') ?? null,
+          anchorConnected: anchor?.isConnected ?? false,
+          anchorInsideParagraph: Boolean(
+            targetParagraph && anchor && (
+              anchor === targetParagraph || targetParagraph.contains(anchor)
+            )
+          ),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorParentName: anchor?.parentNode?.nodeName ?? null,
+          canvas: canvas instanceof HTMLElement ? {
+            clientHeight: canvas.clientHeight,
+            scrollHeight: canvas.scrollHeight,
+            scrollTop: canvas.scrollTop
+          } : null,
+          codeBlockAttached: Boolean(code?.isConnected),
+          codeBlockTextEndsWithLineFeed: (code?.textContent ?? '').endsWith('\n'),
+          codeBlockTextLength: code?.textContent?.length ?? null,
+          collapsed: selection?.isCollapsed ?? null,
+          contentEditable: surface?.getAttribute('contenteditable') ?? null,
+          immersiveSurfaceCount: document.querySelectorAll(
+            '.easymde-immersive-visual-editor'
+          ).length,
+          mountedBlockCount: mountedIds.length,
+          mountedRanges,
+          paragraphAttached: Boolean(targetParagraph?.isConnected),
+          paragraphOffset,
+          paragraphTextLength: targetParagraph?.textContent?.length ?? null,
+          paragraphTextMatchesExpected: targetParagraph?.textContent === expected.paragraph,
+          preview: {
+            errorPresent: Boolean(previewSink?.hasAttribute('data-easymde-preview-error')),
+            ownerBusy: previewSink?.getAttribute('aria-busy') ?? null,
+            signatureChangedFromPrevious: Boolean(signature)
+              && signature !== expected.previousSignature,
+            signatureMarkdownLength: /^\d+$/u.test(markdownLengthText ?? '')
+              ? Number(markdownLengthText)
+              : null,
+            signatureRevision: /^\d+$/u.test(revisionText ?? '')
+              ? Number(revisionText)
+              : null,
+            surfaceBusy: surface?.getAttribute('aria-busy') ?? null
+          },
+          source: {
+            length: sourceText.length,
+            matchesExpected: sourceText === expected.markdown,
+            selection: sourceSelection
+          },
+          spacerCount: spacers.length,
+          spacerRanges: spacers.map((spacer) => ({
+            end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+            start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+          }))
+        };
+      },
+      { markdown: expectedMarkdown, paragraph: expectedParagraph, previousSignature }
+    );
+    const assertMountedWindow = async (expectedMarkdown, expectedParagraph) => {
+      await expect(block).toBeAttached({ timeout: 30_000 });
+      const currentSignature = await readyPreviewSignature(surface);
+      const state = await readParagraphState(
+        expectedMarkdown,
+        expectedParagraph,
+        currentSignature
+      );
+      expect(state.source.matchesExpected).toBe(true);
+      expect(state.paragraphAttached).toBe(true);
+      expect(state.paragraphTextMatchesExpected).toBe(true);
+      expectWindowedCoverage({
+        mountedBlockCount: state.mountedBlockCount,
+        mountedRanges: state.mountedRanges,
+        spacerRanges: state.spacerRanges
+      }, blocks.length, 159);
+    };
+    const readNativeParagraphCaret = async () => page.evaluate(() => {
+      const field = document.querySelector('#easymde-source');
+      return field instanceof HTMLTextAreaElement ? {
+        end: field.selectionEnd,
+        start: field.selectionStart
+      } : null;
+    });
+    const originalCaret = await surface.evaluate((root) => {
+      const paragraph = root.querySelector('[data-easymde-visual-block-id="b159"]');
+      const walker = root.ownerDocument.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT);
+      const text = walker.nextNode();
+      if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) {
+        throw new Error('windowed-paragraph-caret-unavailable');
+      }
+      root.focus({ preventScroll: true });
+      const range = root.ownerDocument.createRange();
+      range.setStart(text, 0);
+      range.collapse(true);
+      const selection = root.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('windowed-paragraph-selection-unavailable');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return {
+        anchorInsideParagraph: paragraph.contains(selection.anchorNode),
+        anchorName: selection.anchorNode?.nodeName ?? null,
+        anchorOffset: selection.anchorOffset,
+        collapsed: selection.isCollapsed,
+        paragraphBlockId: paragraph.getAttribute('data-easymde-visual-block-id')
+      };
+    });
+    expect(originalCaret).toEqual({
+      anchorInsideParagraph: true,
+      anchorName: '#text',
+      anchorOffset: 0,
+      collapsed: true,
+      paragraphBlockId: 'b159'
+    });
+    await assertMountedWindow(markdown, paragraphText);
+    let previewSignature = await readyPreviewSignature(surface);
+    const initialPreviewSignature = previewSignature;
+    const initialState = await readParagraphState(markdown, paragraphText, previewSignature);
+    expect(initialState.source.matchesExpected).toBe(true);
+    expect(initialState.paragraphOffset).toBe(0);
+
+    const sourceCaretBeforeEdit = await readNativeParagraphCaret();
+    const previewPostsBeforeEdit = previewPosts;
+    const inputTraceKey = '__easymdeWindowedB159ParagraphInput';
+    await surface.evaluate((root, key) => {
+      const events = [];
+      const record = (event) => {
+        if (!['beforeinput', 'input'].includes(event.type)) return;
+        if ('insertText' !== event.inputType || 'X' !== event.data) return;
+        const selection = root.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const anchorElement = anchor instanceof Element
+          ? anchor
+          : anchor?.parentElement ?? null;
+        events.push({
+          cancelable: event.cancelable,
+          dataLength: event.data?.length ?? null,
+          defaultPrevented: event.defaultPrevented,
+          inputType: event.inputType,
+          phase: event.type,
+          selection: 'beforeinput' === event.type ? {
+            anchorBlockId: anchorElement?.closest(
+              '[data-easymde-visual-block-id]'
+            )?.getAttribute('data-easymde-visual-block-id') ?? null,
+            anchorConnected: anchor?.isConnected ?? false,
+            anchorInsideParagraph: Boolean(
+              root.querySelector('[data-easymde-visual-block-id="b159"]')
+                ?.contains(anchor)
+            ),
+            anchorName: anchor?.nodeName ?? null,
+            anchorOffset: selection?.anchorOffset ?? null,
+            collapsed: selection?.isCollapsed ?? null
+          } : null
+        });
+      };
+      for (const type of ['beforeinput', 'input']) {
+        root.addEventListener(type, record, true);
+      }
+      window[key] = {
+        dispose: () => {
+          for (const type of ['beforeinput', 'input']) {
+            root.removeEventListener(type, record, true);
+          }
+        },
+        events
+      };
+    }, inputTraceKey);
+    await page.keyboard.type(insertedText, { delay: 0 });
+    const inputEvents = await page.evaluate((key) => {
+      const trace = window[key];
+      if (!trace) return [];
+      trace.dispose();
+      delete window[key];
+      return trace.events;
+    }, inputTraceKey);
+    await testInfo.attach('windowed-b159-native-input', {
+      body: JSON.stringify({
+        previewPostsBeforeEdit,
+        sourceCaretBeforeEdit,
+        events: inputEvents,
+        initialState
+      }),
+      contentType: 'application/json'
+    });
+    expect(inputEvents).toContainEqual(expect.objectContaining({
+      phase: 'beforeinput',
+      inputType: 'insertText',
+      selection: expect.objectContaining({
+        anchorBlockId: 'b159',
+        anchorInsideParagraph: true,
+        anchorName: '#text',
+        anchorOffset: 0,
+        collapsed: true
+      })
+    }));
+
+    const adoptedPreview = async (
+      expectedMarkdown,
+      expectedParagraph,
+      previousSignature,
+      phase,
+      postsBefore
+    ) => {
+      let refreshed = false;
+      try {
+        await waitForPreviewRefresh(
+          surface,
+          previousSignature,
+          `${phase} should adopt the exact Windowed paragraph source`
+        );
+        await expect(editor.source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+        await waitForBrowserPaint(page);
+        await expect(surface).toHaveAttribute('contenteditable', 'true');
+        await expect(surface).toHaveAttribute('aria-busy', 'false');
+        await assertMountedWindow(expectedMarkdown, expectedParagraph);
+        refreshed = true;
+      } finally {
+        const state = await readParagraphState(
+          expectedMarkdown,
+          expectedParagraph,
+          previousSignature
+        );
+        await testInfo.attach(`windowed-b159-${phase}-preview-state`, {
+          body: JSON.stringify({
+            pageErrorCount: pageErrors.length,
+            failureCodes: [...new Set(failureCodes)],
+            previewPostsAfter: previewPosts,
+            previewPostsBefore: postsBefore,
+            previewPostDelta: previewPosts - postsBefore,
+            refreshed,
+            state
+          }),
+          contentType: 'application/json'
+        });
+      }
+      expect(previewPosts).toBeGreaterThan(postsBefore);
+      return await readyPreviewSignature(surface);
+    };
+
+    const assertParagraphHistoryState = async (
+      expectedMarkdown,
+      expectedParagraph,
+      expectedDomOffset,
+      expectedSourceOffset
+    ) => {
+      await expect(editor.source).toHaveValue(expectedMarkdown);
+      const state = await readParagraphState(
+        expectedMarkdown,
+        expectedParagraph,
+        previewSignature
+      );
+      expect(state.source.matchesExpected).toBe(true);
+      expect(state.paragraphAttached).toBe(true);
+      expect(state.paragraphTextMatchesExpected).toBe(true);
+      expect(state.paragraphTextLength).toBe(expectedParagraph.length);
+      expect(state.paragraphOffset).toBe(expectedDomOffset);
+      expect(state.anchorInsideParagraph).toBe(true);
+      expect(state.collapsed).toBe(true);
+      expect(state.source.selection).toEqual({
+        end: expectedSourceOffset,
+        start: expectedSourceOffset
+      });
+      expect(state.preview.surfaceBusy).toBe('false');
+      expect(state.contentEditable).toBe('true');
+      expect(state.immersiveSurfaceCount).toBe(1);
+      expect(state.codeBlockAttached).toBe(true);
+      expectWindowedCoverage({
+        mountedBlockCount: state.mountedBlockCount,
+        mountedRanges: state.mountedRanges,
+        spacerRanges: state.spacerRanges
+      }, blocks.length, 159);
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    };
+    let editCommitted = false;
+    try {
+      await expect(editor.source).toHaveValue(updatedMarkdown, { timeout: 15_000 });
+      await waitForBrowserPaint(page);
+      await expect(surface).toHaveAttribute('contenteditable', 'true');
+      await expect(surface).toHaveAttribute('aria-busy', 'false');
+      await assertParagraphHistoryState(
+        updatedMarkdown,
+        updatedParagraph,
+        insertedText.length,
+        paragraphStart + insertedText.length
+      );
+      editCommitted = true;
+    } finally {
+      const state = await readParagraphState(
+        updatedMarkdown,
+        updatedParagraph,
+        initialPreviewSignature
+      );
+      await testInfo.attach('windowed-b159-edit-commit-state', {
+        body: JSON.stringify({
+          failureCodes: [...new Set(failureCodes)],
+          pageErrorCount: pageErrors.length,
+          previewPostsAfterEdit: previewPosts,
+          previewPostsBeforeEdit,
+          previewPostDelta: previewPosts - previewPostsBeforeEdit,
+          previewSignatureUnchanged: !state.preview.signatureChangedFromPrevious,
+          editCommitted,
+          state
+        }),
+        contentType: 'application/json'
+      });
+    }
+    expect(previewPosts).toBe(previewPostsBeforeEdit);
+    expect(await readyPreviewSignature(surface)).toBe(initialPreviewSignature);
+
+    const previewPostsBeforeUndo = previewPosts;
+    await page.keyboard.press('ControlOrMeta+z');
+    previewSignature = await adoptedPreview(
+      markdown,
+      paragraphText,
+      previewSignature,
+      'undo',
+      previewPostsBeforeUndo
+    );
+    await assertParagraphHistoryState(markdown, paragraphText, 0, paragraphStart);
+
+    const previewPostsBeforeRedo = previewPosts;
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    previewSignature = await adoptedPreview(
+      updatedMarkdown,
+      updatedParagraph,
+      previewSignature,
+      'redo',
+      previewPostsBeforeRedo
+    );
+    await assertParagraphHistoryState(
+      updatedMarkdown,
+      updatedParagraph,
+      insertedText.length,
+      paragraphStart + insertedText.length
+    );
+    await assertMountedWindow(updatedMarkdown, updatedParagraph);
+  });
 
   test('hands the normal document session to React with one visible source and a fresh native bridge', async ({ page }, testInfo) => {
     const user = testInfo.easymdeUser;

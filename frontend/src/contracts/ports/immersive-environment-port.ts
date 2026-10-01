@@ -4,6 +4,7 @@ export type ImmersiveEnvironmentPort = Readonly<{
   activateFocusBoundary: (boundary: HTMLElement) => () => void;
   hasOpenToolbarPopover: () => boolean;
   now: () => number;
+  viewportWidth: () => number;
   schedule: (callback: () => void, delay: number) => () => void;
   subscribeResize: (listener: () => void) => () => void;
   observePreviewLayout: (

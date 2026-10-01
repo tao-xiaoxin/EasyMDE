@@ -102,6 +102,9 @@ export function createPreviewWindowRepository(
   }
   const roots = rootElements(surface);
   validateBlockBinding(roots, editMap);
+  editMap.blocks.forEach((block, index) => {
+    if (!block.editable) roots[index]?.setAttribute('contenteditable', 'false');
+  });
   const blocks: PreviewWindowBlock[] = editMap.blocks.map((map) => ({
     id: map.id,
     startLine: map.startLine,

@@ -4,6 +4,10 @@ import type {
   PreviewEditMap,
   PreviewEditMapBlock
 } from '../../contracts/ports/preview-request';
+import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../shared/markdown/markdown-line-model';
 
 import {
   applyVisualBlockShortcut,
@@ -12,8 +16,10 @@ import {
   applyVisualMarkdownEditIntent,
   captureVisualCodeInputSnapshot,
   createVisualMarkdownSourceIntervalMap,
+  expandVisualCodeFenceForBody,
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
+  createVisualCodeBodyIntervalForPreviewBlock,
   createVisualMarkdownWindowChange,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
@@ -21,14 +27,21 @@ import {
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
+  placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretFromSourceOffset,
+  visualCaretBoundaryFromSourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
+  projectVisualCodeBodySelection,
+  reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
   visualSelectionSourceRangeForBlocks,
-  visualSelectionSourceRange
+  visualSelectionSourceRange,
+  visualCodeBodyOrdinalForSourceRange,
+  createVisualCodeBodyOrdinalsForPreviewBlocks,
+  visualCodeBlockStructureSignature
 } from './visual-markdown';
 
 function editor(html: string): HTMLElement {
@@ -68,6 +81,985 @@ function previewBlock(
 }
 
 describe('visual Markdown editing', () => {
+  it('maps CRLF, lone-CR, and LF line starts with the same UTF-16 offsets', () => {
+    expect(markdownLineStarts('A\r\nB\rC\n')).toEqual([0, 3, 5, 7]);
+  });
+
+  it.each([
+    { accepted: true, suffix: '' },
+    { accepted: true, suffix: ' \t' },
+    { accepted: true, suffix: '\r \t' },
+    { accepted: true, suffix: '\r\n\t\r\n' },
+    { accepted: true, suffix: '\n\r' },
+    { accepted: false, suffix: '\r visible' },
+    { accepted: false, suffix: '\u00a0' },
+    { accepted: false, suffix: '\r\u00a0\r' },
+    { accepted: false, suffix: '\u2028' },
+    { accepted: false, suffix: '\r\u2028\r' }
+  ])('recognizes only mapped terminal Markdown whitespace suffixes', ({
+    accepted,
+    suffix
+  }) => {
+    expect(isMarkdownTerminalWhitespaceSuffix(suffix)).toBe(accepted);
+  });
+
+  it.each([
+    { blankLineCount: 0, fence: '~~~' },
+    { blankLineCount: 1, fence: '~~~' },
+    { blankLineCount: 2, fence: '```' },
+    { blankLineCount: 3, fence: '~~~' }
+  ])(
+    'projects $blankLineCount blank body lines from the Preview block for $fence',
+    ({ blankLineCount, fence }) => {
+      const markdown = `Before\n\n${fence}\n${'\n'.repeat(blankLineCount)}${fence}\n\nAfter`;
+      const closingLine = 3 + blankLineCount;
+      const editMap = previewEditMap([
+        previewBlock('b0', 0, 1),
+        previewBlock('b1', 2, closingLine + 1),
+        previewBlock('b2', closingLine + 2, closingLine + 3)
+      ]);
+
+      const projection = createVisualCodeBodyIntervalForPreviewBlock(
+        markdown,
+        editMap,
+        'b1'
+      );
+
+      expect(markdown.slice(projection.bodyStart, projection.bodyEnd))
+        .toBe('\n'.repeat(blankLineCount));
+      expect(projection.codeOrdinal).toBe(0);
+      expect(projection.fence).toBe(fence);
+      expect(projection.emptyBodyLineCount).toBe(blankLineCount);
+    }
+  );
+
+  it('maps CRLF code body offsets without changing the source line ending', () => {
+    const markdown = 'Before\r\n\r\n~~~\r\n\r\n\r\n~~~\r\n\r\nAfter';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 6),
+      previewBlock('b2', 7, 8)
+    ]);
+    const projection = createVisualCodeBodyIntervalForPreviewBlock(
+      markdown,
+      editMap,
+      'b1'
+    );
+
+    expect(markdown.slice(projection.bodyStart, projection.bodyEnd))
+      .toBe('\r\n\r\n');
+    expect(projection.lineEnding).toBe('\r\n');
+    expect(projection.emptyBodyLineCount).toBe(2);
+  });
+
+  it.each(['~~~', '```'])(
+    'restores a lone-CR %s fence from canonical Markdown',
+    (fence) => {
+      const markdown = `${fence}js\rAlpha\r${fence}`;
+      const surface = editor('<pre><code class="language-js">Alpha\n</code></pre>');
+
+      restoreVisualCodeFenceFamilies(surface, markdown);
+
+      expect(surface.querySelector('pre')?.getAttribute(
+        'data-easymde-visual-fence'
+      )).toBe(fence);
+      expect(serializeVisualMarkdown(surface)).toBe(
+        markdown.replace(/\r\n|\r/g, '\n')
+      );
+    }
+  );
+
+  it('maps lone-CR code body offsets without changing the source line ending', () => {
+    const markdown = 'Before\r\r~~~\r\r\r~~~\r\rAfter';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 1),
+      previewBlock('b1', 2, 6),
+      previewBlock('b2', 7, 8)
+    ]);
+    const projection = createVisualCodeBodyIntervalForPreviewBlock(
+      markdown,
+      editMap,
+      'b1'
+    );
+
+    expect(createVisualMarkdownSourceRangeFromPreviewEditMap(
+      markdown,
+      editMap,
+      { end: 2, start: 1 }
+    )).toEqual({ end: 18, start: 8 });
+    expect(markdown.slice(projection.bodyStart, projection.bodyEnd))
+      .toBe('\r\r');
+    expect(projection.lineEnding).toBe('\r');
+    expect(projection.emptyBodyLineCount).toBe(2);
+  });
+
+  it.each([
+    {
+      codeBody: 'Alpha\n',
+      label: 'closed backtick with LF',
+      markdown: '```js\nAlpha\n```'
+    },
+    {
+      codeBody: 'Alpha\n',
+      label: 'open backtick without a final LF',
+      markdown: '```js\nAlpha'
+    },
+    {
+      codeBody: 'Alpha\n',
+      label: 'open tilde with CRLF',
+      markdown: '~~~js\r\nAlpha\r\n'
+    },
+    {
+      codeBody: 'Alpha \n',
+      label: 'open tilde with trailing body space',
+      markdown: '~~~js\nAlpha \n'
+    },
+    {
+      codeBody: '',
+      label: 'bare open tilde',
+      markdown: '~~~'
+    },
+    {
+      codeBody: '\n',
+      label: 'open empty code body after one blank line',
+      markdown: '~~~js\n\n'
+    }
+  ])('serializes the $label from accepted EOF topology', ({
+    codeBody,
+    markdown
+  }) => {
+    const surface = editor('');
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    code.className = 'language-js';
+    code.textContent = codeBody;
+    pre.append(code);
+    surface.append(pre);
+    restoreVisualCodeFenceFamilies(surface, markdown);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      markdown.replace(/\r\n|\r/g, '\n')
+    );
+  });
+
+  it.each(['~~~', '```'])(
+    'keeps an expanded literal %s run open at EOF in both source and DOM serialization',
+    (fence) => {
+      const body = `Alpha\n${fence}x\n`;
+      const base = `${fence}\nAlpha\n\n`;
+      const outerFence = fence[0]?.repeat(fence.length + 1);
+      const expected = `${outerFence}\n${body}`;
+      const expanded = expandVisualCodeFenceForBody(base, 0, body);
+      const surface = editor('');
+      const pre = document.createElement('pre');
+      const code = document.createElement('code');
+      code.textContent = body;
+      pre.append(code);
+      surface.append(pre);
+      restoreVisualCodeFenceFamilies(surface, expected);
+
+      expect(expanded?.markdown).toBe(expected);
+      expect(serializeVisualMarkdown(surface)).toBe(expected);
+    }
+  );
+
+  it('discards forged open-EOF metadata when restoring a closed source fence', () => {
+    const surface = editor(
+      '<pre data-easymde-visual-fence-open-eof="999999"><code class="language-js">Alpha\n</code></pre>'
+    );
+    const markdown = '~~~js\nAlpha\n~~~';
+
+    restoreVisualCodeFenceFamilies(surface, markdown);
+
+    expect(surface.querySelector('pre')?.hasAttribute(
+      'data-easymde-visual-fence-open-eof'
+    )).toBe(false);
+    expect(serializeVisualMarkdown(surface)).toBe(markdown);
+  });
+
+  it.each(['~~~', '```'])(
+    'expands the %s outer fence around a literal body run',
+    (fence) => {
+      const source = `${fence}js\nBefore\n\nAfter\n${fence}`;
+      const body = `Before\n${fence}x\nAfter\n`;
+      const expanded = expandVisualCodeFenceForBody(source, 0, body);
+      const outerFence = fence[0]?.repeat(fence.length + 1);
+
+      expect(expanded).toEqual({
+        fence: outerFence,
+        markdown: `${outerFence}js\n${body}${outerFence}`,
+        openingFenceDelta: 1,
+        unexpandedMarkdown: `${fence}js\n${body}${fence}`
+      });
+    }
+  );
+
+  it('expands a fenced code body while retaining surrounding CRLF source', () => {
+    const before = '# Before\r\n\r\n';
+    const after = '\r\n\r\n# After';
+    const fence = '~~~';
+    const source = `${before}${fence}js\r\nBefore\r\n\r\nAfter\r\n${fence}\r\n${after}`;
+    const body = `Before\n${fence}\nAfter\n`;
+    const expanded = expandVisualCodeFenceForBody(source, 0, body);
+    const outerFence = '~~~~';
+
+    expect(expanded?.markdown).toBe(
+      `${before}${outerFence}js\r\nBefore\r\n${fence}\r\nAfter\r\n${outerFence}\r\n${after}`
+    );
+    expect(expanded?.openingFenceDelta).toBe(1);
+  });
+
+  it('resolves a source selection to its unique closed fenced code body', () => {
+    const markdown = [
+      'Before',
+      '',
+      '~~~js',
+      'First',
+      '~~~',
+      '',
+      '```py',
+      'Second',
+      '```',
+      '',
+      'After'
+    ].join('\n');
+    const secondBody = markdown.indexOf('Second');
+
+    expect(visualCodeBodyOrdinalForSourceRange(markdown, {
+      end: secondBody + 'Second'.length,
+      start: secondBody
+    })).toBe(1);
+    expect(() => visualCodeBodyOrdinalForSourceRange(markdown, {
+      end: markdown.length,
+      start: markdown.length
+    })).toThrow('visual-editor-code-body-map-ambiguous');
+  });
+
+  it.each(['~~~', '```'])(
+    'maps an editable unclosed %s fence at EOF from its Preview edit range',
+    (fence) => {
+      const markdown = fence;
+      const editMap = previewEditMap([previewBlock('b0', 0, 1)]);
+
+      expect(createVisualCodeBodyOrdinalsForPreviewBlocks(
+        markdown,
+        editMap
+      ).get('b0')).toBe(0);
+      expect(createVisualCodeBodyIntervalForPreviewBlock(
+        markdown,
+        editMap,
+        'b0'
+      )).toEqual({
+        bodyEnd: markdown.length,
+        bodyStart: markdown.length,
+        closed: false,
+        codeOrdinal: 0,
+        emptyBodyLineCount: 0,
+        fence,
+        info: '',
+        lineEnding: '',
+        sourceBlockEnd: markdown.length,
+        sourceBlockStart: 0
+      });
+      expect(visualCodeBodyOrdinalForSourceRange(markdown, {
+        end: markdown.length,
+        start: markdown.length
+      })).toBe(0);
+    }
+  );
+
+  it('maps source-backed code after a leading zero-line generated Preview root', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 0, false),
+      previewBlock('b1', 0, 3)
+    ]);
+
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(
+      markdown,
+      editMap
+    )).toEqual(new Map([['b1', 0]]));
+  });
+
+  it('skips a trailing generated root at the one-past-final source line', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const editMap = previewEditMap([
+      previewBlock('b0', 0, 3),
+      previewBlock('b1', 3, 3, false)
+    ]);
+
+    expect(createVisualCodeBodyOrdinalsForPreviewBlocks(
+      markdown,
+      editMap
+    )).toEqual(new Map([['b0', 0]]));
+  });
+
+  it.each([
+    {
+      blocks: [previewBlock('b0', 0, 3), previewBlock('b1', 4, 4, false)],
+      name: 'a generated range beyond the final line'
+    },
+    {
+      blocks: [previewBlock('b0', 0, 3), previewBlock('b1', 2, 2, false)],
+      name: 'an out-of-order generated range'
+    },
+    {
+      blocks: [previewBlock('b0', 3, 3)],
+      name: 'an editable zero-width range'
+    }
+  ])('rejects $name while mapping code body ordinals', ({ blocks }) => {
+    expect(() => createVisualCodeBodyOrdinalsForPreviewBlocks(
+      '~~~js\nAlpha\n~~~',
+      previewEditMap(blocks)
+    )).toThrow('visual-editor-code-block-map-invalid');
+  });
+
+  it.each(['~~~', '```'])(
+    'widens an open EOF %s fence around a literal body fence and stays open',
+    (fence) => {
+      const source = `${fence}\nAlpha\n`;
+      const body = `Alpha\n${fence}\nAfter\n`;
+      const expanded = expandVisualCodeFenceForBody(source, 0, body);
+      const outerFence = fence[0]?.repeat(fence.length + 1);
+
+      expect(expanded).toEqual({
+        fence: outerFence,
+        markdown: `${outerFence}\n${body}`,
+        openingFenceDelta: 1,
+        unexpandedMarkdown: `${fence}\n${body}`
+      });
+      expect(createVisualCodeBodyIntervalForPreviewBlock(
+        expanded?.markdown ?? '',
+        previewEditMap([previewBlock('b0', 0, 4)]),
+        'b0'
+      ).closed).toBe(false);
+    }
+  );
+
+  it('maps source offsets through an accepted Highlight.js token span', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">Al</span>pha\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const token = code?.querySelector('span')?.firstChild;
+    if (!(code instanceof HTMLElement) || !(token instanceof Text)) {
+      throw new Error('visual-code-highlight-token-fixture-missing');
+    }
+    placeCaret(token, 1);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: token, offset: 1 },
+        start: { node: token, offset: 1 }
+      }
+    );
+
+    expect(projection.sourceSelection).toEqual({ end: 7, start: 7 });
+    expect(projection.localSelection).toEqual({ end: 1, start: 1 });
+  });
+
+  it('projects a caret through a plain single-text browser span', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const surface = editor('<pre><code>A<span>l</span>pha\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const wrapper = code?.querySelector('span');
+    const text = wrapper?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(wrapper instanceof HTMLSpanElement)
+      || !(text instanceof Text)
+    ) {
+      throw new Error('visual-browser-text-span-fixture-missing');
+    }
+    placeCaret(text, 1);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: text, offset: 1 },
+        start: { node: text, offset: 1 }
+      }
+    );
+
+    expect(projection.localSelection).toEqual({ end: 2, start: 2 });
+    expect(projection.sourceSelection).toEqual({ end: 8, start: 8 });
+    expect(wrapper.isConnected).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+  });
+
+  it('projects lone-CR code body source offsets through an LF Preview DOM', () => {
+    const sourceMarkdown = '~~~js\rAlpha\r~~~';
+    const visualMarkdown = '~~~js\nAlpha\n~~~';
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>Alpha\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-lone-cr-code-projection-fixture-missing');
+    }
+    placeCaret(text, 6);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      visualMarkdown,
+      0,
+      {
+        end: { node: text, offset: 6 },
+        start: { node: text, offset: 6 }
+      }
+    );
+
+    expect(projection.sourceText).toBe('Alpha\r');
+    expect(projection.visualText).toBe('Alpha\n');
+    expect(projection.localSelection).toEqual({ end: 6, start: 6 });
+    expect(projection.sourceSelection).toEqual({
+      end: projection.sourceInterval.bodyStart + 6,
+      start: projection.sourceInterval.bodyStart + 6
+    });
+    expect(projection.visualSelection).toEqual({
+      end: projection.visualInterval.bodyStart + 6,
+      start: projection.visualInterval.bodyStart + 6
+    });
+  });
+
+  it('returns a caret boundary for a detached region without changing Selection', () => {
+    const detached = document.createElement('article');
+    detached.innerHTML = '<p>Markdown content</p>';
+    const selectedText = document.createTextNode('unrelated selection');
+    document.body.append(selectedText);
+    placeCaret(selectedText, 4);
+
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      detached,
+      'Markdown content',
+      'Markdown content',
+      4
+    );
+
+    expect(boundary.node).toBe(detached.querySelector('p')?.firstChild);
+    expect(boundary.offset).toBe(4);
+    expect(window.getSelection()?.anchorNode).toBe(selectedText);
+    expect(window.getSelection()?.anchorOffset).toBe(4);
+    selectedText.remove();
+  });
+
+  it('maps code text when serialization contributes its terminal newline', () => {
+    const markdown = '~~~js\nAlpha\n~~~';
+    const surface = editor('<pre><code>Alpha</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-code-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 2);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: text, offset: 2 },
+        start: { node: text, offset: 2 }
+      }
+    );
+
+    expect(projection.localSelection).toEqual({ end: 2, start: 2 });
+    expect(projection.sourceSelection).toEqual({ end: 8, start: 8 });
+  });
+
+  it('maps an open EOF code body when rendered code adds a terminal newline after blank lines', () => {
+    const sourceMarkdown = '~~~\n\n\n\n';
+    const visualMarkdown = '~~~\n\n\n\n\n';
+    const surface = editor('<pre><code>\n\n\n\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-open-code-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 3);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      visualMarkdown,
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    );
+
+    expect(projection.sourceText).toBe('\n\n\n');
+    expect(projection.visualText).toBe('\n\n\n\n');
+    expect(projection.localSelection).toEqual({ end: 3, start: 3 });
+    expect(projection.sourceSelection).toEqual({ end: 7, start: 7 });
+    expect(projection.visualSelection).toEqual({ end: 7, start: 7 });
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      '~~~\n\n\n\n\n\n\n',
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    )).toThrow('visual-editor-code-body-projection-mismatch');
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      '~~~\n\nX\n',
+      0,
+      {
+        end: { node: text, offset: 3 },
+        start: { node: text, offset: 3 }
+      }
+    )).toThrow('visual-editor-code-body-projection-mismatch');
+  });
+
+  it.each([
+    {
+      markdown: '~~~\n~~~',
+      sourceBody: '',
+      visualMarkdown: '~~~\n\n~~~'
+    },
+    {
+      markdown: '~~~\n\n~~~',
+      sourceBody: '\n',
+      visualMarkdown: '~~~\n\n~~~'
+    },
+    {
+      markdown: '```js\n```',
+      sourceBody: '',
+      visualMarkdown: '```js\n\n```'
+    },
+    {
+      markdown: '```js\n\n```',
+      sourceBody: '\n',
+      visualMarkdown: '```js\n\n```'
+    },
+    {
+      markdown: '~~~\r\r~~~',
+      sourceBody: '\r',
+      visualMarkdown: '~~~\n\n~~~'
+    }
+  ])('maps an accepted empty $markdown code placeholder to its source body', ({
+    markdown,
+    sourceBody,
+    visualMarkdown
+  }) => {
+    const surface = editor(
+      '<pre><code><span data-easymde-visual-code-placeholder=""></span></code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const placeholder = code?.querySelector(
+      '[data-easymde-visual-code-placeholder]'
+    );
+    if (!(code instanceof HTMLElement) || !(placeholder instanceof HTMLSpanElement)) {
+      throw new Error('visual-code-empty-placeholder-projection-fixture-missing');
+    }
+    placeholder.append(document.createTextNode(''));
+    const marker = placeholder.firstChild;
+    if (!(marker instanceof Text)) {
+      throw new Error('visual-code-empty-placeholder-text-missing');
+    }
+    placeCaret(marker, 0);
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      markdown,
+      visualMarkdown,
+      0,
+      {
+        end: { node: marker, offset: 0 },
+        start: { node: marker, offset: 0 }
+      }
+    );
+
+    expect(markdown.slice(
+      projection.sourceInterval.bodyStart,
+      projection.sourceInterval.bodyEnd
+    )).toBe(sourceBody);
+    expect(projection.visualText).toBe('\n');
+    expect(projection.sourceSelection).toEqual({
+      end: projection.sourceInterval.bodyStart,
+      start: projection.sourceInterval.bodyStart
+    });
+    expect(projection.visualSelection).toEqual({
+      end: projection.visualInterval.bodyStart,
+      start: projection.visualInterval.bodyStart
+    });
+  });
+
+  it('maps Chromium collapsed CODE@0 input to the exact empty placeholder', () => {
+    const markdown = '~~~\n\n~~~';
+    const surface = editor(
+      '<pre><code><span data-easymde-visual-code-placeholder=""></span></code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const placeholder = code?.querySelector(
+      '[data-easymde-visual-code-placeholder]'
+    );
+    if (!(code instanceof HTMLElement) || !(placeholder instanceof HTMLSpanElement)) {
+      throw new Error('visual-code-chromium-boundary-fixture-missing');
+    }
+    placeholder.append(document.createTextNode(''));
+
+    const projection = projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: code, offset: 0 },
+        start: { node: code, offset: 0 }
+      }
+    );
+
+    expect(projection.sourceSelection).toEqual({
+      end: projection.sourceInterval.bodyStart,
+      start: projection.sourceInterval.bodyStart
+    });
+    expect(projection.localSelection).toEqual({ end: 0, start: 0 });
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: code, offset: 1 },
+        start: { node: code, offset: 0 }
+      }
+    )).toThrow('visual-editor-code-body-selection-invalid');
+    expect(() => projectVisualCodeBodySelection(
+      code,
+      markdown,
+      markdown,
+      0,
+      {
+        end: { node: code, offset: 1 },
+        start: { node: code, offset: 1 }
+      }
+    )).toThrow('visual-editor-code-body-selection-invalid');
+  });
+
+  it.each([
+    { body: '', markdown: '~~~\n~~~' },
+    { body: '\n', markdown: '~~~\n\n~~~' },
+    { body: '\n\n', markdown: '~~~\n\n\n~~~' },
+    { body: ' \n', markdown: '~~~\n \n~~~' },
+    { body: 'Alpha\n', markdown: '~~~\nAlpha\n~~~' },
+    { body: 'Alpha', markdown: '~~~\nAlpha\n~~~' }
+  ])('serializes code body $body without adding a structural newline', ({ body, markdown }) => {
+    const surface = editor(
+      `<pre data-easymde-visual-fence="~~~"><code>${body}</code></pre>`
+    );
+
+    expect(serializeVisualMarkdown(surface)).toBe(markdown);
+  });
+
+  it.each([
+    { body: 'A', caretOffset: 1, expected: 'A\n' },
+    { body: '\nA', caretOffset: 2, expected: '\nA\n' },
+    { body: 'A\n\n', caretOffset: 1, expected: 'A\n\n' }
+  ])('restores only missing terminal newlines from the source body', ({ body, caretOffset, expected }) => {
+    const surface = editor(`<pre><code>${body}</code></pre>`);
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-code-body-text-fixture-missing');
+    }
+    placeCaret(text, Math.min(caretOffset, text.length));
+
+    reconcileVisualCodeBodyDom(code, expected, caretOffset);
+
+    expect(code.textContent).toBe(expected);
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(caretOffset);
+  });
+
+  it('normalizes one renderer-only terminal newline after a code-body deletion', () => {
+    const surface = editor('<pre><code>\n\n\n\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-code-body-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 3);
+
+    reconcileVisualCodeBodyDom(code, '\n\n\n', 3);
+
+    expect(code.textContent).toBe('\n\n\n');
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(3);
+  });
+
+  it('reconciles lone-CR source code through syntax spans and retains the LF DOM caret', () => {
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">Alpha</span>\nBeta\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const syntax = code?.querySelector('span.hljs-keyword');
+    const syntaxText = syntax?.firstChild;
+    const trailingText = syntax?.nextSibling;
+    if (
+      !(code instanceof HTMLElement)
+      || !(syntax instanceof HTMLSpanElement)
+      || !(syntaxText instanceof Text)
+      || !(trailingText instanceof Text)
+    ) {
+      throw new Error('visual-lone-cr-code-reconcile-fixture-missing');
+    }
+    placeCaret(trailingText, 2);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\rBeta\r', 7);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.firstChild).toBe(syntax);
+    expect(syntax.firstChild).toBe(syntaxText);
+    expect(syntax.textContent).toBe('Alpha');
+    expect(window.getSelection()?.anchorNode).toBe(trailingText);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it('reconciles a plain LF DOM from CRLF source with a normalized caret offset', () => {
+    const surface = editor('<pre><code>Alpha\nBeta\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-crlf-plain-code-reconcile-fixture-missing');
+    }
+    placeCaret(text, 6);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\r\nBeta\r\n', 6);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(6);
+  });
+
+  it('normalizes CRLF after browser color FONT unwraps to plain code text', () => {
+    const surface = editor(
+      '<pre><code><font color="#c678dd">Alpha</font>\nBeta\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const font = code?.querySelector('font');
+    const trailingText = font?.nextSibling;
+    if (
+      !(code instanceof HTMLElement)
+      || !(font instanceof HTMLElement)
+      || !(trailingText instanceof Text)
+    ) {
+      throw new Error('visual-crlf-browser-font-reconcile-fixture-missing');
+    }
+    placeCaret(trailingText, 1);
+
+    reconcileVisualCodeBodyDom(code, 'Alpha\r\nBeta\r\n', 6);
+
+    expect(code.textContent).toBe('Alpha\nBeta\n');
+    expect(code.querySelector('font')).toBeNull();
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(trailingText);
+    expect(window.getSelection()?.anchorNode).toBe(trailingText);
+    expect(window.getSelection()?.anchorOffset).toBe(6);
+  });
+
+  it('removes the renderer-only terminal newline while retaining syntax markup', () => {
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">\n\n</span>\n</code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const syntax = code?.querySelector('span.hljs-keyword');
+    const text = syntax?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(syntax instanceof HTMLSpanElement)
+      || !(text instanceof Text)
+    ) {
+      throw new Error('visual-highlighted-terminal-newline-fixture-missing');
+    }
+    placeCaret(text, 2);
+
+    reconcileVisualCodeBodyDom(code, '\n\n', 2);
+
+    expect(code.textContent).toBe('\n\n');
+    expect(code.contains(syntax)).toBe(true);
+    expect(syntax.textContent).toBe('\n\n');
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it.each([
+    { body: '\n\n\n\n\n', label: 'two trailing newlines' },
+    { body: '\n\nX\n', label: 'non-newline content drift' }
+  ])('rejects $label while reconciling code-body text', ({ body }) => {
+    const surface = editor(`<pre><code>${body}</code></pre>`);
+    const code = surface.querySelector('pre > code');
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('visual-code-body-reconcile-negative-fixture-missing');
+    }
+
+    expect(() => reconcileVisualCodeBodyDom(code, '\n\n\n', 3)).toThrow(
+      'visual-editor-code-body-dom-mismatch'
+    );
+  });
+
+  it('unwraps a mutated empty marker while retaining the browser Text node', () => {
+    const surface = editor(
+      '<pre><code><span data-easymde-visual-code-placeholder=""></span></code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const marker = code?.firstElementChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(marker instanceof HTMLSpanElement)
+    ) {
+      throw new Error('visual-code-placeholder-reconcile-fixture-missing');
+    }
+    marker.append(document.createTextNode(''));
+    const activeText = marker.firstChild;
+    if (!(activeText instanceof Text)) {
+      throw new Error('visual-code-placeholder-reconcile-text-missing');
+    }
+    activeText.data = 'A';
+    placeCaret(activeText, 1);
+
+    reconcileVisualCodeBodyDom(code, 'A\n', 1);
+
+    expect(code.firstChild).toBe(activeText);
+    expect(activeText.isConnected).toBe(true);
+    expect(activeText.data).toBe('A\n');
+    expect(code.querySelector('[data-easymde-visual-code-placeholder]'))
+      .toBeNull();
+    expect(window.getSelection()?.anchorNode).toBe(activeText);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+  });
+
+  it('unwraps a plain single-text browser span and retains its Text caret', () => {
+    const surface = editor('<pre><code>A<span>l</span></code></pre>');
+    const code = surface.querySelector('pre > code');
+    const wrapper = code?.querySelector('span');
+    const text = wrapper?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(wrapper instanceof HTMLSpanElement)
+      || !(text instanceof Text)
+    ) {
+      throw new Error('visual-browser-text-span-reconcile-fixture-missing');
+    }
+    placeCaret(text, 1);
+
+    reconcileVisualCodeBodyDom(code, 'Al\n', 2);
+
+    expect(wrapper.isConnected).toBe(false);
+    expect(code.children).toHaveLength(0);
+    expect(code.childNodes).toHaveLength(1);
+    expect(code.firstChild).toBe(text);
+    expect(text.data).toBe('Al\n');
+    expect(window.getSelection()?.anchorNode).toBe(text);
+    expect(window.getSelection()?.anchorOffset).toBe(2);
+  });
+
+  it('unwraps browser font formatting while preserving syntax spans and caret identity', () => {
+    const surface = editor(
+      '<pre><code><span class="hljs-keyword">let </span><font color="#c678dd">x</font></code></pre>'
+    );
+    const code = surface.querySelector('pre > code');
+    const syntaxSpan = code?.querySelector('span.hljs-keyword');
+    const font = code?.querySelector('font');
+    const typedText = font?.firstChild;
+    if (
+      !(code instanceof HTMLElement)
+      || !(syntaxSpan instanceof HTMLSpanElement)
+      || !(font instanceof HTMLElement)
+      || !(typedText instanceof Text)
+    ) {
+      throw new Error('visual-code-browser-font-fixture-missing');
+    }
+    placeCaret(typedText, typedText.length);
+
+    reconcileVisualCodeBodyDom(code, 'let x\n', 5);
+
+    expect(code.textContent).toBe('let x\n');
+    expect(code.querySelector('font')).toBeNull();
+    expect(code.querySelector('span.hljs-keyword')).toBe(syntaxSpan);
+    expect(code.querySelector('span.hljs-keyword')?.textContent).toBe('let ');
+    expect(typedText.isConnected).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(typedText);
+    expect(window.getSelection()?.anchorOffset).toBe(1);
+  });
+
+  it.each([
+    '<strong>A</strong>',
+    '<font color="#c678dd" onclick="x()">A</font>',
+    '<span title="not-neutral">A</span>',
+    '<span><span>A</span></span>',
+    '<span>A<strong></strong></span>'
+  ])('rejects unsupported code descendants: %s', (markup) => {
+    const surface = editor(`<pre><code>${markup}</code></pre>`);
+    const code = surface.querySelector('pre > code');
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('visual-code-semantic-node-fixture-missing');
+    }
+
+    expect(() => reconcileVisualCodeBodyDom(code, 'A\n', 1)).toThrow(
+      'visual-editor-code-body-dom-shape-invalid'
+    );
+  });
+
+  it('rejects code text that differs before the missing terminal newline', () => {
+    const surface = editor('<pre><code>A\n</code></pre>');
+    const code = surface.querySelector('pre > code');
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('visual-code-body-code-fixture-missing');
+    }
+
+    expect(() => reconcileVisualCodeBodyDom(code, '\nA\n', 2)).toThrow(
+      'visual-editor-code-body-dom-mismatch'
+    );
+  });
+
+  it('fails closed when a Preview block range does not identify one fenced source block', () => {
+    const markdown = '~~~\nA\n~~~\n\n~~~\nB\n~~~';
+    const editMap = previewEditMap([previewBlock('b0', 0, 7)]);
+
+    expect(() => createVisualCodeBodyIntervalForPreviewBlock(
+      markdown,
+      editMap,
+      'b0'
+    )).toThrow('visual-editor-code-body-map-ambiguous');
+  });
+
+  it('keeps code-block structure stable across line shifts and detects inserted fences', () => {
+    const accepted = 'Above\n\n~~~js\nA\n~~~\n\n~~~py\nB\n~~~';
+    const shifted = 'Above\nAdded line\n\n~~~js\nAx\n~~~\n\n~~~py\nB\n~~~';
+    const inserted = `~~~\n\n~~~\n\n${shifted}`;
+
+    expect(visualCodeBlockStructureSignature(accepted)).toBe(
+      visualCodeBlockStructureSignature(shifted)
+    );
+    expect(visualCodeBlockStructureSignature(accepted)).not.toBe(
+      visualCodeBlockStructureSignature(inserted)
+    );
+  });
+
   it.each([
     { boundary: 'start' as const, offset: 0 },
     { boundary: 'end' as const, offset: 1 }
@@ -669,12 +1661,12 @@ A--&gt;B</code></pre>
     )).toBe('');
     expect(placeholder?.childNodes).toHaveLength(1);
     expect(placeholder?.firstChild).toBeInstanceOf(Text);
-    expect(placeholder?.textContent).toBe(' ');
-    expect(window.getSelection()?.anchorNode).toBe(code);
-    expect(window.getSelection()?.focusNode).toBe(code);
-    expect(window.getSelection()?.isCollapsed).toBe(false);
+    expect(placeholder?.textContent).toBe('');
+    expect(window.getSelection()?.anchorNode).toBe(placeholder?.firstChild);
+    expect(window.getSelection()?.focusNode).toBe(placeholder?.firstChild);
+    expect(window.getSelection()?.isCollapsed).toBe(true);
     expect(window.getSelection()?.anchorOffset).toBe(0);
-    expect(window.getSelection()?.focusOffset).toBe(1);
+    expect(window.getSelection()?.focusOffset).toBe(0);
     const closingFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
     expect(closingFence).toBeTruthy();
     expect(
@@ -785,7 +1777,7 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe('`````js linenos=true\n\n`````');
   });
 
-  it('keeps the empty code placeholder through first input and deletion', () => {
+  it('preserves the empty code text node across native history and deletion', () => {
     const surface = editor('<p>~~~bash</p>');
     const paragraph = surface.querySelector('p');
     const source = paragraph?.firstChild;
@@ -813,9 +1805,27 @@ A--&gt;B</code></pre>
     placeholder.removeAttribute('data-easymde-visual-code-placeholder');
     placeCaret(placeholderText, placeholderText.length);
     expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+
+    placeholderText.data = '';
+    normalizeVisualCodePlaceholders(surface, 'historyUndo', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
+    expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(true);
+    expect(window.getSelection()?.anchorNode).toBe(placeholderText);
+
+    placeholderText.data = 'x';
+    normalizeVisualCodePlaceholders(surface, 'historyRedo', code.parentElement);
+    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
+    expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(false);
+
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
     expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(code.firstChild).toBe(placeholder);
+    expect(placeholder.firstChild).toBe(placeholderText);
 
     const backspace = new KeyboardEvent('keydown', {
       bubbles: true,
@@ -825,6 +1835,69 @@ A--&gt;B</code></pre>
     expect(applyVisualBlockShortcut(surface, backspace)).toBe(true);
     expect(surface.querySelector('pre')).toBeNull();
     expect(surface.querySelector('p')).not.toBeNull();
+  });
+
+  it.each([
+    { body: '\n', empty: true, label: 'one LF terminal line ending' },
+    { body: '\r\n', empty: true, label: 'one CRLF terminal line ending' },
+    { body: '\n\n', empty: false, label: 'two blank body lines' },
+    { body: ' \n', empty: false, label: 'body space before a line ending' }
+  ])('treats only $label as an empty code body for Backspace', ({
+    body,
+    empty
+  }) => {
+    const surface = editor('');
+    const pre = document.createElement('pre');
+    pre.setAttribute('data-easymde-visual-fence', '~~~');
+    const code = document.createElement('code');
+    const source = document.createTextNode(`A${body}`);
+    code.append(source);
+    pre.append(code);
+    surface.append(pre);
+    placeCaret(source, 1);
+    const snapshot = captureVisualCodeInputSnapshot(pre);
+    if (!snapshot) throw new Error('visual-empty-body-snapshot-missing');
+
+    source.data = body;
+    placeCaret(source, 0);
+    normalizeVisualCodePlaceholders(
+      surface,
+      'deleteContentBackward',
+      snapshot
+    );
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+
+    expect(applyVisualBlockShortcut(surface, backspace)).toBe(empty);
+    expect(backspace.defaultPrevented).toBe(empty);
+    expect(surface.querySelector('pre')).toBe(empty ? null : pre);
+  });
+
+  it('does not flush pending input for a nonempty code-body Backspace', () => {
+    const surface = editor('<pre><code>body</code></pre>');
+    const codeText = surface.querySelector('pre > code')?.firstChild;
+    if (!(codeText instanceof Text)) {
+      throw new Error('visual-code-body-flush-guard-text-missing');
+    }
+    placeCaret(codeText, 2);
+    const beforeEmptyCodeFenceRemoval = vi.fn(() => true);
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+
+    expect(applyVisualBlockShortcut(
+      surface,
+      backspace,
+      beforeEmptyCodeFenceRemoval
+    )).toBe(false);
+    expect(beforeEmptyCodeFenceRemoval).not.toHaveBeenCalled();
+    expect(backspace.defaultPrevented).toBe(false);
+    expect(surface.querySelector('pre > code')?.textContent).toBe('body');
   });
 
   it('leaves a strict empty code fence on Enter and then forms a list marker', () => {
@@ -894,8 +1967,14 @@ A--&gt;B</code></pre>
     'does not scan unrelated code placeholders when the input block is null (%s)',
     (inputType) => {
       const surface = editor(
-        '<pre data-easymde-visual-fence="~~~"><code><span data-easymde-visual-code-placeholder> </span></code></pre><p>Paragraph</p>'
+        '<pre data-easymde-visual-fence="~~~"><code></code></pre><p>Paragraph</p>'
       );
+      const placeholder = surface.ownerDocument.createElement('span');
+      placeholder.setAttribute('data-easymde-visual-code-placeholder', '');
+      placeholder.append(surface.ownerDocument.createTextNode(''));
+      const code = surface.querySelector('code');
+      if (!code) throw new Error('visual-code-placeholder-fixture-missing');
+      code.append(placeholder);
       const before = surface.innerHTML;
 
       normalizeVisualCodePlaceholders(surface, inputType, null);
@@ -1875,6 +2954,28 @@ A--&gt;B</code></pre>
     ).toBeNull();
   });
 
+  it('adds the first zero-body code line while keeping the caret before its delimiter newline', () => {
+    expect(applyVisualMarkdownEditIntent(
+      '~~~\n~~~',
+      '~~~\n~~~',
+      { end: 4, start: 4 },
+      { end: 4, start: 4 },
+      'insertText',
+      'A',
+      {
+        sourceCaretLength: 1,
+        sourceReplacement: 'A\n',
+        visualCaretLength: 1,
+        visualReplacement: 'A\n'
+      }
+    )).toEqual({
+      selection: { direction: 'none', end: 5, start: 5 },
+      sourceMarkdown: '~~~\nA\n~~~',
+      visualMarkdown: '~~~\nA\n~~~',
+      visualSelection: { end: 5, start: 5 }
+    });
+  });
+
   it('maps a visual selection back to the canonical Markdown range', () => {
     const surface = editor('<p>Choose <strong>this</strong> text</p>');
     const text = surface.querySelector('strong')?.firstChild as Text;
@@ -2157,6 +3258,59 @@ A--&gt;B</code></pre>
     ).toEqual({ direction: 'none', end: 0, start: 0 });
     expect(window.getSelection()?.anchorNode?.textContent).toBe(
       'Markdown content'
+    );
+  });
+
+  it.each([
+    { fence: '```', source: '```\nAlpha\n```' },
+    { fence: '~~~~~', source: '~~~~~\nAlpha\n~~~~~' },
+    { fence: '~~~', source: '~~~\rAlpha\r~~~' }
+  ])(
+    'places an accepted document-end caret after a closed $fence fence without changing serialization',
+    ({ fence, source }) => {
+      const surface = editor(
+        `<pre data-easymde-visual-fence="${fence}"><code>Alpha</code></pre>`
+      );
+      placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+      expect(
+        placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+          surface,
+          source,
+          'end'
+        )
+      ).toBe(true);
+
+      const paragraph = surface.querySelector('pre + p');
+      const caret = paragraph?.firstChild;
+      expect(caret).toBeInstanceOf(Text);
+      expect(caret?.textContent).toBe('\u200b');
+      expect(serializeVisualMarkdown(surface)).toBe(
+        source.replace(/\r\n|\r/g, '\n')
+      );
+      expect(window.getSelection()?.anchorNode).toBe(caret);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+    }
+  );
+
+  it('keeps an accepted end caret inside an unclosed final fence', () => {
+    const source = '~~~\nAlpha';
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~"><code>Alpha</code></pre>'
+    );
+    placeVisualCaretAtAcceptedPasteDocumentBoundary(surface, 'end');
+
+    expect(
+      placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd(
+        surface,
+        source,
+        'end'
+      )
+    ).toBe(false);
+    expect(surface.querySelector('pre + p')).toBeNull();
+    expect(window.getSelection()?.anchorNode).toBe(
+      surface.querySelector('pre > code')?.firstChild
     );
   });
 

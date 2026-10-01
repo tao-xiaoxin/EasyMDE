@@ -8,6 +8,7 @@ import type {
   PreviewResponse,
   SafePreviewHtml
 } from '../../../contracts/ports/preview-request';
+import { VISUAL_MARKDOWN_READ_ONLY_SELECTOR } from '../../../contracts/visual-markdown-read-only';
 import type { PreviewRequestSession } from '../model/create-preview-request-session';
 import type { PreviewEnhancementPort } from '../ports/preview-enhancement-port';
 import type { PreviewScrollPort } from '../ports/preview-scroll-port';
@@ -128,6 +129,141 @@ function windowedFixture(count: number, signature: string) {
       .map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
       .join('') as SafePreviewHtml
   };
+}
+
+function documentEndFixture(
+  count: number,
+  signature: string,
+  terminalSuffix = ''
+) {
+  const markdown = [
+    ...Array.from({ length: count }, (_, index) => `line-${index}`)
+  ].join('\n') + terminalSuffix;
+  const blocks = Array.from({ length: count }, (_, index) => ({
+    id: `b${index}`,
+    startLine: index,
+    endLine: index + 1,
+    editable: true as const
+  }));
+  return {
+    editMap: {
+      version: 1 as const,
+      coordinate: 'line' as const,
+      signature,
+      blocks
+    },
+    html: blocks
+      .map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
+      .join('') as SafePreviewHtml,
+    markdown
+  };
+}
+
+function documentEndWithGeneratedRootsFixture(
+  count: number,
+  signature: string,
+  terminalSuffix = ''
+) {
+  const fixture = documentEndFixture(count, signature, terminalSuffix);
+  const generatedRoots = [
+    `<hr data-easymde-visual-block-id="b${count}" class="footnotes-sep">`,
+    `<div data-easymde-visual-block-id="b${count + 1}" class="footnotes">`
+      + '<ol><li>Generated note</li></ol></div>'
+  ];
+  const lastSourceBlock = fixture.editMap.blocks[count - 1];
+  if (!lastSourceBlock) throw new Error('preview-test-document-end-source-missing');
+
+  return {
+    ...fixture,
+    editMap: {
+      ...fixture.editMap,
+      blocks: [
+        ...fixture.editMap.blocks,
+        ...generatedRoots.map((_, index) => ({
+          id: `b${count + index}`,
+          startLine: lastSourceBlock.endLine,
+          endLine: lastSourceBlock.endLine,
+          editable: false
+        }))
+      ]
+    },
+    html: (fixture.html + generatedRoots.join('')) as SafePreviewHtml
+  };
+}
+
+function protectedPreviewFixture(
+  paragraph: string,
+  signature: string,
+  options?: Readonly<{
+    footnote?: string;
+    mathWrapper?: boolean;
+    tocHref?: string;
+    order?: ReadonlyArray<'paragraph' | 'toc' | 'math' | 'footnote-separator' | 'footnotes'>;
+  }>
+) {
+  const htmlByBlock = {
+    paragraph: `<p data-easymde-visual-block-id="b0">${paragraph}</p>`,
+    toc: '<div data-easymde-visual-block-id="b1" class="easymde-toc">'
+      + `<ul><li><a href="${options?.tocHref ?? '#heading'}">Heading</a></li></ul>`
+      + '</div>',
+    math: '<p data-easymde-visual-block-id="b2">Result '
+      + (options?.mathWrapper ? '<span>' : '')
+      + '<span class="easymde-math" data-easymde-rendered="1">'
+      + '<span>2</span></span>'
+      + (options?.mathWrapper ? '</span>' : '')
+      + '</p>',
+    'footnote-separator': '<hr data-easymde-visual-block-id="b3" '
+      + 'class="footnotes-sep">',
+    footnotes: '<div data-easymde-visual-block-id="b4" class="footnotes">'
+      + `<ol><li>${options?.footnote ?? 'Note'}</li></ol></div>`
+  };
+  const order = options?.order ?? [
+    'paragraph',
+    'toc',
+    'math',
+    'footnote-separator',
+    'footnotes'
+  ];
+  return {
+    editMap: {
+      version: 1 as const,
+      coordinate: 'line' as const,
+      signature,
+      blocks: order.map((key, index) => ({
+        id: `b${{
+          paragraph: 0,
+          toc: 1,
+          math: 2,
+          'footnote-separator': 3,
+          footnotes: 4
+        }[key]}`,
+        startLine: index * 2,
+        endLine: index * 2 + 1,
+        editable: true
+      }))
+    },
+    html: order.map((key) => htmlByBlock[key]).join('') as SafePreviewHtml
+  };
+}
+
+function previewWindowRanges(children: ReadonlyArray<Element>): Array<{
+  end: number;
+  start: number;
+}> {
+  return children.map((child) => {
+    const spacer = child.getAttribute('data-easymde-preview-window-spacer');
+    if (null !== spacer) {
+      return {
+        end: Number(child.getAttribute('data-easymde-preview-window-end')),
+        start: Number(child.getAttribute('data-easymde-preview-window-start'))
+      };
+    }
+    const id = child.getAttribute('data-easymde-visual-block-id');
+    const index = id?.match(/^b(0|[1-9]\d*)$/)?.[1];
+    if (undefined === index) throw new Error('preview-window-test-block-id-invalid');
+    const start = Number(index);
+    return { end: start + 1, start };
+  });
 }
 
 function visualSourceMarkerCount(surface: HTMLElement): number {
@@ -267,6 +403,175 @@ function setup(options?: {
 }
 
 describe('PreviewSurfaceOwner', () => {
+  it('preserves accepted protected Preview nodes in real staged rematerializations', async () => {
+    const initialSignature = 'protected-identity-initial';
+    const initialFixture = protectedPreviewFixture(
+      'Paragraph',
+      initialSignature
+    );
+    const current = setup({
+      contentEditable: true,
+      initialEditMap: initialFixture.editMap,
+      initialHtml: initialFixture.html,
+      initialSignature,
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: false
+    });
+    await act(async () => {
+      for (let index = 0; index < 16; index += 1) await Promise.resolve();
+      await flushAnimationFrames(4);
+    });
+
+    const protectedNodes = Array.from(current.surface.querySelectorAll<HTMLElement>(
+      VISUAL_MARKDOWN_READ_ONLY_SELECTOR
+    ));
+    expect(protectedNodes).toHaveLength(4);
+    for (const node of protectedNodes) node.setAttribute('contenteditable', 'false');
+    const oldToc = current.surface.querySelector('.easymde-toc');
+    const oldMath = current.surface.querySelector('.easymde-math');
+    const oldFootnoteSeparator = current.surface.querySelector('.footnotes-sep');
+    const oldFootnotes = current.surface.querySelector('.footnotes');
+    if (!oldToc || !oldMath || !oldFootnoteSeparator || !oldFootnotes) {
+      throw new Error('preview-protected-test-node-missing');
+    }
+
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    const accept = async (
+      fixture: ReturnType<typeof protectedPreviewFixture>,
+      markdown: string
+    ): Promise<void> => {
+      const responseIndex = current.responses.length;
+      act(() => {
+        current.session.schedule(request(markdown, fixture.editMap.signature), true);
+      });
+      await act(async () => {
+        current.responses[responseIndex]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+    };
+
+    const firstFixture = protectedPreviewFixture(
+      'Paragraph!',
+      'protected-identity-first'
+    );
+    await accept(firstFixture, 'Paragraph!');
+
+    expect(current.surface.getAttribute('aria-busy')).toBe('false');
+    expect(current.surface.easymdePreviewSignature)
+      .toBe(firstFixture.editMap.signature);
+    expect(current.onDiagnostic).not.toHaveBeenCalled();
+    expect(replaceChildren.mock.calls[0]).toEqual(expect.arrayContaining([
+      oldToc,
+      oldFootnoteSeparator,
+      oldFootnotes
+    ]));
+    expect(current.surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const secondFixture = protectedPreviewFixture(
+      'Paragraph!?',
+      'protected-identity-second'
+    );
+    await accept(secondFixture, 'Paragraph!?');
+    expect(current.surface.querySelector('.easymde-toc')).toBe(oldToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const changedAttributeFixture = protectedPreviewFixture(
+      'Paragraph!?#',
+      'protected-identity-changed-attribute',
+      { tocHref: '#changed' }
+    );
+    await accept(changedAttributeFixture, 'Paragraph!?#');
+    const changedAttributeToc = current.surface.querySelector<HTMLElement>(
+      '.easymde-toc'
+    );
+    expect(changedAttributeToc).not.toBe(oldToc);
+    expect(changedAttributeToc?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+    expect(current.surface.querySelector('.footnotes')).toBe(oldFootnotes);
+
+    const changedHtmlFixture = protectedPreviewFixture(
+      'Paragraph!?#$',
+      'protected-identity-changed-html',
+      { footnote: 'Changed note', tocHref: '#changed' }
+    );
+    await accept(changedHtmlFixture, 'Paragraph!?#$');
+    const changedHtmlFootnotes = current.surface.querySelector<HTMLElement>(
+      '.footnotes'
+    );
+    expect(changedHtmlFootnotes).not.toBe(oldFootnotes);
+    expect(changedHtmlFootnotes?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-toc'))
+      .toBe(changedAttributeToc);
+    expect(current.surface.querySelector('.easymde-math')).toBe(oldMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    const changedPathFixture = protectedPreviewFixture(
+      'Paragraph!?#$%',
+      'protected-identity-changed-path',
+      { footnote: 'Changed note', mathWrapper: true, tocHref: '#changed' }
+    );
+    await accept(changedPathFixture, 'Paragraph!?#$%');
+    const changedPathMath = current.surface.querySelector<HTMLElement>(
+      '.easymde-math'
+    );
+    expect(changedPathMath).not.toBe(oldMath);
+    expect(changedPathMath?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-toc'))
+      .toBe(changedAttributeToc);
+    expect(current.surface.querySelector('.footnotes'))
+      .toBe(changedHtmlFootnotes);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    const reorderedFixture = protectedPreviewFixture(
+      'Paragraph!?#$%&',
+      'protected-identity-reordered',
+      {
+        footnote: 'Changed note',
+        mathWrapper: true,
+        order: [
+          'paragraph',
+          'footnotes',
+          'math',
+          'footnote-separator',
+          'toc'
+        ],
+        tocHref: '#changed'
+      }
+    );
+    await accept(reorderedFixture, 'Paragraph!?#$%&');
+    const reorderedToc = current.surface.querySelector<HTMLElement>(
+      '.easymde-toc'
+    );
+    const reorderedFootnotes = current.surface.querySelector<HTMLElement>(
+      '.footnotes'
+    );
+    expect(reorderedToc).not.toBe(changedAttributeToc);
+    expect(reorderedFootnotes).not.toBe(changedHtmlFootnotes);
+    expect(reorderedToc?.getAttribute('contenteditable')).toBe('false');
+    expect(reorderedFootnotes?.getAttribute('contenteditable')).toBe('false');
+    expect(current.surface.querySelector('.easymde-math')).toBe(changedPathMath);
+    expect(current.surface.querySelector('.footnotes-sep'))
+      .toBe(oldFootnoteSeparator);
+
+    replaceChildren.mockRestore();
+  });
+
   it('does not expose an editable visual surface as a live region', async () => {
     const editable = setup({ contentEditable: true });
 
@@ -812,6 +1117,488 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.surface.querySelector(
       '[data-easymde-preview-window-spacer]'
     )).not.toBeNull();
+  });
+
+  it('commits a prepared document-end pin through the Safe Preview sink until release', async () => {
+    const signature = 'history-document-end';
+    const fixture = documentEndFixture(220, signature, '\n\n');
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 10_000
+    });
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    window.getSelection()?.removeAllRanges();
+
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    expect(() => current.runtime.prepareDocumentEndWindowPin(signature))
+      .toThrow('preview-window-document-end-pin-already-active');
+    replaceChildren.mockClear();
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    const initialCommit = replaceChildren.mock.calls[0];
+    expect(initialCommit).toBeDefined();
+    expect(initialCommit?.some((node) => node instanceof HTMLElement
+      && 'b219' === node.getAttribute('data-easymde-visual-block-id'))).toBe(true);
+    const initialElements = initialCommit?.filter(
+      (node): node is HTMLElement => node instanceof HTMLElement
+    ) ?? [];
+    const initialBlockCount = initialElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length;
+    expect(initialBlockCount).toBeGreaterThan(0);
+    expect(initialBlockCount).toBeLessThanOrEqual(160);
+    let coveredThrough = 0;
+    for (const range of previewWindowRanges(initialElements)) {
+      expect(range.start).toBe(coveredThrough);
+      expect(range.end).toBeGreaterThan(range.start);
+      coveredThrough = range.end;
+    }
+    expect(coveredThrough).toBe(220);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+
+    const rootCaret = document.createRange();
+    rootCaret.setStart(current.surface, 0);
+    rootCaret.collapse(true);
+    window.getSelection()?.addRange(rootCaret);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    await act(async () => flushAnimationFrames(2));
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    const pinnedElements = Array.from(current.surface.children);
+    expect(pinnedElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length).toBeLessThanOrEqual(160);
+    coveredThrough = 0;
+    for (const range of previewWindowRanges(pinnedElements)) {
+      expect(range.start).toBe(coveredThrough);
+      expect(range.end).toBeGreaterThan(range.start);
+      coveredThrough = range.end;
+    }
+    expect(coveredThrough).toBe(220);
+
+    const finalBlock = current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    );
+    const finalText = finalBlock?.firstChild;
+    if (!finalText) throw new Error('preview-test-document-end-text-missing');
+    const finalCaret = document.createRange();
+    finalCaret.setStart(finalText, 0);
+    finalCaret.collapse(true);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(finalCaret);
+    current.surface.ownerDocument.dispatchEvent(new Event('selectionchange'));
+    act(() => lease.release());
+    await act(async () => flushAnimationFrames(2));
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    const releasedElements = Array.from(current.surface.children);
+    const releasedBlockCount = releasedElements.filter((node) =>
+      node.hasAttribute('data-easymde-visual-block-id')
+    ).length;
+    expect(releasedBlockCount).toBeLessThanOrEqual(192);
+    expect(releasedBlockCount).toBeGreaterThan(160);
+    expect(current.surface.querySelector(
+      '[data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+    act(() => lease.release());
+    replaceChildren.mockRestore();
+  });
+
+  it.each([8, 160] as const)(
+    'releases a matching document-end pin when the accepted Preview has %i blocks',
+    async (blockCount) => {
+      const signature = `history-document-end-small-${blockCount}`;
+      const fixture = documentEndFixture(blockCount, signature, '\n\n');
+      const current = setup({
+        contentEditable: true,
+        initialHtml: '<p>Initial preview</p>',
+        stagingScheduler: { yield: () => Promise.resolve() },
+        windowed: true
+      });
+      await act(async () => flushAnimationFrames());
+
+      const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+      act(() => {
+        current.session.schedule(request(fixture.markdown, signature), true);
+      });
+      await act(async () => {
+        current.responses[0]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+
+      expect(current.surface.getAttribute('aria-busy')).toBe('false');
+      expect(current.surface.getAttribute('contenteditable')).toBe('true');
+      expect(current.surface.easymdePreviewSignature).toBe(signature);
+      expect(current.surface.querySelectorAll(
+        '[data-easymde-visual-block-id]'
+      )).toHaveLength(blockCount);
+      expect(current.surface.querySelector(
+        '[data-easymde-preview-window-spacer]'
+      )).toBeNull();
+      expect(current.onDiagnostic).not.toHaveBeenCalled();
+
+      lease.release();
+      lease.release();
+      const nextLease = current.runtime.prepareDocumentEndWindowPin('next');
+      nextLease.release();
+    }
+  );
+
+  it.each([
+    { label: 'CRLF blank lines', signature: 'crlf', suffix: '\r\n\r\n' },
+    {
+      label: 'a lone-CR omitted whitespace-only line',
+      signature: 'lone-cr-whitespace',
+      suffix: '\r \t'
+    }
+  ])('pins the final block with $label', async ({ signature: caseSignature, suffix }) => {
+    const signature = `history-document-end-${caseSignature}`;
+    const fixture = documentEndFixture(220, signature, suffix);
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    window.getSelection()?.removeAllRanges();
+
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    replaceChildren.mockClear();
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    const initialCommit = replaceChildren.mock.calls[0];
+    expect(initialCommit).toBeDefined();
+    expect(initialCommit?.some((node) => node instanceof HTMLElement
+      && 'b219' === node.getAttribute('data-easymde-visual-block-id'))).toBe(true);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    expect(current.onDiagnostic).not.toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    lease.release();
+    replaceChildren.mockRestore();
+  });
+
+  it('rejects nonempty source after a lone-CR document-end block', async () => {
+    const signature = 'history-document-end-lone-cr-hidden-source';
+    const fixture = documentEndFixture(
+      220,
+      signature,
+      '\r\r[ref]: https://example.test\r'
+    );
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    await act(async () => flushAnimationFrames());
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
+  });
+
+  it.each(['', '\n\n'])(
+    'pins the EOF source block before trailing generated zero-width roots with suffix %j',
+    async (terminalSuffix) => {
+      const signature = `history-document-end-generated-${terminalSuffix.length}`;
+      const fixture = documentEndWithGeneratedRootsFixture(
+        220,
+        signature,
+        terminalSuffix
+      );
+      const current = setup({
+        contentEditable: true,
+        initialHtml: '<p>Initial preview</p>',
+        stagingScheduler: { yield: () => Promise.resolve() },
+        windowed: true
+      });
+      await act(async () => flushAnimationFrames());
+      const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+      act(() => {
+        current.session.schedule(request(fixture.markdown, signature), true);
+      });
+      await act(async () => {
+        current.responses[0]?.resolve({
+          editMap: fixture.editMap,
+          features: {},
+          html: fixture.html
+        });
+        for (let index = 0; index < 24; index += 1) await Promise.resolve();
+        await flushAnimationFrames(8);
+      });
+
+      expect(current.surface.getAttribute('data-easymde-preview-error')).toBeNull();
+      expect(current.surface.easymdePreviewSignature).toBe(signature);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b219"]'
+      )).not.toBeNull();
+      let materialization!: Promise<boolean>;
+      act(() => {
+        materialization = current.runtime.materialize();
+      });
+      await act(async () => flushAnimationFrames(8));
+      await expect(materialization).resolves.toBe(true);
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b220"]'
+      )?.getAttribute('contenteditable')).toBe('false');
+      expect(current.surface.querySelector(
+        '[data-easymde-visual-block-id="b221"]'
+      )?.getAttribute('contenteditable')).toBe('false');
+      expect(current.onDiagnostic).not.toHaveBeenCalled();
+      lease.release();
+    }
+  );
+
+  it('rejects an ambiguous EOF map with a trailing editable block', async () => {
+    const signature = 'history-document-end-trailing-editable';
+    const fixture = documentEndFixture(220, signature, '\n\n');
+    const trailingEditableBlock = {
+      id: 'b220',
+      startLine: 220,
+      endLine: 221,
+      editable: true
+    } as const;
+    const editMap = {
+      ...fixture.editMap,
+      blocks: [
+        ...fixture.editMap.blocks,
+        trailingEditableBlock
+      ]
+    };
+    const html = (fixture.html
+      + '<p data-easymde-visual-block-id="b220">Trailing source</p>') as SafePreviewHtml;
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({ editMap, features: {}, html });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
+  });
+
+  it('invalidates a superseded document-end lease by token without clearing its replacement', async () => {
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const staleLease = current.runtime.prepareDocumentEndWindowPin('stale');
+    act(() => {
+      current.session.schedule(request('# Superseded', 'superseded'), true);
+    });
+    const signature = 'replacement';
+    const fixture = documentEndFixture(220, signature);
+    const replacementLease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+      staleLease.release();
+    });
+    await act(async () => {
+      current.responses[1]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).not.toBeNull();
+    act(() => replacementLease.release());
+  });
+
+  it('rejects invalid document-end maps and releases the lease on enhancement failure', async () => {
+    const signature = 'invalid-document-end';
+    const fixture = documentEndFixture(220, signature);
+    const invalidMap = {
+      ...fixture.editMap,
+      blocks: fixture.editMap.blocks.map((block, index) =>
+        index === 219 ? { ...block, editable: false } : block
+      )
+    };
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: invalidMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-document-end-block-unavailable'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    const nextLease = current.runtime.prepareDocumentEndWindowPin('next');
+    lease.release();
+    nextLease.release();
+  });
+
+  it('does not apply a cancelled document-end pin to a later matching request', async () => {
+    const signature = 'cancelled-document-end';
+    const fixture = documentEndFixture(220, signature);
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    lease.release();
+    const replaceChildren = vi.spyOn(current.surface, 'replaceChildren');
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(12);
+    });
+
+    expect(replaceChildren.mock.calls.some((nodes) =>
+      nodes.some((node) => node instanceof HTMLElement
+        && 'b219' === node.getAttribute('data-easymde-visual-block-id'))
+    )).toBe(false);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b219"]'
+    )).toBeNull();
+    replaceChildren.mockRestore();
+  });
+
+  it('rejects an accepted Preview with a mismatched edit-map signature', async () => {
+    const signature = 'requested-document-end';
+    const fixture = documentEndFixture(220, 'stale-edit-map-signature');
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      stagingScheduler: { yield: () => Promise.resolve() },
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin(signature);
+    act(() => {
+      current.session.schedule(request(fixture.markdown, signature), true);
+    });
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      for (let index = 0; index < 24; index += 1) await Promise.resolve();
+      await flushAnimationFrames(8);
+    });
+
+    expect(current.onDiagnostic).toHaveBeenCalledWith(
+      'preview-window-edit-map-invalid'
+    );
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    lease.release();
+  });
+
+  it('invalidates a prepared document-end lease on owner teardown', () => {
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '<p>Initial preview</p>',
+      windowed: true
+    });
+    const lease = current.runtime.prepareDocumentEndWindowPin('teardown');
+
+    current.unmount();
+
+    expect(() => lease.release()).not.toThrow();
+    expect(() => current.runtime.prepareDocumentEndWindowPin('late'))
+      .toThrow('preview-window-document-end-owner-inactive');
   });
 
   it('materializes the complete Preview asynchronously for a same-activation consumer', async () => {
@@ -2084,6 +2871,245 @@ describe('PreviewSurfaceOwner', () => {
     expect(current.canvas.scrollLeft).toBe(12);
     expect(current.canvas.scrollTop).toBe(78);
     expect(current.surface.textContent).toBe('Updated');
+  });
+
+  it('restores the latest scroll ratio only after a windowed HTML commit is ready', async () => {
+    const fixture = windowedFixture(320, 'windowed-scroll');
+    const enhancement = deferred<void>();
+    const finishCommit = deferred<void>();
+    const statuses: PreviewSurfaceStatus[] = [];
+    let current!: ReturnType<typeof setup>;
+    let commitHeld = false;
+    let restoreMetrics: Readonly<{
+      busy: string | null;
+      hasWindowContent: boolean;
+      scrollHeight: number;
+      snapshotRatio: number;
+    }> | null = null;
+    const stagingScheduler = {
+      now: () => 0,
+      yield: () => {
+        const hasWindowContent = Boolean(current?.surface.querySelector(
+          '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+        ));
+        if (!commitHeld && hasWindowContent) {
+          commitHeld = true;
+          return finishCommit.promise;
+        }
+        return Promise.resolve();
+      }
+    };
+    const scrollPort: PreviewScrollPort = {
+      capture: (canvas) => {
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        return {
+          left: canvas.scrollLeft,
+          ratio: maxScroll ? canvas.scrollTop / maxScroll : 0,
+          top: canvas.scrollTop
+        };
+      },
+      restore: (canvas, snapshot) => {
+        const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+        restoreMetrics = {
+          busy: current.surface.getAttribute('aria-busy'),
+          hasWindowContent: Boolean(current.surface.querySelector(
+            '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+          )),
+          scrollHeight: canvas.scrollHeight,
+          snapshotRatio: snapshot.ratio
+        };
+        canvas.scrollLeft = snapshot.left;
+        canvas.scrollTop = maxScroll ? snapshot.ratio * maxScroll : snapshot.top;
+      }
+    };
+    const enhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      () => enhancement.promise
+    );
+    current = setup({
+      enhance,
+      initialHtml: '',
+      onStatusChange: (status) => statuses.push(status),
+      scrollPort,
+      stagingScheduler,
+      windowed: true
+    });
+    Object.defineProperty(current.canvas, 'clientHeight', {
+      configurable: true,
+      value: 100
+    });
+    Object.defineProperty(current.canvas, 'scrollHeight', {
+      configurable: true,
+      get: () => current.surface.querySelector(
+        '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+      ) ? 2000 : 1000
+    });
+    current.canvas.scrollTop = 450;
+
+    act(() => {
+      current.session.schedule(request('# Windowed', 'windowed-scroll'), true);
+    });
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap: fixture.editMap,
+        features: {},
+        html: fixture.html
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledOnce();
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    current.canvas.scrollTop = 600;
+    await act(async () => {
+      enhancement.resolve();
+      await enhancement.promise;
+    });
+    expect(commitHeld).toBe(true);
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id], [data-easymde-preview-window-spacer]'
+    )).not.toBeNull();
+    expect(current.surface.getAttribute('aria-busy')).toBe('true');
+    expect(statuses.at(-1)).toBe('loading');
+    expect(restoreMetrics).toBeNull();
+
+    await act(async () => {
+      finishCommit.resolve();
+      await finishCommit.promise;
+    });
+
+    expect(statuses.at(-1)).toBe('ready');
+    expect(restoreMetrics).toEqual({
+      busy: 'false',
+      hasWindowContent: true,
+      scrollHeight: 2000,
+      snapshotRatio: 600 / 900
+    });
+    expect(current.canvas.scrollTop).toBeCloseTo((600 / 900) * 1900);
+  });
+
+  it('discards pending scroll restoration after empty, error, and failed requests', async () => {
+    const restore = vi.fn<PreviewScrollPort['restore']>();
+    const current = setup({
+      enhance: vi.fn().mockRejectedValue(new Error('enhancement failed')),
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore
+      }
+    });
+
+    act(() => current.session.schedule(request(''), true));
+    expect(restore).not.toHaveBeenCalled();
+
+    act(() => current.session.schedule(request('# Request error'), true));
+    await act(async () => {
+      current.responses[0]?.reject(new Error('private response detail'));
+      await Promise.resolve();
+    });
+    expect(current.surface.textContent).toBe(messages.error);
+    expect(restore).not.toHaveBeenCalled();
+
+    act(() => current.session.schedule(request('# Enhancement error'), true));
+    await act(async () => {
+      current.responses[1]?.resolve({
+        html: safeHtml('<p>Enhancement failure</p>'),
+        features: {}
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('ignores superseded enhancement completion and does not restore after teardown', async () => {
+    const firstEnhancement = deferred<void>();
+    const secondEnhancement = deferred<void>();
+    const enhance = vi
+      .fn<PreviewEnhancementPort['enhance']>()
+      .mockImplementationOnce(() => firstEnhancement.promise)
+      .mockImplementationOnce(() => secondEnhancement.promise);
+    const restore = vi.fn<PreviewScrollPort['restore']>();
+    const current = setup({
+      enhance,
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore
+      }
+    });
+
+    act(() => current.session.schedule(request('# First', 'first-scroll'), true));
+    await act(async () => {
+      current.responses[0]?.resolve({ html: safeHtml('<p>First</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledTimes(1);
+
+    act(() => current.session.schedule(request('# Second', 'second-scroll'), true));
+    await act(async () => {
+      current.responses[1]?.resolve({ html: safeHtml('<p>Second</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(enhance).toHaveBeenCalledTimes(2);
+    expect(restore).not.toHaveBeenCalled();
+
+    await act(async () => {
+      secondEnhancement.resolve();
+      await secondEnhancement.promise;
+    });
+    expect(current.surface.textContent).toBe('Second');
+    expect(restore).toHaveBeenCalledOnce();
+
+    current.unmount();
+    await act(async () => {
+      firstEnhancement.resolve();
+      await firstEnhancement.promise;
+    });
+    expect(restore).toHaveBeenCalledOnce();
+
+    const lateEnhancement = deferred<void>();
+    const lateRestore = vi.fn<PreviewScrollPort['restore']>();
+    const lateEnhance = vi.fn<PreviewEnhancementPort['enhance']>(
+      () => lateEnhancement.promise
+    );
+    const lateOwner = setup({
+      enhance: lateEnhance,
+      initialHtml: '',
+      scrollPort: {
+        capture: (surface) => ({
+          left: surface.scrollLeft,
+          ratio: 0,
+          top: surface.scrollTop
+        }),
+        restore: lateRestore
+      }
+    });
+    act(() => lateOwner.session.schedule(request('# Late owner'), true));
+    await act(async () => {
+      lateOwner.responses[0]?.resolve({ html: safeHtml('<p>Late</p>'), features: {} });
+      await Promise.resolve();
+    });
+    expect(lateEnhance).toHaveBeenCalledOnce();
+    lateOwner.unmount();
+    await act(async () => {
+      lateEnhancement.resolve();
+      await lateEnhancement.promise;
+    });
+    expect(lateRestore).not.toHaveBeenCalled();
   });
 
   it('keeps sanitized HTML but marks the surface unavailable when enhancement fails', async () => {

@@ -106,6 +106,13 @@ export function createBrowserImmersiveEnvironment(
       }
       return browserWindow.Date.now();
     },
+    viewportWidth() {
+      const browserWindow = documentRef.defaultView;
+      if (!browserWindow) {
+        throw new Error('immersive-window-unavailable');
+      }
+      return browserWindow.innerWidth;
+    },
     schedule(callback, delay) {
       const timer = documentRef.defaultView?.setTimeout(callback, delay);
       if (undefined === timer) {

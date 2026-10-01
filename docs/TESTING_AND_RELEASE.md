@@ -424,23 +424,162 @@ Preview paper, completed block and inline syntax, bounded visual-input
 coalescing, explicit selection-loss failure without end-of-document appends,
 consecutive full Markdown pastes through the server Preview owner, one Preview
 request per paste, and zero Preview requests for ordinary visual keystrokes.
+Fenced-code cases cover typed and pasted tilde and backtick fences, zero or
+multiple blank body lines, successive input, line endings, caret placement,
+Undo/Redo, highlighted code cleared and retyped, and windowed block offsets.
+Native clipboard cases paste each bare three-character opener, assert that the
+initial source is unchanged, then type body text and check persistence, history,
+caret, and frame geometry. Unclosed EOF bodies retain their open state, including
+literal fence content that requires a wider opener.
+They assert the canonical Markdown and
+editable DOM body agree after each transition while the shared Mac frame
+retains its full width and non-collapsing code area. The dedicated immersive
+unlock browser cases measure in-page click-to-pending, first visible pending
+frame, click-to-focused-editable timing, and Long Tasks. They also check
+repeated pointer, Enter, and Space activation, focus retained on the pending
+control, focus handed to the ready editor, cancellation, bounded window
+mounting, and absence of Preview or document writes. A private maintainer
+document is tested locally by native paste and exact source comparison; its
+content is not part of the public fixtures or test artifacts.
+For code-map changes, test a locally typed fence without a Preview block ID,
+an accepted mapped empty fence, and a mapped block whose ID order or fence
+topology becomes stale. The stale input must be blocked without changing the
+canonical source or a different code block. A non-windowed synthetic document
+near the 160-block boundary must retain exact source under rapid and spaced
+code-body typing, keep the first visible frame responsive, and meet the
+full-sequence Long Task budget defined below; windowed b160 coverage is
+separate.
+Also exercise Enter followed by a code character inside the debounce window,
+pending exact input followed by composition, rejected blank-code composition,
+and editing an older mapped block after creating a local fence. Code DOM may add
+or omit exactly one renderer-only terminal LF under the projection contract;
+verify native next input, caret, Undo, Redo, and exact canonical Markdown while
+rejecting multiple line-ending or content differences.
+Exercise an ordinary list-item split followed immediately by text before the
+debounce expires. Verify the first item remains canonical, the new text stays
+in the second item, the source and visual caret agree, and ordinary rapid text
+still uses the grouped exact-input path.
+Exercise the exact accepted native-paste snapshot for both fence families and
+unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
+Verify neutral native spans retain Text identity, caret and exact code body;
+attributed or malformed spans must still fail explicitly.
+Exercise initial empty frames and code emptied one character at a time, then
+Backspace at the empty start followed by Undo and Redo. Cover both fence
+families, closed and open-EOF fences, bare pasted openers and pending input
+followed immediately by structural deletion. Include an open-EOF body with
+three blank lines and last-line text, then use trusted repeated Backspace
+keydowns without source reads, paint waits, or settle delays between keys; the
+frame must be absent immediately and through eight frames, 80 ms, and 250 ms.
+A single terminal LF is empty;
+additional blank lines and spaces remain content. Verify exact source, frame
+and connected caret restoration, preserved code-tail whitespace, and windowed
+source-range metadata when local and global code-block ordinals differ.
+After Undo restores an empty frame, type the first character through native
+beforeinput and verify exact source and no projection failure. Exercise the
+innerHTML round-trip that removes a placeholder's zero-length Text node.
+Use the real CodeMirror adapter for more than 120 visual edits, actual history
+pruning, all retained Undo/Redo targets, grouped input, Redo-branch replacement
+and Undo across the initial visual baseline. Verify same-value selection writes
+add no document history and native contenteditable history never takes over.
+Include ordinary paragraph and mixed paragraph/code history whose exact-source
+input records a rematerialization slot without an innerHTML getter. Preserve
+the existing zero-getter hot-path checks. Formal Preview acceptance must reject
+stale slot identity, source, signature, history depths or selection, and report
+render failure or teardown through the existing owner without fabricated HTML.
+For non-windowed rematerialization, exercise the real Preview owner and Safe
+HTML sink with TOC, footnote, rendered math, and Mermaid nodes. Exact equivalent
+protected output must retain node identity through the first staged commit, a
+same-commit rerender, and a later equivalent Preview. Attribute, child markup,
+path, or order changes must keep the fresh accepted node; cross-document staged
+nodes and replacement failure must preserve the sink's validation and rollback
+contracts.
+Local snapshot Cut, Undo, and Redo coverage must also preserve equivalent
+protected nodes when restoring an editable sibling shifts their absolute DOM
+path. Require equal protected-region count and order, exact meaningful
+attributes and markup, connected Selection, canonical source, and no Preview
+request for the local Undo. Missing or non-equivalent protected output remains
+fresh; blank or whitespace-only root `style` is the sole ignored layout artifact.
+For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
+the document-end pin before formal Preview, the mounted final editable block
+and exact canonical/visible caret after the final Redo. A mapped range may omit
+terminal line endings; non-line-ending gaps must remain explicit failures.
+Exercise the actual SafePreviewHtmlSink child replacement and first window
+commit: a root-end Selection can collapse to root offset zero while the leased
+target must remain mounted. Keep the 160-block cap while the EOF lease is
+active, and the exact full-document window/spacer partition. Releasing the
+lease restores the existing ordinary pinned-window limit. Acquire it before scheduling
+the request; verify cancellation, signature mismatch, supersession, rendering
+or scheduling error and teardown release, and that an older release cannot
+clear a newer token. Ordinary and non-EOF Preview paths acquire no lease.
+Also exercise a native EOF edit that expands a small document beyond the
+Windowed threshold, Undo to the accepted small target, and Redo to the large
+target. The small commit must mount every block without spacers, remain
+editable, and restore its connected collapsed EOF caret; Redo must restore the
+bounded Windowed partition and the same canonical EOF ownership.
+Run that transition with a real Theme-generated footnote tail. Verify the REST
+map contains trailing non-editable zero-width roots, the final editable source
+root remains the EOF owner, the generated DOM roots are protected, and Redo
+restores the connected caret without source-to-transformed-DOM guesswork.
+Also cover a generated zero-width root before an unrelated fenced block so its
+code-body ordinal remains mappable.
+Verify a complete active fence run in the body followed immediately by another
+character widens the outer fence and preserves source, caret, Undo, and Redo.
+Use a noncancelable rejected composition mutation to prove accepted DOM/source
+restoration and a subsequent valid edit. The shifted windowed b160 case also
+checks native Enter followed by text, separate Undo/Redo steps, restored stale
+block identity, and the bounded mount count. Verify history Preview restores
+scroll only after its bounded DOM commit, keeping the selected block mounted.
+Ordinary paragraph history beyond the first windowed block also checks exact
+source, DOM/native caret, adjacent-block boundary ownership, and final EOF.
+Verify pre-edit visible-selection synchronization restores paragraph and IME
+carets on Undo/Redo, and stale PRE replacement after noncancelable text input
+restores the accepted DOM and caret without publishing a source change.
+The canonical adapter's post-edit selection option must preserve ordinary
+document Undo/Redo step counts and same-value updates.
+The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
+of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
+inputs appear in the code DOM, canonical Markdown converges within 150 ms of
+the last rapid input, five spaced inputs settle within the per-key budget, and
+the first visible frame stays within 100 ms. The complete 20-key burst plus
+five spaced-input sequence has a narrowly scoped edit-phase Long Task budget:
+at most one task may overlap an edit phase, it may overlap at most one phase,
+its duration must be at most 75 ms, and total blocking time above the 50 ms
+Long Task threshold must be at most 25 ms. An edit phase runs from `beforeinput`
+until canonical Markdown and the expected visible code body remain exact
+through two animation frames. The test keeps every observed Long Task,
+classifies it as edit-phase, between-phase, or outside-interaction evidence, and
+records only privacy-safe attribution `containerType` and `name` categories;
+attribution URLs and identifiers are not recorded. This budget applies only to
+this near-threshold non-windowed sequence; other performance cases retain their
+separate gates. The JSON attachment and structured output contain counts and
+timings needed to locate a failure without recording article content.
+The 390px immersive cases begin with Outline open. They check that its overlay
+does not narrow Source, Split, Preview, or the Mac frame, then verify pending
+unlock keeps the Outline open, editable readiness closes it without changing
+Markdown, Preview, or the preference, and manual reopen remains available.
+They also cover desktop-to-compact resize while Preview remains editable,
+repeated crossings after a manual reopen, focus and caret preservation, RTL
+placement, and page-level horizontal overflow.
 The `chromium-performance` test uses about 194 KB of synthetic Markdown with
 454 headings, language-free and explicit-language code fences, and a real
 Clipboard paste. It requires a paste handler below 50 ms, edit-handler p95 at
 or below 16 ms, first-double-frame and mutation-settled edit p95 values at or
 below 100 ms, semantic Preview settling within five seconds, CLS at or below
-0.01, and zero Long Tasks across 60 real input/delete interactions. The atomic
-formal Preview layout may contribute at
-most one Long Task at or below 75 ms; every other deferred Preview or edit Long
-Task fails the test. The same test verifies exact canonical Markdown, one
+0.01, and zero Long Tasks across 60 real input/delete interactions. A Long
+Task overlapping paste activation may occur once, at or below 75 ms and with
+at most 25 ms of blocking time above the 50 ms threshold. The Preview response
+may contribute at most two Long Tasks, each at or below 75 ms and with combined
+blocking time at or below 40 ms. Activation and response blocking time together
+must stay at or below 65 ms; any other overlapping or edit Long Task fails the
+test. The same test verifies exact canonical Markdown, one
 Preview request, bounded window mounting, lock synchronization, and the
 absence of browser errors without recording article content.
 A separate Chromium performance case pastes a generated 2,300-block document
 with 150 fenced code blocks after an existing paragraph. It asserts all 2,301
 Preview map blocks, exact canonical Markdown, one Preview request, an editable
-ready surface within 2.5 seconds, and no more than two Preview-phase Long
-Tasks of at most 75 ms each. The original 194 KB case keeps its stricter
-single-Preview-Long-Task limit and 60-interaction edit gate. Fresh bare `~~~`
+ready surface within 2.5 seconds, and the same paste-activation, Preview-response,
+and combined blocking-time limits. The 194 KB case additionally enforces its
+60-interaction zero-edit-Long-Task gate. Fresh bare `~~~`
 and triple-backtick cases verify the first Mac-framed code block, fence-family
 preservation, mobile geometry, and a warm PHP-rendered Preview.
 The Chromium test `parses the exact full-capability fixture after immersive

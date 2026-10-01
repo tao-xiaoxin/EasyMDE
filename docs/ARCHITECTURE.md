@@ -259,6 +259,10 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Preview scroll snapshots belong to their request generation. The existing
+ratio-based restoration runs after that generation's accepted DOM commit reaches
+ready; loading and enhancement do not consume it. Failure, supersession, and
+teardown discard the snapshot.
 Large candidate population and visual block marker passes yield when measured
 work reaches an eight-millisecond slice budget, checking cancellation and the
 current Preview owner after each yield. A large final handoff retains one paint
@@ -279,7 +283,116 @@ or previously accepted visual selection and never silently appends at the end
 when mapping is unavailable. Focus restoration uses `preventScroll`, and a
 pending paste blocks `beforeinput` without toggling the active surface's
 `contenteditable` state. History and composition input never re-enter the
-shortcut parser.
+shortcut parser. Consecutive exact text input may continue through its pending
+source projection. When a prior browser mutation is pending without such a
+projection, the next `beforeinput` first synchronizes that structural DOM
+change. This keeps a rapid list split followed by text in the new item from
+mapping through the pre-split source interval.
+When the generic map cannot project a collapsed caret inside CODE, the existing
+code-body projection owns only that caret input; non-collapsed selections retain
+the generic owner.
+For a mapped fenced code block, the visual editor resolves the active Preview
+block to one Markdown source body interval. That interval owns blank-line and
+line-ending semantics for both ordinary and windowed immersive editing;
+browser-created code DOM nodes are reconciled to the source interval without
+using their child count as a Markdown line index. The document session remains
+the canonical value and history owner. Non-windowed visual history slots follow
+CodeMirror's actual Undo/Redo depths, including grouped events, history pruning
+and replacement of a Redo branch. A slot retains an exact DOM snapshot or marks
+an accepted source state for formal Preview rematerialization. Ordinary exact
+text input does not serialize the whole DOM or reuse stale accepted HTML to
+manufacture a snapshot. Exact snapshots restore code DOM and caret after
+browser-created formatting or a scripted terminal newline is normalized.
+Targets without a local snapshot, including history before the visual baseline,
+use the formal Preview owner bound to source, signature, history state and
+selection; native contenteditable history never owns Markdown. Restoring an
+empty code block rehydrates its placeholder Text
+before capturing the visual Markdown baseline and restoring the caret. A
+failed snapshot caret restore rolls the canonical history change back.
+Accepted open-EOF fences retain source-derived ending metadata. Serialization
+removes its synthetic closing delimiter after Turndown, preserving code-tail
+whitespace and source-owned line endings. Code-body commits refresh this
+metadata; the windowed source-range adapter restores it for the active region.
+An actual empty-code Backspace shortcut flushes pending input before its
+structural change and records the corresponding canonical history transition.
+Focused windowed history at canonical EOF prepares a Preview-owned document-end
+window pin before scheduling its exact formal Preview request. The in-memory
+lease binds the request signature and accepted generation, preserves the
+validated final editable block in the initial and subsequent bounded windows,
+and releases after caret restoration or cancellation, error and teardown.
+When that exact request resolves to a document at or below the Windowed
+threshold, the owner releases the matching lease and continues the normal full
+staged commit because the complete DOM already contains the editable EOF.
+Stale, superseded, or identity-mismatched leases still fail through the
+existing Preview error path.
+The Windowed visual owner and Preview surface remain paired until the restored
+history selection is committed. If the canonical history still has a Redo
+branch, that pair remains active until Redo obtains its next document-end lease
+or a new local edit discards the branch; failure, exit, and teardown clear it.
+Generated Preview roots may carry non-editable zero-width source ranges before
+or after editable roots. Code-body mapping skips those ranges, and document-end
+pinning selects the unique last editable root that reaches canonical EOF.
+For a transformed non-code final root, EOF restoration may collapse at that
+validated live root's DOM end only when every following mounted root is the
+corresponding protected non-editable output; ordinary and PRE mapping remain
+source-projected and fail explicitly on ambiguity.
+Temporary browser Selection is not a pin across Safe HTML child replacement.
+After the final editable block mounts, a collapsed EOF
+caret may project to that block's text end when only source line endings remain
+outside its mapped range; omitted content or an unmounted final block fails.
+Mapped code Enter handles both `insertParagraph` and `insertLineBreak` in the
+existing code node before Chromium can split it into multiple `code` children.
+The projection and reconciliation accept exactly one renderer-only terminal LF
+difference in either direction between editable code DOM and Markdown; multiple
+line-ending differences or changed content remain explicit failures. Markdown
+retains the delimiter line ending. Composition flushes pending exact
+input before it starts, and a rejected code-map composition remains rejected
+through its end. Successful exact code edits retain per-`pre` recovery snapshots
+so failure recovery restores DOM consistent with canonical Markdown without
+serializing the complete document on each keystroke.
+Native neutral code spans are accepted only when each has no attributes and
+exactly one direct Text child. Projection reads this shape without mutation;
+reconciliation unwraps it using the same Text node and preserves Selection.
+Other unsupported markup remains an explicit failure.
+The source reframe path and serializer share outer-fence length selection, so a
+literal complete fence run in the body remains content by widening the outer
+delimiter. The source interval, DOM fence family, caret, and history snapshot
+advance together. Both visual owners restore their accepted DOM or window
+region after rejected noncancelable composition, without writing that mutation
+to Markdown. Windowed code Enter reconciles Chromium's split code nodes through
+the captured body intent; Enter and a following character retain the canonical
+owner's separate history transactions.
+An unclosed fenced block is mappable only when its accepted editable Preview
+range and source interval both reach EOF. Pasting a bare opener preserves its
+bytes; the first body edit supplies a missing line ending without adding a
+closing fence. Literal fence content widens the opener while preserving that
+open state.
+Canonical and visual opener prefixes are computed independently: an accepted
+paste may retain a bare opener while the mounted visual snapshot already has
+its line ending. Each caret offset includes only its own inserted prefix.
+Before a native windowed edit or IME composition changes the DOM, its visible
+selection is synchronized through a same-value canonical update. Code
+selections use the accepted code-body source projection. This gives Undo the
+actual pre-edit caret without adding a document change. Nonempty code edits also validate the
+accepted PRE identity; a stale replacement is rejected and restored before
+source publication.
+Windowed visual document edits opt in to recording their post-edit selection
+through CodeMirror's selection history. This adds no document Undo step and
+keeps Undo/Redo selection with the canonical history owner. After the matching
+Preview is ready, the bounded mounted region receives that source selection;
+absolute offsets are converted once, with explicit adjacent-block and EOF
+ownership. Generic source-to-DOM lookup returns a node and offset without
+mutating Selection on detached clones.
+The accepted Preview source and ordered block IDs own mapped code ordinals.
+A fence created locally by a visual shortcut or toolbar command carries
+runtime-only provenance for its exact `pre` node and canonical body interval
+until a new Preview is accepted. A mapped `pre` missing its accepted identity,
+reordered mapped blocks, or changed fence topology invalidates the old mapping;
+code-body input then fails explicitly before it can write another block. Generic edits may
+change fence topology but cannot reuse the old Preview mapping afterward.
+An older mapped code block may retain its original ordinal when verified local
+code blocks were added strictly after it; moved identities and unverified
+topology changes still fail explicitly.
 Delegated Media insertion uses a separate selection-preparation capability so
 that Media can preserve its insertion range without making transition flushes
 depend on selection state.
@@ -295,8 +408,21 @@ meaningful root attributes are compared exactly before serialization. An empty
 root `style` attribute introduced or removed by responsive browser layout is
 ignored because it has no declaration; non-empty style, content, attribute,
 identity, count, or order changes still fail with the stable visual-editor
-diagnostic. Local visual synchronization failures do not change the formal
-server Preview status or reuse the Preview failure message.
+diagnostic. During a new accepted non-windowed Preview commit, the Safe HTML
+sink preserves an existing protected node only at the same child-node path with
+the same tag, namespace, attributes, and child markup. Changed or reordered
+output uses the fresh server-authoritative node. The sink records the adopted
+node sequence as its committed identity, so later reconciliation cannot replace
+an equivalent protected subtree behind the visual editor's owner. Local visual
+synchronization failures do not change the formal server Preview status or
+reuse the Preview failure message.
+Local visual-history snapshot restoration uses the same equivalence owner after
+canonical history and snapshot validation. It matches protected regions by
+their protected-region order, allowing restored editable siblings to shift DOM
+paths without replacing unchanged renderer instances. Protected-region count,
+tag, namespace, meaningful attributes, and child markup must still agree; a
+mismatch keeps the fresh snapshot node. Blank root `style` remains the only
+nonsemantic attribute normalization for both paths.
 
 The Markdown feature detector and renderer share `MarkdownCodeRegionScanner`
 so math delimiters inside fenced, indented, or inline code remain literal and
@@ -416,6 +542,16 @@ browser-session immersive preferences own presentation only. The browser
 preference port persists only the immersive Outline choice. The Editor Root
 maps Settings Center `general.editingMode` from `live-preview` to immersive
 split, `source` to source, and `preview` to Preview when the Root mounts.
+At narrow widths, the Outline overlays a full-width workspace. A completed
+transition into editable immersive Preview, or a width crossing into narrow
+layout while Preview is already editable, closes that overlay once as local
+presentation state. Pending or failed unlocks do not close it; a manual reopen
+at the same width remains open. These changes never write the Outline
+preference.
+The transition waits for the current visual-editor runtime surface to be
+connected before moving focus or closing the Outline. While unlocking, the
+control remains focusable and reports `aria-busy` and `aria-disabled`; only a
+capability-unavailable control uses native `disabled`.
 Changing the immersive mode is session-only: it survives exiting and re-entering
 immersive writing while that Root remains mounted, but a normal or hard refresh
 creates a new Root and restores the Settings Center mode. Legacy stored

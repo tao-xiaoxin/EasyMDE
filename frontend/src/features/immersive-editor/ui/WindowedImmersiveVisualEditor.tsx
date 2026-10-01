@@ -425,9 +425,10 @@ function inferWindowedCodeBodyDeletionSelection(
       visualSelection: input.visualSelection
     };
   }
+  const after = visualCodeBodyDomText(input.code);
   const delta = codeBodyTextDelta(
     input.codeTextBefore,
-    visualCodeBodyDomText(input.code)
+    after
   );
   if (!delta) {
     return {
@@ -435,7 +436,13 @@ function inferWindowedCodeBodyDeletionSelection(
       visualSelection: input.visualSelection
     };
   }
-  if (delta.start >= delta.end || '' !== delta.replacement) {
+  const removedLength = input.codeTextBefore.length - after.length;
+  if (
+    removedLength <= 0
+    || delta.start >= delta.end
+    || '' !== delta.replacement
+    || delta.end - delta.start !== removedLength
+  ) {
     throw new Error('visual-editor-code-body-selection-invalid');
   }
   const domSelection = input.code.ownerDocument.defaultView?.getSelection();
@@ -446,7 +453,16 @@ function inferWindowedCodeBodyDeletionSelection(
     node: domSelection.anchorNode,
     offset: domSelection.anchorOffset
   });
-  if (caretOffset !== delta.start) {
+  if (null === caretOffset) {
+    throw new Error('visual-editor-code-body-selection-invalid');
+  }
+  const endOffset = caretOffset + removedLength;
+  if (
+    caretOffset < 0
+    || endOffset > input.codeTextBefore.length
+    || input.codeTextBefore.slice(0, caretOffset)
+      + input.codeTextBefore.slice(endOffset) !== after
+  ) {
     throw new Error('visual-editor-code-body-selection-invalid');
   }
   if (visualCodeBodyDomText(input.sourceCodeSnapshot) !== input.codeTextBefore) {
@@ -458,8 +474,8 @@ function inferWindowedCodeBodyDeletionSelection(
     visualMarkdown,
     0,
     {
-      end: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, delta.end),
-      start: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, delta.start)
+      end: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, endOffset),
+      start: codeBodyDomBoundaryAtOffset(input.sourceCodeSnapshot, caretOffset)
     }
   );
   if (

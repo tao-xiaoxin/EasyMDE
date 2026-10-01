@@ -10485,6 +10485,219 @@ test.describe('EasyMDE editor workflows', () => {
     });
   }
 
+  test('maps repeated-run Windowed native deletes with empty target ranges', async ({ page }, testInfo) => {
+    const browserFailures = [];
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(failureCode ?? 'console-error');
+    });
+    page.on('pageerror', () => browserFailures.push('pageerror'));
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const codeBlock = '~~~js\nAAAAAA\n~~~';
+    const blocks = Array.from({ length: 220 }, (_, index) => (
+      160 === index ? codeBlock : `Repeated-delete paragraph ${index}.`
+    ));
+    const markdown = blocks.join('\n\n');
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Repeated-delete paragraph 0.');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const block = editor.visualEditor.locator(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    await canvas.evaluate((element, index) => {
+      const spacer = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= index && index < end;
+      });
+      const target = element.querySelector(`[data-easymde-visual-block-id="b${index}"]`);
+      if (!spacer && !target) throw new Error('windowed-repeated-delete-target-unavailable');
+      if (!spacer) return;
+      const canvasTop = element.getBoundingClientRect().top;
+      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = Math.min(
+        maxScrollTop,
+        element.scrollTop + spacer.getBoundingClientRect().top - canvasTop + 1
+      );
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+    }, 160);
+    await expect(block).toBeAttached({ timeout: 30_000 });
+    await expect(block).toBeVisible({ timeout: 30_000 });
+
+    const setCodeCaret = async (body, offset) => editor.visualEditor.evaluate((surface, state) => {
+      const code = surface.querySelector('[data-easymde-visual-block-id="b160"] > code');
+      if (!(code instanceof HTMLElement) || code.textContent !== `${state.body}\n`) {
+        throw new Error('windowed-repeated-delete-code-unavailable');
+      }
+      const walker = surface.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+      let remaining = state.offset;
+      let text = walker.nextNode();
+      while (text instanceof Text && remaining > text.length) {
+        remaining -= text.length;
+        text = walker.nextNode();
+      }
+      if (!(text instanceof Text) || remaining > text.length) {
+        throw new Error('windowed-repeated-delete-caret-unavailable');
+      }
+      const range = surface.ownerDocument.createRange();
+      range.setStart(text, remaining);
+      range.collapse(true);
+      const selection = surface.ownerDocument.defaultView?.getSelection();
+      if (!selection) throw new Error('windowed-repeated-delete-selection-unavailable');
+      surface.focus({ preventScroll: true });
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, { body, offset });
+    const traceKey = '__easymdeWindowedRepeatedDeleteFallback';
+    const fallbackInstalled = await page.evaluate((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        InputEvent.prototype,
+        'getTargetRanges'
+      );
+      if (!descriptor || 'function' !== typeof descriptor.value || !descriptor.configurable) {
+        throw new Error('windowed-repeated-delete-target-range-override-unavailable');
+      }
+      Object.defineProperty(InputEvent.prototype, 'getTargetRanges', {
+        ...descriptor,
+        value: () => []
+      });
+      const events = [];
+      const record = (event) => {
+        if (!event.inputType?.startsWith('delete')) return;
+        events.push({
+          inputType: event.inputType,
+          targetRangeCount: event.getTargetRanges().length,
+          trusted: event.isTrusted
+        });
+      };
+      document.addEventListener('beforeinput', record, true);
+      window[key] = {
+        dispose: () => document.removeEventListener('beforeinput', record, true),
+        events
+      };
+      return 0 === new InputEvent('beforeinput').getTargetRanges().length;
+    }, traceKey);
+    expect(fallbackInstalled).toBe(true);
+
+    const codeStart = markdown.indexOf(codeBlock);
+    if (codeStart < 0) throw new Error('windowed-repeated-delete-source-block-missing');
+    const bodyStart = codeStart + codeBlock.indexOf('\n') + 1;
+    const sourceForBody = (body) => (
+      markdown.slice(0, bodyStart) + body + markdown.slice(bodyStart + 'AAAAAA'.length)
+    );
+    const expectWindowedCaret = async (body, offset) => {
+      const codeState = await block.evaluate((pre) => {
+        const code = pre.querySelector(':scope > code');
+        const surface = pre.closest('.easymde-immersive-visual-editor');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        if (!(code instanceof HTMLElement) || !(surface instanceof HTMLElement)) {
+          throw new Error('windowed-repeated-delete-caret-state-unavailable');
+        }
+        const anchorInsideCode = Boolean(
+          anchor && (anchor === code || code.contains(anchor))
+        );
+        let codeOffset = null;
+        if (selection && anchor && anchorInsideCode) {
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          range.setEnd(anchor, selection.anchorOffset);
+          codeOffset = range.toString().length;
+        }
+        return {
+          active: document.activeElement === surface,
+          codeText: code.textContent,
+          selection: {
+            anchorInsideCode,
+            collapsed: selection?.isCollapsed ?? null,
+            codeOffset
+          }
+        };
+      });
+      expect(codeState.codeText).toBe(`${body}\n`);
+      expect(codeState.active).toBe(true);
+      expect(codeState.selection).toMatchObject({
+        anchorInsideCode: true,
+        collapsed: true,
+        codeOffset: offset
+      });
+      const mountedCount = await editor.visualEditor.locator(
+        '[data-easymde-visual-block-id]'
+      ).count();
+      expect(mountedCount).toBeGreaterThan(0);
+      expect(mountedCount).toBeLessThanOrEqual(160);
+    };
+    const expectLatestFallbackDelete = async (inputType) => {
+      const event = await page.evaluate((key) => (
+        window[key]?.events.at(-1) ?? null
+      ), traceKey);
+      expect(event).toEqual({ inputType, targetRangeCount: 0, trusted: true });
+    };
+    const pressAndVerify = async (key, body, offset, message) => {
+      await page.keyboard.press(key);
+      if ('Backspace' === key) await expectLatestFallbackDelete('deleteContentBackward');
+      if ('Delete' === key) await expectLatestFallbackDelete('deleteContentForward');
+      await expect(editor.source).toHaveValue(sourceForBody(body), { timeout: 30_000 });
+      await expect.poll(
+        () => editor.visualEditor.getAttribute('aria-busy'),
+        { message }
+      ).toBe('false');
+      await waitForBrowserPaint(page);
+      await expect(block).toBeAttached({ timeout: 30_000 });
+      await expectWindowedCaret(body, offset);
+    };
+
+    const originalBody = 'AAAAAA';
+    await setCodeCaret(originalBody, 3);
+    await expectWindowedCaret(originalBody, 3);
+    let currentBody = originalBody;
+    let currentCaret = 3;
+    for (const { key, removeAt, caretAfter } of [
+      { caretAfter: 2, key: 'Backspace', removeAt: 2 },
+      { caretAfter: 2, key: 'Delete', removeAt: 2 }
+    ]) {
+      await setCodeCaret(currentBody, currentCaret);
+      const editedBody = currentBody.slice(0, removeAt) + currentBody.slice(removeAt + 1);
+      await pressAndVerify(key, editedBody, caretAfter, `${key} should map to canonical Markdown`);
+      await pressAndVerify(
+        'ControlOrMeta+z',
+        currentBody,
+        currentCaret,
+        `Undo ${key} should restore the exact source and caret`
+      );
+      await pressAndVerify(
+        'ControlOrMeta+Shift+z',
+        editedBody,
+        caretAfter,
+        `Redo ${key} should restore the exact source and caret`
+      );
+      currentBody = editedBody;
+      currentCaret = caretAfter;
+    }
+
+    const nativeDeletes = await page.evaluate((key) => {
+      const trace = window[key];
+      if (!trace) throw new Error('windowed-repeated-delete-trace-unavailable');
+      trace.dispose();
+      delete window[key];
+      return trace.events;
+    }, traceKey);
+    expect(nativeDeletes.map(({ inputType }) => inputType)).toEqual([
+      'deleteContentBackward',
+      'deleteContentForward'
+    ]);
+    expect(nativeDeletes.every(({ targetRangeCount, trusted }) => (
+      0 === targetRangeCount && true === trusted
+    ))).toBe(true);
+    expect(browserFailures).toEqual([]);
+  });
+
   test('maps Windowed code edits to source block b160', async ({ page }, testInfo) => {
     const failureCodes = [];
     const pageErrors = [];

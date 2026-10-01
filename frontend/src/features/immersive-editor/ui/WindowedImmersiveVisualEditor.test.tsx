@@ -134,6 +134,16 @@ function textOffsetWithin(root: HTMLElement, node: Node, offset: number): number
   return range.toString().length;
 }
 
+function expectConnectedCodeCaret(code: HTMLElement, expectedOffset: number): void {
+  const selection = code.ownerDocument.defaultView?.getSelection();
+  if (!selection?.anchorNode) throw new Error('windowed-code-caret-missing');
+  expect(selection.isCollapsed).toBe(true);
+  expect(selection.anchorNode.isConnected).toBe(true);
+  expect(code.contains(selection.anchorNode)).toBe(true);
+  expect(textOffsetWithin(code, selection.anchorNode, selection.anchorOffset))
+    .toBe(expectedOffset);
+}
+
 const testPrepareWindowBlockAdoption = (): (() => boolean) => () => true;
 
 const testDocumentEndPreviewRequest = (signature: string) => (_markdown: string) => ({
@@ -239,6 +249,46 @@ function renderWindowEditor(
   };
 }
 
+function renderCodeBodyEditor(
+  initialFence: string,
+  codeText: string,
+  options: Readonly<{
+    codeMarkup?: string;
+    documentSession?: EditorDocumentSession;
+    onFailure?: (code: string) => void;
+    requestPreview?: (markdown: string) => string;
+    sourceBlockCount?: number;
+  }> = {}
+) {
+  const blockIndex = 160;
+  const { codeMarkup, sourceBlockCount = 320, ...renderOptions } = options;
+  const current = fixture({
+    blockOverrides: { [blockIndex]: initialFence },
+    markupOverrides: {
+      [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code>${codeMarkup ?? codeText}</code></pre>`
+    },
+    mounted: [blockIndex],
+    sourceBlockCount
+  });
+  const initialMarkdown = current.canonical();
+  const sourceStart = initialMarkdown.indexOf(initialFence);
+  if (sourceStart < 0) throw new Error('windowed-code-body-source-missing');
+  const rendered = renderWindowEditor(current, renderOptions);
+  const code = current.surface.querySelector<HTMLElement>(
+    `[data-easymde-visual-block-id="b${blockIndex}"] > code`
+  );
+  if (!(code instanceof HTMLElement)) {
+    throw new Error('windowed-code-body-code-missing');
+  }
+  return {
+    ...rendered,
+    code,
+    current,
+    initialMarkdown,
+    sourceStart
+  };
+}
+
 function mergeMountedBlocks(
   first: HTMLElement,
   second: HTMLElement,
@@ -249,6 +299,71 @@ function mergeMountedBlocks(
   const text = first.firstChild;
   if (!(text instanceof Text)) throw new Error('windowed-merged-text-missing');
   placeCaret(text, caretOffset);
+}
+
+function dispatchCodeBodyDeletion(
+  surface: HTMLElement,
+  code: HTMLElement,
+  options: Readonly<{
+    inputType: string;
+    postCaretOffset?: number | undefined;
+    replacement?: string | undefined;
+    removedLength: number;
+    start: number;
+    targetRanges?: 'empty' | 'explicit' | 'missing';
+    targetRangeEnd?: number;
+    targetRangeStart?: number;
+}>
+): InputEvent {
+  const textNodes: Text[] = [];
+  const walker = code.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (!(node instanceof Text)) {
+      throw new Error('windowed-code-body-deletion-text-missing');
+    }
+    textNodes.push(node);
+    node = walker.nextNode();
+  }
+  if (1 !== textNodes.length) {
+    throw new Error('windowed-code-body-deletion-text-missing');
+  }
+  const text = textNodes[0];
+  if (!text) throw new Error('windowed-code-body-deletion-text-missing');
+  const backward = options.inputType.endsWith('Backward');
+  const defaultCaret = backward
+    ? options.start + options.removedLength
+    : options.start;
+  placeCaret(text, options.targetRangeStart ?? defaultCaret);
+  const beforeInput = new InputEvent('beforeinput', {
+    bubbles: true,
+    cancelable: true,
+    inputType: options.inputType
+  });
+  if ('missing' !== options.targetRanges) {
+    Object.defineProperty(beforeInput, 'getTargetRanges', {
+      value: () => {
+        if ('empty' === options.targetRanges) return [];
+        const range = document.createRange();
+        range.setStart(text, options.targetRangeStart ?? options.start);
+        range.setEnd(
+          text,
+          options.targetRangeEnd ?? options.start + options.removedLength
+        );
+        return [range];
+      }
+    });
+  }
+  surface.dispatchEvent(beforeInput);
+  text.data = text.data.slice(0, options.start)
+    + (options.replacement ?? '')
+    + text.data.slice(options.start + options.removedLength);
+  placeCaret(text, options.postCaretOffset ?? options.start + (options.replacement?.length ?? 0));
+  surface.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    inputType: options.inputType
+  }));
+  return beforeInput;
 }
 
 describe('WindowedImmersiveVisualEditor', () => {
@@ -2011,6 +2126,373 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(cloneSurface).not.toHaveBeenCalled();
     expect(onFailure).not.toHaveBeenCalled();
     view.unmount();
+  });
+
+  it.each([
+    { inputType: 'deleteContentBackward', targetRanges: 'missing' },
+    { inputType: 'deleteContentBackward', targetRanges: 'empty' },
+    { inputType: 'deleteContentForward', targetRanges: 'missing' },
+    { inputType: 'deleteContentForward', targetRanges: 'empty' }
+  ] as const)(
+    'maps repeated-space $inputType with $targetRanges target ranges from the post-delete caret',
+    ({ inputType, targetRanges }) => {
+      const initialFence = '~~~\nA   B\n~~~';
+      const expectedFence = '~~~\nA  B\n~~~';
+      const onFailure = vi.fn();
+      const requestPreview = vi.fn(() => 'unexpected-code-deletion-preview');
+      const {
+        code,
+        current,
+        initialMarkdown,
+        sourceStart,
+        view
+      } = renderCodeBodyEditor(initialFence, 'A   B\n', {
+        onFailure,
+        requestPreview
+      });
+      const expectedMarkdown = `${initialMarkdown.slice(0, sourceStart)}${expectedFence}${initialMarkdown.slice(
+        sourceStart + initialFence.length
+      )}`;
+      const sourceCaret = sourceStart + '~~~\n'.length + 2;
+
+      const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+        inputType,
+        removedLength: 1,
+        start: 2,
+        targetRanges
+      });
+
+      expect(beforeInput.defaultPrevented).toBe(false);
+      expect(current.canonical()).toBe(expectedMarkdown);
+      expect(current.documentSession.document.getValue()).toBe(expectedMarkdown);
+      expect(current.documentSession.document.getSelection()).toEqual({
+        direction: 'none',
+        end: sourceCaret,
+        start: sourceCaret
+      });
+      expect(code.textContent).toBe('A  B\n');
+      expectConnectedCodeCaret(code, 2);
+      expect(current.documentChanges).toHaveBeenCalledOnce();
+      expect(current.documentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recordHistorySelection: true,
+          selection: {
+            direction: 'none',
+            end: sourceCaret,
+            start: sourceCaret
+          }
+        })
+      );
+      expect(requestPreview).not.toHaveBeenCalled();
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  );
+
+  it('keeps a repeated-run caret connected inside highlighted code markup', () => {
+    const initialFence = '~~~js\nA   B\n~~~';
+    const changedFence = '~~~js\nA  B\n~~~';
+    const onFailure = vi.fn();
+    const {
+      code,
+      current,
+      initialMarkdown,
+      sourceStart,
+      view
+    } = renderCodeBodyEditor(initialFence, 'A   B\n', {
+      codeMarkup: '<span class="hljs-name">A   B\n</span>',
+      onFailure
+    });
+    const expectedMarkdown = `${initialMarkdown.slice(0, sourceStart)}${changedFence}${initialMarkdown.slice(
+      sourceStart + initialFence.length
+    )}`;
+
+    dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentBackward',
+      removedLength: 1,
+      start: 2,
+      targetRanges: 'empty'
+    });
+
+    expect(current.canonical()).toBe(expectedMarkdown);
+    expect(code.textContent).toBe('A  B\n');
+    expectConnectedCodeCaret(code, 2);
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('preserves the input selection when native deletion produces no DOM delta', () => {
+    const initialFence = '~~~\nABCD\n~~~';
+    const onFailure = vi.fn();
+    const { code, current, initialMarkdown, sourceStart, view } =
+      renderCodeBodyEditor(initialFence, 'ABCD\n', { onFailure });
+    const sourceCaret = sourceStart + '~~~\n'.length + 2;
+
+    const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentBackward',
+      removedLength: 0,
+      start: 2,
+      targetRanges: 'missing'
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(initialMarkdown);
+    expect(current.documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: sourceCaret,
+      start: sourceCaret
+    });
+    expect(code.textContent).toBe('ABCD\n');
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('projects repeated multi-code-unit emoji deletion from the collapsed caret', () => {
+    const initialFence = '~~~\n🙂🙂🙂\n~~~';
+    const expectedFence = '~~~\n🙂🙂\n~~~';
+    const onFailure = vi.fn();
+    const {
+      code,
+      current,
+      initialMarkdown,
+      sourceStart,
+      view
+    } = renderCodeBodyEditor(initialFence, '🙂🙂🙂\n', { onFailure });
+    const expectedMarkdown = `${initialMarkdown.slice(0, sourceStart)}${expectedFence}${initialMarkdown.slice(
+      sourceStart + initialFence.length
+    )}`;
+    const sourceCaret = sourceStart + '~~~\n'.length + 2;
+
+    const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentBackward',
+      removedLength: 2,
+      start: 2,
+      targetRanges: 'missing'
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(expectedMarkdown);
+    expect(current.documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: sourceCaret,
+      start: sourceCaret
+    });
+    expect(code.textContent).toBe('🙂🙂\n');
+    expectConnectedCodeCaret(code, 2);
+    expect(current.documentChanges).toHaveBeenCalledOnce();
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('keeps the terminal renderer LF outside an open code body deletion', () => {
+    const initialFence = '~~~\nA';
+    const failure = vi.fn();
+    const {
+      code,
+      current,
+      initialMarkdown,
+      onFailure,
+      sourceStart,
+      view
+    } = renderCodeBodyEditor(
+      initialFence,
+      'A\n',
+      { onFailure: failure, sourceBlockCount: 161 }
+    );
+    const expectedMarkdown = `${initialMarkdown.slice(0, sourceStart)}~~~\n`;
+    const sourceCaret = sourceStart + '~~~\n'.length;
+
+    const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentBackward',
+      removedLength: 1,
+      start: 0,
+      targetRanges: 'empty'
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(expectedMarkdown);
+    expect(current.documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: sourceCaret,
+      start: sourceCaret
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it.each([
+    {
+      body: 'ABCD\n',
+      name: 'a wrong caret',
+      postCaretOffset: 2,
+      replacement: undefined,
+      start: 1
+    },
+    {
+      body: 'A  B\n',
+      name: 'text substitution',
+      postCaretOffset: undefined,
+      replacement: 'x',
+      start: 2
+    }
+  ])('fails fast for $name during collapsed deletion', ({
+    body,
+    postCaretOffset,
+    replacement,
+    start
+  }) => {
+    const initialFence = `~~~\n${body}~~~`;
+    const onFailure = vi.fn();
+    const { code, current, initialMarkdown, view } = renderCodeBodyEditor(
+      initialFence,
+      body,
+      { onFailure }
+    );
+
+    const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentForward',
+      postCaretOffset,
+      removedLength: 1,
+      replacement,
+      start,
+      targetRanges: 'empty'
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(initialMarkdown);
+    expect(current.surface.querySelector(
+      `[data-easymde-visual-block-id="b160"] > code`
+    )?.textContent).toBe(body);
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledWith('visual-editor-code-body-selection-invalid');
+    expect(onFailure).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
+  it('keeps a noncollapsed target range authoritative for code deletion', () => {
+    const initialFence = '~~~\nABCD\n~~~';
+    const expectedFence = '~~~\nAD\n~~~';
+    const onFailure = vi.fn();
+    const {
+      code,
+      current,
+      initialMarkdown,
+      sourceStart,
+      view
+    } = renderCodeBodyEditor(initialFence, 'ABCD\n', { onFailure });
+    const expectedMarkdown = `${initialMarkdown.slice(0, sourceStart)}${expectedFence}${initialMarkdown.slice(
+      sourceStart + initialFence.length
+    )}`;
+    const sourceCaret = sourceStart + '~~~\n'.length + 1;
+
+    const beforeInput = dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentForward',
+      removedLength: 2,
+      start: 1,
+      targetRangeEnd: 3,
+      targetRangeStart: 1,
+      targetRanges: 'explicit'
+    });
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(expectedMarkdown);
+    expect(current.documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: sourceCaret,
+      start: sourceCaret
+    });
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('records collapsed repeated-space deletion selections in real Undo and Redo history', () => {
+    const blockIndex = 160;
+    const initialFence = '~~~\nA   B\n~~~';
+    const expectedFence = '~~~\nA  B\n~~~';
+    const current = fixture({
+      blockOverrides: { [blockIndex]: initialFence },
+      markupOverrides: {
+        [blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code>A   B\n</code></pre>`
+      },
+      mounted: [blockIndex]
+    });
+    const initialMarkdown = current.canonical();
+    const initialStart = initialMarkdown.indexOf(initialFence);
+    const expectedMarkdown = initialMarkdown.slice(0, initialStart)
+      + expectedFence
+      + initialMarkdown.slice(initialStart + initialFence.length);
+    const beforeCaret = initialStart + '~~~\n'.length + 3;
+    const afterCaret = initialStart + '~~~\n'.length + 2;
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    submissionField.setSelectionRange(beforeCaret, beforeCaret);
+    const container = document.createElement('div');
+    document.body.append(container, submissionField);
+    const codeMirrorDocument = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const documentSession = createEditorDocumentSession(
+      codeMirrorDocument,
+      createNativeTitleSession(null)
+    );
+    documentSession.registerSubmissionState({
+      appleFont: 'system',
+      codeTheme: 'dark',
+      codeThemeExplicit: false,
+      customCssId: '',
+      customFont: 'none',
+      markdownTheme: 'default',
+      serifFont: 'off',
+      windowsFont: 'system'
+    });
+    const onFailure = vi.fn();
+    const { view } = renderWindowEditor(current, { documentSession, onFailure });
+    current.surface.tabIndex = 0;
+    current.surface.focus();
+    const code = current.surface.querySelector<HTMLElement>(
+      `[data-easymde-visual-block-id="b${blockIndex}"] > code`
+    );
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('windowed-history-repeated-space-code-missing');
+    }
+
+    dispatchCodeBodyDeletion(current.surface, code, {
+      inputType: 'deleteContentBackward',
+      removedLength: 1,
+      start: 2,
+      targetRanges: 'missing'
+    });
+    expect(documentSession.document.getValue()).toBe(expectedMarkdown);
+    expect(documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: afterCaret,
+      start: afterCaret
+    });
+    expectConnectedCodeCaret(code, 2);
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+
+    expect(documentSession.document.undo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(initialMarkdown);
+    expect(documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: beforeCaret,
+      start: beforeCaret
+    });
+    expect(documentSession.document.redo()).toBe(true);
+    expect(documentSession.document.getValue()).toBe(expectedMarkdown);
+    expect(documentSession.document.getSelection()).toEqual({
+      direction: 'none',
+      end: afterCaret,
+      start: afterCaret
+    });
+    documentSession.document.destroy();
+    container.remove();
+    submissionField.remove();
   });
 
   it('keeps repeated Backspace edits in one mounted Block exact', () => {

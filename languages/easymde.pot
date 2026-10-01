@@ -1248,13 +1248,13 @@ msgstr ""
 msgid "The image is larger than the allowed upload size."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:388
+#: src/Admin/EditorSaveHandler.php:393
 msgid ""
 "EasyMDE cannot save this post because Markdown rendering is unavailable. "
 "Install Composer dependencies and try again."
 msgstr ""
 
-#: src/Admin/EditorSaveHandler.php:389
+#: src/Admin/EditorSaveHandler.php:394
 msgid "EasyMDE renderer unavailable"
 msgstr ""
 

@@ -259,6 +259,12 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Fence shortcuts are a presentation command: a newly formed tilde or backtick
+opener that can be represented as valid backtick syntax is serialized as an
+equally wide backtick fence while its info string is retained. Accepted or
+pasted tilde fences retain their source family. Inline shortcuts skip `CODE`
+and `PRE` content, block shortcuts skip code bodies, and the serializer scopes
+list, image, and caret-marker cleanup outside code.
 Preview scroll snapshots belong to their request generation. The existing
 ratio-based restoration runs after that generation's accepted DOM commit reaches
 ready; loading and enhancement do not consume it. Failure, supersession, and
@@ -284,7 +290,9 @@ when mapping is unavailable. Focus restoration uses `preventScroll`, and a
 pending paste blocks `beforeinput` without toggling the active surface's
 `contenteditable` state. History and composition input never re-enter the
 shortcut parser. Consecutive exact text input may continue through its pending
-source projection. When a prior browser mutation is pending without such a
+source projection. A successful flush re-captures the current connected
+Selection before mapping that same `beforeinput`; failed or stale mapping
+rejects it explicitly. When a prior browser mutation is pending without such a
 projection, the next `beforeinput` first synchronizes that structural DOM
 change. This keeps a rapid list split followed by text in the new item from
 mapping through the pre-split source interval.

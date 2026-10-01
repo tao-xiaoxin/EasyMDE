@@ -424,9 +424,14 @@ Preview paper, completed block and inline syntax, bounded visual-input
 coalescing, explicit selection-loss failure without end-of-document appends,
 consecutive full Markdown pastes through the server Preview owner, one Preview
 request per paste, and zero Preview requests for ordinary visual keystrokes.
-Fenced-code cases cover typed and pasted tilde and backtick fences, zero or
-multiple blank body lines, successive input, line endings, caret placement,
-Undo/Redo, highlighted code cleared and retyped, and windowed block offsets.
+Fenced-code cases cover typed and pasted tilde and backtick fences, including
+the rule that a newly formed tilde shortcut becomes an equally wide backtick
+fence while accepted or pasted tilde source remains unchanged. They also cover
+valid multi-token info strings and info strings that cannot form a valid
+backtick shortcut,
+literal Markdown-looking text inside `CODE`/`PRE`, zero or multiple blank body
+lines, successive input, line endings, caret placement, Undo/Redo, highlighted
+code cleared and retyped, and windowed block offsets.
 Native clipboard cases paste each bare three-character opener, assert that the
 initial source is unchanged, then type body text and check persistence, history,
 caret, and frame geometry. Unclosed EOF bodies retain their open state, including

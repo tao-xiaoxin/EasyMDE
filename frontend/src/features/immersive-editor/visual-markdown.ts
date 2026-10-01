@@ -1767,6 +1767,26 @@ function visualBlockText(block: HTMLElement): string {
   return clone.textContent ?? '';
 }
 
+function visualCodeBodyIsEmpty(
+  code: HTMLElement | null,
+  placeholder: HTMLSpanElement | null
+): boolean {
+  if (!code || placeholder) return true;
+  const walker = code.ownerDocument.createTreeWalker(
+    code,
+    NodeFilter.SHOW_TEXT
+  );
+  let combined = '';
+  let current = walker.nextNode();
+  while (current) {
+    const value = current instanceof Text ? current.data : '';
+    combined += value;
+    if (combined.length > 2) return false;
+    current = walker.nextNode();
+  }
+  return ['', '\n', '\r', '\r\n'].includes(combined);
+}
+
 function caretIsAtEnd(block: HTMLElement): boolean {
   const selection = window.getSelection();
   if (
@@ -1834,14 +1854,17 @@ export function applyVisualBlockShortcut(
   const code = 'PRE' === block?.tagName
     ? directCodeChild(block)
     : null;
-  const isEmptyCodePlaceholder = Boolean(
-    code && strictVisualCodePlaceholder(code)
-  );
+  const codePlaceholder = code ? strictVisualCodePlaceholder(code) : null;
+  const isEmptyCodePlaceholder = Boolean(codePlaceholder);
   if (!block || (!selection?.isCollapsed && !isEmptyCodePlaceholder)) {
     return false;
   }
 
-  const text = visualBlockText(block);
+  if ('PRE' === block.tagName) {
+    if (!visualCodeBodyIsEmpty(code, codePlaceholder)) return false;
+  }
+
+  const text = 'PRE' === block.tagName ? '' : visualBlockText(block);
   if ('Backspace' === event.key && '' === text) {
     if ('PRE' === block.tagName && beforeEmptyCodeFenceRemoval) {
       if (!beforeEmptyCodeFenceRemoval()) {
@@ -1874,6 +1897,11 @@ export function applyVisualBlockShortcut(
     replaceBlock(block, 'p');
     return true;
   }
+
+  // Markdown block shortcuts are only meaningful at the document-block
+  // boundary. Code text is literal, even when it happens to look like a
+  // heading, list marker, thematic break, or fence opener.
+  if ('PRE' === block.tagName) return false;
 
   if (' ' === event.key) {
     const heading = text.match(/^(#{1,6})$/);
@@ -1952,20 +1980,31 @@ export function applyVisualBlockShortcut(
       return true;
     }
 
-    const fence = text.match(/^(`{3,}|~{3,})([a-zA-Z0-9_-]*)$/);
-    const fenceFamily = fence?.[1];
-    if (fenceFamily && caretIsAtEnd(block)) {
+    const fence = markdownFenceOpening(text);
+    const fenceFamily = fence?.family;
+    const canCanonicalizeFence = Boolean(
+      fence
+      && !fence.info.includes('`')
+    );
+    if (fenceFamily && canCanonicalizeFence && caretIsAtEnd(block)) {
       event.preventDefault();
       const documentRef = editor.ownerDocument;
       const pre = documentRef.createElement('pre');
       const code = documentRef.createElement('code');
       const editablePlaceholder = createVisualCodePlaceholder(documentRef);
-      code.className = fence[2]
-        ? `hljs language-${fence[2]}`
+      const languageClass = /^[a-zA-Z0-9_-]+$/.test(fence.language)
+        ? fence.language
+        : '';
+      code.className = languageClass
+        ? `hljs language-${languageClass}`
         : 'hljs';
       code.append(editablePlaceholder);
       pre.append(code);
-      pre.setAttribute(VISUAL_FENCE_ATTRIBUTE, fenceFamily);
+      pre.setAttribute(
+        VISUAL_FENCE_ATTRIBUTE,
+        '`'.repeat(fenceFamily.length)
+      );
+      pre.setAttribute(VISUAL_FENCE_INFO_ATTRIBUTE, fence.info);
       preserveVisualBlockIdentity(block, pre);
       block.replaceWith(pre);
       markShortcutApplied(pre, 'block');
@@ -1988,6 +2027,7 @@ export function applyVisualInlineShortcut(editor: HTMLElement): boolean {
   }
 
   const textNode = selection.anchorNode as Text;
+  if (textNode.parentElement?.closest('pre, code')) return false;
   const offset = selection.anchorOffset;
   const beforeCaret = textNode.data.slice(0, offset);
   const patterns: ReadonlyArray<{
@@ -2312,7 +2352,51 @@ function markdownSerializationRoot(editor: HTMLElement): HTMLElement {
   )) {
     generated.remove();
   }
+  removeTrailingVisualImageWhitespace(root);
   return root;
+}
+
+function removeTrailingVisualImageWhitespace(root: HTMLElement): void {
+  for (const image of root.querySelectorAll('img')) {
+    const block = image.closest('p, li, div, section, article');
+    if (!block || block.closest('pre')) continue;
+    let directChild: Node = image;
+    while (
+      directChild.parentNode
+      && directChild.parentNode !== block
+    ) {
+      directChild = directChild.parentNode;
+    }
+    if (
+      directChild.parentNode !== block
+      || !(directChild instanceof HTMLImageElement)
+    ) continue;
+    const following = Array.from(block.childNodes);
+    const childIndex = Array.prototype.indexOf.call(
+      block.childNodes,
+      directChild
+    );
+    const trailing = following.slice(childIndex + 1);
+    const whitespace: Text[] = [];
+    for (const node of trailing) {
+      if (node instanceof Text && /^[ \t\r\n]*$/.test(node.data)) {
+        whitespace.push(node);
+        continue;
+      }
+      break;
+    }
+    const nextMeaningful = trailing[whitespace.length];
+    const nextIsBlock = nextMeaningful instanceof HTMLElement
+      && [
+        'ARTICLE', 'BLOCKQUOTE', 'DIV', 'FIGURE', 'H1', 'H2', 'H3', 'H4',
+        'H5', 'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'UL'
+      ].includes(nextMeaningful.tagName);
+    const standalone = undefined === nextMeaningful
+      || (block === root && nextIsBlock);
+    if (whitespace.length > 0 && standalone) {
+      for (const node of whitespace) node.remove();
+    }
+  }
 }
 
 export function serializeVisualMarkdown(editor: HTMLElement): string {
@@ -2321,12 +2405,9 @@ export function serializeVisualMarkdown(editor: HTMLElement): string {
     throw new Error('visual-editor-window-incomplete');
   }
   const service = visualMarkdownSerializer();
-  const serialized = service
-    .turndown(markdownSerializationRoot(editor))
-    .replace(/\u200b/g, '')
-    .replace(/^(\s*)-\s{2,}/gm, '$1- ')
-    .replace(/^(!\[[^\]]*]\([^)]+\))[ \t]+$/gm, '$1')
-    .trim();
+  const serializationRoot = markdownSerializationRoot(editor);
+  removeVisualCaretMarkersFromSerializationRoot(serializationRoot);
+  const serialized = service.turndown(serializationRoot).trim();
   const pres = [
     ...(editor.matches('pre') ? [editor] : []),
     ...Array.from(editor.querySelectorAll<HTMLElement>('pre'))
@@ -2607,6 +2688,27 @@ function visualMarkdownSerializer(): TurndownService {
     filter: (node) => ['DEL', 'S', 'STRIKE'].includes(node.nodeName),
     replacement: (content) => `~~${content}~~`
   });
+  service.addRule('easymde-list-item-spacing', {
+    filter: (node) => 'LI' === node.nodeName,
+    replacement: (content, node) => {
+      const parent = node.parentElement;
+      let marker = '-';
+      if ('OL' === parent?.nodeName) {
+        const start = parent.getAttribute('start');
+        const index = Array.prototype.indexOf.call(parent.children, node);
+        marker = `${start ? Number(start) + index : index + 1}.`;
+      }
+      const markerPrefix = `${marker} `;
+      const isParagraph = /\n$/.test(content);
+      const trimmed = content.replace(/^\n+|\n+$/g, '');
+      const normalized = trimmed + (isParagraph ? '\n' : '');
+      const indented = normalized.replace(
+        /\n/g,
+        `\n${' '.repeat(markerPrefix.length)}`
+      );
+      return `${marker} ${indented}${node.nextSibling ? '\n' : ''}`;
+    }
+  });
   service.addRule('easymde-math-block', {
     filter: (node) =>
       node.classList.contains('easymde-math-block') ||
@@ -2625,7 +2727,7 @@ function visualMarkdownSerializer(): TurndownService {
     filter: (node) =>
       ['P', 'DIV'].includes(node.nodeName)
       && 0 === node.children.length
-      && /^(?:`{3,}|~{3,})[a-zA-Z0-9_-]*$/.test(node.textContent ?? ''),
+      && Boolean(markdownFenceOpening(node.textContent ?? '')),
     replacement: (_content, node) => node.textContent ?? ''
   });
   service.addRule('easymde-visual-code-fence', {
@@ -2650,6 +2752,30 @@ function visualMarkdownSerializer(): TurndownService {
   });
   visualMarkdownService = service;
   return service;
+}
+
+function removeVisualCaretMarkersFromSerializationRoot(
+  root: HTMLElement
+): void {
+  const walker = root.ownerDocument.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT
+  );
+  const textNodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    if (
+      current instanceof Text
+      && !current.parentElement?.closest('code')
+      && current.data.includes('\u200b')
+    ) {
+      textNodes.push(current);
+    }
+    current = walker.nextNode();
+  }
+  for (const text of textNodes) {
+    text.data = text.data.replace(/\u200b/g, '');
+  }
 }
 
 function visualBoundarySourceOffset(

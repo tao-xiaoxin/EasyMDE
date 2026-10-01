@@ -720,6 +720,13 @@ function normalizeMarkdown(markdown) {
   return markdown.replace(/\r\n/g, '\n');
 }
 
+function canonicalVisualFence(fence) {
+  const markerRun = fence.match(/^~+/u)?.[0];
+  return markerRun
+    ? `${'`'.repeat(markerRun.length)}${fence.slice(markerRun.length)}`
+    : fence;
+}
+
 async function fillMarkdownAndWaitForPreview(page, markdown, expectedText) {
   await page.locator('.easymde-source-react .cm-content').fill(markdown);
   await expect(page.locator('#easymde-source')).toHaveValue(markdown);
@@ -5596,6 +5603,8 @@ test.describe('EasyMDE editor workflows', () => {
       observationInstalled = true;
 
       try {
+        const expectedFence = canonicalVisualFence(fixture.fence);
+        const expectedClosingFence = canonicalVisualFence(fixture.closingFence);
         if (fixture.windowed) {
           await selectVisualText(visualEditor, 'Windowed paragraph 1.');
         } else {
@@ -5608,17 +5617,17 @@ test.describe('EasyMDE editor workflows', () => {
         await expect(visualEditor.locator('pre > code')).toHaveCount(1);
         await expect.poll(
           () => source.inputValue().then((value) => fixture.windowed
-            ? value.startsWith(`${fixture.fence}\n\n${fixture.closingFence}`)
-            : value.endsWith(`${fixture.fence}\n\n${fixture.closingFence}`)),
-          { message: `${fixture.id} should preserve its fence family` }
+            ? value.startsWith(`${expectedFence}\n\n${expectedClosingFence}`)
+            : value.endsWith(`${expectedFence}\n\n${expectedClosingFence}`)),
+          { message: `${fixture.id} should serialize its typed fence` }
         ).toBe(true);
 
         inputAttempted = true;
         await page.keyboard.type('Alpha');
         await expect.poll(
           () => source.inputValue().then((value) => fixture.windowed
-            ? value.startsWith(`${fixture.fence}\nAlpha\n${fixture.closingFence}`)
-            : value.endsWith(`${fixture.fence}\nAlpha\n${fixture.closingFence}`)),
+            ? value.startsWith(`${expectedFence}\nAlpha\n${expectedClosingFence}`)
+            : value.endsWith(`${expectedFence}\nAlpha\n${expectedClosingFence}`)),
           { message: `${fixture.id} should accept immediate code input` }
         ).toBe(true);
         inputAccepted = true;
@@ -6710,6 +6719,7 @@ test.describe('EasyMDE editor workflows', () => {
   for (const fence of ['~~~', '```']) {
     test(`keeps immersive ${fence} typed and pasted caret/frame state`, async ({ page }, testInfo) => {
       await login(page, testInfo.easymdeUser);
+      const typedFence = canonicalVisualFence(fence);
       await page.setViewportSize({ width: 1280, height: 720 });
       const evidence = {
         fence,
@@ -6808,7 +6818,7 @@ test.describe('EasyMDE editor workflows', () => {
       await page.keyboard.type(fence);
       await page.keyboard.press('Enter');
       await expect.poll(() => typed.source.inputValue()).toBe(
-        `${fence}\n\n${fence}`
+        `${typedFence}\n\n${typedFence}`
       );
       await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
       evidence.typed = await readEvidence(typed.visualEditor);
@@ -6817,7 +6827,7 @@ test.describe('EasyMDE editor workflows', () => {
       expect(evidence.typed.selection.anchorParentIsPlaceholder).toBe(true);
       await page.keyboard.type('x');
       await expect.poll(() => typed.source.inputValue()).toBe(
-        `${fence}\nx\n${fence}`
+        `${typedFence}\nx\n${typedFence}`
       );
       await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
       evidence.typedAfterInput = await readEvidence(typed.visualEditor);
@@ -6825,7 +6835,7 @@ test.describe('EasyMDE editor workflows', () => {
 
       await page.keyboard.press('ControlOrMeta+z');
       await expect.poll(() => typed.source.inputValue()).toBe(
-        `${fence}\n\n${fence}`
+        `${typedFence}\n\n${typedFence}`
       );
       await expect(typed.visualEditor.locator('pre > code')).toHaveCount(1);
       evidence.typedAfterUndo = await readEvidence(typed.visualEditor);
@@ -6835,7 +6845,7 @@ test.describe('EasyMDE editor workflows', () => {
 
       await page.keyboard.press('ControlOrMeta+Shift+z');
       await expect.poll(() => typed.source.inputValue()).toBe(
-        `${fence}\nx\n${fence}`
+        `${typedFence}\nx\n${typedFence}`
       );
       await expect(typed.visualEditor.locator('pre > code')).toContainText('x');
       evidence.typedAfterRedo = await readEvidence(typed.visualEditor);
@@ -6845,9 +6855,9 @@ test.describe('EasyMDE editor workflows', () => {
       await expect(page.getByRole('region', {
         name: typed.labels.immersive
       })).toHaveCount(0);
-      await expect(typed.source).toHaveValue(`${fence}\nx\n${fence}`);
+      await expect(typed.source).toHaveValue(`${typedFence}\nx\n${typedFence}`);
       const typedReentered = await enterImmersivePreviewAndUnlock(page);
-      await expect(typedReentered.source).toHaveValue(`${fence}\nx\n${fence}`);
+      await expect(typedReentered.source).toHaveValue(`${typedFence}\nx\n${typedFence}`);
       await expect(typedReentered.visualEditor.locator('pre > code'))
         .toContainText('x');
       evidence.typedAfterReentry = await readEvidence(typedReentered.visualEditor);
@@ -7328,6 +7338,273 @@ test.describe('EasyMDE editor workflows', () => {
     expect(pageErrors).toEqual([]);
   };
 
+  for (const fence of ['~~~', '```']) {
+    const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
+    test(`canonicalizes typed ${fenceLabel} JSON fences and preserves literal code editing`, async ({ page }, testInfo) => {
+      const pageErrors = [];
+      const failureCodes = [];
+      page.on('pageerror', () => pageErrors.push('pageerror'));
+      page.on('console', (message) => {
+        const failureCode = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        if ('error' === message.type() && failureCode) failureCodes.push(failureCode);
+      });
+
+      const info = 'json';
+      const typedOpening = `${fence}${info}`;
+      const canonicalOpening = canonicalVisualFence(typedOpening);
+      const canonicalClosing = canonicalVisualFence(fence);
+      const bodyLines = [
+        '{',
+        '  "firstName": "John",',
+        '  "lastName": "Smith",',
+        '  "age": 25,',
+        '  "literal": "**bold** ~~deleted~~ `literal` # - 1.   \u200b"',
+        '}'
+      ];
+      const body = bodyLines.join('\n');
+      const bodyText = `${body}\n`;
+      const emptyMarkdown = `${canonicalOpening}\n\n${canonicalClosing}`;
+      const expectedMarkdown = `${canonicalOpening}\n${body}\n${canonicalClosing}`;
+      const deletedBody = body.replace(/\u200b/u, '');
+      const expectedDeletedMarkdown = `${canonicalOpening}\n${deletedBody}\n${canonicalClosing}`;
+
+      const readLiteralCode = async (visualEditor) => visualEditor.evaluate((surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) {
+          throw new Error('typed-json-code-body-unavailable');
+        }
+        return {
+          codeText: code.textContent ?? '',
+          structuredNodeCount: code.querySelectorAll(
+            'strong, em, del, s, strike, code, ul, ol, li, h1, h2, h3, h4, h5, h6'
+          ).length,
+          zwspCount: (code.textContent ?? '').split('\u200b').length - 1
+        };
+      });
+      const expectLiteralCode = async (visualEditor, expectedBodyText) => {
+        const literalCode = await readLiteralCode(visualEditor);
+        expect(
+          literalCode.codeText === expectedBodyText
+          || `${literalCode.codeText}\n` === expectedBodyText,
+          'fenced code projection may omit only its canonical terminal LF'
+        ).toBe(true);
+        expect(literalCode.structuredNodeCount).toBe(0);
+        return literalCode;
+      };
+      const selectCodeContents = async (visualEditor) => visualEditor.evaluate((surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) {
+          throw new Error('typed-json-code-selection-unavailable');
+        }
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('typed-json-code-selection-missing');
+        const range = surface.ownerDocument.createRange();
+        range.selectNodeContents(code);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+      const selectCodeText = async (visualEditor, expectedText) => visualEditor.evaluate(
+        (surface, text) => {
+          const code = surface.querySelector('pre > code');
+          if (!(code instanceof HTMLElement)) {
+            throw new Error('typed-json-code-text-selection-unavailable');
+          }
+          const walker = surface.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node) {
+            if (node instanceof Text) {
+              const textOffset = node.data.indexOf(text);
+              if (textOffset >= 0) {
+                const selection = surface.ownerDocument.defaultView?.getSelection();
+                if (!selection) throw new Error('typed-json-code-text-selection-missing');
+                const range = surface.ownerDocument.createRange();
+                range.setStart(node, textOffset);
+                range.setEnd(node, textOffset + text.length);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                return;
+              }
+            }
+            node = walker.nextNode();
+          }
+          throw new Error(`typed-json-code-text-not-found:${text}`);
+        },
+        expectedText
+      );
+
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      let editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(editor.visualEditor);
+      await editor.visualEditor.focus();
+      await editor.visualEditor.press('ControlOrMeta+End');
+      await page.keyboard.type(typedOpening, { delay: 0 });
+      await page.keyboard.press('Enter');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        emptyMarkdown,
+        acceptedPreviewSignature,
+        'visual fence shortcut should commit canonical Markdown before body input'
+      );
+
+      for (const [index, line] of bodyLines.entries()) {
+        await page.keyboard.type(line, { delay: 0 });
+        if (index < bodyLines.length - 1) await page.keyboard.press('Enter');
+      }
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'trusted keyboard JSON input should preserve exact fenced source'
+      );
+      expect(await editor.source.inputValue()).toBe(expectedMarkdown);
+      await expectLiteralCode(editor.visualEditor, bodyText);
+      expectCodeBodyFrame(await readCodeBodyState(editor.visualEditor));
+
+      await editor.visualEditor.evaluate((surface) => {
+        const code = surface.querySelector('pre > code');
+        if (!(code instanceof HTMLElement)) {
+          throw new Error('typed-json-marker-selection-code-unavailable');
+        }
+        const walker = surface.ownerDocument.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node) {
+          if (node instanceof Text) {
+            const markerOffset = node.data.indexOf('\u200b');
+            if (markerOffset >= 0) {
+              const selection = surface.ownerDocument.defaultView?.getSelection();
+              if (!selection) throw new Error('typed-json-marker-selection-missing');
+              selection.collapse(node, markerOffset + 1);
+              return;
+            }
+          }
+          node = walker.nextNode();
+        }
+        throw new Error('typed-json-marker-not-found');
+      });
+      await page.keyboard.press('Backspace');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedDeletedMarkdown,
+        acceptedPreviewSignature,
+        'deleting one literal code character should preserve the code DOM'
+      );
+      expect(await editor.source.inputValue()).toBe(expectedDeletedMarkdown);
+      const deletedLiteralCode = await expectLiteralCode(editor.visualEditor, `${deletedBody}\n`);
+      expect(deletedLiteralCode.zwspCount).toBe(0);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        'Undo should restore the exact literal code source'
+      );
+      await expectLiteralCode(editor.visualEditor, bodyText);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedDeletedMarkdown,
+        acceptedPreviewSignature,
+        'Redo should restore the exact literal code deletion'
+      );
+      await expectLiteralCode(editor.visualEditor, `${deletedBody}\n`);
+
+      await page.getByRole('button', { name: editor.labels.exit }).click();
+      await expect(page.getByRole('region', {
+        name: editor.labels.immersive
+      })).toHaveCount(0);
+      await expect(page.locator('#easymde-source')).toHaveValue(expectedDeletedMarkdown);
+      const ordinarySource = page.locator('.easymde-source-react .cm-content');
+      await expect(ordinarySource).toBeVisible();
+      await expect(ordinarySource.locator('.cm-line')).toHaveText(
+        expectedDeletedMarkdown.split('\n')
+      );
+      const ordinaryPreview = page.locator(
+        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      );
+      await expect(ordinaryPreview).toHaveAttribute('aria-busy', 'false');
+      await expect(ordinaryPreview).not.toHaveAttribute('data-easymde-preview-error', '1');
+      await expect(ordinaryPreview.locator('pre > code')).toHaveCount(1);
+      await expect(ordinaryPreview).toHaveClass(/easymde-code-mac/u);
+
+      editor = await enterImmersivePreviewAndUnlock(page);
+      const reenteredPreviewSignature = await readyPreviewSignature(editor.visualEditor);
+      await expect(editor.source).toHaveValue(expectedDeletedMarkdown);
+      await expectLiteralCode(editor.visualEditor, `${deletedBody}\n`);
+      await selectCodeContents(editor.visualEditor);
+      await page.keyboard.press('Backspace');
+      const retypedMarkdown = `${canonicalOpening}\nA\n${canonicalClosing}`;
+      await page.keyboard.type('A', { delay: 0 });
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        retypedMarkdown,
+        reenteredPreviewSignature,
+        'immediate input after body deletion should not be dropped'
+      );
+      await expectLiteralCode(editor.visualEditor, 'A\n');
+      expectCodeBodyCaret(await readCodeBodyState(editor.visualEditor), 1);
+
+      await selectCodeText(editor.visualEditor, 'A');
+      await page.keyboard.press('Backspace');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        emptyMarkdown,
+        reenteredPreviewSignature,
+        'deleting the retyped code character should restore an empty fenced block'
+      );
+      await expectLiteralCode(editor.visualEditor, '\n');
+
+      await page.waitForTimeout(600);
+      await page.keyboard.press('Backspace');
+      await expect.poll(() => editor.source.inputValue()).toBe('');
+      await expect(editor.visualEditor.locator('pre')).toHaveCount(0);
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect.poll(() => editor.source.inputValue()).toBe(emptyMarkdown);
+      await expect(editor.visualEditor.locator('pre > code')).toHaveCount(1);
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect.poll(() => editor.source.inputValue()).toBe('');
+      await expect(editor.visualEditor.locator('pre')).toHaveCount(0);
+
+      expect(failureCodes).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const info of ['C++', 'C#']) {
+    test(`canonicalizes typed tilde ${info} info strings to backtick fences`, async ({ page }, testInfo) => {
+      const fence = '~~~';
+      const typedOpening = `${fence}${info}`;
+      const canonicalOpening = canonicalVisualFence(typedOpening);
+      const expectedMarkdown = `${canonicalOpening}\n\n${canonicalVisualFence(fence)}`;
+      await login(page, testInfo.easymdeUser);
+      await openEasyMdeNewPost(page);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const acceptedPreviewSignature = await readyPreviewSignature(editor.visualEditor);
+      await editor.visualEditor.focus();
+      await editor.visualEditor.press('ControlOrMeta+End');
+      await page.keyboard.type(typedOpening, { delay: 0 });
+      await page.keyboard.press('Enter');
+      await waitForImmersiveEditCommit(
+        editor.source,
+        editor.visualEditor,
+        expectedMarkdown,
+        acceptedPreviewSignature,
+        `${info} info string should survive typed tilde canonicalization`
+      );
+      await expect(editor.visualEditor.locator('pre > code')).toHaveCount(1);
+      await expect(editor.source).toHaveValue(expectedMarkdown);
+    });
+  }
+
 
   for (const fence of ['~~~', '```']) {
     const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
@@ -7785,6 +8062,7 @@ test.describe('EasyMDE editor workflows', () => {
   for (const fence of ['~~~', '```']) {
     const fenceLabel = '~~~' === fence ? 'tilde' : 'backtick';
     test(`deletes an empty typed ${fenceLabel} code block with Undo and Redo`, async ({ page }, testInfo) => {
+      const typedFence = canonicalVisualFence(fence);
       const failureCodes = [];
       const pageErrors = [];
       page.on('console', (message) => {
@@ -7804,7 +8082,7 @@ test.describe('EasyMDE editor workflows', () => {
       const code = editor.visualEditor.locator('pre > code');
       await expect(code).toHaveCount(1);
       const sourceWithFence = await editor.source.inputValue();
-      expect(sourceWithFence.split(/\r?\n/u).filter((line) => line === fence))
+      expect(sourceWithFence.split(/\r?\n/u).filter((line) => line === typedFence))
         .toHaveLength(2);
 
       const readSafeState = async () => {

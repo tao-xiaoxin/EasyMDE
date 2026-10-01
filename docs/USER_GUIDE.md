@@ -42,6 +42,11 @@ activation is ignored.
 In editable immersive Preview, Backspace at the start of an empty fenced code
 block removes its frame and returns to a paragraph. Undo and Redo restore the
 source, frame and caret, including fences left open at the end of the document.
+When a new visual block is created by typing a tilde or backtick fence opener
+that can be represented as valid backtick syntax and pressing Enter, its source
+uses an equally wide backtick fence with the typed language or info string.
+Existing or pasted tilde fences retain their original family; an info string
+containing a backtick remains literal instead of forming an invalid shortcut.
 On narrow screens, the Outline opens over the writing area. It closes when
 Preview becomes editable or an editable Preview is resized into a narrow
 screen. Its show control can reopen it without changing the saved Outline

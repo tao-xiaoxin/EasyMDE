@@ -608,7 +608,7 @@ describe('ImmersiveVisualEditor', () => {
   });
 
   it.each(['~~~js', '```js'])(
-    'preserves the %s fence family when Enter follows rapid visual input',
+    'canonicalizes the %s fence when Enter follows rapid visual input',
     (fence) => {
       vi.useFakeTimers();
       try {
@@ -732,8 +732,13 @@ describe('ImmersiveVisualEditor', () => {
         });
 
         expect(onFailure).not.toHaveBeenCalled();
+        const inputFamily = fence.match(/^(`{3,}|~{3,})/)?.[1];
+        const canonicalFamily = inputFamily
+          ? '`'.repeat(inputFamily.length)
+          : '';
+        const info = fence.slice(inputFamily?.length ?? 0);
         expect(canonical).toContain(
-          `${fence}\nconst value = 1;\n${fence.slice(0, 3)}`
+          `${canonicalFamily}${info}\nconst value = 1;\n${canonicalFamily}`
         );
         view.unmount();
       } finally {
@@ -851,7 +856,7 @@ describe('ImmersiveVisualEditor', () => {
       act(() => vi.advanceTimersByTime(80));
 
       expect(history.document.getValue()).toBe(
-        '~~~js\nExisting\n~~~\n\n~~~py\nA\n~~~'
+        '~~~js\nExisting\n~~~\n\n```py\nA\n```'
       );
       expect(localCode.textContent).toBe('A\n');
       expect(onFailure).not.toHaveBeenCalled();
@@ -883,7 +888,7 @@ describe('ImmersiveVisualEditor', () => {
       act(() => vi.advanceTimersByTime(80));
 
       expect(history.document.getValue()).toBe(
-        '~~~js\nExistingX\n~~~\n\n~~~py\nA\n~~~'
+        '~~~js\nExistingX\n~~~\n\n```py\nA\n```'
       );
       expect(existingCode.textContent).toBe('ExistingX\n');
       expect(onFailure).not.toHaveBeenCalled();
@@ -953,7 +958,7 @@ describe('ImmersiveVisualEditor', () => {
       ) throw new Error(
         `visual-fence-placeholder-missing:${onFailure.mock.calls.flat().join(',')}`
       );
-      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(canonicalValue).toBe('```bash\n\n```');
       expect(placeholder.getAttribute(
         'data-easymde-visual-code-placeholder'
       )).toBe('');
@@ -983,7 +988,7 @@ describe('ImmersiveVisualEditor', () => {
       expect(placeholder.hasAttribute(
         'data-easymde-visual-code-placeholder'
       )).toBe(false);
-      expect(canonicalValue).toBe('~~~bash\nx\n~~~');
+      expect(canonicalValue).toBe('```bash\nx\n```');
 
       placeCaretInText(currentText);
       const historyUndo = new InputEvent('beforeinput', {
@@ -1012,7 +1017,7 @@ describe('ImmersiveVisualEditor', () => {
       )).toBe(true);
       expect(window.getSelection()?.anchorNode).toBe(historyPlaceholder.firstChild);
       expect(window.getSelection()?.isCollapsed).toBe(true);
-      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(canonicalValue).toBe('```bash\n\n```');
 
       const historyRedo = new InputEvent('beforeinput', {
         bubbles: true,
@@ -1034,7 +1039,7 @@ describe('ImmersiveVisualEditor', () => {
       expect(historyPlaceholder.hasAttribute(
         'data-easymde-visual-code-placeholder'
       )).toBe(false);
-      expect(canonicalValue).toBe('~~~bash\nx\n~~~');
+      expect(canonicalValue).toBe('```bash\nx\n```');
 
       placeCaretInText(currentText);
       const deleteInput = new InputEvent('beforeinput', {
@@ -1060,7 +1065,7 @@ describe('ImmersiveVisualEditor', () => {
         'data-easymde-visual-code-placeholder'
       )).toBe('');
       expect(restored?.textContent).toBe('');
-      expect(canonicalValue).toBe('~~~bash\n\n~~~');
+      expect(canonicalValue).toBe('```bash\n\n```');
 
       const restoredText = restored?.firstChild;
       if (!(restoredText instanceof Text)) throw new Error('visual-restored-text-missing');
@@ -1082,7 +1087,7 @@ describe('ImmersiveVisualEditor', () => {
       expect(restored.hasAttribute(
         'data-easymde-visual-code-placeholder'
       )).toBe(false);
-      expect(canonicalValue).toBe('~~~bash\ny\n~~~');
+      expect(canonicalValue).toBe('```bash\ny\n```');
       expect(requestPreview).not.toHaveBeenCalled();
       view.unmount();
     } finally {
@@ -1290,6 +1295,108 @@ describe('ImmersiveVisualEditor', () => {
         'data-easymde-visual-code-placeholder'
       )).toBe(false);
       expect(canonicalValue).toBe('~~~bash\ny\n~~~');
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('accepts immediate text input after deleting a selected code body', () => {
+    vi.useFakeTimers();
+    try {
+      const markdown = '~~~json\n{"name":"A"}\n~~~';
+      const signature = 'delete-then-type-code-body';
+      const surface = document.createElement('article');
+      surface.innerHTML = [
+        '<pre data-easymde-visual-block-id="b0">',
+        '<code>{"name":"A"}\n</code>',
+        '</pre>'
+      ].join('');
+      document.body.append(surface);
+      const history = createHistoryDocument(markdown, true);
+      const onFailure = vi.fn();
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={history as unknown as EditorDocumentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{
+            editMap: oneFencedBlockEditMap(markdown, signature),
+            revision: 1,
+            signature
+          }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'unexpected-preview')}
+          surface={surface}
+        />
+      );
+      const pre = surface.querySelector('pre');
+      const code = pre?.querySelector(':scope > code');
+      if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
+        throw new Error('visual-delete-then-type-code-fixture-missing');
+      }
+      const selection = window.getSelection();
+      const selectedCode = document.createRange();
+      selectedCode.selectNodeContents(code);
+      selection?.removeAllRanges();
+      selection?.addRange(selectedCode);
+
+      const deleteBeforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward'
+      });
+      surface.dispatchEvent(deleteBeforeInput);
+      expect(deleteBeforeInput.defaultPrevented).toBe(false);
+
+      code.textContent = '';
+      const emptyCodeSelection = document.createRange();
+      emptyCodeSelection.setStart(code, 0);
+      emptyCodeSelection.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(emptyCodeSelection);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      }));
+
+      const placeholder = code.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      );
+      const placeholderText = placeholder?.firstChild;
+      if (!(placeholder instanceof HTMLElement) || !(placeholderText instanceof Text)) {
+        throw new Error('visual-delete-then-type-placeholder-missing');
+      }
+      const insertBeforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'A',
+        inputType: 'insertText'
+      });
+      surface.dispatchEvent(insertBeforeInput);
+      expect(insertBeforeInput.defaultPrevented).toBe(false);
+
+      placeholderText.data = 'A';
+      placeCaretInText(placeholderText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(history.document.getValue()).toBe('~~~json\nA\n~~~');
+      expect(code.textContent).toBe('A\n');
       expect(onFailure).not.toHaveBeenCalled();
       view.unmount();
     } finally {
@@ -1827,7 +1934,7 @@ describe('ImmersiveVisualEditor', () => {
       }));
       act(() => vi.advanceTimersByTime(80));
 
-      expect(history.document.getValue()).toContain('~~~\nAB\n~~~');
+      expect(history.document.getValue()).toContain('```\nAB\n```');
       expect(code.textContent).toBe('AB\n');
       expect(onFailure).not.toHaveBeenCalled();
       expect(requestPreview).not.toHaveBeenCalled();
@@ -3910,7 +4017,7 @@ describe('ImmersiveVisualEditor', () => {
         cancelable: true,
         key: 'Enter'
       }));
-      expect(history.getValue()).toBe('~~~\n\n~~~');
+      expect(history.getValue()).toBe('```\n\n```');
 
       const code = surface.querySelector('pre > code');
       const placeholder = code?.querySelector(
@@ -3940,10 +4047,10 @@ describe('ImmersiveVisualEditor', () => {
         inputType: 'insertText'
       }));
       act(() => vi.advanceTimersByTime(80));
-      expect(history.getValue()).toBe('~~~\nx\n~~~');
+      expect(history.getValue()).toBe('```\nx\n```');
       expect(applyTextChange.mock.calls.map(([change]) => change.value)).toEqual([
-        '~~~\n\n~~~',
-        '~~~\nx\n~~~'
+        '```\n\n```',
+        '```\nx\n```'
       ]);
 
       const undo = new KeyboardEvent('keydown', {
@@ -3956,7 +4063,7 @@ describe('ImmersiveVisualEditor', () => {
       expect(undo.defaultPrevented).toBe(true);
       expect(undoCommand).toHaveBeenCalledOnce();
       expect(onFailure).not.toHaveBeenCalled();
-      expect(history.getValue()).toBe('~~~\n\n~~~');
+      expect(history.getValue()).toBe('```\n\n```');
       expect(surface.querySelector('pre > code')?.textContent).toBe('');
       const restoredPlaceholder = surface.querySelector(
         'pre > code [data-easymde-visual-code-placeholder]'
@@ -3976,7 +4083,7 @@ describe('ImmersiveVisualEditor', () => {
       surface.dispatchEvent(redo);
       expect(redo.defaultPrevented).toBe(true);
       expect(redoCommand).toHaveBeenCalledOnce();
-      expect(history.getValue()).toBe('~~~\nx\n~~~');
+      expect(history.getValue()).toBe('```\nx\n```');
       expect(surface.querySelector('pre > code')?.textContent).toBe('x\n');
       expect(window.getSelection()?.anchorNode).toBeInstanceOf(Text);
       expect(window.getSelection()?.anchorOffset).toBe(1);
@@ -5190,6 +5297,81 @@ describe('ImmersiveVisualEditor', () => {
     }
   );
 
+  it('keeps consecutive spaces in a pending fenced code input burst', () => {
+    vi.useFakeTimers();
+    try {
+      const markdown = '~~~json\n{\n\n~~~';
+      const signature = 'pending-code-spaces';
+      const surface = document.createElement('article');
+      surface.innerHTML = '<pre><code>{\n\n</code></pre>';
+      document.body.append(surface);
+      const history = createHistoryDocument(markdown, true);
+      const onFailure = vi.fn();
+      const view = render(
+        <ImmersiveVisualEditor
+          documentSession={history as unknown as EditorDocumentSession}
+          imageUploadEnabled={false}
+          imagePasteUploadEnabled={false}
+          onCanonicalDocumentChange={vi.fn()}
+          onDiagnostic={vi.fn()}
+          onDispose={vi.fn()}
+          onFailure={onFailure}
+          onMarkdownChange={vi.fn()}
+          onPendingChange={vi.fn()}
+          onReady={vi.fn()}
+          onTransferFailure={vi.fn()}
+          pending={false}
+          previewSnapshot={{
+            editMap: oneFencedBlockEditMap(markdown, signature),
+            revision: 1,
+            signature
+          }}
+          previewStatus="ready"
+          requestPreview={vi.fn(() => 'unexpected-preview')}
+          surface={surface}
+        />
+      );
+      const code = surface.querySelector('pre > code');
+      const text = code?.firstChild;
+      if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+        throw new Error('visual-pending-code-spaces-fixture-missing');
+      }
+      placeCaretInText(text, 2);
+
+      const dispatchSpace = (): InputEvent => {
+        const beforeInput = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: ' ',
+          inputType: 'insertText'
+        });
+        surface.dispatchEvent(beforeInput);
+        expect(beforeInput.defaultPrevented).toBe(false);
+        const offset = window.getSelection()?.anchorOffset ?? text.length;
+        text.insertData(offset, ' ');
+        placeCaretInText(text, offset + 1);
+        const input = new InputEvent('input', {
+          bubbles: true,
+          data: ' ',
+          inputType: 'insertText'
+        });
+        surface.dispatchEvent(input);
+        return input;
+      };
+
+      dispatchSpace();
+      dispatchSpace();
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(history.document.getValue()).toBe('~~~json\n{\n  \n~~~');
+      expect(text.data).toBe('{\n  \n');
+      expect(onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['~~~', '```'])(
     'maps the first native input inside an accepted %s placeholder',
     (fence) => {
@@ -5806,7 +5988,7 @@ describe('ImmersiveVisualEditor', () => {
     view.unmount();
   });
 
-  it('maps a code block after visual paragraph edits shift stale Preview lines', () => {
+  it('maps a code block after pending visual paragraph edits shift Preview lines', () => {
     vi.useFakeTimers();
     try {
       const markdown = 'above\n\n~~~js\n\n~~~';
@@ -5899,22 +6081,12 @@ describe('ImmersiveVisualEditor', () => {
         inputType: 'insertText'
       });
       surface.dispatchEvent(beforeInput);
-      expect(beforeInput.defaultPrevented).toBe(true);
+      expect(beforeInput.defaultPrevented).toBe(false);
       expect(canonicalValue).toContain('added line two');
       expect(canonicalValue).toContain('~~~js');
       expect(code.textContent).toBe('\n');
       shiftedMarkdown = canonicalValue;
       expect(requestPreview).not.toHaveBeenCalled();
-
-      placeCaretInText(bodyText, 0);
-      const retryBeforeInput = new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        data: 'A',
-        inputType: 'insertText'
-      });
-      surface.dispatchEvent(retryBeforeInput);
-      expect(retryBeforeInput.defaultPrevented).toBe(false);
 
       bodyText.data = 'A\n';
       placeCaretInText(bodyText, 1);
@@ -6244,6 +6416,10 @@ describe('ImmersiveVisualEditor', () => {
       );
 
       try {
+        const inputFamily = fence.match(/^(`{3,}|~{3,})/)?.[1];
+        const canonicalFence = inputFamily && '~' === inputFamily[0]
+          ? '`'.repeat(inputFamily.length)
+          : fence;
         const fenceText = surface.querySelector('p')?.firstChild;
         if (!(fenceText instanceof Text)) {
           throw new Error('visual-undo-empty-fence-text-missing');
@@ -6254,7 +6430,7 @@ describe('ImmersiveVisualEditor', () => {
           cancelable: true,
           key: 'Enter'
         }));
-        expect(history.getValue()).toBe(`${fence}\n\n${fence}`);
+        expect(history.getValue()).toBe(`${canonicalFence}\n\n${canonicalFence}`);
 
         act(() => vi.advanceTimersByTime(600));
         surface.dispatchEvent(new KeyboardEvent('keydown', {
@@ -6271,7 +6447,7 @@ describe('ImmersiveVisualEditor', () => {
           ctrlKey: true,
           key: 'z'
         }));
-        expect(history.getValue()).toBe(`${fence}\n\n${fence}`);
+        expect(history.getValue()).toBe(`${canonicalFence}\n\n${canonicalFence}`);
         const code = surface.querySelector('pre > code');
         if (!(code instanceof HTMLElement)) {
           throw new Error('visual-undo-empty-fence-code-missing');

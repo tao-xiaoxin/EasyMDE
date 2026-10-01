@@ -50,7 +50,10 @@ type Props = ImmersiveVisualEditorProps & Readonly<{
   prepareWindowBlockAdoption: (
     node: HTMLElement
   ) => (() => boolean) | null;
-  requestPreviewAtDocumentEnd: (markdown: string) => Readonly<{
+  requestPreviewAtDocumentEnd: (
+    markdown: string,
+    sourceSelection?: Readonly<{ end: number; start: number }>
+  ) => Readonly<{
     onSelectionRestored?: () => void;
     release: () => void;
     signature: string;
@@ -160,6 +163,10 @@ type DeletionDirection = 'backward' | 'forward';
 
 type CommitOptions = Readonly<{
   allowSingleBlockStructural?: boolean;
+}>;
+
+type FormalPreviewOptions = Readonly<{
+  pinWindowSelection?: boolean;
 }>;
 
 type WindowedCodeBodyInputIntent = Readonly<{
@@ -310,6 +317,10 @@ const WINDOWED_CODE_BODY_DELETION_TYPES: ReadonlySet<string> = new Set([
   'deleteContentForward',
   'deleteWordBackward',
   'deleteWordForward'
+]);
+const WINDOWED_WHOLE_DOCUMENT_DELETION_TYPES: ReadonlySet<string> = new Set([
+  'deleteContentBackward',
+  'deleteContentForward'
 ]);
 
 function windowedCodeBodyInputIntent(
@@ -557,6 +568,57 @@ function rootBlock(surface: HTMLElement, node: Node | null): HTMLElement | null 
     current = current.parentElement;
   }
   return current?.parentElement === surface ? current : null;
+}
+
+function selectSurfaceContents(surface: HTMLElement): void {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-window-selection-invalid');
+  const range = surface.ownerDocument.createRange();
+  range.selectNodeContents(surface);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function selectionCoversEditableSurface(
+  surface: HTMLElement,
+  ranges: SourceRangeLedger
+): boolean {
+  const documentRef = surface.ownerDocument;
+  const selection = documentRef.defaultView?.getSelection();
+  if (
+    !surface.isConnected
+    || documentRef.activeElement !== surface
+    || !selection
+    || 1 !== selection.rangeCount
+    || selection.isCollapsed
+    || !selection.anchorNode?.isConnected
+    || !selection.focusNode?.isConnected
+    || !surface.contains(selection.anchorNode)
+    || !surface.contains(selection.focusNode)
+  ) return false;
+  const range = selection.getRangeAt(0);
+  if (
+    !range.startContainer.isConnected
+    || !range.endContainer.isConnected
+    || !surface.contains(range.startContainer)
+    || !surface.contains(range.endContainer)
+  ) return false;
+  const rootStart = documentRef.createRange();
+  rootStart.setStart(surface, 0);
+  rootStart.collapse(true);
+  const rootEnd = documentRef.createRange();
+  rootEnd.setStart(surface, surface.childNodes.length);
+  rootEnd.collapse(true);
+  if (
+    range.compareBoundaryPoints(Range.START_TO_START, rootStart) > 0
+    || range.compareBoundaryPoints(Range.END_TO_END, rootEnd) < 0
+  ) return false;
+  const blocks = Array.from(surface.children).filter(
+    (child) => !child.hasAttribute(WINDOW_SPACER_ATTRIBUTE)
+  );
+  return blocks.length > 0 && blocks.every((block) => {
+    return ranges.get(block.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? '') !== null;
+  });
 }
 
 function caretIsAtStart(block: HTMLElement): boolean {
@@ -1574,10 +1636,28 @@ export function WindowedImmersiveVisualEditor({
           }
           if (restored && pendingHistorySelection.releaseDocumentEndPin) {
             const visualSelection = surface.ownerDocument.defaultView?.getSelection();
+            const pendingSelection = pendingHistorySelection.selection;
+            const visualSelectionHasExpectedShape = Boolean(
+              visualSelection
+              && 1 === visualSelection.rangeCount
+              && visualSelection.anchorNode?.isConnected
+              && visualSelection.focusNode?.isConnected
+              && surface.contains(visualSelection.anchorNode)
+              && surface.contains(visualSelection.focusNode)
+              && (
+                pendingSelection.start === pendingSelection.end
+                  ? visualSelection.isCollapsed
+                  : !visualSelection.isCollapsed
+              )
+              && (
+                'none' === pendingSelection.direction
+                  ? visualSelection.isCollapsed
+                  : documentSelectionDirection(visualSelection)
+                    === pendingSelection.direction
+              )
+            );
             if (
-              !visualSelection?.isCollapsed
-              || !visualSelection.anchorNode?.isConnected
-              || !surface.contains(visualSelection.anchorNode)
+              !visualSelectionHasExpectedShape
               || !pendingHistorySelection.historyState
               || documentSession.document.getValue() !== activePending.markdown
               || !sameDocumentSelection(
@@ -1899,6 +1979,7 @@ export function WindowedImmersiveVisualEditor({
         const value = source.slice(0, region.sourceStart)
           + replacementMarkdown
           + source.slice(region.sourceEnd);
+        const restoreFocus = surface.ownerDocument.activeElement === surface;
         const adoptionFinalizers: Array<() => boolean> = [];
         adoptionTransaction = structuralChange && !structural;
         if (adoptionTransaction) {
@@ -1940,7 +2021,15 @@ export function WindowedImmersiveVisualEditor({
         sourceRef.current = value;
         if (value !== source) onMarkdownChange();
         if (structural) {
-          requestFormalPreview(value);
+          requestFormalPreview(
+            value,
+            {
+              historyState: documentSession.document.getHistoryState(),
+              restoreFocus,
+              selection
+            },
+            { pinWindowSelection: true }
+          );
         } else {
           updateBlockRanges(rangesRef.current, region, replacementMarkdown.length);
         }
@@ -1969,22 +2058,30 @@ export function WindowedImmersiveVisualEditor({
         historyState: DocumentHistoryState;
         restoreFocus: boolean;
         selection: DocumentSelection;
-      }>
+      }>,
+      options: FormalPreviewOptions = {}
     ): void => {
       releasePendingHistorySelection(pendingHistorySelectionRef);
       onPendingChange(true);
       let releaseDocumentEndPin: (() => void) | null = null;
       let onDocumentEndSelectionRestored: (() => void) | null = null;
       try {
-        const shouldPinDocumentEnd = Boolean(
+        const shouldPinWindowSelection = Boolean(
           historySelection?.restoreFocus
           && historySelection.historyState
-          && historySelection.selection.start === markdown.length
-          && historySelection.selection.end === markdown.length
+          && (
+            options.pinWindowSelection
+            || (
+              historySelection.selection.start === markdown.length
+              && historySelection.selection.end === markdown.length
+            )
+          )
         );
         let signature: string;
-        if (shouldPinDocumentEnd) {
-          const previewRequest = requestPreviewAtDocumentEnd(markdown);
+        if (shouldPinWindowSelection && historySelection) {
+          const previewRequest = options.pinWindowSelection
+            ? requestPreviewAtDocumentEnd(markdown, historySelection.selection)
+            : requestPreviewAtDocumentEnd(markdown);
           signature = previewRequest.signature;
           onDocumentEndSelectionRestored =
             previewRequest.onSelectionRestored ?? null;
@@ -2098,6 +2195,8 @@ export function WindowedImmersiveVisualEditor({
         if (event.cancelable) event.preventDefault();
         return;
       }
+      const wholeDocumentDeletionInput =
+        WINDOWED_WHOLE_DOCUMENT_DELETION_TYPES.has(event.inputType);
       if (!composing && !event.isComposing) codeBodyInput = null;
       if (
         pendingRef.current
@@ -2108,12 +2207,56 @@ export function WindowedImmersiveVisualEditor({
         event.preventDefault();
         return;
       }
+      if (composing || event.isComposing) return;
+      let wholeDocumentDeletion = false;
+      if (wholeDocumentDeletionInput) {
+        try {
+          wholeDocumentDeletion = selectionCoversEditableSurface(
+            surface,
+            rangesRef.current
+          );
+        } catch (error) {
+          if (event.cancelable) event.preventDefault();
+          report(error);
+          return;
+        }
+      }
+      if (wholeDocumentDeletion) {
+        event.preventDefault();
+        try {
+          const source = sourceRef.current;
+          const restoreFocus = surface.ownerDocument.activeElement === surface;
+          const selection = {
+            direction: 'none' as const,
+            end: 0,
+            start: 0
+          };
+          if (source) {
+            applyDocumentChange({
+              changes: { from: 0, insert: '', to: source.length },
+              deferNativeBridge: false,
+              recordHistorySelection: true,
+              selection,
+              value: ''
+            });
+            sourceRef.current = '';
+            onMarkdownChange();
+            requestFormalPreview('', {
+              historyState: documentSession.document.getHistoryState(),
+              restoreFocus,
+              selection
+            });
+          }
+        } catch (error) {
+          report(error);
+        }
+        return;
+      }
       if ('historyUndo' === event.inputType || 'historyRedo' === event.inputType) {
         event.preventDefault();
         runHistory('historyRedo' === event.inputType);
         return;
       }
-      if (composing || event.isComposing) return;
       try {
         visualInputBlock = captureVisualCodeInputSnapshot(
           selectedVisualCodeBlock(surface)
@@ -2339,7 +2482,36 @@ export function WindowedImmersiveVisualEditor({
         runHistory('y' === key || event.shiftKey);
         return;
       }
+      const selectAllShortcut = (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && !event.shiftKey
+        && 'a' === key;
+      if (selectAllShortcut) {
+        if (!(event.target instanceof Node) || !surface.contains(event.target)) return;
+        event.preventDefault();
+        try {
+          focusSurface(surface);
+          selectSurfaceContents(surface);
+        } catch (error) {
+          report(error);
+        }
+        return;
+      }
       if (!['Backspace', ' ', 'Enter'].includes(event.key)) return;
+      if ('Backspace' === event.key) {
+        let wholeDocumentSelection = false;
+        try {
+          wholeDocumentSelection = selectionCoversEditableSurface(
+            surface,
+            rangesRef.current
+          );
+        } catch (error) {
+          event.preventDefault();
+          report(error);
+          return;
+        }
+        if (wholeDocumentSelection) return;
+      }
       try {
         normalizeVisualCaretAtDocumentBoundary(surface);
       } catch (error) {

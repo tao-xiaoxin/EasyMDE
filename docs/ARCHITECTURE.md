@@ -259,6 +259,18 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+An accepted empty Preview discards the previous window repository, pending
+window commit, and pending materialization work; any superseded materialization
+resolves `false`. `materialize()` reports readiness only for an accepted ready
+Preview. Without a repository it returns success only when no materialization
+is pending, no actual spacer remains, and the accepted state does not still
+require a large window. Non-ready, unavailable-repository, and stale-repository
+paths return `false` with the stable diagnostics
+`preview-window-materialize-not-ready`,
+`preview-window-materialize-repository-unavailable`, and
+`preview-window-materialize-repository-stale`. Ready materialization is
+installed by the Safe HTML sink in bounded batches; completion, failure,
+supersession, empty replacement, and teardown resolve every pending result.
 Fence shortcuts are a presentation command: a newly formed tilde or backtick
 opener that can be represented as valid backtick syntax is serialized as an
 equally wide backtick fence while its info string is retained. Accepted or
@@ -323,11 +335,17 @@ whitespace and source-owned line endings. Code-body commits refresh this
 metadata; the windowed source-range adapter restores it for the active region.
 An actual empty-code Backspace shortcut flushes pending input before its
 structural change and records the corresponding canonical history transition.
-Focused windowed history at canonical EOF prepares a Preview-owned document-end
-window pin before scheduling its exact formal Preview request. The in-memory
-lease binds the request signature and accepted generation, preserves the
-validated final editable block in the initial and subsequent bounded windows,
-and releases after caret restoration or cancellation, error and teardown.
+Focused windowed structural edits prepare a Preview-owned selection pin
+before scheduling its exact formal Preview request. The in-memory lease binds
+the request signature, source selection, and accepted generation. A selected
+source range may be non-collapsed; Preview maps both endpoints to the relevant
+editable block indices before the atomic first window commit and preserves
+those indices in subsequent bounded windows. After the matching commit, the
+windowed owner restores the canonical Selection direction as well as its
+endpoints. A canonical EOF selection still uses the document-end form of the
+same lease. The lease releases after caret restoration or cancellation, error,
+or teardown; invalid range, map, generation, signature, and owner transitions
+remain explicit Preview failures.
 When that exact request resolves to a document at or below the Windowed
 threshold, the owner releases the matching lease and continues the normal full
 staged commit because the complete DOM already contains the editable EOF.
@@ -409,6 +427,32 @@ For a signature-matched visual paste accepted at canonical offset `0` or
 and restores it at the first or last safe editable DOM boundary without running
 the generic DOM search. Internal positions still use the bounded mapper and
 fail explicitly when they cannot be mapped.
+
+Windowed `Ctrl/Cmd+A` is owned by the live visual root: it creates a selection
+over the actual connected root, including its Preview spacer nodes. The
+windowed input owner handles only `deleteContentBackward` and
+`deleteContentForward` as full-document deletion when that current connected
+range covers the root and every current non-spacer child has a valid current
+range-ledger binding. That binding may identify a generated or non-editable
+root when the whole canonical document is explicitly selected. An incomplete,
+stale, detached, partial read-only, or Cut selection cannot claim
+full-document authority; it uses the existing protected mapped-selection path
+or fails explicitly and never expands mounted text to hidden source. Mapped
+source separator ranges and terminal whitespace are handled only when the
+accepted source-range map identifies them; unsupported or unmounted source
+gaps fail explicitly. The connected-root coverage guard is limited to the
+Backspace/Delete whole-document path, including its keydown handoff, so
+ordinary typing retains the cached interval-map fast path without a
+full-document scan. Empty and non-windowed editing continue through the
+existing `ImmersiveVisualEditor` empty-paragraph and local editing owners.
+
+During a bounded window child replacement, the Safe HTML sink derives the
+focused full-root Selection from the connected surface and preserves its
+forward or backward direction synchronously after the replacement. It also
+preserves a connected live text selection and root-boundary caret. Partial
+root selections and full-root selections after focus leaves the surface are
+never expanded to the new root; no caller-side shortcut flag grants that
+authority.
 
 Generated TOC, footnote, rendered math, and Mermaid regions remain the same
 read-only DOM nodes while visual editing is active. Their child markup and

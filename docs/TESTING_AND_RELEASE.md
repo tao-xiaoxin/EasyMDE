@@ -435,7 +435,18 @@ code cleared and retyped, and windowed block offsets.
 Native clipboard cases paste each bare three-character opener, assert that the
 initial source is unchanged, then type body text and check persistence, history,
 caret, and frame geometry. Unclosed EOF bodies retain their open state, including
-literal fence content that requires a wider opener.
+literal fence content that requires a wider opener. The four final native-paste
+deletion cases are `keeps native pasted backtick-json-closed body deletion on
+one visual caret`, `keeps native pasted tilde-closed body deletion on one visual
+caret`, `keeps native pasted backtick-json-open-eof body deletion on one visual
+caret`, and `keeps native pasted tilde-open-eof body deletion on one visual
+caret`.
+Each case records privacy-safe caret geometry and attaches a diagnostic
+Playwright screenshot with `caret: 'initial'`. The assertions own the current
+connected DOM Selection, source range, code/frame dimensions, and visual owner
+counts; those bounds do not prove every Chrome caret-paint or compositor state.
+The reported two-position blinking caret was not reproduced by this coverage.
+Track any future reproduction and evidence in [Issue 243](https://github.com/tao-xiaoxin/EasyMDE/issues/243); this contract makes no fix claim.
 They assert the canonical Markdown and
 editable DOM body agree after each transition while the shared Mac frame
 retains its full width and non-collapsing code area. The dedicated immersive
@@ -541,6 +552,41 @@ carets on Undo/Redo, and stale PRE replacement after noncancelable text input
 restores the accepted DOM and caret without publishing a source change.
 The canonical adapter's post-edit selection option must preserve ordinary
 document Undo/Redo step counts and same-value updates.
+The focused regression names for this windowed-selection contract are
+`pins the accepted Preview block for a non-document-end source selection`,
+`restores a noncollapsed selection after an accepted middle code-fence Preview`,
+`rejects an accepted source selection outside the request Markdown`,
+`does not apply a cancelled source-selection pin to a later matching request`,
+`owns Ctrl+A Backspace as a canonical full-document deletion`,
+`does not delete unmounted source on a whole-surface cut`,
+`clears canonical source when the root includes a generated read-only block`,
+`rejects a destructive selection that crosses an unmounted spacer`,
+`does not let a stale Ctrl+A selection clear a later collapsed deletion`,
+`clears a root selection spanning a mounted code block`,
+`keeps a selected mapped code block local to code`, and
+`keeps a generic tilde in an Enter-created paragraph`. Chromium coverage adds
+`preserves a windowed paragraph caret after structural Enter and formal
+Preview`, `keeps a long cleared document editable before and after immersive
+re-entry`, `commits immediate input after a long full clear and preserves
+Undo/Redo caret state`, and `keeps a partially deleted paragraph mapped after
+Enter and tilde input`. The Safe HTML sink cases are
+`preserves a focused full-root $direction selection during replacement`,
+`does not expand a partial root selection during replacement`, `does not
+restore a full-root range after focus leaves the surface`, and `restores spacer
+range and geometry after cancelling a partial materialization`. The Preview
+owner cases also cover `materializes the complete Preview asynchronously for a
+same-activation consumer`, `cancels stale window materialization when an
+authoritative empty Preview replaces it`, `does not report materialization
+success while a newer Preview is loading`, and `rejects materialization while
+an accepted window commit is still committing`.
+The named cases define the regression contract and do not replace the exact
+runtime evidence required by the browser gate.
+The change does not alter performance budgets. Keep the existing limits and
+the current test names `enforces the non-windowed edit-phase Long Task budget`,
+`@performance keeps near-threshold non-windowed immersive code editing
+responsive`, `@performance keeps a synthetic large Markdown paste and
+windowed visual editing responsive`, and `@performance renders a dense
+2300-block Preview with 150 code fences before enabling visual edits`.
 The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
 of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
 inputs appear in the code DOM, canonical Markdown converges within 150 ms of

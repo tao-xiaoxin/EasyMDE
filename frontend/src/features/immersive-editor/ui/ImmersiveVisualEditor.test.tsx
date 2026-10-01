@@ -3343,6 +3343,192 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('keeps a generic tilde in an Enter-created paragraph', () => {
+    vi.useFakeTimers();
+    const initialMarkdown = 'Initial\n\nLater';
+    const surface = document.createElement('article');
+    surface.innerHTML = '<p>Initial</p><p>Later</p>';
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    document.body.append(surface, container, submissionField);
+    const history = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    history.applyTextChange({
+      selection: {
+        direction: 'none',
+        end: initialMarkdown.length,
+        start: initialMarkdown.length
+      },
+      value: initialMarkdown
+    });
+    const onFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'unexpected-paragraph-preview');
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={{
+          document: history
+        } as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'enter-paragraph-tilde' }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+
+    try {
+      const firstParagraph = surface.querySelector('p');
+      const firstText = firstParagraph?.firstChild;
+      const laterParagraph = surface.querySelectorAll('p')[1];
+      if (
+        !(firstParagraph instanceof HTMLParagraphElement)
+        || !(firstText instanceof Text)
+        || !(laterParagraph instanceof HTMLParagraphElement)
+      ) {
+        throw new Error('visual-enter-paragraph-fixture-missing');
+      }
+      placeCaretInText(firstText);
+
+      const enterKey = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Enter'
+      });
+      surface.dispatchEvent(enterKey);
+      expect(enterKey.defaultPrevented).toBe(false);
+      const enterBeforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertParagraph'
+      });
+      Object.defineProperty(enterBeforeInput, 'getTargetRanges', {
+        value: () => [{
+          endContainer: firstText,
+          endOffset: firstText.length,
+          startContainer: firstText,
+          startOffset: firstText.length
+        }]
+      });
+      surface.dispatchEvent(enterBeforeInput);
+      const insertedParagraph = document.createElement('p');
+      const insertedBreak = document.createElement('br');
+      insertedParagraph.append(insertedBreak);
+      firstParagraph.after(insertedParagraph);
+      const splitSelection = document.createRange();
+      splitSelection.setStart(insertedParagraph, 0);
+      splitSelection.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(splitSelection);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        inputType: 'insertParagraph'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '~',
+        inputType: 'insertText'
+      });
+      Object.defineProperty(beforeInput, 'getTargetRanges', {
+        value: () => [{
+          endContainer: insertedParagraph,
+          endOffset: 0,
+          startContainer: insertedParagraph,
+          startOffset: 0
+        }]
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      const tildeText = document.createTextNode('~');
+      insertedParagraph.replaceChildren(tildeText);
+      placeCaretInText(tildeText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: '~',
+        inputType: 'insertText'
+      }));
+
+      const expectConnectedSelection = (offset: number): void => {
+        const current = window.getSelection();
+        expect(current?.isCollapsed).toBe(true);
+        expect(current?.anchorNode).toBe(tildeText);
+        expect(current?.anchorOffset).toBe(offset);
+        expect(tildeText.isConnected).toBe(true);
+        expect(tildeText.parentNode).toBe(insertedParagraph);
+        expect(insertedParagraph.isConnected).toBe(true);
+      };
+      expectConnectedSelection(1);
+      act(() => vi.advanceTimersByTime(80));
+      expectConnectedSelection(1);
+      expect(history.getValue()).toBe('Initial\n\n~\n\nLater');
+      expect(history.getSelection()).toEqual({
+        direction: 'none',
+        end: 10,
+        start: 10
+      });
+      expect(requestPreview).not.toHaveBeenCalled();
+
+      const followupBeforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      Object.defineProperty(followupBeforeInput, 'getTargetRanges', {
+        value: () => [{
+          endContainer: tildeText,
+          endOffset: 1,
+          startContainer: tildeText,
+          startOffset: 1
+        }]
+      });
+      surface.dispatchEvent(followupBeforeInput);
+      expect(followupBeforeInput.defaultPrevented).toBe(false);
+      tildeText.insertData(1, 'x');
+      placeCaretInText(tildeText, 2);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'x',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expectConnectedSelection(2);
+      expect(history.getValue()).toBe('Initial\n\n~x\n\nLater');
+      expect(history.getSelection()).toEqual({
+        direction: 'none',
+        end: 11,
+        start: 11
+      });
+      expect(tildeText.data).toBe('~x');
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves raw underline markup during rapid mapped text replacement', () => {
     vi.useFakeTimers();
     const initialMarkdown = '<u>Underlined text</u>';

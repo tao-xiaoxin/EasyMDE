@@ -106,6 +106,7 @@ import type { PreviewScrollPort } from '../../features/live-preview/ports/previe
 import {
   PreviewSurfaceOwner,
   type PreviewSurfaceRuntime,
+  type PreviewSourceSelection,
   type PreviewSurfaceStatus
 } from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { openMediaPickerSession } from '../../features/media-picker/media-picker-session';
@@ -456,7 +457,8 @@ export function schedulePreviewWithDocumentEndPin(
   runtime: Pick<PreviewSurfaceRuntime, 'prepareDocumentEndWindowPin' | 'session'>,
   request: PreviewRequest,
   onHistoryPendingChange?: (pending: boolean) => void,
-  onHistorySelectionRestored?: () => void
+  onHistorySelectionRestored?: () => void,
+  sourceSelection?: PreviewSourceSelection
 ): Readonly<{
   onSelectionRestored: () => void;
   release: () => void;
@@ -465,7 +467,7 @@ export function schedulePreviewWithDocumentEndPin(
   onHistoryPendingChange?.(true);
   let lease: ReturnType<PreviewSurfaceRuntime['prepareDocumentEndWindowPin']> | null = null;
   try {
-    lease = runtime.prepareDocumentEndWindowPin(request.signature);
+    lease = runtime.prepareDocumentEndWindowPin(request.signature, sourceSelection);
     runtime.session.schedule(request, true);
   } catch (error) {
     try {
@@ -1171,7 +1173,7 @@ export function EditorRoot(props: EditorRootProps) {
     [schedulePreviewMarkdown]
   );
   const handleVisualPreviewAtDocumentEnd = useCallback(
-    (markdown: string) => {
+    (markdown: string, sourceSelection?: PreviewSourceSelection) => {
       const runtime = previewRuntimeRef.current;
       if (!runtime) {
         throw new Error('preview-runtime-unavailable');
@@ -1201,7 +1203,8 @@ export function EditorRoot(props: EditorRootProps) {
               documentSession.document.getHistoryState().redoDepth > 0
             );
           }
-        }
+        },
+        sourceSelection
       );
     },
     [documentSession, props.preview]

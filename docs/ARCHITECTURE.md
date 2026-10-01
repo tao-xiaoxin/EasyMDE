@@ -685,6 +685,13 @@ Opening an ordinary existing supported post imports the current `post_content` i
 
 Markdown is the source of truth in `_easymde_markdown`. WordPress `post_content` stores rendered HTML for themes, feeds, search, plugins, visitors, and compatibility when EasyMDE is inactive.
 
+Native Save and autosave render compatibility HTML through WordPress's
+`wp_insert_post_data` slashed post-field contract; Core unslashes that field
+before storage. The render signature hashes the raw HTML that Core stores.
+Metadata writes for Save, autosave, revision copy, and revision restore apply
+the same boundary rule to the exact Markdown source; reads remain ordinary
+metadata reads.
+
 Important post meta keys include:
 
 ```text

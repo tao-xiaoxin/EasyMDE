@@ -10609,9 +10609,11 @@ test.describe('EasyMDE editor workflows', () => {
       const localFenceParagraph = 'Local fence marker';
       const initialMarkdown = `${fence}js\nExisting\n${fence}\n\n${localFenceParagraph}`;
       const openLocalFenceMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py`;
-      const emptyLocalFenceMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py\n\n${fence}`;
-      const localBodyMarkdown = `${fence}js\nExisting\n${fence}\n\n${fence}py\nA\n${fence}`;
-      const editedMarkdown = `${fence}js\nExistingX\n${fence}\n\n${fence}py\nA\n${fence}`;
+      const localOpeningFence = canonicalVisualFence(`${fence}py`);
+      const localClosingFence = canonicalVisualFence(fence);
+      const emptyLocalFenceMarkdown = `${fence}js\nExisting\n${fence}\n\n${localOpeningFence}\n\n${localClosingFence}`;
+      const localBodyMarkdown = `${fence}js\nExisting\n${fence}\n\n${localOpeningFence}\nA\n${localClosingFence}`;
+      const editedMarkdown = `${fence}js\nExistingX\n${fence}\n\n${localOpeningFence}\nA\n${localClosingFence}`;
 
       page.on('console', (message) => {
         const failureCode = message.text().match(/^\[EasyMDE\] (visual-editor-code-body-map-[a-z-]+)$/u)?.[1];

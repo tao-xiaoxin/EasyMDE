@@ -3415,9 +3415,10 @@ export function ImmersiveVisualEditor({
         && visualInputPendingRef.current
         && !pendingCodeInputCanContinue
       ) {
-        event.preventDefault();
-        flushVisualInput();
-        return;
+        if (!flushVisualInput()) {
+          event.preventDefault();
+          return;
+        }
       }
       visualInputBlock = null;
       visualInputCodeOrdinal = null;

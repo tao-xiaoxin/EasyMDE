@@ -528,6 +528,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(requestPreview).not.toHaveBeenCalled();
     expect(onPendingChange).not.toHaveBeenCalledWith(true);
     expect(prepareWindowBlockAdoption).toHaveBeenCalledWith(code.parentElement);
+    expect(current.canonical()).toContain('```bash\n\n```');
 
     const input = new InputEvent('beforeinput', {
       bubbles: true,
@@ -545,7 +546,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       bubbles: true,
       inputType: 'insertText'
     }));
-    expect(current.canonical()).toContain('~~~bash\necho ready\n~~~');
+    expect(current.canonical()).toContain('```bash\necho ready\n```');
     expect(code.textContent).toBe('echo ready');
     expect(window.getSelection()?.anchorNode).toBe(codeText);
     expect(window.getSelection()?.anchorOffset).toBe(codeText.length);
@@ -568,7 +569,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       inputType: 'deleteContentBackward'
     }));
     expect(onFailure).not.toHaveBeenCalled();
-    expect(current.canonical()).toContain('~~~bash\necho read\n~~~');
+    expect(current.canonical()).toContain('```bash\necho read\n```');
 
     placeCaret(codeText, 0);
     const beforeForwardDelete = new InputEvent('beforeinput', {
@@ -587,7 +588,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       bubbles: true,
       inputType: 'deleteContentForward'
     }));
-    expect(current.canonical()).toContain('~~~bash\ncho read\n~~~');
+    expect(current.canonical()).toContain('```bash\ncho read\n```');
 
     placeCaret(codeText, 0);
     const beforeEmptyDelete = new InputEvent('beforeinput', {
@@ -609,7 +610,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       'data-easymde-visual-code-placeholder'
     )).toBe('');
     expect(restored?.textContent).toBe('');
-    expect(current.canonical()).toContain('~~~bash\n\n~~~');
+    expect(current.canonical()).toContain('```bash\n\n```');
 
     const restoredText = restored?.firstChild;
     if (!(restoredText instanceof Text)) throw new Error('windowed-restored-text-missing');
@@ -630,7 +631,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored?.hasAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe(false);
-    expect(current.canonical()).toContain('~~~bash\ny\n~~~');
+    expect(current.canonical()).toContain('```bash\ny\n```');
     expect(requestPreview).not.toHaveBeenCalled();
     expect(onPendingChange).not.toHaveBeenCalledWith(true);
     view.unmount();
@@ -641,9 +642,9 @@ describe('WindowedImmersiveVisualEditor', () => {
     const initialMarkdown = current.canonical();
     const fenceStart = initialMarkdown.indexOf('~~~bash');
     if (fenceStart < 0) throw new Error('windowed-transparent-span-fence-missing');
-    const afterFence = initialMarkdown.replace('~~~bash', '~~~bash\n\n~~~');
-    const afterA = initialMarkdown.replace('~~~bash', '~~~bash\nA\n~~~');
-    const afterAl = initialMarkdown.replace('~~~bash', '~~~bash\nAl\n~~~');
+    const afterFence = initialMarkdown.replace('~~~bash', '```bash\n\n```');
+    const afterA = initialMarkdown.replace('~~~bash', '```bash\nA\n```');
+    const afterAl = initialMarkdown.replace('~~~bash', '```bash\nAl\n```');
     const bodyStart = fenceStart + '~~~bash\n'.length;
     const submissionField = document.createElement('textarea');
     submissionField.value = initialMarkdown;
@@ -1420,7 +1421,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       data: 'echo hi',
       inputType: 'insertText'
     }));
-    expect(current.canonical()).toContain('~~~bash\necho hi\n~~~');
+    expect(current.canonical()).toContain('```bash\necho hi\n```');
 
     const selectedCode = document.createRange();
     selectedCode.selectNodeContents(code);
@@ -1456,7 +1457,7 @@ describe('WindowedImmersiveVisualEditor', () => {
       'data-easymde-visual-code-placeholder'
     )).toBe('');
     expect(restored?.textContent).toBe('');
-    expect(current.canonical()).toContain('~~~bash\n\n~~~');
+    expect(current.canonical()).toContain('```bash\n\n```');
     expect(requestPreview).not.toHaveBeenCalled();
 
     if (!(restored instanceof HTMLSpanElement)
@@ -1480,7 +1481,7 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(restored.hasAttribute(
       'data-easymde-visual-code-placeholder'
     )).toBe(false);
-    expect(current.canonical()).toContain('~~~bash\ny\n~~~');
+    expect(current.canonical()).toContain('```bash\ny\n```');
     expect(requestPreview).not.toHaveBeenCalled();
     view.unmount();
   });
@@ -2032,8 +2033,14 @@ describe('WindowedImmersiveVisualEditor', () => {
     expect(onFailure).not.toHaveBeenCalled();
     expect(requestPreview).not.toHaveBeenCalled();
     const family = fence.match(/^(`{3,}|~{3,})/)?.[1];
-    expect(family).toBeTruthy();
-    expect(current.canonical()).toContain(`${fence}\n\n${family}`);
+    if (!family) throw new Error('windowed-canonical-fence-family-missing');
+    const canonicalFamily = '~' === family[0]
+      ? '`'.repeat(family.length)
+      : family;
+    const info = fence.slice(family.length);
+    expect(current.canonical()).toContain(
+      `${canonicalFamily}${info}\n\n${canonicalFamily}`
+    );
     view.unmount();
   });
 

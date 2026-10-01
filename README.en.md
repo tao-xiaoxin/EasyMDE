@@ -55,6 +55,7 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 - Scroll synchronization between source and preview panes.
 - Compact icon toolbar for common Markdown actions.
 - Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
+- Immersive editing accepts `~~~` or backtick fence shortcuts that can be represented as valid backtick syntax; a newly formed block uses an equally wide backtick fence in source, while existing or pasted tilde fences retain their family.
 - Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
 - Write beside the live preview on desktop; the panes stack vertically on narrow screens.
 

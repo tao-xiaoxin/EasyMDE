@@ -1551,7 +1551,7 @@ describe('EditorRoot', () => {
     }));
     expect(visualEditor.querySelector('pre > code.hljs')).not.toBeNull();
     await waitFor(() =>
-      expect(props.submissionField.value).toBe('~~~\n\n~~~')
+      expect(props.submissionField.value).toBe('```\n\n```')
     );
     await waitFor(() =>
       expect(props.enhancementPort.syncCodeFrameBackgrounds)

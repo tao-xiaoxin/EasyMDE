@@ -1141,6 +1141,50 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('preserves literal code-body whitespace and zero-width characters', () => {
+    const surface = editor('');
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    const body = '-  value\n\u200b literal';
+    code.append(document.createTextNode(body));
+    pre.append(code);
+    surface.append(pre);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      `\`\`\`\n${body}\n\`\`\``
+    );
+  });
+
+  it('keeps hard-break spacing after an inline image with surrounding text', () => {
+    const surface = editor('');
+    const paragraph = document.createElement('p');
+    const image = document.createElement('img');
+    image.src = 'https://example.test/x';
+    paragraph.append(
+      document.createTextNode('Text'),
+      image,
+      document.createTextNode('  '),
+      document.createElement('br'),
+      document.createTextNode('Next')
+    );
+    surface.append(paragraph);
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      'Text![](https://example.test/x)  \nNext'
+    );
+  });
+
+  it('keeps literal code-body spacing inside unordered and ordered list items', () => {
+    const surface = editor(
+      '<ul><li><pre><code>-  value\n</code></pre></li></ul>'
+      + '<ol start="10"><li><pre><code>-  value\n</code></pre></li></ol>'
+    );
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '- ```\n  -  value\n  ```\n  \n\n10. ```\n    -  value\n    ```'
+    );
+  });
+
   it('restores fenced code families after a rendered Preview replaces the visual DOM', () => {
     const surface = editor(`
       <pre><code class="language-js">tilde</code></pre>
@@ -1637,7 +1681,7 @@ A--&gt;B</code></pre>
     '`````bash',
     '```',
     '```bash'
-  ])('forms the supported %s fence only after Enter and preserves its family', (fence) => {
+  ])('forms the supported %s fence only after Enter and canonicalizes it to backticks', (fence) => {
     const surface = editor(`<p>${fence}</p>`);
     const text = surface.querySelector('p')?.firstChild;
     if (!(text instanceof Text)) throw new Error('visual-fence-text-missing');
@@ -1667,17 +1711,63 @@ A--&gt;B</code></pre>
     expect(window.getSelection()?.isCollapsed).toBe(true);
     expect(window.getSelection()?.anchorOffset).toBe(0);
     expect(window.getSelection()?.focusOffset).toBe(0);
-    const closingFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
-    expect(closingFence).toBeTruthy();
+    const inputFence = fence.match(/^(`{3,}|~{3,})/)?.[1];
+    const closingFence = inputFence ? '`'.repeat(inputFence.length) : null;
+    const info = fence.slice(inputFence?.length ?? 0);
+    if (!closingFence) throw new Error('visual-canonical-fence-missing');
+    expect(surface.querySelector('pre')?.getAttribute(
+      'data-easymde-visual-fence'
+    )).toBe(closingFence);
     expect(
       visualSelectionSourceRange(
         surface,
-        fence,
-        fence,
-        `${fence}\n\n${closingFence}`
+        `${closingFence}${info}`,
+        `${closingFence}${info}`,
+        `${closingFence}${info}\n\n${closingFence}`
       )
-    ).toEqual({ direction: 'none', end: fence.length + 1, start: fence.length + 1 });
-    expect(serializeVisualMarkdown(surface)).toBe(`${fence}\n\n${closingFence}`);
+    ).toEqual({
+      direction: 'none',
+      end: closingFence.length + info.length + 1,
+      start: closingFence.length + info.length + 1
+    });
+    expect(serializeVisualMarkdown(surface)).toBe(
+      `${closingFence}${info}\n\n${closingFence}`
+    );
+  });
+
+  it.each([
+    { fence: '```c++', info: 'c++', languageClass: null },
+    { fence: '```c#', info: 'c#', languageClass: null },
+    { fence: '``` json', info: ' json', languageClass: 'language-json' },
+    { fence: '```json title=test', info: 'json title=test', languageClass: 'language-json' },
+    { fence: '~~~json title=test', info: 'json title=test', languageClass: 'language-json' }
+  ])('accepts a valid fence info string for $fence', ({ fence, info, languageClass }) => {
+    const surface = editor(`<p>${fence}</p>`);
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-fence-info-text-missing');
+    placeCaret(text, text.length);
+
+    expect(applyVisualBlockShortcut(surface, new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    }))).toBe(true);
+
+    const pre = surface.querySelector('pre');
+    const code = pre?.querySelector(':scope > code');
+    expect(pre?.getAttribute('data-easymde-visual-fence-info')).toBe(info);
+    if (languageClass) {
+      expect(code?.classList.contains(languageClass)).toBe(true);
+    } else {
+      expect(code?.className).toBe('hljs');
+    }
+    const inputFamily = fence.match(/^(`{3,}|~{3,})/)?.[1];
+    const canonicalFamily = inputFamily
+      ? '`'.repeat(inputFamily.length)
+      : '';
+    expect(serializeVisualMarkdown(surface)).toBe(
+      `${canonicalFamily}${info}\n\n${canonicalFamily}`
+    );
   });
 
   it('rejects a backtick fence with an embedded backtick in its info string', () => {
@@ -1694,6 +1784,24 @@ A--&gt;B</code></pre>
 
     expect(applyVisualBlockShortcut(surface, event)).toBe(false);
     expect(surface.innerHTML).toBe('<p>`````js`invalid</p>');
+  });
+
+  it('leaves a tilde shortcut with a backtick info string literal', () => {
+    const surface = editor('<p>~~~j`s</p>');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-tilde-info-text-missing');
+    placeCaret(text, text.length);
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Enter'
+    });
+
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(surface.innerHTML).toBe('<p>~~~j`s</p>');
+    expect(serializeVisualMarkdown(surface)).toBe('~~~j`s');
   });
 
   it.each([
@@ -1801,14 +1909,14 @@ A--&gt;B</code></pre>
     }
 
     placeholderText.data = 'x';
-    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
     placeholder.removeAttribute('data-easymde-visual-code-placeholder');
     placeCaret(placeholderText, placeholderText.length);
-    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
 
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'historyUndo', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(serializeVisualMarkdown(surface)).toBe('```bash\n\n```');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
     expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(true);
@@ -1816,14 +1924,14 @@ A--&gt;B</code></pre>
 
     placeholderText.data = 'x';
     normalizeVisualCodePlaceholders(surface, 'historyRedo', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\nx\n~~~');
+    expect(serializeVisualMarkdown(surface)).toBe('```bash\nx\n```');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
     expect(placeholder.hasAttribute('data-easymde-visual-code-placeholder')).toBe(false);
 
     placeholderText.data = '';
     normalizeVisualCodePlaceholders(surface, 'deleteContentBackward', code.parentElement);
-    expect(serializeVisualMarkdown(surface)).toBe('~~~bash\n\n~~~');
+    expect(serializeVisualMarkdown(surface)).toBe('```bash\n\n```');
     expect(code.firstChild).toBe(placeholder);
     expect(placeholder.firstChild).toBe(placeholderText);
 
@@ -2379,6 +2487,41 @@ A--&gt;B</code></pre>
     expect(applyVisualInlineShortcut(surface)).toBe(true);
     expect(surface.querySelector('strong')?.textContent).toBe('bold');
     expect(serializeVisualMarkdown(surface)).toBe('Use **bold**');
+  });
+
+  it.each(['**bold**', '~~deleted~~', '`literal`'])(
+    'leaves inline Markdown syntax literal inside a fenced code body: %s',
+    (value) => {
+      const surface = editor(`<pre><code>${value}</code></pre>`);
+      const text = surface.querySelector('pre > code')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('visual-code-inline-text-missing');
+      placeCaret(text, text.length);
+
+      expect(applyVisualInlineShortcut(surface)).toBe(false);
+      expect(surface.querySelector('pre > code')?.innerHTML).toBe(value);
+      expect(surface.querySelector('pre > code strong, pre > code em, pre > code del, pre > code code')).toBeNull();
+    }
+  );
+
+  it('leaves block shortcut markers literal inside a fenced code body', () => {
+    const surface = editor('<pre><code>#</code></pre>');
+    const pre = surface.querySelector('pre');
+    if (!(pre instanceof HTMLElement)) throw new Error('visual-code-block-pre-missing');
+    const cloneNode = vi.spyOn(pre, 'cloneNode');
+    const text = surface.querySelector('pre > code')?.firstChild;
+    if (!(text instanceof Text)) throw new Error('visual-code-block-text-missing');
+    placeCaret(text, text.length);
+
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: ' '
+    });
+
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    expect(surface.innerHTML).toBe('<pre><code>#</code></pre>');
+    expect(cloneNode).not.toHaveBeenCalled();
   });
 
   it('accepts valid emphasis content containing underscores', () => {

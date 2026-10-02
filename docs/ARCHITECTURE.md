@@ -259,6 +259,13 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+The PHP Preview owner remains authoritative for source provenance, source type,
+order, and range bounds, and projects each connected-overlap union into the edit
+map. After a connected group is known, one linear flush marks every group root
+readonly with a zero-width range at the union end. Both the windowed marker path
+and the non-windowed enhanced-root path carry the map's `editable` bit; false
+roots receive `contenteditable=false` and the shared read-only selector protects
+them. This provenance projection does not mutate the Source Editor.
 Fence shortcuts are a presentation command: a newly formed tilde or backtick
 opener that can be represented as valid backtick syntax is serialized as an
 equally wide backtick fence while its info string is retained. Accepted or
@@ -487,23 +494,117 @@ current exception; Verify Upload remains single-attempt.
 
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
-WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state.
+WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
 and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
 enabled, an explicit ordinary or immersive Copy uses the modern Clipboard
 deferred payload path to serially rasterize only outermost rendered Mermaid and
-KaTeX math roots, then uploads each PNG through the Editor's selected
-`ImageUploadPort`. Image Hosting enabled selects the existing Image Hosting
-owner; disabled selects the existing WordPress Media Library owner. Ordinary
-tables, existing images, ordinary SVG, code, other media, and unknown content
-retain portable HTML. Background preparation for ordinary Preview remains
-compatibility-only and never runs from visual editing; explicit Copy prepares
-the current stable surface on demand. Legacy Clipboard and synchronous modern
-setup failure upload nothing. A failed selected owner never switches;
-Copy publishes no partial Clipboard payload, though an upload completed before
-a later transaction failure can remain. The live Preview and document remain
-unchanged.
+KaTeX math roots in stable source order, then uploads each PNG through the
+Editor's selected `ImageUploadPort` with backpressure and at most three
+in-flight uploads. Completion is retained by candidate order and visual clones
+are replaced only after all selected-owner uploads succeed, in that order.
+Image Hosting enabled selects the existing Image Hosting owner; disabled selects
+the existing WordPress Media Library owner. Ordinary tables, existing images,
+ordinary SVG, code, other media, and unknown content retain portable HTML.
+Background preparation for ordinary Preview remains compatibility-only and
+never runs from visual editing; explicit Copy prepares the current stable
+surface on demand. With PNG conversion enabled, EditorRoot skips unused
+portable background preparation, resize/layout subscriptions, and its queued
+timer; explicit Copy still serializes a fresh payload for the current source;
+disabled/default behavior remains unchanged.
+Legacy Clipboard and synchronous modern setup failure upload nothing. A failed
+selected owner never switches; stale or aborted conversion aborts remaining
+uploads and rejects the deferred payload. Copy publishes no
+partial Clipboard payload, though an upload completed before a later
+transaction failure can remain. The live Preview and document remain unchanged.
+The PNG conversion branch still prepares computed root metadata, removes class
+and transient attributes, and registers the outer visual root before replacing
+that whole root with the native image. It therefore skips descendant,
+pseudo-element, and theme-background portable serialization for the converted
+candidate while native capture reads the original source tree; portable,
+background, legacy, table, and ordinary-SVG serialization remains unchanged.
+
+For the portable path, a successful modern setup constructs deferred HTML and
+plain text Blob payloads and invokes the browser `write()` owner in the
+originating click task before yielding or reading computed styles and geometry.
+The later freshness walk includes the complete sink markup, root attributes
+except the three refresh bookkeeping attributes, viewport, computed export and
+pseudo-element styles, and element dimensions; scroll-coordinate-only changes
+may reuse a payload. Ordinary and pseudo-element logical text alignment is
+converted to physical values using source direction. Ordinary `content-box`
+finite pixel dimensions are projected to border-box by adding padding and
+borders, while intrinsic values and special SVG/Math/KaTeX/Mermaid geometry
+remain unchanged. The legacy `execCommand` path retains its synchronous
+activation requirement and consumes only a source- and layout-fresh prepared
+payload. Each transaction-local source guard observes the sink before taking
+its immutable initial canonical key and drains `MutationObserver.takeRecords()`
+at initial, current, and final checkpoints. The clean path makes an O(1) reuse
+decision; the dirty path recomputes the complete key, allowing same-value mutations to
+reuse while making real source changes stale. Final source and layout keys and
+the existing owner/layout guards remain authoritative. Only the three
+refresh-bookkeeping attributes on the sink root are ignored; matching
+descendant attributes remain source changes. Abort, timeout, stale, and
+teardown gates reject deferred work, and `finally` disconnects the observer,
+including late cleanup.
+
+The visual rasterizer waits for document font readiness and resolves managed
+font roots from the approved `previewEnhancement.assetBaseUrl` and approved
+KaTeX stylesheet URL supplied by bootstrap. It embeds only matching managed
+same-origin EasyMDE `@font-face` sources in the raster SVG; remote or
+unrecognized URLs are omitted. A required managed family with no source face,
+invalid or rejected bytes, or failed browser-font validation fails explicitly;
+only nonmanaged or system families may remain on the browser fallback. Bounded
+font work is cancellable. Each successful PNG filename includes the SHA-256
+digest of its final bytes, which preserves repeated output names while
+distinguishing different output bytes.
+
+Math rasterization first receives a native computed-style clone of the same Safe
+Preview source and its original parent context for inline line-box typography.
+The snapshot retains all safe computed dimensions and normal defaults, including
+KaTeX, table, and pstrut geometry; computed `table-layout` remains native and
+there is no authored-dimension preference rule. Inline allocation is
+measured before capture normalization as fractional `inlineLayout` data
+containing width, height, baseline, paint offsets, and optional viewport
+geometry. The outer inline-block wrapper always owns the source allocation and
+line box. Its inner original source-root viewport owns `auto`/`scroll`/
+`hidden`/`clip` independently per axis; `autoX`/`hiddenY` expands X while
+clipping Y, and `hiddenX`/`autoY` does the inverse. The PNG uses root-local
+union paint offsets plus viewport offsets. Physical left margin is owned by the outer wrapper once and subtracted
+once from the local paint offset; vertical margin remains allocation-only, and
+source `vertical-align:top` and `bottom` retain their neighboring line-box
+keywords while other modes use the measured allocation `B-H` relation. Paint
+placement uses root-local union and viewport offsets rather than a fixed offset.
+Capture
+bounds retain full scroll/descendant extent
+when appropriate and floor minima/ceil maxima once on the paint grid to remove
+fractional phase drift. Missing or invalid allocation fails explicitly.
+Display math retains a centered intrinsic wrapper with local horizontal overflow
+and a block image; source padding, borders, backgrounds, and capture geometry
+are baked into the PNG once. All output dimensions remain subject to the
+existing 4096-edge and PNG-pixel bounds. Ordinary media keeps its responsive
+sizing.
+
+Modern Clipboard preparation has a 60-second bound for the serialized payload
+and deferred HTML/plain Blob values; once they are ready, the actual browser
+commit has a separate 10-second bound. Early browser-write rejection fails fast,
+while late payload, stale-source, abort, and teardown gates prevent a deferred
+value from reporting success after the operation is no longer current.
+
+Focused unit coverage does not replace the native CSS allocation matrix. Native
+production verification is the evidence boundary for fractional and
+superscript source-to-PNG geometry; residual 1/64 CSS-pixel precision and DPR1
+text anti-aliasing differences are rendering limits, not exporter offsets.
+
+Preview request diagnostics use the current request session and the active
+owner's latest callback reference. Known failures expose only the stable,
+privacy-safe `preview-response-invalid` or `preview-request-failed` codes;
+superseded, aborted, stale, or torn-down work does not publish a diagnostic or
+error state. The owner is not recreated merely because the callback identity
+changes. PHP owns strict source provenance, type, order, and range bounds; the
+connected-overlap union is flushed once into readonly zero-width map entries.
+The same editable map is enforced by both visual surfaces through the existing
+marker/repository paths.
 
 `createBrowserWechatClipboard` currently limits materialized theme-image data payloads to 4,000,000 bytes, retains at most 32 background-asset cache entries, and applies 10,000 ms timeouts to approved theme-image fetch/conversion and Clipboard commit.
 

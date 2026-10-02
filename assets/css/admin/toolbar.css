@@ -174,6 +174,11 @@
     background: #fff;
 }
 
+.easymde-toolbar-copy-action[aria-busy="true"] {
+    cursor: progress;
+    opacity: .72;
+}
+
 .easymde-toolbar-text-icon,
 .easymde-wechat-glyph {
     display: inline-flex;
@@ -242,4 +247,34 @@
 
 .easymde-wechat-glyph path {
     fill: #07c060;
+}
+
+.easymde-wechat-pending-glyph {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(7, 192, 96, 0.1);
+    box-shadow: inset 0 0 0 1px rgba(7, 192, 96, 0.18);
+    color: #07c060;
+}
+
+.easymde-wechat-pending-glyph svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    animation: easymde-wechat-copy-spin 800ms linear infinite;
+}
+
+@keyframes easymde-wechat-copy-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .easymde-wechat-pending-glyph svg {
+        animation: none;
+    }
 }

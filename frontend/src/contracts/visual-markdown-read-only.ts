@@ -3,5 +3,6 @@ export const VISUAL_MARKDOWN_READ_ONLY_SELECTOR = [
   '.footnotes-sep',
   '.footnotes',
   '.easymde-math[data-easymde-rendered]',
-  '.easymde-mermaid'
+  '.easymde-mermaid',
+  '[data-easymde-visual-block-id][contenteditable="false"]'
 ].join(', ');

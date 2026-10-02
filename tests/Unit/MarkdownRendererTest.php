@@ -1,6 +1,7 @@
 <?php
 
 use EasyMDE\Content\MarkdownRenderer;
+use EasyMDE\Content\VisualPreviewBlockAnnotator;
 
 final class MarkdownRendererTest extends WP_UnitTestCase
 {
@@ -188,6 +189,144 @@ final class MarkdownRendererTest extends WP_UnitTestCase
         $this->assertStringContainsString( '<p data-easymde-visual-block-id="b3">After</p>', $preview['html'] );
         $this->assertStringNotContainsString( 'data-easymde-visual-source-id', $preview['html'] );
     }
+
+	public function test_preview_marks_split_block_math_roots_read_only_without_overlapping_source_ranges() {
+		$preview = MarkdownRenderer::render_preview( 'Display math: \\[\\frac{1}{n}\\].', 'default' );
+		$blocks  = $preview['editMap']['blocks'];
+
+		$this->assertCount( 3, $blocks );
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+			),
+			$blocks
+		);
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b0">Display math:</p>', $preview['html'] );
+		$this->assertStringContainsString( '<div class="easymde-math easymde-math-block" data-easymde-visual-block-id="b1">', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b2">.</p>', $preview['html'] );
+	}
+
+	public function test_preview_resets_read_only_duplicate_group_before_following_source_block() {
+		$preview = MarkdownRenderer::render_preview(
+			"First: \\[x\\].\n\nSecond: \\[y\\].\n\nAfter",
+			'default'
+		);
+		$ranges = array_map(
+			static function ( $block ) {
+				return array(
+					'startLine' => $block['startLine'],
+					'endLine'   => $block['endLine'],
+					'editable'  => $block['editable'],
+				);
+			},
+			$preview['editMap']['blocks']
+		);
+
+		$this->assertSame(
+			array(
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 1, 'endLine' => 1, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'startLine' => 4, 'endLine' => 5, 'editable' => true ),
+			),
+			$ranges
+		);
+	}
+
+	public function test_preview_marks_split_math_roots_read_only_when_prose_continues_on_the_next_line() {
+		$preview = MarkdownRenderer::render_preview( "Before: \\[x\\] after.\nMore", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Before:', $preview['html'] );
+		$this->assertStringContainsString( 'More', $preview['html'] );
+	}
+
+	public function test_preview_marks_split_math_roots_read_only_when_prose_precedes_on_the_previous_line() {
+		$preview = MarkdownRenderer::render_preview( "Intro\nBefore: \\[x\\] after.", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Intro', $preview['html'] );
+		$this->assertStringContainsString( 'Before:', $preview['html'] );
+	}
+
+	public function test_preview_keeps_a_following_editable_paragraph_after_a_multiline_split_group() {
+		$preview = MarkdownRenderer::render_preview( "Before: \\[x\\] after.\nMore\n\nEditable", 'default' );
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 2, 'endLine' => 2, 'editable' => false ),
+				array( 'id' => 'b3', 'startLine' => 3, 'endLine' => 4, 'editable' => true ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'More', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b3">Editable</p>', $preview['html'] );
+	}
+
+	public function test_preview_unions_connected_split_roots_across_a_multiline_bridge_before_the_following_editable_paragraph() {
+		$preview = MarkdownRenderer::render_preview(
+			"Before: \\[x\\] tail.\nMiddle\nPrefix \\[y\\] after.\n\nEditable",
+			'default'
+		);
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b1', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b3', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b4', 'startLine' => 3, 'endLine' => 3, 'editable' => false ),
+				array( 'id' => 'b5', 'startLine' => 4, 'endLine' => 5, 'editable' => true ),
+			),
+			$preview['editMap']['blocks']
+		);
+		$this->assertStringContainsString( 'Middle', $preview['html'] );
+		$this->assertStringContainsString( 'Prefix', $preview['html'] );
+		$this->assertStringContainsString( '<p data-easymde-visual-block-id="b5">Editable</p>', $preview['html'] );
+	}
+
+	public function test_preview_rejects_invalid_source_block_types_order_and_bounds() {
+		$cases = array(
+			array( 'source_id' => 's0', 'startLine' => '0', 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => -1, 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => 1, 'endLine' => 0, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 0, 'endLine' => 1, 'editable' => true ),
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 1, 'editable' => 'true' ),
+		);
+
+		foreach ( $cases as $source_block ) {
+			try {
+				VisualPreviewBlockAnnotator::finalize(
+					'<p data-easymde-visual-source-id="' . $source_block['source_id'] . '">A</p>',
+					array( $source_block )
+				);
+				$this->fail( 'Expected malformed Preview source provenance to be rejected.' );
+			} catch ( RuntimeException $exception ) {
+				$this->assertSame( 'Preview source map contains an invalid source block.', $exception->getMessage() );
+			}
+		}
+	}
 
 	public function test_preview_maps_mixed_line_endings_before_a_trailing_whitespace_only_line() {
 		$markdown = "# Heading\r\n\rParagraph\n \t";

@@ -10,7 +10,7 @@ import {
   useState
 } from '@wordpress/element';
 import type { CSSProperties } from 'react';
-import { MoreHorizontal } from '../../generated/lucide-icons';
+import { MoreHorizontal, RefreshCcw } from '../../generated/lucide-icons';
 
 import type { DocumentSourceBootstrap } from '../../contracts/bootstrap/document-source-bootstrap';
 import type {
@@ -267,6 +267,7 @@ type RootExportCommandsProps = Readonly<{
   executeCommand: (commandId: string) => void;
   platform: ToolbarPlatform;
   toolbar: ToolbarBootstrap;
+  wechatCopyPending: boolean;
 }>;
 
 const WECHAT_ICON_PATHS = [
@@ -301,10 +302,19 @@ function WechatIcon() {
   );
 }
 
+function WechatPendingIcon() {
+  return (
+    <span className="easymde-wechat-pending-glyph" aria-hidden="true">
+      <RefreshCcw size={16} strokeWidth={2.2} />
+    </span>
+  );
+}
+
 function RootExportCommands({
   executeCommand,
   platform,
-  toolbar
+  toolbar,
+  wechatCopyPending
 }: RootExportCommandsProps) {
   const commands = toolbar.commands.filter(
     (command) => 'main' === command.surface && 'export' === command.group
@@ -322,19 +332,22 @@ function RootExportCommands({
         const title = shortcut
           ? `${command.label} (${shortcut})`
           : command.label;
+        const isWechatCopy = 'copyWechat' === command.action;
         return (
           <button
             key={command.id}
             type="button"
-            className={`easymde-toolbar-button easymde-toolbar-button-compact${'copyWechat' === command.action ? ' easymde-toolbar-copy-action' : ''}`}
+            className={`easymde-toolbar-button easymde-toolbar-button-compact${isWechatCopy ? ' easymde-toolbar-copy-action' : ''}${isWechatCopy && wechatCopyPending ? ' is-pending' : ''}`}
             data-easymde-command={command.id}
             aria-label={command.label}
+            aria-busy={isWechatCopy && wechatCopyPending ? 'true' : undefined}
+            disabled={isWechatCopy && wechatCopyPending}
             title={title}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => executeCommand(command.id)}
           >
-            {'copyWechat' === command.action ? (
-              <WechatIcon />
+            {isWechatCopy ? (
+              wechatCopyPending ? <WechatPendingIcon /> : <WechatIcon />
             ) : (
               <span
                 className={`dashicons dashicons-${command.icon}`}
@@ -709,6 +722,9 @@ export function EditorRoot(props: EditorRootProps) {
     [fontState, props.fonts]
   );
   const [immersive, setImmersive] = useState(false);
+  const [wechatCopyPending, setWechatCopyPending] = useState(false);
+  const wechatCopyPendingRef = useRef(false);
+  const wechatCopySequenceRef = useRef(0);
   const [mediaPickerDialog, setMediaPickerDialog] = useState<
     'media' | 'featured' | null
   >(null);
@@ -909,6 +925,7 @@ export function EditorRoot(props: EditorRootProps) {
         visualPreviewEditingRef.current
         || visualPreviewWindowRequestedRef.current
         || !props.wechatExport.enabled
+        || props.wechatExport.pngConversionEnabled
         || !surface
         || !prepare
       ) return;
@@ -917,11 +934,19 @@ export function EditorRoot(props: EditorRootProps) {
       // operation; opening or editing a Preview is not a copy failure.
       void prepare(surface, { background: true }).catch(() => undefined);
     },
-    [props.wechatClipboard, props.wechatExport.enabled]
+    [
+      props.wechatClipboard,
+      props.wechatExport.enabled,
+      props.wechatExport.pngConversionEnabled
+    ]
   );
   const scheduleWechatPreviewPreparation = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = props.wechatClipboard.prepare;
+      if (props.wechatExport.pngConversionEnabled) {
+        cancelScheduledWechatPreparation();
+        return;
+      }
       if (!props.wechatExport.enabled || !surface || !prepare) return;
       cancelScheduledWechatPreparation();
       const cancel = props.immersiveEnvironment.schedule(() => {
@@ -935,7 +960,8 @@ export function EditorRoot(props: EditorRootProps) {
       prepareWechatPreview,
       props.immersiveEnvironment,
       props.wechatClipboard,
-      props.wechatExport.enabled
+      props.wechatExport.enabled,
+      props.wechatExport.pngConversionEnabled
     ]
   );
   const scheduleCurrentWechatPreviewPreparation = useCallback(() => {
@@ -946,7 +972,11 @@ export function EditorRoot(props: EditorRootProps) {
     scheduleWechatPreviewPreparation(surface ?? null);
   }, [scheduleWechatPreviewPreparation]);
   useEffect(() => {
-    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+    if (
+      !props.wechatExport.enabled
+      || props.wechatExport.pngConversionEnabled
+      || !props.wechatClipboard.prepare
+    ) {
       return undefined;
     }
     const unsubscribe = props.immersiveEnvironment.subscribeResize(
@@ -957,10 +987,15 @@ export function EditorRoot(props: EditorRootProps) {
     props.immersiveEnvironment,
     props.wechatClipboard,
     props.wechatExport.enabled,
+    props.wechatExport.pngConversionEnabled,
     scheduleCurrentWechatPreviewPreparation
   ]);
   useEffect(() => {
-    if (!props.wechatExport.enabled || !props.wechatClipboard.prepare) {
+    if (
+      !props.wechatExport.enabled
+      || props.wechatExport.pngConversionEnabled
+      || !props.wechatClipboard.prepare
+    ) {
       return undefined;
     }
     const surface =
@@ -976,6 +1011,7 @@ export function EditorRoot(props: EditorRootProps) {
     props.immersiveEnvironment,
     props.wechatClipboard,
     props.wechatExport.enabled,
+    props.wechatExport.pngConversionEnabled,
     scheduleCurrentWechatPreviewPreparation
   ]);
   useEffect(() => {
@@ -1807,6 +1843,42 @@ export function EditorRoot(props: EditorRootProps) {
       setWechatStatus
     ]
   );
+  const requestWechatCopy = useCallback(() => {
+    if (!rootActiveRef.current || wechatCopyPendingRef.current) {
+      return Promise.resolve(false);
+    }
+    const sequence = ++wechatCopySequenceRef.current;
+    wechatCopyPendingRef.current = true;
+    setWechatCopyPending(true);
+    let operation: ReturnType<typeof wechatSession.copy>;
+    try {
+      // Keep the session call in the originating click/key activation task. The
+      // Clipboard adapter owns the activation-sensitive browser write.
+      operation = wechatSession.copy();
+    } catch (error) {
+      if (wechatCopySequenceRef.current === sequence) {
+        wechatCopyPendingRef.current = false;
+        setWechatCopyPending(false);
+      }
+      throw error;
+    }
+    return operation
+      .then(
+        (result) =>
+          rootActiveRef.current
+          && wechatCopySequenceRef.current === sequence
+          && 'copied' === result.status
+      )
+      .finally(() => {
+        if (
+          rootActiveRef.current
+          && wechatCopySequenceRef.current === sequence
+        ) {
+          wechatCopyPendingRef.current = false;
+          setWechatCopyPending(false);
+        }
+      });
+  }, [wechatSession]);
   const remoteImageImportPort = useMemo<RemoteImageImportPort>(
     () => ({
       import: (request) => {
@@ -1891,7 +1963,7 @@ export function EditorRoot(props: EditorRootProps) {
         props.toolbar.commands.find((command) => command.id === commandId)
           ?.action
       ) {
-        void wechatSession.copy();
+        void requestWechatCopy();
         return true;
       }
       return props.executeExternalCommand(commandId, session);
@@ -1900,7 +1972,7 @@ export function EditorRoot(props: EditorRootProps) {
       openMediaPicker,
       props.executeExternalCommand,
       props.toolbar.commands,
-      wechatSession
+      requestWechatCopy
     ]
   );
   const publish = useCallback((
@@ -2024,9 +2096,10 @@ export function EditorRoot(props: EditorRootProps) {
       setImmersiveMode(mode);
     });
   }, [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]);
-  const copyWechatFromImmersive = useCallback(async () => {
-    return 'copied' === (await wechatSession.copy()).status;
-  }, [wechatSession]);
+  const copyWechatFromImmersive = useCallback(
+    () => requestWechatCopy(),
+    [requestWechatCopy]
+  );
 
   useEffect(() => {
     if (immersive || !restoreImmersiveFocusRef.current) return;
@@ -2117,10 +2190,19 @@ export function EditorRoot(props: EditorRootProps) {
     [props.mediaPickerFrame]
   );
 
-  useEffect(() => () => wechatSession.dispose(), [wechatSession]);
+  useEffect(
+    () => () => {
+      const liveRoot = rootActiveRef.current;
+      wechatCopySequenceRef.current += 1;
+      wechatCopyPendingRef.current = false;
+      if (liveRoot) setWechatCopyPending(false);
+      wechatSession.dispose();
+    },
+    [wechatSession]
+  );
   useEffect(
     () => () => cancelScheduledWechatPreparation(),
-    [cancelScheduledWechatPreparation]
+    [cancelScheduledWechatPreparation, props.wechatExport.pngConversionEnabled]
   );
 
   useEffect(() => {
@@ -2387,6 +2469,7 @@ export function EditorRoot(props: EditorRootProps) {
             visualPreviewEditing
             && Boolean(visualEditorRuntimeRef.current?.surface.isConnected)
           }
+          wechatCopyPending={wechatCopyPending}
           focusVisualPreview={focusVisualPreview}
           mode={immersiveMode}
           direction={props.layout.direction}
@@ -2498,6 +2581,7 @@ export function EditorRoot(props: EditorRootProps) {
                 }
                 platform={props.platform}
                 toolbar={props.toolbar}
+                wechatCopyPending={wechatCopyPending}
               />
             ) : null}
             <button

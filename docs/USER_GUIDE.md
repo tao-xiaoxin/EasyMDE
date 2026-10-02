@@ -245,12 +245,31 @@ The table of contents is generated from rendered headings and is inserted where 
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
 
+While a copy is in progress, the ordinary and immersive controls share one busy
+state: both copy controls are disabled, expose their busy state, and show the
+animated refresh indicator. Repeated activation is ignored. The indicator
+clears after the browser Clipboard operation returns, and replacing or leaving
+the editor clears stale pending feedback without reporting a late success.
+
 **Convert and upload images for WeChat copy** is disabled by default under
 **EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy
 converts the outermost rendered Mermaid diagrams and inline or block formulas
 to PNG. Normal tables remain editable HTML; existing images, ordinary SVG,
 code, other media, and unknown content keep their existing rich-text form.
 EasyMDE does not upload during Preview or background preparation.
+Wide formulas retain their full captured extent inside the copied visual's
+horizontal overflow owner, while the visual's surrounding spacing remains part
+of the copied HTML layout. Inline formulas use a measured fractional
+allocation, optional source viewport, and root-local paint offset, including
+superscript, subscript, and middle alignment. Top and bottom alignment retain
+their relationship to the surrounding line box; other modes use the measured
+formula allocation. The outer inline box keeps the line-box allocation while
+clipped content keeps its source viewport and scrollable content scrolls locally.
+The horizontal and vertical axes remain independent, so a formula can scroll on
+one axis while clipping on the other.
+Block formulas remain centered and
+horizontally scrollable when their PNG is wider than the pasted column; their
+visual padding and border appear once.
 
 Generated PNGs use the same upload owner already selected for editor images:
 Image Hosting when enabled, or the WordPress Media Library when disabled. A
@@ -259,6 +278,9 @@ success. PNGs uploaded before a later conversion, upload, or Clipboard failure
 may remain in the selected storage. Copy never changes Markdown, saved content,
 or the live Preview. PNG conversion requires the modern browser Clipboard API;
 unsupported or legacy-only paths fail explicitly without uploading.
+Copy uses the current stable Preview: refresh bookkeeping alone does not
+invalidate it, while an actual content or layout change requires a fresh
+payload.
 
 - **Ready:** The action copies the current rendered Preview and reports success only after the browser confirms the copy.
 - **Empty, loading, or error:** The action does not copy and shows that the Preview is unavailable; wait until the Preview is ready and try again.

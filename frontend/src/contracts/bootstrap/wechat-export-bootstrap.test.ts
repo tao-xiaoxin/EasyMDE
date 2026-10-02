@@ -9,6 +9,7 @@ describe('parseWechatExportBootstrap', () => {
       pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed.',
+        failedWithUploads: 'Copy failed after uploading images.',
         success: 'Copied.',
         unsupported: 'Clipboard unavailable.'
       }
@@ -17,6 +18,7 @@ describe('parseWechatExportBootstrap', () => {
       pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed.',
+        failedWithUploads: 'Copy failed after uploading images.',
         success: 'Copied.',
         unsupported: 'Clipboard unavailable.'
       }
@@ -28,7 +30,7 @@ describe('parseWechatExportBootstrap', () => {
       expect(() => parseWechatExportBootstrap({
         enabled: true,
         pngConversionEnabled: value,
-        strings: { failed: 'x', success: 'x', unsupported: 'x' },
+        strings: { failed: 'x', failedWithUploads: 'x', success: 'x', unsupported: 'x' },
       })).toThrow('wechat-export-png-conversion-invalid');
     }
   });
@@ -38,7 +40,7 @@ describe('parseWechatExportBootstrap', () => {
       expect(() => parseWechatExportBootstrap({
         enabled: value,
         pngConversionEnabled: false,
-        strings: { failed: 'x', success: 'x', unsupported: 'x' },
+        strings: { failed: 'x', failedWithUploads: 'x', success: 'x', unsupported: 'x' },
       })).toThrow('wechat-export-enabled-invalid');
     }
   });
@@ -50,7 +52,12 @@ describe('parseWechatExportBootstrap', () => {
     expect(() => parseWechatExportBootstrap({
       enabled: true,
       pngConversionEnabled: false,
-      strings: { failed: 'x', success: 'x', unsupported: 'x'.repeat(513) }
+      strings: { failed: 'x', success: 'x', unsupported: 'x' }
+    })).toThrow('wechat-export-string-invalid');
+    expect(() => parseWechatExportBootstrap({
+      enabled: true,
+      pngConversionEnabled: false,
+      strings: { failed: 'x', failedWithUploads: 'x', success: 'x', unsupported: 'x'.repeat(513) }
     })).toThrow('wechat-export-string-invalid');
   });
 });

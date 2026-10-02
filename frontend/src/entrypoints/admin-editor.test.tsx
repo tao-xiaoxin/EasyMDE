@@ -203,7 +203,12 @@ const bootstrap = {
     placeholderAlt: 'alt text'
   },
   preview: { postId: 7 },
-  previewEnhancement: { assetBaseUrl: 'https://example.test/plugin/' },
+  previewEnhancement: {
+    assetBaseUrl: 'https://example.test/plugin/',
+    assets: {
+      katexCssUrl: 'https://example.test/plugin/assets/vendor/katex/katex.min.css'
+    }
+  },
   toolbar: { commands: [], shortcuts: [] },
   wechatExport: {},
   wordpress: {

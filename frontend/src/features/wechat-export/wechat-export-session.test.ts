@@ -14,6 +14,7 @@ function deferred<T>() {
 
 const strings = {
   failed: 'Copy failed.',
+  failedWithUploads: 'Copy failed after uploading images.',
   success: 'Copied.',
   unsupported: 'Clipboard unavailable.'
 };
@@ -68,6 +69,83 @@ describe('createWechatExportSession', () => {
     expect(onDiagnostic).toHaveBeenCalledWith('wechat-clipboard-unsupported');
     expect(onStatus).toHaveBeenCalledWith({ message: strings.unsupported, type: 'error' });
     expect(onStatus).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
+  });
+
+  it('reports a disabled export as an explicit terminal failure', async () => {
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: { copy: vi.fn() },
+      enabled: false,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic: vi.fn(),
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-export-disabled',
+      status: 'failed'
+    });
+    expect(onStatus).toHaveBeenCalledWith({
+      message: strings.failed,
+      type: 'error'
+    });
+  });
+
+  it('reports residual generated images with the distinct recovery message', async () => {
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: {
+        copy: vi.fn().mockResolvedValue({
+          code: 'wechat-png-upload-failed',
+          sideEffects: 'uploads-may-remain',
+          status: 'failed'
+        })
+      },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic: vi.fn(),
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-png-upload-failed',
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    expect(onStatus).toHaveBeenCalledWith({
+      message: strings.failedWithUploads,
+      type: 'error'
+    });
+  });
+
+  it('keeps a cancellation without residual uploads on the generic failure message', async () => {
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: {
+        copy: vi.fn().mockResolvedValue({
+          code: 'wechat-png-rasterization-cancelled',
+          sideEffects: 'none',
+          status: 'failed'
+        })
+      },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic: vi.fn(),
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-png-rasterization-cancelled',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(onStatus).toHaveBeenCalledWith({
+      message: strings.failed,
+      type: 'error'
+    });
   });
 
   it('releases the pending slot after a failed clipboard operation', async () => {

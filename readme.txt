@@ -176,6 +176,7 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 = 0.1.9 =
 
 * Add an opt-in WeChat PNG export setting, disabled by default: explicit ordinary or immersive Copy converts only rendered Mermaid diagrams and formulas, keeps normal tables and other content in HTML, and uploads generated PNGs through Image Hosting when enabled or WordPress Media Library when disabled.
+* Improve WeChat copy responsiveness and preserve rendered typography, alignment, spacing, formula and diagram frames, with bounded concurrent PNG uploads and explicit failures instead of partial Clipboard content.
 * Make Image Hosting opt-in: `imageHostingEnabled` defaults to disabled, so eligible local image paste and drag-and-drop use the WordPress Media Library owner while remote image import is off; enabling it selects Image Hosting, and a failed selected owner never switches to another owner.
 
 = 0.1.8 =

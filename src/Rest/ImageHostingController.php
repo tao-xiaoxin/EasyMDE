@@ -581,12 +581,12 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'imageHostingEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
+		$keys = array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'imageHostingEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
+		foreach ( array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}

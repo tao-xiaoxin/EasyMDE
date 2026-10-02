@@ -13,9 +13,13 @@ import { wordpressEndpoint } from '../shared/wordpress-endpoint';
 
 export type WordPressApiFetch = (options: Readonly<Record<string, unknown>>) => Promise<unknown>;
 
+export const PREVIEW_RESPONSE_INVALID_CODE = 'preview-response-invalid' as const;
+
 export class PreviewResponseError extends Error {
+  public readonly code = PREVIEW_RESPONSE_INVALID_CODE;
+
   public constructor() {
-    super('preview-response-invalid');
+    super(PREVIEW_RESPONSE_INVALID_CODE);
     this.name = 'PreviewResponseError';
   }
 }

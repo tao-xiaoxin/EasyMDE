@@ -313,6 +313,7 @@ type Props = Readonly<{
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
   toolbar: ReactNode;
+  wechatCopyPending: boolean;
   onCopyWechat: () => Promise<boolean>;
   onBeforeSourceMutation: () => boolean;
   onExit: () => void;
@@ -704,6 +705,7 @@ export function ImmersiveEditor({
   restoreRevision,
   styleControls,
   toolbar,
+  wechatCopyPending,
   mode,
   onCopyWechat,
   onBeforeSourceMutation,
@@ -901,6 +903,8 @@ export function ImmersiveEditor({
     documentSession.document.focus();
   };
   const copyWechat = () => {
+    if (wechatCopyPending) return;
+    setWechatCopied(false);
     void onCopyWechat().then((success) => {
       if (success) setWechatCopied(true);
     });
@@ -972,6 +976,7 @@ export function ImmersiveEditor({
         strings={strings}
         styleControls={styleControls}
         toolbar={toolbar}
+        wechatCopyPending={wechatCopyPending}
         wechatCopied={wechatCopied}
         onCopyWechat={copyWechat}
         onExit={onExit}

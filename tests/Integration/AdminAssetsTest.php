@@ -487,6 +487,15 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
 	}
 
+	public function test_wechat_residual_upload_failure_has_a_distinct_php_gettext_message() {
+		$strings = $this->get_strings->invoke( $this->admin_assets );
+
+		$this->assertSame(
+			'Copy for WeChat failed. Some generated images may remain in the selected image storage; review them before retrying.',
+			$strings['copyWechatFailedWithUploads']
+		);
+	}
+
 	public function test_custom_css_variable_categories_match_the_reference_tab_panels() {
 		$variables = $this->get_custom_css_variables->invoke( $this->admin_assets );
 		$groups    = array();

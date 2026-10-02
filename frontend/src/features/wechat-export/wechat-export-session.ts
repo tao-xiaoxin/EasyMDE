@@ -48,7 +48,9 @@ export function createWechatExportSession({
         return Promise.resolve({ code: 'wechat-export-inactive', status: 'failed' });
       }
       if (!enabled) {
-        return Promise.resolve({ code: 'wechat-export-disabled', status: 'failed' });
+        const result = { code: 'wechat-export-disabled' as const, status: 'failed' as const };
+        onStatus({ message: strings.failed, type: 'error' });
+        return Promise.resolve(result);
       }
       const preview = getPreview();
       if (!preview) {
@@ -89,7 +91,11 @@ export function createWechatExportSession({
         if ('failed' === result.status) {
           onDiagnostic(result.code);
           onStatus({
-            message: 'wechat-clipboard-unsupported' === result.code ? strings.unsupported : strings.failed,
+            message: 'uploads-may-remain' === result.sideEffects
+              ? strings.failedWithUploads
+              : 'wechat-clipboard-unsupported' === result.code
+                ? strings.unsupported
+                : strings.failed,
             type: 'error'
           });
           return result;

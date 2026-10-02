@@ -2247,6 +2247,27 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('protects server-marked noneditable Preview roots as generated regions', () => {
+    const surface = editor(`
+      <p data-easymde-visual-block-id="b0">Editable source</p>
+      <p data-easymde-visual-block-id="b1" contenteditable="false">Generated prefix</p>
+      <div data-easymde-visual-block-id="b2" contenteditable="false">Generated formula</div>
+      <p data-easymde-visual-block-id="b3" contenteditable="false">Generated suffix</p>
+    `);
+
+    protectVisualMarkdownReadOnlyRegions(surface);
+    const snapshot = captureVisualMarkdownReadOnlySnapshot(surface);
+
+    expect(snapshot).toHaveLength(3);
+    for (const region of snapshot) {
+      expect(region.node.getAttribute('contenteditable')).toBe('false');
+    }
+    snapshot[1]?.node.replaceChildren('Changed generated formula');
+    expect(() => assertVisualMarkdownReadOnlySnapshot(surface, snapshot)).toThrow(
+      'visual-editor-read-only-region-mutated'
+    );
+  });
+
   it('protects generated table-of-contents markup from visual editing', () => {
     const surface = editor(`
       <p>Editable paragraph</p>

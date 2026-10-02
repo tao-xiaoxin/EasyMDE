@@ -420,6 +420,8 @@ export function mountAdminEditor(
     }),
     wechatExport: bootstrap.wechatExport,
     wechatVisualRasterizationPort: createBrowserWechatVisualRasterizer({
+      approvedAssetBaseUrl: bootstrap.previewEnhancement.assetBaseUrl,
+      approvedKaTeXCssUrl: bootstrap.previewEnhancement.assets.katexCssUrl,
       blob: Blob,
       document: documentRef,
       file: File,

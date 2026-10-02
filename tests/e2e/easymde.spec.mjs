@@ -17450,6 +17450,46 @@ test.describe('EasyMDE editor workflows', () => {
       .toContain(postId);
   });
 
+  test('preserves literal Markdown backslashes through native Save and reload', async ({ page }, testInfo) => {
+    const user = testInfo.easymdeUser;
+    const title = `Markdown backslashes ${testSlug(testInfo)}`;
+    const markdown = String.raw`# Literal Markdown Backslashes
+
+Inline math: $\pi$ and $\sum_{i=1}^{n} x_i$.
+
+$$
+\frac{1}{n}
+$$
+
+~~~text
+Display math: \[\frac{1}{n}\].
+Markdown escapes: \*literal asterisk\* and \_literal underscore\_.
+Repeated path slashes: C:\Temp\file and \\server\share.
+JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
+~~~`;
+
+    await login(page, user);
+    await openEasyMdeNewPost(page);
+    await page.locator('#title').fill(title);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Literal Markdown Backslashes');
+    await expect(
+      page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"] .easymde-math[data-easymde-rendered]')
+    ).toHaveCount(3);
+
+    const savePost = await readyNativeDraftSave(page);
+    const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
+    await navigation;
+    await expect(page.locator('#message, .notice-success')).toBeVisible();
+
+    const postId = await currentPostId(page);
+    expect(normalizeMarkdown(postMetaValue(postId, '_easymde_markdown'))).toBe(markdown);
+
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+  });
+
   const selectSummaryMode = async (page, targetIndex) => {
     await page.goto('/wp-admin/admin.php?page=easymde&route=/general_setting');
     await expect(page.locator('.easymde-settings-center')).toBeVisible();

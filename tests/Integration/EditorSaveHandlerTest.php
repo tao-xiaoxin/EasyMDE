@@ -1,6 +1,7 @@
 <?php
 
 use EasyMDE\Admin\EditorSaveHandler;
+use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\PostDocument;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -319,6 +320,82 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
         }
     }
 
+    public function test_valid_save_preserves_literal_markdown_backslashes_and_compatibility_html()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_author' => $user_id,
+                'post_content' => '<p>Before EasyMDE.</p>',
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $markdown = <<<'MARKDOWN'
+# Literal Markdown Backslashes
+
+Inline math: $\pi$ and $\sum_{i=1}^{n} x_i$.
+
+Markdown escapes: \*literal asterisk\* and \[literal brackets\].
+
+Repeated path slashes: C:\Temp\file and \\server\share.
+
+JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
+MARKDOWN;
+        $previous_post = $_POST;
+        $_POST = wp_slash(
+            array(
+                'easymde_nonce' => wp_create_nonce('easymde_save_markdown'),
+                'easymde_enabled' => '1',
+                'easymde_markdown' => $markdown,
+                'easymde_markdown_theme' => 'default',
+                'easymde_code_theme' => 'github',
+            )
+        );
+        $handler = new EditorSaveHandler(
+            new PostDocument(),
+            $this->theme_state_repository(),
+            function () {
+                return true;
+            }
+        );
+        $handler->register_hooks();
+
+        try {
+            $expected_html = MarkdownRenderer::render( $markdown, 'default' );
+            wp_update_post(
+                array(
+                    'ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_content' => '<p>Native Save input.</p>',
+                )
+            );
+
+            $this->assertSame($markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+            $this->assertSame($expected_html, get_post($post_id)->post_content);
+            $this->assertSame(
+                (new PostDocument())->render_signature($markdown, 'default', $expected_html),
+                get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
+            );
+        } finally {
+            $_POST = $previous_post;
+            remove_action('save_post', array($handler, 'save_post_meta'), 10);
+            remove_action(
+                'wp_creating_autosave',
+                array($handler, 'materialize_new_native_autosave_meta'),
+                20
+            );
+            remove_action(
+                'wp_after_insert_post',
+                array($handler, 'materialize_native_autosave_meta'),
+                20
+            );
+            remove_filter('wp_insert_post_data', array($handler, 'render_markdown_post_content'), 10);
+            remove_filter('redirect_post_location', array($handler, 'redirect_after_native_publish'), 10);
+        }
+    }
+
     public function test_native_draft_autosave_keeps_markdown_and_compatibility_html_consistent()
     {
         $user_id = self::factory()->user->create(array('role' => 'editor'));
@@ -396,6 +473,75 @@ final class EditorSaveHandlerTest extends WP_UnitTestCase
             );
         } finally {
             $_POST = $previous_post;
+        }
+    }
+
+    public function test_native_autosave_preserves_literal_markdown_backslashes_and_compatibility_html()
+    {
+        $user_id = self::factory()->user->create(array('role' => 'editor'));
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'draft',
+                'post_author' => $user_id,
+                'post_content' => '<p>Before autosave.</p>',
+            )
+        );
+        wp_set_current_user($user_id);
+
+        $markdown = <<<'MARKDOWN'
+# Autosave Backslashes
+
+Formula: $\frac{1}{n}$ and escaped punctuation: \*literal\*.
+
+Repeated slashes: C:\Temp\file and \\server\share.
+MARKDOWN;
+        $previous_post = $_POST;
+        $_POST = wp_slash($this->native_autosave_request($post_id, $markdown));
+        $handler = new EditorSaveHandler(
+            new PostDocument(),
+            $this->theme_state_repository(),
+            function () {
+                return true;
+            }
+        );
+        $handler->register_hooks();
+
+        try {
+            $autosave_id = wp_create_post_autosave(
+                array(
+                    'post_ID' => $post_id,
+                    'post_type' => 'post',
+                    'post_author' => $user_id,
+                    'post_title' => 'Autosave Backslashes',
+                    'post_content' => $markdown,
+                    'post_excerpt' => '',
+                )
+            );
+
+            $this->assertIsInt($autosave_id);
+            $this->assertSame($markdown, get_post_meta($autosave_id, PostDocument::META_MARKDOWN, true));
+            $expected_html = MarkdownRenderer::render($markdown, 'default');
+            $this->assertSame($expected_html, get_post($autosave_id)->post_content);
+            $this->assertSame(
+                (new PostDocument())->render_signature($markdown, 'default', $expected_html),
+                get_post_meta($autosave_id, PostDocument::META_RENDER_SIGNATURE, true)
+            );
+        } finally {
+            $_POST = $previous_post;
+            remove_action('save_post', array($handler, 'save_post_meta'), 10);
+            remove_action(
+                'wp_creating_autosave',
+                array($handler, 'materialize_new_native_autosave_meta'),
+                20
+            );
+            remove_action(
+                'wp_after_insert_post',
+                array($handler, 'materialize_native_autosave_meta'),
+                20
+            );
+            remove_filter('wp_insert_post_data', array($handler, 'render_markdown_post_content'), 10);
+            remove_filter('redirect_post_location', array($handler, 'redirect_after_native_publish'), 10);
         }
     }
 

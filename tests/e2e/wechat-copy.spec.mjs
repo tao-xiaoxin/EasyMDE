@@ -120,22 +120,18 @@ async function login(page, user) {
   await page.locator('#loginform').evaluate((form, credentials) => {
     const username = form.elements.namedItem('log');
     const password = form.elements.namedItem('pwd');
-    const redirectTo = form.elements.namedItem('redirect_to');
     const submit = form.elements.namedItem('wp-submit');
     if (
       !(username instanceof HTMLInputElement)
       || !(password instanceof HTMLInputElement)
-      || !(redirectTo instanceof HTMLInputElement)
       || !(submit instanceof HTMLInputElement)
     ) {
       throw new Error('wordpress-login-fields-unavailable');
     }
     username.value = credentials.username;
     password.value = credentials.password;
-    redirectTo.value = new URL('/wp-admin/post-new.php', window.location.origin).href;
     form.requestSubmit(submit);
   }, user);
-  await waitForVisibleSelector(page, '#easymde-editor', 'easymde-editor-unavailable');
   await waitForVisibleSelector(page, '#wpadminbar', 'wordpress-admin-bar-unavailable');
 }
 

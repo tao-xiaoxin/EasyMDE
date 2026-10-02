@@ -90,7 +90,7 @@ final class EditorSaveHandler {
 		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $post_id );
 
 		$this->post_document->mark_enabled( $post_id );
-		update_post_meta( $post_id, PostDocument::META_MARKDOWN, $markdown );
+		update_post_meta( $post_id, PostDocument::META_MARKDOWN, $this->metadata_value_for_write( PostDocument::META_MARKDOWN, $markdown ) );
 		update_post_meta( $post_id, PostDocument::META_MARKDOWN_THEME, $theme_state['markdownTheme'] );
 		if ( $theme_state['codeThemeExplicit'] ) {
 			update_post_meta( $post_id, PostDocument::META_CODE_THEME, $theme_state['codeTheme'] );
@@ -166,7 +166,8 @@ final class EditorSaveHandler {
 		$theme_state = $this->theme_state_repository->sanitize_theme_state_from_request( $request['source'], $owner_id );
 
 		try {
-			$data['post_content'] = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
+			$rendered_content     = MarkdownRenderer::render( $markdown, $theme_state['markdownTheme'] );
+			$data['post_content'] = wp_slash( $rendered_content );
 		} catch ( \Throwable $exception ) {
 			unset( $exception );
 
@@ -179,7 +180,7 @@ final class EditorSaveHandler {
 			$this->pending_render_signatures[ absint( $postarr['ID'] ) ] = $this->post_document->render_signature(
 				$markdown,
 				$theme_state['markdownTheme'],
-				$data['post_content']
+				$rendered_content
 			);
 		}
 
@@ -268,8 +269,12 @@ final class EditorSaveHandler {
 
 		foreach ( $metadata as $key => $value ) {
 			delete_metadata( 'post', $revision_id, $key );
-			add_metadata( 'post', $revision_id, $key, $value );
+			add_metadata( 'post', $revision_id, $key, $this->metadata_value_for_write( $key, $value ) );
 		}
+	}
+
+	private function metadata_value_for_write( $key, $value ) {
+		return PostDocument::META_MARKDOWN === $key ? wp_slash( $value ) : $value;
 	}
 
 	private function has_valid_save_request() {

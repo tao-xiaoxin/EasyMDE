@@ -35,6 +35,14 @@ scripts/install-wp-tests.sh easymde_phpunit <db_user> <db_password> <db_host> 6.
 composer run test:phpunit
 ```
 
+The Markdown source-integrity regression covers native Save, native autosave,
+revision metadata copy, and revision restore through real WordPress metadata
+APIs:
+
+```bash
+scripts/run-ci-image.sh --filter 'EditorSaveHandlerTest|RevisionManagerTest'
+```
+
 For repeated local validation, build the pinned reusable CI image once from
 explicitly supplied local resources:
 

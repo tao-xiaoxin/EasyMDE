@@ -175,7 +175,12 @@ describe('createBrowserWechatClipboard', () => {
       if (signal.aborted) abort();
       else signal.addEventListener('abort', abort, { once: true });
     }));
-    const upload = vi.fn();
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'hidden-math.png',
+      url: 'https://example.test/hidden-math.png'
+    }));
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: ClipboardItemStub,
@@ -436,7 +441,12 @@ describe('createBrowserWechatClipboard', () => {
       value: execCommand
     });
     const rasterize = vi.fn();
-    const upload = vi.fn();
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'hidden-math.png',
+      url: 'https://example.test/hidden-math.png'
+    }));
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: null,
@@ -508,7 +518,12 @@ describe('createBrowserWechatClipboard', () => {
     const rasterize = vi.fn(async () => {
       throw new Error('native-rasterizer-failed');
     });
-    const upload = vi.fn();
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'hidden-math.png',
+      url: 'https://example.test/hidden-math.png'
+    }));
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: ClipboardItemStub,
@@ -783,6 +798,191 @@ describe('createBrowserWechatClipboard', () => {
     expect(images[1]?.getAttribute('style')).toContain('margin-left:7px');
     expect(images[1]?.getAttribute('style')).toContain('margin-right:9px');
     expect(images[1]?.getAttribute('style')).toContain('vertical-align:middle');
+  });
+
+  it('captures hidden-source PNG visuals with their native candidate geometry', async () => {
+    const writes: unknown[] = [];
+    const requests: Array<Readonly<{
+      height: number;
+      kind: string;
+      source: Element;
+      width: number;
+    }>> = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = readyPreview();
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    preview.innerHTML = '<div class="easymde-math-block"><span class="katex"><span class="katex-html">Hidden math</span></span></div>';
+    const math = preview.querySelector('.easymde-math-block');
+    if (!math) throw new Error('math root missing');
+    Object.defineProperty(math, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 0, width: 0 })
+    });
+    const sourceMarkup = preview.innerHTML;
+    let measurementWidth = '';
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 300,
+            height: 300,
+            left: 0,
+            right: 500,
+            top: 0,
+            width: 500,
+            x: 0,
+            y: 0
+          };
+        }
+        if (
+          this.classList.contains('easymde-math-block')
+          && this.closest('.easymde-wechat-png-measurement')
+        ) {
+          return {
+            bottom: 24,
+            height: 24,
+            left: 0,
+            right: 180,
+            top: 0,
+            width: 180,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this);
+      }
+    });
+    const rasterize = vi.fn(async ({ height, kind, source, width }: {
+      height: number;
+      kind: string;
+      source: Element;
+      width: number;
+    }) => {
+      measurementWidth = document.querySelector<HTMLElement>('.easymde-wechat-png-measurement')?.style.width ?? '';
+      requests.push({ height, kind, source, width });
+      if (width <= 0 || height <= 0) throw new Error('wechat-png-size-invalid');
+      return {
+        file: new File(['unexpected'], 'unexpected.png', { type: 'image/png' }),
+        height,
+        pixelCount: width * height,
+        width
+      };
+    });
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'hidden-math.png',
+      url: 'https://example.test/hidden-math.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) {
+          return declaration({
+            display: 'block',
+            'border-left-width': '5px',
+            'border-right-width': '5px',
+            'padding-left': '20px',
+            'padding-right': '20px',
+            width: '500px'
+          });
+        }
+        if (element === preview) return declaration({ display: 'none', 'max-width': '760px' });
+        if (element === math) {
+          return declaration({ display: 'block', height: '24px', width: '180px' });
+        }
+        if (element.closest('.katex')) return declaration({ display: 'inline', 'white-space': 'nowrap' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    let result: Awaited<ReturnType<typeof clipboard.copy>>;
+    try {
+      result = await clipboard.copy(preview, pngOptions(
+        { rasterize },
+        { upload } as never
+      ));
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ height: 24, kind: 'math', width: 180 });
+    expect(requests[0]?.source).not.toBe(math);
+    expect(measurementWidth).toBe('450px');
+    expect(result).toEqual({ method: 'clipboard', status: 'copied' });
+    expect(upload).toHaveBeenCalledOnce();
+    expect(writes).toHaveLength(1);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('cleans the hidden measurement tree when modern PNG write rejects immediately', async () => {
+    const preview = readyPreview();
+    preview.innerHTML = '<div class="easymde-math-block"><span class="katex"><span class="katex-html">Held math</span></span></div>';
+    const sourceMarkup = preview.innerHTML;
+    const rasterize = vi.fn(async () => ({
+      file: new File(['late'], 'late.png', { type: 'image/png' }),
+      height: 24,
+      pixelCount: 4320,
+      width: 180
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'late.png',
+      url: 'https://example.test/late.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === preview) return declaration({ display: 'none' });
+        if (element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '24px', width: '180px' });
+        }
+        return declaration({ display: 'inline' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.reject(new Error('NotAllowedError')))
+    });
+
+    await expect(clipboard.copy(preview, pngOptions(
+      { rasterize },
+      { upload } as never
+    ))).resolves.toEqual({
+      code: 'wechat-png-clipboard-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(document.querySelector('.easymde-wechat-png-measurement')).toBeNull();
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(preview.innerHTML).toBe(sourceMarkup);
   });
 
   it('builds a native root capture clone without exporter markers or unsafe SVG URLs', async () => {
@@ -3114,6 +3314,7 @@ describe('createBrowserWechatClipboard', () => {
       write: async (items) => { writes.push(items); }
     });
 
+    clipboard.rememberPreviewWidth?.(preview);
     try {
       await expect(clipboard.copy(preview)).resolves.toEqual({
         method: 'clipboard',

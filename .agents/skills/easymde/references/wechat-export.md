@@ -25,6 +25,10 @@ exporter whitespace markers, and normalizes non-breaking spaces. The legacy
 path selects the same HTML and lets the destination derive visible plain text.
 The plain-text measurement host uses the rendered Preview width, including the
 last non-zero visible width while immersive source mode hides Preview.
+The optional `rememberPreviewWidth` port hook records only one positive finite
+root width; `EditorRoot` calls it when Preview is ready and immediately before
+source mode hides that Preview. This width is measurement input only, not a
+content, payload, or rectangle cache.
 
 PHP remains authoritative for Preview source provenance and its connected
 readonly overlap projection. Clipboard consumes the accepted Safe Preview and
@@ -163,7 +167,15 @@ For a PNG candidate, the outer clone still receives its computed root metadata,
 class/transient-attribute sanitization, and visual-root registration before the
 conversion short-circuit. Because the native PNG replaces that whole root,
 conversion skips descendant, pseudo-element, and theme-background portable
-serialization; native capture still reads the original source tree. The
+serialization; native capture still reads the current source tree. If the
+resolved Preview is hidden, explicit PNG Copy first attaches a temporary
+measurement tree built from the current stable enhanced Preview and uses that
+tree for the complete HTML, plain-text, and PNG serialization. It retains the
+Preview's context CSS while neutralizing ancestor layout at the authoritative
+width; when no visible width was remembered, it uses live workspace width and
+content constraints rather than a viewport fallback or old content/rectangle
+cache. Freshness remains owned by the original resolved Preview, and every
+terminal path removes the measurement tree and its guards. The
 portable/default, background, legacy, table, and ordinary-SVG paths are
 unchanged.
 

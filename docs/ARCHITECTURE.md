@@ -525,8 +525,18 @@ The PNG conversion branch still prepares computed root metadata, removes class
 and transient attributes, and registers the outer visual root before replacing
 that whole root with the native image. It therefore skips descendant,
 pseudo-element, and theme-background portable serialization for the converted
-candidate while native capture reads the original source tree; portable,
+candidate while native capture reads the current source tree; portable,
 background, legacy, table, and ordinary-SVG serialization remains unchanged.
+When the resolved Preview is hidden for explicit PNG Copy, the Clipboard
+adapter attaches a temporary measurement tree from the current stable enhanced
+Preview and uses it for the complete HTML, plain-text, and PNG serialization.
+It retains Preview context CSS while neutralizing ancestor layout at the
+authoritative width. `EditorRoot` supplies the optional `rememberPreviewWidth`
+value at Preview-ready and immediately before source-mode hiding; if no
+positive visible width exists, the measurement tree derives live workspace
+width and content constraints rather than falling back to the viewport or an
+old content/rectangle cache. Freshness remains keyed to the original resolved
+Preview, and all terminal paths clean up the measurement tree and guards.
 
 For the portable path, a successful modern setup constructs deferred HTML and
 plain text Blob payloads and invokes the browser `write()` owner in the

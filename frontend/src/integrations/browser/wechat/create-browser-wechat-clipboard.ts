@@ -310,6 +310,11 @@ type WechatPngConversionState = {
   uploadsMayRemain: boolean;
 };
 
+type WechatPngGeometryMeasurement = Readonly<{
+  cleanup: () => void;
+  root: HTMLElement;
+}>;
+
 type WechatPngConversionContext = Readonly<{
   imageUploadPort: ImageUploadPort;
   isCurrent?: () => boolean;
@@ -2522,14 +2527,15 @@ async function replaceVisualObjects(
       }
       const sourceRect = candidate.source.getBoundingClientRect();
       const inlineVisual = requiresInlineBaseline(candidate.kind, candidate.element);
+      const geometryParent = candidate.source.parentElement;
       let rasterized: WechatVisualRasterizationResult;
       try {
         const rasterization = withTimeout(
           context.rasterizationPort.rasterize({
             kind: candidate.kind,
             height: sourceRect.height,
-            ...(inlineVisual && candidate.source.parentElement
-              ? { inlineParent: candidate.source.parentElement }
+            ...(inlineVisual && geometryParent
+              ? { inlineParent: geometryParent }
               : {}),
             maxPixels: MAX_WECHAT_PNG_PIXELS,
             scale: context.scale,
@@ -2952,7 +2958,7 @@ function normalizedPlainText(value: string): string {
 }
 
 function previewMeasurementWidth(source: HTMLElement): number | null {
-  const rectWidth = source.getBoundingClientRect().width;
+  const rectWidth = source.getBoundingClientRect?.()?.width ?? 0;
   const visibleWidth = rectWidth || source.clientWidth || source.offsetWidth;
   if (visibleWidth > 0) {
     PREVIEW_MEASUREMENT_WIDTHS.set(source, visibleWidth);
@@ -2972,6 +2978,174 @@ function previewMeasurementWidth(source: HTMLElement): number | null {
   const viewportWidth = viewport?.innerWidth ?? 0;
   const fallbackWidth = documentWidth || viewportWidth;
   return fallbackWidth > 0 ? fallbackWidth : null;
+}
+
+function rememberPreviewWidthValue(source: HTMLElement): void {
+  const width = source.getBoundingClientRect?.()?.width ?? 0;
+  if (Number.isFinite(width) && width > 0) {
+    PREVIEW_MEASUREMENT_WIDTHS.set(source, width);
+  }
+}
+
+const PREVIEW_MEASUREMENT_INHERITED_PROPERTIES = [
+  'color',
+  'direction',
+  'font-family',
+  'font-size',
+  'font-stretch',
+  'font-style',
+  'font-variant',
+  'font-weight',
+  'letter-spacing',
+  'line-height',
+  'list-style-position',
+  'list-style-type',
+  'text-align',
+  'text-indent',
+  'text-shadow',
+  'text-transform',
+  'tab-size',
+  'white-space',
+  'word-break',
+  'word-spacing',
+  'overflow-wrap'
+] as const;
+
+function cssPixelValue(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)px$/i.exec(value.trim());
+  if (!match) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function previewWorkspaceMeasurementWidth(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): number | null {
+  const remembered = PREVIEW_MEASUREMENT_WIDTHS.get(preview);
+  if (remembered && remembered > 0) return remembered;
+
+  let current: Element | null = preview.parentElement;
+  while (current) {
+    const computed = runtime.getComputedStyle(current);
+    const rectWidth = current.getBoundingClientRect?.()?.width ?? 0;
+    if (Number.isFinite(rectWidth) && rectWidth > 0) {
+      const horizontalEdges = [
+        'padding-left',
+        'padding-right',
+        'border-left-width',
+        'border-right-width'
+      ].reduce(
+        (total, property) => total + cssPixelValue(computed.getPropertyValue(property)),
+        0
+      );
+      const contentWidth = rectWidth - horizontalEdges;
+      return contentWidth > 0 ? contentWidth : rectWidth;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function isPreviewHiddenForPng(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): boolean {
+  let current: Element | null = preview;
+  while (current) {
+    const computed = runtime.getComputedStyle(current);
+    if (
+      ['none', 'hidden'].includes(computed.getPropertyValue('display').trim().toLowerCase())
+      || 'hidden' === computed.getPropertyValue('visibility').trim().toLowerCase()
+      || 'hidden' === computed.getPropertyValue('content-visibility').trim().toLowerCase()
+    ) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function createHiddenPreviewGeometryMeasurement(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime
+): WechatPngGeometryMeasurement {
+  const document = preview.ownerDocument;
+  if (!document.body) throw new Error('wechat-png-measurement-document-body-unavailable');
+  const host = document.createElement('div');
+  host.className = 'easymde-wechat-png-measurement';
+  host.setAttribute('aria-hidden', 'true');
+  host.setAttribute('inert', '');
+  host.style.cssText = [
+    'position:fixed',
+    'left:-100000px',
+    'top:0',
+    'display:block',
+    'opacity:0',
+    'pointer-events:none',
+    'contain:layout style'
+  ].join(';');
+  const width = previewWorkspaceMeasurementWidth(preview, runtime);
+  if (width) {
+    host.style.width = `${width}px`;
+    host.style.maxWidth = `${width}px`;
+  }
+  const inherited = runtime.getComputedStyle(preview);
+  PREVIEW_MEASUREMENT_INHERITED_PROPERTIES.forEach((property) => {
+    const value = inherited.getPropertyValue(property);
+    if (value) host.style.setProperty(property, value);
+  });
+  for (let index = 0; index < inherited.length; index += 1) {
+    const property = inherited.item(index);
+    if (!property?.startsWith('--')) continue;
+    host.style.setProperty(property, inherited.getPropertyValue(property));
+  }
+  const path: Element[] = [];
+  let source: Element | null = preview;
+  while (source && source !== document.body && source !== document.documentElement) {
+    path.unshift(source);
+    source = source.parentElement;
+  }
+  let clone: HTMLElement | null = null;
+  let cloneParent: Element | null = host;
+  path.forEach((pathElement) => {
+    const pathClone = (pathElement === preview
+      ? pathElement.cloneNode(true)
+      : pathElement.cloneNode(false)) as HTMLElement;
+    const computed = runtime.getComputedStyle(pathElement);
+    if (pathElement !== preview) {
+      pathClone.style.setProperty('display', 'block', 'important');
+      pathClone.style.setProperty('position', 'static', 'important');
+      pathClone.style.setProperty('inset', 'auto', 'important');
+      pathClone.style.setProperty('width', '100%', 'important');
+      pathClone.style.setProperty('min-width', '0', 'important');
+      pathClone.style.setProperty('max-width', 'none', 'important');
+      pathClone.style.setProperty('height', 'auto', 'important');
+      pathClone.style.setProperty('min-height', '0', 'important');
+      pathClone.style.setProperty('max-height', 'none', 'important');
+      pathClone.style.setProperty('margin', '0', 'important');
+      pathClone.style.setProperty('padding', '0', 'important');
+      pathClone.style.setProperty('border', '0', 'important');
+      pathClone.style.setProperty('transform', 'none', 'important');
+    }
+    if ('none' === computed.getPropertyValue('display').trim().toLowerCase()) {
+      pathClone.style.setProperty('display', 'block', 'important');
+    }
+    if ('hidden' === computed.getPropertyValue('content-visibility').trim().toLowerCase()) {
+      pathClone.style.setProperty('content-visibility', 'visible', 'important');
+    }
+    cloneParent?.append(pathClone);
+    cloneParent = pathClone;
+    if (pathElement === preview) clone = pathClone;
+  });
+  if (!clone) {
+    host.remove();
+    throw new Error('wechat-png-measurement-preview-unavailable');
+  }
+  const measurementRoot = clone as HTMLElement;
+  document.body.append(host);
+  return {
+    cleanup: () => host.remove(),
+    root: measurementRoot
+  };
 }
 
 function connectedPlainText(root: HTMLElement, source: HTMLElement): string {
@@ -3551,6 +3725,9 @@ export function createBrowserWechatClipboard(
   };
 
   return {
+    rememberPreviewWidth(preview: HTMLElement): void {
+      rememberPreviewWidthValue(preview);
+    },
     async prepare(
       preview: HTMLElement,
       options: WechatClipboardPreparationOptions = {}
@@ -3664,8 +3841,10 @@ export function createBrowserWechatClipboard(
         const conversionRasterizationPort = options.visualRasterizationPort as WechatVisualRasterizationPort | undefined;
         const conversionImageUploadPort = options.imageUploadPort as ImageUploadPort | undefined;
         let startConversion: () => void = () => undefined;
+        let conversionTerminated = false;
         let payloadPreview = preview;
         let disposeConversionFreshness = (): void => undefined;
+        let disposeGeometryMeasurement = (): void => undefined;
         const portableSourceFreshness: { current: ClipboardSourceFreshnessGuard | null } = {
           current: null
         };
@@ -3695,6 +3874,7 @@ export function createBrowserWechatClipboard(
           }
           try {
             payloadPreview = resolvedPreview;
+            rememberPreviewWidthValue(resolvedPreview);
             portableSourceFreshness.current = createClipboardSourceFreshnessGuard(resolvedPreview);
             resolvePortableFreshness();
           } catch (error: unknown) {
@@ -3705,9 +3885,25 @@ export function createBrowserWechatClipboard(
           ? new Promise<SerializedClipboardPayload>((resolve, reject) => {
             startConversion = () => {
               void readyPreview.then((resolvedPreview) => {
+                if (
+                  conversionTerminated
+                  || conversionSignal.aborted
+                  || options.isCurrent && !options.isCurrent()
+                ) {
+                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                }
                 payloadPreview = resolvedPreview;
+                rememberPreviewWidthValue(resolvedPreview);
                 const sourceFreshness = createClipboardSourceFreshnessGuard(resolvedPreview);
                 disposeConversionFreshness = sourceFreshness.dispose;
+                const geometryMeasurement = isPreviewHiddenForPng(resolvedPreview, runtime)
+                  ? createHiddenPreviewGeometryMeasurement(resolvedPreview, runtime)
+                  : undefined;
+                disposeGeometryMeasurement = () => {
+                  geometryMeasurement?.cleanup();
+                  disposeGeometryMeasurement = () => undefined;
+                };
+                const serializationPreview = geometryMeasurement?.root ?? resolvedPreview;
                 return waitForBrowserTask(runtime).then(() => {
                   const conversionContext: WechatPngConversionContext = {
                     isCurrent: () => (
@@ -3723,7 +3919,7 @@ export function createBrowserWechatClipboard(
                     state: conversionState
                   };
                   return serializeClipboardPayload(
-                    resolvedPreview,
+                    serializationPreview,
                     runtime,
                     backgroundAssetCache,
                     createSerializationYield(runtime, true),
@@ -3735,6 +3931,7 @@ export function createBrowserWechatClipboard(
                     }
                     return serialized;
                   }).finally(() => {
+                    disposeGeometryMeasurement();
                     sourceFreshness.dispose();
                     disposeConversionFreshness = () => undefined;
                   });
@@ -3974,6 +4171,8 @@ export function createBrowserWechatClipboard(
           }
           return { code: 'wechat-copy-failed', status: 'failed' };
         } finally {
+          conversionTerminated = true;
+          disposeGeometryMeasurement();
           disposePortableFreshness();
           disposeConversionFreshness();
           detachConversionAbort();

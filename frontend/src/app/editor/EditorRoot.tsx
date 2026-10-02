@@ -902,10 +902,31 @@ export function EditorRoot(props: EditorRootProps) {
     () => () => props.appearancePort.dispose(),
     [props.appearancePort]
   );
-  const handlePreviewReady = useCallback((runtime: PreviewSurfaceRuntime) => {
-    previewRuntimeRef.current = runtime;
-    setPreviewRuntimeGeneration((generation) => generation + 1);
-  }, []);
+  const rememberWechatPreviewWidth = useCallback(
+    (surface?: HTMLElement | null) => {
+      if (!props.wechatExport.enabled) return;
+      const remember = props.wechatClipboard.rememberPreviewWidth;
+      if (!remember) return;
+      const visualSurface =
+        visualPreviewEditingRef.current || visualPreviewWindowRequestedRef.current
+          ? visualEditorRuntimeRef.current?.surface
+          : null;
+      const activePreview = surface
+        ?? (visualSurface?.isConnected ? visualSurface : null)
+        ?? previewRuntimeRef.current?.surface
+        ?? null;
+      if (activePreview) remember(activePreview);
+    },
+    [props.wechatClipboard, props.wechatExport.enabled]
+  );
+  const handlePreviewReady = useCallback(
+    (runtime: PreviewSurfaceRuntime) => {
+      previewRuntimeRef.current = runtime;
+      rememberWechatPreviewWidth(runtime.surface);
+      setPreviewRuntimeGeneration((generation) => generation + 1);
+    },
+    [rememberWechatPreviewWidth]
+  );
   const prepareVisualWindowBlockAdoption = useCallback(
     (node: HTMLElement): (() => boolean) | null => {
       const runtime = previewRuntimeRef.current;
@@ -2062,9 +2083,14 @@ export function EditorRoot(props: EditorRootProps) {
           ? null
           : currentState.status
     }));
+    if ('source' === immersiveModeRef.current) rememberWechatPreviewWidth();
     immersiveRef.current = true;
     setImmersive(true);
-  }, [closeForToolbar, props.immersivePreferencesPort]);
+  }, [
+    closeForToolbar,
+    props.immersivePreferencesPort,
+    rememberWechatPreviewWidth
+  ]);
   const exitImmersive = useCallback(() => {
     cancelVisualUnlockPreparation();
     if (
@@ -2088,14 +2114,20 @@ export function EditorRoot(props: EditorRootProps) {
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
     ) {
+      if ('source' === mode) rememberWechatPreviewWidth();
       setImmersiveMode(mode);
       return;
     }
     void prepareSourceMutationWithPreview().then((prepared) => {
       if (!prepared || !rootActiveRef.current) return;
+      if ('source' === mode) rememberWechatPreviewWidth();
       setImmersiveMode(mode);
     });
-  }, [cancelVisualUnlockPreparation, prepareSourceMutationWithPreview]);
+  }, [
+    cancelVisualUnlockPreparation,
+    prepareSourceMutationWithPreview,
+    rememberWechatPreviewWidth
+  ]);
   const copyWechatFromImmersive = useCallback(
     () => requestWechatCopy(),
     [requestWechatCopy]

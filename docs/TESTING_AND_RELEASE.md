@@ -250,6 +250,14 @@ with a zero-width range at the union end. Both visual surface paths enforce
 Clipboard tests also verify the separate 60-second payload/HTML/plain-Blob
 preparation bound and 10-second browser-commit bound, including fail-fast early
 write rejection and late deferred-payload gating.
+The hidden-surface PNG regression must verify that explicit Copy attaches a
+temporary measurement tree from the current stable enhanced Preview, uses that
+tree for the complete serialization, preserves native candidate geometry, and
+keeps freshness owned by the original Preview. It must cover remembered
+positive root width from Preview-ready and before source-mode hiding, the
+initial-never-visible path using live workspace width and content constraints,
+ancestor layout neutralization with retained context CSS, and cleanup on every
+conversion terminal path.
 Freshness tests verify that the transaction-local `MutationObserver` is
 installed before the initial snapshot, that `takeRecords()` checkpoints cover
 initial, current, and final comparisons, and that the clean path makes an O(1)

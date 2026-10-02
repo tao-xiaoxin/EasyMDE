@@ -641,6 +641,7 @@ function fixture(): EditorRootProps &
     },
     wechatClipboard: {
       copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' }),
+      rememberPreviewWidth: vi.fn(),
       prepare: vi.fn().mockResolvedValue(undefined)
     },
     wechatExport: {
@@ -6011,6 +6012,148 @@ describe('EditorRoot', () => {
         'is-immersive-preview'
       )
     ).toBe(true);
+  });
+
+  it('records the visible Preview before entering persisted source mode', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      settings: {
+        ...baseProps.settings,
+        general: {
+          ...baseProps.settings.general,
+          editingMode: 'source' as const
+        }
+      },
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-source'
+      )
+    ).toBe(true);
+    view.unmount();
+  });
+
+  it('records the visible Preview before a direct immersive source transition', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+
+    fireEvent.click(view.getByRole('button', { name: /^编辑$/u }));
+
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-source'
+      )
+    ).toBe(true);
+    view.unmount();
+  });
+
+  it('records the visible Preview before an async visual source transition', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+    fireEvent.click(view.getByRole('button', { name: /^编辑$/u }));
+
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(true)
+    );
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    view.unmount();
   });
 
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {

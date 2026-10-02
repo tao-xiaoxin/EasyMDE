@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
@@ -49,6 +49,52 @@ const readonlyProjectionUpdatedMarkdown = [
   '',
   'Updated ordinary editable paragraph.'
 ].join('\n');
+const pngHiddenPreviewMarkdown = [
+  '# Hidden Preview PNG fixture',
+  '',
+  '## Stable geometry',
+  '',
+  '> A quote keeps the hidden measurement tree in flow.',
+  '',
+  '| Column | Value |',
+  '| --- | --- |',
+  '| table | stable |',
+  '',
+  '```js',
+  'const hiddenPreview = true;',
+  '```',
+  '',
+  'Inline parent **before** $x^2$ **after**.',
+  '',
+  '```mermaid',
+  'graph LR',
+  '  A[Start] --> B[Finish]',
+  '```'
+].join('\n');
+const pngHiddenPreviewUpdatedMarkdown = [
+  '# Hidden Preview PNG fixture',
+  '',
+  'Updated after the hidden Preview refresh.',
+  '',
+  '## Stable geometry',
+  '',
+  '> The updated quote remains in the hidden measurement tree.',
+  '',
+  '| Column | Value |',
+  '| --- | --- |',
+  '| table | refreshed |',
+  '',
+  '```js',
+  'const hiddenPreview = false;',
+  '```',
+  '',
+  'Inline parent **before** $x^2$ **after**.',
+  '',
+  '```mermaid',
+  'graph LR',
+  '  A[Start] --> B[Updated finish]',
+  '```'
+].join('\n');
 
 function requiredEnvironment(name) {
   const value = process.env[name];
@@ -56,6 +102,28 @@ function requiredEnvironment(name) {
     throw new Error(`${name} must be set in the root .env or process environment.`);
   }
   return value;
+}
+
+function multipartFileDigest(request) {
+  const contentType = request.headers()['content-type'] ?? '';
+  const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/iu);
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  const body = request.postDataBuffer();
+  if (!boundary || !body) throw new Error('wechat-png-upload-body-unavailable');
+  const fileHeader = Buffer.from('Content-Disposition: form-data; name="file";');
+  const fileHeaderStart = body.indexOf(fileHeader);
+  const fileStartMarker = Buffer.from('\r\n\r\n');
+  const fileStart = body.indexOf(fileStartMarker, fileHeaderStart);
+  const fileEnd = body.indexOf(
+    Buffer.from(`\r\n--${boundary}`),
+    fileStart + fileStartMarker.length
+  );
+  if (fileHeaderStart < 0 || fileStart < 0 || fileEnd < 0) {
+    throw new Error('wechat-png-upload-file-part-unavailable');
+  }
+  return createHash('sha256')
+    .update(body.subarray(fileStart + fileStartMarker.length, fileEnd))
+    .digest('hex');
 }
 
 function runWp(args) {
@@ -169,6 +237,12 @@ async function assertPngConversionDisabled(page) {
   await expect.poll(() => page.evaluate(
     () => window.EasyMDEEditorRootBootstrap.wechatExport.pngConversionEnabled
   )).toBe(false);
+}
+
+async function assertPngConversionEnabled(page) {
+  await expect.poll(() => page.evaluate(
+    () => window.EasyMDEEditorRootBootstrap.wechatExport.pngConversionEnabled
+  )).toBe(true);
 }
 
 async function installClipboardInstrumentation(page) {
@@ -290,6 +364,7 @@ async function installClipboardInstrumentation(page) {
         hasEditorChrome: normalized.includes('easymde-toolbar')
           || normalized.includes('cm-content'),
         hasFormula: normalized.includes('katex'),
+        imageCount: (normalized.match(/<img\b/gu) ?? []).length,
         hasMermaid: normalized.includes('easymde-mermaid'),
         hasScript: normalized.includes('<script'),
         hasTable: normalized.includes('<table')
@@ -675,6 +750,46 @@ async function stopZeroWriteProbe(page) {
   await page.evaluate(() => globalThis.__easymdeWechatZeroWrite.disconnect());
 }
 
+async function installPngMeasurementProbe(page) {
+  await page.evaluate(() => {
+    const measurements = [];
+    const observer = new MutationObserver(() => {
+      const host = document.querySelector('.easymde-wechat-png-measurement');
+      const root = host?.querySelector('[data-easymde-preview-html-sink="1"]');
+      if (
+        !(host instanceof HTMLElement)
+        || !(root instanceof HTMLElement)
+        || !host.isConnected
+        || !root.isConnected
+      ) return;
+      const rootRect = root.getBoundingClientRect();
+      const hostRect = host.getBoundingClientRect();
+      measurements.push({
+        hostWidth: hostRect?.width ?? 0,
+        rootHeight: rootRect.height,
+        rootWidth: rootRect.width
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    globalThis.__easymdePngMeasurementProbe = {
+      disconnect() {
+        observer.disconnect();
+      },
+      read() {
+        return measurements.slice();
+      }
+    };
+  });
+}
+
+async function readPngMeasurements(page) {
+  return page.evaluate(() => globalThis.__easymdePngMeasurementProbe.read());
+}
+
+async function stopPngMeasurementProbe(page) {
+  await page.evaluate(() => globalThis.__easymdePngMeasurementProbe.disconnect());
+}
+
 async function readRect(locator) {
   return locator.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -900,6 +1015,388 @@ test.describe('WeChat copy browser regressions', () => {
       nonwindowed: true,
       ordinaryParagraphText: 'Updated ordinary editable paragraph.'
     });
+  });
+
+  test('rasterizes current visual roots after immersive Source hides Preview', async ({
+    context,
+    page
+  }, testInfo) => {
+    testInfo.wechatHeartbeatRequests = [];
+    await login(page, testInfo.wechatUser);
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await installClipboardInstrumentation(page);
+    await page.addInitScript(() => {
+      let loaderBootstrap;
+      Object.defineProperty(window, 'EasyMDEAdminEditorLoaderBootstrap', {
+        configurable: true,
+        get: () => loaderBootstrap,
+        set: (value) => {
+          const editorBootstrap = value
+            && 'object' === typeof value
+            && value.editorBootstrap
+            && 'object' === typeof value.editorBootstrap
+            ? value.editorBootstrap
+            : null;
+          loaderBootstrap = editorBootstrap?.settings?.general
+            ? {
+                ...value,
+                editorBootstrap: {
+                  ...editorBootstrap,
+                  settings: {
+                    ...editorBootstrap.settings,
+                    general: {
+                      ...editorBootstrap.settings.general,
+                      ...('1' === window.sessionStorage.getItem(
+                        'easymde-e2e-hidden-png-source'
+                      ) ? { editingMode: 'source' } : {})
+                    }
+                  },
+                  wechatExport: {
+                    ...editorBootstrap.wechatExport,
+                    pngConversionEnabled: true
+                  }
+                }
+              }
+            : value;
+        }
+      });
+    });
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+
+    const imageUploadBootstrap = await page.evaluate(() => ({
+      endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
+      owner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner
+    }));
+    if (!imageUploadBootstrap.endpoint || !imageUploadBootstrap.owner) {
+      throw new Error('wechat-png-image-upload-bootstrap-unavailable');
+    }
+    expect(['image-hosting', 'media']).toContain(imageUploadBootstrap.owner);
+    const imageUploadPath = new URL(
+      imageUploadBootstrap.endpoint,
+      page.url()
+    ).pathname;
+    const uploadRequests = [];
+    const uploadDigests = [];
+    const imageUploadMatcher = (url) => new URL(url).pathname === imageUploadPath;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === imageUploadPath) {
+        uploadRequests.push({ method: request.method() });
+        uploadDigests.push(multipartFileDigest(request));
+      }
+    });
+    await page.route(imageUploadMatcher, async (route) => {
+      const index = uploadRequests.length;
+      const response = imageUploadBootstrap.owner === 'image-hosting'
+        ? {
+            alt: '',
+            backup: { status: 'disabled' },
+            title: '',
+            url: `https://images.example.test/e2e/wechat-png-${index}.png`
+          }
+        : {
+            alt: '',
+            filename: `wechat-png-${index}.png`,
+            id: 9000 + index,
+            title: '',
+            url: `https://images.example.test/e2e/wechat-png-${index}.png`
+          };
+      await route.fulfill({
+        body: JSON.stringify(response),
+        contentType: 'application/json',
+        status: 200
+      });
+    });
+
+    await fillMarkdownAndWaitForPreview(
+      page,
+      pngHiddenPreviewMarkdown,
+      'Inline parent'
+    );
+    const preview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(preview.locator('.easymde-math-inline')).toHaveCount(1);
+    await expect(preview.locator('.easymde-mermaid')).toHaveCount(1);
+    await expect(preview.locator('table')).toHaveCount(1);
+    await expect(preview.locator('pre code')).toHaveCount(1);
+    const initialGeometry = await preview.evaluate((root) => (
+      [...root.querySelectorAll('.easymde-math-inline, .easymde-mermaid')].map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const parentRect = element.parentElement?.getBoundingClientRect();
+        return {
+          display: style.display,
+          height: rect.height,
+          parentHeight: parentRect?.height ?? 0,
+          parentWidth: parentRect?.width ?? 0,
+          visibility: style.visibility,
+          width: rect.width
+        };
+      })
+    ));
+    expect(initialGeometry).toHaveLength(2);
+    for (const geometry of initialGeometry) {
+      expect(geometry.display).not.toBe('none');
+      expect(geometry.visibility).not.toBe('hidden');
+      expect(geometry.width).toBeGreaterThan(0);
+      expect(geometry.height).toBeGreaterThan(0);
+      expect(geometry.parentWidth).toBeGreaterThan(0);
+      expect(geometry.parentHeight).toBeGreaterThan(0);
+    }
+    expect(uploadRequests).toHaveLength(0);
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    const immersivePreview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(immersivePreview).toBeVisible();
+    const visibleSplitBox = await immersivePreview.boundingBox();
+    if (!visibleSplitBox) throw new Error('wechat-png-visible-split-preview-unavailable');
+    await installPngMeasurementProbe(page);
+
+    await page.getByRole('button', {
+      name: immersiveLabels.editMode,
+      exact: true
+    }).click();
+    await expect(immersivePreview).toBeHidden();
+    const source = page.locator('#easymde-source');
+    await expect(source).toHaveValue(pngHiddenPreviewMarkdown);
+    await setupZeroWriteProbe(page);
+
+    const immersiveButton = page.getByRole('button', {
+      exact: true,
+      name: immersiveLabels.wechat
+    });
+    await focusPageForCopy(page);
+    await beginCopy(page, 'deferred');
+    await immersiveButton.focus();
+    await expect(immersiveButton).toBeFocused();
+    await immersiveButton.press('Enter');
+    await immersiveButton.press('Enter');
+    await waitForPendingMeasurement(page);
+    const copyMetrics = await copyTrace(page);
+    expect(copyMetrics.clickCount).toBe(2);
+    expect(copyMetrics.writeCount).toBe(1);
+    expect(copyMetrics.writeActivation).toBe(true);
+    await expect(immersiveButton).toBeFocused();
+    await expect(immersiveButton).toHaveAttribute('aria-busy', 'true');
+    await expect(immersiveButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(immersiveButton).toHaveJSProperty('disabled', false);
+    await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
+    await waitForWechatStatusEvent(page, 'wechat-success');
+    await expect.poll(() => page.evaluate((writeIndex) => (
+      globalThis.__easymdeWechatCopyTrace.writes[writeIndex]?.nativeState
+    ), copyMetrics.writeIndex)).toBe('fulfilled');
+    await expect(immersiveButton).toBeFocused();
+    await expect(immersiveButton).not.toBeDisabled();
+    const payload = await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.readPayload());
+    expect(payload).toMatchObject({
+      hasCode: true,
+      hasEditorChrome: false,
+      hasFormula: false,
+      hasMermaid: false,
+      hasScript: false,
+      imageCount: 2,
+      hasTable: true
+    });
+    expect(uploadRequests).toHaveLength(2);
+    expect(uploadDigests).toHaveLength(2);
+    await expect(page.locator('.easymde-wechat-png-measurement')).toHaveCount(0);
+    const firstMeasurements = await readPngMeasurements(page);
+    expect(firstMeasurements.length).toBeGreaterThan(0);
+    expect(firstMeasurements[0].rootWidth).toBeGreaterThan(0);
+    expect(Math.abs(firstMeasurements[0].rootWidth - visibleSplitBox.width))
+      .toBeLessThanOrEqual(1);
+    const firstMeasurementCount = firstMeasurements.length;
+    const zeroWrite = await readZeroWriteProbe(page);
+    expect(zeroWrite).toMatchObject({
+      compatibilityUnchanged: true,
+      previewMutations: 0,
+      previewUnchanged: true,
+      sourceMutations: 0,
+      sourceUnchanged: true
+    });
+    await stopZeroWriteProbe(page);
+    await dismissEditorStatus(page);
+    await expect(source).toHaveValue(pngHiddenPreviewMarkdown);
+
+    await fillMarkdownAndWaitForPreview(
+      page,
+      pngHiddenPreviewUpdatedMarkdown,
+      'Updated after the hidden Preview refresh.'
+    );
+    await expect(immersivePreview).toBeHidden();
+    await expect(source).toHaveValue(pngHiddenPreviewUpdatedMarkdown);
+    await setupZeroWriteProbe(page);
+    await focusPageForCopy(page);
+    await beginCopy(page, 'deferred');
+    await immersiveButton.focus();
+    await expect(immersiveButton).toBeFocused();
+    await immersiveButton.press('Enter');
+    await immersiveButton.press('Enter');
+    await waitForPendingMeasurement(page);
+    const updatedCopyMetrics = await copyTrace(page);
+    expect(updatedCopyMetrics.clickCount).toBe(2);
+    expect(updatedCopyMetrics.writeCount).toBe(1);
+    expect(updatedCopyMetrics.writeActivation).toBe(true);
+    await expect(immersiveButton).toBeFocused();
+    await expect(immersiveButton).toHaveAttribute('aria-busy', 'true');
+    await expect(immersiveButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(immersiveButton).toHaveJSProperty('disabled', false);
+    await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
+    await waitForWechatStatusEvent(page, 'wechat-success');
+    await expect.poll(() => page.evaluate((writeIndex) => (
+      globalThis.__easymdeWechatCopyTrace.writes[writeIndex]?.nativeState
+    ), updatedCopyMetrics.writeIndex)).toBe('fulfilled');
+    await expect(immersiveButton).toBeFocused();
+    await expect(immersiveButton).not.toBeDisabled();
+    const updatedPayload = await page.evaluate(
+      () => globalThis.__easymdeWechatCopyTrace.readPayload()
+    );
+    expect(updatedPayload).toMatchObject({
+      hasFormula: false,
+      hasMermaid: false,
+      imageCount: 2
+    });
+    expect(uploadRequests).toHaveLength(4);
+    expect(uploadDigests).toHaveLength(4);
+    expect(uploadDigests.slice(2).some(
+      (digest, index) => digest !== uploadDigests[index]
+    )).toBe(true);
+    const updatedZeroWrite = await readZeroWriteProbe(page);
+    expect(updatedZeroWrite).toMatchObject({
+      compatibilityUnchanged: true,
+      previewMutations: 0,
+      previewUnchanged: true,
+      sourceMutations: 0,
+      sourceUnchanged: true
+    });
+    await stopZeroWriteProbe(page);
+    await expect(page.locator('.easymde-wechat-png-measurement')).toHaveCount(0);
+    await dismissEditorStatus(page);
+    const updatedMeasurements = await readPngMeasurements(page);
+    expect(updatedMeasurements.length).toBeGreaterThan(firstMeasurementCount);
+    const updatedMeasurement = updatedMeasurements.at(-1);
+    expect(updatedMeasurement?.rootWidth ?? 0).toBeGreaterThan(0);
+    expect(Math.abs((updatedMeasurement?.rootWidth ?? 0) - visibleSplitBox.width))
+      .toBeLessThanOrEqual(1);
+    await stopPngMeasurementProbe(page);
+    await page.getByRole('button', {
+      name: immersiveLabels.splitMode,
+      exact: true
+    }).click();
+    await expect(immersivePreview).toBeVisible();
+    const refreshedSplitBox = await immersivePreview.boundingBox();
+    if (!refreshedSplitBox) throw new Error('wechat-png-refreshed-split-preview-unavailable');
+    expect(Math.abs(refreshedSplitBox.width - visibleSplitBox.width)).toBeLessThanOrEqual(1);
+    await expect(immersivePreview).toContainText('Updated after the hidden Preview refresh.');
+    await expect(immersivePreview.locator('.easymde-math-inline')).toHaveCount(1);
+    await expect(immersivePreview.locator('.easymde-mermaid')).toHaveCount(1);
+    await expect(immersivePreview.locator('table')).toHaveCount(1);
+    await expect(immersivePreview.locator('pre code')).toHaveCount(1);
+    await page.getByRole('button', {
+      name: immersiveLabels.exit,
+      exact: true
+    }).click();
+
+    // Reuse the loader bootstrap seam to cover a genuinely first hidden
+    // Preview without changing the site-wide editing mode setting.
+    await page.evaluate(() => {
+      window.sessionStorage.setItem('easymde-e2e-hidden-png-source', '1');
+    });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+    expect(await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.settings.general.editingMode
+    )).toBe('source');
+    await page.addStyleTag({
+      content: [
+        '.easymde-editor:not(.is-immersive) { max-width: 760px !important; }',
+        '.easymde-editor:not(.is-immersive) > .easymde-workspace {',
+        '  box-sizing: border-box !important;',
+        '  width: 500px !important;',
+        '  max-width: 760px !important;',
+        '  padding-left: 18px !important;',
+        '  padding-right: 18px !important;',
+        '}'
+      ].join('\n')
+    });
+    const availableSourceWidth = await page.locator('.easymde-workspace').evaluate((workspace) => {
+      const rect = workspace.getBoundingClientRect();
+      const style = getComputedStyle(workspace);
+      const horizontalEdges = [
+        'padding-left',
+        'padding-right',
+        'border-left-width',
+        'border-right-width'
+      ].reduce((total, property) => total + Number.parseFloat(style.getPropertyValue(property) || '0'), 0);
+      return rect.width - horizontalEdges;
+    });
+    expect(availableSourceWidth).toBeGreaterThan(0);
+    expect(availableSourceWidth).toBeLessThanOrEqual(760);
+    await installPngMeasurementProbe(page);
+    const initialHiddenPreview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(initialHiddenPreview).toBeHidden();
+    uploadRequests.length = 0;
+    await fillMarkdownAndWaitForPreview(
+      page,
+      pngHiddenPreviewMarkdown,
+      'Inline parent'
+    );
+    await expect(initialHiddenPreview).toBeHidden();
+    await expect(initialHiddenPreview.locator('.easymde-math-inline')).toHaveCount(1);
+    await expect(initialHiddenPreview.locator('.easymde-mermaid')).toHaveCount(1);
+    expect(uploadRequests).toHaveLength(0);
+    await setupZeroWriteProbe(page);
+    const initialSourceCopy = page.locator('.easymde-toolbar-copy-action');
+    await focusPageForCopy(page);
+    await beginCopy(page, 'success');
+    await initialSourceCopy.click();
+    await expect.poll(() => page.evaluate(
+      () => globalThis.__easymdeWechatCopyTrace.writes.length
+    )).toBe(1);
+    await waitForWechatStatusEvent(page, 'wechat-success');
+    const initialHiddenMetrics = await copyTrace(page);
+    expect(initialHiddenMetrics.clickCount).toBe(1);
+    expect(initialHiddenMetrics.writeCount).toBe(1);
+    expect(initialHiddenMetrics.writeActivation).toBe(true);
+    expect(initialHiddenMetrics.writeNativeState).toBe('fulfilled');
+    const initialHiddenPayload = await page.evaluate(
+      () => globalThis.__easymdeWechatCopyTrace.readPayload()
+    );
+    expect(initialHiddenPayload).toMatchObject({
+      hasFormula: false,
+      hasMermaid: false,
+      imageCount: 2
+    });
+    expect(uploadRequests).toHaveLength(2);
+    const initialHiddenZeroWrite = await readZeroWriteProbe(page);
+    expect(initialHiddenZeroWrite).toMatchObject({
+      compatibilityUnchanged: true,
+      previewMutations: 0,
+      previewUnchanged: true,
+      sourceMutations: 0,
+      sourceUnchanged: true
+    });
+    await stopZeroWriteProbe(page);
+    await expect(page.locator('.easymde-wechat-png-measurement')).toHaveCount(0);
+    const initialSourceMeasurements = await readPngMeasurements(page);
+    expect(initialSourceMeasurements.length).toBeGreaterThan(0);
+    const initialSourceMeasurement = initialSourceMeasurements.at(-1);
+    expect(initialSourceMeasurement?.rootWidth ?? 0).toBeGreaterThan(0);
+    expect(initialSourceMeasurement?.rootWidth ?? Number.MAX_SAFE_INTEGER)
+      .toBeLessThanOrEqual(availableSourceWidth + 1);
+    await stopPngMeasurementProbe(page);
+    await page.unroute(imageUploadMatcher);
   });
 
   test('cold medium copy shows pending feedback, coalesces clicks, and preserves the source and Preview', async ({

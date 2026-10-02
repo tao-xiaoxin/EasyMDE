@@ -802,6 +802,9 @@ async function waitForPreviewRefresh(preview, previousSignature, message) {
 }
 
 async function moveVisualCaretToDocumentEnd(surface) {
+  // macOS Chromium leaves ControlOrMeta+End at offset 0 in contenteditable;
+  // Meta+ArrowDown is the native document-end shortcut verified by the
+  // isolated caret baseline.
   await surface.press(
     process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End'
   );

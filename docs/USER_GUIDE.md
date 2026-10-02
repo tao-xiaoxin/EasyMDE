@@ -245,11 +245,13 @@ The table of contents is generated from rendered headings and is inserted where 
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
 
-While a copy is in progress, the ordinary and immersive controls share one busy
-state: both copy controls are disabled, expose their busy state, and show the
-animated refresh indicator. Repeated activation is ignored. The indicator
-clears after the browser Clipboard operation returns, and replacing or leaving
-the editor clears stale pending feedback without reporting a late success.
+While a copy is in progress, the ordinary and immersive controls remain
+focusable and share one pending state. They announce busy and temporary
+unavailability with `aria-busy` and `aria-disabled`; repeated click, Enter, or
+Space activation is ignored. The refresh indicator remains static when reduced
+motion is preferred. Settled success or failure clears the pending state after
+the browser Clipboard operation returns, and replacing or leaving the editor
+clears stale pending feedback without reporting a late success.
 
 **Convert and upload images for WeChat copy** is disabled by default under
 **EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy

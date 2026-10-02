@@ -4,7 +4,10 @@ import {
   MAX_PREVIEW_EDIT_MAP_BLOCKS,
   type PreviewEditMapBlock
 } from '../../../contracts/ports/preview-request';
-import { createWordPressPreviewPort } from './create-wordpress-preview-port';
+import {
+  createWordPressPreviewPort,
+  PREVIEW_RESPONSE_INVALID_CODE
+} from './create-wordpress-preview-port';
 
 const request = {
   markdown: '# Preview',
@@ -100,6 +103,8 @@ describe('createWordPressPreviewPort', () => {
       'https://example.test/wp-admin/post.php'
     );
     await expect(port.render(request, new AbortController().signal)).rejects.toMatchObject({
+      code: PREVIEW_RESPONSE_INVALID_CODE,
+      message: PREVIEW_RESPONSE_INVALID_CODE,
       name: 'PreviewResponseError'
     });
   });

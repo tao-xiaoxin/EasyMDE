@@ -26,11 +26,18 @@ path selects the same HTML and lets the destination derive visible plain text.
 The plain-text measurement host uses the rendered Preview width, including the
 last non-zero visible width while immersive source mode hides Preview.
 
+PHP remains authoritative for Preview source provenance and its connected
+readonly overlap projection. Clipboard consumes the accepted Safe Preview and
+never changes the edit map or Source Editor.
+
 Before touching Clipboard, the session rejects disabled, inactive, empty,
 loading, and error Preview states with a distinct unavailable result. It
 coalesces concurrent copy requests, maps Adapter rejection to explicit failure,
 reports unsupported Clipboard separately, and suppresses late status after
-teardown.
+teardown. There is at most one active copy operation per session. Disposal or
+session replacement signals cancellation to the adapter and invalidates its
+sequence, so a late result cannot publish status or success for the replaced
+session.
 
 ## Activation and preparation
 
@@ -60,7 +67,9 @@ do not copy their numeric constants into this reference.
 
 When theme-image preparation is pending, the modern path creates one
 `ClipboardItem` with deferred Blob payloads and starts `navigator.clipboard.write`
-in the originating click task. The path remains asynchronous when no image is
+in the originating click task. The successful modern setup invokes `write()`
+before its first browser-task yield and before any computed-style, pseudo-style,
+or geometry freshness walk. The path remains asynchronous when no image is
 pending; background work must not synchronously serialize a full Preview. If
 ClipboardItem construction or the write invocation throws synchronously and no
 prepared payload exists, one synchronous serialization attempt may use the
@@ -68,21 +77,38 @@ same-click legacy fallback. A pending preparation or a modern write rejection
 after an await never crosses into legacy. A fast write followed by a deferred
 payload failure is still failure.
 
+For the ordinary modern path, the deferred HTML and plain-text Blob
+preparation has a 60-second bound. Once both Blobs and the serialized payload
+are ready, the actual browser Clipboard commit has its separate 10-second
+bound. A browser write rejection that arrives before payload readiness fails
+immediately; a late payload, stale-source, abort, or teardown failure gates the
+deferred Blob values and cannot turn an already-started write into success.
+
 The legacy path calls `execCommand` synchronously in the originating click task
 only with a ready payload. A click before preparation completes fails. If a
 transient preparation failed and no prepared entry exists, that click starts
 one background retry but still fails; a later click may use it after success.
-Keep a last successful payload only while source markup is unchanged. A
-successful replacement supersedes it; a failed replacement restores the newest
-same-source success, and monotonic generations prevent an older completion
-from downgrading it. Viewport-coordinate-only scroll changes may reuse a
-payload; dimensions and computed wrapping styles invalidate it. Full sink
-markup, root `class`/`style`, viewport, computed export styles, pseudo-element
-styles, and geometry participate in freshness. Only `aria-busy`,
+Both paths keep a last successful payload only while source markup is unchanged.
+A successful replacement supersedes it; a failed replacement restores the
+newest same-source success, and monotonic generations prevent an older
+completion from downgrading it. Viewport-coordinate-only scroll changes may
+reuse a payload; dimensions and computed wrapping styles invalidate it. Full
+sink markup, root `class`/`style`, viewport, computed export styles,
+pseudo-element styles, and geometry participate in freshness. Only `aria-busy`,
 `data-easymde-preview-accepted`, and `data-easymde-preview-refreshing` on
 the sink root are refresh bookkeeping excluded from the source key; the same
 attributes on descendants and every other root attribute still invalidate it.
 The PNG conversion path uses that same source key across asynchronous checks.
+Each transaction-local freshness guard installs its `MutationObserver` before
+the initial snapshot and drains `takeRecords()` at the initial, current, and
+final checkpoints. A clean guard is an O(1) reuse decision; a dirty guard
+recomputes the current complete canonical source key and compares it with the
+immutable initial key, so a mutation that returns to the same value remains
+reusable while an observed real source change becomes permanently stale. Final
+checks still compare the complete source and layout keys and keep
+the existing Preview-owner and layout guards. Abort, timeout, stale, and
+teardown paths gate the deferred result; `finally` disconnects the observer,
+including late cleanup after an earlier failure.
 
 ## Optional PNG conversion
 
@@ -95,13 +121,23 @@ transfer schema 10 requires the field, while schemas 1 through 9 import it as
 When disabled, Copy follows the existing portable-HTML path unchanged. When
 enabled, conversion runs only during an explicit ordinary or immersive Copy
 from the current stable Preview. Background preparation performs no
-rasterization or upload. The only candidates are the outermost rendered
+rasterization or upload. With PNG conversion enabled, EditorRoot skips unused
+portable background preparation, its resize/layout subscriptions, and its
+queued timer; explicit Copy still obtains a fresh payload for the current
+source. The only candidates are the outermost rendered
 `.easymde-mermaid` root containing SVG and outermost rendered
 `.easymde-math`, `.easymde-math-block`, or `.easymde-math-inline` root
 containing KaTeX. Nested candidate descendants are part of their outer root and
 are not converted or uploaded separately. Ordinary tables, existing `<img>`,
 ordinary SVG, code, other media, and unknown content remain on the existing
 portable-HTML path.
+For a PNG candidate, the outer clone still receives its computed root metadata,
+class/transient-attribute sanitization, and visual-root registration before the
+conversion short-circuit. Because the native PNG replaces that whole root,
+conversion skips descendant, pseudo-element, and theme-background portable
+serialization; native capture still reads the original source tree. The
+portable/default, background, legacy, table, and ordinary-SVG paths are
+unchanged.
 
 PNG Copy requires the modern Clipboard path. Construct deferred HTML and plain
 text payloads and call `navigator.clipboard.write()` in the originating click
@@ -111,16 +147,84 @@ an asynchronous write or deferred-payload failure never falls back to legacy.
 Clipboard success requires every conversion, selected-owner upload, deferred
 payload, and browser write to succeed.
 
-Rasterize and upload candidates serially, with at most 32 candidates. Use the
-current device pixel ratio clamped to `1..2`; each source edge is `1..4096`
-CSS pixels, each PNG is at most 16,777,216 output pixels, and the transaction
-is at most 33,554,432 output pixels. Each PNG must be non-empty verified
-`image/png`, no larger than the authoritative image-upload `maxBytes`; all PNGs
-together are at most 33,554,432 bytes. Each rasterization has a 10,000 ms bound
-and the conversion transaction has a 60,000 ms bound. Cancellation, stale
-Preview markup, invalid dimensions or MIME, limit exhaustion, timeout,
-rasterization failure, upload failure, and Clipboard failure remain distinct,
-explicit failures.
+The visual rasterizer waits for document font readiness before encoding. It
+resolves managed font roots from the approved
+`previewEnhancement.assetBaseUrl` and approved KaTeX stylesheet URL supplied by
+bootstrap, rather than inferring roots from arbitrary CSS suffixes. It embeds
+only matching managed same-origin `@font-face` sources as data fonts in the
+raster SVG; remote or unrecognized font URLs are omitted. A required managed
+family with no source face, invalid or rejected bytes, or failed browser-font
+validation fails explicitly. Only nonmanaged or system families may remain on
+the browser's available fallback font. Font fetch, response-body, cache, and
+aggregate embedding limits remain bounded and cancellation or font failure
+rejects the visual conversion. A successful PNG filename includes the lowercase
+SHA-256 digest of its final bytes, so identical output is stable and different
+output cannot collide solely on the visual kind.
+
+Discover candidates in stable source order and rasterize them serially, with at
+most 32 candidates. After each raster result passes the per-file and aggregate
+limits, enqueue its selected-owner upload with backpressure and at most three
+in-flight PNG uploads. Keep completed uploads keyed by candidate order and
+replace visual clones only after every selected-owner upload succeeds, in that
+same order. Use the current device pixel ratio clamped to `1..2`; each source
+edge is `1..4096` CSS pixels, each PNG is at most 16,777,216 output pixels, and
+the transaction is at most 33,554,432 output pixels. Each PNG must be non-empty
+verified `image/png`, no larger than the authoritative image-upload `maxBytes`;
+all PNGs together are at most 33,554,432 bytes. Each rasterization has a 10,000
+ms bound and the conversion transaction has a 60,000 ms bound. Any
+cancellation, stale Preview, invalid dimension or MIME, limit exhaustion,
+timeout, rasterization failure, selected-owner upload failure, or Clipboard
+failure aborts remaining in-flight uploads and rejects the whole deferred
+payload. The result remains explicit about uploads that may already remain.
+
+Math capture uses a separately styled clone of the same Safe Preview source.
+The adapter copies all safe computed dimensions and normal defaults into that
+clone and does not apply portable serializer markers, empty `U+2060` spans, or
+portable CSS rewrites. KaTeX, table, and pstrut computed dimensions and normal
+defaults remain in the native snapshot; computed `table-layout` remains part of
+it, and there is no authored-dimension preference rule. The clone is measured
+before capture normalization. Unconstrained inline/block captures neutralize
+root margin and positioning, remove max-size constraints, and use max-content
+sizing with visible overflow to union source scroll dimensions, descendant
+layout bounds, and the requested root size. Constrained inline roots preserve
+their source viewport dimensions and max constraints for `hidden`, `clip`, and
+`visible`; each axis is independent, so `autoX`/`hiddenY` expands X and clips Y,
+while `hiddenX`/`autoY` does the inverse. This preserves the complete
+display-formula extent, including a wide scrollable KaTeX formula. The measured
+dimensions are rechecked against the existing
+`1..4096` source edge and PNG pixel bounds, with fractional paint bounds
+quantized once by flooring minima and ceiling maxima on the paint grid.
+
+For every inline math root (`inline`, `inline-block`, or `inline-flex`), the
+raster port receives the original Preview parent for line-box typography and
+returns fractional `inlineLayout` allocation (`width`, `height`, `baseline`,
+`paintOffsetX`, and `paintOffsetY`) plus optional `viewport` geometry
+(`width`, `height`, `offsetX`, and `offsetY`) measured before capture
+normalization, including custom `vertical-align` values such as `super`, `sub`,
+and `middle`. PNG paint bounds do not define inline allocation. The outer
+inline-block wrapper always owns the original allocation and line box. When a
+viewport is present, the inner original source-root viewport owns
+`auto`/`scroll`/`hidden`/`clip`; the PNG uses root-local union paint offsets
+plus the viewport offset. The outer physical `margin-left` is owned once by
+the wrapper and removed once from the local paint offset; vertical margin stays
+allocation-only: source `vertical-align:top` and `bottom` retain their original
+neighboring line-box keywords, while other modes use the measured allocation
+`B-H` relation. Paint placement still uses only root-local union and viewport
+offsets; no fixed offset is used. A
+missing, non-finite, or out-of-bound allocation is an explicit
+baseline/rasterization failure and never falls back to CSS's unmeasured
+baseline.
+
+For fraction and table-like KaTeX geometry, the native clone retains every safe
+computed dimension and normal default, including computed `table-layout`; used
+table bounds remain measurable so the browser can recompute intrinsic layout.
+
+Block math keeps an intrinsic centered wrapper with local horizontal overflow:
+the wrapper is block-level, width-constrained to the destination, centered with
+auto margins, and scrolls horizontally while hiding vertical overflow. Its PNG
+is block-level and centered by that wrapper. Source padding, borders,
+background, and capture geometry are baked into the PNG once; they are not
+copied again onto the wrapper or generated image.
 
 Upload each generated PNG through the Editor's already selected
 `ImageUploadPort`: Image Hosting when `imageHostingEnabled` is true, or the
@@ -139,6 +243,15 @@ and SVG-internal IDs, safe image `src`/`srcset`, safe link URLs, and approved
 computed typography/layout. Remove unsafe URLs. Non-allowlisted CSS background
 URLs become `none` layer slots while safe colors, gradients, and layer order
 remain.
+
+For ordinary flow elements and generated pseudo-elements, map computed logical
+`text-align:start` and `text-align:end` to physical `left` or `right` using the
+source direction from computed style, the nearest `dir`, or the document. WeChat
+forces pasted content to `border-box`, so a finite pixel width, min/max width,
+height, or min/max height computed under ordinary `content-box` is serialized
+with its padding and border widths added and `box-sizing:border-box`. Intrinsic
+or non-pixel dimensions and SVG, Math, KaTeX, and Mermaid special-layout
+geometry retain their existing values.
 
 Materialize only bounded same-origin theme backgrounds as data images. Preserve
 repeating backgrounds as CSS instead of flattening them. For a non-repeating
@@ -201,5 +314,12 @@ teardown. PNG-conversion tests additionally cover strict configuration and
 transfer migration, exact candidate classification, no-upload background and
 legacy paths, write-before-work activation timing, selected-owner dispatch,
 limits, serial order, stale/cancel/timeout/failure behavior, residual-upload
-reporting, and ordinary/immersive invocation. Use semantic readiness, not fixed
+reporting, ordinary/immersive invocation, native math margin and scroll-bound
+capture, native `inlineLayout` allocation, optional viewport geometry, local
+paint offsets, and paint-grid quantization, inline baseline variants and
+explicit baseline failure, generated-image sizing inside the HTML overflow
+owner, and single-owner block spacing. Use semantic readiness, not fixed
 sleeps, and record unverified browsers or destination behavior honestly.
+The native CSS allocation matrix remains required evidence for fractional and
+superscript formulas; focused unit coverage does not prove final source-to-PNG
+baseline fidelity.

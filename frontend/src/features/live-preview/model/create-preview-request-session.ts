@@ -10,14 +10,32 @@ export type PreviewRequestSession = Readonly<{
   schedule: (request: PreviewRequest, immediate?: boolean) => number;
 }>;
 
+export type PreviewRequestFailureCode =
+  | 'preview-request-failed'
+  | 'preview-response-invalid';
+
+const previewRequestFailureCodes: ReadonlySet<string> = new Set<PreviewRequestFailureCode>([
+  'preview-request-failed',
+  'preview-response-invalid'
+]);
+
+export function previewRequestFailureCode(error: unknown): PreviewRequestFailureCode {
+  const code = error instanceof Error ? error.message : '';
+  return previewRequestFailureCodes.has(code)
+    ? code as PreviewRequestFailureCode
+    : 'preview-request-failed';
+}
+
 type PreviewRequestSessionOptions = Readonly<{
   initialRevision: number;
+  onDiagnostic?: (code: PreviewRequestFailureCode) => void;
   onState: (state: PreviewRequestState) => void;
   port: PreviewRequestPort;
 }>;
 
 export function createPreviewRequestSession({
   initialRevision,
+  onDiagnostic,
   onState,
   port
 }: PreviewRequestSessionOptions): PreviewRequestSession {
@@ -81,6 +99,7 @@ export function createPreviewRequestSession({
             controller === currentController &&
             !(error instanceof DOMException && 'AbortError' === error.name)
           ) {
+            onDiagnostic?.(previewRequestFailureCode(error));
             onState({ kind: 'error', request, revision: currentRevision });
           }
         } finally {

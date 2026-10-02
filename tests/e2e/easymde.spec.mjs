@@ -801,6 +801,39 @@ async function waitForPreviewRefresh(preview, previousSignature, message) {
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
 }
 
+async function moveVisualCaretToDocumentEnd(surface) {
+  await surface.press(
+    process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End'
+  );
+  await expect.poll(() => surface.evaluate((root) => {
+    const selection = root.ownerDocument.getSelection();
+    if (
+      !selection?.isCollapsed
+      || !selection.anchorNode
+      || !selection.focusNode
+      || !root.contains(selection.anchorNode)
+      || !root.contains(selection.focusNode)
+    ) return false;
+    const source = root.ownerDocument.querySelector('#easymde-source');
+    if (!(source instanceof HTMLTextAreaElement)) return false;
+    const sourceLength = source.value.length;
+    const selectionOffset = (node, offset) => {
+      const range = root.ownerDocument.createRange();
+      range.selectNodeContents(root);
+      try {
+        range.setEnd(node, offset);
+      } catch {
+        return null;
+      }
+      return range.toString().length;
+    };
+    return selectionOffset(selection.anchorNode, selection.anchorOffset) === sourceLength
+      && selectionOffset(selection.focusNode, selection.focusOffset) === sourceLength;
+  }), {
+    message: 'visual caret should be at document end before paste'
+  }).toBe(true);
+}
+
 function expectWindowedCoverage(
   state,
   totalBlockCount,
@@ -3523,7 +3556,7 @@ test.describe('EasyMDE editor workflows', () => {
     const origin = new URL(page.url()).origin;
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await visualEditor.focus();
-    await visualEditor.press('ControlOrMeta+End');
+    await moveVisualCaretToDocumentEnd(visualEditor);
     await page.evaluate(async (value) => {
       if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
         throw new Error('native-clipboard-write-unavailable');
@@ -4038,7 +4071,7 @@ test.describe('EasyMDE editor workflows', () => {
     const origin = new URL(page.url()).origin;
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
     await visualEditor.focus();
-    await visualEditor.press('ControlOrMeta+End');
+    await moveVisualCaretToDocumentEnd(visualEditor);
     await page.evaluate(async (value) => {
       if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
         throw new Error('native-clipboard-write-unavailable');

@@ -292,6 +292,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 
 	public function test_verification_accepts_the_complete_image_settings_draft_without_projecting_editor_only_fields() {
 		$payload = $this->verification_payload( 'primary' );
+		$payload['settings']['wechatPngExportEnabled'] = true;
 		$payload['settings']['autoUploadPastedImages'] = true;
 		$payload['settings']['remoteImageUploadMode']  = 'both';
 
@@ -300,6 +301,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertCount( 1, $this->runtime->validation_calls );
 		$this->assertArrayNotHasKey( 'autoUploadPastedImages', $this->runtime->validation_calls[0][0] );
+		$this->assertArrayNotHasKey( 'wechatPngExportEnabled', $this->runtime->validation_calls[0][0] );
 		$this->assertArrayNotHasKey( 'remoteImageUploadMode', $this->runtime->validation_calls[0][0] );
 	}
 
@@ -324,6 +326,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		unset( $missing_remote_mode['settings']['remoteImageUploadMode'] );
 		$invalid_auto_upload = $this->verification_payload( 'primary' );
 		$invalid_auto_upload['settings']['autoUploadPastedImages'] = 'true';
+		$invalid_wechat_png_export = $this->verification_payload( 'primary' );
+		$invalid_wechat_png_export['settings']['wechatPngExportEnabled'] = 'true';
 		$invalid_image_hosting = $this->verification_payload( 'primary' );
 		$invalid_image_hosting['settings']['imageHostingEnabled'] = 'true';
 		$invalid_remote_mode = $this->verification_payload( 'primary' );
@@ -331,7 +335,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$extra_field = $this->verification_payload( 'primary' );
 		$extra_field['settings']['editorOnly'] = true;
 
-		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $invalid_remote_mode, $extra_field ) as $payload ) {
+		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_wechat_png_export, $invalid_image_hosting, $invalid_remote_mode, $extra_field ) as $payload ) {
 			$response = rest_do_request( $this->verification_request( $payload ) );
 
 			$this->assertSame( 400, $response->get_status() );
@@ -1092,6 +1096,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			'settings' => array(
 				'service'             => 'cloudflare-r2',
 				'imageHostingEnabled' => false,
+				'wechatPngExportEnabled' => false,
 				'endpoint'            => 'https://synthetic-account.r2.cloudflarestorage.com',
 				'bucket'              => 'synthetic-primary',
 				'domain'              => 'https://images.example.test',

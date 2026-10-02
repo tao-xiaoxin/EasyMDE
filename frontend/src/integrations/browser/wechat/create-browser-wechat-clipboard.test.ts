@@ -3123,6 +3123,153 @@ describe('createBrowserWechatClipboard', () => {
     expect(text).toContain('Heading');
   });
 
+  it('preserves inherited computed defaults and nested resets in both Clipboard paths', async () => {
+    const inheritedDefaults: Record<string, string> = {
+      'font-style': 'normal',
+      'font-variant': 'normal',
+      'font-stretch': '100%',
+      'letter-spacing': 'normal',
+      'text-transform': 'none',
+      'white-space': 'normal',
+      'text-indent': '0px',
+      'text-shadow': 'none',
+      'tab-size': '8',
+      'list-style-position': 'outside'
+    };
+    const nestedReset = {
+      'letter-spacing': '0.25px',
+      'text-indent': '4px',
+      'text-transform': 'uppercase',
+      'overflow-wrap': 'anywhere'
+    };
+    const source = (): HTMLElement => {
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p><span>Inherited text</span></p>';
+      Object.defineProperty(preview, 'innerText', {
+        configurable: true,
+        value: 'Inherited text'
+      });
+      return preview;
+    };
+    const styleFor = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) {
+        return declaration({
+          ...inheritedDefaults,
+          content: '"before"',
+          display: 'inline',
+          'overflow-wrap': 'break-word'
+        });
+      }
+      if ('ARTICLE' === element.tagName) {
+        return declaration({
+          ...inheritedDefaults,
+          display: 'block',
+          opacity: '1',
+          'overflow-wrap': 'normal'
+        });
+      }
+      if ('SPAN' === element.tagName) {
+        return declaration({
+          ...inheritedDefaults,
+          ...nestedReset,
+          display: 'inline'
+        });
+      }
+      return declaration({
+        ...inheritedDefaults,
+        display: 'block',
+        opacity: '1',
+        'overflow-wrap': 'normal'
+      });
+    };
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const runtime = {
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: styleFor,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items: unknown[]) => { writes.push(items); }
+    };
+    const modern = createBrowserWechatClipboard(runtime);
+    await expect(modern.copy(source())).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernItem = (writes[0] as ClipboardItemStub[])[0];
+    const modernBlob = modernItem?.payload['text/html'];
+    if (!modernBlob) throw new Error('modern HTML missing');
+    const modernHtml = await blobText(modernBlob);
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    const paragraph = modernHolder.querySelector<HTMLElement>('section p');
+    const paragraphStyle = paragraph?.getAttribute('style') ?? '';
+    for (const [property, value] of Object.entries(inheritedDefaults)) {
+      expect(paragraphStyle).toContain(`${property}:${value}`);
+    }
+    expect(paragraphStyle).not.toContain('opacity:1');
+    const beforeStyle = modernHolder.querySelector('section p > span[aria-hidden="true"]')?.getAttribute('style') ?? '';
+    expect(beforeStyle).toContain('letter-spacing:normal');
+    expect(beforeStyle).toContain('overflow-wrap:break-word!important');
+    const nestedElement = modernHolder.querySelector<HTMLElement>('section p span:not([aria-hidden="true"]):not([leaf])');
+    const nestedStyle = nestedElement?.getAttribute('style') ?? '';
+    expect(nestedStyle).toContain('letter-spacing:0.25px');
+    expect(nestedStyle).toContain('text-indent:4px');
+    expect(nestedStyle).toContain('text-transform:uppercase');
+    expect(nestedStyle).toContain('overflow-wrap:anywhere!important');
+
+    const hostileStyles = document.createElement('style');
+    hostileStyles.textContent = '.wechat-hostile section * { overflow-wrap:break-word !important; }';
+    modernHolder.className = 'wechat-hostile';
+    document.head.append(hostileStyles);
+    document.body.append(modernHolder);
+    try {
+      expect(paragraph?.style.getPropertyPriority('overflow-wrap')).toBe('important');
+      expect(nestedElement?.style.getPropertyPriority('overflow-wrap')).toBe('important');
+      expect(window.getComputedStyle(paragraph as Element).getPropertyValue('overflow-wrap')).toBe('normal');
+      expect(window.getComputedStyle(nestedElement as Element).getPropertyValue('overflow-wrap')).toBe('anywhere');
+    } finally {
+      modernHolder.remove();
+      hostileStyles.remove();
+    }
+
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        ...runtime,
+        clipboardItem: null,
+        write: null
+      });
+      const legacyPreview = source();
+      await prepareClipboard(legacy, legacyPreview);
+      await expect(legacy.copy(legacyPreview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(legacyHtml).toBe(modernHtml);
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
   it('keeps semantic article structure and materializes safe pseudo content', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {

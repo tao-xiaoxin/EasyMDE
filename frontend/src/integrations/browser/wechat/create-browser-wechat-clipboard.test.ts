@@ -5549,6 +5549,174 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('cancels an active background serialization when its owner aborts', async () => {
+    const pendingImage = deferred<Response>();
+    const fetchStarted = deferred<void>();
+    const ownerController = new AbortController();
+    const writes: unknown[] = [];
+    const bodyAppend = vi.spyOn(document.body, 'append');
+    let sourceInnerTextReads = 0;
+    let requestSignal: AbortSignal | null = null;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      get: () => {
+        sourceInnerTextReads += 1;
+        return 'Theme heading';
+      }
+    });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart-cancel.png', document.baseURI).href;
+    const fetch = vi.fn((_value: RequestInfo | URL, init?: RequestInit) => {
+      requestSignal = init?.signal ?? null;
+      fetchStarted.resolve();
+      return pendingImage.promise;
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn((items) => {
+        writes.push(items);
+        return Promise.resolve();
+      })
+    });
+    const prepare = clipboard.prepare;
+    if (!prepare) throw new Error('clipboard preparation is unavailable');
+
+    const preparation = prepare(
+      preview,
+      {
+        background: true,
+        signal: ownerController.signal
+      } as WechatClipboardPreparationOptions & Readonly<{ signal: AbortSignal }>
+    );
+    await fetchStarted.promise;
+
+    try {
+      ownerController.abort();
+      expect(requestSignal).not.toBeNull();
+      expect((requestSignal as AbortSignal | null)?.aborted).toBe(false);
+      const appendCallsBeforeResolution = bodyAppend.mock.calls.length;
+      const copy = clipboard.copy(preview);
+      pendingImage.resolve({
+        blob: async () => new window.Blob(['theme image'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as unknown as Response);
+      await expect(preparation).rejects.toMatchObject({ name: 'AbortError' });
+      await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(bodyAppend).toHaveBeenCalledTimes(appendCallsBeforeResolution + 1);
+      expect(sourceInnerTextReads).toBe(1);
+      expect(fetch).toHaveBeenCalledOnce();
+      const item = (writes[0] as ClipboardItemStub[])[0];
+      if (!item) throw new Error('ClipboardItem missing');
+      const htmlPayload = item.payload['text/html'];
+      if (!htmlPayload) throw new Error('Clipboard HTML missing');
+      const html = await blobText(htmlPayload);
+      expect(html).toContain('data:image/png;base64,');
+
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      expect(writes).toHaveLength(2);
+      expect(sourceInnerTextReads).toBe(1);
+    } finally {
+      if (!ownerController.signal.aborted) ownerController.abort();
+      await preparation.catch(() => undefined);
+      bodyAppend.mockRestore();
+    }
+  });
+
+  it('settles canceled waiters without reviving the old background job', async () => {
+    const pendingImage = deferred<Response>();
+    const fetchStarted = deferred<void>();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const nextController = new AbortController();
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Theme heading</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
+    const imageUrl = new URL('/assets/images/cupid-busy-heart-waiters.png', document.baseURI).href;
+    const fetch = vi.fn((_value: RequestInfo | URL, _init?: RequestInit) => {
+      fetchStarted.resolve();
+      return pendingImage.promise;
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            content: '""',
+            display: 'block',
+            width: '20px',
+            height: '20px',
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'background-image': `url("${imageUrl}")`
+          });
+        }
+        return computedStyle(element, pseudoElement);
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    const prepare = clipboard.prepare;
+    if (!prepare) throw new Error('clipboard preparation is unavailable');
+    const first = prepare(
+      preview,
+      { background: true, signal: firstController.signal }
+    );
+    await fetchStarted.promise;
+    const second = prepare(
+      preview,
+      { background: true, signal: secondController.signal }
+    );
+    firstController.abort();
+    secondController.abort();
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(second).rejects.toMatchObject({ name: 'AbortError' });
+
+    const next = prepare(
+      preview,
+      { background: true, signal: nextController.signal }
+    );
+    pendingImage.resolve({
+      blob: async () => new window.Blob(['theme image'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(next).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it('rejects a computed-style change between serialization and final freshness', async () => {
     const pendingImage = deferred<Response>();
     const imageUrl = new URL('/assets/images/fidelity-race.png', document.baseURI).href;

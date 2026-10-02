@@ -36,6 +36,7 @@ import {
   isVisualPreviewWindowRequestCurrent,
   schedulePreviewWithDocumentEndPin,
   scheduleVisualWindowedHistoryBranchRelease,
+  visualPreviewSourceHasEditableMap,
   visualPreviewUsesWindowedOwner,
   visualPreviewSurfaceUsesWindowedOwner,
   type EditorRootProps
@@ -716,6 +717,21 @@ describe('EditorRoot', () => {
         previewPending,
         editing,
         requested
+      )).toBe(expected);
+    }
+  );
+
+  it.each([
+    ['', true],
+    [' ', true],
+    ['\n\n', true],
+    ['Before', false]
+  ])(
+    'admits only empty or terminal-whitespace Preview sources without an edit map',
+    (sourceMarkdown, expected) => {
+      expect(visualPreviewSourceHasEditableMap(
+        { editMap: null },
+        sourceMarkdown
       )).toBe(expected);
     }
   );
@@ -4182,6 +4198,73 @@ describe('EditorRoot', () => {
     });
     expect(preparation).not.toHaveBeenCalled();
     view.unmount();
+  });
+
+  it('cancels an active WeChat background preparation when visual editing starts', async () => {
+    const baseProps = fixture();
+    const pendingPreparation = deferred<void>();
+    const scheduled: Array<{ active: boolean; callback: () => void }> = [];
+    let activeSignal: AbortSignal | null = null;
+    const prepare = vi.fn(
+      (
+        _surface: HTMLElement,
+        options?: { background?: boolean; signal?: AbortSignal }
+      ) => {
+        if (options?.background) {
+          activeSignal = options.signal ?? null;
+          return pendingPreparation.promise;
+        }
+        return Promise.resolve();
+      }
+    );
+    const props = {
+      ...baseProps,
+      immersiveEnvironment: {
+        ...baseProps.immersiveEnvironment,
+        schedule: (callback: () => void) => {
+          const task = { active: true, callback };
+          scheduled.push(task);
+          return () => {
+            task.active = false;
+          };
+        }
+      },
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        prepare
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    try {
+      fireEvent.click(
+        await view.findByRole('button', { name: '进入沉浸写作' })
+      );
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(
+        () => expect(view.getByText('内容已载入')).not.toBeNull(),
+        { timeout: 5_000 }
+      );
+
+      scheduled.length = 0;
+      act(() => props.triggerPreviewLayout());
+      const task = scheduled.find(({ active }) => active);
+      if (!task) throw new Error('missing WeChat background preparation task');
+      act(() => task.callback());
+      await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+      expect(prepare.mock.calls[0]?.[1]).toMatchObject({ background: true });
+
+      fireEvent.click(
+        view.getByRole('button', { name: '解除锁定并编辑' })
+      );
+      await view.findByRole('textbox', { name: '可视化文章编辑器' });
+
+      expect(activeSignal).not.toBeNull();
+      expect((activeSignal as AbortSignal | null)?.aborted).toBe(true);
+    } finally {
+      pendingPreparation.resolve();
+      view.unmount();
+    }
   });
 
   it('does not schedule WeChat preparation during rapid immersive visual edits', async () => {

@@ -200,6 +200,7 @@ function renderWindowEditor(
     }>;
     onDiagnostic?: (code: string) => void;
     onFailure?: (code: string) => void;
+    onTransferFailure?: () => void;
     onCanonicalDocumentChange?: () => void;
     onPendingChange?: (pending: boolean) => void;
     onReady?: (runtime: ImmersiveVisualEditorRuntime) => void;
@@ -207,6 +208,7 @@ function renderWindowEditor(
   }> = {}
 ) {
   const onFailure = options.onFailure ?? vi.fn();
+  const onTransferFailure = options.onTransferFailure ?? vi.fn();
   const onDiagnostic = options.onDiagnostic ?? vi.fn();
   const onPendingChange = options.onPendingChange ?? vi.fn();
   const requestPreview = options.requestPreview ?? vi.fn(() => 'next');
@@ -228,7 +230,7 @@ function renderWindowEditor(
     onMarkdownChange: vi.fn(),
     onPendingChange,
     onReady: options.onReady ?? vi.fn(),
-    onTransferFailure: vi.fn(),
+    onTransferFailure,
     pending: false,
     previewSnapshot: { revision: 1, signature: 'windowed' },
     previewStatus: 'ready' as const,
@@ -1953,6 +1955,109 @@ describe('WindowedImmersiveVisualEditor', () => {
     }
   });
 
+  it('restores a noncollapsed selection after an accepted middle code-fence Preview', () => {
+    const current = fixture();
+    const requestPreview = vi.fn((_markdown: string) => 'middle-code-preview');
+    const requestPreviewAtDocumentEnd = vi.fn((markdown: string) => ({
+      release: vi.fn(),
+      signature: requestPreview(markdown)
+    }));
+    const onFailure = vi.fn();
+    const onTransferFailure = vi.fn();
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const { rerenderPreview, view } = renderWindowEditor(current, {
+      onFailure,
+      onReady: (nextRuntime) => {
+        runtime = nextRuntime;
+      },
+      onTransferFailure,
+      requestPreview,
+      requestPreviewAtDocumentEnd
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('windowed-middle-code-text-missing');
+    const selection = window.getSelection();
+    selection?.setBaseAndExtent(text, 6, text, 2);
+    if (!runtime) throw new Error('windowed-middle-code-runtime-missing');
+
+    expect((runtime as ImmersiveVisualEditorRuntime).executeCommand({
+      action: 'codeFence',
+      group: 'insert',
+      icon: 'media-code',
+      id: 'codefence-middle',
+      label: 'Code fence',
+      surface: 'main'
+    })).toBe(true);
+    const expectedSelection = current.documentSession.document.getSelection();
+    expect(expectedSelection.direction).toBe('backward');
+    expect(expectedSelection.start).toBeLessThan(expectedSelection.end);
+    expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(
+      current.canonical(),
+      expectedSelection
+    );
+
+    const source = current.canonical();
+    const opening = source.match(/(^|\n)(`{3,}|~{3,})[^\n]*\n/u);
+    if (!opening || undefined === opening.index || !opening[2]) {
+      throw new Error('windowed-middle-code-fence-source-missing');
+    }
+    const fence = opening[2];
+    const fenceLineStart = opening.index + (opening[1] ? 1 : 0);
+    const bodyStart = opening.index + opening[0].length;
+    const closingMarker = `\n${fence}\n`;
+    const closingStart = source.indexOf(closingMarker, bodyStart);
+    if (closingStart < 0) throw new Error('windowed-middle-code-fence-close-missing');
+    const targetEnd = closingStart + closingMarker.length;
+    const startLine = source.slice(0, fenceLineStart).split('\n').length - 1;
+    const endLine = source.slice(0, targetEnd).split('\n').length - 1;
+    const body = source.slice(bodyStart, closingStart + 1);
+    const acceptedBlocks = [
+      ...current.editMap.blocks.slice(0, 160),
+      {
+        editable: true,
+        endLine,
+        id: 'b160-code',
+        startLine
+      }
+    ];
+    current.surface.innerHTML = [
+      '<div data-easymde-preview-window-spacer="1"></div>',
+      `<pre data-easymde-visual-block-id="b160-code"><code>${body}</code></pre>`,
+      '<div data-easymde-preview-window-spacer="1"></div>'
+    ].join('');
+    selection?.collapse(current.surface, 0);
+    act(() => {
+      rerenderPreview(
+        { ...current.editMap, blocks: acceptedBlocks, signature: 'middle-code-preview' },
+        { revision: 2, signature: 'middle-code-preview' }
+      );
+    });
+
+    const acceptedCode = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160-code"] > code'
+    );
+    const acceptedText = acceptedCode?.firstChild;
+    const acceptedSelection = window.getSelection();
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(onTransferFailure).not.toHaveBeenCalled();
+    expect(acceptedText).toBeInstanceOf(Text);
+    expect(acceptedSelection?.rangeCount).toBe(1);
+    expect(acceptedSelection?.isCollapsed).toBe(false);
+    expect(acceptedSelection?.anchorNode).toBe(acceptedText);
+    expect(acceptedSelection?.focusNode).toBe(acceptedText);
+    expect(acceptedSelection?.anchorOffset).toBeGreaterThan(
+      acceptedSelection?.focusOffset ?? Number.MAX_SAFE_INTEGER
+    );
+    expect(current.documentSession.document.getSelection()).toEqual(expectedSelection);
+    view.unmount();
+  });
+
   it('keeps the canonical selection when the windowed surface has no DOM selection', () => {
     const current = fixture();
     let runtime: ImmersiveVisualEditorRuntime | null = null;
@@ -2748,6 +2853,294 @@ describe('WindowedImmersiveVisualEditor', () => {
     view.unmount();
   });
 
+  it('owns Ctrl+A Backspace as a canonical full-document deletion', () => {
+    const current = fixture();
+    const original = current.canonical();
+    const onFailure = vi.fn();
+    const onTransferFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'empty-document-preview');
+    const { view } = renderWindowEditor(current, {
+      onFailure,
+      onTransferFailure,
+      requestPreview
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+
+    const selectAll = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'a'
+    });
+    current.surface.dispatchEvent(selectAll);
+    expect(selectAll.defaultPrevented).toBe(true);
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+
+    const backspace = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    current.surface.dispatchEvent(backspace);
+    expect(backspace.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(original);
+    expect(onFailure).not.toHaveBeenCalled();
+
+    const deleteAll = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(deleteAll);
+
+    expect(deleteAll.defaultPrevented).toBe(true);
+    expect(current.canonical()).toBe('');
+    expect(current.documentChanges).toHaveBeenCalledOnce();
+    expect(current.documentChanges.mock.lastCall?.[0]).toEqual({
+      changes: {
+        from: 0,
+        insert: '',
+        to: expect.any(Number)
+      },
+      deferNativeBridge: false,
+      recordHistorySelection: true,
+      selection: {
+        direction: 'none',
+        end: 0,
+        start: 0
+      },
+      value: ''
+    });
+    expect(requestPreview).toHaveBeenCalledWith('');
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(onTransferFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('does not delete unmounted source on a whole-surface cut', () => {
+    const current = fixture();
+    const original = current.canonical();
+    const onFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'unexpected-cut-preview');
+    const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    const selectAll = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'a'
+    });
+    current.surface.dispatchEvent(selectAll);
+    expect(selectAll.defaultPrevented).toBe(true);
+
+    const cut = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteByCut'
+    });
+    current.surface.dispatchEvent(cut);
+
+    expect(cut.defaultPrevented).toBe(true);
+    expect(current.canonical()).toBe(original);
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledWith('visual-editor-window-selection-invalid');
+    view.unmount();
+  });
+
+  it('clears canonical source when the root includes a generated read-only block', () => {
+    const generatedSource = 'Before\n\n```mermaid\nA-->B\n```\n\nAfter';
+    const current = fixture({
+      blockOverrides: { 160: generatedSource },
+      markupOverrides: {
+        160: '<p data-easymde-visual-block-id="b160">'
+          + '<span class="easymde-mermaid" contenteditable="false">Rendered</span>'
+          + '</p>'
+      },
+      mounted: [160],
+      nonEditable: [160]
+    });
+    const onFailure = vi.fn();
+    const requestPreview = vi.fn(() => 'empty-rich-document-preview');
+    const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'a'
+    }));
+    const deleteAll = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(deleteAll);
+
+    expect(deleteAll.defaultPrevented).toBe(true);
+    expect(current.canonical()).toBe('');
+    expect(requestPreview).toHaveBeenCalledWith('');
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('leaves a composing full-range deletion to the IME owner', () => {
+    const current = fixture();
+    const original = current.canonical();
+    const onFailure = vi.fn();
+    const { view } = renderWindowEditor(current, { onFailure });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    const paragraph = current.surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('windowed-composition-text-missing');
+    placeCaret(text, text.length);
+    current.surface.dispatchEvent(new CompositionEvent('compositionstart', {
+      bubbles: true
+    }));
+    const range = document.createRange();
+    range.selectNodeContents(current.surface);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward',
+      isComposing: true
+    });
+    current.surface.dispatchEvent(beforeInput);
+
+    expect(beforeInput.defaultPrevented).toBe(false);
+    expect(current.canonical()).toBe(original);
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('does not let a stale Ctrl+A selection clear a later collapsed deletion', () => {
+    const current = fixture();
+    const original = current.canonical();
+    const { view } = renderWindowEditor(current);
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'a'
+    }));
+    const paragraph = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160"]'
+    );
+    const text = paragraph?.firstChild;
+    if (!(text instanceof Text)) throw new Error('windowed-stale-selection-text-missing');
+    placeCaret(text, text.length);
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(beforeInput);
+    expect(beforeInput.defaultPrevented).toBe(false);
+    text.deleteData(text.length - 1, 1);
+    placeCaret(text, text.length);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+
+    expect(current.canonical()).not.toBe('');
+    expect(current.canonical()).toBe(original.replace('Line 160', 'Line 16'));
+    expect(current.documentChanges).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+
+  it('clears a root selection spanning a mounted code block', () => {
+    const requestPreview = vi.fn(() => 'empty-code-document-preview');
+    const { current, view } = renderCodeBodyEditor(
+      '~~~json\n{"value":1}\n~~~',
+      '{"value":1}\n',
+      { requestPreview }
+    );
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    const code = current.surface.querySelector<HTMLElement>('pre > code');
+    const codeText = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+      throw new Error('windowed-code-anchor-selection-missing');
+    }
+    placeCaret(codeText, codeText.length);
+    current.surface.dispatchEvent(new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: 'a'
+    }));
+    expect(current.documentChanges).not.toHaveBeenCalled();
+    expect(requestPreview).not.toHaveBeenCalled();
+
+    const deleteAll = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(deleteAll);
+
+    expect(deleteAll.defaultPrevented).toBe(true);
+    expect(current.canonical()).toBe('');
+    expect(requestPreview).toHaveBeenCalledWith('');
+    view.unmount();
+  });
+
+  it('keeps a selected mapped code block local to code', () => {
+    const onFailure = vi.fn();
+    const { code, current, view } = renderCodeBodyEditor(
+      '~~~json\n{"value":1}\n~~~',
+      '{"value":1}\n',
+      { onFailure }
+    );
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
+    const selectedCode = document.createRange();
+    selectedCode.selectNodeContents(code);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(selectedCode);
+
+    const deleteBody = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    current.surface.dispatchEvent(deleteBody);
+    expect(deleteBody.defaultPrevented).toBe(false);
+    code.replaceChildren(document.createTextNode(''));
+    placeCaret(code.firstChild as Text, 0);
+    current.surface.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'deleteContentBackward'
+    }));
+
+    expect(current.canonical()).not.toBe('');
+    expect(current.canonical()).toContain('~~~json');
+    expect(onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('merges a mounted adjacent Block for backward deletion at the block start', () => {
     const current = fixture({ mounted: [159, 160], paragraphBlocks: true });
     const onFailure = vi.fn();
@@ -3538,30 +3931,19 @@ describe('WindowedImmersiveVisualEditor', () => {
   it('merges a structural Enter that creates a sibling Block inside the active region', () => {
     const current = fixture();
     const onFailure = vi.fn();
-    const requestPreview = vi.fn(() => 'enter-signature');
-    const view = render(
-      <WindowedImmersiveVisualEditor
-        documentSession={current.documentSession}
-        editMap={current.editMap}
-        imagePasteUploadEnabled={false}
-        imageUploadEnabled={false}
-        onCanonicalDocumentChange={vi.fn()}
-        onDiagnostic={vi.fn()}
-        onDispose={vi.fn()}
-        onFailure={onFailure}
-        onMarkdownChange={vi.fn()}
-        onPendingChange={vi.fn()}
-        onReady={vi.fn()}
-        prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
-        onTransferFailure={vi.fn()}
-        pending={false}
-        previewSnapshot={{ revision: 1, signature: 'windowed' }}
-        previewStatus="ready"
-        requestPreview={requestPreview}
-        requestPreviewAtDocumentEnd={testDocumentEndPreviewRequestUsing(requestPreview)}
-        surface={current.surface}
-      />
-    );
+    const requestPreview = vi.fn((_markdown: string) => 'enter-signature');
+    const requestPreviewAtDocumentEnd = vi.fn((markdown: string) => ({
+      release: vi.fn(),
+      signature: requestPreview(markdown)
+    }));
+    const { rerenderPreview, view } = renderWindowEditor(current, {
+      onFailure,
+      requestPreview,
+      requestPreviewAtDocumentEnd
+    });
+    current.surface.tabIndex = 0;
+    current.surface.setAttribute('contenteditable', 'true');
+    current.surface.focus();
     const paragraph = current.surface.querySelector('p');
     const text = paragraph?.firstChild;
     if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) {
@@ -3592,7 +3974,67 @@ describe('WindowedImmersiveVisualEditor', () => {
     ]);
     expect(current.documentChanges).toHaveBeenCalledOnce();
     expect(requestPreview).toHaveBeenCalledWith(current.canonical());
+    expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(
+      current.canonical(),
+      current.documentSession.document.getSelection()
+    );
     expect(onFailure).not.toHaveBeenCalled();
+
+    const expectedSelection = current.documentSession.document.getSelection();
+    const acceptedSignature = 'enter-signature';
+    const acceptedBlocks = current.editMap.blocks.flatMap((block, index) => {
+      if (index < 160) return [block];
+      if (index === 160) {
+        return [
+          { ...block, endLine: block.startLine + 1 },
+          {
+            editable: true,
+            endLine: block.endLine + 2,
+            id: 'b160-enter',
+            startLine: block.startLine + 2
+          }
+        ];
+      }
+      return [{
+        ...block,
+        endLine: block.endLine + 2,
+        id: `${block.id}-shifted`,
+        startLine: block.startLine + 2
+      }];
+    });
+    current.surface.innerHTML = [
+      '<div data-easymde-preview-window-spacer="1"></div>',
+      '<p data-easymde-visual-block-id="b160">Line</p>',
+      '<p data-easymde-visual-block-id="b160-enter">160</p>',
+      '<div data-easymde-preview-window-spacer="1"></div>'
+    ].join('');
+    const replacedSelection = window.getSelection();
+    replacedSelection?.collapse(current.surface, 0);
+    act(() => {
+      rerenderPreview(
+        { ...current.editMap, blocks: acceptedBlocks, signature: acceptedSignature },
+        { revision: 2, signature: acceptedSignature }
+      );
+    });
+
+    const siblingAfterPreview = current.surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b160-enter"]'
+    );
+    const selectionAfterPreview = window.getSelection();
+    const anchorAfterPreview = selectionAfterPreview?.anchorNode;
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(selectionAfterPreview?.isCollapsed).toBe(true);
+    expect(document.activeElement).toBe(current.surface);
+    expect(siblingAfterPreview).not.toBeNull();
+    expect(anchorAfterPreview).not.toBeNull();
+    expect(anchorAfterPreview?.isConnected).toBe(true);
+    expect(anchorAfterPreview && siblingAfterPreview?.contains(anchorAfterPreview)).toBe(true);
+    expect(textOffsetWithin(
+      siblingAfterPreview as HTMLElement,
+      anchorAfterPreview as Node,
+      selectionAfterPreview?.anchorOffset ?? -1
+    )).toBe(0);
+    expect(current.documentSession.document.getSelection()).toEqual(expectedSelection);
     view.unmount();
   });
 

@@ -424,6 +424,155 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(selection?.focusOffset).toBe(surface.childNodes.length);
   });
 
+  it.each([
+    { anchorOffset: 0, direction: 'forward', focusOffset: 2 },
+    { anchorOffset: 2, direction: 'backward', focusOffset: 0 }
+  ] as const)(
+    'preserves a focused full-root $direction selection during replacement',
+    ({ anchorOffset, focusOffset }) => {
+      const surfaceRef = createRef<HTMLElement>();
+      const first = document.createElement('p');
+      const second = document.createElement('p');
+      const third = document.createElement('p');
+      first.textContent = 'first';
+      second.textContent = 'second';
+      third.textContent = 'third';
+      const props = {
+        contentEditable: true,
+        html: '' as SafePreviewHtml,
+        htmlRevision: 1,
+        surfaceRef
+      } as const;
+      const view = render(
+        <SafePreviewHtmlSink
+          {...props}
+          windowedCommit={{ key: 1, nodes: [first, second], revision: 1 }}
+        />
+      );
+      const surface = surfaceRef.current;
+      if (!surface) throw new Error('test-full-root-selection-surface-missing');
+      surface.focus();
+      const selection = window.getSelection();
+      if (!selection) throw new Error('test-full-root-selection-missing');
+      selection.setBaseAndExtent(
+        surface,
+        anchorOffset,
+        surface,
+        focusOffset
+      );
+      expect(document.activeElement).toBe(surface);
+
+      view.rerender(
+        <SafePreviewHtmlSink
+          {...props}
+          windowedCommit={{
+            key: 2,
+            nodes: [first, second, third],
+            revision: 1
+          }}
+        />
+      );
+
+      expect(Array.from(surface.childNodes)).toEqual([first, second, third]);
+      expect(selection.anchorNode).toBe(surface);
+      expect(selection.anchorOffset).toBe(
+        'forward' === (anchorOffset < focusOffset ? 'forward' : 'backward')
+          ? 0
+          : surface.childNodes.length
+      );
+      expect(selection.focusNode).toBe(surface);
+      expect(selection.focusOffset).toBe(
+        'forward' === (anchorOffset < focusOffset ? 'forward' : 'backward')
+          ? surface.childNodes.length
+          : 0
+      );
+      view.unmount();
+    }
+  );
+
+  it('does not expand a partial root selection during replacement', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const second = document.createElement('p');
+    const third = document.createElement('p');
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: [first, second], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-partial-root-surface-missing');
+    surface.focus();
+    const selection = window.getSelection();
+    if (!selection) throw new Error('test-partial-root-selection-missing');
+    selection.setBaseAndExtent(surface, 1, surface, 2);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 2, nodes: [first, second, third], revision: 1 }}
+      />
+    );
+
+    const expanded = selection.anchorNode === surface
+      && selection.focusNode === surface
+      && selection.anchorOffset === 0
+      && selection.focusOffset === surface.childNodes.length;
+    expect(expanded).toBe(false);
+    view.unmount();
+  });
+
+  it('does not restore a full-root range after focus leaves the surface', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const second = document.createElement('p');
+    const third = document.createElement('p');
+    const outside = document.createElement('button');
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 1,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 1, nodes: [first, second], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-blurred-root-surface-missing');
+    surface.focus();
+    const selection = window.getSelection();
+    if (!selection) throw new Error('test-blurred-root-selection-missing');
+    selection.setBaseAndExtent(surface, 0, surface, 2);
+    document.body.append(outside);
+    outside.focus();
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        windowedCommit={{ key: 2, nodes: [first, second, third], revision: 1 }}
+      />
+    );
+
+    expect(document.activeElement).toBe(outside);
+    const expanded = selection.anchorNode === surface
+      && selection.focusNode === surface
+      && selection.anchorOffset === 0
+      && selection.focusOffset === surface.childNodes.length;
+    expect(expanded).toBe(false);
+    outside.remove();
+    view.unmount();
+  });
+
   it('preserves a live text selection while reconciling the bounded window', () => {
     const surfaceRef = createRef<HTMLElement>();
     const first = document.createElement('p');

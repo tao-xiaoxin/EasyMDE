@@ -1,4 +1,5 @@
 import type { Change } from 'diff';
+import { markdownLanguage } from '@codemirror/lang-markdown';
 import { diffChars, diffLines } from 'diff';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
@@ -10,7 +11,10 @@ import {
   visualProtectedNodeAttributesEqual,
   type VisualProtectedNodeAttribute
 } from '../../shared/dom/visual-protected-node-adoption';
-import { markdownLineStarts } from '../../shared/markdown/markdown-line-model';
+import {
+  isMarkdownTerminalWhitespaceSuffix,
+  markdownLineStarts
+} from '../../shared/markdown/markdown-line-model';
 
 export { VISUAL_MARKDOWN_READ_ONLY_SELECTOR };
 
@@ -1764,7 +1768,33 @@ function visualBlockText(block: HTMLElement): string {
   )) {
     marker.remove();
   }
+  const structuralChildren = ['BLOCKQUOTE', 'OL', 'UL'].includes(block.tagName)
+    && Array.from(clone.children).some((child) =>
+      ['BLOCKQUOTE', 'LI', 'OL', 'P', 'PRE', 'UL'].includes(child.tagName)
+    );
+  if (structuralChildren) {
+    for (const child of Array.from(clone.childNodes)) {
+      if (child instanceof Text && isMarkdownTerminalWhitespaceSuffix(child.data)) {
+        child.remove();
+      }
+    }
+  }
   return clone.textContent ?? '';
+}
+
+export function visualStructuralBodyIsEmpty(editor: HTMLElement): boolean {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  const node = selection?.anchorNode;
+  if (!node || !editor.contains(node)) return false;
+  const element = node instanceof HTMLElement ? node : node.parentElement;
+  const body = element?.closest('li, p');
+  if (!body || !editor.contains(body)) return false;
+  const structuralParent = body.closest('blockquote, ol, ul');
+  if (!structuralParent || !editor.contains(structuralParent)) return false;
+  return Array.from(body.childNodes).every((child) =>
+    child instanceof HTMLBRElement
+    || (child instanceof Text && '' === child.data)
+  );
 }
 
 function visualCodeBodyIsEmpty(
@@ -2783,7 +2813,8 @@ function visualBoundarySourceOffset(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
   node: Node,
-  offset: number
+  offset: number,
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
 ): number {
   const marker = '\uE000easymde-caret\uE001';
   if (sourceMarkdown.includes(marker) || baselineVisualMarkdown.includes(marker)) {
@@ -2818,7 +2849,8 @@ function visualBoundarySourceOffset(
   const markedSource = mergeVisualMarkdownChange(
     sourceMarkdown,
     baselineVisualMarkdown,
-    markedVisualMarkdown
+    markedVisualMarkdown,
+    projectedIntervalMap
   );
   const sourceOffset = markedSource.indexOf(marker);
   if (sourceOffset < 0 || sourceOffset !== markedSource.lastIndexOf(marker)) {
@@ -2850,12 +2882,49 @@ type BaselineSourceSegment = Readonly<{
   sourceStart: number;
 }>;
 
+function emptyStructuralSeparatorEnd(
+  source: string,
+  sourceStart: number
+): number | null {
+  const lineStart = source.lastIndexOf('\n', sourceStart - 1) + 1;
+  const lineEnd = source.indexOf('\n', sourceStart);
+  const end = -1 === lineEnd ? source.length : lineEnd;
+  const line = source.slice(lineStart, end);
+  const markerOffset = sourceStart - lineStart;
+  const cursor = markdownLanguage.parser.parse(line).cursor();
+  let markerEnd: number | null = null;
+  cursor.iterate((node) => {
+    if (
+      ['HeaderMark', 'ListMark', 'QuoteMark'].includes(node.name)
+      && node.to === markerOffset
+      && null === markerEnd
+    ) markerEnd = node.to;
+  });
+  if (
+    null === markerEnd
+    || markerEnd !== sourceStart - lineStart
+    || markerEnd === line.length
+  ) return null;
+  const separator = line.slice(markerEnd);
+  if (!/^[ \t]+$/u.test(separator)) return null;
+  if (markdownCodeBlocks(source).some((block) =>
+    block.bodyStart !== null
+    && sourceStart >= block.bodyStart
+    && (block.bodyEnd === null || sourceStart < block.bodyEnd)
+  )) return null;
+  return sourceStart + 1;
+}
+
 export type VisualMarkdownSourceIntervalMap = Readonly<{
   hiddenSourceRanges: ReadonlyArray<Readonly<{ end: number; start: number }>>;
   originalOffsetAt: (sourceOffset: number) => number | undefined;
+  rawSourceOffsetAt: (visualOffset: number) => number | undefined;
   resolve: (visualOffset: number) => number | null;
   source: string;
+  structuralSourceSeparatorStart: number | null;
+  structuralSourceBoundary: number | null;
   sourceOffsetAt: (visualOffset: number) => number | undefined;
+  isStructuralSourceBoundary: (sourceOffset: number) => boolean;
 }>;
 
 export function createVisualMarkdownSourceIntervalMap(
@@ -2936,7 +3005,7 @@ export function createVisualMarkdownSourceIntervalMap(
     }
   }
 
-  const sourceOffsetAt = (visualOffset: number): number | undefined => {
+  const rawSourceOffsetAt = (visualOffset: number): number | undefined => {
     let lower = 0;
     let upper = baselineSourceSegments.length - 1;
     let candidateIndex = -1;
@@ -2961,12 +3030,34 @@ export function createVisualMarkdownSourceIntervalMap(
     }
     return segment.sourceStart + visualOffset - segment.baselineStart;
   };
+  const baselineEndSourceOffset = rawSourceOffsetAt(
+    baselineVisualMarkdown.length
+  );
+  const structuralHiddenRange = hiddenSourceRanges.find(
+    ({ start }) => start === baselineEndSourceOffset
+  );
+  const structuralSeparatorEnd = structuralHiddenRange
+    ? emptyStructuralSeparatorEnd(source, structuralHiddenRange.start)
+    : null;
+  const structuralSourceBoundary = structuralSeparatorEnd !== null
+    && structuralSeparatorEnd <= (structuralHiddenRange?.end ?? -1)
+    ? structuralSeparatorEnd
+    : null;
+  const structuralSourceSeparatorStart = structuralSourceBoundary === null
+    ? null
+    : structuralHiddenRange?.start ?? null;
+  const sourceOffsetAt = (visualOffset: number): number | undefined =>
+    visualOffset === baselineVisualMarkdown.length
+    && structuralSourceBoundary !== null
+      ? structuralSourceBoundary
+      : rawSourceOffsetAt(visualOffset);
   const originalOffsetAt = (sourceOffset: number): number | undefined =>
     sourceOffsets ? sourceOffsets[sourceOffset] : sourceOffset;
 
   return {
     hiddenSourceRanges,
     originalOffsetAt,
+    rawSourceOffsetAt,
     resolve(visualOffset) {
       if (
         !Number.isInteger(visualOffset)
@@ -2980,7 +3071,12 @@ export function createVisualMarkdownSourceIntervalMap(
       return originalOffsetAt(sourceOffset) ?? null;
     },
     source,
-    sourceOffsetAt
+    structuralSourceSeparatorStart,
+    structuralSourceBoundary,
+    sourceOffsetAt,
+    isStructuralSourceBoundary(sourceOffset) {
+      return sourceOffset === structuralSourceBoundary;
+    }
   };
 }
 
@@ -3019,6 +3115,7 @@ export function createVisualMarkdownDirectSourceIntervalMap(
   return {
     hiddenSourceRanges: [],
     originalOffsetAt,
+    rawSourceOffsetAt: sourceOffsetAt,
     resolve(visualOffset) {
       const sourceOffset = sourceOffsetAt(visualOffset);
       return undefined === sourceOffset
@@ -3026,7 +3123,12 @@ export function createVisualMarkdownDirectSourceIntervalMap(
         : originalOffsetAt(sourceOffset) ?? null;
     },
     source,
-    sourceOffsetAt
+    structuralSourceSeparatorStart: null,
+    structuralSourceBoundary: null,
+    sourceOffsetAt,
+    isStructuralSourceBoundary() {
+      return false;
+    }
   };
 }
 
@@ -3612,6 +3714,553 @@ export function placeVisualCaretFromSourceOffset(
   placeVisualCaretAtBoundary(editor, boundary);
 }
 
+type VisualStructuralMarkerKind = 'blockquote' | 'ol' | 'ul';
+
+type VisualStructuralLine = Readonly<{
+  bodyBoundary: number;
+  markerKinds: ReadonlyArray<VisualStructuralMarkerKind>;
+}>;
+
+function structuralMarkdownLine(
+  line: string,
+  allowMissingSeparator = false
+): VisualStructuralLine | null {
+  const markers: Array<{
+    kind: VisualStructuralMarkerKind;
+    to: number;
+  }> = [];
+  const nodeStack: string[] = [];
+  let hasHeaderMark = false;
+  const cursor = markdownLanguage.parser.parse(line).cursor();
+  const visit = (): void => {
+    nodeStack.push(cursor.name);
+    if ('QuoteMark' === cursor.name) {
+      markers.push({ kind: 'blockquote', to: cursor.to });
+    } else if ('ListMark' === cursor.name) {
+      const list = [...nodeStack].reverse().find((name) =>
+        ['BulletList', 'OrderedList'].includes(name)
+      );
+      if (list) {
+        markers.push({
+          kind: 'BulletList' === list ? 'ul' : 'ol',
+          to: cursor.to
+        });
+      }
+    } else if ('HeaderMark' === cursor.name) {
+      hasHeaderMark = true;
+    }
+    if (cursor.firstChild()) {
+      do {
+        visit();
+      } while (cursor.nextSibling());
+      cursor.parent();
+    }
+    nodeStack.pop();
+  };
+  visit();
+  if (hasHeaderMark || !markers.length) return null;
+  const markerEnd = markers[markers.length - 1]?.to ?? 0;
+  const separator = line.slice(markerEnd);
+  if (
+    (!separator && !allowMissingSeparator)
+    || (separator && !/^[ \t]+$/u.test(separator))
+  ) return null;
+  return {
+    bodyBoundary: markerEnd + (separator ? 1 : 0),
+    markerKinds: markers.map((marker) => marker.kind)
+  };
+}
+
+function structuralAncestry(
+  editor: HTMLElement,
+  body: HTMLElement
+): ReadonlyArray<VisualStructuralMarkerKind> | null {
+  if (!['P', 'LI'].includes(body.tagName)) return null;
+  const ancestry: VisualStructuralMarkerKind[] = [];
+  let current = body.parentElement;
+  while (current && current !== editor) {
+    if ('BLOCKQUOTE' === current.tagName) {
+      ancestry.push('blockquote');
+    } else if ('OL' === current.tagName) {
+      ancestry.push('ol');
+    } else if ('UL' === current.tagName) {
+      ancestry.push('ul');
+    } else if (['PRE', 'CODE'].includes(current.tagName)) {
+      return null;
+    }
+    current = current.parentElement;
+  }
+  if (current !== editor || !ancestry.length) return null;
+  return ancestry.reverse();
+}
+
+function structuralLineMatchesAncestry(
+  line: VisualStructuralLine,
+  ancestry: ReadonlyArray<VisualStructuralMarkerKind>
+): boolean {
+  return line.markerKinds.length === ancestry.length
+    && line.markerKinds.every((kind, index) => kind === ancestry[index]);
+}
+
+type UnchangedVisualSourceAnchor = Readonly<{
+  baselineEnd: number;
+  baselineStart: number;
+  sourceEnd: number;
+  sourceStart: number;
+}>;
+
+function hasNonStructuralMarkdownLine(value: string): boolean {
+  return value.split(/\r?\n/u).some((line) =>
+    line.length > 0
+    && !/^\s*$/u.test(line)
+    && null === structuralMarkdownLine(line, true)
+  );
+}
+
+type MarkdownLineRange = Readonly<{
+  contentEnd: number;
+  end: number;
+  start: number;
+}>;
+
+function markdownLineRanges(value: string): ReadonlyArray<MarkdownLineRange> {
+  const ranges: MarkdownLineRange[] = [];
+  let start = 0;
+  while (start <= value.length) {
+    let contentEnd = start;
+    while (
+      contentEnd < value.length
+      && !['\r', '\n'].includes(value[contentEnd] ?? '')
+    ) contentEnd += 1;
+    let end = contentEnd;
+    if (contentEnd < value.length) {
+      end += '\r' === value[contentEnd] && '\n' === value[contentEnd + 1]
+        ? 2
+        : 1;
+    }
+    ranges.push({ contentEnd, end, start });
+    if (end >= value.length) break;
+    start = end;
+  }
+  return ranges;
+}
+
+function isMarkdownLineBoundary(value: string, offset: number): boolean {
+  return offset === 0
+    || offset === value.length
+    || '\r' === value[offset - 1]
+    || '\n' === value[offset - 1]
+    || '\r' === value[offset]
+    || '\n' === value[offset];
+}
+
+function hasOnlyStructuralMarkdownLines(
+  value: string,
+  start: number,
+  end: number
+): boolean {
+  if (
+    start < 0
+    || end < start
+    || end > value.length
+    || !isMarkdownLineBoundary(value, start)
+    || !isMarkdownLineBoundary(value, end)
+  ) return false;
+  return markdownLineRanges(value).every((range) => {
+    if (range.end <= start || range.start >= end) return true;
+    if (range.start < start || range.contentEnd > end) return false;
+    const line = value.slice(range.start, range.contentEnd);
+    return !line.trim() || null !== structuralMarkdownLine(line, true);
+  });
+}
+
+type MarkdownCodeContextRange = Readonly<{
+  end: number;
+  start: number;
+}>;
+
+function markdownCodeContextRanges(
+  markdown: string
+): ReadonlyArray<MarkdownCodeContextRange> {
+  const ranges: MarkdownCodeContextRange[] = [];
+  markdownLanguage.parser.parse(markdown).cursor().iterate((node) => {
+    if (['CodeBlock', 'FencedCode'].includes(node.name)) {
+      ranges.push({ end: node.to, start: node.from });
+    }
+  });
+  return ranges;
+}
+
+function overlapsMarkdownCodeContext(
+  start: number,
+  end: number,
+  codeRanges: ReadonlyArray<MarkdownCodeContextRange>
+): boolean {
+  return codeRanges.some((range) => start < range.end && end > range.start);
+}
+
+function hasOnlyStructuralSourceLines(
+  source: string,
+  start: number,
+  end: number,
+  codeRanges: ReadonlyArray<MarkdownCodeContextRange>
+): boolean {
+  if (!hasOnlyStructuralMarkdownLines(source, start, end)) return false;
+  return !markdownLineRanges(source).some((range) =>
+    range.end > start
+    && range.start < end
+    && overlapsMarkdownCodeContext(range.start, range.contentEnd, codeRanges)
+  );
+}
+
+function unchangedVisualSourceAnchors(
+  source: string,
+  baseline: string
+): ReadonlyArray<UnchangedVisualSourceAnchor> {
+  const anchors: UnchangedVisualSourceAnchor[] = [];
+  let sourcePosition = 0;
+  let baselinePosition = 0;
+  for (const part of diffLines(source, baseline, { newlineIsToken: true })) {
+    if (part.added) {
+      baselinePosition += part.value.length;
+      continue;
+    }
+    if (part.removed) {
+      sourcePosition += part.value.length;
+      continue;
+    }
+    if (hasNonStructuralMarkdownLine(part.value)) {
+      anchors.push({
+        baselineEnd: baselinePosition + part.value.length,
+        baselineStart: baselinePosition,
+        sourceEnd: sourcePosition + part.value.length,
+        sourceStart: sourcePosition
+      });
+    }
+    sourcePosition += part.value.length;
+    baselinePosition += part.value.length;
+  }
+  return anchors;
+}
+
+function markedVisualSelectionBoundary(
+  editor: HTMLElement,
+  node: Node,
+  offset: number,
+  baselineVisualMarkdown: string
+): number | null {
+  const marker = '\uE000easymde-caret\uE001';
+  if (
+    !editor.isConnected
+    || baselineVisualMarkdown.includes(marker)
+    || node === editor
+    || !editor.contains(node)
+  ) return null;
+  const path: number[] = [];
+  let current: Node | null = node;
+  while (current && current !== editor) {
+    const parent: ParentNode | null = current.parentNode;
+    if (!parent) return null;
+    const index = Array.prototype.indexOf.call(parent.childNodes, current);
+    if (index < 0) return null;
+    path.unshift(index);
+    current = parent as Node;
+  }
+  if (current !== editor) return null;
+  const clone = editor.cloneNode(true) as HTMLElement;
+  let cloneNode: Node = clone;
+  for (const index of path) {
+    const child = cloneNode.childNodes[index];
+    if (!child) return null;
+    cloneNode = child;
+  }
+  const range = clone.ownerDocument.createRange();
+  try {
+    range.setStart(cloneNode, offset);
+    range.collapse(true);
+    range.insertNode(clone.ownerDocument.createTextNode(marker));
+  } catch {
+    return null;
+  }
+  const markedVisualMarkdown = serializeVisualMarkdown(clone);
+  let baselinePosition = 0;
+  let insertion: number | null = null;
+  for (const part of diffChars(baselineVisualMarkdown, markedVisualMarkdown)) {
+    if (!part.added && !part.removed) {
+      baselinePosition += part.value.length;
+      continue;
+    }
+    if (part.removed) return null;
+    if (part.value !== marker || null !== insertion) return null;
+    insertion = baselinePosition;
+  }
+  return insertion;
+}
+
+export function visualSelectionVisualOffset(
+  editor: HTMLElement,
+  baselineVisualMarkdown: string
+): number {
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection?.isCollapsed || !selection.anchorNode) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  const visualOffset = markedVisualSelectionBoundary(
+    editor,
+    selection.anchorNode,
+    selection.anchorOffset,
+    baselineVisualMarkdown
+  );
+  if (null === visualOffset) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  return visualOffset;
+}
+
+function projectVisualSelectionInterval(
+  intervalMap: VisualMarkdownSourceIntervalMap,
+  visualOffset: number,
+  sourceOffset: number
+): VisualMarkdownSourceIntervalMap {
+  const sourceOffsetAt = (offset: number): number | undefined =>
+    offset === visualOffset
+      ? sourceOffset
+      : intervalMap.sourceOffsetAt(offset);
+  const rawSourceOffsetAt = (offset: number): number | undefined =>
+    offset === visualOffset
+      ? sourceOffset
+      : intervalMap.rawSourceOffsetAt(offset);
+  return {
+    ...intervalMap,
+    isStructuralSourceBoundary(offset) {
+      return offset === sourceOffset
+        || intervalMap.isStructuralSourceBoundary(offset);
+    },
+    resolve(offset) {
+      const mapped = sourceOffsetAt(offset);
+      return undefined === mapped
+        ? null
+        : intervalMap.originalOffsetAt(mapped) ?? null;
+    },
+    rawSourceOffsetAt,
+    sourceOffsetAt
+  };
+}
+
+export type VisualEmptyStructuralBodySelection = Readonly<{
+  resolved?: true;
+  sourceOffset: number;
+  visualOffset: number;
+}>;
+
+export type VisualEmptyStructuralBodySelectionResult =
+  | VisualEmptyStructuralBodySelection
+  | Readonly<{
+      failure: 'visual-editor-markdown-merge-ambiguous'
+        | 'visual-editor-markdown-merge-failed';
+    }>
+  | null;
+
+function neutralEmptyStructuralBodySelection(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  currentVisualMarkdown: string
+): VisualEmptyStructuralBodySelectionResult {
+  if (currentVisualMarkdown !== baselineVisualMarkdown) return null;
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || !selection.anchorNode
+    || selection.anchorNode !== selection.focusNode
+    || !editor.contains(selection.anchorNode)
+  ) return null;
+  const body = selection.anchorNode instanceof HTMLElement
+    ? selection.anchorNode
+    : selection.anchorNode.parentElement;
+  if (
+    !(body instanceof HTMLElement)
+    || !['P', 'LI'].includes(body.tagName)
+    || body.childNodes.length !== 1
+    || !(body.firstChild instanceof HTMLBRElement)
+    || ![0, 1].includes(selection.anchorOffset)
+    || selection.anchorNode !== body
+  ) return null;
+  if (
+    body.closest('pre, code, [contenteditable="false"]')
+    || body.closest('.easymde-toc, .easymde-mermaid, .easymde-math')
+  ) return null;
+  const ancestry = structuralAncestry(editor, body);
+  if (!ancestry) return null;
+
+  const intervalMap = createVisualMarkdownSourceIntervalMap(
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const visualPosition = markedVisualSelectionBoundary(
+    editor,
+    selection.anchorNode,
+    selection.anchorOffset,
+    baselineVisualMarkdown
+  );
+  if (null === visualPosition) {
+    return null;
+  }
+  const resolvedSourceOffset = intervalMap.sourceOffsetAt(visualPosition);
+  if (undefined !== resolvedSourceOffset) {
+    return {
+      resolved: true,
+      sourceOffset: resolvedSourceOffset,
+      visualOffset: visualPosition
+    };
+  }
+  const baselineLineStarts = markdownLineStarts(baselineVisualMarkdown);
+  const baselineCandidates: Array<Readonly<{
+    end: number;
+    start: number;
+  }>> = [];
+  for (let index = 0; index < baselineLineStarts.length; index += 1) {
+    const lineStart = baselineLineStarts[index] ?? 0;
+    const nextLineStart = baselineLineStarts[index + 1]
+      ?? baselineVisualMarkdown.length;
+    const lineEnd = nextLineStart > lineStart
+      && '\n' === baselineVisualMarkdown[nextLineStart - 1]
+      ? nextLineStart - 1
+      : nextLineStart;
+    const contentEnd = lineEnd > lineStart
+      && '\r' === baselineVisualMarkdown[lineEnd - 1]
+      ? lineEnd - 1
+      : lineEnd;
+    const structure = structuralMarkdownLine(
+      baselineVisualMarkdown.slice(lineStart, contentEnd),
+      true
+    );
+    if (
+      structure
+      && structuralLineMatchesAncestry(structure, ancestry)
+    ) baselineCandidates.push({ end: contentEnd, start: lineStart });
+  }
+  const baselineCandidate = baselineCandidates.find((candidate) =>
+    candidate.start <= visualPosition && candidate.end >= visualPosition
+  );
+  if (!baselineCandidate) {
+    return { failure: 'visual-editor-markdown-merge-failed' };
+  }
+  const unchangedAnchors = unchangedVisualSourceAnchors(
+    intervalMap.source,
+    baselineVisualMarkdown
+  );
+  const previousAnchors = unchangedAnchors.filter((anchor) =>
+    anchor.baselineEnd <= baselineCandidate.start
+  );
+  const previous = previousAnchors[previousAnchors.length - 1];
+  const next = unchangedAnchors.find((anchor) =>
+    anchor.baselineStart >= baselineCandidate.end
+  );
+  const baselineRunStart = previous?.baselineEnd ?? 0;
+  const baselineRunEnd = next?.baselineStart ?? baselineVisualMarkdown.length;
+  if (!hasOnlyStructuralMarkdownLines(
+    baselineVisualMarkdown,
+    baselineRunStart,
+    baselineRunEnd
+  )) return { failure: 'visual-editor-markdown-merge-failed' };
+  const sourceStart = previous?.sourceEnd ?? 0;
+  const sourceEnd = next?.sourceStart ?? intervalMap.source.length;
+  if (
+    sourceStart > sourceEnd
+    || !isMarkdownLineBoundary(intervalMap.source, sourceStart)
+    || !isMarkdownLineBoundary(intervalMap.source, sourceEnd)
+  ) return { failure: 'visual-editor-markdown-merge-failed' };
+  const sourceCodeRanges = markdownCodeContextRanges(intervalMap.source);
+  if (!hasOnlyStructuralSourceLines(
+    intervalMap.source,
+    sourceStart,
+    sourceEnd,
+    sourceCodeRanges
+  )) return { failure: 'visual-editor-markdown-merge-failed' };
+
+  const sourceLineStarts = markdownLineStarts(intervalMap.source);
+  const candidates: number[] = [];
+  for (let index = 0; index < sourceLineStarts.length; index += 1) {
+    const lineStart = sourceLineStarts[index] ?? 0;
+    const nextLineStart = sourceLineStarts[index + 1]
+      ?? intervalMap.source.length;
+    const lineEnd = nextLineStart > lineStart
+      && '\n' === intervalMap.source[nextLineStart - 1]
+      ? nextLineStart - 1
+      : nextLineStart;
+    const contentEnd = lineEnd > lineStart
+      && '\r' === intervalMap.source[lineEnd - 1]
+      ? lineEnd - 1
+      : lineEnd;
+    if (lineStart < sourceStart || contentEnd > sourceEnd) continue;
+    if (overlapsMarkdownCodeContext(lineStart, lineEnd, sourceCodeRanges)) {
+      continue;
+    }
+    const line = intervalMap.source.slice(lineStart, contentEnd);
+    const structure = structuralMarkdownLine(line);
+    if (
+      structure
+      && structuralLineMatchesAncestry(structure, ancestry)
+      && structure.bodyBoundary > 0
+    ) candidates.push(lineStart + structure.bodyBoundary);
+  }
+  if (0 === candidates.length) {
+    return { failure: 'visual-editor-markdown-merge-failed' };
+  }
+  if (1 !== candidates.length) {
+    return { failure: 'visual-editor-markdown-merge-ambiguous' };
+  }
+  const normalizedSourceOffset = candidates[0];
+  if (undefined === normalizedSourceOffset) {
+    return { failure: 'visual-editor-markdown-merge-failed' };
+  }
+  return {
+    sourceOffset: normalizedSourceOffset,
+    visualOffset: visualPosition
+  };
+}
+
+export function visualEmptyStructuralBodySelection(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string,
+  currentVisualMarkdown = baselineVisualMarkdown
+): VisualEmptyStructuralBodySelectionResult {
+  const result = neutralEmptyStructuralBodySelection(
+    editor,
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    currentVisualMarkdown
+  );
+  if (!result) return null;
+  if ('failure' in result) return result;
+  const selection = editor.ownerDocument.defaultView?.getSelection();
+  if (!selection?.anchorNode || !selection.isCollapsed) {
+    return { failure: 'visual-editor-markdown-merge-failed' };
+  }
+  const intervalMap = createVisualMarkdownSourceIntervalMap(
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const projectedIntervalMap = true === result.resolved
+    ? undefined
+    : projectVisualSelectionInterval(
+        intervalMap,
+        result.visualOffset,
+        result.sourceOffset
+      );
+  const sourceOffset = visualBoundarySourceOffset(
+    editor,
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    selection.anchorNode,
+    selection.anchorOffset,
+    projectedIntervalMap
+  );
+  return { sourceOffset, visualOffset: result.visualOffset };
+}
+
 type VisualSelectionSourceRangeOptions = Readonly<{
   acceptedPasteDocumentBoundary?: AcceptedPasteDocumentBoundary;
 }>;
@@ -3663,6 +4312,39 @@ export function visualSelectionSourceRange(
     const offset = selection.anchorOffset === 0
       ? 0
       : sourceMarkdown.length;
+    return { direction: 'none', end: offset, start: offset };
+  }
+  const neutralSelection = neutralEmptyStructuralBodySelection(
+    editor,
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    currentVisualMarkdown
+  );
+  if (neutralSelection && 'failure' in neutralSelection) {
+    throw new Error(neutralSelection.failure);
+  }
+  if (
+    neutralSelection
+    && 'sourceOffset' in neutralSelection
+    && true !== neutralSelection.resolved
+  ) {
+    const intervalMap = createVisualMarkdownSourceIntervalMap(
+      sourceMarkdown,
+      baselineVisualMarkdown
+    );
+    const projectedIntervalMap = projectVisualSelectionInterval(
+      intervalMap,
+      neutralSelection.visualOffset,
+      neutralSelection.sourceOffset
+    );
+    const offset = visualBoundarySourceOffset(
+      editor,
+      sourceMarkdown,
+      baselineVisualMarkdown,
+      selection.anchorNode,
+      selection.anchorOffset,
+      projectedIntervalMap
+    );
     return { direction: 'none', end: offset, start: offset };
   }
   if (selectedVisualCodePlaceholder(selection)) {
@@ -3808,16 +4490,18 @@ export type VisualMarkdownMergeResult = Readonly<{
 export function mergeVisualMarkdownChangeDetails(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
-  editedVisualMarkdown: string
+  editedVisualMarkdown: string,
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
 ): VisualMarkdownMergeResult {
   if (baselineVisualMarkdown === editedVisualMarkdown) {
     return { edits: [], value: sourceMarkdown };
   }
 
-  const sourceIntervalMap = createVisualMarkdownSourceIntervalMap(
-    sourceMarkdown,
-    baselineVisualMarkdown
-  );
+  const sourceIntervalMap = projectedIntervalMap
+    ?? createVisualMarkdownSourceIntervalMap(
+      sourceMarkdown,
+      baselineVisualMarkdown
+    );
   const { hiddenSourceRanges, source } = sourceIntervalMap;
   let baselinePosition = 0;
 
@@ -3851,31 +4535,54 @@ export function mergeVisualMarkdownChangeDetails(
       replacement = part.value;
     }
 
-    const sourceStart = sourceIntervalMap.sourceOffsetAt(start);
-    const sourceEnd = sourceIntervalMap.sourceOffsetAt(end);
+    const replacedVisualText = baselineVisualMarkdown.slice(start, end);
+    const mappedSourceStart = sourceIntervalMap.sourceOffsetAt(start);
+    const sourceStart = start === end
+      && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceStart ?? -1)
+      ? sourceIntervalMap.rawSourceOffsetAt(start)
+      : mappedSourceStart;
+    const mappedSourceEnd = sourceIntervalMap.sourceOffsetAt(end);
+    const sourceEnd = start !== end
+      && sourceIntervalMap.isStructuralSourceBoundary(mappedSourceEnd ?? -1)
+      ? sourceIntervalMap.rawSourceOffsetAt(end)
+      : mappedSourceEnd;
+    const consumesStructuralSeparator = sourceIntervalMap.structuralSourceSeparatorStart !== null
+      && sourceStart === sourceIntervalMap.structuralSourceSeparatorStart
+      && sourceEnd === sourceIntervalMap.structuralSourceBoundary;
+    const sourceSliceMatchesVisual = sourceStart !== undefined
+      && sourceEnd !== undefined
+      && source.slice(sourceStart, sourceEnd)
+        === baselineVisualMarkdown.slice(start, end);
     if (
       undefined === sourceStart
       || undefined === sourceEnd
-      || source.slice(sourceStart, sourceEnd)
-        !== baselineVisualMarkdown.slice(start, end)
+      || (!sourceSliceMatchesVisual && !consumesStructuralSeparator)
     ) {
       throw new Error('visual-editor-markdown-merge-failed');
     }
-    const replacedVisualText = baselineVisualMarkdown.slice(start, end);
     // Only reject edits whose mapped source range actually overlaps hidden
     // Markdown. Identical text in an unrelated hidden range is not evidence
     // that the visible selection is ambiguous.
     const editOverlapsHiddenSource = hiddenSourceRanges.some(
       ({ end: hiddenEnd, start: hiddenStart }) =>
         sourceStart < hiddenEnd && sourceEnd > hiddenStart
+        && !(
+          consumesStructuralSeparator
+          && hiddenStart === sourceIntervalMap.structuralSourceSeparatorStart
+        )
     );
     const insertionTouchesHiddenBoundary = 0 === replacedVisualText.length
       && hiddenSourceRanges.some(({ end: hiddenEnd, start: hiddenStart }) =>
         (sourceStart === hiddenStart || sourceStart === hiddenEnd)
         && !(
-          sourceStart === hiddenStart
-          && hiddenEnd === source.length
-          && /^\n+$/.test(source.slice(hiddenStart, hiddenEnd))
+          consumesStructuralSeparator
+          || sourceIntervalMap.isStructuralSourceBoundary(sourceStart)
+          || (
+          hiddenEnd === source.length
+          && isMarkdownTerminalWhitespaceSuffix(
+            source.slice(hiddenStart, hiddenEnd)
+          )
+          )
         )
       );
     if (editOverlapsHiddenSource || insertionTouchesHiddenBoundary) {
@@ -3917,11 +4624,13 @@ export function mergeVisualMarkdownChangeDetails(
 export function mergeVisualMarkdownChange(
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
-  editedVisualMarkdown: string
+  editedVisualMarkdown: string,
+  projectedIntervalMap?: VisualMarkdownSourceIntervalMap
 ): string {
   return mergeVisualMarkdownChangeDetails(
     sourceMarkdown,
     baselineVisualMarkdown,
-    editedVisualMarkdown
+    editedVisualMarkdown,
+    projectedIntervalMap
   ).value;
 }

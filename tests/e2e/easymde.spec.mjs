@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
+import { markdownLanguage } from '@codemirror/lang-markdown';
 import { expect, test } from '@playwright/test';
 import { selectOrdinaryOption } from './helpers/ordinary-select.mjs';
 import { collectPreviewRequestOutcomes } from './helpers/preview-request-evidence.mjs';
@@ -4742,6 +4743,2272 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
+  test('preserves a windowed paragraph caret after structural Enter and formal Preview', async ({ page }, testInfo) => {
+    const markdown = syntheticWindowedMarkdown();
+    const targetBlockIndex = 180;
+    const targetBlockId = `b${targetBlockIndex}`;
+    const caretBlockIndex = targetBlockIndex + 1;
+    const caretBlockId = `b${caretBlockIndex}`;
+    const marker = `Windowed paragraph ${targetBlockIndex + 1}.`;
+    const expectedSourceCaret = markdown.indexOf(marker) + marker.length;
+    const expectedSourceCaretAfterEnter = expectedSourceCaret + 2;
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Windowed paragraph 1.');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const visualEditor = editor.visualEditor;
+    const source = editor.source;
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    const target = visualEditor.locator(
+      `[data-easymde-visual-block-id="${targetBlockId}"]`
+    );
+
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(1);
+    const scrollEvidence = await canvas.evaluate((element, index) => {
+      if (!(element instanceof HTMLElement)) {
+        throw new Error('windowed-caret-canvas-unavailable');
+      }
+      const mounted = element.querySelector(
+        `[data-easymde-visual-block-id="b${index}"]`
+      );
+      const spacer = Array.from(element.querySelectorAll(
+        '[data-easymde-preview-window-spacer]'
+      )).find((candidate) => {
+        const start = Number(candidate.getAttribute('data-easymde-preview-window-start'));
+        const end = Number(candidate.getAttribute('data-easymde-preview-window-end'));
+        return start <= index && index < end;
+      });
+      if (!mounted && !spacer) {
+        throw new Error('windowed-caret-target-not-represented');
+      }
+      const canvasRect = element.getBoundingClientRect();
+      const spacerRect = spacer?.getBoundingClientRect() ?? null;
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+      const targetScrollTop = mounted
+        ? element.scrollTop
+        : Math.min(
+          maximum,
+          element.scrollTop + (spacerRect?.top ?? canvasRect.top) - canvasRect.top + 1
+        );
+      element.scrollTop = targetScrollTop;
+      element.dispatchEvent(new Event('scroll'));
+      return {
+        maximum,
+        mounted: Boolean(mounted),
+        spacer: spacer ? {
+          end: Number(spacer.getAttribute('data-easymde-preview-window-end')),
+          start: Number(spacer.getAttribute('data-easymde-preview-window-start'))
+        } : null,
+        targetScrollTop
+      };
+    }, targetBlockIndex);
+    await expect(target).toBeAttached({ timeout: 30_000 });
+    await target.scrollIntoViewIfNeeded();
+    await waitForBrowserPaint(page);
+    await target.click();
+    await page.keyboard.press('End');
+
+    const readCaretState = async (expectedBlockId = targetBlockId) => visualEditor.evaluate((surface, expected) => {
+      const field = document.querySelector('#easymde-source');
+      const canvasElement = document.querySelector('.easymde-immersive-preview-canvas');
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const block = anchorElement?.closest('[data-easymde-visual-block-id]');
+      const blockId = block?.getAttribute('data-easymde-visual-block-id') ?? null;
+      const blockMatch = /^b(\d+)$/u.exec(blockId ?? '');
+      let blockOffset = null;
+      if (block && anchor && selection?.isCollapsed) {
+        const range = document.createRange();
+        range.selectNodeContents(block);
+        try {
+          range.setEnd(anchor, selection.anchorOffset);
+          blockOffset = range.toString().length;
+        } catch {}
+      }
+      const mountedIds = Array.from(
+        canvasElement?.querySelectorAll('[data-easymde-visual-block-id]') ?? []
+      ).map((node) => node.getAttribute('data-easymde-visual-block-id'))
+        .filter((id) => null !== id);
+      return {
+        activeInsideSurface: Boolean(document.activeElement && surface.contains(document.activeElement)),
+        anchorBlockId: blockId,
+        anchorBlockIndex: blockMatch ? Number(blockMatch[1]) : null,
+        anchorBlockOffset: blockOffset,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        contentEditable: surface.getAttribute('contenteditable'),
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        mountedBlockCount: mountedIds.length,
+        targetMounted: mountedIds.includes(expected.targetBlockId),
+        previewBusy: surface.getAttribute('aria-busy'),
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null,
+        spacerCount: canvasElement?.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ).length ?? 0,
+        surfaceConnected: surface.isConnected
+      };
+    }, { targetBlockId: expectedBlockId });
+
+    const beforeEnter = await readCaretState();
+    expect(beforeEnter).toMatchObject({
+      anchorBlockId: targetBlockId,
+      anchorBlockIndex: targetBlockIndex,
+      anchorBlockOffset: marker.length,
+      anchorConnected: true,
+      selectionCollapsed: true,
+      targetMounted: true
+    });
+    const previewResponse = page.waitForResponse((response) => {
+      const request = response.request();
+      if ('POST' !== request.method()
+        || !new URL(response.url()).pathname.endsWith('/wp-json/easymde/v1/preview')) {
+        return false;
+      }
+      try {
+        return request.postDataJSON()?.markdown === markdown;
+      } catch {
+        return false;
+      }
+    }, { timeout: 30_000 });
+    await visualEditor.press('End');
+    await visualEditor.press('Enter');
+    const afterEnter = await readCaretState();
+    const response = await previewResponse;
+    expect(response.ok()).toBe(true);
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    await expect(visualEditor).not.toHaveAttribute('data-easymde-preview-error', '1');
+    await waitForBrowserPaint(page);
+    const afterPreview = await readCaretState(caretBlockId);
+    await testInfo.attach('windowed-enter-caret-evidence', {
+      body: JSON.stringify({
+        afterEnter,
+        afterPreview,
+        beforeEnter,
+        browserFailures,
+        expectedSourceCaret,
+        markerLength: marker.length,
+        scrollEvidence,
+        targetBlockIndex
+      }),
+      contentType: 'application/json'
+    });
+    expect(afterPreview).toMatchObject({
+      activeInsideSurface: true,
+      anchorBlockId: caretBlockId,
+      anchorBlockIndex: caretBlockIndex,
+      anchorBlockOffset: 0,
+      anchorConnected: true,
+      canonicalLength: markdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedSourceCaretAfterEnter,
+        start: expectedSourceCaretAfterEnter
+      },
+      targetMounted: true
+    });
+
+    const expectedMarkdown = `${markdown.slice(0, expectedSourceCaretAfterEnter)}~${markdown.slice(expectedSourceCaretAfterEnter)}`;
+    await page.keyboard.press('Shift+Backquote');
+    await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+    await expect.poll(
+      () => readyPreviewSignature(visualEditor),
+      { message: 'windowed tilde input should keep the accepted Preview generation' }
+    ).toMatch(/:\d+$/u);
+    const afterTilde = await readCaretState(caretBlockId);
+    expect(afterTilde).toMatchObject({
+      activeInsideSurface: true,
+      anchorBlockId: caretBlockId,
+      anchorBlockIndex: caretBlockIndex,
+      anchorBlockOffset: 1,
+      anchorConnected: true,
+      canonicalLength: expectedMarkdown.length,
+      errorCode: null,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedSourceCaretAfterEnter + 1,
+        start: expectedSourceCaretAfterEnter + 1
+      },
+      targetMounted: true
+    });
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('keeps a long cleared document editable before and after immersive re-entry', async ({ page }, testInfo) => {
+    const markdown = Array.from(
+      { length: 500 },
+      (_, index) => `Clear target paragraph ${index}: ${'Synthetic text '.repeat(15)}`
+    ).join('\n\n');
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Clear target paragraph 0:');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const readState = async (visualEditor) => visualEditor.evaluate((surface) => {
+      const field = document.querySelector('#easymde-source');
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const block = element?.closest('[data-easymde-visual-block-id]');
+      return {
+        activeElementIsSurface: document.activeElement === surface,
+        activeInsideSurface: Boolean(document.activeElement && surface.contains(document.activeElement)),
+        anchorBlockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorInsideSurface: Boolean(anchor && surface.contains(anchor)),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        contentEditable: surface.getAttribute('contenteditable'),
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        previewBusy: surface.getAttribute('aria-busy'),
+        rangeCount: selection?.rangeCount ?? null,
+        selectedRange: selection?.rangeCount ? (() => {
+          const range = selection.getRangeAt(0);
+          return {
+            collapsed: range.collapsed,
+            endName: range.endContainer.nodeName,
+            endOffset: range.endOffset,
+            endRoot: range.endContainer === surface,
+            selectedTextLength: range.toString().length,
+            startName: range.startContainer.nodeName,
+            startOffset: range.startOffset,
+            startRoot: range.startContainer === surface
+          };
+        })() : null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        surfaceChildCount: surface.childNodes.length,
+        visualBlockCount: surface.querySelectorAll('[data-easymde-visual-block-id]').length,
+        spacerCount: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length,
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null,
+        surfaceConnected: surface.isConnected,
+        textLength: surface.textContent?.length ?? 0
+      };
+    });
+
+    const visibleParagraph = await editor.visualEditor.evaluate((surface) => {
+      const canvas = surface.closest('.easymde-immersive-preview-canvas');
+      if (!(canvas instanceof HTMLElement)) {
+        throw new Error('long-clear-preview-canvas-unavailable');
+      }
+      const canvasRect = canvas.getBoundingClientRect();
+      const candidates = Array.from(surface.querySelectorAll(
+        '[data-easymde-visual-block-id]'
+      )).flatMap((block) => {
+        const paragraph = block.matches('p') ? block : block.querySelector('p');
+        const blockId = block.getAttribute('data-easymde-visual-block-id');
+        if (!paragraph || !blockId) return [];
+        const rect = paragraph.getBoundingClientRect();
+        const intersectsCanvas = rect.bottom > canvasRect.top
+          && rect.top < canvasRect.bottom
+          && rect.right > canvasRect.left
+          && rect.left < canvasRect.right;
+        return intersectsCanvas && rect.width > 0 && rect.height > 0
+          ? [{ blockId, top: rect.top }]
+          : [];
+      });
+      candidates.sort((left, right) => left.top - right.top);
+      return candidates[0] ?? null;
+    });
+    if (!visibleParagraph || !/^b\d+$/u.test(visibleParagraph.blockId)) {
+      throw new Error('long-clear-visible-paragraph-unavailable');
+    }
+    const firstParagraph = editor.visualEditor.locator(
+      `[data-easymde-visual-block-id="${visibleParagraph.blockId}"]`
+    );
+    await expect(firstParagraph).toBeVisible();
+    await firstParagraph.click();
+    const beforeSelectAll = await readState(editor.visualEditor);
+    expect(beforeSelectAll).toMatchObject({
+      activeElementIsSurface: true,
+      activeInsideSurface: true,
+      anchorConnected: true,
+      anchorInsideSurface: true,
+      contentEditable: 'true',
+      selectionCollapsed: true
+    });
+    await page.keyboard.press('ControlOrMeta+A');
+    const afterSelectAll = await readState(editor.visualEditor);
+    expect(afterSelectAll).toMatchObject({
+      activeElementIsSurface: true,
+      activeInsideSurface: true,
+      anchorConnected: true,
+      anchorInsideSurface: true,
+      selectedRange: {
+        endOffset: afterSelectAll.surfaceChildCount,
+        endRoot: true,
+        startOffset: 0,
+        startRoot: true
+      },
+      selectionCollapsed: false
+    });
+    await page.keyboard.press('Backspace');
+    await waitForBrowserPaint(page);
+    await page.waitForTimeout(300);
+    const afterClear = await readState(editor.visualEditor);
+    await page.keyboard.press('Shift+Backquote');
+    const afterTilde = await readState(editor.visualEditor);
+    await page.keyboard.type('x', { delay: 0 });
+    await page.waitForTimeout(300);
+    const afterInput = await readState(editor.visualEditor);
+
+    const expectedMarkdown = '~x';
+    await testInfo.attach('immersive-long-clear-caret-evidence', {
+      body: JSON.stringify({
+        afterClear,
+        afterInput,
+        afterTilde,
+        browserFailures,
+        expectedLength: expectedMarkdown.length,
+        initialLength: markdown.length
+      }),
+      contentType: 'application/json'
+    });
+
+    expect(afterClear).toMatchObject({
+      canonicalLength: 0,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true
+    });
+    expect(afterInput).toMatchObject({
+      activeInsideSurface: true,
+      anchorConnected: true,
+      canonicalLength: expectedMarkdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedMarkdown.length,
+        start: expectedMarkdown.length
+      }
+    });
+    await expect(editor.source).toHaveValue(expectedMarkdown);
+
+    await page.getByRole('button', { name: editor.labels.exit }).click();
+    await expect(page.getByRole('region', {
+      name: editor.labels.immersive
+    })).toHaveCount(0);
+    const reentered = await enterImmersivePreviewAndUnlock(page);
+    const afterReentry = await readState(reentered.visualEditor);
+    await testInfo.attach('immersive-long-clear-reentry-evidence', {
+      body: JSON.stringify({ afterReentry, browserFailures }),
+      contentType: 'application/json'
+    });
+
+    expect(await reentered.source.inputValue()).toBe(expectedMarkdown);
+    expect(afterClear).toMatchObject({
+      canonicalLength: 0,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true
+    });
+    expect(afterInput).toMatchObject({
+      activeInsideSurface: true,
+      anchorConnected: true,
+      canonicalLength: expectedMarkdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedMarkdown.length,
+        start: expectedMarkdown.length
+      }
+    });
+    expect(afterReentry).toMatchObject({
+      canonicalLength: expectedMarkdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      selectionCollapsed: true
+    });
+    await expect(reentered.visualEditor).toContainText(expectedMarkdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('commits immediate input after a long full clear and preserves Undo/Redo caret state', async ({ page }, testInfo) => {
+    const markdown = Array.from(
+      { length: 500 },
+      (_, index) => `Immediate clear paragraph ${index}: ${'Synthetic text '.repeat(15)}`
+    ).join('\n\n');
+    const expectedMarkdown = '~x';
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Immediate clear paragraph 0:');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const readState = async () => editor.visualEditor.evaluate((surface) => {
+      const field = document.querySelector('#easymde-source');
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const block = element?.closest('[data-easymde-visual-block-id]');
+      return {
+        activeElementIsSurface: document.activeElement === surface,
+        activeInsideSurface: Boolean(document.activeElement && surface.contains(document.activeElement)),
+        anchorBlockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorInsideSurface: Boolean(anchor && surface.contains(anchor)),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        contentEditable: surface.getAttribute('contenteditable'),
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        previewBusy: surface.getAttribute('aria-busy'),
+        rangeCount: selection?.rangeCount ?? null,
+        selectedRange: selection?.rangeCount ? (() => {
+          const range = selection.getRangeAt(0);
+          return {
+            collapsed: range.collapsed,
+            endName: range.endContainer.nodeName,
+            endOffset: range.endOffset,
+            endRoot: range.endContainer === surface,
+            selectedTextLength: range.toString().length,
+            startName: range.startContainer.nodeName,
+            startOffset: range.startOffset,
+            startRoot: range.startContainer === surface
+          };
+        })() : null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        surfaceChildCount: surface.childNodes.length,
+        visualBlockCount: surface.querySelectorAll('[data-easymde-visual-block-id]').length,
+        spacerCount: surface.querySelectorAll('[data-easymde-preview-window-spacer]').length,
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null,
+        surfaceConnected: surface.isConnected
+      };
+    });
+
+    const visibleParagraph = await editor.visualEditor.evaluate((surface) => {
+      const canvas = surface.closest('.easymde-immersive-preview-canvas');
+      if (!(canvas instanceof HTMLElement)) {
+        throw new Error('immediate-clear-preview-canvas-unavailable');
+      }
+      const canvasRect = canvas.getBoundingClientRect();
+      const candidates = Array.from(surface.querySelectorAll(
+        '[data-easymde-visual-block-id]'
+      )).flatMap((block) => {
+        const paragraph = block.matches('p') ? block : block.querySelector('p');
+        const blockId = block.getAttribute('data-easymde-visual-block-id');
+        if (!paragraph || !blockId) return [];
+        const rect = paragraph.getBoundingClientRect();
+        const intersectsCanvas = rect.bottom > canvasRect.top
+          && rect.top < canvasRect.bottom
+          && rect.right > canvasRect.left
+          && rect.left < canvasRect.right;
+        return intersectsCanvas && rect.width > 0 && rect.height > 0
+          ? [{ blockId, top: rect.top }]
+          : [];
+      });
+      candidates.sort((left, right) => left.top - right.top);
+      return candidates[0] ?? null;
+    });
+    if (!visibleParagraph || !/^b\d+$/u.test(visibleParagraph.blockId)) {
+      throw new Error('immediate-clear-visible-paragraph-unavailable');
+    }
+    const firstParagraph = editor.visualEditor.locator(
+      `[data-easymde-visual-block-id="${visibleParagraph.blockId}"]`
+    );
+    await expect(firstParagraph).toBeVisible();
+    await firstParagraph.click();
+    const beforeSelectAll = await readState();
+    expect(beforeSelectAll).toMatchObject({
+      activeElementIsSurface: true,
+      activeInsideSurface: true,
+      anchorConnected: true,
+      anchorInsideSurface: true,
+      contentEditable: 'true',
+      selectionCollapsed: true
+    });
+    await page.keyboard.press('ControlOrMeta+A');
+    const afterSelectAll = await readState();
+    expect(afterSelectAll).toMatchObject({
+      activeElementIsSurface: true,
+      activeInsideSurface: true,
+      anchorConnected: true,
+      anchorInsideSurface: true,
+      selectedRange: {
+        endOffset: afterSelectAll.surfaceChildCount,
+        endRoot: true,
+        startOffset: 0,
+        startRoot: true
+      },
+      selectionCollapsed: false
+    });
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Shift+Backquote');
+    await page.keyboard.type('x', { delay: 0 });
+    await page.waitForTimeout(300);
+    const afterImmediateInput = await readState();
+    await testInfo.attach('immersive-immediate-clear-caret-evidence', {
+      body: JSON.stringify({ afterImmediateInput, afterSelectAll, browserFailures }),
+      contentType: 'application/json'
+    });
+    await expect(editor.source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+    expect(afterImmediateInput).toMatchObject({
+      activeInsideSurface: true,
+      anchorConnected: true,
+      canonicalLength: expectedMarkdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      rangeCount: 1,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedMarkdown.length,
+        start: expectedMarkdown.length
+      }
+    });
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(editor.source).toHaveValue('', { timeout: 30_000 });
+    const afterUndo = await readState();
+    expect(afterUndo).toMatchObject({
+      activeInsideSurface: true,
+      anchorConnected: true,
+      canonicalLength: 0,
+      contentEditable: 'true',
+      errorCode: null,
+      rangeCount: 1,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: 0,
+        start: 0
+      }
+    });
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(editor.source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+    const afterRedo = await readState();
+    expect(afterRedo).toMatchObject({
+      activeInsideSurface: true,
+      anchorConnected: true,
+      canonicalLength: expectedMarkdown.length,
+      contentEditable: 'true',
+      errorCode: null,
+      rangeCount: 1,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: expectedMarkdown.length,
+        start: expectedMarkdown.length
+      }
+    });
+    expect(browserFailures).toEqual([]);
+  });
+
+  for (const deletionKey of ['Backspace', 'Delete']) {
+    test(`clears a nonwindowed Mermaid and math document with ${deletionKey} and preserves immediate visual input`, async ({ page }, testInfo) => {
+      const markdown = [
+        'Before generated content.',
+        '',
+        '```mermaid',
+        'graph TD',
+        'A[Start] --> B[End]',
+        '```',
+        '',
+        '$$',
+        'x^2 + y^2 = z^2',
+        '$$',
+        '',
+        'After generated content.'
+      ].join('\n');
+      const browserFailures = [];
+      page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+      page.on('console', (message) => {
+        if ('error' !== message.type()) return;
+        const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        browserFailures.push(code ?? 'console-error');
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, 'Before generated content.');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const visualEditor = editor.visualEditor;
+      const source = editor.source;
+      await expect(visualEditor.locator(
+        '[data-easymde-preview-window-spacer]'
+      )).toHaveCount(0);
+      await expect(visualEditor.locator('.easymde-mermaid')).toHaveCount(1);
+      await expect(visualEditor.locator('.easymde-math')).toHaveCount(1);
+
+      const readState = async () => visualEditor.evaluate((surface) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const caretBox = range?.getBoundingClientRect() ?? null;
+        const rootContains = (node) => Boolean(
+          node && (node === surface || surface.contains(node))
+        );
+        const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+        const focusElement = focus instanceof Element ? focus : focus?.parentElement;
+        const emptyParagraphs = Array.from(surface.querySelectorAll(':scope > p'))
+          .filter((paragraph) => paragraph.textContent === '');
+        const emptyParagraph = emptyParagraphs[0] ?? null;
+        const protectedNodes = Array.from(surface.querySelectorAll(
+          '.easymde-mermaid, .easymde-math'
+        ));
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && 'ARTICLE' === surface.tagName,
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorClosestParagraph: Boolean(anchorElement?.closest('p')),
+          anchorInsideSurface: rootContains(anchor),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          caretRect: caretBox ? {
+            height: caretBox.height,
+            width: caretBox.width,
+            x: caretBox.x,
+            y: caretBox.y
+          } : null,
+          childCount: surface.childNodes.length,
+          childNodeNames: Array.from(surface.childNodes, ({ nodeName }) => nodeName),
+          codeMirrorConnectedCount: Array.from(
+            document.querySelectorAll('.cm-editor')
+          ).filter((node) => node.isConnected).length,
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusClosestParagraph: Boolean(focusElement?.closest('p')),
+          focusInsideSurface: rootContains(focus),
+          focusName: focus?.nodeName ?? null,
+          focusOffset: selection?.focusOffset ?? null,
+          generated: {
+            connected: protectedNodes.filter((node) => node.isConnected).length,
+            mathCount: surface.querySelectorAll('.easymde-math').length,
+            mermaidCount: surface.querySelectorAll('.easymde-mermaid').length,
+            nonEditableCount: protectedNodes.filter(
+              (node) => node.getAttribute('contenteditable') === 'false'
+            ).length
+          },
+          emptyParagraphCount: emptyParagraphs.length,
+          emptyParagraphHeight: emptyParagraph?.getBoundingClientRect().height ?? null,
+          emptyParagraphBrCount: emptyParagraph?.querySelectorAll('br').length ?? 0,
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          selectionEndConnected: Boolean(range?.endContainer?.isConnected),
+          selectionEndRoot: range?.endContainer === surface,
+          selectionEndOffset: range?.endOffset ?? null,
+          selectionStartConnected: Boolean(range?.startContainer?.isConnected),
+          selectionStartRoot: range?.startContainer === surface,
+          selectionStartOffset: range?.startOffset ?? null,
+          selectedTextLength: range?.toString().length ?? null,
+          source: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            length: sourceField.value.length,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected,
+          textLength: surface.textContent?.length ?? 0
+        };
+      });
+      const expectConnectedCaret = (state) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          anchorInsideSurface: true,
+          codeMirrorConnectedCount: 0,
+          contentEditable: 'true',
+          focusConnected: true,
+          focusInsideSurface: true,
+          nativeRangeCount: 1,
+          selectionCollapsed: true,
+          selectionEndConnected: true,
+          selectionStartConnected: true,
+          surfaceConnected: true
+        });
+        expect(state.caretRect).toMatchObject({ height: expect.any(Number) });
+      };
+      const expectEmptyParagraphCaret = (state) => {
+        expectConnectedCaret(state);
+        expect(state).toMatchObject({
+          anchorClosestParagraph: true,
+          childCount: 1,
+          childNodeNames: ['P'],
+          emptyParagraphBrCount: 1,
+          emptyParagraphCount: 1,
+          focusClosestParagraph: true
+        });
+        expect(state.emptyParagraphHeight).toBeGreaterThan(0);
+      };
+
+      const target = visualEditor.locator('p').first();
+      await target.click();
+      const beforeSelectAll = await readState();
+      expectConnectedCaret(beforeSelectAll);
+      await page.keyboard.press('ControlOrMeta+A');
+      const afterSelectAll = await readState();
+      expect(afterSelectAll).toMatchObject({
+        activeElementIsArticle: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        contentEditable: 'true',
+        nativeRangeCount: 1,
+        selectionCollapsed: false,
+        selectionEndConnected: true,
+        selectionEndRoot: true,
+        selectionEndOffset: afterSelectAll.childCount,
+        selectionStartConnected: true,
+        selectionStartRoot: true,
+        selectionStartOffset: 0,
+        surfaceConnected: true
+      });
+      await page.keyboard.press(deletionKey);
+      const afterClearImmediate = await readState();
+      expectEmptyParagraphCaret(afterClearImmediate);
+      await testInfo.attach(`nonwindowed-generated-clear-${deletionKey.toLowerCase()}-after-clear-screenshot`, {
+        body: await page.screenshot({ caret: 'initial', fullPage: false }),
+        contentType: 'image/png'
+      });
+
+      await page.keyboard.press('Shift+Backquote');
+      await page.keyboard.type('x', { delay: 0 });
+      const afterImmediateInput = await readState();
+      await expect.poll(
+        () => source.inputValue(),
+        { timeout: 30_000, message: `${deletionKey} clear should settle the immediate tilde input` }
+      ).toBe('~x');
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(300);
+      const afterDebounce = await readState();
+      expectConnectedCaret(afterDebounce);
+      expect(afterDebounce.source).toMatchObject({
+        end: 2,
+        length: 2,
+        start: 2
+      });
+      expect(afterDebounce.generated).toMatchObject({
+        connected: 0,
+        mathCount: 0,
+        mermaidCount: 0
+      });
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue('', { timeout: 30_000 });
+      const afterUndo = await readState();
+      expectConnectedCaret(afterUndo);
+      expect(afterUndo.source).toMatchObject({ end: 0, length: 0, start: 0 });
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(source).toHaveValue('~x', { timeout: 30_000 });
+      const afterRedo = await readState();
+      expectConnectedCaret(afterRedo);
+      expect(afterRedo.source).toMatchObject({ end: 2, length: 2, start: 2 });
+
+      await testInfo.attach(`nonwindowed-generated-clear-${deletionKey.toLowerCase()}-evidence`, {
+        body: JSON.stringify({
+          afterClearImmediate,
+          afterDebounce,
+          afterImmediateInput,
+          afterRedo,
+          afterSelectAll,
+          afterUndo,
+          beforeSelectAll,
+          browserFailures,
+          deletionKey,
+          initialMarkdownLength: markdown.length
+        }),
+        contentType: 'application/json'
+      });
+      await testInfo.attach(`nonwindowed-generated-clear-${deletionKey.toLowerCase()}-screenshot`, {
+        body: await page.screenshot({ caret: 'initial', fullPage: false }),
+        contentType: 'image/png'
+      });
+
+      await page.getByRole('button', {
+        name: editor.labels.exit
+      }).click();
+      await expect(page.getByRole('region', {
+        name: editor.labels.immersive
+      })).toHaveCount(0);
+      const reentered = await enterImmersivePreviewAndUnlock(page);
+      await expect(reentered.source).toHaveValue('~x');
+      await expect(reentered.visualEditor).toContainText('~x');
+      await expect(reentered.visualEditor.locator('.easymde-mermaid')).toHaveCount(0);
+      await expect(reentered.visualEditor.locator('.easymde-math')).toHaveCount(0);
+      expect(browserFailures).toEqual([]);
+    });
+  }
+
+  test('flushes pending code before immediate native input in an empty quote', async ({ page, context }, testInfo) => {
+    const quoteBody = 'quote body';
+    const markdown = [
+      `> ${quoteBody}`,
+      '',
+      '```js',
+      '',
+      '```',
+      '',
+      '$$x$$'
+    ].join('\n');
+    const browserFailures = [];
+    const pageErrors = [];
+    const mathKey = '__easymdeRapidCodeToEmptyQuoteMath';
+    const traceKey = '__easymdeRapidCodeToEmptyQuoteTrace';
+    let cdp = null;
+
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+    page.on('pageerror', (error) => pageErrors.push(`pageerror:${error.name}`));
+
+    const parseNodes = (source) => {
+      const cursor = markdownLanguage.parser.parse(source).cursor();
+      const nodes = [];
+      const visit = (current, ancestors) => {
+        const nextAncestors = [...ancestors, current.name];
+        nodes.push({
+          ancestors,
+          from: current.from,
+          name: current.name,
+          text: source.slice(current.from, current.to),
+          to: current.to
+        });
+        if (!current.firstChild()) return;
+        do visit(current, nextAncestors); while (current.nextSibling());
+        current.parent();
+      };
+      visit(cursor, []);
+      return nodes;
+    };
+    const uniqueNode = (nodes, predicate, label) => {
+      const matches = nodes.filter(predicate);
+      expect(matches, label).toHaveLength(1);
+      return matches[0];
+    };
+    const insertAt = (source, offset, value) => (
+      source.slice(0, offset) + value + source.slice(offset)
+    );
+
+    try {
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, quoteBody);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const source = editor.source;
+      const visualEditor = editor.visualEditor;
+      await expect(visualEditor.locator(
+        '[data-easymde-preview-window-spacer]'
+      )).toHaveCount(0);
+      await expect(visualEditor.locator('blockquote > p')).toHaveCount(1);
+      await expect(visualEditor.locator('pre > code')).toHaveCount(1);
+      await expect(visualEditor.locator(
+        '.easymde-math[data-easymde-rendered]'
+      )).toHaveCount(1);
+
+      const initialSource = await source.inputValue();
+      expect(initialSource).toBe(markdown);
+      const initialNodes = parseNodes(initialSource);
+      const quoteParagraph = uniqueNode(
+        initialNodes,
+        (node) => node.name === 'Paragraph'
+          && node.text === quoteBody
+          && node.ancestors.includes('Blockquote'),
+        'synthetic quote paragraph AST target'
+      );
+      const initialFence = uniqueNode(
+        initialNodes,
+        (node) => node.name === 'FencedCode'
+          && node.text.startsWith('```js\n'),
+        'synthetic empty fence AST target'
+      );
+      expect(initialFence.text).toBe('```js\n\n```');
+
+      await visualEditor.evaluate((surface, key) => {
+        const math = surface.querySelector('.easymde-math[data-easymde-rendered]');
+        if (!(math instanceof HTMLElement)) {
+          throw new Error('rapid-code-empty-quote-protected-math-missing');
+        }
+        window[key] = math;
+      }, mathKey);
+      const expectedAfterQuoteClear = (
+        initialSource.slice(0, quoteParagraph.from)
+        + initialSource.slice(quoteParagraph.to)
+      );
+      await selectVisualText(visualEditor, quoteBody);
+      await page.keyboard.press('Backspace');
+      await expect(source).toHaveValue(expectedAfterQuoteClear, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+        timeout: 30_000
+      });
+      await expect(visualEditor.locator('blockquote > p')).toHaveText('');
+      await expect(visualEditor.locator('blockquote > p > br')).toHaveCount(1);
+      expect(await visualEditor.evaluate((surface, key) => (
+        surface.querySelector('.easymde-math[data-easymde-rendered]') === window[key]
+      ), mathKey)).toBe(true);
+
+      const afterQuoteClearNodes = parseNodes(expectedAfterQuoteClear);
+      const emptyCodeText = uniqueNode(
+        afterQuoteClearNodes,
+        (node) => node.name === 'CodeText'
+          && node.ancestors.includes('FencedCode'),
+        'synthetic empty fence body AST target'
+      );
+      expect(emptyCodeText.text).toBe('\n');
+      const expectedCodeInput = insertAt(expectedAfterQuoteClear, emptyCodeText.from, 'A');
+      const expectedFinalSource = insertAt(
+        expectedCodeInput,
+        quoteParagraph.from,
+        'x'
+      );
+      const expectedCodeInputNodes = parseNodes(expectedCodeInput);
+      expect(uniqueNode(
+        expectedCodeInputNodes,
+        (node) => node.name === 'CodeText'
+          && node.ancestors.includes('FencedCode')
+          && node.text === 'A',
+        'code A AST body'
+      ).from).toBe(emptyCodeText.from);
+      const expectedFinalNodes = parseNodes(expectedFinalSource);
+      expect(uniqueNode(
+        expectedFinalNodes,
+        (node) => node.name === 'Paragraph'
+          && node.text === 'x'
+          && node.ancestors.includes('Blockquote'),
+        'quote x AST body'
+      ).from).toBe(quoteParagraph.from);
+
+      const readNativeState = async () => visualEditor.evaluate((surface, key) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const quote = surface.querySelector('blockquote > p');
+        const code = surface.querySelector('pre > code');
+        const placeholder = code?.querySelector(
+          ':scope > [data-easymde-visual-code-placeholder]'
+        ) ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const inside = (node, target) => Boolean(
+          node && target && (node === target || target.contains(node))
+        );
+        const textOffset = (target, node, offset) => {
+          if (!inside(node, target)) return null;
+          const targetRange = document.createRange();
+          targetRange.selectNodeContents(target);
+          targetRange.setEnd(node, offset);
+          return targetRange.toString().length;
+        };
+        const anchorInsideQuote = inside(anchor, quote);
+        const anchorInsideCode = inside(anchor, code);
+        const focusInsideQuote = inside(focus, quote);
+        const focusInsideCode = inside(focus, code);
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && surface.tagName === 'ARTICLE',
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideCode,
+          anchorInsidePlaceholder: inside(anchor, placeholder),
+          anchorInsideQuote,
+          anchorNodeName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorTextOffsetInCode: textOffset(code, anchor, selection?.anchorOffset ?? -1),
+          anchorTextOffsetInQuote: textOffset(quote, anchor, selection?.anchorOffset ?? -1),
+          codePlaceholderCount: code?.querySelectorAll(
+            ':scope > [data-easymde-visual-code-placeholder]'
+          ).length ?? 0,
+          codeText: code?.textContent ?? null,
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusInsideCode,
+          focusInsideQuote,
+          focusOffset: selection?.focusOffset ?? null,
+          focusTextOffsetInCode: textOffset(code, focus, selection?.focusOffset ?? -1),
+          focusTextOffsetInQuote: textOffset(quote, focus, selection?.focusOffset ?? -1),
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          protectedMathConnected: surface.querySelector(
+            '.easymde-math[data-easymde-rendered]'
+          ) === window[key],
+          quoteBrCount: quote?.querySelectorAll(':scope > br').length ?? 0,
+          quoteText: quote?.textContent ?? null,
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          sourceSelection: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected
+        };
+      }, mathKey);
+      const expectHealthyNativeState = (state) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          contentEditable: 'true',
+          errorCode: null,
+          focusConnected: true,
+          nativeRangeCount: 1,
+          protectedMathConnected: true,
+          selectionCollapsed: true,
+          surfaceConnected: true
+        });
+      };
+      const expectOwnerState = (state, owner, quoteText, codeText, sourceOffset) => {
+        expectHealthyNativeState(state);
+        expect(state.quoteText).toBe(quoteText);
+        expect(state.quoteBrCount).toBe(quoteText ? 0 : 1);
+        expect(state.codeText?.trimEnd()).toBe(codeText);
+        if (Number.isInteger(sourceOffset)) {
+          expect(state.sourceSelection).toEqual({
+            end: sourceOffset,
+            start: sourceOffset
+          });
+        }
+        if (owner === 'quote') {
+          expect(state).toMatchObject({
+            anchorInsideCode: false,
+            anchorInsideQuote: true,
+            focusInsideCode: false,
+            focusInsideQuote: true,
+            anchorTextOffsetInQuote: quoteText.length,
+            focusTextOffsetInQuote: quoteText.length
+          });
+        } else {
+          expect(state).toMatchObject({
+            anchorInsideCode: true,
+            anchorInsideQuote: false,
+            focusInsideCode: true,
+            focusInsideQuote: false,
+            anchorTextOffsetInCode: codeText.length,
+            focusTextOffsetInCode: codeText.length
+          });
+          if (codeText) {
+            expect(state.anchorNodeName).toBe('#text');
+          }
+        }
+      };
+
+      const code = visualEditor.locator('pre > code');
+      const codeClick = await clickCodeLine(page, code, 0);
+      expect(codeClick.afterClick.hit.insideCode).toBe(true);
+      const codeBeforeBurst = await readNativeState();
+      expectOwnerState(
+        codeBeforeBurst,
+        'code',
+        '',
+        '',
+        null
+      );
+      const preInputCanonicalSelection = codeBeforeBurst.sourceSelection;
+      expect(preInputCanonicalSelection).toEqual({
+        end: expect.any(Number),
+        start: expect.any(Number)
+      });
+      expect(Number.isInteger(preInputCanonicalSelection.start)).toBe(true);
+      expect(Number.isInteger(preInputCanonicalSelection.end)).toBe(true);
+      expect(preInputCanonicalSelection.start).toBe(preInputCanonicalSelection.end);
+      const quoteBox = await visualEditor.locator('blockquote > p').boundingBox();
+      if (!quoteBox) throw new Error('rapid-code-empty-quote-box-unavailable');
+      const quotePoint = {
+        x: quoteBox.x + Math.min(8, Math.max(1, quoteBox.width / 2)),
+        y: quoteBox.y + Math.max(1, quoteBox.height / 2)
+      };
+
+      await visualEditor.evaluate((surface, key) => {
+        const sourceField = document.querySelector('#easymde-source');
+        if (!(sourceField instanceof HTMLTextAreaElement)) {
+          throw new Error('rapid-code-empty-quote-source-field-missing');
+        }
+        const events = [];
+        const preCode = sourceField.value;
+        const recordBeforeInput = (event) => {
+          if ('insertText' !== event.inputType) return;
+          const selection = document.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const quote = surface.querySelector('blockquote > p');
+          const code = surface.querySelector('pre > code');
+          events.push({
+            anchorConnected: Boolean(anchor?.isConnected),
+            anchorInsideCode: Boolean(anchor && code?.contains(anchor)),
+            anchorInsideEmptyQuote: Boolean(
+              anchor
+              && quote
+              && quote.textContent === ''
+              && quote.contains(anchor)
+            ),
+            anchorNodeName: anchor?.nodeName ?? null,
+            anchorOffset: selection?.anchorOffset ?? null,
+            canonicalSourceMatchesPreCode: sourceField.value === preCode,
+            inputType: event.inputType,
+            isTrusted: event.isTrusted,
+            selectionCollapsed: Boolean(selection?.isCollapsed)
+          });
+        };
+        surface.addEventListener('beforeinput', recordBeforeInput, true);
+        window[key] = {
+          cleanup: () => surface.removeEventListener(
+            'beforeinput',
+            recordBeforeInput,
+            true
+          ),
+          events,
+          preCodeLength: preCode.length
+        };
+      }, traceKey);
+
+      let trace = null;
+      let burstError = null;
+      try {
+        cdp = await context.newCDPSession(page);
+        await cdp.send('Input.insertText', { text: 'A' });
+        await cdp.send('Input.dispatchMouseEvent', {
+          button: 'left',
+          buttons: 1,
+          clickCount: 1,
+          type: 'mousePressed',
+          x: quotePoint.x,
+          y: quotePoint.y
+        });
+        await cdp.send('Input.dispatchMouseEvent', {
+          button: 'left',
+          buttons: 0,
+          clickCount: 1,
+          type: 'mouseReleased',
+          x: quotePoint.x,
+          y: quotePoint.y
+        });
+        await cdp.send('Input.insertText', { text: 'x' });
+      } catch (error) {
+        burstError = error;
+      } finally {
+        if (!page.isClosed()) {
+          trace = await page.evaluate((key) => {
+            const value = window[key];
+            if (!value) throw new Error('rapid-code-empty-quote-trace-missing');
+            value.cleanup();
+            delete window[key];
+            return {
+              events: value.events,
+              preCodeLength: value.preCodeLength
+            };
+          }, traceKey);
+        }
+      }
+      if (trace) {
+        await testInfo.attach('rapid-code-empty-quote-beforeinput', {
+          body: JSON.stringify({
+            events: trace.events,
+            preCodeLength: trace.preCodeLength
+          }),
+          contentType: 'application/json'
+        });
+      }
+      if (burstError) throw burstError;
+      if (!trace) throw new Error('rapid-code-empty-quote-trace-unavailable');
+      expect(trace.preCodeLength).toBe(expectedAfterQuoteClear.length);
+      expect(trace.events).toHaveLength(2);
+      expect(trace.events).toEqual([
+        expect.objectContaining({
+          anchorConnected: true,
+          anchorInsideCode: true,
+          canonicalSourceMatchesPreCode: true,
+          inputType: 'insertText',
+          isTrusted: true,
+          selectionCollapsed: true
+        }),
+        expect.objectContaining({
+          anchorConnected: true,
+          anchorInsideEmptyQuote: true,
+          anchorNodeName: 'P',
+          anchorOffset: 0,
+          canonicalSourceMatchesPreCode: true,
+          inputType: 'insertText',
+          isTrusted: true,
+          selectionCollapsed: true
+        })
+      ]);
+
+      await expect(source).toHaveValue(expectedFinalSource, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+        timeout: 30_000
+      });
+      await waitForBrowserPaint(page);
+      const afterRapidInput = await readNativeState();
+      expectOwnerState(
+        afterRapidInput,
+        'quote',
+        'x',
+        'A',
+        quoteParagraph.from + 1
+      );
+      expect(browserFailures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+
+      const historySteps = [
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'undo quote input',
+          quoteText: '',
+          source: expectedCodeInput,
+          sourceOffset: quoteParagraph.from,
+          key: 'ControlOrMeta+z'
+        },
+        {
+          owner: 'code',
+          codeText: '',
+          label: 'undo code input',
+          quoteText: '',
+          source: expectedAfterQuoteClear,
+          sourceOffset: preInputCanonicalSelection.start,
+          key: 'ControlOrMeta+z'
+        },
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'redo code input',
+          quoteText: '',
+          source: expectedCodeInput,
+          sourceOffset: quoteParagraph.from,
+          key: 'ControlOrMeta+Shift+z'
+        },
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'redo quote input',
+          quoteText: 'x',
+          source: expectedFinalSource,
+          sourceOffset: quoteParagraph.from + 1,
+          key: 'ControlOrMeta+Shift+z'
+        }
+      ];
+      for (const step of historySteps) {
+        await page.keyboard.press(step.key);
+        await expect(source).toHaveValue(step.source, { timeout: 30_000 });
+        await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+          timeout: 30_000
+        });
+        await waitForBrowserPaint(page);
+        const state = await readNativeState();
+        const nativeOwner = (insideCode, insideQuote) => (
+          insideCode ? 'code' : (insideQuote ? 'quote' : 'outside')
+        );
+        await testInfo.attach(`rapid-code-empty-quote-${step.label}-state`, {
+          body: JSON.stringify({
+            native: {
+              anchor: {
+                offset: state.anchorInsideCode
+                  ? state.anchorTextOffsetInCode
+                  : state.anchorTextOffsetInQuote,
+                owner: nativeOwner(state.anchorInsideCode, state.anchorInsideQuote)
+              },
+              focus: {
+                offset: state.focusInsideCode
+                  ? state.focusTextOffsetInCode
+                  : state.focusTextOffsetInQuote,
+                owner: nativeOwner(state.focusInsideCode, state.focusInsideQuote)
+              }
+            },
+            preview: {
+              busy: state.previewBusy,
+              error: state.errorCode,
+              protectedMathConnected: state.protectedMathConnected
+            },
+            sourceSelection: state.sourceSelection,
+            step: step.label
+          }),
+          contentType: 'application/json'
+        });
+        expectOwnerState(
+          state,
+          step.owner,
+          step.quoteText,
+          step.codeText,
+          step.sourceOffset
+        );
+        expect(browserFailures, step.label).toEqual([]);
+        expect(pageErrors, step.label).toEqual([]);
+      }
+    } finally {
+      if (!page.isClosed()) {
+        if (cdp) await cdp.detach();
+        await page.evaluate((key) => {
+          delete window[key];
+        }, mathKey);
+        await page.evaluate((key) => {
+          const trace = window[key];
+          if (trace?.cleanup) trace.cleanup();
+          delete window[key];
+        }, traceKey);
+      }
+    }
+  });
+
+  for (const fixture of [
+    { label: 'plain', markdown: 'one', retainedSuffix: '', selector: 'p' },
+    { label: 'trailing-space', markdown: 'one ', retainedSuffix: ' ', selector: 'p' },
+    { label: 'trailing-newlines', markdown: 'one\n\n', retainedSuffix: '\n\n', selector: 'p' },
+    { label: 'two-paragraphs', markdown: 'one\n\ntwo', retainedSuffix: '\n\n', selector: 'p' },
+    { label: 'heading', markdown: '# one', retainedSuffix: '', selector: 'h1' },
+    { label: 'list', markdown: '- one', retainedSuffix: '', selector: 'li' },
+    { label: 'blockquote', markdown: '> one', retainedSuffix: '', selector: 'blockquote' },
+    {
+      label: 'code',
+      markdown: '```json\n{"key":"value"}\n```',
+      retainedSuffix: '',
+      selector: 'pre > code'
+    }
+  ]) {
+    test(`preserves first input after incremental ${fixture.label} Backspace clear`, async ({ page }, testInfo) => {
+      const expectedAfterClear = fixture.retainedSuffix;
+      const expectedX = `~x${expectedAfterClear}`;
+      const expectedXY = `~xy${expectedAfterClear}`;
+      const browserFailures = [];
+      page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+      page.on('console', (message) => {
+        if ('error' !== message.type()) return;
+        const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        browserFailures.push(code ?? 'console-error');
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, fixture.markdown, null);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const visualEditor = editor.visualEditor;
+      const source = editor.source;
+      await expect(visualEditor.locator(
+        '[data-easymde-preview-window-spacer]'
+      )).toHaveCount(0);
+      const target = visualEditor.locator(fixture.selector).first();
+      await expect(target).toBeVisible();
+      await target.click();
+      await visualEditor.press('ControlOrMeta+End');
+
+      const readState = async () => visualEditor.evaluate((surface) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const caretBox = range?.getBoundingClientRect() ?? null;
+        const insideSurface = (node) => Boolean(
+          node && (node === surface || surface.contains(node))
+        );
+        const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+        const focusElement = focus instanceof Element ? focus : focus?.parentElement;
+        const emptyParagraphs = Array.from(surface.querySelectorAll(':scope > p'))
+          .filter((paragraph) => paragraph.textContent === '');
+        const emptyParagraph = emptyParagraphs[0] ?? null;
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && 'ARTICLE' === surface.tagName,
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorClosestParagraph: Boolean(anchorElement?.closest('p')),
+          anchorInsideSurface: insideSurface(anchor),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          caretRect: caretBox ? {
+            height: caretBox.height,
+            width: caretBox.width,
+            x: caretBox.x,
+            y: caretBox.y
+          } : null,
+          childCount: surface.childNodes.length,
+          childNodeNames: Array.from(surface.childNodes, ({ nodeName }) => nodeName),
+          codeMirrorConnectedCount: Array.from(
+            document.querySelectorAll('.cm-editor')
+          ).filter((node) => node.isConnected).length,
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusClosestParagraph: Boolean(focusElement?.closest('p')),
+          focusInsideSurface: insideSurface(focus),
+          focusName: focus?.nodeName ?? null,
+          focusOffset: selection?.focusOffset ?? null,
+          emptyParagraphCount: emptyParagraphs.length,
+          emptyParagraphHeight: emptyParagraph?.getBoundingClientRect().height ?? null,
+          emptyParagraphBrCount: emptyParagraph?.querySelectorAll('br').length ?? 0,
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          selectionEndConnected: Boolean(range?.endContainer?.isConnected),
+          selectionStartConnected: Boolean(range?.startContainer?.isConnected),
+          selectedTextLength: range?.toString().length ?? null,
+          source: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            length: sourceField.value.length,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected,
+          textLength: surface.textContent?.length ?? 0
+        };
+      });
+      const expectConnectedCaret = (state) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          anchorInsideSurface: true,
+          codeMirrorConnectedCount: 0,
+          contentEditable: 'true',
+          focusConnected: true,
+          focusInsideSurface: true,
+          nativeRangeCount: 1,
+          selectionCollapsed: true,
+          selectionEndConnected: true,
+          selectionStartConnected: true,
+          surfaceConnected: true
+        });
+        expect(state.caretRect).toMatchObject({ height: expect.any(Number) });
+      };
+      const expectEmptyParagraphCaret = (state) => {
+        expectConnectedCaret(state);
+        expect(state).toMatchObject({
+          anchorClosestParagraph: true,
+          childCount: 1,
+          childNodeNames: ['P'],
+          emptyParagraphBrCount: 1,
+          emptyParagraphCount: 1,
+          focusClosestParagraph: true
+        });
+        expect(state.emptyParagraphHeight).toBeGreaterThan(0);
+      };
+
+      for (let index = 0; index < fixture.markdown.length + 5; index += 1) {
+        await page.keyboard.press('Backspace');
+      }
+      const afterClearImmediate = await readState();
+      expectEmptyParagraphCaret(afterClearImmediate);
+      await testInfo.attach(`incremental-clear-${fixture.label}-after-clear-screenshot`, {
+        body: await page.screenshot({ caret: 'initial', fullPage: false }),
+        contentType: 'image/png'
+      });
+
+      await page.keyboard.press('Shift+Backquote');
+      await page.keyboard.type('x', { delay: 0 });
+      const afterImmediateInput = await readState();
+      await expect(source).toHaveValue(expectedX, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(300);
+      const afterDebounce = await readState();
+      expectConnectedCaret(afterDebounce);
+      expect(afterDebounce.source).toMatchObject({
+        end: 2,
+        length: expectedX.length,
+        start: 2
+      });
+
+      await page.keyboard.type('y', { delay: 0 });
+      await expect(source).toHaveValue(expectedXY, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await waitForBrowserPaint(page);
+      await page.waitForTimeout(300);
+      const afterDelayedInput = await readState();
+      expectConnectedCaret(afterDelayedInput);
+      expect(afterDelayedInput.source).toMatchObject({
+        end: 3,
+        length: expectedXY.length,
+        start: 3
+      });
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(expectedX, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterDelayedUndo = await readState();
+      expectConnectedCaret(afterDelayedUndo);
+      expect(afterDelayedUndo.source).toMatchObject({
+        end: 2,
+        length: expectedX.length,
+        start: 2
+      });
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(source).toHaveValue(expectedXY, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterDelayedRedo = await readState();
+      expectConnectedCaret(afterDelayedRedo);
+      expect(afterDelayedRedo.source).toMatchObject({
+        end: 3,
+        length: expectedXY.length,
+        start: 3
+      });
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(expectedX, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(expectedAfterClear, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterClearUndo = await readState();
+      expectConnectedCaret(afterClearUndo);
+      expect(afterClearUndo.source).toMatchObject({
+        end: 0,
+        length: expectedAfterClear.length,
+        start: 0
+      });
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(source).toHaveValue(expectedX, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(source).toHaveValue(expectedXY, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterClearRedo = await readState();
+      expectConnectedCaret(afterClearRedo);
+      expect(afterClearRedo.source).toMatchObject({
+        end: 3,
+        length: expectedXY.length,
+        start: 3
+      });
+
+      await page.keyboard.press('Backspace');
+      await expect(source).toHaveValue(expectedX, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterExtraBackspace = await readState();
+      expectConnectedCaret(afterExtraBackspace);
+      expect(afterExtraBackspace.source).toMatchObject({
+        end: 2,
+        length: expectedX.length,
+        start: 2
+      });
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(expectedXY, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+      const afterExtraUndo = await readState();
+      expectConnectedCaret(afterExtraUndo);
+      expect(afterExtraUndo.source).toMatchObject({
+        end: 3,
+        length: expectedXY.length,
+        start: 3
+      });
+
+      await testInfo.attach(`incremental-clear-${fixture.label}-evidence`, {
+        body: JSON.stringify({
+          afterClearImmediate,
+          afterClearRedo,
+          afterClearUndo,
+          afterDelayedInput,
+          afterDelayedRedo,
+          afterDelayedUndo,
+          afterDebounce,
+          afterExtraBackspace,
+          afterExtraUndo,
+          afterImmediateInput,
+          browserFailures,
+          fixture: {
+            label: fixture.label,
+            markdownLength: fixture.markdown.length,
+            retainedSuffixLength: expectedAfterClear.length,
+            selector: fixture.selector
+          }
+        }),
+        contentType: 'application/json'
+      });
+      await testInfo.attach(`incremental-clear-${fixture.label}-screenshot`, {
+        body: await page.screenshot({ caret: 'initial', fullPage: false }),
+        contentType: 'image/png'
+      });
+      expect(browserFailures).toEqual([]);
+    });
+  }
+
+  for (const fixture of [
+    {
+      label: 'list-fast',
+      markdown: '- one',
+      pauseMs: 0,
+      prefix: '- ',
+      targetSelector: 'li',
+      wrapperSelector: 'li'
+    },
+    {
+      label: 'list-paused',
+      markdown: '- one',
+      pauseMs: 150,
+      prefix: '- ',
+      targetSelector: 'li',
+      wrapperSelector: 'li'
+    },
+    {
+      label: 'quote-fast',
+      markdown: '> one',
+      pauseMs: 0,
+      prefix: '> ',
+      targetSelector: 'blockquote > p',
+      wrapperSelector: 'blockquote > p'
+    },
+    {
+      label: 'quote-paused',
+      markdown: '> one',
+      pauseMs: 150,
+      prefix: '> ',
+      targetSelector: 'blockquote > p',
+      wrapperSelector: 'blockquote > p'
+    }
+  ]) {
+    test(`preserves ${fixture.label} wrapper before structural Backspace input`, async ({ page }, testInfo) => {
+      const expectedMarkdown = `${fixture.prefix}~x`;
+      const browserFailures = [];
+      page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+      page.on('console', (message) => {
+        if ('error' !== message.type()) return;
+        const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        browserFailures.push(code ?? 'console-error');
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, fixture.markdown, 'one');
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const visualEditor = editor.visualEditor;
+      const source = editor.source;
+      const target = visualEditor.locator(fixture.targetSelector).first();
+      await expect(target).toBeVisible();
+      await target.click();
+      await page.keyboard.press('ControlOrMeta+End');
+
+      const readState = async () => visualEditor.evaluate((surface, selectors) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const wrapper = surface.querySelector(selectors.wrapper);
+        const anchorInsideWrapper = Boolean(
+          wrapper && anchor && (anchor === wrapper || wrapper.contains(anchor))
+        );
+        const focusInsideWrapper = Boolean(
+          wrapper && focus && (focus === wrapper || wrapper.contains(focus))
+        );
+        const insideBody = (node) => Boolean(
+          node && document.body && (node === document.body || document.body.contains(node))
+        );
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && 'ARTICLE' === surface.tagName,
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideBody: insideBody(anchor),
+          anchorInsideSurface: Boolean(anchor && surface.contains(anchor)),
+          anchorInsideWrapper,
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusInsideBody: insideBody(focus),
+          focusInsideSurface: Boolean(focus && surface.contains(focus)),
+          focusInsideWrapper,
+          focusName: focus?.nodeName ?? null,
+          focusOffset: selection?.focusOffset ?? null,
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          selectionEndInsideBody: insideBody(range?.endContainer),
+          selectionEndConnected: Boolean(range?.endContainer?.isConnected),
+          selectionStartInsideBody: insideBody(range?.startContainer),
+          selectionStartConnected: Boolean(range?.startContainer?.isConnected),
+          source: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            length: sourceField.value.length,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected,
+          wrapper: {
+            childNodeNames: wrapper
+              ? Array.from(wrapper.childNodes, ({ nodeName }) => nodeName)
+              : [],
+            connected: Boolean(wrapper?.isConnected),
+            parentTagName: wrapper?.parentElement?.tagName ?? null,
+            tagName: wrapper?.tagName ?? null,
+            textLength: wrapper?.textContent?.length ?? null,
+            count: surface.querySelectorAll(selectors.wrapper).length
+          }
+        };
+      }, {
+        wrapper: fixture.wrapperSelector
+      });
+      const expectWrapperCaret = (state, expectedTextLength) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          anchorInsideSurface: true,
+          anchorInsideWrapper: true,
+          contentEditable: 'true',
+          errorCode: null,
+          focusConnected: true,
+          focusInsideSurface: true,
+          focusInsideWrapper: true,
+          nativeRangeCount: 1,
+          selectionCollapsed: true,
+          selectionEndConnected: true,
+          selectionStartConnected: true,
+          surfaceConnected: true,
+          wrapper: {
+            connected: true,
+            count: 1,
+            textLength: expectedTextLength,
+            tagName: 'li' === fixture.targetSelector ? 'LI' : 'P'
+          }
+        });
+      };
+      const expectSourceCaret = (state, expectedValue) => {
+        expect(state.source).toEqual({
+          end: expectedValue.length,
+          length: expectedValue.length,
+          start: expectedValue.length
+        });
+      };
+      const expectSemanticCaret = (state, expectedTextLength) => {
+        expectWrapperCaret(state, expectedTextLength);
+        expect(state).toMatchObject({
+          anchorInsideBody: true,
+          focusInsideBody: true,
+          selectionEndInsideBody: true,
+          selectionStartInsideBody: true,
+          wrapper: {
+            parentTagName: 'li' === fixture.targetSelector ? 'UL' : 'BLOCKQUOTE'
+          }
+        });
+      };
+
+      for (let index = 0; index < 3; index += 1) {
+        await page.keyboard.press('Backspace');
+      }
+      if (fixture.pauseMs > 0) await page.waitForTimeout(fixture.pauseMs);
+      const afterStructuralBackspace = await readState();
+      expectWrapperCaret(afterStructuralBackspace, 0);
+
+      await page.keyboard.press('Shift+Backquote');
+      await page.keyboard.type('x', { delay: 0 });
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      await expect(target).toHaveText('~x');
+      const afterInput = await readState();
+      expectWrapperCaret(afterInput, 2);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(fixture.prefix, { timeout: 30_000 });
+      await expect(target).toHaveText('');
+      const afterUndo = await readState();
+      expectWrapperCaret(afterUndo, 0);
+
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      await expect(target).toHaveText('~x');
+      const afterRedo = await readState();
+      expectWrapperCaret(afterRedo, 2);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(fixture.prefix, { timeout: 30_000 });
+      const afterUndoAgain = await readState();
+      expectSemanticCaret(afterUndoAgain, 0);
+      expectSourceCaret(afterUndoAgain, fixture.prefix);
+
+      await page.keyboard.type('y', { delay: 0 });
+      const expectedFollowupMarkdown = `${fixture.prefix}y`;
+      await expect(source).toHaveValue(expectedFollowupMarkdown, { timeout: 30_000 });
+      await expect(target).toHaveText('y');
+      const afterFollowupInput = await readState();
+      expectSemanticCaret(afterFollowupInput, 1);
+      expectSourceCaret(afterFollowupInput, expectedFollowupMarkdown);
+      expect(browserFailures).toEqual([]);
+
+      await testInfo.attach(`structural-wrapper-${fixture.label}-evidence`, {
+        body: JSON.stringify({
+          afterInput,
+          afterFollowupInput,
+          afterRedo,
+          afterStructuralBackspace,
+          afterUndo,
+          afterUndoAgain,
+          browserFailures,
+          fixture: {
+            label: fixture.label,
+            pauseMs: fixture.pauseMs,
+            prefixLength: fixture.prefix.length
+          }
+        }),
+        contentType: 'application/json'
+      });
+      expect(browserFailures).toEqual([]);
+    });
+  }
+
+  test('preserves immediate input after clearing an existing persisted article', async ({ page }, testInfo) => {
+    const initialMarkdown = 'one';
+    const expectedImmediateMarkdown = '~x';
+    const expectedFinalMarkdown = '~xy';
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    const user = testInfo.easymdeUser;
+    const title = `Existing caret stability ${testSlug(testInfo)}`;
+    const postId = Number.parseInt(
+      runWp([
+        'post',
+        'create',
+        `--post_author=${user.id}`,
+        '--post_status=draft',
+        `--post_title=${title}`,
+        '--post_content=<p>one</p>',
+        '--porcelain'
+      ]),
+      10
+    );
+    expect(Number.isSafeInteger(postId)).toBe(true);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_enabled', '1']);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown', initialMarkdown]);
+    runWp(['post', 'meta', 'update', String(postId), '_easymde_markdown_theme', 'default']);
+
+    await login(page, user);
+    await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`);
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    const source = page.locator('#easymde-source');
+    await expect(source).toHaveValue(initialMarkdown);
+
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const visualEditor = editor.visualEditor;
+    await expect(source).toHaveValue(initialMarkdown);
+    const target = visualEditor.locator('p').first();
+    await expect(target).toHaveText(initialMarkdown);
+    await target.click();
+    await page.keyboard.press('ControlOrMeta+End');
+
+    const readCaretState = async () => visualEditor.evaluate((surface) => {
+      const sourceField = document.querySelector('#easymde-source');
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const focus = selection?.focusNode ?? null;
+      const paragraph = surface.querySelector(':scope > p');
+      const inside = (node, ancestor) => Boolean(
+        node && ancestor && (node === ancestor || ancestor.contains(node))
+      );
+      const paragraphTextOffset = (node, offset) => {
+        if (!inside(node, paragraph)) return null;
+        const range = document.createRange();
+        range.selectNodeContents(paragraph);
+        range.setEnd(node, offset);
+        return range.toString().length;
+      };
+      return {
+        activeElementIsArticle: document.activeElement === surface
+          && 'ARTICLE' === surface.tagName,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorInsideParagraph: inside(anchor, paragraph),
+        anchorInsideSurface: inside(anchor, surface),
+        anchorParagraphTextOffset: paragraphTextOffset(
+          anchor,
+          selection?.anchorOffset ?? -1
+        ),
+        contentEditable: surface.getAttribute('contenteditable'),
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        focusConnected: Boolean(focus?.isConnected),
+        focusInsideParagraph: inside(focus, paragraph),
+        focusInsideSurface: inside(focus, surface),
+        focusParagraphTextOffset: paragraphTextOffset(
+          focus,
+          selection?.focusOffset ?? -1
+        ),
+        nativeRangeCount: selection?.rangeCount ?? 0,
+        paragraphConnected: Boolean(paragraph?.isConnected),
+        paragraphCount: surface.querySelectorAll(':scope > p').length,
+        previewBusy: surface.getAttribute('aria-busy'),
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        source: sourceField instanceof HTMLTextAreaElement ? {
+          end: sourceField.selectionEnd,
+          length: sourceField.value.length,
+          start: sourceField.selectionStart
+        } : null,
+        surfaceConnected: surface.isConnected
+      };
+    });
+    const expectConnectedParagraphCaret = (state, expectedLength) => {
+      expect(state).toMatchObject({
+        activeElementIsArticle: true,
+        anchorConnected: true,
+        anchorInsideParagraph: true,
+        anchorInsideSurface: true,
+        anchorParagraphTextOffset: expectedLength,
+        contentEditable: 'true',
+        errorCode: null,
+        focusConnected: true,
+        focusInsideParagraph: true,
+        focusInsideSurface: true,
+        focusParagraphTextOffset: expectedLength,
+        nativeRangeCount: 1,
+        paragraphConnected: true,
+        paragraphCount: 1,
+        previewBusy: 'false',
+        selectionCollapsed: true,
+        surfaceConnected: true,
+        source: {
+          end: expectedLength,
+          length: expectedLength,
+          start: expectedLength
+        }
+      });
+    };
+
+    for (let index = 0; index < initialMarkdown.length + 5; index += 1) {
+      await page.keyboard.press('Backspace');
+    }
+    await page.keyboard.press('Shift+Backquote');
+    await page.keyboard.type('x', { delay: 0 });
+    await expect(source).toHaveValue(expectedImmediateMarkdown, { timeout: 30_000 });
+    const afterImmediateInput = await readCaretState();
+    expectConnectedParagraphCaret(afterImmediateInput, expectedImmediateMarkdown.length);
+
+    await waitForBrowserPaint(page);
+    await page.waitForTimeout(300);
+    await page.keyboard.type('y', { delay: 0 });
+    await expect(source).toHaveValue(expectedFinalMarkdown, { timeout: 30_000 });
+    await waitForBrowserPaint(page);
+    await page.waitForTimeout(300);
+    const afterDelayedInput = await readCaretState();
+    expectConnectedParagraphCaret(afterDelayedInput, expectedFinalMarkdown.length);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(source).toHaveValue(expectedImmediateMarkdown, { timeout: 30_000 });
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    const afterUndo = await readCaretState();
+    expectConnectedParagraphCaret(afterUndo, expectedImmediateMarkdown.length);
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(source).toHaveValue(expectedFinalMarkdown, { timeout: 30_000 });
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    const afterRedo = await readCaretState();
+    expectConnectedParagraphCaret(afterRedo, expectedFinalMarkdown.length);
+
+    await page.getByRole('button', { name: editor.labels.exit }).click();
+    await expect(page.getByRole('region', { name: editor.labels.immersive })).toHaveCount(0);
+    const reentered = await enterImmersivePreviewAndUnlock(page);
+    await expect(reentered.source).toHaveValue(expectedFinalMarkdown, { timeout: 30_000 });
+    await expect(reentered.visualEditor.locator('p').first()).toHaveText(expectedFinalMarkdown);
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('clears a trailing-tail document through the full root range before immediate input', async ({ page }, testInfo) => {
+    const markdown = 'one\n\ntwo';
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'two');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const visualEditor = editor.visualEditor;
+    const source = editor.source;
+    await expect(visualEditor.locator(
+      '[data-easymde-preview-window-spacer]'
+    )).toHaveCount(0);
+
+    const readState = async () => visualEditor.evaluate((surface) => {
+      const sourceField = document.querySelector('#easymde-source');
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const focus = selection?.focusNode ?? null;
+      const range = selection?.rangeCount === 1
+        ? selection.getRangeAt(0)
+        : null;
+      const anchorElement = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const focusElement = focus instanceof Element ? focus : focus?.parentElement;
+      const emptyParagraphs = Array.from(surface.querySelectorAll(':scope > p'))
+        .filter((paragraph) => paragraph.textContent === '');
+      const emptyParagraph = emptyParagraphs[0] ?? null;
+      const caretBox = range?.getBoundingClientRect() ?? null;
+      return {
+        activeElementIsArticle: document.activeElement === surface
+          && 'ARTICLE' === surface.tagName,
+        anchorClosestParagraph: Boolean(anchorElement?.closest('p')),
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorInsideSurface: Boolean(anchor && surface.contains(anchor)),
+        childCount: surface.childNodes.length,
+        childNodeNames: Array.from(surface.childNodes, ({ nodeName }) => nodeName),
+        contentEditable: surface.getAttribute('contenteditable'),
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        focusClosestParagraph: Boolean(focusElement?.closest('p')),
+        focusConnected: Boolean(focus?.isConnected),
+        focusInsideSurface: Boolean(focus && surface.contains(focus)),
+        nativeRangeCount: selection?.rangeCount ?? 0,
+        emptyParagraphBrCount: emptyParagraph?.querySelectorAll('br').length ?? 0,
+        emptyParagraphCount: emptyParagraphs.length,
+        emptyParagraphHeight: emptyParagraph?.getBoundingClientRect().height ?? null,
+        caretRect: caretBox ? {
+          height: caretBox.height,
+          width: caretBox.width,
+          x: caretBox.x,
+          y: caretBox.y
+        } : null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        selectionEndConnected: Boolean(range?.endContainer?.isConnected),
+        selectionEndRoot: range?.endContainer === surface,
+        selectionEndOffset: range?.endOffset ?? null,
+        selectionStartConnected: Boolean(range?.startContainer?.isConnected),
+        selectionStartRoot: range?.startContainer === surface,
+        selectionStartOffset: range?.startOffset ?? null,
+        source: sourceField instanceof HTMLTextAreaElement ? {
+          end: sourceField.selectionEnd,
+          length: sourceField.value.length,
+          start: sourceField.selectionStart
+        } : null,
+        surfaceConnected: surface.isConnected
+      };
+    });
+    const expectConnectedCaret = (state) => {
+      expect(state).toMatchObject({
+        activeElementIsArticle: true,
+        anchorClosestParagraph: true,
+        anchorConnected: true,
+        anchorInsideSurface: true,
+        childCount: 1,
+        childNodeNames: ['P'],
+        contentEditable: 'true',
+        emptyParagraphBrCount: 1,
+        emptyParagraphCount: 1,
+        focusClosestParagraph: true,
+        focusConnected: true,
+        focusInsideSurface: true,
+        nativeRangeCount: 1,
+        selectionCollapsed: true,
+        selectionEndConnected: true,
+        selectionStartConnected: true,
+        surfaceConnected: true
+      });
+      expect(state.emptyParagraphHeight).toBeGreaterThan(0);
+    };
+
+    await visualEditor.locator('p').first().click();
+    await page.keyboard.press('ControlOrMeta+A');
+    const afterSelectAll = await readState();
+    expect(afterSelectAll).toMatchObject({
+      activeElementIsArticle: true,
+      anchorConnected: true,
+      anchorInsideSurface: true,
+      nativeRangeCount: 1,
+      selectionCollapsed: false,
+      selectionEndConnected: true,
+      selectionEndRoot: true,
+      selectionEndOffset: afterSelectAll.childCount,
+      selectionStartConnected: true,
+      selectionStartRoot: true,
+      selectionStartOffset: 0
+    });
+    await page.keyboard.press('Backspace');
+    const afterClearImmediate = await readState();
+    expectConnectedCaret(afterClearImmediate);
+    await testInfo.attach('trailing-tail-full-clear-after-clear-screenshot', {
+      body: await page.screenshot({ caret: 'initial', fullPage: false }),
+      contentType: 'image/png'
+    });
+
+    await page.keyboard.press('Shift+Backquote');
+    await page.keyboard.type('x', { delay: 0 });
+    await expect(source).toHaveValue('~x', { timeout: 30_000 });
+    await waitForBrowserPaint(page);
+    await page.waitForTimeout(300);
+    const afterInput = await readState();
+    expect(afterInput.source).toMatchObject({ end: 2, length: 2, start: 2 });
+
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(source).toHaveValue('', { timeout: 30_000 });
+    const afterUndo = await readState();
+    expect(afterUndo.source).toMatchObject({ end: 0, length: 0, start: 0 });
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(source).toHaveValue('~x', { timeout: 30_000 });
+    const afterRedo = await readState();
+    expect(afterRedo.source).toMatchObject({ end: 2, length: 2, start: 2 });
+    await testInfo.attach('trailing-tail-full-clear-evidence', {
+      body: JSON.stringify({
+        afterClearImmediate,
+        afterInput,
+        afterRedo,
+        afterSelectAll,
+        afterUndo,
+        browserFailures,
+        markdownLength: markdown.length
+      }),
+      contentType: 'application/json'
+    });
+    expect(browserFailures).toEqual([]);
+  });
+
+  test('keeps a partially deleted paragraph mapped after Enter and tilde input', async ({ page }, testInfo) => {
+    const markdown = 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.';
+    const afterDeleteMarkdown = 'First paragraph.\n\n\n\nThird paragraph.';
+    const expectedMarkdown = 'First paragraph.\n\n\n\n~\n\nThird paragraph.';
+    const browserFailures = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Second paragraph.');
+    const editor = await enterImmersivePreviewAndUnlock(page);
+    const visualEditor = editor.visualEditor;
+    const source = editor.source;
+    await selectVisualText(visualEditor, 'Second paragraph.');
+    await page.keyboard.press('Backspace');
+    await expect(source).toHaveValue(afterDeleteMarkdown, { timeout: 30_000 });
+    await page.keyboard.press('Enter');
+    const afterEnter = await visualEditor.evaluate((surface) => {
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const block = (anchor instanceof Element ? anchor : anchor?.parentElement)
+        ?.closest('[data-easymde-visual-block-id]');
+      const field = document.querySelector('#easymde-source');
+      return {
+        anchorBlockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null
+      };
+    });
+    await page.keyboard.press('Shift+Backquote');
+    const afterTilde = await visualEditor.evaluate((surface) => {
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const block = element?.closest('[data-easymde-visual-block-id]');
+      const field = document.querySelector('#easymde-source');
+      return {
+        anchorBlockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorName: anchor?.nodeName ?? null,
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null
+      };
+    });
+    await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+    await waitForBrowserPaint(page);
+    await page.waitForTimeout(120);
+    const settled = await visualEditor.evaluate((surface) => {
+      const selection = document.getSelection();
+      const anchor = selection?.anchorNode ?? null;
+      const element = anchor instanceof Element ? anchor : anchor?.parentElement;
+      const block = element?.closest('[data-easymde-visual-block-id]');
+      const field = document.querySelector('#easymde-source');
+      return {
+        anchorBlockId: block?.getAttribute('data-easymde-visual-block-id') ?? null,
+        anchorConnected: Boolean(anchor?.isConnected),
+        anchorOffset: selection?.anchorOffset ?? null,
+        canonicalLength: field instanceof HTMLTextAreaElement ? field.value.length : null,
+        errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+        selectionCollapsed: Boolean(selection?.isCollapsed),
+        sourceSelection: field instanceof HTMLTextAreaElement ? {
+          end: field.selectionEnd,
+          start: field.selectionStart
+        } : null
+      };
+    });
+    await testInfo.attach('partial-delete-enter-tilde-caret-evidence', {
+      body: JSON.stringify({ afterEnter, afterTilde, browserFailures, settled }),
+      contentType: 'application/json'
+    });
+    expect(afterEnter).toMatchObject({
+      anchorBlockId: 'b1',
+      anchorConnected: true,
+      canonicalLength: afterDeleteMarkdown.length,
+      errorCode: null,
+      selectionCollapsed: true
+    });
+    expect(afterTilde).toMatchObject({
+      anchorBlockId: 'b1',
+      anchorConnected: true,
+      errorCode: null,
+      selectionCollapsed: true
+    });
+    expect(settled).toMatchObject({
+      anchorBlockId: 'b1',
+      anchorConnected: true,
+      anchorOffset: 1,
+      canonicalLength: expectedMarkdown.length,
+      errorCode: null,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: 21,
+        start: 21
+      }
+    });
+    expect(browserFailures).toEqual([]);
+  });
+
   test('supports representative Typora visual shortcuts and repeated deletion', async ({ page }, testInfo) => {
     const browserFailures = [];
     const recordFailure = (kind, message) => {
@@ -5037,7 +7304,13 @@ test.describe('EasyMDE editor workflows', () => {
     expect(browserFailures).toEqual([]);
   });
 
-  test('keeps the public full-capability fixture stable through destructive visual editing', async ({ page, context }, testInfo) => {
+  for (const firstInput of [
+    { key: 'Shift+Backquote', label: 'tilde (~)', marker: '~' },
+    { key: 'Shift+Digit8', label: 'asterisk (*)', marker: '*' },
+    { key: 'Shift+Minus', label: 'underscore (_)', marker: '_' },
+    { key: 'Backslash', label: 'backslash (\\)', marker: '\\' }
+  ]) {
+  test(`keeps the public full-capability fixture stable through destructive visual editing (${firstInput.label})`, async ({ page, context }, testInfo) => {
     const browserFailures = [];
     await page.route(
       'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png',
@@ -5115,6 +7388,92 @@ test.describe('EasyMDE editor workflows', () => {
           && current.every((node, index) => node === initial[index]);
       })).toBe(true);
     };
+    const readNativeCaretState = async (expectedParagraphText) => visualEditor.evaluate(
+      (surface, expectedText) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const paragraphSelector = ':scope > blockquote > blockquote > p';
+        const paragraph = surface.querySelector(paragraphSelector);
+        const inside = (node, ancestor) => Boolean(
+          node && ancestor && (node === ancestor || ancestor.contains(node))
+        );
+        const paragraphTextOffset = (node, offset) => {
+          if (!inside(node, paragraph)) return null;
+          const range = document.createRange();
+          range.selectNodeContents(paragraph);
+          range.setEnd(node, offset);
+          return range.toString().length;
+        };
+        let blockquoteDepth = 0;
+        for (
+          let ancestor = paragraph?.parentElement ?? null;
+          ancestor;
+          ancestor = ancestor.parentElement
+        ) {
+          if ('BLOCKQUOTE' === ancestor.tagName) blockquoteDepth += 1;
+        }
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && 'ARTICLE' === surface.tagName,
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideParagraph: inside(anchor, paragraph),
+          anchorInsideSurface: inside(anchor, surface),
+          anchorParagraphTextOffset: paragraphTextOffset(
+            anchor,
+            selection?.anchorOffset ?? -1
+          ),
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusInsideParagraph: inside(focus, paragraph),
+          focusInsideSurface: inside(focus, surface),
+          focusParagraphTextOffset: paragraphTextOffset(
+            focus,
+            selection?.focusOffset ?? -1
+          ),
+          innerQuoteBlockquoteDepth: blockquoteDepth,
+          innerQuoteParagraphConnected: Boolean(paragraph?.isConnected),
+          innerQuoteParagraphCount: surface.querySelectorAll(paragraphSelector).length,
+          innerQuoteParagraphParentTagName: paragraph?.parentElement?.tagName ?? null,
+          innerQuoteParagraphTagName: paragraph?.tagName ?? null,
+          innerQuoteParagraphTextLength: paragraph?.textContent?.length ?? null,
+          innerQuoteParagraphTextMatchesExpected: paragraph?.textContent === expectedText,
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          sourceSelection: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected
+        };
+      },
+      expectedParagraphText
+    );
+    const findNestedQuoteParagraph = (markdown) => {
+      const cursor = markdownLanguage.parser.parse(markdown).cursor();
+      const matches = [];
+      const visit = (current, ancestors) => {
+        const nextAncestors = [...ancestors, current.name];
+        if ('Paragraph' === current.name
+          && markdown.slice(current.from, current.to) === '第二层引用。') {
+          matches.push({
+            blockquoteParentCount: ancestors.filter((name) => 'Blockquote' === name).length,
+            from: current.from,
+            to: current.to
+          });
+        }
+        if (!current.firstChild()) return;
+        do visit(current, nextAncestors); while (current.nextSibling());
+        current.parent();
+      };
+      visit(cursor, []);
+      expect(matches).toHaveLength(1);
+      expect(matches[0].blockquoteParentCount).toBe(2);
+      return matches[0];
+    };
 
     await selectVisualText(visualEditor, 'Heading 1');
     await page.keyboard.press('Backspace');
@@ -5133,6 +7492,7 @@ test.describe('EasyMDE editor workflows', () => {
 
     await selectVisualText(visualEditor, '第二层引用。');
     const beforeCut = await source.inputValue();
+    const nestedQuoteParagraph = findNestedQuoteParagraph(beforeCut);
     await page.keyboard.press('ControlOrMeta+X');
     await expect.poll(() => source.inputValue()).not.toBe(beforeCut);
     await expectProtectedMarkup();
@@ -5143,6 +7503,153 @@ test.describe('EasyMDE editor workflows', () => {
     await page.keyboard.press('ControlOrMeta+Shift+Z');
     await expect.poll(() => source.inputValue()).toBe(afterCut);
     await expectProtectedMarkup();
+
+    const afterRedoNativeCaret = await readNativeCaretState('');
+    expect(afterRedoNativeCaret).toMatchObject({
+      activeElementIsArticle: true,
+      anchorConnected: true,
+      anchorInsideParagraph: true,
+      anchorInsideSurface: true,
+      anchorParagraphTextOffset: 0,
+      contentEditable: 'true',
+      errorCode: null,
+      focusConnected: true,
+      focusInsideParagraph: true,
+      focusInsideSurface: true,
+      focusParagraphTextOffset: 0,
+      innerQuoteParagraphConnected: true,
+      innerQuoteParagraphCount: 1,
+      innerQuoteParagraphParentTagName: 'BLOCKQUOTE',
+      innerQuoteParagraphTagName: 'P',
+      innerQuoteParagraphTextLength: 0,
+      innerQuoteParagraphTextMatchesExpected: true,
+      nativeRangeCount: 1,
+      selectionCollapsed: true,
+      surfaceConnected: true
+    });
+    expect(afterRedoNativeCaret.innerQuoteBlockquoteDepth).toBeGreaterThan(1);
+
+    const expectedNativeParagraphText = `${firstInput.marker}x`;
+    const canonicalSourceBeforeNativeInput = await source.inputValue();
+    expect(canonicalSourceBeforeNativeInput).toBe(afterCut);
+    const preInputSourceSelection = await source.evaluate((field) => ({
+      end: field.selectionEnd,
+      start: field.selectionStart
+    }));
+    expect(preInputSourceSelection.start).toBe(preInputSourceSelection.end);
+    expect(afterCut).toBe(
+      beforeCut.slice(0, nestedQuoteParagraph.from)
+      + beforeCut.slice(nestedQuoteParagraph.to)
+    );
+    expect(nestedQuoteParagraph.from).toBeLessThanOrEqual(afterCut.length);
+    const expectedNativeInput = (
+      canonicalSourceBeforeNativeInput.slice(0, nestedQuoteParagraph.from)
+      + expectedNativeParagraphText
+      + canonicalSourceBeforeNativeInput.slice(nestedQuoteParagraph.from)
+    );
+
+    const beforeInputTraceKey = '__easymdeFullFixtureBeforeInputTrace';
+    await visualEditor.evaluate((surface, key) => {
+      const sourceField = document.querySelector('#easymde-source');
+      if (!(sourceField instanceof HTMLTextAreaElement)) {
+        throw new Error('full-fixture-beforeinput-source-textarea-missing');
+      }
+      const preWord = sourceField.value;
+      const events = [];
+      const recordBeforeInput = (event) => {
+        events.push({
+          canonicalSourceMatchesPreWord: sourceField.value === preWord,
+          inputType: event.inputType ?? null,
+          isTrusted: event.isTrusted
+        });
+      };
+      surface.addEventListener('beforeinput', recordBeforeInput, true);
+      window[key] = {
+        cleanup: () => surface.removeEventListener('beforeinput', recordBeforeInput, true),
+        events
+      };
+    }, beforeInputTraceKey);
+    let beforeInputEvidence;
+    try {
+      await page.keyboard.type(expectedNativeParagraphText, { delay: 0 });
+      await expect(source).toHaveValue(expectedNativeInput, { timeout: 30_000 });
+    } finally {
+      beforeInputEvidence = await visualEditor.evaluate((surface, key) => {
+        const trace = window[key];
+        if (!trace) throw new Error('full-fixture-beforeinput-trace-missing');
+        trace.cleanup();
+        delete window[key];
+        return {
+          count: trace.events.length,
+          first: trace.events[0] ?? null,
+          second: trace.events[1] ?? null
+        };
+      }, beforeInputTraceKey);
+    }
+    expect(beforeInputEvidence).toEqual({
+      count: 2,
+      first: {
+        canonicalSourceMatchesPreWord: true,
+        inputType: 'insertText',
+        isTrusted: true
+      },
+      second: {
+        canonicalSourceMatchesPreWord: true,
+        inputType: 'insertText',
+        isTrusted: true
+      }
+    });
+    const afterNativeInput = await readNativeCaretState(expectedNativeParagraphText);
+    expect(afterNativeInput).toMatchObject({
+      anchorConnected: true,
+      anchorInsideParagraph: true,
+      anchorInsideSurface: true,
+      anchorParagraphTextOffset: expectedNativeParagraphText.length,
+      errorCode: null,
+      focusConnected: true,
+      focusInsideParagraph: true,
+      focusInsideSurface: true,
+      focusParagraphTextOffset: expectedNativeParagraphText.length,
+      innerQuoteParagraphCount: 1,
+      innerQuoteParagraphTextLength: expectedNativeParagraphText.length,
+      innerQuoteParagraphTextMatchesExpected: true,
+      nativeRangeCount: 1,
+      selectionCollapsed: true,
+      sourceSelection: {
+        end: nestedQuoteParagraph.from + expectedNativeParagraphText.length,
+        start: nestedQuoteParagraph.from + expectedNativeParagraphText.length
+      }
+    });
+    await expectProtectedMarkup();
+    expect(browserFailures).toEqual([]);
+
+    await page.keyboard.press('ControlOrMeta+Z');
+    await expect(source).toHaveValue(canonicalSourceBeforeNativeInput, { timeout: 30_000 });
+    await expect(visualEditor).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 });
+    const afterNativeUndo = await readNativeCaretState('');
+    expect(afterNativeUndo).toMatchObject({
+      anchorConnected: true,
+      anchorInsideParagraph: true,
+      anchorInsideSurface: true,
+      anchorParagraphTextOffset: 0,
+      errorCode: null,
+      focusConnected: true,
+      focusInsideParagraph: true,
+      focusInsideSurface: true,
+      focusParagraphTextOffset: 0,
+      innerQuoteParagraphCount: 1,
+      innerQuoteParagraphTextLength: 0,
+      innerQuoteParagraphTextMatchesExpected: true,
+      nativeRangeCount: 1,
+      previewBusy: 'false',
+      selectionCollapsed: true
+    });
+    expect(afterNativeUndo.sourceSelection).toEqual({
+      end: nestedQuoteParagraph.from,
+      start: nestedQuoteParagraph.from
+    });
+    await expectProtectedMarkup();
+    expect(browserFailures).toEqual([]);
 
     const mermaid = visualEditor.locator('.easymde-mermaid').first();
     await expect(mermaid).toHaveAttribute('contenteditable', 'false');
@@ -5220,6 +7727,7 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(page.locator('.easymde-pane-preview')).toBeVisible();
     expect(browserFailures).toEqual([]);
   });
+  }
 
   test('links status bar and synchronized scrolling settings to ordinary and immersive editing', async ({ page, context }, testInfo) => {
     const browserFailures = [];
@@ -6749,6 +9257,355 @@ test.describe('EasyMDE editor workflows', () => {
       );
       expect(failureCodes).toEqual([]);
       expect(pageErrors).toEqual([]);
+    });
+  }
+
+  for (const fixture of [
+    {
+      closing: '```',
+      label: 'backtick-json-closed',
+      marker: '```',
+      opening: '```json',
+      variant: 'closed'
+    },
+    {
+      closing: '~~~',
+      label: 'tilde-closed',
+      marker: '~~~',
+      opening: '~~~',
+      variant: 'closed'
+    },
+    {
+      closing: '```',
+      label: 'backtick-json-open-eof',
+      marker: '```',
+      opening: '```json',
+      variant: 'open-eof'
+    },
+    {
+      closing: '~~~',
+      label: 'tilde-open-eof',
+      marker: '~~~',
+      opening: '~~~',
+      variant: 'open-eof'
+    }
+  ]) {
+    test(`keeps native pasted ${fixture.label} body deletion on one visual caret`, async ({ page, context }, testInfo) => {
+      const body = '{"key":"value"}';
+      const retypedBody = '{"key":"retyped"}';
+      const isOpenEof = 'open-eof' === fixture.variant;
+      const initialPasteMarkdown = isOpenEof
+        ? fixture.opening
+        : `${fixture.opening}\n\n${fixture.closing}`;
+      const emptiedBodyMarkdown = isOpenEof
+        ? `${fixture.opening}\n\n`
+        : `${fixture.opening}\n\n${fixture.closing}`;
+      const expectedMarkdown = isOpenEof
+        ? `${fixture.opening}\n${body}\n`
+        : `${fixture.opening}\n${body}\n${fixture.closing}`;
+      const expectedRetypedMarkdown = isOpenEof
+        ? `${fixture.opening}\n${retypedBody}\n`
+        : `${fixture.opening}\n${retypedBody}\n${fixture.closing}`;
+      const expectedPasteCaretOffset = isOpenEof ? 0 : 1;
+      const browserFailures = [];
+      page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+      page.on('console', (message) => {
+        if ('error' !== message.type()) return;
+        const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+        browserFailures.push(code ?? 'console-error');
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const visualEditor = editor.visualEditor;
+      const source = editor.source;
+      const code = visualEditor.locator('pre > code');
+      const sourceBeforeFence = await source.inputValue();
+      const origin = new URL(page.url()).origin;
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+
+      const readVisualCaretEvidence = async (
+        surfaceLocator = visualEditor
+      ) => surfaceLocator.evaluate((surface) => {
+        const code = surface.querySelector('pre > code');
+        const pre = code?.parentElement;
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const insideSurface = (node) => Boolean(
+          node && (node === surface || surface.contains(node))
+        );
+        const insideCode = (node) => Boolean(
+          code && node && (node === code || code.contains(node))
+        );
+        let codeOffset = null;
+        if (range && code && insideCode(anchor)) {
+          const codeRange = surface.ownerDocument.createRange();
+          codeRange.selectNodeContents(code);
+          codeRange.setEnd(anchor, selection.anchorOffset);
+          codeOffset = codeRange.toString().length;
+        }
+        const rect = (element) => {
+          if (!(element instanceof Element)) return null;
+          const box = element.getBoundingClientRect();
+          return {
+            height: box.height,
+            width: box.width,
+            x: box.x,
+            y: box.y
+          };
+        };
+        const codeText = code?.textContent ?? '';
+        const logicalLineCount = codeText.endsWith('\n')
+          ? codeText.slice(0, -1).split('\n').length
+          : codeText.split('\n').length;
+        const caretBox = range?.getBoundingClientRect() ?? null;
+        const lineHeight = code instanceof HTMLElement
+          ? Number.parseFloat(getComputedStyle(code).lineHeight)
+          : null;
+        const connectedCodeMirrorEditors = Array.from(
+          document.querySelectorAll('.cm-editor')
+        ).filter((node) => node.isConnected).length;
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && 'ARTICLE' === surface.tagName,
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideCode: insideCode(anchor),
+          anchorInsideSurface: insideSurface(anchor),
+          anchorName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          caretRect: caretBox ? {
+            height: caretBox.height,
+            width: caretBox.width,
+            x: caretBox.x,
+            y: caretBox.y
+          } : null,
+          codeConnected: Boolean(code?.isConnected),
+          codeHeight: rect(code)?.height ?? null,
+          codeLogicalLineCount: logicalLineCount,
+          codeOffset,
+          codeTextLength: codeText.length,
+          codeWidth: rect(code)?.width ?? null,
+          codeMirrorConnectedCount: connectedCodeMirrorEditors,
+          codeMirrorFocused: Boolean(document.activeElement?.closest('.cm-editor')),
+          editableRootCount: document.querySelectorAll('[contenteditable="true"]').length,
+          focusConnected: Boolean(focus?.isConnected),
+          focusInsideCode: insideCode(focus),
+          focusInsideSurface: insideSurface(focus),
+          focusName: focus?.nodeName ?? null,
+          focusOffset: selection?.focusOffset ?? null,
+          lineHeight,
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          preHeight: rect(pre)?.height ?? null,
+          preWidth: rect(pre)?.width ?? null,
+          selectedTextLength: range?.toString().length ?? null,
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          selectionStartConnected: Boolean(range?.startContainer?.isConnected),
+          selectionEndConnected: Boolean(range?.endContainer?.isConnected),
+          surfaceConnected: surface.isConnected
+        };
+      });
+      const expectConnectedVisualRange = (state, collapsed = true) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          anchorInsideSurface: true,
+          codeMirrorConnectedCount: 0,
+          codeMirrorFocused: false,
+          editableRootCount: 1,
+          focusConnected: true,
+          focusInsideSurface: true,
+          nativeRangeCount: 1,
+          selectionCollapsed: collapsed,
+          selectionEndConnected: true,
+          selectionStartConnected: true,
+          surfaceConnected: true
+        });
+      };
+      const expectCodeCaretGeometry = (state, expectedOffset) => {
+        expectConnectedVisualRange(state);
+        expect(state).toMatchObject({
+          anchorInsideCode: true,
+          codeConnected: true,
+          codeLogicalLineCount: 1,
+          codeOffset: expectedOffset,
+          focusInsideCode: true
+        });
+        expect(state.lineHeight).toBeGreaterThan(0);
+        expect(state.caretRect).toMatchObject({ height: expect.any(Number) });
+        expect(state.codeHeight).toBeGreaterThan(0);
+        expect(state.preHeight).toBeGreaterThan(0);
+        expect(state.preWidth).toBeGreaterThan(0);
+        expect(state.codeWidth).toBeGreaterThan(0);
+      };
+
+      await expect(source).toHaveValue(sourceBeforeFence);
+      await visualEditor.focus();
+      await visualEditor.press('ControlOrMeta+End');
+      await page.evaluate(async (value) => {
+        if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+          throw new Error('native-fence-regression-clipboard-unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+      }, initialPasteMarkdown);
+      await page.keyboard.press('ControlOrMeta+V');
+      await expect(source).toHaveValue(initialPasteMarkdown, { timeout: 30_000 });
+      await expect(code).toHaveCount(1);
+      await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false');
+      const afterNativePaste = await readVisualCaretEvidence();
+      expectCodeCaretGeometry(afterNativePaste, expectedPasteCaretOffset);
+
+      await page.keyboard.type(body, { delay: 0 });
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      await expect(code).toContainText(body);
+      const afterBodyInput = await readVisualCaretEvidence();
+      expectCodeCaretGeometry(afterBodyInput, body.length);
+
+      const selectCodeBody = async (expectedLength) => {
+        await clickCodeLine(page, code, 0);
+        await page.keyboard.press('End');
+        await page.keyboard.down('Shift');
+        await page.keyboard.press('Home');
+        await page.keyboard.up('Shift');
+        const selected = await readVisualCaretEvidence();
+        expectConnectedVisualRange(selected, false);
+        expect(selected.anchorInsideCode).toBe(true);
+        expect(selected.focusInsideCode).toBe(true);
+        expect(selected.selectedTextLength).toBe(expectedLength);
+        return selected;
+      };
+
+      const beforeSelectedDelete = await selectCodeBody(body.length);
+      await page.keyboard.press('Delete');
+      const afterSelectedDelete = await readVisualCaretEvidence();
+      expectConnectedVisualRange(afterSelectedDelete);
+      expect(afterSelectedDelete.codeLogicalLineCount).toBe(1);
+      expect(afterSelectedDelete.anchorInsideCode).toBe(true);
+      expect(afterSelectedDelete.codeConnected).toBe(true);
+      expect(afterSelectedDelete.codeOffset).toBeLessThanOrEqual(1);
+      expect(afterSelectedDelete.codeTextLength).toBeLessThanOrEqual(1);
+
+      await page.keyboard.type(retypedBody, { delay: 0 });
+      await expect(source).toHaveValue(expectedRetypedMarkdown, { timeout: 30_000 });
+      await expect(code).toContainText(retypedBody);
+      const afterImmediateRetype = await readVisualCaretEvidence();
+      expectCodeCaretGeometry(afterImmediateRetype, retypedBody.length);
+
+      await selectCodeBody(retypedBody.length);
+      await page.keyboard.press('Delete');
+      const beforeHeldBackspace = await readVisualCaretEvidence();
+      expectConnectedVisualRange(beforeHeldBackspace);
+      expect(beforeHeldBackspace.anchorInsideCode).toBe(true);
+      expect(beforeHeldBackspace.codeConnected).toBe(true);
+      expect(beforeHeldBackspace.codeOffset).toBeLessThanOrEqual(1);
+      expect(beforeHeldBackspace.codeTextLength).toBeLessThanOrEqual(1);
+      const heldProbe = await startContinuousBackspaceProbe(
+        visualEditor,
+        fixture.marker,
+        2
+      );
+      const heldBackspace = await completeHeldBackspaceSequence(page, heldProbe, 2);
+      const afterHeldBackspace = await readVisualCaretEvidence();
+      expectConnectedVisualRange(afterHeldBackspace);
+      expectHeldBackspaceCompletion({
+        backspaceCount: 2,
+        failureCodes: browserFailures.filter((entry) => !entry.startsWith('pageerror:')),
+        finalSource: await source.inputValue(),
+        immediate: heldBackspace.immediate,
+        pageErrors: browserFailures.filter((entry) => entry.startsWith('pageerror:')),
+        sourceBeforeFence,
+        trace: heldBackspace.trace
+      });
+      expect(await source.inputValue()).toBe(sourceBeforeFence);
+      expect(afterHeldBackspace.codeConnected).toBe(false);
+
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(source).toHaveValue(emptiedBodyMarkdown, { timeout: 30_000 });
+      await expect(code).toHaveCount(1);
+      const afterHeldUndo = await readVisualCaretEvidence();
+      expectConnectedVisualRange(afterHeldUndo);
+      expect(afterHeldUndo.codeConnected).toBe(true);
+      await page.keyboard.type(body, { delay: 0 });
+      await expect(source).toHaveValue(expectedMarkdown, { timeout: 30_000 });
+      const afterUndoRetype = await readVisualCaretEvidence();
+      expectCodeCaretGeometry(afterUndoRetype, body.length);
+
+      await testInfo.attach(`native-${fixture.label}-caret-geometry`, {
+        body: JSON.stringify({
+          fixture: {
+            hasClosingFence: !isOpenEof,
+            openingLength: fixture.opening.length,
+            variant: fixture.variant
+          },
+          bodyLengths: {
+            initial: body.length,
+            retyped: retypedBody.length
+          },
+          afterBodyInput,
+          afterHeldBackspace,
+          afterHeldUndo,
+          afterImmediateRetype,
+          afterNativePaste,
+          afterSelectedDelete,
+          afterUndoRetype,
+          beforeHeldBackspace,
+          beforeSelectedDelete,
+          heldBackspace: {
+            immediate: heldBackspace.immediate,
+            trace: heldBackspace.trace
+          }
+        }),
+        contentType: 'application/json'
+      });
+      await testInfo.attach(`native-${fixture.label}-caret-screenshot`, {
+        body: await page.screenshot({ caret: 'initial', fullPage: false }),
+        contentType: 'image/png'
+      });
+
+      await page.getByRole('button', {
+        name: editor.labels.previewLockReadOnly
+      }).click();
+      await expect(visualEditor).toHaveCount(0);
+      await page.getByRole('button', {
+        name: editor.labels.split,
+        exact: true
+      }).click();
+      await expect(page.locator('.easymde-pane-source')).toBeVisible();
+      await expect(page.locator('.easymde-pane-preview')).toBeVisible();
+      await expect(source).toHaveValue(expectedMarkdown);
+      await page.getByRole('button', {
+        name: editor.labels.edit,
+        exact: true
+      }).click();
+      await expect(page.getByRole('textbox', {
+        name: editor.labels.previewEditorLabel
+      })).toHaveCount(0);
+      await page.getByRole('button', {
+        name: editor.labels.preview,
+        exact: true
+      }).click();
+      await expect(page.getByText(editor.labels.previewContentLoaded)).toBeVisible();
+      await page.getByRole('button', {
+        name: editor.labels.previewUnlockEdit
+      }).click();
+      const reentered = page.getByRole('textbox', {
+        name: editor.labels.previewEditorLabel
+      });
+      await expect(reentered).toHaveAttribute('contenteditable', 'true');
+      await expect(reentered).toHaveAttribute('aria-busy', 'false');
+      await expect(source).toHaveValue(expectedMarkdown);
+      await expect(reentered.locator('pre > code')).toHaveCount(1);
+      await expect(reentered.locator('pre > code')).toContainText(body);
+      const afterVisualReentry = await readVisualCaretEvidence(reentered);
+      expectConnectedVisualRange(afterVisualReentry);
+      expect(afterVisualReentry.codeConnected).toBe(true);
+      expect(browserFailures).toEqual([]);
     });
   }
 

@@ -120,6 +120,53 @@ function previewDocumentEndBlockIndex(
   return eofBlocks[0];
 }
 
+function previewSourceSelectionBlockIndices(
+  markdown: string,
+  editMap: PreviewEditMap,
+  signature: string,
+  sourceSelection: Readonly<{ end: number; start: number }>
+): number[] {
+  if (
+    editMap.signature !== signature
+    || 1 !== editMap.version
+    || 'line' !== editMap.coordinate
+  ) {
+    throw new PreviewWindowDomError('preview-window-selection-map-invalid');
+  }
+  const offsets = [...new Set([sourceSelection.start, sourceSelection.end])];
+  if (offsets.some((offset) =>
+    !Number.isSafeInteger(offset)
+    || offset < 0
+    || offset > markdown.length
+  )) {
+    throw new PreviewWindowDomError('preview-window-selection-range-invalid');
+  }
+  const lineStarts = markdownLineStarts(markdown);
+  const indices = offsets.map((offset) => {
+    if (offset === markdown.length) {
+      return previewDocumentEndBlockIndex(markdown, editMap, signature);
+    }
+    let lineIndex = lineStarts.length - 1;
+    for (let index = 1; index < lineStarts.length; index += 1) {
+      const lineStart = lineStarts[index];
+      if (undefined !== lineStart && lineStart > offset) {
+        lineIndex = index - 1;
+        break;
+      }
+    }
+    const blockIndex = editMap.blocks.findIndex((block) =>
+      block.editable
+      && block.startLine <= lineIndex
+      && lineIndex < block.endLine
+    );
+    if (blockIndex < 0) {
+      throw new PreviewWindowDomError('preview-window-selection-block-unavailable');
+    }
+    return blockIndex;
+  });
+  return [...new Set(indices)];
+}
+
 type PreviewMessages = Readonly<{
   empty: string;
   error: string;
@@ -178,11 +225,17 @@ export type PreviewDocumentEndPinLease = Readonly<{
   release: () => void;
 }>;
 
+export type PreviewSourceSelection = Readonly<{
+  end: number;
+  start: number;
+}>;
+
 type MutablePreviewDocumentEndPin = {
   generation: number | null;
   requestRevision: number | null;
   signature: string;
-  targetIndex: number | null;
+  sourceSelection: PreviewSourceSelection | null;
+  targetIndices: number[];
 };
 
 const VISUAL_MARKDOWN_SOURCE_ATTRIBUTE =
@@ -215,7 +268,8 @@ type PendingPreviewScrollRestore = Readonly<{
 export type PreviewSurfaceRuntime = Readonly<{
   materialize: () => Promise<boolean>;
   prepareDocumentEndWindowPin: (
-    signature: string
+    signature: string,
+    sourceSelection?: PreviewSourceSelection
   ) => PreviewDocumentEndPinLease;
   prepareWindowBlockAdoption: (
     node: HTMLElement
@@ -628,7 +682,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const prepareWindowBlockAdoptionRef = useRef<
     (node: HTMLElement) => (() => boolean) | null
   >(() => null);
-  const materializeRef = useRef<() => Promise<boolean>>(() =>
+  const materializeRef = useRef<(reportDiagnostics?: boolean) => Promise<boolean>>(() =>
     Promise.resolve(false)
   );
   const scheduleWindowRef = useRef<() => void>(() => undefined);
@@ -651,7 +705,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     if (
       reconcile
       && ownerActiveRef.current
-      && pin.targetIndex !== null
+      && pin.targetIndices.length > 0
       && repository?.context.revision === pin.generation
       && repository.context.signature === pin.signature
     ) {
@@ -660,13 +714,25 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   }
 
   function prepareDocumentEndWindowPin(
-    signature: string
+    signature: string,
+    sourceSelection?: PreviewSourceSelection
   ): PreviewDocumentEndPinLease {
     if (!ownerActiveRef.current) {
       throw new Error('preview-window-document-end-owner-inactive');
     }
     if (!windowedRef.current || !signature) {
       throw new Error('preview-window-document-end-pin-unavailable');
+    }
+    if (
+      sourceSelection
+      && (
+        !Number.isSafeInteger(sourceSelection.start)
+        || !Number.isSafeInteger(sourceSelection.end)
+        || sourceSelection.start < 0
+        || sourceSelection.end < sourceSelection.start
+      )
+    ) {
+      throw new Error('preview-window-selection-range-invalid');
     }
     if (documentEndPinRef.current) {
       throw new Error('preview-window-document-end-pin-already-active');
@@ -675,7 +741,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       generation: null,
       requestRevision: null,
       signature,
-      targetIndex: null
+      sourceSelection: sourceSelection ?? null,
+      targetIndices: []
     };
     documentEndPinRef.current = pin;
     let released = false;
@@ -890,10 +957,45 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     );
   }, [props.onDiagnostic]);
 
-  const materialize = useCallback((): Promise<boolean> => {
+  const materialize = useCallback((reportDiagnostics = true): Promise<boolean> => {
     if (!ownerActiveRef.current) return Promise.resolve(false);
+    const currentState = stateRef.current;
+    if (
+      'html' !== currentState.kind
+      || 'ready' !== currentState.phase
+    ) {
+      if (reportDiagnostics) {
+        props.onDiagnostic?.('preview-window-materialize-not-ready');
+      }
+      return Promise.resolve(false);
+    }
     const repository = previewWindowRepositoryRef.current;
-    if (!repository) return Promise.resolve(true);
+    if (!repository) {
+      const surface = surfaceRef.current;
+      if (
+        materializationPendingRef.current
+        || surface?.querySelector(`[${PREVIEW_WINDOW_SPACER_ATTRIBUTE}]`)
+        || (windowedRef.current && previewNeedsWindow(currentState.editMap))
+      ) {
+        if (reportDiagnostics) {
+          props.onDiagnostic?.('preview-window-materialize-repository-unavailable');
+        }
+        return Promise.resolve(false);
+      }
+      return Promise.resolve(true);
+    }
+    if (
+      currentState.generation !== repository.context.revision
+      || currentState.htmlRevision !== repository.context.revision
+      || currentState.signature !== repository.context.signature
+    ) {
+      discardPendingWork();
+      previewWindowRepositoryRef.current = null;
+      if (reportDiagnostics) {
+        props.onDiagnostic?.('preview-window-materialize-repository-stale');
+      }
+      return Promise.resolve(false);
+    }
     try {
       validatePreviewWindowRepository(repository);
     } catch (error) {
@@ -947,7 +1049,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
         : current
     );
     return promise;
-  }, [props.onDiagnostic]);
+  }, [discardPendingWork, props.onDiagnostic]);
   materializeRef.current = materialize;
 
   const prepareWindowBlockAdoption = (
@@ -1146,6 +1248,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       scrollSnapshotRef.current = null;
     }
     discardPendingWork();
+    previewWindowRepositoryRef.current = null;
 
     if ('loading' === requestState.kind) {
       setState((current) =>
@@ -1363,6 +1466,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       session.destroy();
     };
   }, [discardStaging]);
+
+  useLayoutEffect(() => {
+    if (props.windowed) return;
+    const documentEndPin = documentEndPinRef.current;
+    if (documentEndPin) clearDocumentEndPin(documentEndPin, false);
+  }, [props.windowed]);
 
   useLayoutEffect(() => {
     setState((current) => {
@@ -1654,15 +1763,22 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             }
           );
           repository = previewWindowRepositoryRef.current;
-          const documentEndIndex = matchingDocumentEndPin
-            ? previewDocumentEndBlockIndex(
-                activeCandidate.markdown,
-                activeCandidate.editMap,
-                activeCandidate.signature
-              )
-            : null;
+          const pinnedIndices = matchingDocumentEndPin
+            ? matchingDocumentEndPin.sourceSelection
+              ? previewSourceSelectionBlockIndices(
+                  activeCandidate.markdown,
+                  activeCandidate.editMap,
+                  activeCandidate.signature,
+                  matchingDocumentEndPin.sourceSelection
+                )
+              : [previewDocumentEndBlockIndex(
+                  activeCandidate.markdown,
+                  activeCandidate.editMap,
+                  activeCandidate.signature
+                )]
+            : [];
           if (matchingDocumentEndPin) {
-            matchingDocumentEndPin.targetIndex = documentEndIndex;
+            matchingDocumentEndPin.targetIndices = pinnedIndices;
           }
           await scheduler.yield();
           if (!isCurrent() || controller.signal.aborted) {
@@ -1675,8 +1791,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
             && currentDocumentEndPin === matchingDocumentEndPin
             && matchingDocumentEndPin.generation === repository.context.revision
             && matchingDocumentEndPin.signature === repository.context.signature
-            && null !== matchingDocumentEndPin.targetIndex
-            ? [matchingDocumentEndPin.targetIndex]
+            && matchingDocumentEndPin.targetIndices.length > 0
+            ? matchingDocumentEndPin.targetIndices
             : [];
           const initialWindow = repository.model.getWindow({
             context: repository.context,
@@ -1747,7 +1863,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   useLayoutEffect(() => {
     if (!windowedEditing) {
       materializedOverrideRef.current = false;
-      void materializeRef.current();
+      void materializeRef.current(false);
       return;
     }
     const surface = surfaceRef.current;
@@ -1890,9 +2006,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       if (
         documentEndPin?.generation === activeRepository.context.revision
         && documentEndPin.signature === activeRepository.context.signature
-        && null !== documentEndPin.targetIndex
       ) {
-        pins.add(documentEndPin.targetIndex);
+        for (const targetIndex of documentEndPin.targetIndices) {
+          pins.add(targetIndex);
+        }
       }
       return [...pins].sort((left, right) => left - right);
     };
@@ -1935,7 +2052,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
       const documentEndPinApplies = Boolean(
         documentEndPin?.generation === activeRepository.context.revision
         && documentEndPin.signature === activeRepository.context.signature
-        && null !== documentEndPin.targetIndex
+        && documentEndPin.targetIndices.length > 0
       );
       const result = activeRepository.model.getWindow({
         context: activeRepository.context,

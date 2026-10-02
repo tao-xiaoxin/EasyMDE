@@ -208,6 +208,16 @@ The current production build and entry matrix is:
 
 Each row has a committed `manifest.json` and `wordpress-manifest.json`, and the `media-editor` dependency appears only in the `media-picker` WordPress manifest.
 
+The focused visual Markdown-transfer regression is:
+
+```bash
+npm run test:frontend -- frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.test.tsx -t "skips target code-structure validation while a Markdown paste awaits formal Preview"
+```
+
+It verifies the canonical and submission-field insertion, one Preview request,
+unchanged history ownership, no redundant code-topology signature scan, and
+blocking of further `beforeinput` while the accepted paste Preview is pending.
+
 ## WeChat Clipboard Verification
 
 The focused browser-Adapter test is:
@@ -238,6 +248,8 @@ The WeChat export implementation contract is owned by the [EasyMDE WeChat export
 
 The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. They also verify that modern `write()` is invoked before freshness style and geometry reads, logical `text-align` values are normalized by source direction, and ordinary content-box pixel dimensions are projected for a border-box destination. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization and bounded upload work; rasterization stays serial while selected-owner uploads are backpressured at three in flight; completion replaces visuals in stable candidate order; and any upload failure aborts remaining uploads without committing a partial Clipboard payload. Only outermost Mermaid and KaTeX math roots become PNG; ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. Math coverage verifies the native Safe Preview capture clone, original inline parent typography, complete safe computed dimensions and normal defaults, native computed `table-layout`, retained KaTeX/table/pstrut dimensions, no portable empty-span leakage, full scroll and descendant bounds for wide formulas, axis-independent clipped versus scrollable inline viewport geometry including `autoX/hiddenY` and `hiddenX/autoY`, retained 4096-edge and PNG-pixel validation, fractional `inlineLayout` allocation with optional viewport and paint offsets, top/bottom neighboring-line-box keywords, measured `B-H` margins for other vertical-align modes, explicit failure for missing or invalid allocation, paint-grid floor/ceil quantization, centered local wrapper overflow, and fixed block-image sizing with padding/borders/background captured once. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
 The focused rasterizer tests additionally verify that document font readiness is awaited, approved bootstrap asset roots are used for matching managed local font faces, remote sources are omitted, missing managed KaTeX faces fail explicitly, valid font bytes are signature- and browser-font-validated, successful bytes are cached, failed entries can retry, cancellation remains explicit, nonmanaged/system families retain the browser fallback, and final PNG names use a deterministic SHA-256 content digest.
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
 Preview request tests verify that current failures use only the stable privacy-safe
 `preview-response-invalid` and `preview-request-failed` diagnostics, while
@@ -496,7 +508,18 @@ code cleared and retyped, and windowed block offsets.
 Native clipboard cases paste each bare three-character opener, assert that the
 initial source is unchanged, then type body text and check persistence, history,
 caret, and frame geometry. Unclosed EOF bodies retain their open state, including
-literal fence content that requires a wider opener.
+literal fence content that requires a wider opener. The four final native-paste
+deletion cases are `keeps native pasted backtick-json-closed body deletion on
+one visual caret`, `keeps native pasted tilde-closed body deletion on one visual
+caret`, `keeps native pasted backtick-json-open-eof body deletion on one visual
+caret`, and `keeps native pasted tilde-open-eof body deletion on one visual
+caret`.
+Each case records privacy-safe caret geometry and attaches a diagnostic
+Playwright screenshot with `caret: 'initial'`. The assertions own the current
+connected DOM Selection, source range, code/frame dimensions, and visual owner
+counts; those bounds do not prove every Chrome caret-paint or compositor state.
+The reported two-position blinking caret was not reproduced by this coverage.
+Track any future reproduction and evidence in [Issue 243](https://github.com/tao-xiaoxin/EasyMDE/issues/243); this contract makes no fix claim.
 They assert the canonical Markdown and
 editable DOM body agree after each transition while the shared Mac frame
 retains its full width and non-collapsing code area. The dedicated immersive
@@ -525,6 +548,47 @@ Exercise an ordinary list-item split followed immediately by text before the
 debounce expires. Verify the first item remains canonical, the new text stays
 in the second item, the source and visual caret agree, and ordinary rapid text
 still uses the grouped exact-input path.
+For an unchanged source and visual baseline, cover the neutral selection path
+with a collapsed caret in a sole-`BR` `P`/`LI` body. Require unchanged-neighbor
+or validated-source-end bounds, parser-ordered blockquote/list ancestry, and
+exactly one owned separator. Code/protected content, missing ownership, and
+ambiguous candidates must not claim a source range; a valid case must project a
+zero-width boundary before the existing merge checks. Confirm ordinary content
+keeps its cached unique-text hot-path eligibility before this structural scan.
+Typed `beforeinput` coverage must capture the exact collapsed target range and
+body path before browser mutation, then verify that the pre-mutation canonical
+Selection update changes neither source bytes nor history depth. After native
+mutation, require the same target/body boundary, the expected empty-placeholder
+to Text transition, unchanged outside-body DOM, and the protected snapshot;
+serialize the actual surface and continue through the existing edit-intent and
+history owners. Include normalized-to-canonical CRLF offsets, immediate and
+delayed next input, and Undo/Redo native/canonical Selection points. Stale or
+mismatched evidence must fail explicitly.
+Unit coverage must pair the empty quote and list cases with source, history,
+native Selection, and protected-node assertions. It must also cover the owner
+handoff when pending code input crosses into an empty structural body: the code
+intent is flushed before the selection-only canonical update, while input that
+remains in the same code body stays in the pending burst. Empty-body capture
+must prove that the canonical source equals the committed source before and
+after that update and reports the existing
+`visual-editor-history-document-stale` error on mismatch.
+Browser coverage for this handoff must execute a CDP `insertText` code input,
+then a native mouse move/click into an empty quote or list body, then a second
+native insertion. CDP `insertText` is trusted non-keyboard input for the first
+step; the contract does not require a physical key, and another legitimate
+native browser input method is valid when it provides the same evidence. The
+second `beforeinput` must observe the canonical pre-code value, proving that
+the pending code intent was still present at event entry; that observation
+alone does not prove the subsequent flush or structural acceptance. Final
+source, history, native Selection, and protected-node results must prove the
+flush and accepted structural edit.
+Exercise one zero-delay rapid word kept in the same pending burst in an empty
+structural body: pre-commit input must leave canonical bytes and history
+unchanged, then produce one canonical content transaction and one Undo step back
+to empty. Require the post-input caret to follow actual serialization and
+marker mapping. Real Media-selection
+preparation must preserve canonical Selection, source, protected-node identity,
+and the no-rematerialization path for escaped `~`, `*`, `_`, and `\` input.
 Exercise the exact accepted native-paste snapshot for both fence families and
 unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
 Verify neutral native spans retain Text identity, caret and exact code body;
@@ -552,6 +616,11 @@ input records a rematerialization slot without an innerHTML getter. Preserve
 the existing zero-getter hot-path checks. Formal Preview acceptance must reject
 stale slot identity, source, signature, history depths or selection, and report
 render failure or teardown through the existing owner without fabricated HTML.
+For an empty list or blockquote body produced by pending visual input, verify
+that the already materialized accepted HTML, source map, and visual baseline
+are recorded as the current local snapshot. Immediate next native input and
+the wrapper's Undo/Redo must preserve the connected caret and canonical source;
+when that snapshot is valid, they must make no formal Preview request.
 For non-windowed rematerialization, exercise the real Preview owner and Safe
 HTML sink with TOC, footnote, rendered math, and Mermaid nodes. Exact equivalent
 protected output must retain node identity through the first staged commit, a
@@ -563,8 +632,9 @@ Local snapshot Cut, Undo, and Redo coverage must also preserve equivalent
 protected nodes when restoring an editable sibling shifts their absolute DOM
 path. Require equal protected-region count and order, exact meaningful
 attributes and markup, connected Selection, canonical source, and no Preview
-request for the local Undo. Missing or non-equivalent protected output remains
-fresh; blank or whitespace-only root `style` is the sole ignored layout artifact.
+request for the local Undo, including snapshots taken after an empty structural
+body. Missing or non-equivalent protected output remains fresh; blank or
+whitespace-only root `style` is the sole ignored layout artifact.
 For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
 the document-end pin before formal Preview, the mounted final editable block
 and exact canonical/visible caret after the final Redo. A mapped range may omit
@@ -602,6 +672,65 @@ carets on Undo/Redo, and stale PRE replacement after noncancelable text input
 restores the accepted DOM and caret without publishing a source change.
 The canonical adapter's post-edit selection option must preserve ordinary
 document Undo/Redo step counts and same-value updates.
+The focused regression names for this windowed-selection contract are
+`pins the accepted Preview block for a non-document-end source selection`,
+`restores a noncollapsed selection after an accepted middle code-fence Preview`,
+`rejects an accepted source selection outside the request Markdown`,
+`does not apply a cancelled source-selection pin to a later matching request`,
+`owns Ctrl+A Backspace as a canonical full-document deletion`,
+`does not delete unmounted source on a whole-surface cut`,
+`clears canonical source when the root includes a generated read-only block`,
+`rejects a destructive selection that crosses an unmounted spacer`,
+`does not let a stale Ctrl+A selection clear a later collapsed deletion`,
+`clears a root selection spanning a mounted code block`,
+`keeps a selected mapped code block local to code`, and
+`keeps a generic tilde in an Enter-created paragraph`. Chromium coverage adds
+`preserves a windowed paragraph caret after structural Enter and formal
+Preview`, `keeps a long cleared document editable before and after immersive
+re-entry`, `commits immediate input after a long full clear and preserves
+Undo/Redo caret state`, and `keeps a partially deleted paragraph mapped after
+Enter and tilde input`. The Safe HTML sink cases are
+`preserves a focused full-root $direction selection during replacement`,
+`does not expand a partial root selection during replacement`, `does not
+restore a full-root range after focus leaves the surface`, and `restores spacer
+range and geometry after cancelling a partial materialization`. The Preview
+owner cases also cover `materializes the complete Preview asynchronously for a
+same-activation consumer`, `cancels stale window materialization when an
+authoritative empty Preview replaces it`, `does not report materialization
+success while a newer Preview is loading`, and `rejects materialization while
+an accepted window commit is still committing`.
+The empty-surface unit cases are named `owns native whole-root $name Backspace
+and Delete with immediate re-entry`, `creates an editable paragraph after
+clearing an empty-root topology %s`, `normalizes the empty root after
+incremental native Backspace before the next tilde ($markdown)`, and `clears a
+formatted empty $name block before immediate tilde input`. Serialization and
+source-boundary coverage also includes `reports empty structural serialization
+shapes`, `preserves a literal space inside a list item as content`, `preserves
+direct quote content beside an empty structural paragraph`, and `preserves
+terminal spaces and newlines when inserting at their visual boundary`.
+Parser-backed separator coverage is named `maps an empty structural body after
+its parser-owned separator`, `does not classify a code-body separator as a
+structural body boundary`, `retains hidden reference definitions after empty
+structural insertion`, and `preserves reference definitions when a visible
+structural marker is removed`. These cases consume one parser-owned separator
+and preserve additional separator or tail bytes; they do not widen the
+ordinary input path or its existing performance budget.
+The browser cases add `clears a nonwindowed Mermaid and math document with
+${deletionKey} and preserves immediate visual input` for Backspace and Delete,
+`preserves first input after incremental ${fixture.label} Backspace clear` for
+the `plain`, `trailing-space`, `trailing-newlines`, `two-paragraphs`, `heading`,
+`list`, `blockquote`, and `code` fixtures, `preserves ${fixture.label} wrapper
+before structural Backspace input` for `list-fast`, `list-paused`, `quote-fast`,
+and `quote-paused`, plus `clears a trailing-tail document through the full root
+range before immediate input`.
+The named cases define the regression contract and do not replace the exact
+runtime evidence required by the browser gate.
+The change does not alter performance budgets. Keep the existing limits and
+the current test names `enforces the non-windowed edit-phase Long Task budget`,
+`@performance keeps near-threshold non-windowed immersive code editing
+responsive`, `@performance keeps a synthetic large Markdown paste and
+windowed visual editing responsive`, and `@performance renders a dense
+2300-block Preview with 150 code fences before enabling visual edits`.
 The dedicated `@performance` case uses 159 fenced `pre` blocks and about 93 KB
 of synthetic Markdown. It checks that Preview stays non-windowed, all 20 rapid
 inputs appear in the code DOM, canonical Markdown converges within 150 ms of
@@ -665,6 +794,10 @@ scrolling. It then locks the paper again without converting a local editing
 failure into a formal Preview failure. Private maintainer documents may be used
 only for local timing and digest-equivalence probes; their path, title, content,
 or screenshots must not enter tracked tests or public evidence.
+The destructive-edit browser cases are parameterized for first input `~`, `*`,
+`_`, and `\`. Each case must locate the nested-quote source point through an
+independent Markdown AST lookup, then verify the escaped source/caret result,
+Undo/Redo, protected node identity, and no formal Preview rematerialization.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

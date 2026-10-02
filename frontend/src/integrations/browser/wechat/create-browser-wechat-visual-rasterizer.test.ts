@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { Blob as NodeBlob } from 'node:buffer';
+import { webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -50,6 +52,7 @@ const JETBRAINS_REGULAR_FONT = bundledFontFixture('jetbrains-mono/jetbrains-mono
 let styleSheetsDescriptor: PropertyDescriptor | undefined;
 let fontsDescriptor: PropertyDescriptor | undefined;
 let fontFaceDescriptor: PropertyDescriptor | undefined;
+let cryptoDescriptor: PropertyDescriptor | undefined;
 
 class FontFaceStub {
   load = vi.fn(async () => this);
@@ -112,7 +115,7 @@ function stubCanvas(): void {
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
     .mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
   vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-    callback(new Blob(['png'], { type: 'image/png' }));
+    callback(new NodeBlob(['png'], { type: 'image/png' }) as unknown as Blob);
   });
 }
 
@@ -200,9 +203,18 @@ afterEach(() => {
     const target = window as Window & { FontFace?: unknown };
     delete target.FontFace;
   }
+  if (cryptoDescriptor) {
+    Object.defineProperty(window, 'crypto', cryptoDescriptor);
+    cryptoDescriptor = undefined;
+  }
 });
 
 beforeEach(() => {
+  cryptoDescriptor = Object.getOwnPropertyDescriptor(window, 'crypto');
+  Object.defineProperty(window, 'crypto', {
+    configurable: true,
+    value: webcrypto,
+  });
   fontFaceDescriptor = Object.getOwnPropertyDescriptor(window, 'FontFace');
   Object.defineProperty(window, 'FontFace', {
     configurable: true,
@@ -218,7 +230,7 @@ describe('createBrowserWechatVisualRasterizer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-      callback(new Blob(['png'], { type: 'image/png' }));
+      callback(new NodeBlob(['png'], { type: 'image/png' }) as unknown as Blob);
     });
     const source = document.createElement('div');
     source.innerHTML = '<svg width="20" height="10"><path d="M0 0"></path></svg>';
@@ -270,7 +282,7 @@ describe('createBrowserWechatVisualRasterizer', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-      callback(new Blob(['png'], { type: 'image/png' }));
+      callback(new NodeBlob(['png'], { type: 'image/png' }) as unknown as Blob);
     });
     const source = document.createElement('div');
     source.innerHTML = '<span class="katex"><span class="katex-html">x + y</span></span>';
@@ -1474,7 +1486,7 @@ describe('createBrowserWechatVisualRasterizer', () => {
       .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
     let bytes = 'first-png';
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
-      callback(new Blob([bytes], { type: 'image/png' }));
+      callback(new NodeBlob([bytes], { type: 'image/png' }) as unknown as Blob);
     });
     const source = document.createElement('div');
     source.innerHTML = '<svg width="20" height="10"></svg>';
@@ -1832,7 +1844,7 @@ describe('createBrowserWechatVisualRasterizer', () => {
     });
     Object.defineProperty(dom.window.HTMLCanvasElement.prototype, 'toBlob', {
       configurable: true,
-      value: (callback: BlobCallback) => callback(new Blob(['png'], { type: 'image/png' })),
+      value: (callback: BlobCallback) => callback(new NodeBlob(['png'], { type: 'image/png' }) as unknown as Blob),
     });
     const source = serverDocument.createElement('div');
     source.setAttribute('style', 'font-family:KaTeX_Main');

@@ -533,8 +533,17 @@ originating click task before yielding or reading computed styles and geometry.
 After that write starts, a pending entry's `sourceMarkup` is compared with the
 current full key before it is awaited; an obsolete entry is ignored locally and
 the existing fresh-preparation path runs without cache deletion or catch-all
-retry. Same-source pending work remains awaitable, with rejection and the
-current/stale guards reported explicitly.
+retry. For portable modern Copy, the non-windowed source-freshness guard is
+captured after the native `write()` starts and before the first browser-task
+yield, while a windowed baseline waits for `resolvePreview` to complete
+legitimate materialization. An older same-source background promise may refresh
+only on its internal `wechat-copy-stale` rejection while the session, signal,
+and source captured for this Copy remain current; other failures propagate when
+no completed fallback is recovered. The stale path performs one fresh
+preparation, preserves completed same-source fallback reuse, does not retry a
+nonstale failure, and never starts a second native write. All terminal
+paths clean up freshness state; this transaction-local guard adds no global
+activation layout lock and changes no limits.
 The later freshness walk includes the complete sink markup, root attributes
 except the three refresh bookkeeping attributes, viewport, computed export and
 pseudo-element styles, and element dimensions; scroll-coordinate-only changes

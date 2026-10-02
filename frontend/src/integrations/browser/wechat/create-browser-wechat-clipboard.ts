@@ -3277,6 +3277,11 @@ type WechatClipboardCopyGuard = Readonly<{
   signal?: AbortSignal | undefined;
 }>;
 
+type ClipboardSourceFreshnessState = Readonly<{
+  current: () => ClipboardSourceFreshnessGuard | null;
+  ready: Promise<void>;
+}>;
+
 function assertCopyGuardCurrent(guard: WechatClipboardCopyGuard): void {
   if (guard.signal?.aborted || (guard.isCurrent && !guard.isCurrent())) {
     throw new Error('wechat-copy-cancelled');
@@ -3291,22 +3296,40 @@ function assertCopyPreviewCurrent(
   if (!previewReady(preview)) throw new Error('wechat-preview-unavailable');
 }
 
+function assertPortableCopyCurrent(
+  preview: HTMLElement,
+  guard: WechatClipboardCopyGuard,
+  sourceFreshness: ClipboardSourceFreshnessState
+): void {
+  assertCopyPreviewCurrent(preview, guard);
+  const sourceGuard = sourceFreshness.current();
+  if (!sourceGuard?.isCurrent()) {
+    throw new Error('wechat-copy-stale');
+  }
+}
+
+function isWechatCopyStaleError(error: unknown): boolean {
+  return error instanceof Error && 'wechat-copy-stale' === error.message;
+}
+
 async function preparedClipboardPayloadAfterWrite(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
   nextSequence: () => number,
-  guard: WechatClipboardCopyGuard = {}
+  guard: WechatClipboardCopyGuard = {},
+  sourceFreshness: ClipboardSourceFreshnessState
 ): Promise<PreparedClipboardPayload> {
   // Keep the click task free of computed-style and geometry work. The first
   // await is intentional: modern Clipboard write() must receive its deferred
   // payload before the freshness walk starts.
-  assertCopyPreviewCurrent(preview, guard);
+  await sourceFreshness.ready;
+  assertPortableCopyCurrent(preview, guard, sourceFreshness);
   const yieldToBrowser = createSerializationYield(runtime, true);
   if (!yieldToBrowser) throw new Error('wechat-copy-yield-unavailable');
   await waitForBrowserTask(runtime);
-  assertCopyPreviewCurrent(preview, guard);
+  assertPortableCopyCurrent(preview, guard, sourceFreshness);
 
   let existing = preparedPayloads.get(preview);
   if (existing && !existing.payload) {
@@ -3317,23 +3340,29 @@ async function preparedClipboardPayloadAfterWrite(
         await existing.promise;
       } catch (error: unknown) {
         const recovered = preparedPayloads.get(preview);
-        if (!recovered?.payload) throw error;
-        existing = recovered;
+        if (recovered?.payload) {
+          existing = recovered;
+        } else if (isWechatCopyStaleError(error)) {
+          assertPortableCopyCurrent(preview, guard, sourceFreshness);
+          existing = undefined;
+        } else {
+          throw error;
+        }
       }
-      assertCopyPreviewCurrent(preview, guard);
+      assertPortableCopyCurrent(preview, guard, sourceFreshness);
       existing = preparedPayloads.get(preview);
     }
   }
 
   if (existing?.payload) {
-    assertCopyPreviewCurrent(preview, guard);
+    assertPortableCopyCurrent(preview, guard, sourceFreshness);
     const sourceMarkup = clipboardSourceMarkup(preview);
     const layoutSignature = await preparedLayoutSignatureWithYield(
       preview,
       runtime,
       yieldToBrowser
     );
-    assertCopyPreviewCurrent(preview, guard);
+    assertPortableCopyCurrent(preview, guard, sourceFreshness);
     const liveSourceMarkup = clipboardSourceMarkup(preview);
     const current = preparedPayloads.get(preview);
     if (
@@ -3349,9 +3378,9 @@ async function preparedClipboardPayloadAfterWrite(
   // A replacement is created only after write() has been invoked. Background
   // mode supplies the yielding serializer and preserves the latest stable
   // same-source payload as its failure fallback.
-  assertCopyPreviewCurrent(preview, guard);
+  assertPortableCopyCurrent(preview, guard, sourceFreshness);
   await yieldToBrowser();
-  assertCopyPreviewCurrent(preview, guard);
+  assertPortableCopyCurrent(preview, guard, sourceFreshness);
   return preparedClipboardPayload(
     preview,
     runtime,
@@ -3637,6 +3666,41 @@ export function createBrowserWechatClipboard(
         let startConversion: () => void = () => undefined;
         let payloadPreview = preview;
         let disposeConversionFreshness = (): void => undefined;
+        const portableSourceFreshness: { current: ClipboardSourceFreshnessGuard | null } = {
+          current: null
+        };
+        let portableFreshnessClosed = false;
+        let resolvePortableFreshness: () => void = () => undefined;
+        let rejectPortableFreshness: (error: unknown) => void = () => undefined;
+        const portableFreshnessReady = new Promise<void>((resolve, reject) => {
+          resolvePortableFreshness = resolve;
+          rejectPortableFreshness = reject;
+        });
+        void portableFreshnessReady.catch(() => undefined);
+        if (pngConversionEnabled) resolvePortableFreshness();
+        const portableFreshness: ClipboardSourceFreshnessState = {
+          current: () => portableFreshnessClosed ? null : portableSourceFreshness.current,
+          ready: portableFreshnessReady
+        };
+        const disposePortableFreshness = (): void => {
+          if (portableFreshnessClosed) return;
+          portableFreshnessClosed = true;
+          portableSourceFreshness.current?.dispose();
+          rejectPortableFreshness(new Error('wechat-copy-cancelled'));
+        };
+        const initializePortableFreshness = (resolvedPreview: HTMLElement): void => {
+          if (portableFreshnessClosed) {
+            rejectPortableFreshness(new Error('wechat-copy-cancelled'));
+            return;
+          }
+          try {
+            payloadPreview = resolvedPreview;
+            portableSourceFreshness.current = createClipboardSourceFreshnessGuard(resolvedPreview);
+            resolvePortableFreshness();
+          } catch (error: unknown) {
+            rejectPortableFreshness(error);
+          }
+        };
         const payload = pngConversionEnabled
           ? new Promise<SerializedClipboardPayload>((resolve, reject) => {
             startConversion = () => {
@@ -3687,7 +3751,8 @@ export function createBrowserWechatClipboard(
                   backgroundAssetCache,
                   preparedPayloads,
                   nextPreparationSequence,
-                  copyGuard
+                  copyGuard,
+                  portableFreshness
                 ).then((prepared) => prepared.promise);
               })
             : preparedClipboardPayloadAfterWrite(
@@ -3696,7 +3761,8 @@ export function createBrowserWechatClipboard(
               backgroundAssetCache,
               preparedPayloads,
               nextPreparationSequence,
-              copyGuard
+              copyGuard,
+              portableFreshness
         ).then((prepared) => prepared.promise);
         let rejectDeferredPayload: ((error: unknown) => void) | null = null;
         const deferredPayloadFailure = new Promise<never>((_resolve, reject) => {
@@ -3715,9 +3781,16 @@ export function createBrowserWechatClipboard(
             options.signal.addEventListener('abort', abortDeferredPayload, { once: true });
           }
         }
+        const assertDeferredBlobCurrent = (): void => {
+          if (pngConversionEnabled) {
+            assertCopyPreviewCurrent(payloadPreview, copyGuard);
+            return;
+          }
+          assertPortableCopyCurrent(payloadPreview, copyGuard, portableFreshness);
+        };
         const gateBlob = (source: Promise<Blob>): Promise<Blob> => Promise.race([
           source.then((blob) => {
-            assertCopyPreviewCurrent(payloadPreview, copyGuard);
+            assertDeferredBlobCurrent();
             return blob;
           }),
           deferredPayloadFailure
@@ -3790,6 +3863,7 @@ export function createBrowserWechatClipboard(
           writePromise = Promise.resolve(runtime.write([item]));
         } catch {
           conversionController?.abort();
+          disposePortableFreshness();
           disposeConversionFreshness();
           detachConversionAbort();
           detachCopyAbort();
@@ -3805,7 +3879,16 @@ export function createBrowserWechatClipboard(
           }
           return fallbackAfterSynchronousModernFailure();
         }
-        if (pngConversionEnabled) startConversion?.();
+        if (pngConversionEnabled) {
+          startConversion?.();
+        } else if (requiresPreviewResolution) {
+          void readyPreview.then(
+            initializePortableFreshness,
+            (error: unknown) => rejectPortableFreshness(error)
+          );
+        } else {
+          initializePortableFreshness(preview);
+        }
         try {
           const writeResult = writePromise.then(
             () => ({ error: null }),
@@ -3850,6 +3933,14 @@ export function createBrowserWechatClipboard(
               writeFailure
             ]);
           }
+          if (!pngConversionEnabled) {
+            const sourceGuard = portableFreshness.current();
+            assertCopyPreviewCurrent(payloadPreview, copyGuard);
+            if (!sourceGuard?.finalize()) {
+              throw new Error('wechat-copy-stale');
+            }
+            assertCopyPreviewCurrent(payloadPreview, copyGuard);
+          }
           return { method: 'clipboard', status: 'copied' };
         } catch (error: unknown) {
           // A rejected modern write resumes after an await and cannot safely
@@ -3883,6 +3974,7 @@ export function createBrowserWechatClipboard(
           }
           return { code: 'wechat-copy-failed', status: 'failed' };
         } finally {
+          disposePortableFreshness();
           disposeConversionFreshness();
           detachConversionAbort();
           detachCopyAbort();

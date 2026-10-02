@@ -259,6 +259,17 @@ reusable; an observed real source change remains permanently stale. They also ve
 root-only refresh-bookkeeping exclusions, descendant mutations, complete final
 source/layout comparisons, unchanged Preview-owner/layout guards, and observer
 disconnect on abort, timeout, teardown, and late `finally` cleanup.
+The portable freshness regression matrix should also verify that non-windowed
+source freshness is initialized after native `write()` and before its first
+browser-task yield, while a windowed baseline waits for legitimate
+`resolvePreview` materialization. It must cover an older same-source background
+promise refreshing only its internal `wechat-copy-stale` rejection while
+the session, signal, and source captured for the Copy remain current; propagation
+of nonstale failures when no completed fallback is recovered; one fresh
+preparation without retry or a second native write;
+completed same-source fallback reuse; and cleanup on success, stale, abort,
+timeout, teardown, and synchronous write failure. The matrix must not introduce
+a global activation layout lock or alter existing limits.
 Focused tests do not replace the native CSS allocation matrix, which is the
 evidence boundary for fractional and superscript source-to-PNG geometry.
 Residual 1/64 CSS-pixel precision and DPR1 text anti-aliasing differences are

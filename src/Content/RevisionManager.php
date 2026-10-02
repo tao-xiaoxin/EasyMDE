@@ -63,7 +63,7 @@ final class RevisionManager {
 
 		foreach ( $this->post_document->revision_meta_keys() as $key ) {
 			if ( metadata_exists( 'post', $parent_id, $key ) ) {
-				update_metadata( 'post', $revision_id, $key, get_post_meta( $parent_id, $key, true ) );
+				update_metadata( 'post', $revision_id, $key, $this->metadata_value_for_write( $key, get_post_meta( $parent_id, $key, true ) ) );
 			} else {
 				delete_metadata( 'post', $revision_id, $key );
 			}
@@ -148,7 +148,7 @@ final class RevisionManager {
 		try {
 			foreach ( $this->post_document->revision_meta_keys() as $key ) {
 				if ( metadata_exists( 'post', $revision_id, $key ) ) {
-					update_post_meta( $post_id, $key, get_post_meta( $revision_id, $key, true ) );
+					update_post_meta( $post_id, $key, $this->metadata_value_for_write( $key, get_post_meta( $revision_id, $key, true ) ) );
 				} else {
 					delete_post_meta( $post_id, $key );
 				}
@@ -216,11 +216,15 @@ final class RevisionManager {
 	private function restore_meta_snapshot( $post_id, array $snapshot ) {
 		foreach ( $snapshot as $key => $item ) {
 			if ( ! empty( $item['exists'] ) ) {
-				update_post_meta( $post_id, $key, $item['value'] );
+				update_post_meta( $post_id, $key, $this->metadata_value_for_write( $key, $item['value'] ) );
 			} else {
 				delete_post_meta( $post_id, $key );
 			}
 		}
+	}
+
+	private function metadata_value_for_write( $key, $value ) {
+		return PostDocument::META_MARKDOWN === $key ? wp_slash( $value ) : $value;
 	}
 
 	private function revision_meta_changed_since( $post_id, array $snapshot ) {

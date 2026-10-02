@@ -1,6 +1,7 @@
 <?php
 
 use EasyMDE\Content\PostDocument;
+use EasyMDE\Content\MarkdownRenderer;
 use EasyMDE\Content\RevisionManager;
 use EasyMDE\Theme\ArticleThemeRegistry;
 use EasyMDE\Theme\CodeThemeRegistry;
@@ -65,6 +66,55 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertStringNotContainsString('Current', get_post($post_id)->post_content);
         $this->assertSame(
             (new PostDocument())->render_signature('# Restored', 'custom', get_post($post_id)->post_content),
+            get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
+        );
+    }
+
+    public function test_revision_copy_and_restore_preserve_literal_markdown_backslashes()
+    {
+        $post_id = self::factory()->post->create(
+            array(
+                'post_type' => 'post',
+                'post_content' => '<p>Current</p>',
+            )
+        );
+        $copied_markdown = <<<'MARKDOWN'
+# Copied Backslashes
+
+Formula: $\pi$ and escaped punctuation: \*literal\*.
+
+Repeated slashes: C:\Temp\file and \\server\share.
+MARKDOWN;
+        update_post_meta($post_id, PostDocument::META_ENABLED, '1');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, wp_slash($copied_markdown));
+
+        $revision_id = wp_insert_post(
+            array(
+                'post_parent' => $post_id,
+                'post_type' => 'revision',
+                'post_status' => 'inherit',
+                'post_title' => 'Backslash revision',
+                'post_content' => '<p>Copied</p>',
+            )
+        );
+
+        $manager = new RevisionManager(new PostDocument(), $this->theme_state_repository());
+        $manager->save_revision_meta($revision_id, $post_id);
+        $this->assertSame($copied_markdown, get_post_meta($revision_id, PostDocument::META_MARKDOWN, true));
+
+        $restored_markdown = <<<'MARKDOWN'
+# Restored Backslashes
+
+JSON: {"path":"C:\\Temp\\file","quote":"\"value\""}
+MARKDOWN;
+        update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, wp_slash($restored_markdown));
+        $manager->restore_revision_meta($post_id, $revision_id);
+
+        $this->assertSame($restored_markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        $expected_html = MarkdownRenderer::render($restored_markdown, 'default');
+        $this->assertSame($expected_html, get_post($post_id)->post_content);
+        $this->assertSame(
+            (new PostDocument())->render_signature($restored_markdown, 'default', $expected_html),
             get_post_meta($post_id, PostDocument::META_RENDER_SIGNATURE, true)
         );
     }
@@ -239,8 +289,13 @@ final class RevisionManagerTest extends WP_UnitTestCase
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN, '# Restored');
         update_metadata('post', $revision_id, PostDocument::META_MARKDOWN_THEME, 'orange-heart');
 
+        $current_markdown = <<<'MARKDOWN'
+# Current Markdown
+
+Formula: $\pi$ and C:\Temp\file.
+MARKDOWN;
         update_post_meta($post_id, PostDocument::META_ENABLED, '1');
-        update_post_meta($post_id, PostDocument::META_MARKDOWN, '# Current Markdown');
+        update_post_meta($post_id, PostDocument::META_MARKDOWN, wp_slash($current_markdown));
         update_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, 'default');
 
         $cleaned_post_cache = false;
@@ -279,7 +334,7 @@ final class RevisionManagerTest extends WP_UnitTestCase
         $this->assertSame($revision_id, $restore_failure[1]);
         $this->assertInstanceOf(\RuntimeException::class, $restore_failure[2]);
         $this->assertSame('1', get_post_meta($post_id, PostDocument::META_ENABLED, true));
-        $this->assertSame('# Current Markdown', get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
+        $this->assertSame($current_markdown, get_post_meta($post_id, PostDocument::META_MARKDOWN, true));
         $this->assertSame('default', get_post_meta($post_id, PostDocument::META_MARKDOWN_THEME, true));
         $this->assertSame('<p>Current HTML</p>', get_post($post_id)->post_content);
     }

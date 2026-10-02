@@ -341,7 +341,7 @@ function RootExportCommands({
             data-easymde-command={command.id}
             aria-label={command.label}
             aria-busy={isWechatCopy && wechatCopyPending ? 'true' : undefined}
-            disabled={isWechatCopy && wechatCopyPending}
+            aria-disabled={isWechatCopy && wechatCopyPending ? 'true' : undefined}
             title={title}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => executeCommand(command.id)}

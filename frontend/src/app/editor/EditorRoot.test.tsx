@@ -1,5 +1,6 @@
 import { createElement } from '@wordpress/element';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7255,7 +7256,8 @@ describe('EditorRoot', () => {
     });
 
     fireEvent.click(ordinaryCopy);
-    expect(ordinaryCopy.hasAttribute('disabled')).toBe(true);
+    expect(ordinaryCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(ordinaryCopy.hasAttribute('disabled')).toBe(false);
     expect(ordinaryCopy.getAttribute('aria-busy')).toBe('true');
     expect(
       ordinaryCopy.querySelector('.easymde-wechat-pending-glyph svg')
@@ -7266,7 +7268,8 @@ describe('EditorRoot', () => {
 
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     const immersiveCopy = view.getByRole('button', { name: '复制到公众号' });
-    expect(immersiveCopy.hasAttribute('disabled')).toBe(true);
+    expect(immersiveCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(immersiveCopy.hasAttribute('disabled')).toBe(false);
     expect(immersiveCopy.getAttribute('aria-busy')).toBe('true');
     expect(
       immersiveCopy.querySelector('.easymde-wechat-pending-glyph svg')
@@ -7277,11 +7280,79 @@ describe('EditorRoot', () => {
     });
     await waitFor(() => {
       const completed = view.getByRole('button', { name: '复制到公众号' });
+      expect(completed.hasAttribute('aria-disabled')).toBe(false);
       expect(completed.hasAttribute('disabled')).toBe(false);
       expect(completed.hasAttribute('aria-busy')).toBe(false);
       expect(completed.querySelector('.easymde-immersive-wechat-glyph')).not.toBeNull();
     });
     expect(view.getByRole('status').textContent).toContain('Copied');
+  });
+
+  it('keeps keyboard focus through pending ordinary and immersive copy', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const ordinaryPending = deferred<ClipboardResult>();
+    const immersivePending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy)
+      .mockReturnValueOnce(ordinaryPending.promise)
+      .mockReturnValueOnce(immersivePending.promise);
+    const user = userEvent.setup();
+    const view = render(<EditorRoot {...props} />);
+    const ordinaryCopy = await view.findByRole('button', {
+      name: 'Copy to WeChat'
+    });
+    const sourceBeforeCopy = props.submissionField.value;
+
+    ordinaryCopy.focus();
+    await user.keyboard('{Enter}');
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(ordinaryCopy);
+    expect(ordinaryCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(ordinaryCopy.hasAttribute('disabled')).toBe(false);
+    expect(ordinaryCopy.getAttribute('aria-busy')).toBe('true');
+
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    await user.click(ordinaryCopy);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(ordinaryCopy);
+
+    await act(async () => {
+      ordinaryPending.resolve({ method: 'clipboard', status: 'copied' });
+    });
+    await waitFor(() => {
+      expect(ordinaryCopy.hasAttribute('aria-disabled')).toBe(false);
+      expect(ordinaryCopy.hasAttribute('aria-busy')).toBe(false);
+    });
+    expect(document.activeElement).toBe(ordinaryCopy);
+    expect(props.submissionField.value).toBe(sourceBeforeCopy);
+
+    await user.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    const immersiveCopy = view.getByRole('button', { name: '复制到公众号' });
+    immersiveCopy.focus();
+    await user.keyboard(' ');
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(immersiveCopy);
+    expect(immersiveCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(immersiveCopy.hasAttribute('disabled')).toBe(false);
+    expect(immersiveCopy.getAttribute('aria-busy')).toBe('true');
+
+    await user.keyboard('{Enter}');
+    await user.click(immersiveCopy);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(immersiveCopy);
+
+    await act(async () => {
+      immersivePending.resolve({ code: 'wechat-copy-failed', status: 'failed' });
+    });
+    await waitFor(() => {
+      expect(immersiveCopy.hasAttribute('aria-disabled')).toBe(false);
+      expect(immersiveCopy.hasAttribute('aria-busy')).toBe(false);
+    });
+    expect(document.activeElement).toBe(immersiveCopy);
+    expect(props.submissionField.value).toBe(sourceBeforeCopy);
   });
 
   it('clears shared pending feedback after a cancellation failure', async () => {
@@ -7305,6 +7376,7 @@ describe('EditorRoot', () => {
 
     await waitFor(() => {
       const completed = view.getByRole('button', { name: 'Copy to WeChat' });
+      expect(completed.hasAttribute('aria-disabled')).toBe(false);
       expect(completed.hasAttribute('disabled')).toBe(false);
       expect(completed.hasAttribute('aria-busy')).toBe(false);
       expect(view.getByRole('alert').textContent).toBe('Copy failed');
@@ -7335,6 +7407,7 @@ describe('EditorRoot', () => {
       const replacementCopy = view.getByRole('button', {
         name: 'Copy to WeChat'
       });
+      expect(replacementCopy.hasAttribute('aria-disabled')).toBe(false);
       expect(replacementCopy.hasAttribute('disabled')).toBe(false);
       expect(replacementCopy.hasAttribute('aria-busy')).toBe(false);
     });

@@ -38,6 +38,12 @@ teardown. There is at most one active copy operation per session. Disposal or
 session replacement signals cancellation to the adapter and invalidates its
 sequence, so a late result cannot publish status or success for the replaced
 session.
+While Copy is pending, both ordinary and immersive controls remain focusable
+and expose `aria-busy="true"` and `aria-disabled="true"` instead of native
+`disabled`. The shared pending reference rejects duplicate click and keyboard
+activation. The `RefreshCcw` pending glyph retains the control's geometry and
+respects reduced-motion preferences; only an unavailable capability uses native
+`disabled`.
 
 ## Activation and preparation
 

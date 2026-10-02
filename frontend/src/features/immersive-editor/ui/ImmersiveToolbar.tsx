@@ -116,7 +116,7 @@ export function ImmersiveToolbar({
           onClick={onCopyWechat}
           className={`easymde-immersive-wechat${wechatCopyPending ? ' is-pending' : ''}`}
           aria-busy={wechatCopyPending ? 'true' : undefined}
-          disabled={wechatCopyPending}
+          aria-disabled={wechatCopyPending ? 'true' : undefined}
         >
           {wechatCopyPending ? <WeChatPendingGlyph /> : <WeChatGlyph />}
           <span>{wechatCopied ? strings.wechatCopied : strings.wechat}</span>

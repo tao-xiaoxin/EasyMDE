@@ -226,12 +226,14 @@ async function installClipboardInstrumentation(page) {
       const write = trace.writes[trace.startedWriteCount];
       if (!click || !write) throw new Error('wechat-copy-timing-sample-missing');
       return {
+        clickCount: trace.clicks.length,
         clickToPendingFrameMs: trace.pendingFrameAt === null
           ? null
           : trace.pendingFrameAt - click.at,
         clickToWriteMs: write.at - click.at,
         writeActivation: write.activation,
         writeCount: trace.writes.length - trace.startedWriteCount,
+        writeIndex: trace.startedWriteCount,
         writeNativeState: write.nativeState
       };
     };
@@ -957,7 +959,8 @@ test.describe('WeChat copy browser regressions', () => {
     expect(pendingMetrics.clickToWriteMs).toBeLessThanOrEqual(50);
     expect(pendingMetrics.clickToPendingFrameMs).toBeLessThanOrEqual(100);
     await expect(copyButton).toHaveAttribute('aria-busy', 'true');
-    await expect(copyButton).toBeDisabled();
+    await expect(copyButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(copyButton).toHaveJSProperty('disabled', false);
     await expect(copyButton).toHaveClass(/\bis-pending\b/u);
     expectRectStable(initialRect, await readRect(copyButton), 'pending copy button');
 
@@ -981,15 +984,49 @@ test.describe('WeChat copy browser regressions', () => {
     )).toEqual([]);
     await dismissEditorStatus(page);
 
+    await beginCopy(page, 'deferred');
+    await focusPageForCopy(page);
+    await copyButton.focus();
+    await expect(copyButton).toBeFocused();
+    await copyButton.press('Enter');
+    await copyButton.press('Enter');
+    await waitForPendingMeasurement(page);
+    const keyboardSuccessMetrics = await copyTrace(page);
+    expect(keyboardSuccessMetrics.clickCount).toBe(2);
+    expect(keyboardSuccessMetrics.writeCount).toBe(1);
+    expect(keyboardSuccessMetrics.writeActivation).toBe(true);
+    expect(keyboardSuccessMetrics.clickToWriteMs).toBeLessThanOrEqual(50);
+    expect(keyboardSuccessMetrics.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+    await expect(copyButton).toBeFocused();
+    await expect(copyButton).toHaveAttribute('aria-busy', 'true');
+    await expect(copyButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(copyButton).toHaveJSProperty('disabled', false);
+    await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
+    await waitForWechatStatusEvent(page, 'wechat-success');
+    await expect.poll(() => page.evaluate((writeIndex) => (
+      globalThis.__easymdeWechatCopyTrace.writes[writeIndex]?.nativeState
+    ), keyboardSuccessMetrics.writeIndex)).toBe('fulfilled');
+    await expect(copyButton).toBeFocused();
+    await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
+    await expect(copyButton).not.toBeDisabled();
+    expectRectStable(initialRect, await readRect(copyButton), 'keyboard successful copy button');
+    await dismissEditorStatus(page);
+
     await beginCopy(page, 'reject');
-    await copyButton.click();
+    await focusPageForCopy(page);
+    await copyButton.focus();
+    await expect(copyButton).toBeFocused();
+    await copyButton.press('Enter');
     await waitForWechatStatusEvent(page, 'wechat-failed');
     const failureMetrics = await copyTrace(page);
-    await movePointerNeutral(page);
+    expect(failureMetrics.clickCount).toBe(1);
     expect(failureMetrics.writeCount).toBe(1);
     expect(failureMetrics.writeActivation).toBe(true);
     expect(failureMetrics.writeNativeState).toBe('rejected');
+    await expect(copyButton).toBeFocused();
     await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
+    await expect(copyButton).not.toBeDisabled();
+    await movePointerNeutral(page);
     expectRectStable(initialRect, await readRect(copyButton), 'failed copy button');
     const failureZeroWrite = await readZeroWriteProbe(page);
     expect(failureZeroWrite).toMatchObject({
@@ -1122,16 +1159,22 @@ test.describe('WeChat copy browser regressions', () => {
     const immersiveRequestStart = postRequests.length;
     await focusPageForCopy(page);
     await beginCopy(page, 'deferred');
-    await immersiveButton.click();
+    await immersiveButton.focus();
+    await expect(immersiveButton).toBeFocused();
+    await immersiveButton.press('Enter');
+    await immersiveButton.press('Enter');
     await waitForPendingMeasurement(page);
     const immersivePendingMetrics = await copyTrace(page);
     await movePointerNeutral(page);
+    expect(immersivePendingMetrics.clickCount).toBe(2);
     expect(immersivePendingMetrics.writeCount).toBe(1);
     expect(immersivePendingMetrics.writeActivation).toBe(true);
     expect(immersivePendingMetrics.clickToWriteMs).toBeLessThanOrEqual(50);
     expect(immersivePendingMetrics.clickToPendingFrameMs).toBeLessThanOrEqual(100);
+    await expect(immersiveButton).toBeFocused();
     await expect(immersiveButton).toHaveAttribute('aria-busy', 'true');
-    await expect(immersiveButton).toBeDisabled();
+    await expect(immersiveButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(immersiveButton).toHaveJSProperty('disabled', false);
     await expect(immersiveButton).toHaveClass(/\bis-pending\b/u);
     expectRectStable(immersiveRect, await readRect(immersiveButton), 'pending immersive copy button');
     await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
@@ -1143,6 +1186,8 @@ test.describe('WeChat copy browser regressions', () => {
       () => globalThis.__easymdeWechatCopyTrace.writes[2]?.nativeState
     )).toBe('fulfilled');
     await waitForWechatStatusEvent(page, 'wechat-success');
+    await expect(immersiveButton).toBeFocused();
+    await expect(immersiveButton).not.toBeDisabled();
     await movePointerNeutral(page);
     expectRectStable(immersiveRect, await readRect(immersiveButton), 'warm immersive copy button');
     expect(await page.locator('#easymde-source').inputValue()).toBe(sourceBeforeImmersiveCopy);

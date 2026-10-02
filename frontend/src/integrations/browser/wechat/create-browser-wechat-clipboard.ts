@@ -399,21 +399,15 @@ function createSerializationYield(
   return () => {
     if (firstYield) {
       firstYield = false;
-      lastYieldAt = Date.now();
-      return waitForBrowserTask(runtime);
+      return waitForBrowserTask(runtime).then(() => {
+        lastYieldAt = Date.now();
+      });
     }
     if (Date.now() - lastYieldAt < BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS) {
       return Promise.resolve();
     }
-    lastYieldAt = Date.now();
-
-    const browserWindow = runtime.document.defaultView;
-    return new Promise<void>((resolve) => {
-      if (browserWindow) {
-        browserWindow.setTimeout(resolve, 0);
-      } else {
-        setTimeout(resolve, 0);
-      }
+    return waitForBrowserTask(runtime).then(() => {
+      lastYieldAt = Date.now();
     });
   };
 }

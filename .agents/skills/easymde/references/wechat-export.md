@@ -101,6 +101,11 @@ pseudo-element styles, and geometry participate in freshness. Only `aria-busy`,
 `data-easymde-preview-accepted`, and `data-easymde-preview-refreshing` on
 the sink root are refresh bookkeeping excluded from the source key; the same
 attributes on descendants and every other root attribute still invalidate it.
+For each pseudo-element, a non-emitted value (`pseudoContent(rawContent) ===
+null`, including `none`, `normal`, and unsupported values) contributes only its
+raw `content` sentinel to freshness and skips unused pseudo-style reads,
+serialization, and asset fetch. Quoted empty and text pseudos retain full styles
+and existing limits; ordinary-node, source, and geometry handling is unchanged.
 The PNG conversion path uses that same source key across asynchronous checks.
 Each transaction-local freshness guard installs its `MutationObserver` before
 the initial snapshot and drains `takeRecords()` at the initial, current, and

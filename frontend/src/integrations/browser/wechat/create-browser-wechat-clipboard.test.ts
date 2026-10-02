@@ -3375,6 +3375,151 @@ describe('createBrowserWechatClipboard', () => {
     expect(text).toContain('Article title');
   });
 
+  it.each([
+    ['none', 'none'],
+    ['normal', 'normal'],
+    ['unsupported', 'attr(data-label)']
+  ])('does not walk or fetch styles for a non-generating %s pseudo', async (_, content) => {
+    const writes: unknown[] = [];
+    const pseudoProperties: string[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const imageUrl = new URL('/assets/images/non-generating-pseudo.png', document.baseURI).href;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Pseudo content</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Pseudo content' });
+    const fetch = vi.fn();
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (pseudoElement) {
+          return {
+            getPropertyValue: (property: string) => {
+              pseudoProperties.push(property);
+              if ('content' === property) return content;
+              if ('background-image' === property) return `url("${imageUrl}")`;
+              return 'block';
+            }
+          } as unknown as CSSStyleDeclaration;
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(pseudoProperties.length).toBeGreaterThan(0);
+    expect(pseudoProperties.every((property) => 'content' === property)).toBe(true);
+    expect(writes).toHaveLength(1);
+  });
+
+  it('invalidates pseudo freshness for null-to-generated transitions and generated style changes', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    let content = 'none';
+    let color = 'red';
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1>Pseudo transition</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Pseudo transition' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            color,
+            content,
+            display: 'block'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+    const readHtml = async (index: number): Promise<string> => {
+      const item = (writes[index] as ClipboardItemStub[])[0];
+      const html = item?.payload['text/html'];
+      if (!html) throw new Error('clipboard html missing');
+      return blobText(html);
+    };
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(await readHtml(0)).not.toContain('aria-hidden="true"');
+
+    content = '""';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const emptyHtml = await readHtml(1);
+    expect(emptyHtml).toContain('aria-hidden="true"');
+    expect(emptyHtml).toContain('font-size:0');
+
+    content = '"Generated"';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const generatedHtml = await readHtml(2);
+    expect(generatedHtml).toContain('Generated');
+    expect(generatedHtml).toContain('color:red');
+
+    color = 'blue';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const restyledHtml = await readHtml(3);
+    expect(restyledHtml).toContain('color:blue');
+    expect(restyledHtml).not.toContain('color:red');
+
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (element, pseudoElement) => {
+          if ('H1' === element.tagName && '::before' === pseudoElement) {
+            return declaration({ color, content, display: 'block' });
+          }
+          return declaration({ display: 'block' });
+        },
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toBe(restyledHtml);
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
   it('inlines same-origin theme background images without fetching arbitrary URLs', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {
@@ -4744,7 +4889,7 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (element, pseudoElement) => (
+        getComputedStyle: (_element, pseudoElement) => (
           pseudoElement ? declaration({}) : declaration({ display: 'block' })
         ),
         getSelection: window.getSelection.bind(window),
@@ -4785,7 +4930,7 @@ describe('createBrowserWechatClipboard', () => {
         blob: Blob,
         clipboardItem: null,
         document,
-        getComputedStyle: (element, pseudoElement) => {
+        getComputedStyle: (_element, pseudoElement) => {
           if (!pseudoElement) clock += 9;
           return pseudoElement ? declaration({}) : declaration({ display: 'block' });
         },

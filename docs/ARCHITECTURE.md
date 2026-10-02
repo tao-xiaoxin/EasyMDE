@@ -539,7 +539,12 @@ finite pixel dimensions are projected to border-box by adding padding and
 borders, while intrinsic values and special SVG/Math/KaTeX/Mermaid geometry
 remain unchanged. The legacy `execCommand` path retains its synchronous
 activation requirement and consumes only a source- and layout-fresh prepared
-payload. Portable output retains safe computed inherited typography defaults on
+payload. A non-emitted pseudo-element (`pseudoContent(rawContent) === null`)
+contributes only its raw `content` sentinel to freshness and skips unused
+pseudo-style reads, serialization, and asset fetch; quoted empty and text
+pseudos retain full styles and existing limits. Ordinary-node, source, and
+geometry handling is unchanged. Portable output retains safe computed inherited
+typography defaults on
 each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
 `letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,
 `tab-size`, and `list-style-position`, while omitting layout defaults. For this

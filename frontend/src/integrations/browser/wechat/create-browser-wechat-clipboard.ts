@@ -1420,6 +1420,7 @@ async function addPseudoElement(
 ): Promise<void> {
   const computed = getComputedStyle(source, pseudo);
   const content = pseudoContent(computed.getPropertyValue('content'));
+  if (null === content) return;
   const declarations = await styleDeclarations(
     source,
     computed,
@@ -1429,7 +1430,7 @@ async function addPseudoElement(
     cache,
     yieldToBrowser
   );
-  if (null === content || (!content && !declarations.length)) return;
+  if (!content && !declarations.length) return;
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
   // WeChat drops completely empty decoration spans during paste. A zero-size
@@ -1466,6 +1467,7 @@ function addPseudoElementSynchronously(
 ): boolean {
   const computed = getComputedStyle(source, pseudo);
   const content = pseudoContent(computed.getPropertyValue('content'));
+  if (null === content) return true;
   const declarations = styleDeclarationsSynchronously(
     source,
     computed,
@@ -1474,7 +1476,7 @@ function addPseudoElementSynchronously(
     runtime
   );
   if (null === declarations) return false;
-  if (null === content || (!content && !declarations.length)) return true;
+  if (!content && !declarations.length) return true;
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
   marker.textContent = content || ' ';
@@ -3051,6 +3053,21 @@ function serializeClipboardPayloadSynchronously(
   };
 }
 
+function preparedPseudoStyleSignature(
+  element: Element,
+  pseudoElement: (typeof PREPARED_PSEUDO_ELEMENTS)[number],
+  runtime: BrowserWechatClipboardRuntime
+): string {
+  const computed = runtime.getComputedStyle(element, pseudoElement);
+  const rawContent = computed.getPropertyValue('content');
+  if (null === pseudoContent(rawContent)) {
+    return `${pseudoElement}:content=${rawContent}`;
+  }
+  return `${pseudoElement}:${PREPARED_STYLE_PROPERTIES
+    .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+    .join(';')}`;
+}
+
 function preparedLayoutSignature(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime
@@ -3068,12 +3085,9 @@ function preparedLayoutSignature(
       const styles = PREPARED_STYLE_PROPERTIES
         .map((property) => `${property}=${computed.getPropertyValue(property)}`)
         .join(';');
-      const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) => {
-        const pseudo = runtime.getComputedStyle(element, pseudoElement);
-        return `${pseudoElement}:${PREPARED_STYLE_PROPERTIES
-          .map((property) => `${property}=${pseudo.getPropertyValue(property)}`)
-          .join(';')}`;
-      }).join('|');
+      const pseudoStyles = PREPARED_PSEUDO_ELEMENTS
+        .map((pseudoElement) => preparedPseudoStyleSignature(element, pseudoElement, runtime))
+        .join('|');
       // `left`/`top`/`right`/`bottom` are viewport-relative and change when
       // the user scrolls, even though the exported markup and layout did not.
       // Only retain dimensions here; they can affect wrapping and image/text
@@ -3100,12 +3114,9 @@ async function preparedLayoutSignatureWithYield(
     const styles = PREPARED_STYLE_PROPERTIES
       .map((property) => `${property}=${computed.getPropertyValue(property)}`)
       .join(';');
-    const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) => {
-      const pseudo = runtime.getComputedStyle(element, pseudoElement);
-      return `${pseudoElement}:${PREPARED_STYLE_PROPERTIES
-        .map((property) => `${property}=${pseudo.getPropertyValue(property)}`)
-        .join(';')}`;
-    }).join('|');
+    const pseudoStyles = PREPARED_PSEUDO_ELEMENTS
+      .map((pseudoElement) => preparedPseudoStyleSignature(element, pseudoElement, runtime))
+      .join('|');
     entries.push(`${index}:${rect.width},${rect.height}:${styles}:${pseudoStyles}`);
     await yieldToBrowser();
   }

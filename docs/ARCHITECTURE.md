@@ -530,6 +530,11 @@ background, legacy, table, and ordinary-SVG serialization remains unchanged.
 For the portable path, a successful modern setup constructs deferred HTML and
 plain text Blob payloads and invokes the browser `write()` owner in the
 originating click task before yielding or reading computed styles and geometry.
+After that write starts, a pending entry's `sourceMarkup` is compared with the
+current full key before it is awaited; an obsolete entry is ignored locally and
+the existing fresh-preparation path runs without cache deletion or catch-all
+retry. Same-source pending work remains awaitable, with rejection and the
+current/stale guards reported explicitly.
 The later freshness walk includes the complete sink markup, root attributes
 except the three refresh bookkeeping attributes, viewport, computed export and
 pseudo-element styles, and element dimensions; scroll-coordinate-only changes

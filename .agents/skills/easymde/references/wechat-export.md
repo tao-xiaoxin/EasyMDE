@@ -79,6 +79,11 @@ prepared payload exists, one synchronous serialization attempt may use the
 same-click legacy fallback. A pending preparation or a modern write rejection
 after an await never crosses into legacy. A fast write followed by a deferred
 payload failure is still failure.
+After the modern write starts, a pending entry's `sourceMarkup` is compared
+with the current full key before awaiting it. A mismatch ignores that obsolete
+entry locally and uses the existing fresh-preparation path without cache
+deletion or catch-all retry; a same-source pending entry is awaited, and its
+rejection plus the current/stale guards remain explicit.
 
 For the ordinary modern path, the deferred HTML and plain-text Blob
 preparation has a 60-second bound. Once both Blobs and the serialized payload

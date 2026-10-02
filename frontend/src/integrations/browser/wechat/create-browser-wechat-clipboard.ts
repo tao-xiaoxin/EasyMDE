@@ -3310,15 +3310,19 @@ async function preparedClipboardPayloadAfterWrite(
 
   let existing = preparedPayloads.get(preview);
   if (existing && !existing.payload) {
-    try {
-      await existing.promise;
-    } catch (error: unknown) {
-      const recovered = preparedPayloads.get(preview);
-      if (!recovered?.payload) throw error;
-      existing = recovered;
+    if (existing.sourceMarkup !== clipboardSourceMarkup(preview)) {
+      existing = undefined;
+    } else {
+      try {
+        await existing.promise;
+      } catch (error: unknown) {
+        const recovered = preparedPayloads.get(preview);
+        if (!recovered?.payload) throw error;
+        existing = recovered;
+      }
+      assertCopyPreviewCurrent(preview, guard);
+      existing = preparedPayloads.get(preview);
     }
-    assertCopyPreviewCurrent(preview, guard);
-    existing = preparedPayloads.get(preview);
   }
 
   if (existing?.payload) {

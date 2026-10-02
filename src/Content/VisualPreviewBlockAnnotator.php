@@ -190,6 +190,7 @@ final class VisualPreviewBlockAnnotator {
 		$last_end_line             = 0;
 		$overlap_group_first_index = null;
 		$overlap_group_end_line    = 0;
+		$overlap_group_floor_line  = 0;
 		$overlap_group_has_overlap = false;
 		foreach ( $root_blocks as $index => $root_block ) {
 			$source_ids = self::source_ids( $root_block );
@@ -212,6 +213,7 @@ final class VisualPreviewBlockAnnotator {
 				$overlap_group_first_index = null;
 				$overlap_group_has_overlap = false;
 			} elseif ( null === $overlap_group_first_index || $raw_range['startLine'] >= $overlap_group_end_line ) {
+				$overlap_group_floor_line = $last_end_line;
 				if ( $overlap_group_has_overlap ) {
 					self::mark_overlap_group_read_only( $map, $overlap_group_first_index, $overlap_group_end_line );
 				}
@@ -219,7 +221,7 @@ final class VisualPreviewBlockAnnotator {
 					$last_end_line = $overlap_group_end_line;
 				}
 
-				if ( $raw_range['startLine'] < $last_end_line ) {
+				if ( $raw_range['startLine'] < $overlap_group_floor_line ) {
 					throw new RuntimeException( 'Preview source ranges overlap without a deterministic source owner.' );
 				}
 
@@ -229,6 +231,9 @@ final class VisualPreviewBlockAnnotator {
 			} else {
 				// CommonMark can bridge separate source spans through split roots. Defer
 				// ownership for the complete connected union until the group ends.
+				if ( $raw_range['startLine'] < $overlap_group_floor_line ) {
+					throw new RuntimeException( 'Preview source ranges overlap without a deterministic source owner.' );
+				}
 				$overlap_group_end_line    = max( $overlap_group_end_line, $raw_range['endLine'] );
 				$overlap_group_has_overlap = true;
 			}

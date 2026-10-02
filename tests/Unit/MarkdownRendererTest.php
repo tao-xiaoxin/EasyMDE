@@ -328,6 +328,46 @@ final class MarkdownRendererTest extends WP_UnitTestCase
 		}
 	}
 
+	public function test_preview_rejects_an_overlap_that_crosses_the_previous_source_group_floor() {
+		$source_blocks = array(
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 2, 'endLine' => 4, 'editable' => true ),
+			array( 'source_id' => 's2', 'startLine' => 1, 'endLine' => 3, 'editable' => true ),
+		);
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'Preview source ranges overlap without a deterministic source owner.' );
+		VisualPreviewBlockAnnotator::finalize(
+			'<p data-easymde-visual-source-id="s0">A</p>' .
+			'<p data-easymde-visual-source-id="s1">B</p>' .
+			'<p data-easymde-visual-source-id="s2">C</p>',
+			$source_blocks
+		);
+	}
+
+	public function test_preview_allows_a_new_overlap_group_starting_at_the_previous_source_floor() {
+		$source_blocks = array(
+			array( 'source_id' => 's0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+			array( 'source_id' => 's1', 'startLine' => 2, 'endLine' => 4, 'editable' => true ),
+			array( 'source_id' => 's2', 'startLine' => 2, 'endLine' => 3, 'editable' => true ),
+		);
+		$result = VisualPreviewBlockAnnotator::finalize(
+			'<p data-easymde-visual-source-id="s0">A</p>' .
+			'<p data-easymde-visual-source-id="s1">B</p>' .
+			'<p data-easymde-visual-source-id="s2">C</p>',
+			$source_blocks
+		);
+
+		$this->assertSame(
+			array(
+				array( 'id' => 'b0', 'startLine' => 0, 'endLine' => 2, 'editable' => true ),
+				array( 'id' => 'b1', 'startLine' => 4, 'endLine' => 4, 'editable' => false ),
+				array( 'id' => 'b2', 'startLine' => 4, 'endLine' => 4, 'editable' => false ),
+			),
+			$result['editMap']['blocks']
+		);
+	}
+
 	public function test_preview_maps_mixed_line_endings_before_a_trailing_whitespace_only_line() {
 		$markdown = "# Heading\r\n\rParagraph\n \t";
 		$preview  = MarkdownRenderer::render_preview( $markdown, 'default' );

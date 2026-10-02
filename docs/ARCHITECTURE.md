@@ -537,7 +537,15 @@ finite pixel dimensions are projected to border-box by adding padding and
 borders, while intrinsic values and special SVG/Math/KaTeX/Mermaid geometry
 remain unchanged. The legacy `execCommand` path retains its synchronous
 activation requirement and consumes only a source- and layout-fresh prepared
-payload. Each transaction-local source guard observes the sink before taking
+payload. Portable output retains safe computed inherited typography defaults on
+each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
+`letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,
+`tab-size`, and `list-style-position`, while omitting layout defaults. For this
+portable text rule, `overflow-wrap` preserves its computed source value with
+`!important` so it outranks WeChat's global `word-wrap:break-word!important`
+alias; the serializer does not blanket-apply `!important` or hardcode platform
+values, and native PNG capture is unchanged. Each transaction-local source
+guard observes the sink before taking
 its immutable initial canonical key and drains `MutationObserver.takeRecords()`
 at initial, current, and final checkpoints. The clean path makes an O(1) reuse
 decision; the dirty path recomputes the complete key, allowing same-value mutations to

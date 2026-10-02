@@ -248,6 +248,15 @@ and SVG-internal IDs, safe image `src`/`srcset`, safe link URLs, and approved
 computed typography/layout. Remove unsafe URLs. Non-allowlisted CSS background
 URLs become `none` layer slots while safe colors, gradients, and layer order
 remain.
+Portable output retains the safe computed inherited typography defaults that
+WeChat would otherwise replace, on each node and pseudo-element:
+`font-style`, `font-variant`, `font-stretch`, `letter-spacing`,
+`text-transform`, `white-space`, `text-indent`, `text-shadow`, `tab-size`, and
+`list-style-position`; layout defaults remain omitted. For this portable text
+rule, `overflow-wrap` alone preserves its computed source value with
+`!important` to outrank WeChat's global `word-wrap:break-word!important`
+alias; there is no blanket `!important`, platform-value hardcoding, extra
+computed read, or native PNG capture change.
 
 For ordinary flow elements and generated pseudo-elements, map computed logical
 `text-align:start` and `text-align:end` to physical `left` or `right` using the

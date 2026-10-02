@@ -143,6 +143,18 @@ const DEFAULT_STYLE_VALUES: Record<string, Set<string>> = {
   'vertical-align': new Set(['baseline']),
   'white-space': new Set(['normal'])
 };
+const PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES = new Set([
+  'font-style',
+  'font-variant',
+  'font-stretch',
+  'letter-spacing',
+  'text-transform',
+  'white-space',
+  'text-indent',
+  'text-shadow',
+  'tab-size',
+  'list-style-position'
+]);
 const MAC_FRAME_MARKERS = new WeakSet<Element>();
 const KATEX_VISUAL_ROOTS = new WeakSet<Element>();
 const KATEX_VISUAL_NODES = new WeakSet<Element>();
@@ -1124,10 +1136,8 @@ function keepStyle(
   if ('float' === property && !['none', 'left', 'right', 'inline-start', 'inline-end'].includes(value)) return false;
   if ('clear' === property && !['none', 'left', 'right', 'both', 'inline-start', 'inline-end'].includes(value)) return false;
   if ('position' === property && !['static', 'relative', 'absolute'].includes(value)) return false;
-  if (omitDefaultValues && DEFAULT_STYLE_VALUES[property]?.has(value)) return false;
-  if (omitDefaultValues && 'normal' === value && ['font-style', 'letter-spacing', 'text-transform'].includes(property)) {
-    return false;
-  }
+  const preservesInheritedDefault = PRESERVE_INHERITED_DEFAULT_STYLE_PROPERTIES.has(property);
+  if (omitDefaultValues && !preservesInheritedDefault && DEFAULT_STYLE_VALUES[property]?.has(value)) return false;
   if (pseudoElement && ['width', 'height'].includes(property)) {
     const sourceMatch = /^(\d+(?:\.\d+)?)(?:px|em|rem|%|cqi|cqw|cqb|cqh|cqmin|cqmax)$/.exec(sourceValue);
     const limit = 'width' === property ? 320 : 120;
@@ -1136,6 +1146,10 @@ function keepStyle(
     if (!normalizedMatch) return false;
   }
   return !omitDefaultValues || !('A' === source.tagName && 'text-decoration' === property && 'none' === value);
+}
+
+function portableStyleDeclaration(property: string, value: string): string {
+  return `${property}:${value}${'overflow-wrap' === property ? '!important' : ''}`;
 }
 
 function supportsSpecialLayout(source: Element): boolean {
@@ -1321,7 +1335,7 @@ async function styleDeclarations(
     const materializedValue = await materializeBackgroundValue(property, value, runtime, cache);
     const normalizedValue = portableStyleValue(property, materializedValue, source, computed);
     if (keepStyle(property, normalizedValue, source, pseudoElement, root, value)) {
-      declarations.push(`${property}:${normalizedValue}`);
+      declarations.push(portableStyleDeclaration(property, normalizedValue));
     }
     await yieldToBrowser?.();
   }
@@ -1356,7 +1370,7 @@ function styleDeclarationsSynchronously(
     if (null === materializedValue) return null;
     const normalizedValue = portableStyleValue(property, materializedValue, source, computed);
     if (keepStyle(property, normalizedValue, source, pseudoElement, root, value)) {
-      declarations.push(`${property}:${normalizedValue}`);
+      declarations.push(portableStyleDeclaration(property, normalizedValue));
     }
   }
   return declarations;

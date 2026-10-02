@@ -24,6 +24,7 @@ import {
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualMarkdownReadOnlySnapshot,
   mergeVisualMarkdownChange,
+  mergeVisualMarkdownChangeDetails,
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
   placeVisualCaretAtAcceptedPasteDocumentBoundary,
@@ -39,6 +40,7 @@ import {
   serializeVisualMarkdownBlockFragment,
   visualSelectionSourceRangeForBlocks,
   visualSelectionSourceRange,
+  visualEmptyStructuralBodySelection,
   visualCodeBodyOrdinalForSourceRange,
   createVisualCodeBodyOrdinalsForPreviewBlocks,
   visualCodeBlockStructureSignature
@@ -81,6 +83,164 @@ function previewBlock(
 }
 
 describe('visual Markdown editing', () => {
+  it('reports empty structural serialization shapes', () => {
+    const list = editor('<ul><li><br></li></ul>');
+    const quote = editor('<blockquote><p><br></p></blockquote>');
+    expect({
+      list: serializeVisualMarkdown(list),
+      quote: serializeVisualMarkdown(quote)
+    }).toEqual({ list: '-', quote: '>' });
+    list.remove();
+    quote.remove();
+  });
+
+  it.each([
+    ['<ul>\n<li><br></li>\n</ul>', 'UL'],
+    ['<blockquote>\n<p><br></p>\n</blockquote>', 'BLOCKQUOTE']
+  ])(
+    'recognizes formatted empty %s as a structural Backspace boundary',
+    (markup, tagName) => {
+      const surface = editor(markup);
+      const block = surface.firstElementChild;
+      if (!(block instanceof HTMLElement)) {
+        throw new Error('visual-empty-structural-block-missing');
+      }
+      const editable = block.querySelector('li, p') ?? block;
+      placeCaret(editable, editable.childNodes.length);
+      const event = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Backspace'
+      });
+      expect(applyVisualBlockShortcut(surface, event)).toBe(true);
+      expect(event.defaultPrevented).toBe(true);
+      expect(surface.firstElementChild?.tagName).toBe('P');
+      expect(block.tagName).toBe(tagName);
+      surface.remove();
+    }
+  );
+
+  it('preserves a literal space inside a list item as content', () => {
+    const surface = editor('<ul>\n<li> </li>\n</ul>');
+    const item = surface.querySelector('li');
+    if (!(item instanceof HTMLElement)) {
+      throw new Error('visual-space-list-item-missing');
+    }
+    const text = item.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('visual-space-list-text-missing');
+    }
+    placeCaret(text, text.length);
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    surface.remove();
+  });
+
+  it('preserves direct quote content beside an empty structural paragraph', () => {
+    const surface = editor('<blockquote>\n<p><br></p>Direct\n</blockquote>');
+    const paragraph = surface.querySelector('blockquote > p');
+    if (!(paragraph instanceof HTMLElement)) {
+      throw new Error('visual-direct-quote-paragraph-missing');
+    }
+    placeCaret(paragraph, paragraph.childNodes.length);
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'Backspace'
+    });
+    expect(applyVisualBlockShortcut(surface, event)).toBe(false);
+    expect(event.defaultPrevented).toBe(false);
+    surface.remove();
+  });
+
+  it.each([
+    '- \n\n[ref]: https://example.test',
+    '> \n\n[ref]: https://example.test'
+  ])(
+    'preserves reference definitions when a visible structural marker is removed',
+    (sourceMarkdown) => {
+      const result = mergeVisualMarkdownChangeDetails(
+        sourceMarkdown,
+        sourceMarkdown.slice(0, 2),
+        ''
+      );
+      expect(result.value).toBe('\n\n[ref]: https://example.test');
+    }
+  );
+
+  it.each([
+    {
+      baseline: '-',
+      boundary: 2,
+      source: '- ',
+      expected: '- ~x'
+    },
+    {
+      baseline: '-',
+      boundary: 2,
+      source: '-  ',
+      expected: '- ~x '
+    },
+    {
+      baseline: '>',
+      boundary: 2,
+      source: '> ',
+      expected: '> ~x'
+    },
+    {
+      baseline: '>',
+      boundary: 2,
+      source: '>  ',
+      expected: '> ~x '
+    },
+    {
+      baseline: '> -',
+      boundary: 4,
+      source: '> - ',
+      expected: '> - ~x'
+    },
+    {
+      baseline: '#',
+      boundary: 2,
+      source: '# ',
+      expected: '# ~x'
+    }
+  ])(
+    'maps an empty structural body after its parser-owned separator',
+    ({ baseline, boundary, expected, source }) => {
+      const map = createVisualMarkdownSourceIntervalMap(source, baseline);
+      expect(map.resolve(baseline.length)).toBe(boundary);
+      expect(mergeVisualMarkdownChange(source, baseline, `${baseline} ~x`)).toBe(expected);
+    }
+  );
+
+  it('does not classify a code-body separator as a structural body boundary', () => {
+    const map = createVisualMarkdownSourceIntervalMap(
+      '```\n- ',
+      '```\n-'
+    );
+    expect(map.structuralSourceBoundary).toBeNull();
+  });
+
+  it.each([
+    ['- ', '-'],
+    ['> ', '>']
+  ])(
+    'retains hidden reference definitions after empty structural insertion',
+    (markerSource, markerVisual) => {
+      const source = `${markerSource}\n\n[ref]: https://example.test`;
+      const edited = `${markerVisual} ~x`;
+      expect(mergeVisualMarkdownChange(source, markerVisual, edited)).toBe(
+        `${markerSource}~x\n\n[ref]: https://example.test`
+      );
+    }
+  );
+
   it('maps CRLF, lone-CR, and LF line starts with the same UTF-16 offsets', () => {
     expect(markdownLineStarts('A\r\nB\rC\n')).toEqual([0, 3, 5, 7]);
   });
@@ -2862,6 +3022,12 @@ A--&gt;B</code></pre>
     ).toBe('Paragraph!\r\n');
   });
 
+  it('preserves terminal spaces and newlines when inserting at their visual boundary', () => {
+    expect(mergeVisualMarkdownChange(' ', '', '~')).toBe('~ ');
+    expect(mergeVisualMarkdownChange('one ', 'one', 'one~')).toBe('one~ ');
+    expect(mergeVisualMarkdownChange('one\n\n', 'one', 'one~')).toBe('one~\n\n');
+  });
+
   it('edits visible link text without rewriting reference links or raw HTML', () => {
     const source = [
       'Raw <u>underlined</u> text and an [OpenAI][openai] reference.',
@@ -3136,6 +3302,340 @@ A--&gt;B</code></pre>
         'Choose **this** text'
       )
     ).toEqual({ direction: 'forward', end: 13, start: 9 });
+  });
+
+  it('maps a native empty nested quote caret to its unique canonical body boundary', () => {
+    const surface = editor([
+      '<blockquote>\n',
+      '  <p><br></p>\n',
+      '  <blockquote>\n',
+      '    <p><br></p>\n',
+      '    <blockquote><p>deep</p></blockquote>\n',
+      '  </blockquote>\n',
+      '</blockquote>\n',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-empty-nested-quote-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '> \n\n> > \n> >\n> > > deep\n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({ direction: 'none', end: 8, start: 8 });
+  });
+
+  it('keeps the canonical separator boundary for a non-empty outer quote', () => {
+    const surface = editor([
+      '<blockquote>\n',
+      '  <p>x</p>\n',
+      '  <blockquote>\n',
+      '    <p><br></p>\n',
+      '    <blockquote><p>deep</p></blockquote>\n',
+      '  </blockquote>\n',
+      '</blockquote>\n',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-nested-quote-source-nine-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '> x\n\n> > \n> >\n> > > deep\n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({ direction: 'none', end: 9, start: 9 });
+  });
+
+  it('preserves CRLF source offsets for an empty nested quote boundary', () => {
+    const surface = editor([
+      '<blockquote>\n',
+      '  <p><br></p>\n',
+      '  <blockquote>\n',
+      '    <p><br></p>\n',
+      '    <blockquote><p>deep</p></blockquote>\n',
+      '  </blockquote>\n',
+      '</blockquote>\n',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-nested-quote-crlf-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '> \r\n\r\n> > \r\n> >\r\n> > > deep\r\n\r\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({ direction: 'none', end: 10, start: 10 });
+  });
+
+  it('keeps the original mapper for already-resolved empty nested bodies', () => {
+    const surface = editor([
+      '<blockquote>\n',
+      '<p><br></p>\n',
+      '<blockquote>\n',
+      '<p><br></p>\n',
+      '<p><br></p>\n',
+      '<blockquote><p>deep</p></blockquote>\n',
+      '</blockquote>\n',
+      '</blockquote>\n',
+      '<p>Tail</p>'
+    ].join(''));
+    const source = serializeVisualMarkdown(surface);
+    const targets = Array.from(surface.querySelectorAll('blockquote p'))
+      .filter((paragraph): paragraph is HTMLElement => paragraph instanceof HTMLElement)
+      .slice(0, 3);
+    expect(targets).toHaveLength(3);
+    for (const [index, target] of targets.entries()) {
+      placeCaret(target, 0);
+      const expected = [2, 12, 24][index];
+      expect(expected).toBeDefined();
+      expect(
+        visualSelectionSourceRange(surface, source, source, source)
+      ).toEqual({ direction: 'none', end: expected, start: expected });
+    }
+  });
+
+  it.each([
+    [
+      'nested unordered lists',
+      '<ul>\n<li><p><br></p>\n<ul>\n<li><p><br></p>\n</li>\n</ul>\n</li>\n</ul>\n<p>Tail</p>',
+      'ul > li > ul > li > p',
+      '- parent\n- - ',
+      13
+    ],
+    [
+      'nested ordered lists',
+      '<ol>\n<li><p><br></p>\n<ol>\n<li><p><br></p>\n</li>\n</ol>\n</li>\n</ol>\n<p>Tail</p>',
+      'ol > li > ol > li > p',
+      '1.   \n   \n1. 1. \n\nTail',
+      16
+    ]
+  ])('exports an already-mapped boundary for %s', (
+    _description,
+    markup,
+    selector,
+    source,
+    expectedSourceOffset
+  ) => {
+    const surface = editor(markup);
+    const baseline = serializeVisualMarkdown(surface);
+    const target = surface.querySelector(selector);
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-nested-list-boundary-target-missing');
+    }
+    placeCaret(target, 0);
+
+    const exported = visualEmptyStructuralBodySelection(
+      surface,
+      source,
+      baseline,
+      baseline
+    );
+    if (!exported || 'failure' in exported) {
+      throw new Error(
+        exported?.failure ?? 'visual-nested-list-boundary-export-failed'
+      );
+    }
+    expect(exported.sourceOffset).toBe(expectedSourceOffset);
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({
+      direction: 'none',
+      end: expectedSourceOffset,
+      start: expectedSourceOffset
+    });
+  });
+
+  it('does not promote a nonempty structural element into the empty-body owner', () => {
+    const surface = editor('<blockquote><p>text</p></blockquote><p>Tail</p>');
+    const target = surface.querySelector('blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-nonempty-structural-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = serializeVisualMarkdown(surface);
+
+    expect(
+      visualEmptyStructuralBodySelection(surface, source, source, source)
+    ).toBeNull();
+  });
+
+  it('maps an empty structural body after one separator while preserving extra source space', () => {
+    const surface = editor('<blockquote><p><br></p></blockquote><p>Tail</p>');
+    const target = surface.querySelector('blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-empty-quote-extra-space-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '>  \n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({ direction: 'none', end: 2, start: 2 });
+  });
+
+  it.each([
+    [
+      'quote',
+      '<blockquote><p><br></p></blockquote>',
+      '> ',
+      'blockquote > p'
+    ],
+    [
+      'unordered list',
+      '<ul><li><br></li></ul>',
+      '- ',
+      'ul > li'
+    ]
+  ])('keeps the existing EOF mapping for a sole empty %s body', (
+    _description,
+    markup,
+    source,
+    selector
+  ) => {
+    const surface = editor(markup);
+    const target = surface.querySelector(selector);
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-empty-eof-compatibility-target-missing');
+    }
+    placeCaret(target, 0);
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(
+      visualSelectionSourceRange(surface, source, baseline, baseline)
+    ).toEqual({ direction: 'none', end: 2, start: 2 });
+  });
+
+  it('rejects a quote-looking source line inside a fenced code block', () => {
+    const surface = editor([
+      '<blockquote>',
+      '  <p><br></p>',
+      '  <blockquote>',
+      '    <p><br></p>',
+      '    <blockquote><p>deep</p></blockquote>',
+      '  </blockquote>',
+      '</blockquote>',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-fenced-quote-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '~~~\n> >   \n~~~\n\n> \n\n> >\n> > > deep\n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(() => visualSelectionSourceRange(
+      surface,
+      source,
+      baseline,
+      baseline
+    )).toThrow('visual-editor-markdown-merge-failed');
+  });
+
+  it.each([
+    [
+      'an indented code block',
+      '    > >   \n\n> \n\n> >\n> > > deep\n\nTail'
+    ],
+    [
+      'inline code',
+      '`> >   `\n\n> \n\n> >\n> > > deep\n\nTail'
+    ],
+    [
+      'an ordered marker for an unordered list body',
+      '> \n\n> 1.  \n> >\n> > > deep\n\nTail'
+    ]
+  ])('rejects %s as an incompatible structural source owner', (
+    _description,
+    source
+  ) => {
+    const surface = editor([
+      '<blockquote>',
+      '  <p><br></p>',
+      '  <blockquote>',
+      '    <p><br></p>',
+      '    <blockquote><p>deep</p></blockquote>',
+      '  </blockquote>',
+      '</blockquote>',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-incompatible-structural-owner-target-missing');
+    }
+    placeCaret(target, 0);
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(() => visualSelectionSourceRange(
+      surface,
+      source,
+      baseline,
+      baseline
+    )).toThrow('visual-editor-markdown-merge-failed');
+  });
+
+  it('rejects an unmatched visible source prefix before an empty structural body', () => {
+    const surface = editor([
+      '<blockquote>',
+      '  <p><br></p>',
+      '  <blockquote>',
+      '    <p><br></p>',
+      '    <blockquote><p>deep</p></blockquote>',
+      '  </blockquote>',
+      '</blockquote>',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-unmatched-prefix-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = 'Different text\n\n> \n\n> >\n> > > deep\n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(() => visualSelectionSourceRange(
+      surface,
+      source,
+      baseline,
+      baseline
+    )).toThrow('visual-editor-markdown-merge-failed');
+  });
+
+  it('rejects multiple compatible source owners for one empty structural body', () => {
+    const surface = editor([
+      '<blockquote>',
+      '  <p><br></p>',
+      '  <blockquote>',
+      '    <p><br></p>',
+      '    <blockquote><p>deep</p></blockquote>',
+      '  </blockquote>',
+      '</blockquote>',
+      '<p>Tail</p>'
+    ].join(''));
+    const target = surface.querySelector('blockquote > blockquote > p');
+    if (!(target instanceof HTMLElement)) {
+      throw new Error('visual-ambiguous-quote-target-missing');
+    }
+    placeCaret(target, 0);
+    const source = '> \n\n> > \n> > \n> >\n> > > deep\n\nTail';
+    const baseline = serializeVisualMarkdown(surface);
+
+    expect(() => visualSelectionSourceRange(
+      surface,
+      source,
+      baseline,
+      baseline
+    )).toThrow('visual-editor-markdown-merge-ambiguous');
   });
 
   it('maps the non-empty paper root start to canonical offset zero', () => {
@@ -3457,20 +3957,27 @@ A--&gt;B</code></pre>
     );
   });
 
-  it.each([' ', '\u00a0'])(
-    'does not treat a non-line-ending suffix as a document-end mapping (%j)',
-    (suffix) => {
+  it.each([
+    [' ', false],
+    ['\u00a0', true]
+  ])(
+    'applies the terminal whitespace contract to source-end mapping (%j)',
+    (suffix, rejects) => {
       const surface = editor('<p>Markdown content</p>');
       const source = `Markdown content${suffix}\n`;
 
-      expect(() =>
+      const place = () =>
         placeVisualCaretFromSourceOffset(
           surface,
           source,
           'Markdown content',
           source.length
-        )
-      ).toThrow('visual-editor-selection-map-failed');
+        );
+      if (rejects) {
+        expect(place).toThrow('visual-editor-selection-map-failed');
+      } else {
+        expect(place).not.toThrow();
+      }
     }
   );
 

@@ -285,6 +285,32 @@ function startWindowChildrenCommit(
   validateWindowChildren(surface, desiredNodes);
   if (!hasExactChildren(surface, desiredNodes)) {
     const selection = surface.ownerDocument.defaultView?.getSelection();
+    const fullRootSelection = (() => {
+      if (
+        !selection
+        || selection.isCollapsed
+        || !surface.isConnected
+        || surface.ownerDocument.activeElement !== surface
+        || selection.anchorNode !== surface
+        || selection.focusNode !== surface
+      ) {
+        return null;
+      }
+      const childCount = surface.childNodes.length;
+      if (
+        selection.anchorOffset === 0
+        && selection.focusOffset === childCount
+      ) {
+        return 'forward' as const;
+      }
+      if (
+        selection.anchorOffset === childCount
+        && selection.focusOffset === 0
+      ) {
+        return 'backward' as const;
+      }
+      return null;
+    })();
     const rootBoundary = selection?.isCollapsed
       && selection.anchorNode === surface
       && selection.focusNode === surface
@@ -321,6 +347,15 @@ function startWindowChildrenCommit(
       if (!hasExactChildren(surface, desiredNodes)) {
         throw new Error('preview-window-node-sequence-invalid');
       }
+    }
+    if (fullRootSelection && selection) {
+      const newChildCount = surface.childNodes.length;
+      selection.setBaseAndExtent(
+        surface,
+        'forward' === fullRootSelection ? 0 : newChildCount,
+        surface,
+        'forward' === fullRootSelection ? newChildCount : 0
+      );
     }
     if (rootBoundary && selection) {
       const range = surface.ownerDocument.createRange();

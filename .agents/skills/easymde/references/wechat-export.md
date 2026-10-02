@@ -42,6 +42,18 @@ unobserved immediately. Sink changes and Root teardown remove all observers
 and listeners. The active surface may be the immersive visual Preview; a
 hidden ordinary surface must not replace it.
 
+EditorRoot's background demands carry a caller-owned `AbortSignal` for their
+sink.
+EditorRoot cancels that demand when visual unlock begins, Preview status leaves
+`ready`, the ordinary or immersive sink is disposed or replaced, the Root tears
+down, or the WeChat Port/export owner changes. The Adapter keeps per-sink
+waiters and one active background job; cancellation removes the caller and
+stops pending or active serialization only when no waiters remain. The job
+checks cancellation before final markup, plain-text derivation, and publishing
+prepared payload/cache state. Background-demand cancellation does not abort
+shared theme-image fetches or their reusable cache work, and explicit Copy has
+an independent operation signal and lifecycle.
+
 EditorRoot starts at most one full serialization per sink, retains only the
 latest request while it runs, and inserts a quiet turn before replacement.
 Background style and geometry walks yield to browser tasks. Appearance or
@@ -53,7 +65,8 @@ limits defined by the live serializer. Only `/assets/images/` GIF, JPEG, PNG,
 or WebP sources are eligible. Each request has an abortable time bound covering
 fetch, response-body reads, and Data URL conversion. A timeout or conversion
 failure evicts the cache entry and fails preparation so a later copy may retry.
-The Adapter forwards the serializer's RequestInit signal unchanged. Read
+Theme-image fetches retain their own timeout/abort lifecycle; a background
+demand signal does not abort an in-flight shared asset fetch. Read
 `frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts`
 and `docs/ARCHITECTURE.md` for the current cache, payload, and timeout limits;
 do not copy their numeric constants into this reference.

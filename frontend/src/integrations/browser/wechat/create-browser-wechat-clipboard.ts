@@ -259,18 +259,31 @@ type PreparedClipboardPayload = {
   recoveredAtLayoutSignature: string | null;
 };
 type PreparedClipboardPayloadCache = WeakMap<HTMLElement, PreparedClipboardPayload>;
-type BackgroundPreparationWaiter = Readonly<{
+type BackgroundPreparationWaiter = {
   reject: (error: unknown) => void;
   resolve: () => void;
-}>;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
 type BackgroundPreparationState = {
   active: Promise<void> | null;
+  activeController: AbortController | null;
   requested: boolean;
   timer: number | ReturnType<typeof setTimeout> | null;
   waiters: BackgroundPreparationWaiter[];
 };
 type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
 type SerializationYield = () => Promise<void>;
+
+function backgroundPreparationAbortError(): Error {
+  const error = new Error('wechat-background-preparation-cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfBackgroundPreparationAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw backgroundPreparationAbortError();
+}
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -293,25 +306,28 @@ function withTimeout<T>(
 
 function createSerializationYield(
   runtime: BrowserWechatClipboardRuntime,
-  enabled: boolean
+  enabled: boolean,
+  signal?: AbortSignal
 ): SerializationYield | null {
   if (!enabled) return null;
 
   let lastYieldAt = Date.now();
-  return () => {
+  return async () => {
+    throwIfBackgroundPreparationAborted(signal);
     if (Date.now() - lastYieldAt < BACKGROUND_SERIALIZATION_YIELD_BUDGET_MS) {
-      return Promise.resolve();
+      return;
     }
     lastYieldAt = Date.now();
 
     const browserWindow = runtime.document.defaultView;
-    return new Promise<void>((resolve) => {
+    await new Promise<void>((resolve) => {
       if (browserWindow) {
         browserWindow.setTimeout(resolve, 0);
       } else {
         setTimeout(resolve, 0);
       }
     });
+    throwIfBackgroundPreparationAborted(signal);
   };
 }
 
@@ -419,8 +435,10 @@ async function materializeBackgroundValue(
   property: string,
   value: string,
   runtime: BrowserWechatClipboardRuntime,
-  cache: BackgroundAssetCache
+  cache: BackgroundAssetCache,
+  signal?: AbortSignal
 ): Promise<string> {
+  throwIfBackgroundPreparationAborted(signal);
   if (!['background', 'background-image'].includes(property) || !value.includes('url(')) {
     return value;
   }
@@ -435,6 +453,7 @@ async function materializeBackgroundValue(
     }
     let materialized = layer;
     for (const match of matches) {
+      throwIfBackgroundPreparationAborted(signal);
       const source = (match[1] ?? match[2] ?? match[3] ?? '').trim();
       if (!source || SAFE_DATA_IMAGE.test(source)) continue;
       if (!isThemeImageUrl(source, runtime.document)) {
@@ -446,6 +465,7 @@ async function materializeBackgroundValue(
       }
       const resolved = new URL(source, runtime.document.baseURI).href;
       const dataUrl = await materializeThemeImage(resolved, runtime, cache);
+      throwIfBackgroundPreparationAborted(signal);
       materialized = materialized.replace(match[0], `url("${dataUrl}")`);
     }
     materializedLayers.push(materialized);
@@ -1124,7 +1144,8 @@ async function styleDeclarations(
   root = false,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  yieldToBrowser: SerializationYield | null = null
+  yieldToBrowser: SerializationYield | null = null,
+  signal?: AbortSignal
 ): Promise<string[]> {
   const properties = [
     ...COPY_STYLE_PROPERTIES,
@@ -1138,8 +1159,16 @@ async function styleDeclarations(
   ];
   const declarations: string[] = [];
   for (const property of properties) {
+    throwIfBackgroundPreparationAborted(signal);
     const value = computed.getPropertyValue(property);
-    const portableValue = await materializeBackgroundValue(property, value, runtime, cache);
+    const portableValue = await materializeBackgroundValue(
+      property,
+      value,
+      runtime,
+      cache,
+      signal
+    );
+    throwIfBackgroundPreparationAborted(signal);
     if (keepStyle(property, portableValue, source, pseudoElement, root)) {
       declarations.push(`${property}:${portableValue}`);
     }
@@ -1227,8 +1256,10 @@ async function addPseudoElement(
   root = false,
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
-  yieldToBrowser: SerializationYield | null = null
+  yieldToBrowser: SerializationYield | null = null,
+  signal?: AbortSignal
 ): Promise<void> {
+  throwIfBackgroundPreparationAborted(signal);
   const computed = getComputedStyle(source, pseudo);
   const content = pseudoContent(computed.getPropertyValue('content'));
   const declarations = await styleDeclarations(
@@ -1238,8 +1269,10 @@ async function addPseudoElement(
     root,
     runtime,
     cache,
-    yieldToBrowser
+    yieldToBrowser,
+    signal
   );
+  throwIfBackgroundPreparationAborted(signal);
   if (null === content || (!content && !declarations.length)) return;
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
@@ -1260,6 +1293,7 @@ async function addPseudoElement(
     computed,
     !content
   );
+  throwIfBackgroundPreparationAborted(signal);
   if ('PRE' === source.tagName && '::before' === pseudo && !content && /box-shadow:/.test(portableDeclarations.join(';'))) {
     MAC_FRAME_MARKERS.add(marker);
   }
@@ -1319,8 +1353,10 @@ async function inlineStyles(
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
   previewRoot: HTMLElement,
-  yieldToBrowser: SerializationYield | null = null
+  yieldToBrowser: SerializationYield | null = null,
+  signal?: AbortSignal
 ): Promise<void> {
+  throwIfBackgroundPreparationAborted(signal);
   if (!(source instanceof Element) || !(clone instanceof Element)) return;
   const computed = getComputedStyle(source);
   // SVG definition trees are commonly hidden by design, but visible shapes
@@ -1337,8 +1373,10 @@ async function inlineStyles(
     root,
     runtime,
     cache,
-    yieldToBrowser
+    yieldToBrowser,
+    signal
   );
+  throwIfBackgroundPreparationAborted(signal);
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
@@ -1385,7 +1423,8 @@ async function inlineStyles(
         runtime,
         cache,
         previewRoot,
-        yieldToBrowser
+        yieldToBrowser,
+        signal
       );
     }
   }
@@ -1397,7 +1436,8 @@ async function inlineStyles(
     root,
     runtime,
     cache,
-    yieldToBrowser
+    yieldToBrowser,
+    signal
   );
   await addPseudoElement(
     source,
@@ -1407,9 +1447,12 @@ async function inlineStyles(
     root,
     runtime,
     cache,
-    yieldToBrowser
+    yieldToBrowser,
+    signal
   );
+  throwIfBackgroundPreparationAborted(signal);
   await yieldToBrowser?.();
+  throwIfBackgroundPreparationAborted(signal);
   appendThemeImages(
     clone,
     preserveRepeatingBackground ? [] : imageLayers,
@@ -2210,8 +2253,10 @@ async function createMarkup(
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
   yieldToBrowser: SerializationYield | null = null,
-  conversion?: WechatPngConversionContext
+  conversion?: WechatPngConversionContext,
+  signal?: AbortSignal
 ): Promise<HTMLElement> {
+  throwIfBackgroundPreparationAborted(signal);
   if (conversion) assertPngConversionCurrent(conversion);
   const clone = preview.cloneNode(true) as HTMLElement;
   const fragmentIds = referencedFragmentIds(preview);
@@ -2224,14 +2269,19 @@ async function createMarkup(
     runtime,
     cache,
     preview,
-    yieldToBrowser
+    yieldToBrowser,
+    signal
   );
+  throwIfBackgroundPreparationAborted(signal);
   if (conversion) {
     assertPngConversionCurrent(conversion);
     await replaceVisualObjects(clone, conversion);
     assertPngConversionCurrent(conversion);
   }
-  return finalizeMarkup(clone, fragmentIds, mathMlNodes);
+  throwIfBackgroundPreparationAborted(signal);
+  const finalized = finalizeMarkup(clone, fragmentIds, mathMlNodes);
+  throwIfBackgroundPreparationAborted(signal);
+  return finalized;
 }
 
 function createMarkupSynchronously(
@@ -2331,18 +2381,26 @@ async function serializeClipboardPayload(
   runtime: BrowserWechatClipboardRuntime,
   cache: BackgroundAssetCache,
   yieldToBrowser: SerializationYield | null = null,
-  conversion?: WechatPngConversionContext
+  conversion?: WechatPngConversionContext,
+  signal?: AbortSignal
 ): Promise<SerializedClipboardPayload> {
+  throwIfBackgroundPreparationAborted(signal);
   const clone = await createMarkup(
     preview,
     runtime,
     cache,
     yieldToBrowser,
-    conversion
+    conversion,
+    signal
   );
+  throwIfBackgroundPreparationAborted(signal);
+  const html = clone.outerHTML;
+  throwIfBackgroundPreparationAborted(signal);
+  const text = connectedPlainText(clone, preview);
+  throwIfBackgroundPreparationAborted(signal);
   return {
-    html: clone.outerHTML,
-    text: connectedPlainText(clone, preview)
+    html,
+    text
   };
 }
 
@@ -2393,8 +2451,10 @@ function preparedLayoutSignature(
 async function preparedLayoutSignatureWithYield(
   preview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
-  yieldToBrowser: SerializationYield
+  yieldToBrowser: SerializationYield,
+  signal?: AbortSignal
 ): Promise<string> {
+  throwIfBackgroundPreparationAborted(signal);
   const viewport = preview.ownerDocument.defaultView;
   const viewportSignature = viewport
     ? `${viewport.innerWidth}x${viewport.innerHeight}@${viewport.devicePixelRatio}`
@@ -2402,6 +2462,7 @@ async function preparedLayoutSignatureWithYield(
   const entries: string[] = [];
   const elements = [preview, ...Array.from(preview.querySelectorAll('*'))];
   for (const [index, element] of elements.entries()) {
+    throwIfBackgroundPreparationAborted(signal);
     const rect = element.getBoundingClientRect();
     const computed = runtime.getComputedStyle(element);
     const styles = PREPARED_STYLE_PROPERTIES
@@ -2415,6 +2476,7 @@ async function preparedLayoutSignatureWithYield(
     }).join('|');
     entries.push(`${index}:${rect.width},${rect.height}:${styles}:${pseudoStyles}`);
     await yieldToBrowser();
+    throwIfBackgroundPreparationAborted(signal);
   }
 
   return [viewportSignature, ...entries].join('\u0001');
@@ -2427,15 +2489,17 @@ function createPreparedClipboardPayload(
   preparedPayloads: PreparedClipboardPayloadCache,
   fallback: PreparedClipboardFallback | null,
   sequence: number,
-  background = false
+  background = false,
+  signal?: AbortSignal
 ): PreparedClipboardPayload {
   let prepared: PreparedClipboardPayload;
+  throwIfBackgroundPreparationAborted(signal);
   // Root class/style changes (font and article-theme controls) can change the
   // computed output without changing the rendered child markup. Responsive
   // breakpoints can also change computed styles and geometry without changing
   // the DOM, so keep both the full sink markup and a layout fingerprint.
   const sourceMarkup = clipboardSourceMarkup(preview);
-  const yieldToBrowser = createSerializationYield(runtime, background);
+  const yieldToBrowser = createSerializationYield(runtime, background, signal);
   const layoutSignature = background
     ? ''
     : preparedLayoutSignature(preview, runtime);
@@ -2447,18 +2511,25 @@ function createPreparedClipboardPayload(
     preview,
     runtime,
     backgroundAssetCache,
-    yieldToBrowser
+    yieldToBrowser,
+    undefined,
+    signal
   )
     .then(async (payload) => {
-      prepared.layoutSignature = background
+      throwIfBackgroundPreparationAborted(signal);
+      const resolvedLayoutSignature = background
         ? await preparedLayoutSignatureWithYield(
           preview,
           runtime,
-          yieldToBrowser as SerializationYield
+          yieldToBrowser as SerializationYield,
+          signal
         )
         : layoutSignature;
-      prepared.payload = payload;
+      throwIfBackgroundPreparationAborted(signal);
+      prepared.layoutSignature = resolvedLayoutSignature;
       const current = preparedPayloads.get(preview);
+      throwIfBackgroundPreparationAborted(signal);
+      prepared.payload = payload;
       if (
         current
         && current !== prepared
@@ -2517,8 +2588,10 @@ function preparedClipboardPayload(
   preparedPayloads: PreparedClipboardPayloadCache,
   nextSequence: () => number,
   replace = false,
-  background = false
+  background = false,
+  signal?: AbortSignal
 ): PreparedClipboardPayload {
+  throwIfBackgroundPreparationAborted(signal);
   const existing = preparedPayloads.get(preview);
   if (!replace) {
     if (
@@ -2544,7 +2617,8 @@ function preparedClipboardPayload(
     preparedPayloads,
     fallback,
     nextSequence(),
-    background
+    background,
+    signal
   );
 }
 
@@ -2569,6 +2643,8 @@ function scheduleBackgroundPreparation(
     if (state.active || !state.requested) return;
     state.requested = false;
 
+    const controller = new AbortController();
+    state.activeController = controller;
     let operation: Promise<void>;
     try {
       operation = preparedClipboardPayload(
@@ -2578,22 +2654,29 @@ function scheduleBackgroundPreparation(
         preparedPayloads,
         nextSequence,
         true,
-        true
+        true,
+        controller.signal
       ).promise.then(() => undefined);
     } catch (error: unknown) {
-      finish(false, error);
-      return;
+      operation = Promise.reject(error);
     }
 
     state.active = operation;
     operation.then(
-      () => finish(true),
-      (error: unknown) => finish(false, error)
+      () => finish(operation, true),
+      (error: unknown) => finish(operation, false, error)
     );
   }
 
-  function finish(success: boolean, error?: unknown): void {
+  function finish(
+    operation: Promise<void>,
+    success: boolean,
+    error?: unknown
+  ): void {
+    if (state.active !== operation) return;
     state.active = null;
+    state.activeController = null;
+    if (backgroundPreparations.get(preview) !== state) return;
     if (state.requested) {
       scheduleBackgroundPreparation(
         preview,
@@ -2610,13 +2693,56 @@ function scheduleBackgroundPreparation(
 
     const waiters = state.waiters.splice(0);
     waiters.forEach((waiter) => {
+      waiter.signal?.removeEventListener('abort', waiter.onAbort as EventListener);
       if (success) waiter.resolve();
       else waiter.reject(error);
     });
     if (!state.active && !state.requested && state.waiters.length === 0) {
-      backgroundPreparations.delete(preview);
+      if (backgroundPreparations.get(preview) === state) {
+        backgroundPreparations.delete(preview);
+      }
     }
   }
+}
+
+function cancelBackgroundPreparationIfUnused(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundPreparations: BackgroundPreparationCache,
+  state: BackgroundPreparationState
+): void {
+  if (state.waiters.length > 0) return;
+  state.requested = false;
+  if (state.timer !== null) {
+    const browserWindow = runtime.document.defaultView;
+    if (browserWindow) browserWindow.clearTimeout(state.timer as number);
+    else clearTimeout(state.timer);
+    state.timer = null;
+  }
+  state.activeController?.abort();
+  if (!state.active && backgroundPreparations.get(preview) === state) {
+    backgroundPreparations.delete(preview);
+  }
+}
+
+function removeBackgroundPreparationWaiter(
+  preview: HTMLElement,
+  runtime: BrowserWechatClipboardRuntime,
+  backgroundPreparations: BackgroundPreparationCache,
+  state: BackgroundPreparationState,
+  waiter: BackgroundPreparationWaiter
+): void {
+  const index = state.waiters.indexOf(waiter);
+  if (index < 0) return;
+  state.waiters.splice(index, 1);
+  waiter.signal?.removeEventListener('abort', waiter.onAbort as EventListener);
+  waiter.reject(backgroundPreparationAbortError());
+  cancelBackgroundPreparationIfUnused(
+    preview,
+    runtime,
+    backgroundPreparations,
+    state
+  );
 }
 
 function coalescedBackgroundPreparation(
@@ -2625,12 +2751,15 @@ function coalescedBackgroundPreparation(
   backgroundAssetCache: BackgroundAssetCache,
   preparedPayloads: PreparedClipboardPayloadCache,
   backgroundPreparations: BackgroundPreparationCache,
-  nextSequence: () => number
+  nextSequence: () => number,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) return Promise.reject(backgroundPreparationAbortError());
   let state = backgroundPreparations.get(preview);
   if (!state) {
     state = {
       active: null,
+      activeController: null,
       requested: false,
       timer: null,
       waiters: []
@@ -2638,10 +2767,24 @@ function coalescedBackgroundPreparation(
     backgroundPreparations.set(preview, state);
   }
   state.requested = true;
+  let waiter!: BackgroundPreparationWaiter;
   const promise = new Promise<void>((resolve, reject) => {
-    state?.waiters.push({ reject, resolve });
+    waiter = signal ? { reject, resolve, signal } : { reject, resolve };
+    state?.waiters.push(waiter);
   });
-  if (!state.active && state.timer === null) {
+  if (signal) {
+    const onAbort = () => removeBackgroundPreparationWaiter(
+      preview,
+      runtime,
+      backgroundPreparations,
+      state as BackgroundPreparationState,
+      waiter
+    );
+    waiter.onAbort = onAbort;
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  }
+  if (state.requested && !state.active && state.timer === null) {
     scheduleBackgroundPreparation(
       preview,
       runtime,
@@ -2719,7 +2862,8 @@ export function createBrowserWechatClipboard(
           backgroundAssetCache,
           preparedPayloads,
           backgroundPreparations,
-          nextPreparationSequence
+          nextPreparationSequence,
+          options.signal
         );
         return;
       }

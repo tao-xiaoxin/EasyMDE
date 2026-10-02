@@ -259,6 +259,26 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Plain-text Markdown transfer from Paste or Drop flushes pending visual input,
+maps the current selection, and applies the insertion through the canonical
+document owner before requesting server Preview. It passes the existing
+code-structure validation record for the new Markdown with the `matchesPreview`
+flag false, so transfer does not repeat the full code-topology scan and any prior
+code-body map remains untrusted until the replacement Preview is accepted.
+Per-key visual source, history, and native-field projection owners remain
+unchanged.
+An accepted empty Preview discards the previous window repository, pending
+window commit, and pending materialization work; any superseded materialization
+resolves `false`. `materialize()` reports readiness only for an accepted ready
+Preview. Without a repository it returns success only when no materialization
+is pending, no actual spacer remains, and the accepted state does not still
+require a large window. Non-ready, unavailable-repository, and stale-repository
+paths return `false` with the stable diagnostics
+`preview-window-materialize-not-ready`,
+`preview-window-materialize-repository-unavailable`, and
+`preview-window-materialize-repository-stale`. Ready materialization is
+installed by the Safe HTML sink in bounded batches; completion, failure,
+supersession, empty replacement, and teardown resolve every pending result.
 Fence shortcuts are a presentation command: a newly formed tilde or backtick
 opener that can be represented as valid backtick syntax is serialized as an
 equally wide backtick fence while its info string is retained. Accepted or
@@ -296,6 +316,44 @@ rejects it explicitly. When a prior browser mutation is pending without such a
 projection, the next `beforeinput` first synchronizes that structural DOM
 change. This keeps a rapid list split followed by text in the new item from
 mapping through the pre-split source interval.
+When the source and visual baseline are unchanged, the neutral structural
+selection exception accepts only a collapsed caret in a sole-`BR` `P` or `LI`
+body. The body must be bounded by unchanged non-structural anchors or validated
+source ends, and its DOM ancestry must match the Markdown parser's ordered
+blockquote/list ancestry with exactly one owned separator. Code or protected
+content, missing ownership, and ambiguous candidates never claim this mapping;
+recognized failures use the existing merge errors. A valid candidate projects a
+zero-width source boundary into the interval map before the existing marker and
+merge checks run. Ordinary content remains eligible for the cached unique-text
+hot path before this structural scan.
+For typed input at that neutral boundary, `beforeinput` must capture the exact
+collapsed target range and body path before the browser transaction. It first
+updates only the canonical Selection through a same-value document operation;
+source bytes and history depth remain unchanged before native mutation. The
+following `input` accepts only the same live target/body path and boundary, the
+expected native empty-placeholder-to-Text transition, unchanged DOM outside the
+body, and an unchanged protected snapshot. It then serializes the actual surface
+as the visual baseline and enters the existing edit-intent and history owners.
+After that serialization, the visual caret offset is recomputed from the actual
+surface through the pure marker mapper rather than from the predicted
+replacement, so selection memory remains correct for escaped `~`, `*`, `_`, and
+`\` input. If another character arrives before the empty-body transaction
+commits, the earliest `historyBefore` and original `baseSourceMarkdown` remain
+authoritative; the existing canonical value diff applies the accumulated source
+once without a full-source scan or global history annotation per key.
+CRLF comparison uses normalized intervals and converts the result back to the
+canonical source UTF-16 offset. Immediate and delayed next input plus Undo/Redo
+must retain paired canonical and native Selection points; stale or mismatched
+evidence fails through the existing explicit synchronization owner.
+If a pending code-body intent is still owned when the Selection leaves its code
+block for an empty structural `P` or `LI`, the existing `beforeinput` owner
+flushes that code intent before dispatching the structural selection-only
+update, then rechecks the current owner. Consecutive input that remains in the
+same code body continues through the existing pending code owner.
+Empty-structural capture verifies that the committed source reference and
+canonical document remain equal before and after that update; a mismatch fails
+with the existing stable `visual-editor-history-document-stale` error before
+native input is accepted.
 When the generic map cannot project a collapsed caret inside CODE, the existing
 code-body projection owns only that caret input; non-collapsed selections retain
 the generic owner.
@@ -311,6 +369,15 @@ an accepted source state for formal Preview rematerialization. Ordinary exact
 text input does not serialize the whole DOM or reuse stale accepted HTML to
 manufacture a snapshot. Exact snapshots restore code DOM and caret after
 browser-created formatting or a scripted terminal newline is normalized.
+When pending visual input leaves a list or blockquote body empty,
+`commitPendingVisualIntent` has already materialized that body and updated the
+accepted HTML, source map, and visual baseline. The current history slot records
+that existing surface through `recordCurrentVisualHistorySnapshot`; it does not
+replace the valid snapshot with a formal Preview-rematerialization slot. The
+next native character and local Undo/Redo therefore use the snapshot path, and
+protected-order adoption preserves equivalent generated node identity without a
+formal Preview request. A formal Preview request remains required when no valid
+local snapshot exists.
 Targets without a local snapshot, including history before the visual baseline,
 use the formal Preview owner bound to source, signature, history state and
 selection; native contenteditable history never owns Markdown. Restoring an
@@ -323,11 +390,17 @@ whitespace and source-owned line endings. Code-body commits refresh this
 metadata; the windowed source-range adapter restores it for the active region.
 An actual empty-code Backspace shortcut flushes pending input before its
 structural change and records the corresponding canonical history transition.
-Focused windowed history at canonical EOF prepares a Preview-owned document-end
-window pin before scheduling its exact formal Preview request. The in-memory
-lease binds the request signature and accepted generation, preserves the
-validated final editable block in the initial and subsequent bounded windows,
-and releases after caret restoration or cancellation, error and teardown.
+Focused windowed structural edits prepare a Preview-owned selection pin
+before scheduling its exact formal Preview request. The in-memory lease binds
+the request signature, source selection, and accepted generation. A selected
+source range may be non-collapsed; Preview maps both endpoints to the relevant
+editable block indices before the atomic first window commit and preserves
+those indices in subsequent bounded windows. After the matching commit, the
+windowed owner restores the canonical Selection direction as well as its
+endpoints. A canonical EOF selection still uses the document-end form of the
+same lease. The lease releases after caret restoration or cancellation, error,
+or teardown; invalid range, map, generation, signature, and owner transitions
+remain explicit Preview failures.
 When that exact request resolves to a document at or below the Windowed
 threshold, the owner releases the matching lease and continues the normal full
 staged commit because the complete DOM already contains the editable EOF.
@@ -409,6 +482,51 @@ For a signature-matched visual paste accepted at canonical offset `0` or
 and restores it at the first or last safe editable DOM boundary without running
 the generic DOM search. Internal positions still use the bounded mapper and
 fail explicitly when they cannot be mapped.
+
+`Ctrl/Cmd+A` is owned by the connected visual root in both non-windowed and
+windowed immersive editing. The whole-root deletion owner handles only
+`deleteContentBackward` and `deleteContentForward`; Cut, IME, partial
+selections, and partial CODE selections remain with their existing protected
+owners. In the windowed path, the current root range must cover every
+non-spacer child with a valid range-ledger binding. That binding may identify a
+generated or non-editable root when the whole canonical document is explicitly
+selected. It never expands a partial mounted range to hidden source. Mapped
+source separator ranges and terminal whitespace are handled only when the
+accepted source-range map identifies them; unsupported or unmounted source
+gaps fail explicitly. The connected-root coverage guard is limited to the
+Backspace/Delete whole-document path, including its keydown handoff, so
+ordinary typing retains the cached interval-map fast path without a
+full-document scan.
+
+When the accepted visual boundary hides a parser-recognized Markdown
+`HeaderMark`, `ListMark`, or `QuoteMark` separator, the local Markdown parser
+maps exactly one ASCII space or tab as the structural separator. Additional
+separator or tail bytes remain source content; code-body separators do not use
+this projection. The parser check runs only for that hidden boundary case, so
+ordinary input keeps its existing fast path. An input that leaves a structural
+body empty flushes through the existing pending-intent or visual-input merge
+owner; it does not use the whole-document transaction below. That transaction is
+reserved for Backspace/Delete over a connected full-root selection.
+
+The whole-root deletion transaction resets the visual surface to one empty
+paragraph with a BR and a connected caret in the same input turn before the
+next native character can arrive. Markdown remains canonical: terminal ASCII
+spaces or newlines may use the empty paragraph presentation while their source
+bytes remain intact, and unlock or Read paths preserve those bytes. Insertion
+at the visual boundary preserves the whitespace. Directly formatted list and
+blockquote bodies use the same empty-Backspace presentation rule while
+non-empty LI, P, PRE, and CODE content remains source-owned. An empty
+structural body keeps its accepted local snapshot through immediate next input,
+Undo, and Redo; equivalent protected generated regions retain their node
+identity without a formal Preview request.
+
+During a bounded window child replacement, the Safe HTML sink derives the
+focused full-root Selection from the connected surface and preserves its
+forward or backward direction synchronously after the replacement. It also
+preserves a connected live text selection and root-boundary caret. Partial
+root selections and full-root selections after focus leaves the surface are
+never expanded to the new root; no caller-side shortcut flag grants that
+authority.
 
 Generated TOC, footnote, rendered math, and Mermaid regions remain the same
 read-only DOM nodes while visual editing is active. Their child markup and
@@ -504,6 +622,14 @@ setup failure upload nothing. A failed selected owner never switches;
 Copy publishes no partial Clipboard payload, though an upload completed before
 a later transaction failure can remain. The live Preview and document remain
 unchanged.
+EditorRoot cancels a queued or active background demand when visual unlock
+begins, Preview loses `ready` status, an ordinary or immersive Preview sink is
+disposed or replaced, the Root tears down, or the WeChat Port/export ownership
+changes. That signal belongs to the background demand and does not cancel an
+explicit Copy. The browser Adapter tracks background waiters and one active job
+per sink, checks cancellation before finalizing markup, deriving plain text, or
+publishing prepared cache state, and leaves shared theme-image fetches
+independent.
 
 `createBrowserWechatClipboard` currently limits materialized theme-image data payloads to 4,000,000 bytes, retains at most 32 background-asset cache entries, and applies 10,000 ms timeouts to approved theme-image fetch/conversion and Clipboard commit.
 

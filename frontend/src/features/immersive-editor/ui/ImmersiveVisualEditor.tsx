@@ -9,6 +9,7 @@ import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
 import type { PreviewSurfaceStatus } from '../../live-preview/ui/PreviewSurfaceOwner';
 import { prepareVisualProtectedNodeAdoption } from '../../../shared/dom/visual-protected-node-adoption';
+import { isMarkdownTerminalWhitespaceSuffix } from '../../../shared/markdown/markdown-line-model';
 import {
   applyVisualBlockShortcut,
   applyVisualInlineShortcut,
@@ -35,6 +36,7 @@ import {
   restoreVisualCodeFenceFamilies,
   restoreVisualCodeFenceOpenEofMetadata,
   serializeVisualMarkdown,
+  visualStructuralBodyIsEmpty,
   visualCodeBodyDomOffset,
   visualCodeBodyIntervalAtOrdinal,
   visualCodeBodyOrdinalForSourceRange,
@@ -43,7 +45,9 @@ import {
   type VisualCodeInputSnapshot,
   type AcceptedPasteDocumentBoundary,
   type VisualMarkdownSourceIntervalMap,
-  visualSelectionSourceRange
+  visualEmptyStructuralBodySelection,
+  visualSelectionSourceRange,
+  visualSelectionVisualOffset
 } from '../visual-markdown';
 
 export type ImmersiveVisualEditorRuntime = Readonly<{
@@ -122,6 +126,10 @@ type ApplyDocumentChangeOptions = Readonly<{
 }>;
 
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
+const VISUAL_WHOLE_DOCUMENT_DELETION_TYPES = new Set([
+  'deleteContentBackward',
+  'deleteContentForward'
+]);
 
 type DocumentHistoryState = ReturnType<
   EditorDocumentSession['document']['getHistoryState']
@@ -232,6 +240,26 @@ type VisualInputIntent = Readonly<{
   visualSelection: Readonly<{ end: number; start: number }>;
 }>;
 
+type VisualEmptyStructuralInput = Readonly<{
+  body: HTMLElement;
+  bodyPath: ReadonlyArray<number>;
+  beforeSurface: HTMLElement;
+  data: string;
+  historyBefore?: VisualHistorySnapshot;
+  historyOrigin?: 'empty-structural';
+  inputType: string;
+  sourceMarkdown: string;
+  sourceSelection: Readonly<{ end: number; start: number }>;
+  targetRange: Readonly<{
+    endNode: Node;
+    endOffset: number;
+    startNode: Node;
+    startOffset: number;
+  }>;
+  visualMarkdown: string;
+  visualSelection: Readonly<{ end: number; start: number }>;
+}>;
+
 type VisualCompositionCodeBodyContext = Readonly<{
   code: HTMLElement;
   codeOrdinal: number;
@@ -254,6 +282,8 @@ type PendingVisualIntent = Readonly<{
     sourceBlockStart: number;
   }>;
   historyBefore?: VisualHistorySnapshot;
+  historyOrigin?: 'empty-structural';
+  deferSourceChange?: boolean;
   memory: VisualSelectionMemory | null;
   result: NonNullable<ReturnType<typeof applyVisualMarkdownEditIntent>>;
   sourceChange: Readonly<{
@@ -327,11 +357,65 @@ function ensureEmptyVisualParagraph(
   surface: HTMLElement,
   sourceMarkdown: string
 ): void {
-  if (sourceMarkdown || surface.hasChildNodes()) return;
+  if (!isVisualMarkdownEmpty(sourceMarkdown)) return;
+  if (
+    surface.hasChildNodes()
+    && !(
+      1 === surface.childNodes.length
+      && surface.firstChild instanceof HTMLBRElement
+    )
+  ) return;
+  resetEmptyVisualParagraph(surface);
+}
+
+function resetEmptyVisualParagraph(surface: HTMLElement): void {
+  surface.replaceChildren();
   const paragraph = surface.ownerDocument.createElement('p');
   paragraph.append(surface.ownerDocument.createElement('br'));
   surface.append(paragraph);
   placeSurfaceCaretAtEnd(paragraph);
+}
+
+function isVisualMarkdownEmpty(markdown: string): boolean {
+  return isMarkdownTerminalWhitespaceSuffix(markdown);
+}
+
+function isEmptyVisualSurface(surface: HTMLElement): boolean {
+  return 0 === surface.childNodes.length
+    || (
+      1 === surface.childNodes.length
+      && surface.firstChild instanceof HTMLBRElement
+    );
+}
+
+function selectVisualSurfaceContents(surface: HTMLElement): void {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const range = surface.ownerDocument.createRange();
+  range.selectNodeContents(surface);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function selectionCoversVisualSurface(surface: HTMLElement): boolean {
+  const documentRef = surface.ownerDocument;
+  const selection = documentRef.defaultView?.getSelection();
+  if (
+    !surface.isConnected
+    || documentRef.activeElement !== surface
+    || !selection
+    || 1 !== selection.rangeCount
+    || selection.isCollapsed
+    || !selection.anchorNode?.isConnected
+    || !selection.focusNode?.isConnected
+    || !surface.contains(selection.anchorNode)
+    || !surface.contains(selection.focusNode)
+  ) return false;
+  const range = selection.getRangeAt(0);
+  return range.startContainer === surface
+    && range.startOffset === 0
+    && range.endContainer === surface
+    && range.endOffset === surface.childNodes.length;
 }
 
 function editableTextNode(surface: HTMLElement, node: Node): node is Text {
@@ -948,6 +1032,74 @@ function visualInputIntent(
   };
 }
 
+function visualEmptyStructuralInputIntent(
+  surface: HTMLElement,
+  event: InputEvent,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string
+): VisualEmptyStructuralInput | null {
+  if (
+    !['insertCompositionText', 'insertFromComposition', 'insertReplacementText', 'insertText']
+      .includes(event.inputType)
+    || null === event.data
+  ) return null;
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  const anchorNode = selection?.anchorNode;
+  const focusNode = selection?.focusNode;
+  if (
+    !selection?.isCollapsed
+    || !(anchorNode instanceof HTMLElement)
+    || anchorNode !== focusNode
+    || selection.anchorOffset !== 0
+    || !surface.contains(anchorNode)
+    || !anchorNode.closest('blockquote, ol, ul')
+    || !['P', 'LI'].includes(anchorNode.tagName)
+    || anchorNode.childNodes.length !== 1
+    || !(anchorNode.firstChild instanceof HTMLBRElement)
+  ) return null;
+  const target = event.getTargetRanges?.()[0];
+  if (
+    !target
+    || target.startContainer !== anchorNode
+    || target.endContainer !== anchorNode
+    || target.startOffset !== target.endOffset
+    || target.startOffset !== selection.anchorOffset
+  ) return null;
+  const mapped = visualEmptyStructuralBodySelection(
+    surface,
+    sourceMarkdown,
+    baselineVisualMarkdown,
+    baselineVisualMarkdown
+  );
+  if (!mapped) return null;
+  if ('failure' in mapped) throw new Error(mapped.failure);
+  const bodyPath = visualNodePath(surface, anchorNode);
+  if (!bodyPath) throw new Error('visual-editor-selection-map-failed');
+  return {
+    body: anchorNode,
+    bodyPath,
+    beforeSurface: surface.cloneNode(true) as HTMLElement,
+    data: event.data,
+    inputType: event.inputType,
+    sourceMarkdown,
+    sourceSelection: {
+      end: mapped.sourceOffset,
+      start: mapped.sourceOffset
+    },
+    targetRange: {
+      endNode: target.endContainer,
+      endOffset: target.endOffset,
+      startNode: target.startContainer,
+      startOffset: target.startOffset
+    },
+    visualMarkdown: baselineVisualMarkdown,
+    visualSelection: {
+      end: mapped.visualOffset,
+      start: mapped.visualOffset
+    }
+  };
+}
+
 function collapsedVisualSelection(surface: HTMLElement): boolean {
   const selection = surface.ownerDocument.defaultView?.getSelection();
   return Boolean(
@@ -1087,6 +1239,8 @@ export function ImmersiveVisualEditor({
   const visualSelectionMemoryRef = useRef<VisualSelectionMemory | null>(null);
   const visualSourceIntervalMapRef = useRef<VisualMarkdownSourceIntervalMap | null>(null);
   const pendingVisualIntentRef = useRef<VisualInputIntent | null>(null);
+  const pendingVisualEmptyStructuralInputRef =
+    useRef<VisualEmptyStructuralInput | null>(null);
   const pendingVisualIntentResultRef = useRef<PendingVisualIntent | null>(null);
   const visualBaselineMaterializedRef = useRef(false);
   const capturedPreviewRevisionRef = useRef<number | null>(null);
@@ -1596,6 +1750,7 @@ export function ImmersiveVisualEditor({
     lastSelectionRef.current = null;
     visualSelectionMemoryRef.current = null;
     pendingVisualIntentRef.current = null;
+    pendingVisualEmptyStructuralInputRef.current = null;
     pendingVisualIntentResultRef.current = null;
     pendingUnmappedVisualInputRef.current = false;
     continuingUnmappedVisualInputRef.current = false;
@@ -1654,6 +1809,7 @@ export function ImmersiveVisualEditor({
     lastSelectionRef.current = null;
     visualSelectionMemoryRef.current = null;
     pendingVisualIntentRef.current = null;
+    pendingVisualEmptyStructuralInputRef.current = null;
     pendingVisualIntentResultRef.current = null;
     pendingUnmappedVisualInputRef.current = false;
     continuingUnmappedVisualInputRef.current = false;
@@ -1960,19 +2116,33 @@ export function ImmersiveVisualEditor({
         throw new Error('visual-editor-markdown-snapshot-missing');
       }
       if (editedVisualMarkdown === baselineVisualMarkdown) {
+        if ('' === editedVisualMarkdown) {
+          ensureEmptyVisualParagraph(surface, sourceMarkdown);
+        }
         if (options.mapSelectionWhenUnchanged) {
-          const mappedSelection = visualSelectionSourceRange(
-            surface,
-            sourceMarkdown,
-            baselineVisualMarkdown,
-            editedVisualMarkdown,
-            options.acceptedDocumentBoundary
-              ? {
-                  acceptedPasteDocumentBoundary:
-                    options.acceptedDocumentBoundary
-                }
-              : {}
-          );
+          let mappedSelection: VisualSelectionSourceRange;
+          try {
+            mappedSelection = visualSelectionSourceRange(
+              surface,
+              sourceMarkdown,
+              baselineVisualMarkdown,
+              editedVisualMarkdown,
+              options.acceptedDocumentBoundary
+                ? {
+                    acceptedPasteDocumentBoundary:
+                      options.acceptedDocumentBoundary
+                  }
+                : {}
+            );
+          } catch (error) {
+            if (
+              error instanceof Error
+              && 'visual-editor-markdown-merge-failed' === error.message
+            ) {
+              throw new Error('visual-editor-unchanged-selection-merge-failed');
+            }
+            throw error;
+          }
           lastSelectionRef.current = mappedSelection;
           // CodeMirror owns the canonical selection used by delegated
           // Media operations. This same-value dispatch changes only that
@@ -1993,6 +2163,10 @@ export function ImmersiveVisualEditor({
         baselineVisualMarkdown,
         editedVisualMarkdown
       );
+      const value = mergeResult.value;
+      if ('' === editedVisualMarkdown) {
+        ensureEmptyVisualParagraph(surface, value);
+      }
       let selection: VisualSelectionSourceRange;
       const inferredEdit = !options.preferVisualSelection
         && collapsedVisualSelection(surface)
@@ -2028,7 +2202,6 @@ export function ImmersiveVisualEditor({
           }
         }
       }
-      const value = mergeResult.value;
       const validatedCodeStructure = visualCodeStructureCandidate(value);
       if (options.localCodeBodyInputPre) {
         const localInput = captureVisualCodeInputSnapshot(
@@ -2540,6 +2713,7 @@ export function ImmersiveVisualEditor({
       );
       if (
         pending.baseSourceMarkdown === previousSource
+        && !pending.deferSourceChange
         && expectedSource !== pending.result.sourceMarkdown
       ) {
         throw new Error('visual-editor-local-change-mismatch');
@@ -2790,6 +2964,7 @@ export function ImmersiveVisualEditor({
           value: committedResult.sourceMarkdown,
           ...(null === expandedPreviewSource
           && pending.baseSourceMarkdown === previousSource
+          && !pending.deferSourceChange
             ? { changes: sourceChange }
             : {})
         }, {
@@ -2810,14 +2985,28 @@ export function ImmersiveVisualEditor({
         visualCodeBodyOrdinalsRef.current = null;
         visualCodeBodyDomOrderInvalidRef.current = true;
       }
+      const emptyStructuralBody = visualStructuralBodyIsEmpty(surface);
+      const committedVisualMarkdown = emptyStructuralBody
+        ? serializeVisualMarkdown(surface)
+        : committedResult.visualMarkdown;
       sourceMarkdownRef.current = committedResult.sourceMarkdown;
-      visualMarkdownRef.current = committedResult.visualMarkdown;
+      visualMarkdownRef.current = committedVisualMarkdown;
       // Selection memory keeps consecutive edits in the same text node O(1).
       // A direct identity map is no longer valid after editing rendered
       // Markdown whose source contains hidden delimiters; materialize the
       // complete map before the next edit in a different node instead.
-      visualSourceIntervalMapRef.current = null;
-      visualBaselineMaterializedRef.current = false;
+      visualSourceIntervalMapRef.current = emptyStructuralBody
+        ? createVisualMarkdownSourceIntervalMap(
+            committedResult.sourceMarkdown,
+            committedVisualMarkdown
+          )
+        : null;
+      visualBaselineMaterializedRef.current = emptyStructuralBody;
+      if (emptyStructuralBody) {
+        acceptedHtmlRef.current = surface.innerHTML;
+        readOnlySnapshotRef.current =
+          captureVisualMarkdownReadOnlySnapshot(surface);
+      }
       acceptedPasteDocumentBoundaryRef.current = null;
       lastSelectionRef.current = committedResult.selection;
       visualSelectionMemoryRef.current = committedMemory;
@@ -2850,10 +3039,17 @@ export function ImmersiveVisualEditor({
           );
         }
         const historyState = documentHistoryState(documentSession.document);
-        visualHistorySnapshotsRef.current.set(historyState.undoDepth, {
-          kind: 'rematerialize',
-          markdown: committedResult.sourceMarkdown
-        });
+        if (emptyStructuralBody) {
+          recordCurrentVisualHistorySnapshot(
+            committedResult.sourceMarkdown,
+            surface.innerHTML
+          );
+        } else {
+          visualHistorySnapshotsRef.current.set(historyState.undoDepth, {
+            kind: 'rematerialize',
+            markdown: committedResult.sourceMarkdown
+          });
+        }
       }
       if (previousSource !== committedResult.sourceMarkdown) {
         onMarkdownChange();
@@ -2909,6 +3105,61 @@ export function ImmersiveVisualEditor({
       }, VISUAL_INPUT_DEBOUNCE_MS);
     };
     flushVisualInputRef.current = flushVisualInput;
+
+    const clearWholeVisualDocument = (): boolean => {
+      const sourceMarkdown = sourceMarkdownRef.current;
+      if (null === sourceMarkdown) {
+        return failVisualSynchronization(
+          new Error('visual-editor-markdown-snapshot-missing')
+        );
+      }
+      const selection = {
+        direction: 'none' as const,
+        end: 0,
+        start: 0
+      };
+      try {
+        resetEmptyVisualParagraph(surface);
+        applyDocumentChange({
+          changes: { from: 0, insert: '', to: sourceMarkdown.length },
+          recordHistorySelection: true,
+          selection,
+          value: ''
+        });
+        clearVisualLocalCodeBodyProvenance();
+        visualCodeBodyPreviewSourceRef.current = '';
+        visualCodeBodyPreviewStructureRef.current =
+          visualCodeBlockStructureSignature('');
+        visualCodeBodyStructureValidationRef.current = {
+          markdown: '',
+          matchesPreview: true
+        };
+        visualCodeBodyOrdinalsRef.current = null;
+        visualCodeBodyDomOrderInvalidRef.current = true;
+        acceptedPasteDocumentBoundaryRef.current = null;
+        lastSelectionRef.current = selection;
+        visualSelectionMemoryRef.current = null;
+        pendingVisualIntentRef.current = null;
+        pendingVisualIntentResultRef.current = null;
+        pendingUnmappedVisualInputRef.current = false;
+        continuingUnmappedVisualInputRef.current = false;
+        sourceMarkdownRef.current = '';
+        visualMarkdownRef.current = '';
+        visualSourceIntervalMapRef.current =
+          createVisualMarkdownSourceIntervalMap('', '');
+        acceptedHtmlRef.current = surface.innerHTML;
+        acceptedCodeBodySnapshotsRef.current.clear();
+        acceptedLocalCodeBodiesRef.current = visualLocalCodeBodyRecords();
+        readOnlySnapshotRef.current =
+          captureVisualMarkdownReadOnlySnapshot(surface);
+        visualBaselineMaterializedRef.current = true;
+        recordCurrentVisualHistorySnapshot('', surface.innerHTML);
+        onMarkdownChange();
+        return true;
+      } catch (error) {
+        return failVisualSynchronization(error);
+      }
+    };
 
     const restoreHistorySnapshot = (
       snapshot: VisualHistorySnapshot
@@ -3318,6 +3569,7 @@ export function ImmersiveVisualEditor({
       });
     };
     const handleBeforeInput = (event: InputEvent) => {
+      pendingVisualEmptyStructuralInputRef.current = null;
       continuingUnmappedVisualInputRef.current = false;
       if (compositionRejected) {
         event.preventDefault();
@@ -3326,8 +3578,35 @@ export function ImmersiveVisualEditor({
       const isHistoryInput =
         'historyUndo' === event.inputType || 'historyRedo' === event.inputType;
       const selectedCodePre = selectedVisualCodeBlock(surface);
-      const pendingVisual = pendingVisualIntentResultRef.current;
-      const pendingCodeStructure = pendingVisual?.codeBlockStructure;
+      let pendingVisual = pendingVisualIntentResultRef.current;
+      let pendingCodeStructure = pendingVisual?.codeBlockStructure;
+      const pendingMemory = pendingVisual?.memory;
+      const pendingMemoryConnected = Boolean(
+        pendingMemory?.anchorNode.isConnected
+        && pendingMemory.focusNode.isConnected
+        && surface.contains(pendingMemory.anchorNode)
+        && surface.contains(pendingMemory.focusNode)
+      );
+      if (
+        !isHistoryInput
+        && !composing
+        && !event.isComposing
+        && pendingVisual
+        && !pendingVisual.codeBlockStructure
+        && (
+          !pendingMemoryConnected
+          || (
+            event.inputType.startsWith('insert')
+            && visualStructuralBodyIsEmpty(surface)
+          )
+        )
+        && !flushVisualInput()
+      ) {
+        event.preventDefault();
+        return;
+      }
+      pendingVisual = pendingVisualIntentResultRef.current;
+      pendingCodeStructure = pendingVisual?.codeBlockStructure;
       let pendingCodeInputCanContinue = Boolean(
         pendingCodeStructure?.preserving
         && selectedCodePre
@@ -3454,6 +3733,19 @@ export function ImmersiveVisualEditor({
         return;
       }
       if (composing || event.isComposing) {
+        return;
+      }
+      if (
+        VISUAL_WHOLE_DOCUMENT_DELETION_TYPES.has(event.inputType)
+        && selectionCoversVisualSurface(surface)
+      ) {
+        event.preventDefault();
+        if (!flushVisualInput()) return;
+        if (!selectionCoversVisualSurface(surface)) {
+          onFailure('visual-editor-whole-document-selection-stale');
+          return;
+        }
+        clearWholeVisualDocument();
         return;
       }
       const continuesUnmappedInput = Boolean(
@@ -3619,6 +3911,41 @@ export function ImmersiveVisualEditor({
           return;
         }
       } else {
+        try {
+          const emptyStructuralInput = visualEmptyStructuralInputIntent(
+            surface,
+            event,
+            sourceMarkdown,
+            visualMarkdown
+          );
+          if (emptyStructuralInput) {
+            applyDocumentChange({
+              selection: {
+                direction: 'none',
+                end: emptyStructuralInput.sourceSelection.end,
+                start: emptyStructuralInput.sourceSelection.start
+              },
+              value: sourceMarkdown
+            });
+            lastSelectionRef.current = {
+              direction: 'none',
+              end: emptyStructuralInput.sourceSelection.end,
+              start: emptyStructuralInput.sourceSelection.start
+            };
+            pendingVisualEmptyStructuralInputRef.current = {
+              ...emptyStructuralInput,
+              historyBefore: captureVisualHistorySnapshot(
+                sourceMarkdown,
+                surface.innerHTML
+              ),
+              historyOrigin: 'empty-structural'
+            };
+          }
+        } catch (error) {
+          event.preventDefault();
+          failVisualSynchronization(error);
+          return;
+        }
         const genericIntent = visualInputIntent(
           surface,
           event,
@@ -3774,6 +4101,17 @@ export function ImmersiveVisualEditor({
       }
     };
     const handleInput = (event: InputEvent) => {
+      const pendingEmptyStructuralInput =
+        pendingVisualEmptyStructuralInputRef.current;
+      pendingVisualEmptyStructuralInputRef.current = null;
+      const flushEmptyVisualInput = (): boolean => {
+        if (!flushVisualInput()) return false;
+        const sourceMarkdown = sourceMarkdownRef.current;
+        if (null !== sourceMarkdown && isVisualMarkdownEmpty(sourceMarkdown)) {
+          ensureEmptyVisualParagraph(surface, sourceMarkdown);
+        }
+        return true;
+      };
       const continuingUnmappedVisualInput =
         continuingUnmappedVisualInputRef.current;
       continuingUnmappedVisualInputRef.current = false;
@@ -3851,13 +4189,133 @@ export function ImmersiveVisualEditor({
           return;
         }
       }
+      if (
+        event.inputType.startsWith('delete')
+        && null !== sourceMarkdownRef.current
+        && isVisualMarkdownEmpty(sourceMarkdownRef.current)
+      ) {
+        ensureEmptyVisualParagraph(surface, '');
+      }
       const shortcutApplied = [
         'historyRedo',
         'historyUndo'
       ].includes(event.inputType)
         ? false
         : applyVisualInlineShortcut(surface);
+      const emptyStructuralInput = pendingEmptyStructuralInput;
+      if (emptyStructuralInput) {
+        try {
+          const sourceMarkdown = sourceMarkdownRef.current;
+          const baselineVisualMarkdown = visualMarkdownRef.current;
+          if (
+            sourceMarkdown !== emptyStructuralInput.sourceMarkdown
+            || baselineVisualMarkdown !== emptyStructuralInput.visualMarkdown
+            || !emptyStructuralInput.body.isConnected
+            || !surface.contains(emptyStructuralInput.body)
+            || visualNodeAtPath(surface, emptyStructuralInput.bodyPath)
+              !== emptyStructuralInput.body
+            || emptyStructuralInput.targetRange.startNode
+              !== emptyStructuralInput.body
+            || emptyStructuralInput.targetRange.endNode
+              !== emptyStructuralInput.body
+            || emptyStructuralInput.targetRange.startOffset !== 0
+            || emptyStructuralInput.targetRange.endOffset !== 0
+          ) {
+            throw new Error('visual-editor-empty-structural-input-stale');
+          }
+          const currentSelection = surface.ownerDocument.defaultView?.getSelection();
+          const text = emptyStructuralInput.body.firstChild;
+          if (
+            !(text instanceof Text)
+            || emptyStructuralInput.body.childNodes.length !== 1
+            || text.data !== emptyStructuralInput.data
+            || !currentSelection?.isCollapsed
+            || currentSelection.anchorNode !== text
+            || currentSelection.focusNode !== text
+            || currentSelection.anchorOffset !== text.length
+            || currentSelection.focusOffset !== text.length
+          ) {
+            throw new Error('visual-editor-empty-structural-input-dom-mismatch');
+          }
+          const beforeClone =
+            emptyStructuralInput.beforeSurface.cloneNode(true) as HTMLElement;
+          const currentClone = surface.cloneNode(true) as HTMLElement;
+          const beforeBody = visualNodeAtPath(
+            beforeClone,
+            emptyStructuralInput.bodyPath
+          );
+          const currentBody = visualNodeAtPath(
+            currentClone,
+            emptyStructuralInput.bodyPath
+          );
+          if (
+            !(beforeBody instanceof HTMLElement)
+            || !(currentBody instanceof HTMLElement)
+          ) {
+            throw new Error('visual-editor-empty-structural-input-stale');
+          }
+          beforeBody.replaceChildren(beforeClone.ownerDocument.createTextNode('__body__'));
+          currentBody.replaceChildren(currentClone.ownerDocument.createTextNode('__body__'));
+          if (beforeClone.innerHTML !== currentClone.innerHTML) {
+            throw new Error('visual-editor-empty-structural-input-dom-mismatch');
+          }
+          const readOnlySnapshot = readOnlySnapshotRef.current;
+          if (readOnlySnapshot) {
+            assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+          }
+          const result = applyVisualMarkdownEditIntent(
+            emptyStructuralInput.sourceMarkdown,
+            emptyStructuralInput.visualMarkdown,
+            emptyStructuralInput.sourceSelection,
+            emptyStructuralInput.visualSelection,
+            emptyStructuralInput.inputType,
+            emptyStructuralInput.data
+          );
+          if (!result) {
+            throw new Error('visual-editor-empty-structural-input-map-failed');
+          }
+          const committedVisualMarkdown = serializeVisualMarkdown(surface);
+          const committedVisualOffset = visualSelectionVisualOffset(
+            surface,
+            committedVisualMarkdown
+          );
+          const committedResult = {
+            ...result,
+            visualMarkdown: committedVisualMarkdown,
+            visualSelection: {
+              end: committedVisualOffset,
+              start: committedVisualOffset
+            }
+          };
+          pendingVisualIntentResultRef.current = {
+            baseSourceMarkdown: emptyStructuralInput.sourceMarkdown,
+            ...(emptyStructuralInput.historyBefore
+              ? { historyBefore: emptyStructuralInput.historyBefore }
+              : {}),
+            ...(emptyStructuralInput.historyOrigin
+              ? { historyOrigin: emptyStructuralInput.historyOrigin }
+              : {}),
+            memory: selectionMemoryForCurrentSelection(
+              surface,
+              committedResult.selection,
+              committedResult.visualSelection
+            ),
+            result: committedResult,
+            sourceChange: {
+              from: emptyStructuralInput.sourceSelection.start,
+              insert: emptyStructuralInput.data,
+              to: emptyStructuralInput.sourceSelection.end
+            }
+          };
+          scheduleVisualInput();
+          return;
+        } catch (error) {
+          failVisualSynchronization(error);
+          return;
+        }
+      }
       const intent = pendingVisualIntentRef.current;
+      const previousPendingVisualIntent = pendingVisualIntentResultRef.current;
       pendingVisualIntentRef.current = null;
       if (intent) {
         const base = pendingVisualIntentResultRef.current?.result;
@@ -3975,53 +4433,101 @@ export function ImmersiveVisualEditor({
           if (result && domMatchesIntent) {
             pendingUnmappedVisualInputRef.current = false;
             continuingUnmappedVisualInputRef.current = false;
+            const committedVisualMarkdown = event.inputType.startsWith('delete')
+              && visualStructuralBodyIsEmpty(surface)
+              ? serializeVisualMarkdown(surface)
+              : result.visualMarkdown;
+            const committedResult = committedVisualMarkdown === result.visualMarkdown
+              ? result
+              : {
+                  ...result,
+                  visualMarkdown: committedVisualMarkdown
+                };
             const codeBlockStructure = intent.codeBlockStructure
               ? {
                   ...intent.codeBlockStructure,
                   preserving: intent.codeBlockStructure.preserving
-                    || visualCodeBlockStructureSignature(result.sourceMarkdown)
+                    || visualCodeBlockStructureSignature(committedResult.sourceMarkdown)
                       === visualCodeBlockStructureSignature(
                         intent.codeBlockStructure.baseMarkdown
                       )
                 }
               : undefined;
+            const continuingHistoryTransaction =
+              previousPendingVisualIntent?.historyOrigin === 'empty-structural'
+              && previousPendingVisualIntent.baseSourceMarkdown
+                === sourceMarkdownRef.current
+                ? previousPendingVisualIntent
+                : null;
+            const transactionBaseSourceMarkdown = continuingHistoryTransaction
+              ? continuingHistoryTransaction.baseSourceMarkdown
+              : sourceMarkdown;
+            const transactionHistoryBefore = continuingHistoryTransaction?.historyBefore
+              ?? intent.historyBefore;
             pendingVisualIntentResultRef.current = {
-                baseSourceMarkdown: sourceMarkdown,
-                ...(intent.codeBody && inputBlock
-                  ? {
-                      codeBodyTopology: {
-                        openEof: intent.codeBody.openEof,
-                        pre: inputBlock.pre,
-                        sourceBlockStart: intent.codeBody.sourceBlockStart
-                      }
+              baseSourceMarkdown: transactionBaseSourceMarkdown,
+              ...(intent.codeBody && inputBlock
+                ? {
+                    codeBodyTopology: {
+                      openEof: intent.codeBody.openEof,
+                      pre: inputBlock.pre,
+                      sourceBlockStart: intent.codeBody.sourceBlockStart
                     }
-                  : {}),
-                ...(codeBlockStructure ? { codeBlockStructure } : {}),
-                ...(intent.historyBefore
-                  ? { historyBefore: intent.historyBefore }
-                  : {}),
-                memory: selectionMemoryForCurrentSelection(
-                  surface,
-                  {
-                    end: result.selection.end,
-                    start: result.selection.start
-                  },
-                  result.visualSelection
-                ),
-                result,
-                sourceChange: {
-                  from: intent.sourceSelection.start,
-                  insert: sourceReplacement,
-                  to: intent.sourceSelection.end
-                }
-              };
-              scheduleVisualInput();
+                  }
+                : {}),
+              ...(codeBlockStructure ? { codeBlockStructure } : {}),
+              ...(transactionHistoryBefore
+                ? { historyBefore: transactionHistoryBefore }
+                : {}),
+              ...(continuingHistoryTransaction
+                ? {
+                    deferSourceChange: true,
+                    historyOrigin: 'empty-structural' as const
+                  }
+                : {}),
+              memory: selectionMemoryForCurrentSelection(
+                surface,
+                {
+                  end: committedResult.selection.end,
+                  start: committedResult.selection.start
+                },
+                committedResult.visualSelection
+              ),
+              result: committedResult,
+              sourceChange: {
+                from: intent.sourceSelection.start,
+                insert: sourceReplacement,
+                to: intent.sourceSelection.end
+              }
+            };
+            if ('' === committedResult.visualMarkdown) {
+              ensureEmptyVisualParagraph(surface, committedResult.sourceMarkdown);
+              const presentation = pendingVisualIntentResultRef.current;
+              if (presentation) {
+                pendingVisualIntentResultRef.current = {
+                  ...presentation,
+                  result: {
+                    ...presentation.result,
+                    visualMarkdown: serializeVisualMarkdown(surface)
+                  }
+                };
+              }
+              commitPendingVisualIntent();
+              visualInputPendingRef.current = false;
               return;
+            }
+            scheduleVisualInput();
+            if (
+              event.inputType.startsWith('delete')
+              && isEmptyVisualSurface(surface)
+              && !flushEmptyVisualInput()
+            ) return;
+            return;
           }
         }
       }
       if (pendingVisualIntentResultRef.current) {
-        commitPendingVisualIntent();
+        if (!commitPendingVisualIntent()) return;
       }
       pendingUnmappedVisualInputRef.current = [
         'insertLineBreak',
@@ -4035,6 +4541,11 @@ export function ImmersiveVisualEditor({
         ].includes(event.inputType)
       );
       scheduleVisualInput();
+      if (
+        event.inputType.startsWith('delete')
+        && isEmptyVisualSurface(surface)
+        && !flushEmptyVisualInput()
+      ) return;
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (visualTransferFailureReportedRef.current) {
@@ -4059,6 +4570,23 @@ export function ImmersiveVisualEditor({
           if (redo ? historyState.redoDepth > 0 : historyState.undoDepth > 0) {
             runHistory(redo);
           }
+        } catch (error) {
+          failVisualSynchronization(error);
+        }
+        return;
+      }
+      const selectAllShortcut = (event.ctrlKey || event.metaKey)
+        && !event.altKey
+        && !event.shiftKey
+        && 'a' === key;
+      if (selectAllShortcut) {
+        if (!(event.target instanceof Node) || !surface.contains(event.target)) {
+          return;
+        }
+        event.preventDefault();
+        try {
+          focusVisualSurface(surface);
+          selectVisualSurfaceContents(surface);
         } catch (error) {
           failVisualSynchronization(error);
         }

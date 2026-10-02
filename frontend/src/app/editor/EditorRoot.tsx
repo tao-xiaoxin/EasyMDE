@@ -73,6 +73,7 @@ import type {
 import type { WechatVisualRasterizationPort } from '../../contracts/ports/wechat-visual-rasterization-port';
 import { buildFontStack } from '../../domain/font-stack';
 import { formatKeyboardShortcut } from '../../shared/keyboard/keyboard-shortcut';
+import { isMarkdownTerminalWhitespaceSuffix } from '../../shared/markdown/markdown-line-model';
 import {
   AppearanceControls,
   type AppearanceNotification,
@@ -171,6 +172,19 @@ export function isVisualPreviewWindowRequestCurrent(
     && 'ready' === status
     && snapshot.revision === request.revision
     && snapshot.signature === request.signature
+  );
+}
+
+export function visualPreviewSourceHasEditableMap(
+  snapshot: Pick<VisualPreviewSnapshot, 'editMap'> | null,
+  sourceMarkdown: string | null
+): boolean {
+  return Boolean(
+    snapshot?.editMap
+    || (
+      null !== sourceMarkdown
+      && isMarkdownTerminalWhitespaceSuffix(sourceMarkdown)
+    )
   );
 }
 
@@ -726,9 +740,9 @@ export function EditorRoot(props: EditorRootProps) {
   const localDraftsEnabled =
     props.settings.general.autoSave && props.localDrafts.enabled;
   const scrollSyncEnabled = props.settings.general.syncScroll;
-  const visualPreviewHasEditableMap = Boolean(
-    visualPreviewSnapshot?.editMap
-    || (documentSession && '' === documentSession.document.getValue())
+  const visualPreviewHasEditableMap = visualPreviewSourceHasEditableMap(
+    visualPreviewSnapshot,
+    documentSession?.document.getValue() ?? null
   );
   const visualPreviewNeedsWindow =
     (visualPreviewSnapshot?.editMap?.blocks.length ?? 0)
@@ -1271,8 +1285,9 @@ export function EditorRoot(props: EditorRootProps) {
       || !snapshot
       || !documentSession
     ) return;
-    const hasEditableMap = Boolean(
-      snapshot.editMap || '' === documentSession.document.getValue()
+    const hasEditableMap = visualPreviewSourceHasEditableMap(
+      snapshot,
+      documentSession.document.getValue()
     );
     if (!hasEditableMap) return;
     flushSync(() => setVisualPreviewUnlocking(true));

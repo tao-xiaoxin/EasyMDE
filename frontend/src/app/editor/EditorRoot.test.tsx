@@ -35,6 +35,7 @@ import {
   isVisualPreviewWindowRequestCurrent,
   schedulePreviewWithDocumentEndPin,
   scheduleVisualWindowedHistoryBranchRelease,
+  visualPreviewSourceHasEditableMap,
   visualPreviewUsesWindowedOwner,
   visualPreviewSurfaceUsesWindowedOwner,
   type EditorRootProps
@@ -713,6 +714,21 @@ describe('EditorRoot', () => {
         previewPending,
         editing,
         requested
+      )).toBe(expected);
+    }
+  );
+
+  it.each([
+    ['', true],
+    [' ', true],
+    ['\n\n', true],
+    ['Before', false]
+  ])(
+    'admits only empty or terminal-whitespace Preview sources without an edit map',
+    (sourceMarkdown, expected) => {
+      expect(visualPreviewSourceHasEditableMap(
+        { editMap: null },
+        sourceMarkdown
       )).toBe(expected);
     }
   );

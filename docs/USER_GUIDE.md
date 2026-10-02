@@ -42,12 +42,17 @@ activation is ignored.
 In editable immersive Preview, Backspace at the start of an empty fenced code
 block removes its frame and returns to a paragraph. Undo and Redo restore the
 source, frame and caret, including fences left open at the end of the document.
-In a long windowed document, Ctrl/Cmd+A selects the connected visual article,
-including the ranges represented by Preview spacers. Backspace or Delete then
-clears the canonical article. The empty visual surface remains editable:
-immediate input is accepted, and Undo or Redo restores the canonical source and
-connected caret. Partial selections or Cut do not expand mounted text to hidden
-source; read-only subregions remain protected during partial editing.
+Ctrl/Cmd+A selects the connected visual article. Backspace or Delete clears the
+canonical article only for that full visual-root selection. Cut, IME input,
+partial selections, and partial code selections keep their existing editing
+owners. The cleared surface immediately shows one empty paragraph and a usable
+caret, so the next character is accepted without waiting for another Preview.
+Undo and Redo restore the canonical source and connected caret.
+If the source contains only terminal ASCII spaces or newlines, the empty
+paragraph is a visual presentation and those source bytes remain intact.
+Insertion at that boundary preserves them. Directly formatted list and quote
+wrappers follow the same empty-Backspace behavior while non-empty code content
+remains unchanged.
 After a structural Enter in a long windowed document, the accepted formal
 Preview restores the current canonical editing position before following input
 is accepted. The existing Markdown source remains authoritative; a structural

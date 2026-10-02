@@ -475,6 +475,29 @@ Exercise an ordinary list-item split followed immediately by text before the
 debounce expires. Verify the first item remains canonical, the new text stays
 in the second item, the source and visual caret agree, and ordinary rapid text
 still uses the grouped exact-input path.
+For an unchanged source and visual baseline, cover the neutral selection path
+with a collapsed caret in a sole-`BR` `P`/`LI` body. Require unchanged-neighbor
+or validated-source-end bounds, parser-ordered blockquote/list ancestry, and
+exactly one owned separator. Code/protected content, missing ownership, and
+ambiguous candidates must not claim a source range; a valid case must project a
+zero-width boundary before the existing merge checks. Confirm ordinary content
+keeps its cached unique-text hot-path eligibility before this structural scan.
+Typed `beforeinput` coverage must capture the exact collapsed target range and
+body path before browser mutation, then verify that the pre-mutation canonical
+Selection update changes neither source bytes nor history depth. After native
+mutation, require the same target/body boundary, the expected empty-placeholder
+to Text transition, unchanged outside-body DOM, and the protected snapshot;
+serialize the actual surface and continue through the existing edit-intent and
+history owners. Include normalized-to-canonical CRLF offsets, immediate and
+delayed next input, and Undo/Redo native/canonical Selection points. Stale or
+mismatched evidence must fail explicitly.
+Exercise one zero-delay rapid word kept in the same pending burst in an empty
+structural body: pre-commit input must leave canonical bytes and history
+unchanged, then produce one canonical content transaction and one Undo step back
+to empty. Require the post-input caret to follow actual serialization and
+marker mapping. Real Media-selection
+preparation must preserve canonical Selection, source, protected-node identity,
+and the no-rematerialization path for escaped `~`, `*`, `_`, and `\` input.
 Exercise the exact accepted native-paste snapshot for both fence families and
 unterminated, LF and CRLF openers, alongside mount-time normalized snapshots.
 Verify neutral native spans retain Text identity, caret and exact code body;
@@ -502,6 +525,11 @@ input records a rematerialization slot without an innerHTML getter. Preserve
 the existing zero-getter hot-path checks. Formal Preview acceptance must reject
 stale slot identity, source, signature, history depths or selection, and report
 render failure or teardown through the existing owner without fabricated HTML.
+For an empty list or blockquote body produced by pending visual input, verify
+that the already materialized accepted HTML, source map, and visual baseline
+are recorded as the current local snapshot. Immediate next native input and
+the wrapper's Undo/Redo must preserve the connected caret and canonical source;
+when that snapshot is valid, they must make no formal Preview request.
 For non-windowed rematerialization, exercise the real Preview owner and Safe
 HTML sink with TOC, footnote, rendered math, and Mermaid nodes. Exact equivalent
 protected output must retain node identity through the first staged commit, a
@@ -513,8 +541,9 @@ Local snapshot Cut, Undo, and Redo coverage must also preserve equivalent
 protected nodes when restoring an editable sibling shifts their absolute DOM
 path. Require equal protected-region count and order, exact meaningful
 attributes and markup, connected Selection, canonical source, and no Preview
-request for the local Undo. Missing or non-equivalent protected output remains
-fresh; blank or whitespace-only root `style` is the sole ignored layout artifact.
+request for the local Undo, including snapshots taken after an empty structural
+body. Missing or non-equivalent protected output remains fresh; blank or
+whitespace-only root `style` is the sole ignored layout artifact.
 For windowed EOF frame removal, verify the complete two-step Undo/Redo sequence,
 the document-end pin before formal Preview, the mounted final editable block
 and exact canonical/visible caret after the final Redo. A mapped range may omit
@@ -579,6 +608,30 @@ same-activation consumer`, `cancels stale window materialization when an
 authoritative empty Preview replaces it`, `does not report materialization
 success while a newer Preview is loading`, and `rejects materialization while
 an accepted window commit is still committing`.
+The empty-surface unit cases are named `owns native whole-root $name Backspace
+and Delete with immediate re-entry`, `creates an editable paragraph after
+clearing an empty-root topology %s`, `normalizes the empty root after
+incremental native Backspace before the next tilde ($markdown)`, and `clears a
+formatted empty $name block before immediate tilde input`. Serialization and
+source-boundary coverage also includes `reports empty structural serialization
+shapes`, `preserves a literal space inside a list item as content`, `preserves
+direct quote content beside an empty structural paragraph`, and `preserves
+terminal spaces and newlines when inserting at their visual boundary`.
+Parser-backed separator coverage is named `maps an empty structural body after
+its parser-owned separator`, `does not classify a code-body separator as a
+structural body boundary`, `retains hidden reference definitions after empty
+structural insertion`, and `preserves reference definitions when a visible
+structural marker is removed`. These cases consume one parser-owned separator
+and preserve additional separator or tail bytes; they do not widen the
+ordinary input path or its existing performance budget.
+The browser cases add `clears a nonwindowed Mermaid and math document with
+${deletionKey} and preserves immediate visual input` for Backspace and Delete,
+`preserves first input after incremental ${fixture.label} Backspace clear` for
+the `plain`, `trailing-space`, `trailing-newlines`, `two-paragraphs`, `heading`,
+`list`, `blockquote`, and `code` fixtures, `preserves ${fixture.label} wrapper
+before structural Backspace input` for `list-fast`, `list-paused`, `quote-fast`,
+and `quote-paused`, plus `clears a trailing-tail document through the full root
+range before immediate input`.
 The named cases define the regression contract and do not replace the exact
 runtime evidence required by the browser gate.
 The change does not alter performance budgets. Keep the existing limits and
@@ -650,6 +703,10 @@ scrolling. It then locks the paper again without converting a local editing
 failure into a formal Preview failure. Private maintainer documents may be used
 only for local timing and digest-equivalence probes; their path, title, content,
 or screenshots must not enter tracked tests or public evidence.
+The destructive-edit browser cases are parameterized for first input `~`, `*`,
+`_`, and `\`. Each case must locate the nested-quote source point through an
+independent Markdown AST lookup, then verify the escaped source/caret result,
+Undo/Redo, protected node identity, and no formal Preview rematerialization.
 
 The installed-ZIP Settings Center workflow also saves a synthetic File Name
 Rule while Image Hosting is disabled, performs an EasyMDE local drop through

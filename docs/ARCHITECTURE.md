@@ -308,6 +308,35 @@ rejects it explicitly. When a prior browser mutation is pending without such a
 projection, the next `beforeinput` first synchronizes that structural DOM
 change. This keeps a rapid list split followed by text in the new item from
 mapping through the pre-split source interval.
+When the source and visual baseline are unchanged, the neutral structural
+selection exception accepts only a collapsed caret in a sole-`BR` `P` or `LI`
+body. The body must be bounded by unchanged non-structural anchors or validated
+source ends, and its DOM ancestry must match the Markdown parser's ordered
+blockquote/list ancestry with exactly one owned separator. Code or protected
+content, missing ownership, and ambiguous candidates never claim this mapping;
+recognized failures use the existing merge errors. A valid candidate projects a
+zero-width source boundary into the interval map before the existing marker and
+merge checks run. Ordinary content remains eligible for the cached unique-text
+hot path before this structural scan.
+For typed input at that neutral boundary, `beforeinput` must capture the exact
+collapsed target range and body path before the browser transaction. It first
+updates only the canonical Selection through a same-value document operation;
+source bytes and history depth remain unchanged before native mutation. The
+following `input` accepts only the same live target/body path and boundary, the
+expected native empty-placeholder-to-Text transition, unchanged DOM outside the
+body, and an unchanged protected snapshot. It then serializes the actual surface
+as the visual baseline and enters the existing edit-intent and history owners.
+After that serialization, the visual caret offset is recomputed from the actual
+surface through the pure marker mapper rather than from the predicted
+replacement, so selection memory remains correct for escaped `~`, `*`, `_`, and
+`\` input. If another character arrives before the empty-body transaction
+commits, the earliest `historyBefore` and original `baseSourceMarkdown` remain
+authoritative; the existing canonical value diff applies the accumulated source
+once without a full-source scan or global history annotation per key.
+CRLF comparison uses normalized intervals and converts the result back to the
+canonical source UTF-16 offset. Immediate and delayed next input plus Undo/Redo
+must retain paired canonical and native Selection points; stale or mismatched
+evidence fails through the existing explicit synchronization owner.
 When the generic map cannot project a collapsed caret inside CODE, the existing
 code-body projection owns only that caret input; non-collapsed selections retain
 the generic owner.
@@ -323,6 +352,15 @@ an accepted source state for formal Preview rematerialization. Ordinary exact
 text input does not serialize the whole DOM or reuse stale accepted HTML to
 manufacture a snapshot. Exact snapshots restore code DOM and caret after
 browser-created formatting or a scripted terminal newline is normalized.
+When pending visual input leaves a list or blockquote body empty,
+`commitPendingVisualIntent` has already materialized that body and updated the
+accepted HTML, source map, and visual baseline. The current history slot records
+that existing surface through `recordCurrentVisualHistorySnapshot`; it does not
+replace the valid snapshot with a formal Preview-rematerialization slot. The
+next native character and local Undo/Redo therefore use the snapshot path, and
+protected-order adoption preserves equivalent generated node identity without a
+formal Preview request. A formal Preview request remains required when no valid
+local snapshot exists.
 Targets without a local snapshot, including history before the visual baseline,
 use the formal Preview owner bound to source, signature, history state and
 selection; native contenteditable history never owns Markdown. Restoring an
@@ -428,23 +466,42 @@ and restores it at the first or last safe editable DOM boundary without running
 the generic DOM search. Internal positions still use the bounded mapper and
 fail explicitly when they cannot be mapped.
 
-Windowed `Ctrl/Cmd+A` is owned by the live visual root: it creates a selection
-over the actual connected root, including its Preview spacer nodes. The
-windowed input owner handles only `deleteContentBackward` and
-`deleteContentForward` as full-document deletion when that current connected
-range covers the root and every current non-spacer child has a valid current
-range-ledger binding. That binding may identify a generated or non-editable
-root when the whole canonical document is explicitly selected. An incomplete,
-stale, detached, partial read-only, or Cut selection cannot claim
-full-document authority; it uses the existing protected mapped-selection path
-or fails explicitly and never expands mounted text to hidden source. Mapped
+`Ctrl/Cmd+A` is owned by the connected visual root in both non-windowed and
+windowed immersive editing. The whole-root deletion owner handles only
+`deleteContentBackward` and `deleteContentForward`; Cut, IME, partial
+selections, and partial CODE selections remain with their existing protected
+owners. In the windowed path, the current root range must cover every
+non-spacer child with a valid range-ledger binding. That binding may identify a
+generated or non-editable root when the whole canonical document is explicitly
+selected. It never expands a partial mounted range to hidden source. Mapped
 source separator ranges and terminal whitespace are handled only when the
 accepted source-range map identifies them; unsupported or unmounted source
 gaps fail explicitly. The connected-root coverage guard is limited to the
 Backspace/Delete whole-document path, including its keydown handoff, so
 ordinary typing retains the cached interval-map fast path without a
-full-document scan. Empty and non-windowed editing continue through the
-existing `ImmersiveVisualEditor` empty-paragraph and local editing owners.
+full-document scan.
+
+When the accepted visual boundary hides a parser-recognized Markdown
+`HeaderMark`, `ListMark`, or `QuoteMark` separator, the local Markdown parser
+maps exactly one ASCII space or tab as the structural separator. Additional
+separator or tail bytes remain source content; code-body separators do not use
+this projection. The parser check runs only for that hidden boundary case, so
+ordinary input keeps its existing fast path. An input that leaves a structural
+body empty flushes through the existing pending-intent or visual-input merge
+owner; it does not use the whole-document transaction below. That transaction is
+reserved for Backspace/Delete over a connected full-root selection.
+
+The whole-root deletion transaction resets the visual surface to one empty
+paragraph with a BR and a connected caret in the same input turn before the
+next native character can arrive. Markdown remains canonical: terminal ASCII
+spaces or newlines may use the empty paragraph presentation while their source
+bytes remain intact, and unlock or Read paths preserve those bytes. Insertion
+at the visual boundary preserves the whitespace. Directly formatted list and
+blockquote bodies use the same empty-Backspace presentation rule while
+non-empty LI, P, PRE, and CODE content remains source-owned. An empty
+structural body keeps its accepted local snapshot through immediate next input,
+Undo, and Redo; equivalent protected generated regions retain their node
+identity without a formal Preview request.
 
 During a bounded window child replacement, the Safe HTML sink derives the
 focused full-root Selection from the connected surface and preserves its

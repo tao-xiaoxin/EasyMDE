@@ -54,6 +54,9 @@ latest request while it runs, and inserts a quiet turn before replacement.
 Background style and geometry walks yield to browser tasks. Appearance or
 Custom CSS changes that tear down visual editing wait for the refreshed active
 Preview before preparing it.
+Each serialization work slice uses the owner-defined measured budget after the
+browser task resumes; time spent waiting for that task is excluded and does not
+consume the slice.
 
 Approved same-origin theme-image requests use the bounded cache and payload
 limits defined by the live serializer. Only `/assets/images/` GIF, JPEG, PNG,

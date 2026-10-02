@@ -280,6 +280,8 @@ Large candidate population and visual block marker passes yield when measured
 work reaches an eight-millisecond slice budget, checking cancellation and the
 current Preview owner after each yield. A large final handoff retains one paint
 barrier before the atomic sink commit.
+The measured work budget restarts when the browser task resumes, so time spent
+waiting for task scheduling is excluded from the slice.
 Layout-dependent code-frame variables are synchronized once against the active
 surface after that commit. Supported `beforeinput` edits use captured source
 and visual ranges to apply one localized canonical transaction. A cached

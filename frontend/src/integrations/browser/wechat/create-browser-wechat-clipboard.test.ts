@@ -4720,6 +4720,89 @@ describe('createBrowserWechatClipboard', () => {
     await expect(second).resolves.toBeUndefined();
   });
 
+  it('does not chain a new browser-task yield after a delayed timer resumes', async () => {
+    const originalSetTimeout = window.setTimeout.bind(window);
+    let clock = 0;
+    let zeroDelayTimers = 0;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation((
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const delay = Number(timeout ?? 0);
+        if (0 === delay) zeroDelayTimers += 1;
+        return originalSetTimeout(() => {
+          if (0 === delay) clock += 20;
+          if ('function' === typeof handler) handler(...args);
+        }, 0) as unknown as number;
+      }
+    ) as typeof window.setTimeout);
+    try {
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p>First</p><p>Second</p><p>Third</p>';
+      Object.defineProperty(preview, 'innerText', { configurable: true, value: 'First\nSecond\nThird' });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+
+      await prepareClipboard(clipboard, preview, { background: true });
+      expect(zeroDelayTimers).toBe(2);
+    } finally {
+      setTimeout.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
+  it('still yields when continuous serialization work exceeds the budget', async () => {
+    const originalSetTimeout = window.setTimeout.bind(window);
+    let clock = 0;
+    let zeroDelayTimers = 0;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation((
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const delay = Number(timeout ?? 0);
+        if (0 === delay) zeroDelayTimers += 1;
+        return originalSetTimeout(() => {
+          if (0 === delay) clock += 20;
+          if ('function' === typeof handler) handler(...args);
+        }, 0) as unknown as number;
+      }
+    ) as typeof window.setTimeout);
+    try {
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p>First</p><p>Second</p><p>Third</p>';
+      Object.defineProperty(preview, 'innerText', { configurable: true, value: 'First\nSecond\nThird' });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (element, pseudoElement) => {
+          if (!pseudoElement) clock += 9;
+          return pseudoElement ? declaration({}) : declaration({ display: 'block' });
+        },
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+
+      await prepareClipboard(clipboard, preview, { background: true });
+      expect(zeroDelayTimers).toBeGreaterThan(2);
+    } finally {
+      setTimeout.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
   it('rejects a computed-style change between serialization and final freshness', async () => {
     const pendingImage = deferred<Response>();
     const imageUrl = new URL('/assets/images/fidelity-race.png', document.baseURI).href;

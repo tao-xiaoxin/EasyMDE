@@ -1533,6 +1533,35 @@ describe('createBrowserWechatVisualRasterizer', () => {
     );
   });
 
+  it('uses the first approved source in a face without fetching fallback formats', async () => {
+    stubCanvas();
+    installFontFaces([{
+      'font-family': 'KaTeX_Main',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2"), url("fonts/KaTeX_Main-Regular.woff") format("woff")',
+    }]);
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      void input;
+      return fontResponse(KATEX_REGULAR_FONT);
+    });
+    const source = document.createElement('div');
+    source.setAttribute('style', 'font-family:KaTeX_Main;font-style:normal;font-weight:400');
+    source.textContent = 'E=mc2';
+
+    await createBrowserWechatVisualRasterizer(runtime({ fetch })).rasterize(
+      request(source, 'math', 1, 80, 30),
+    );
+
+    const svg = serializedImage();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      `${document.location.origin}/wp-content/plugins/easymde/assets/vendor/katex/fonts/KaTeX_Main-Regular.woff2`,
+    );
+    expect(svg).toContain('format("woff2")');
+    expect(svg).not.toContain('format("woff")');
+  });
+
   it('embeds bundled fonts through the approved plugin-root stylesheet owner', async () => {
     stubCanvas();
     installFontFaces([

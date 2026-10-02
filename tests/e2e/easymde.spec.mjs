@@ -5539,6 +5539,516 @@ test.describe('EasyMDE editor workflows', () => {
     });
   }
 
+  test('flushes pending code before immediate native input in an empty quote', async ({ page, context }, testInfo) => {
+    const quoteBody = 'quote body';
+    const markdown = [
+      `> ${quoteBody}`,
+      '',
+      '```js',
+      '',
+      '```',
+      '',
+      '$$x$$'
+    ].join('\n');
+    const browserFailures = [];
+    const pageErrors = [];
+    const mathKey = '__easymdeRapidCodeToEmptyQuoteMath';
+    const traceKey = '__easymdeRapidCodeToEmptyQuoteTrace';
+    let cdp = null;
+
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+    page.on('pageerror', (error) => pageErrors.push(`pageerror:${error.name}`));
+
+    const parseNodes = (source) => {
+      const cursor = markdownLanguage.parser.parse(source).cursor();
+      const nodes = [];
+      const visit = (current, ancestors) => {
+        const nextAncestors = [...ancestors, current.name];
+        nodes.push({
+          ancestors,
+          from: current.from,
+          name: current.name,
+          text: source.slice(current.from, current.to),
+          to: current.to
+        });
+        if (!current.firstChild()) return;
+        do visit(current, nextAncestors); while (current.nextSibling());
+        current.parent();
+      };
+      visit(cursor, []);
+      return nodes;
+    };
+    const uniqueNode = (nodes, predicate, label) => {
+      const matches = nodes.filter(predicate);
+      expect(matches, label).toHaveLength(1);
+      return matches[0];
+    };
+    const insertAt = (source, offset, value) => (
+      source.slice(0, offset) + value + source.slice(offset)
+    );
+
+    try {
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1280, height: 720 });
+      await openEasyMdeNewPost(page);
+      await fillMarkdownAndWaitForPreview(page, markdown, quoteBody);
+      const editor = await enterImmersivePreviewAndUnlock(page);
+      const source = editor.source;
+      const visualEditor = editor.visualEditor;
+      await expect(visualEditor.locator(
+        '[data-easymde-preview-window-spacer]'
+      )).toHaveCount(0);
+      await expect(visualEditor.locator('blockquote > p')).toHaveCount(1);
+      await expect(visualEditor.locator('pre > code')).toHaveCount(1);
+      await expect(visualEditor.locator(
+        '.easymde-math[data-easymde-rendered]'
+      )).toHaveCount(1);
+
+      const initialSource = await source.inputValue();
+      expect(initialSource).toBe(markdown);
+      const initialNodes = parseNodes(initialSource);
+      const quoteParagraph = uniqueNode(
+        initialNodes,
+        (node) => node.name === 'Paragraph'
+          && node.text === quoteBody
+          && node.ancestors.includes('Blockquote'),
+        'synthetic quote paragraph AST target'
+      );
+      const initialFence = uniqueNode(
+        initialNodes,
+        (node) => node.name === 'FencedCode'
+          && node.text.startsWith('```js\n'),
+        'synthetic empty fence AST target'
+      );
+      expect(initialFence.text).toBe('```js\n\n```');
+
+      await visualEditor.evaluate((surface, key) => {
+        const math = surface.querySelector('.easymde-math[data-easymde-rendered]');
+        if (!(math instanceof HTMLElement)) {
+          throw new Error('rapid-code-empty-quote-protected-math-missing');
+        }
+        window[key] = math;
+      }, mathKey);
+      const expectedAfterQuoteClear = (
+        initialSource.slice(0, quoteParagraph.from)
+        + initialSource.slice(quoteParagraph.to)
+      );
+      await selectVisualText(visualEditor, quoteBody);
+      await page.keyboard.press('Backspace');
+      await expect(source).toHaveValue(expectedAfterQuoteClear, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+        timeout: 30_000
+      });
+      await expect(visualEditor.locator('blockquote > p')).toHaveText('');
+      await expect(visualEditor.locator('blockquote > p > br')).toHaveCount(1);
+      expect(await visualEditor.evaluate((surface, key) => (
+        surface.querySelector('.easymde-math[data-easymde-rendered]') === window[key]
+      ), mathKey)).toBe(true);
+
+      const afterQuoteClearNodes = parseNodes(expectedAfterQuoteClear);
+      const emptyCodeText = uniqueNode(
+        afterQuoteClearNodes,
+        (node) => node.name === 'CodeText'
+          && node.ancestors.includes('FencedCode'),
+        'synthetic empty fence body AST target'
+      );
+      expect(emptyCodeText.text).toBe('\n');
+      const expectedCodeInput = insertAt(expectedAfterQuoteClear, emptyCodeText.from, 'A');
+      const expectedFinalSource = insertAt(
+        expectedCodeInput,
+        quoteParagraph.from,
+        'x'
+      );
+      const expectedCodeInputNodes = parseNodes(expectedCodeInput);
+      expect(uniqueNode(
+        expectedCodeInputNodes,
+        (node) => node.name === 'CodeText'
+          && node.ancestors.includes('FencedCode')
+          && node.text === 'A',
+        'code A AST body'
+      ).from).toBe(emptyCodeText.from);
+      const expectedFinalNodes = parseNodes(expectedFinalSource);
+      expect(uniqueNode(
+        expectedFinalNodes,
+        (node) => node.name === 'Paragraph'
+          && node.text === 'x'
+          && node.ancestors.includes('Blockquote'),
+        'quote x AST body'
+      ).from).toBe(quoteParagraph.from);
+
+      const readNativeState = async () => visualEditor.evaluate((surface, key) => {
+        const sourceField = document.querySelector('#easymde-source');
+        const selection = document.getSelection();
+        const anchor = selection?.anchorNode ?? null;
+        const focus = selection?.focusNode ?? null;
+        const quote = surface.querySelector('blockquote > p');
+        const code = surface.querySelector('pre > code');
+        const placeholder = code?.querySelector(
+          ':scope > [data-easymde-visual-code-placeholder]'
+        ) ?? null;
+        const range = selection?.rangeCount === 1
+          ? selection.getRangeAt(0)
+          : null;
+        const inside = (node, target) => Boolean(
+          node && target && (node === target || target.contains(node))
+        );
+        const textOffset = (target, node, offset) => {
+          if (!inside(node, target)) return null;
+          const targetRange = document.createRange();
+          targetRange.selectNodeContents(target);
+          targetRange.setEnd(node, offset);
+          return targetRange.toString().length;
+        };
+        const anchorInsideQuote = inside(anchor, quote);
+        const anchorInsideCode = inside(anchor, code);
+        const focusInsideQuote = inside(focus, quote);
+        const focusInsideCode = inside(focus, code);
+        return {
+          activeElementIsArticle: document.activeElement === surface
+            && surface.tagName === 'ARTICLE',
+          anchorConnected: Boolean(anchor?.isConnected),
+          anchorInsideCode,
+          anchorInsidePlaceholder: inside(anchor, placeholder),
+          anchorInsideQuote,
+          anchorNodeName: anchor?.nodeName ?? null,
+          anchorOffset: selection?.anchorOffset ?? null,
+          anchorTextOffsetInCode: textOffset(code, anchor, selection?.anchorOffset ?? -1),
+          anchorTextOffsetInQuote: textOffset(quote, anchor, selection?.anchorOffset ?? -1),
+          codePlaceholderCount: code?.querySelectorAll(
+            ':scope > [data-easymde-visual-code-placeholder]'
+          ).length ?? 0,
+          codeText: code?.textContent ?? null,
+          contentEditable: surface.getAttribute('contenteditable'),
+          errorCode: surface.getAttribute('data-easymde-preview-error') ?? null,
+          focusConnected: Boolean(focus?.isConnected),
+          focusInsideCode,
+          focusInsideQuote,
+          focusOffset: selection?.focusOffset ?? null,
+          focusTextOffsetInCode: textOffset(code, focus, selection?.focusOffset ?? -1),
+          focusTextOffsetInQuote: textOffset(quote, focus, selection?.focusOffset ?? -1),
+          nativeRangeCount: selection?.rangeCount ?? 0,
+          previewBusy: surface.getAttribute('aria-busy'),
+          protectedMathConnected: surface.querySelector(
+            '.easymde-math[data-easymde-rendered]'
+          ) === window[key],
+          quoteBrCount: quote?.querySelectorAll(':scope > br').length ?? 0,
+          quoteText: quote?.textContent ?? null,
+          selectionCollapsed: Boolean(selection?.isCollapsed),
+          sourceSelection: sourceField instanceof HTMLTextAreaElement ? {
+            end: sourceField.selectionEnd,
+            start: sourceField.selectionStart
+          } : null,
+          surfaceConnected: surface.isConnected
+        };
+      }, mathKey);
+      const expectHealthyNativeState = (state) => {
+        expect(state).toMatchObject({
+          activeElementIsArticle: true,
+          anchorConnected: true,
+          contentEditable: 'true',
+          errorCode: null,
+          focusConnected: true,
+          nativeRangeCount: 1,
+          protectedMathConnected: true,
+          selectionCollapsed: true,
+          surfaceConnected: true
+        });
+      };
+      const expectOwnerState = (state, owner, quoteText, codeText, sourceOffset) => {
+        expectHealthyNativeState(state);
+        expect(state.quoteText).toBe(quoteText);
+        expect(state.quoteBrCount).toBe(quoteText ? 0 : 1);
+        expect(state.codeText?.trimEnd()).toBe(codeText);
+        if (Number.isInteger(sourceOffset)) {
+          expect(state.sourceSelection).toEqual({
+            end: sourceOffset,
+            start: sourceOffset
+          });
+        }
+        if (owner === 'quote') {
+          expect(state).toMatchObject({
+            anchorInsideCode: false,
+            anchorInsideQuote: true,
+            focusInsideCode: false,
+            focusInsideQuote: true,
+            anchorTextOffsetInQuote: quoteText.length,
+            focusTextOffsetInQuote: quoteText.length
+          });
+        } else {
+          expect(state).toMatchObject({
+            anchorInsideCode: true,
+            anchorInsideQuote: false,
+            focusInsideCode: true,
+            focusInsideQuote: false,
+            anchorTextOffsetInCode: codeText.length,
+            focusTextOffsetInCode: codeText.length
+          });
+          if (codeText) {
+            expect(state.anchorNodeName).toBe('#text');
+          }
+        }
+      };
+
+      const code = visualEditor.locator('pre > code');
+      const codeClick = await clickCodeLine(page, code, 0);
+      expect(codeClick.afterClick.hit.insideCode).toBe(true);
+      const codeBeforeBurst = await readNativeState();
+      expectOwnerState(
+        codeBeforeBurst,
+        'code',
+        '',
+        '',
+        null
+      );
+      const preInputCanonicalSelection = codeBeforeBurst.sourceSelection;
+      expect(preInputCanonicalSelection).toEqual({
+        end: expect.any(Number),
+        start: expect.any(Number)
+      });
+      expect(Number.isInteger(preInputCanonicalSelection.start)).toBe(true);
+      expect(Number.isInteger(preInputCanonicalSelection.end)).toBe(true);
+      expect(preInputCanonicalSelection.start).toBe(preInputCanonicalSelection.end);
+      const quoteBox = await visualEditor.locator('blockquote > p').boundingBox();
+      if (!quoteBox) throw new Error('rapid-code-empty-quote-box-unavailable');
+      const quotePoint = {
+        x: quoteBox.x + Math.min(8, Math.max(1, quoteBox.width / 2)),
+        y: quoteBox.y + Math.max(1, quoteBox.height / 2)
+      };
+
+      await visualEditor.evaluate((surface, key) => {
+        const sourceField = document.querySelector('#easymde-source');
+        if (!(sourceField instanceof HTMLTextAreaElement)) {
+          throw new Error('rapid-code-empty-quote-source-field-missing');
+        }
+        const events = [];
+        const preCode = sourceField.value;
+        const recordBeforeInput = (event) => {
+          if ('insertText' !== event.inputType) return;
+          const selection = document.getSelection();
+          const anchor = selection?.anchorNode ?? null;
+          const quote = surface.querySelector('blockquote > p');
+          const code = surface.querySelector('pre > code');
+          events.push({
+            anchorConnected: Boolean(anchor?.isConnected),
+            anchorInsideCode: Boolean(anchor && code?.contains(anchor)),
+            anchorInsideEmptyQuote: Boolean(
+              anchor
+              && quote
+              && quote.textContent === ''
+              && quote.contains(anchor)
+            ),
+            anchorNodeName: anchor?.nodeName ?? null,
+            anchorOffset: selection?.anchorOffset ?? null,
+            canonicalSourceMatchesPreCode: sourceField.value === preCode,
+            inputType: event.inputType,
+            isTrusted: event.isTrusted,
+            selectionCollapsed: Boolean(selection?.isCollapsed)
+          });
+        };
+        surface.addEventListener('beforeinput', recordBeforeInput, true);
+        window[key] = {
+          cleanup: () => surface.removeEventListener(
+            'beforeinput',
+            recordBeforeInput,
+            true
+          ),
+          events,
+          preCodeLength: preCode.length
+        };
+      }, traceKey);
+
+      let trace = null;
+      let burstError = null;
+      try {
+        cdp = await context.newCDPSession(page);
+        await cdp.send('Input.insertText', { text: 'A' });
+        await cdp.send('Input.dispatchMouseEvent', {
+          button: 'left',
+          buttons: 1,
+          clickCount: 1,
+          type: 'mousePressed',
+          x: quotePoint.x,
+          y: quotePoint.y
+        });
+        await cdp.send('Input.dispatchMouseEvent', {
+          button: 'left',
+          buttons: 0,
+          clickCount: 1,
+          type: 'mouseReleased',
+          x: quotePoint.x,
+          y: quotePoint.y
+        });
+        await cdp.send('Input.insertText', { text: 'x' });
+      } catch (error) {
+        burstError = error;
+      } finally {
+        if (!page.isClosed()) {
+          trace = await page.evaluate((key) => {
+            const value = window[key];
+            if (!value) throw new Error('rapid-code-empty-quote-trace-missing');
+            value.cleanup();
+            delete window[key];
+            return {
+              events: value.events,
+              preCodeLength: value.preCodeLength
+            };
+          }, traceKey);
+        }
+      }
+      if (trace) {
+        await testInfo.attach('rapid-code-empty-quote-beforeinput', {
+          body: JSON.stringify({
+            events: trace.events,
+            preCodeLength: trace.preCodeLength
+          }),
+          contentType: 'application/json'
+        });
+      }
+      if (burstError) throw burstError;
+      if (!trace) throw new Error('rapid-code-empty-quote-trace-unavailable');
+      expect(trace.preCodeLength).toBe(expectedAfterQuoteClear.length);
+      expect(trace.events).toHaveLength(2);
+      expect(trace.events).toEqual([
+        expect.objectContaining({
+          anchorConnected: true,
+          anchorInsideCode: true,
+          canonicalSourceMatchesPreCode: true,
+          inputType: 'insertText',
+          isTrusted: true,
+          selectionCollapsed: true
+        }),
+        expect.objectContaining({
+          anchorConnected: true,
+          anchorInsideEmptyQuote: true,
+          anchorNodeName: 'P',
+          anchorOffset: 0,
+          canonicalSourceMatchesPreCode: true,
+          inputType: 'insertText',
+          isTrusted: true,
+          selectionCollapsed: true
+        })
+      ]);
+
+      await expect(source).toHaveValue(expectedFinalSource, { timeout: 30_000 });
+      await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+        timeout: 30_000
+      });
+      await waitForBrowserPaint(page);
+      const afterRapidInput = await readNativeState();
+      expectOwnerState(
+        afterRapidInput,
+        'quote',
+        'x',
+        'A',
+        quoteParagraph.from + 1
+      );
+      expect(browserFailures).toEqual([]);
+      expect(pageErrors).toEqual([]);
+
+      const historySteps = [
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'undo quote input',
+          quoteText: '',
+          source: expectedCodeInput,
+          sourceOffset: quoteParagraph.from,
+          key: 'ControlOrMeta+z'
+        },
+        {
+          owner: 'code',
+          codeText: '',
+          label: 'undo code input',
+          quoteText: '',
+          source: expectedAfterQuoteClear,
+          sourceOffset: preInputCanonicalSelection.start,
+          key: 'ControlOrMeta+z'
+        },
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'redo code input',
+          quoteText: '',
+          source: expectedCodeInput,
+          sourceOffset: quoteParagraph.from,
+          key: 'ControlOrMeta+Shift+z'
+        },
+        {
+          owner: 'quote',
+          codeText: 'A',
+          label: 'redo quote input',
+          quoteText: 'x',
+          source: expectedFinalSource,
+          sourceOffset: quoteParagraph.from + 1,
+          key: 'ControlOrMeta+Shift+z'
+        }
+      ];
+      for (const step of historySteps) {
+        await page.keyboard.press(step.key);
+        await expect(source).toHaveValue(step.source, { timeout: 30_000 });
+        await expect(visualEditor).toHaveAttribute('aria-busy', 'false', {
+          timeout: 30_000
+        });
+        await waitForBrowserPaint(page);
+        const state = await readNativeState();
+        const nativeOwner = (insideCode, insideQuote) => (
+          insideCode ? 'code' : (insideQuote ? 'quote' : 'outside')
+        );
+        await testInfo.attach(`rapid-code-empty-quote-${step.label}-state`, {
+          body: JSON.stringify({
+            native: {
+              anchor: {
+                offset: state.anchorInsideCode
+                  ? state.anchorTextOffsetInCode
+                  : state.anchorTextOffsetInQuote,
+                owner: nativeOwner(state.anchorInsideCode, state.anchorInsideQuote)
+              },
+              focus: {
+                offset: state.focusInsideCode
+                  ? state.focusTextOffsetInCode
+                  : state.focusTextOffsetInQuote,
+                owner: nativeOwner(state.focusInsideCode, state.focusInsideQuote)
+              }
+            },
+            preview: {
+              busy: state.previewBusy,
+              error: state.errorCode,
+              protectedMathConnected: state.protectedMathConnected
+            },
+            sourceSelection: state.sourceSelection,
+            step: step.label
+          }),
+          contentType: 'application/json'
+        });
+        expectOwnerState(
+          state,
+          step.owner,
+          step.quoteText,
+          step.codeText,
+          step.sourceOffset
+        );
+        expect(browserFailures, step.label).toEqual([]);
+        expect(pageErrors, step.label).toEqual([]);
+      }
+    } finally {
+      if (!page.isClosed()) {
+        if (cdp) await cdp.detach();
+        await page.evaluate((key) => {
+          delete window[key];
+        }, mathKey);
+        await page.evaluate((key) => {
+          const trace = window[key];
+          if (trace?.cleanup) trace.cleanup();
+          delete window[key];
+        }, traceKey);
+      }
+    }
+  });
+
   for (const fixture of [
     { label: 'plain', markdown: 'one', retainedSuffix: '', selector: 'p' },
     { label: 'trailing-space', markdown: 'one ', retainedSuffix: ' ', selector: 'p' },

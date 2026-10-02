@@ -37,6 +37,8 @@ export type WechatClipboardResult =
 export type WechatClipboardPreparationOptions = Readonly<{
   /** Background Preview notifications may be coalesced while a payload is preparing. */
   background?: boolean;
+  /** Cancels this background demand without canceling shared asset-cache work. */
+  signal?: AbortSignal;
 }>;
 
 export type WechatClipboardPort = Readonly<{

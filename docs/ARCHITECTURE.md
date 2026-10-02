@@ -259,6 +259,14 @@ enhanced HTML in state while the sink remains the sole imperative child owner,
 so a later rerender cannot roll the committed subtree back. The accepted
 enhanced subtree remains visible while the request, math, Mermaid, and
 Highlight.js work is pending.
+Plain-text Markdown transfer from Paste or Drop flushes pending visual input,
+maps the current selection, and applies the insertion through the canonical
+document owner before requesting server Preview. It passes the existing
+code-structure validation record for the new Markdown with the `matchesPreview`
+flag false, so transfer does not repeat the full code-topology scan and any prior
+code-body map remains untrusted until the replacement Preview is accepted.
+Per-key visual source, history, and native-field projection owners remain
+unchanged.
 An accepted empty Preview discards the previous window repository, pending
 window commit, and pending materialization work; any superseded materialization
 resolves `false`. `materialize()` reports readiness only for an accepted ready
@@ -337,6 +345,15 @@ CRLF comparison uses normalized intervals and converts the result back to the
 canonical source UTF-16 offset. Immediate and delayed next input plus Undo/Redo
 must retain paired canonical and native Selection points; stale or mismatched
 evidence fails through the existing explicit synchronization owner.
+If a pending code-body intent is still owned when the Selection leaves its code
+block for an empty structural `P` or `LI`, the existing `beforeinput` owner
+flushes that code intent before dispatching the structural selection-only
+update, then rechecks the current owner. Consecutive input that remains in the
+same code body continues through the existing pending code owner.
+Empty-structural capture verifies that the committed source reference and
+canonical document remain equal before and after that update; a mismatch fails
+with the existing stable `visual-editor-history-document-stale` error before
+native input is accepted.
 When the generic map cannot project a collapsed caret inside CODE, the existing
 code-body projection owns only that caret input; non-collapsed selections retain
 the generic owner.
@@ -605,6 +622,14 @@ setup failure upload nothing. A failed selected owner never switches;
 Copy publishes no partial Clipboard payload, though an upload completed before
 a later transaction failure can remain. The live Preview and document remain
 unchanged.
+EditorRoot cancels a queued or active background demand when visual unlock
+begins, Preview loses `ready` status, an ordinary or immersive Preview sink is
+disposed or replaced, the Root tears down, or the WeChat Port/export ownership
+changes. That signal belongs to the background demand and does not cancel an
+explicit Copy. The browser Adapter tracks background waiters and one active job
+per sink, checks cancellation before finalizing markup, deriving plain text, or
+publishing prepared cache state, and leaves shared theme-image fetches
+independent.
 
 `createBrowserWechatClipboard` currently limits materialized theme-image data payloads to 4,000,000 bytes, retains at most 32 background-asset cache entries, and applies 10,000 ms timeouts to approved theme-image fetch/conversion and Clipboard commit.
 

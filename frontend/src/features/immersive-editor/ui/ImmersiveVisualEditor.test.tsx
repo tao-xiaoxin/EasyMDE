@@ -510,6 +510,111 @@ describe('ImmersiveVisualEditor', () => {
     view.unmount();
   });
 
+  it('skips target code-structure validation while a Markdown paste awaits formal Preview', () => {
+    const initialMarkdown = 'Before\n\n~~~js\nold\n~~~\n\nTail';
+    const pastedMarkdown = '\n\nTail2';
+    const targetMarkdown = `${initialMarkdown}${pastedMarkdown}`;
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<p>Before</p>',
+      '<pre data-easymde-visual-block-id="b0" data-easymde-visual-fence="~~~" data-easymde-visual-fence-info="js">',
+      '<code class="language-js">old\n</code>',
+      '</pre>',
+      '<p>Tail</p>'
+    ].join('');
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = initialMarkdown;
+    submissionField.defaultValue = initialMarkdown;
+    document.body.append(surface, container, submissionField);
+    const history = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const applyTextChange = vi.spyOn(history, 'applyTextChange');
+    const requestPreview = vi.fn(() => 'pending-whole-document-paste');
+    const onPendingChange = vi.fn();
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={{ document: history } as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={onPendingChange}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(initialMarkdown, 'initial'),
+          revision: 1,
+          signature: 'initial'
+        }}
+        previewStatus="ready"
+        requestPreview={requestPreview}
+        surface={surface}
+      />
+    );
+    const structureSignature = vi.spyOn(
+      visualMarkdown,
+      'visualCodeBlockStructureSignature'
+    );
+    structureSignature.mockClear();
+
+    try {
+      const sourceText = surface.querySelector('p:last-child')?.firstChild;
+      if (!(sourceText instanceof Text)) {
+        throw new Error('visual-pending-whole-paste-source-missing');
+      }
+      placeCaretInText(sourceText);
+      fireEvent.paste(surface, {
+        clipboardData: {
+          getData: (type: string) =>
+            'text/plain' === type ? pastedMarkdown : ''
+        }
+      });
+
+      expect(history.getValue()).toBe(targetMarkdown);
+      expect(submissionField.value).toBe(targetMarkdown);
+      expect([
+        submissionField.selectionStart,
+        submissionField.selectionEnd
+      ]).toEqual([targetMarkdown.length, targetMarkdown.length]);
+      expect(history.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+      expect(applyTextChange).toHaveBeenCalledOnce();
+      expect(requestPreview).toHaveBeenCalledOnce();
+      expect(onPendingChange).toHaveBeenLastCalledWith(true);
+      expect(structureSignature).not.toHaveBeenCalled();
+
+      const codeText = surface.querySelector('pre > code')?.firstChild;
+      if (!(codeText instanceof Text)) {
+        throw new Error('visual-pending-whole-paste-code-missing');
+      }
+      placeCaretInText(codeText, codeText.length - 1);
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(true);
+      expect(history.getValue()).toBe(targetMarkdown);
+      expect(applyTextChange).toHaveBeenCalledOnce();
+    } finally {
+      structureSignature.mockRestore();
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
+      surface.remove();
+    }
+  });
+
   it('does not re-enter the Markdown shortcut parser for History input', () => {
     vi.useFakeTimers();
     try {
@@ -5212,6 +5317,378 @@ describe('ImmersiveVisualEditor', () => {
       expect(history.document.getValue()).toBe(beforeValue);
       expect(history.document.getHistoryState()).toEqual(beforeHistory);
       expect(history.applyTextChange.mock.calls.length).toBe(beforeWrites);
+    } finally {
+      view.unmount();
+      surface.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending code before moving to an empty structural body', () => {
+    vi.useFakeTimers();
+    const markdown = '> \n\n```js\n\n```\n\n$$x$$';
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<blockquote>\n',
+      '  <p><br></p>\n',
+      '</blockquote>\n',
+      '<pre data-easymde-visual-block-id="b0">',
+      '<code><span data-easymde-visual-code-placeholder=""></span></code>',
+      '</pre>',
+      '<div class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"></div>'
+    ].join('');
+    surface.querySelector('span')?.append(document.createTextNode(''));
+    document.body.append(surface);
+    const history = createHistoryDocument(markdown);
+    const onFailure = vi.fn();
+    const signature = 'pending-code-to-empty-quote';
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={history as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(markdown, signature),
+          revision: 1,
+          signature
+        }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'unexpected-preview')}
+        surface={surface}
+      />
+    );
+
+    try {
+      const placeholder = surface.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      );
+      const placeholderText = placeholder?.firstChild;
+      const quote = surface.querySelector('blockquote > p');
+      const protectedNode = surface.querySelector('.easymde-math');
+      if (
+        !(placeholder instanceof HTMLSpanElement)
+        || !(placeholderText instanceof Text)
+        || !(quote instanceof HTMLElement)
+        || !(protectedNode instanceof HTMLElement)
+      ) {
+        throw new Error('visual-pending-code-empty-quote-fixture-missing');
+      }
+      placeCaretInText(placeholderText, 0);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      placeholderText.data = 'A';
+      placeCaretInText(placeholderText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      expect(history.document.getValue()).toBe(markdown);
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 0
+      });
+
+      const quoteRange = document.createRange();
+      quoteRange.setStart(quote, 0);
+      quoteRange.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(quoteRange);
+      document.dispatchEvent(new Event('selectionchange'));
+      surface.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      Object.defineProperty(beforeInput, 'getTargetRanges', {
+        value: () => [{
+          endContainer: quote,
+          endOffset: 0,
+          startContainer: quote,
+          startOffset: 0
+        }]
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      const quoteText = document.createTextNode('x');
+      quote.replaceChildren(quoteText);
+      placeCaretInText(quoteText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'x',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 2
+      });
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getValue()).toBe(
+        '> x\n\n```js\nA\n```\n\n$$x$$'
+      );
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 2
+      });
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+      expect(onFailure).not.toHaveBeenCalled();
+
+      const codeOnlyMarkdown = '> \n\n```js\nA\n```\n\n$$x$$';
+      const undoQuote = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyUndo'
+      });
+      surface.dispatchEvent(undoQuote);
+      expect(undoQuote.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(codeOnlyMarkdown);
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 1,
+        undoDepth: 1
+      });
+      const undoQuoteBody = surface.querySelector('blockquote > p');
+      expect(window.getSelection()?.anchorNode).toBe(undoQuoteBody);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+
+      const undoCode = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyUndo'
+      });
+      surface.dispatchEvent(undoCode);
+      expect(undoCode.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(markdown);
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 2,
+        undoDepth: 0
+      });
+      const initialCodeText = surface.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      )?.firstChild;
+      expect(initialCodeText).toBeInstanceOf(Text);
+      expect(window.getSelection()?.anchorNode).toBe(initialCodeText);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+
+      const redoCode = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyRedo'
+      });
+      surface.dispatchEvent(redoCode);
+      expect(redoCode.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(codeOnlyMarkdown);
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 1,
+        undoDepth: 1
+      });
+      const redoCodeBody = surface.querySelector('blockquote > p');
+      expect(window.getSelection()?.anchorNode).toBe(redoCodeBody);
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+
+      const redoQuote = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyRedo'
+      });
+      surface.dispatchEvent(redoQuote);
+      expect(redoQuote.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(
+        '> x\n\n```js\nA\n```\n\n$$x$$'
+      );
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 2
+      });
+      const redoQuoteText = surface.querySelector('blockquote > p')?.firstChild;
+      expect(redoQuoteText).toBeInstanceOf(Text);
+      expect(window.getSelection()?.anchorNode).toBe(redoQuoteText);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+      expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      surface.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it('flushes pending code before moving to an empty list item', () => {
+    vi.useFakeTimers();
+    const markdown = '- \n\n```js\n\n```\n\n$$x$$';
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<ul>\n',
+      '  <li><br></li>\n',
+      '</ul>\n',
+      '<pre data-easymde-visual-block-id="b0">',
+      '<code><span data-easymde-visual-code-placeholder=""></span></code>',
+      '</pre>',
+      '<div class="easymde-math" data-easymde-rendered="1" data-easymde-visual-markdown-source="x"></div>'
+    ].join('');
+    surface.querySelector('span')?.append(document.createTextNode(''));
+    document.body.append(surface);
+    const history = createHistoryDocument(markdown);
+    const onFailure = vi.fn();
+    const signature = 'pending-code-to-empty-list';
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={history as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={vi.fn()}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(markdown, signature),
+          revision: 1,
+          signature
+        }}
+        previewStatus="ready"
+        requestPreview={vi.fn(() => 'unexpected-preview')}
+        surface={surface}
+      />
+    );
+
+    try {
+      const placeholder = surface.querySelector(
+        '[data-easymde-visual-code-placeholder]'
+      );
+      const placeholderText = placeholder?.firstChild;
+      const item = surface.querySelector('ul > li');
+      const protectedNode = surface.querySelector('.easymde-math');
+      if (
+        !(placeholder instanceof HTMLSpanElement)
+        || !(placeholderText instanceof Text)
+        || !(item instanceof HTMLElement)
+        || !(protectedNode instanceof HTMLElement)
+      ) {
+        throw new Error('visual-pending-code-empty-list-fixture-missing');
+      }
+      placeCaretInText(placeholderText, 0);
+      surface.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      placeholderText.data = 'A';
+      placeCaretInText(placeholderText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'A',
+        inputType: 'insertText'
+      }));
+      expect(history.document.getValue()).toBe(markdown);
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 0
+      });
+
+      const itemRange = document.createRange();
+      itemRange.setStart(item, 0);
+      itemRange.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(itemRange);
+      document.dispatchEvent(new Event('selectionchange'));
+      surface.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'x',
+        inputType: 'insertText'
+      });
+      Object.defineProperty(beforeInput, 'getTargetRanges', {
+        value: () => [{
+          endContainer: item,
+          endOffset: 0,
+          startContainer: item,
+          startOffset: 0
+        }]
+      });
+      surface.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      const itemText = document.createTextNode('x');
+      item.replaceChildren(itemText);
+      placeCaretInText(itemText, 1);
+      surface.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'x',
+        inputType: 'insertText'
+      }));
+      act(() => vi.advanceTimersByTime(80));
+      expect(history.document.getValue()).toBe(
+        '- x\n\n```js\nA\n```\n\n$$x$$'
+      );
+      expect(history.document.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 2
+      });
+      expect(window.getSelection()?.anchorNode).toBe(itemText);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+
+      const undo = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyUndo'
+      });
+      surface.dispatchEvent(undo);
+      expect(undo.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(
+        '- \n\n```js\nA\n```\n\n$$x$$'
+      );
+      expect(window.getSelection()?.anchorNode).toBe(
+        surface.querySelector('ul > li')
+      );
+      expect(window.getSelection()?.anchorOffset).toBe(0);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+
+      const redo = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyRedo'
+      });
+      surface.dispatchEvent(redo);
+      expect(redo.defaultPrevented).toBe(true);
+      expect(history.document.getValue()).toBe(
+        '- x\n\n```js\nA\n```\n\n$$x$$'
+      );
+      const redoText = surface.querySelector('ul > li')?.firstChild;
+      expect(redoText).toBeInstanceOf(Text);
+      expect(window.getSelection()?.anchorNode).toBe(redoText);
+      expect(window.getSelection()?.anchorOffset).toBe(1);
+      expect(surface.querySelector('.easymde-math')).toBe(protectedNode);
+      expect(onFailure).not.toHaveBeenCalled();
     } finally {
       view.unmount();
       surface.remove();

@@ -208,6 +208,16 @@ The current production build and entry matrix is:
 
 Each row has a committed `manifest.json` and `wordpress-manifest.json`, and the `media-editor` dependency appears only in the `media-picker` WordPress manifest.
 
+The focused visual Markdown-transfer regression is:
+
+```bash
+npm run test:frontend -- frontend/src/features/immersive-editor/ui/ImmersiveVisualEditor.test.tsx -t "skips target code-structure validation while a Markdown paste awaits formal Preview"
+```
+
+It verifies the canonical and submission-field insertion, one Preview request,
+unchanged history ownership, no redundant code-topology signature scan, and
+blocking of further `beforeinput` while the accepted paste Preview is pending.
+
 ## WeChat Clipboard Verification
 
 The focused browser-Adapter test is:
@@ -231,6 +241,7 @@ npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
 The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
 The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
 
@@ -499,6 +510,24 @@ serialize the actual surface and continue through the existing edit-intent and
 history owners. Include normalized-to-canonical CRLF offsets, immediate and
 delayed next input, and Undo/Redo native/canonical Selection points. Stale or
 mismatched evidence must fail explicitly.
+Unit coverage must pair the empty quote and list cases with source, history,
+native Selection, and protected-node assertions. It must also cover the owner
+handoff when pending code input crosses into an empty structural body: the code
+intent is flushed before the selection-only canonical update, while input that
+remains in the same code body stays in the pending burst. Empty-body capture
+must prove that the canonical source equals the committed source before and
+after that update and reports the existing
+`visual-editor-history-document-stale` error on mismatch.
+Browser coverage for this handoff must execute a CDP `insertText` code input,
+then a native mouse move/click into an empty quote or list body, then a second
+native insertion. CDP `insertText` is trusted non-keyboard input for the first
+step; the contract does not require a physical key, and another legitimate
+native browser input method is valid when it provides the same evidence. The
+second `beforeinput` must observe the canonical pre-code value, proving that
+the pending code intent was still present at event entry; that observation
+alone does not prove the subsequent flush or structural acceptance. Final
+source, history, native Selection, and protected-node results must prove the
+flush and accepted structural edit.
 Exercise one zero-delay rapid word kept in the same pending burst in an empty
 structural body: pre-commit input must leave canonical bytes and history
 unchanged, then produce one canonical content transaction and one Undo step back

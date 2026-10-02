@@ -2348,7 +2348,9 @@ export function ImmersiveVisualEditor({
           : caret === markdown.length
             ? 'end'
             : null;
-      applyDocumentChange({ selection, value: markdown });
+      applyDocumentChange({ selection, value: markdown }, {
+        validatedCodeStructure: { markdown, matchesPreview: false }
+      });
       onMarkdownChange();
       pendingTransferRef.current = {
         acceptedDocumentBoundary: pasteDocumentBoundary,
@@ -3690,6 +3692,19 @@ export function ImmersiveVisualEditor({
       }
       if (
         !isHistoryInput
+        && pendingCodeStructure
+        && !selectedCodePre
+        && !selectedVisualCodeBlock(surface)
+      ) {
+        if (!flushVisualInput()) {
+          event.preventDefault();
+          return;
+        }
+        pendingVisual = pendingVisualIntentResultRef.current;
+        pendingCodeStructure = pendingVisual?.codeBlockStructure;
+      }
+      if (
+        !isHistoryInput
         && selectedCodePre
         && visualInputPendingRef.current
         && !pendingCodeInputCanContinue
@@ -3919,6 +3934,14 @@ export function ImmersiveVisualEditor({
             visualMarkdown
           );
           if (emptyStructuralInput) {
+            const committedSourceMarkdown = sourceMarkdownRef.current;
+            if (
+              null === committedSourceMarkdown
+              || committedSourceMarkdown !== sourceMarkdown
+              || documentSession.document.getValue() !== committedSourceMarkdown
+            ) {
+              throw new Error('visual-editor-history-document-stale');
+            }
             applyDocumentChange({
               selection: {
                 direction: 'none',
@@ -3927,6 +3950,9 @@ export function ImmersiveVisualEditor({
               },
               value: sourceMarkdown
             });
+            if (documentSession.document.getValue() !== committedSourceMarkdown) {
+              throw new Error('visual-editor-history-document-stale');
+            }
             lastSelectionRef.current = {
               direction: 'none',
               end: emptyStructuralInput.sourceSelection.end,

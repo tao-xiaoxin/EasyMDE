@@ -242,6 +242,7 @@ const VISUAL_MARKDOWN_SOURCE_ATTRIBUTE =
   'data-easymde-visual-markdown-source';
 
 type VisualBlockMarker = Readonly<{
+  editable: boolean;
   id: string;
   marker: Comment;
 }>;
@@ -523,7 +524,7 @@ function capturePreviewBlockMarkers(
           `easymde-visual-block:${block.id}`
         );
         root.before(marker);
-        markers.push({ id: block.id, marker });
+        markers.push({ editable: block.editable, id: block.id, marker });
         if (
           blockIndex + 1 < editMap.blocks.length
           && stagingTime(scheduler, documentRef) - sliceStartedAt
@@ -571,6 +572,7 @@ function annotateEnhancedPreviewBlocks(
           throw new Error('preview-window-block-map-marker-mismatch');
         }
         target.setAttribute(VISUAL_BLOCK_ATTRIBUTE, entry.id);
+        if (!entry.editable) target.setAttribute('contenteditable', 'false');
         if (
           index + 1 < markers.length
           && stagingTime(scheduler, documentRef) - sliceStartedAt
@@ -652,6 +654,8 @@ function annotateEnhancedVisualSources(
 
 export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
   const surfaceRef = useRef<HTMLElement | null>(null);
+  const onDiagnosticRef = useRef(props.onDiagnostic);
+  onDiagnosticRef.current = props.onDiagnostic;
   const scrollSnapshotRef = useRef<PendingPreviewScrollRestore | null>(null);
   const generationRef = useRef(0);
   const enhancementCandidateRef =
@@ -1434,6 +1438,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
     ownerActiveRef.current = true;
     const session = createPreviewRequestSession({
       initialRevision: props.initialRevision,
+      onDiagnostic: (code) => onDiagnosticRef.current?.(code),
       onState: publishRequestState,
       port: props.port
     });

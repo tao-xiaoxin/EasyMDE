@@ -1,5 +1,5 @@
 <?php
 return array(
 	'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
-	'version'      => 'cafc253dd4985dc1',
+	'version'      => '14b9eb58c0400d5f',
 );

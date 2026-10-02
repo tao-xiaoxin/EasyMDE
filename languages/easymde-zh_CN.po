@@ -1165,6 +1165,10 @@ msgstr "已复制当前预览，可直接粘贴到公众号编辑器。"
 msgid "Copy for WeChat failed. Please try again in this browser."
 msgstr "复制到公众号失败，请在当前浏览器中重试。"
 
+#: src/Admin/AdminAssets.php:1066
+msgid "Copy for WeChat failed. Some generated images may remain in the selected image storage; review them before retrying."
+msgstr "复制到公众号失败。部分生成的图片可能仍保留在所选图床或媒体库中，请在重试前检查。"
+
 #: src/Admin/AdminAssets.php:979
 msgid "Clipboard access is not available in this browser."
 msgstr "当前浏览器不支持剪贴板富文本复制。"

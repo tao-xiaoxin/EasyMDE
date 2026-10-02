@@ -238,12 +238,66 @@ The browser rasterizer has a separate focused command:
 npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.test.ts
 ```
 
+The focused Chromium copy regression spec is:
+
+```bash
+npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
+```
+
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. They also verify that modern `write()` is invoked before freshness style and geometry reads, logical `text-align` values are normalized by source direction, and ordinary content-box pixel dimensions are projected for a border-box destination. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization and bounded upload work; rasterization stays serial while selected-owner uploads are backpressured at three in flight; completion replaces visuals in stable candidate order; and any upload failure aborts remaining uploads without committing a partial Clipboard payload. Only outermost Mermaid and KaTeX math roots become PNG; ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. Math coverage verifies the native Safe Preview capture clone, original inline parent typography, complete safe computed dimensions and normal defaults, native computed `table-layout`, retained KaTeX/table/pstrut dimensions, no portable empty-span leakage, full scroll and descendant bounds for wide formulas, axis-independent clipped versus scrollable inline viewport geometry including `autoX/hiddenY` and `hiddenX/autoY`, retained 4096-edge and PNG-pixel validation, fractional `inlineLayout` allocation with optional viewport and paint offsets, top/bottom neighboring-line-box keywords, measured `B-H` margins for other vertical-align modes, explicit failure for missing or invalid allocation, paint-grid floor/ceil quantization, centered local wrapper overflow, and fixed block-image sizing with padding/borders/background captured once. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+The focused rasterizer tests additionally verify that document font readiness is awaited, approved bootstrap asset roots are used for matching managed local font faces, remote sources are omitted, missing managed KaTeX faces fail explicitly, valid font bytes are signature- and browser-font-validated, successful bytes are cached, failed entries can retry, cancellation remains explicit, nonmanaged/system families retain the browser fallback, and final PNG names use a deterministic SHA-256 content digest.
 The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
 Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
-The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
+Preview request tests verify that current failures use only the stable privacy-safe
+`preview-response-invalid` and `preview-request-failed` diagnostics, while
+superseded, aborted, stale, and teardown callbacks remain silent and do not
+recreate the Preview owner when callback identities change. PHP integration tests
+verify strict source provenance, source type/order/bounds, and connected-overlap
+union projection: one linear flush makes every connected group root readonly
+with a zero-width range at the union end. Both visual surface paths enforce
+`editable=false` through `contenteditable=false`.
+Clipboard tests also verify the separate 60-second payload/HTML/plain-Blob
+preparation bound and 10-second browser-commit bound, including fail-fast early
+write rejection and late deferred-payload gating.
+The hidden-surface PNG regression must verify that explicit Copy attaches a
+temporary measurement tree from the current stable enhanced Preview, uses that
+tree for the complete serialization, preserves native candidate geometry, and
+keeps freshness owned by the original Preview. It must cover remembered
+positive root width from Preview-ready and before source-mode hiding, the
+initial-never-visible path using live workspace width and content constraints,
+ancestor layout neutralization with retained context CSS, and cleanup on every
+conversion terminal path.
+Freshness tests verify that the transaction-local `MutationObserver` is
+installed before the initial snapshot, that `takeRecords()` checkpoints cover
+initial, current, and final comparisons, and that the clean path makes an O(1)
+reuse decision while a dirty path recomputes the current complete key and
+compares it with the immutable initial key. Same-value mutations remain
+reusable; an observed real source change remains permanently stale. They also verify
+root-only refresh-bookkeeping exclusions, descendant mutations, complete final
+source/layout comparisons, unchanged Preview-owner/layout guards, and observer
+disconnect on abort, timeout, teardown, and late `finally` cleanup.
+The portable freshness regression matrix should also verify that non-windowed
+source freshness is initialized after native `write()` and before its first
+browser-task yield, while a windowed baseline waits for legitimate
+`resolvePreview` materialization. It must cover an older same-source background
+promise refreshing only its internal `wechat-copy-stale` rejection while
+the session, signal, and source captured for the Copy remain current; propagation
+of nonstale failures when no completed fallback is recovered; one fresh
+preparation without retry or a second native write;
+completed same-source fallback reuse; and cleanup on success, stale, abort,
+timeout, teardown, and synchronous write failure. The matrix must not introduce
+a global activation layout lock or alter existing limits.
+Focused tests do not replace the native CSS allocation matrix, which is the
+evidence boundary for fractional and superscript source-to-PNG geometry.
+Residual 1/64 CSS-pixel precision and DPR1 text anti-aliasing differences are
+rendering limits, not exporter offsets. Real R2, WeChat, and CI results remain
+separate evidence.
+
+The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. The focused `tests/e2e/wechat-copy.spec.mjs` covers a cold medium fixture with duplicate-click coalescing, click-to-pending and click-to-write timing, deferred success, rejected browser writes, stable control geometry, and zero document/Preview writes; its warm full-capability case checks rich output and ordinary/immersive pending feedback against the same Preview. PNG conversion owner dispatch, selected-owner failure, ordinary-table preservation, and no-upload background behavior remain covered by the focused frontend tests; native-browser evidence must additionally inspect Mermaid inner-SVG capture, wrapper background/border/padding ownership, complete wide-formula bounds, and responsive image sizing. Settings/editor E2E coverage separately exercises the persisted switch and WordPress image-upload owner contracts. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
+The keyboard-activation regression matrix must verify that ordinary and immersive pending Copy controls retain focus on the originating control before and after native Enter renders the pending state, expose `aria-busy="true"` and `aria-disabled="true"` without native `disabled`, and suppress duplicate click and Enter activation through the shared pending reference. It must also verify stable `RefreshCcw` geometry and no spinner animation under reduced-motion preferences; native `disabled` remains valid only for unavailable capability.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.

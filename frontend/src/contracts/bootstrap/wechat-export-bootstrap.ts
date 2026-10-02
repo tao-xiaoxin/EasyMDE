@@ -1,5 +1,6 @@
 export type WechatExportStrings = Readonly<{
 	failed: string;
+	failedWithUploads: string;
 	success: string;
 	unsupported: string;
 }>;
@@ -43,6 +44,7 @@ export function parseWechatExportBootstrap(
 		pngConversionEnabled: bootstrap.pngConversionEnabled,
 		strings: {
 			failed: stringValue(strings.failed),
+			failedWithUploads: stringValue(strings.failedWithUploads),
 			success: stringValue(strings.success),
 			unsupported: stringValue(strings.unsupported),
 		},

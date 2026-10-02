@@ -1,5 +1,6 @@
 import { createElement } from '@wordpress/element';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -641,6 +642,7 @@ function fixture(): EditorRootProps &
     },
     wechatClipboard: {
       copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' }),
+      rememberPreviewWidth: vi.fn(),
       prepare: vi.fn().mockResolvedValue(undefined)
     },
     wechatExport: {
@@ -648,6 +650,7 @@ function fixture(): EditorRootProps &
       pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed',
+        failedWithUploads: 'Copy failed after uploading images',
         success: 'Copied',
         unsupported: 'Clipboard unsupported'
       }
@@ -6094,6 +6097,148 @@ describe('EditorRoot', () => {
     ).toBe(true);
   });
 
+  it('records the visible Preview before entering persisted source mode', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      settings: {
+        ...baseProps.settings,
+        general: {
+          ...baseProps.settings.general,
+          editingMode: 'source' as const
+        }
+      },
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-source'
+      )
+    ).toBe(true);
+    view.unmount();
+  });
+
+  it('records the visible Preview before a direct immersive source transition', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '编辑器设置' }));
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+
+    fireEvent.click(view.getByRole('button', { name: /^编辑$/u }));
+
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    expect(
+      view.container.querySelector('.easymde-editor')?.classList.contains(
+        'is-immersive-source'
+      )
+    ).toBe(true);
+    view.unmount();
+  });
+
+  it('records the visible Preview before an async visual source transition', async () => {
+    const baseProps = fixture();
+    const rememberPreviewWidth = vi.fn();
+    const props = {
+      ...baseProps,
+      wechatClipboard: {
+        ...baseProps.wechatClipboard,
+        rememberPreviewWidth
+      }
+    };
+    const view = render(<EditorRoot {...props} />);
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).not.toBeNull()
+    );
+    const preview = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!preview) throw new Error('preview-sink-unavailable');
+    await waitFor(() => expect(rememberPreviewWidth).toHaveBeenCalledWith(preview));
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    rememberPreviewWidth.mockClear();
+    rememberPreviewWidth.mockImplementation(() => {
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(false);
+    });
+    fireEvent.click(view.getByRole('button', { name: /^编辑$/u }));
+
+    await waitFor(() =>
+      expect(
+        view.container.querySelector('.easymde-editor')?.classList.contains(
+          'is-immersive-source'
+        )
+      ).toBe(true)
+    );
+    expect(rememberPreviewWidth).toHaveBeenCalledOnce();
+    expect(rememberPreviewWidth).toHaveBeenCalledWith(preview);
+    view.unmount();
+  });
+
   it('lets the user discard an unreadable local draft and unblock storage ownership', async () => {
     const props = fixture();
     vi.mocked(props.localDraftStorage.read).mockReturnValue({
@@ -7324,6 +7469,217 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('shares truthful pending feedback across ordinary and immersive copy controls', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const pending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy).mockReturnValue(pending.promise);
+    const view = render(<EditorRoot {...props} />);
+    const ordinaryCopy = await view.findByRole('button', {
+      name: 'Copy to WeChat'
+    });
+
+    fireEvent.click(ordinaryCopy);
+    expect(ordinaryCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(ordinaryCopy.hasAttribute('disabled')).toBe(false);
+    expect(ordinaryCopy.getAttribute('aria-busy')).toBe('true');
+    expect(
+      ordinaryCopy.querySelector('.easymde-wechat-pending-glyph svg')
+    ).not.toBeNull();
+    expect(ordinaryCopy.querySelector('.easymde-wechat-glyph')).toBeNull();
+    fireEvent.click(ordinaryCopy);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledOnce();
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    const immersiveCopy = view.getByRole('button', { name: '复制到公众号' });
+    expect(immersiveCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(immersiveCopy.hasAttribute('disabled')).toBe(false);
+    expect(immersiveCopy.getAttribute('aria-busy')).toBe('true');
+    expect(
+      immersiveCopy.querySelector('.easymde-wechat-pending-glyph svg')
+    ).not.toBeNull();
+
+    await act(async () => {
+      pending.resolve({ method: 'clipboard', status: 'copied' });
+    });
+    await waitFor(() => {
+      const completed = view.getByRole('button', { name: '复制到公众号' });
+      expect(completed.hasAttribute('aria-disabled')).toBe(false);
+      expect(completed.hasAttribute('disabled')).toBe(false);
+      expect(completed.hasAttribute('aria-busy')).toBe(false);
+      expect(completed.querySelector('.easymde-immersive-wechat-glyph')).not.toBeNull();
+    });
+    expect(view.getByRole('status').textContent).toContain('Copied');
+  });
+
+  it('keeps keyboard focus through pending ordinary and immersive copy', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const ordinaryPending = deferred<ClipboardResult>();
+    const immersivePending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy)
+      .mockReturnValueOnce(ordinaryPending.promise)
+      .mockReturnValueOnce(immersivePending.promise);
+    const user = userEvent.setup();
+    const view = render(<EditorRoot {...props} />);
+    const ordinaryCopy = await view.findByRole('button', {
+      name: 'Copy to WeChat'
+    });
+    const sourceBeforeCopy = props.submissionField.value;
+
+    ordinaryCopy.focus();
+    await user.keyboard('{Enter}');
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(ordinaryCopy);
+    expect(ordinaryCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(ordinaryCopy.hasAttribute('disabled')).toBe(false);
+    expect(ordinaryCopy.getAttribute('aria-busy')).toBe('true');
+
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    await user.click(ordinaryCopy);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(ordinaryCopy);
+
+    await act(async () => {
+      ordinaryPending.resolve({ method: 'clipboard', status: 'copied' });
+    });
+    await waitFor(() => {
+      expect(ordinaryCopy.hasAttribute('aria-disabled')).toBe(false);
+      expect(ordinaryCopy.hasAttribute('aria-busy')).toBe(false);
+    });
+    expect(document.activeElement).toBe(ordinaryCopy);
+    expect(props.submissionField.value).toBe(sourceBeforeCopy);
+
+    await user.click(view.getByRole('button', { name: '进入沉浸写作' }));
+    const immersiveCopy = view.getByRole('button', { name: '复制到公众号' });
+    immersiveCopy.focus();
+    await user.keyboard(' ');
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(immersiveCopy);
+    expect(immersiveCopy.getAttribute('aria-disabled')).toBe('true');
+    expect(immersiveCopy.hasAttribute('disabled')).toBe(false);
+    expect(immersiveCopy.getAttribute('aria-busy')).toBe('true');
+
+    await user.keyboard('{Enter}');
+    await user.click(immersiveCopy);
+    expect(props.wechatClipboard.copy).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe(immersiveCopy);
+
+    await act(async () => {
+      immersivePending.resolve({ code: 'wechat-copy-failed', status: 'failed' });
+    });
+    await waitFor(() => {
+      expect(immersiveCopy.hasAttribute('aria-disabled')).toBe(false);
+      expect(immersiveCopy.hasAttribute('aria-busy')).toBe(false);
+    });
+    expect(document.activeElement).toBe(immersiveCopy);
+    expect(props.submissionField.value).toBe(sourceBeforeCopy);
+  });
+
+  it('clears shared pending feedback after a cancellation failure', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const pending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy).mockReturnValue(pending.promise);
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    fireEvent.click(copy);
+    expect(copy.getAttribute('aria-busy')).toBe('true');
+    await act(async () => {
+      pending.resolve({
+        code: 'wechat-png-rasterization-cancelled',
+        status: 'failed'
+      });
+    });
+
+    await waitFor(() => {
+      const completed = view.getByRole('button', { name: 'Copy to WeChat' });
+      expect(completed.hasAttribute('aria-disabled')).toBe(false);
+      expect(completed.hasAttribute('disabled')).toBe(false);
+      expect(completed.hasAttribute('aria-busy')).toBe(false);
+      expect(view.getByRole('alert').textContent).toBe('Copy failed');
+    });
+  });
+
+  it('releases pending feedback when the WeChat session is replaced', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const pending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy).mockReturnValue(pending.promise);
+    const replacementClipboard = {
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' } as const),
+      prepare: vi.fn().mockResolvedValue(undefined)
+    };
+    const view = render(<EditorRoot {...props} />);
+    const copy = await view.findByRole('button', { name: 'Copy to WeChat' });
+
+    fireEvent.click(copy);
+    expect(copy.getAttribute('aria-busy')).toBe('true');
+    view.rerender(
+      <EditorRoot {...props} wechatClipboard={replacementClipboard} />
+    );
+
+    await waitFor(() => {
+      const replacementCopy = view.getByRole('button', {
+        name: 'Copy to WeChat'
+      });
+      expect(replacementCopy.hasAttribute('aria-disabled')).toBe(false);
+      expect(replacementCopy.hasAttribute('disabled')).toBe(false);
+      expect(replacementCopy.hasAttribute('aria-busy')).toBe(false);
+    });
+    fireEvent.click(view.getByRole('button', { name: 'Copy to WeChat' }));
+    await waitFor(() => expect(replacementClipboard.copy).toHaveBeenCalledOnce());
+    await act(async () => {
+      pending.resolve({ method: 'clipboard', status: 'copied' });
+    });
+  });
+
+  it('does not mark the live immersive surface copied from a stale success', async () => {
+    const props = fixture();
+    type ClipboardResult = Awaited<
+      ReturnType<typeof props.wechatClipboard.copy>
+    >;
+    const pending = deferred<ClipboardResult>();
+    vi.mocked(props.wechatClipboard.copy).mockReturnValue(pending.promise);
+    const replacementClipboard = {
+      copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' } as const),
+      prepare: vi.fn().mockResolvedValue(undefined)
+    };
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    expect(view.getByRole('button', { name: '复制到公众号' }).getAttribute('aria-busy'))
+      .toBe('true');
+
+    view.rerender(
+      <EditorRoot {...props} wechatClipboard={replacementClipboard} />
+    );
+    await waitFor(() => {
+      expect(view.getByRole('button', { name: '复制到公众号' })).not.toBeNull();
+      expect(view.queryByRole('button', { name: '已复制' })).toBeNull();
+    });
+
+    await act(async () => {
+      pending.resolve({ method: 'clipboard', status: 'copied' });
+    });
+    expect(view.queryByRole('button', { name: '已复制' })).toBeNull();
+    expect(view.getByRole('button', { name: '复制到公众号' })).not.toBeNull();
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    await waitFor(() => expect(replacementClipboard.copy).toHaveBeenCalledOnce());
+  });
+
   it('passes PNG export through the protected image upload owner', async () => {
     const props = fixture();
     const rasterizationPort = {
@@ -7600,6 +7956,57 @@ describe('EditorRoot', () => {
     });
     expect(prepare).not.toHaveBeenCalled();
     expect(props.getPreviewLayoutObservationCount()).toBe(0);
+    view.unmount();
+  });
+
+  it('does not prepare portable WeChat payloads in the background when PNG conversion is enabled', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const view = render(
+      <EditorRoot
+        {...props}
+        wechatExport={{ ...props.wechatExport, pngConversionEnabled: true }}
+      />
+    );
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-easymde-preview-html-sink="1"]'))
+        .not.toBeNull()
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(props.getPreviewLayoutObservationCount()).toBe(0);
+    act(() => {
+      props.triggerResize();
+      props.triggerPreviewLayout();
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('cancels queued portable preparation when PNG conversion becomes enabled', async () => {
+    const props = fixture();
+    const prepare = props.wechatClipboard.prepare;
+    if (!prepare) throw new Error('wechat preparation is unavailable');
+    const view = render(<EditorRoot {...props} />);
+
+    await waitFor(() => expect(prepare).toHaveBeenCalled());
+    const callsBeforeToggle = vi.mocked(prepare).mock.calls.length;
+    act(() => props.triggerResize());
+    view.rerender(
+      <EditorRoot
+        {...props}
+        wechatExport={{ ...props.wechatExport, pngConversionEnabled: true }}
+      />
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+    });
+    expect(vi.mocked(prepare).mock.calls.length).toBe(callsBeforeToggle);
     view.unmount();
   });
 

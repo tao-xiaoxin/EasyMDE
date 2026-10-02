@@ -126,13 +126,29 @@ final class VisualPreviewBlockAnnotator {
 			throw new RuntimeException( 'The DOM extension is required to annotate Preview blocks.' );
 		}
 
-		$source_by_id = array();
-		foreach ( $source_blocks as $source_block ) {
-			if ( ! isset( $source_block['source_id'], $source_block['startLine'], $source_block['endLine'], $source_block['editable'] ) ) {
-				throw new RuntimeException( 'Preview source map contains an incomplete source block.' );
+		$source_by_id    = array();
+		$source_position = 0;
+		foreach ( $source_blocks as $source_index => $source_block ) {
+			$expected_source_id = 's' . $source_position;
+			if (
+				! is_int( $source_index )
+				|| $source_index !== $source_position
+				|| ! is_array( $source_block )
+				|| ! isset( $source_block['source_id'], $source_block['startLine'], $source_block['endLine'], $source_block['editable'] )
+				|| ! is_string( $source_block['source_id'] )
+				|| $source_block['source_id'] !== $expected_source_id
+				|| ! is_int( $source_block['startLine'] )
+				|| ! is_int( $source_block['endLine'] )
+				|| $source_block['startLine'] < 0
+				|| $source_block['endLine'] < $source_block['startLine']
+				|| ! is_bool( $source_block['editable'] )
+				|| isset( $source_by_id[ $source_block['source_id'] ] )
+			) {
+				throw new RuntimeException( 'Preview source map contains an invalid source block.' );
 			}
 
 			$source_by_id[ $source_block['source_id'] ] = $source_block;
+			++$source_position;
 		}
 
 		$document              = new DOMDocument( '1.0', 'UTF-8' );
@@ -170,22 +186,58 @@ final class VisualPreviewBlockAnnotator {
 			}
 		}
 
-		$map           = array();
-		$last_end_line = 0;
+		$map                       = array();
+		$last_end_line             = 0;
+		$overlap_group_first_index = null;
+		$overlap_group_end_line    = 0;
+		$overlap_group_floor_line  = 0;
+		$overlap_group_has_overlap = false;
 		foreach ( $root_blocks as $index => $root_block ) {
 			$source_ids = self::source_ids( $root_block );
 			if ( empty( $source_ids ) && ! self::is_generated_root( $root_block ) ) {
 				throw new RuntimeException( 'Preview HTML contains a root block without source provenance.' );
 			}
 
-			$range         = empty( $source_ids )
+			$range     = empty( $source_ids )
 				? array(
 					'startLine' => $last_end_line,
 					'endLine'   => $last_end_line,
 				)
-					: self::range_for_source_ids( $source_ids, $source_by_id );
-			$editable      = ! empty( $source_ids );
-			$last_end_line = $range['endLine'];
+				: self::range_for_source_ids( $source_ids, $source_by_id );
+			$raw_range = $range;
+			$editable  = ! empty( $source_ids );
+			if ( empty( $source_ids ) ) {
+				if ( $overlap_group_has_overlap ) {
+					self::mark_overlap_group_read_only( $map, $overlap_group_first_index, $overlap_group_end_line );
+				}
+				$overlap_group_first_index = null;
+				$overlap_group_has_overlap = false;
+			} elseif ( null === $overlap_group_first_index || $raw_range['startLine'] >= $overlap_group_end_line ) {
+				$overlap_group_floor_line = $last_end_line;
+				if ( $overlap_group_has_overlap ) {
+					self::mark_overlap_group_read_only( $map, $overlap_group_first_index, $overlap_group_end_line );
+				}
+				if ( null !== $overlap_group_first_index ) {
+					$last_end_line = $overlap_group_end_line;
+				}
+
+				if ( $raw_range['startLine'] < $overlap_group_floor_line ) {
+					throw new RuntimeException( 'Preview source ranges overlap without a deterministic source owner.' );
+				}
+
+				$overlap_group_first_index = $index;
+				$overlap_group_end_line    = $raw_range['endLine'];
+				$overlap_group_has_overlap = false;
+			} else {
+				// CommonMark can bridge separate source spans through split roots. Defer
+				// ownership for the complete connected union until the group ends.
+				if ( $raw_range['startLine'] < $overlap_group_floor_line ) {
+					throw new RuntimeException( 'Preview source ranges overlap without a deterministic source owner.' );
+				}
+				$overlap_group_end_line    = max( $overlap_group_end_line, $raw_range['endLine'] );
+				$overlap_group_has_overlap = true;
+			}
+			$last_end_line = max( $last_end_line, $range['endLine'] );
 
 			$block_id = 'b' . (int) $index;
 			$root_block->removeAttribute( self::BLOCK_ATTRIBUTE );
@@ -196,6 +248,9 @@ final class VisualPreviewBlockAnnotator {
 				'endLine'   => $range['endLine'],
 				'editable'  => (bool) $editable,
 			);
+		}
+		if ( $overlap_group_has_overlap ) {
+			self::mark_overlap_group_read_only( $map, $overlap_group_first_index, $overlap_group_end_line );
 		}
 
 		self::remove_source_attributes( $root );
@@ -219,6 +274,26 @@ final class VisualPreviewBlockAnnotator {
 				'blocks'     => $map,
 			),
 		);
+	}
+
+	/**
+	 * Project one complete overlapping source group after all of its roots are known.
+	 *
+	 * @param array<int,array{id:string,startLine:int,endLine:int,editable:bool}> $map
+	 * @param int|null $first_index
+	 * @param int $end_line
+	 */
+	private static function mark_overlap_group_read_only( array &$map, $first_index, $end_line ) {
+		if ( null === $first_index ) {
+			return;
+		}
+
+		$map_count = count( $map );
+		for ( $index = $first_index; $index < $map_count; ++$index ) {
+			$map[ $index ]['startLine'] = $end_line;
+			$map[ $index ]['endLine']   = $end_line;
+			$map[ $index ]['editable']  = false;
+		}
 	}
 
 	private static function mark_first_media_child( AbstractBlock $node, $source_id ) {

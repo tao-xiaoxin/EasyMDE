@@ -1380,29 +1380,24 @@ async function embedFontFaces(
       throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
     }
     if (!face.sources.length) continue;
-    const sources: string[] = [];
-    for (const source of face.sources) {
-      if (signal.aborted) {
-        throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+    const source = face.sources[0];
+    if (!source) continue;
+    const asset = await cachedFontAsset(source.url, source.scope, runtime, signal, cache);
+    if (!accountedBytes.has(source.url)) {
+      accountedBytes.add(source.url);
+      totalBytes += asset.size;
+      if (totalBytes > MAX_EMBEDDED_FONT_BYTES) {
+        throw new WechatVisualRasterizationError('wechat-png-font-failed');
       }
-      const asset = await cachedFontAsset(source.url, source.scope, runtime, signal, cache);
-      if (!accountedBytes.has(source.url)) {
-        accountedBytes.add(source.url);
-        totalBytes += asset.size;
-        if (totalBytes > MAX_EMBEDDED_FONT_BYTES) {
-          throw new WechatVisualRasterizationError('wechat-png-font-failed');
-        }
-      }
-      sources.push(`url("${asset.dataUrl}") format("${source.format}")`);
     }
-    if (!sources.length) continue;
-    const faceKey = `${face.descriptors.join(';')}|${sources.join(',')}`;
+    const sourceValue = `url("${asset.dataUrl}") format("${source.format}")`;
+    const faceKey = `${face.descriptors.join(';')}|${sourceValue}`;
     if (emittedFaceKeys.has(faceKey)) continue;
     emittedFaceKeys.add(faceKey);
     if (emittedFaceKeys.size > MAX_EMBEDDED_FONT_FACES) {
       throw new WechatVisualRasterizationError('wechat-png-font-failed');
     }
-    const rule = `@font-face{${face.descriptors.join(';')};src:${sources.join(',')}}`;
+    const rule = `@font-face{${face.descriptors.join(';')};src:${sourceValue}}`;
     emittedBytes += rule.length;
     if (emittedBytes > MAX_EMBEDDED_FONT_STYLESHEET_BYTES) {
       throw new WechatVisualRasterizationError('wechat-png-font-failed');

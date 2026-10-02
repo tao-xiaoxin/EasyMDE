@@ -552,7 +552,12 @@ The visual rasterizer waits for document font readiness and resolves managed
 font roots from the approved `previewEnhancement.assetBaseUrl` and approved
 KaTeX stylesheet URL supplied by bootstrap. It embeds only matching managed
 same-origin EasyMDE `@font-face` sources in the raster SVG; remote or
-unrecognized URLs are omitted. A required managed family with no source face,
+unrecognized URLs are omitted. For each matching face, the first approved
+source in existing CSS order is the only source downloaded and natively
+validated, while all retained weight, style, stretch, unicode-range, and other
+face descriptors remain attached to their separate faces; failure of that
+selected source fails conversion explicitly without an alternate-source retry
+or fallback substitution. A required managed family with no source face,
 invalid or rejected bytes, or failed browser-font validation fails explicitly;
 only nonmanaged or system families may remain on the browser fallback. Bounded
 font work is cancellable. Each successful PNG filename includes the SHA-256

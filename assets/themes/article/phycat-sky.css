@@ -273,6 +273,10 @@
     font-weight: 500
 }
 
+.easymde-rendered-content.easymde-markdown-theme-phycat-sky li {
+    position: relative
+}
+
 .easymde-rendered-content.easymde-markdown-theme-phycat-sky li:before {
     content: "";
     height: calc(100% - 45px);

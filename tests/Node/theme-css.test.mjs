@@ -1292,6 +1292,30 @@ test('Phycat and Mdmdt adapters contain no document-host numbering, scrollbar, o
   );
 });
 
+test('all Phycat list items anchor their task and connector decorations', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const body = cssRuleBodyMatching(
+      css,
+      `${scopedArticleRoot(theme)} li`,
+      (candidate) => /(?:^|;)\s*position\s*:\s*relative\s*(?:;|$)/.test(candidate)
+    );
+
+    assert.ok(body, `${theme} list items must establish the containing block for absolute decorations`);
+  }
+});
+
 test('Terminal Noir preserves the reference terminal palette and readable contrast', () => {
   const css = readFileSync(join(repoRoot, 'assets/themes/code/terminal-noir.css'), 'utf8');
   const macFrameSelector = '.easymde-rendered-content.easymde-code-theme-terminal-noir.easymde-code-mac pre';

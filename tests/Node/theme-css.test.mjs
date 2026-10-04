@@ -21,7 +21,7 @@ function cssRuleBodies(source, selector) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    const selectors = match[1].split(',').map((item) => item.trim());
+    const selectors = splitCssSelectors(match[1]);
 
     if (selectors.includes(selector)) {
       bodies.push(match[2]);
@@ -37,7 +37,7 @@ function cssRuleSelectors(source) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    selectors.push(...match[1].split(',').map((item) => item.trim()));
+    selectors.push(...splitCssSelectors(match[1]));
   }
 
   return selectors;
@@ -48,10 +48,9 @@ function cssRuleBodyMatching(source, selector, predicate = () => true) {
   let match;
 
   while ((match = rulePattern.exec(source)) !== null) {
-    const selectors = match[1]
-      .replaceAll(/\/\*[\s\S]*?\*\//g, '')
-      .split(',')
-      .map((item) => item.trim());
+    const selectors = splitCssSelectors(
+      match[1].replaceAll(/\/\*[\s\S]*?\*\//g, '')
+    );
     if (selectors.includes(selector) && predicate(match[2])) return match[2];
   }
 
@@ -979,6 +978,153 @@ test('Mdmdt retains the pinned nested-list rhythm', () => {
     css,
     new RegExp(`${escapedRegExp(root)} ul\\s*,\\s*${escapedRegExp(root)} ul\\s*\\{`),
     'Mdmdt must not reintroduce the duplicate broad-list override'
+  );
+});
+
+test('Mdmdt restores ordinary unordered-list marker semantics without task bullets', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const expected = [
+    [`${root} ul:not(.task-list)`, /list-style-type:\s*disc;/],
+    [`${root} :is(ul, ol) ul:not(.task-list)`, /list-style-type:\s*circle;/],
+    [`${root} :is(ul, ol) :is(ul, ol) ul:not(.task-list)`, /list-style-type:\s*square;/],
+    [`${root} ul.task-list`, /list-style-type:\s*none;/],
+    [`${root} ol.task-list`, /list-style-type:\s*none;/],
+    [`${root} .task-list-item`, /list-style-type:\s*none;/],
+    [`${root} .task-list-item::marker`, /content:\s*none;/]
+  ];
+
+  for (const [selector, declaration] of expected) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => declaration.test(body)),
+      `Mdmdt should define ${selector} with ${declaration}`
+    );
+  }
+});
+
+test('Mdmdt list markers follow ancestor list depth through wrappers and mixed lists', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const dom = new JSDOM(`
+    <style>${css}</style>
+    <article class="easymde-rendered-content easymde-markdown-theme-mdmdt">
+      <ul id="root-list">
+        <li>
+          <blockquote>
+            <ul id="blockquote-list">
+              <li>
+                <blockquote>
+                  <ol id="mixed-list">
+                    <li>
+                      <blockquote>
+                        <ul id="square-list"><li>Square</li></ul>
+                      </blockquote>
+                    </li>
+                  </ol>
+                </blockquote>
+              </li>
+            </ul>
+          </blockquote>
+        </li>
+      </ul>
+      <ul id="task-list" class="task-list">
+        <li class="task-list-item"><input type="checkbox" disabled>Task</li>
+        <li><blockquote><ul id="task-nested-list"><li>Nested</li></ul></blockquote></li>
+      </ul>
+    </article>
+  `);
+  const styleOf = (id) => dom.window.getComputedStyle(dom.window.document.getElementById(id));
+
+  assert.equal(styleOf('root-list').listStyleType, 'disc');
+  assert.equal(styleOf('blockquote-list').listStyleType, 'circle');
+  assert.equal(styleOf('mixed-list').listStyleType, 'decimal');
+  assert.equal(styleOf('square-list').listStyleType, 'square');
+  assert.equal(styleOf('task-list').listStyleType, 'none');
+  assert.equal(
+    dom.window.getComputedStyle(dom.window.document.querySelector('.task-list-item')).listStyleType,
+    'none'
+  );
+  assert.equal(styleOf('task-nested-list').listStyleType, 'circle');
+  assert.ok(dom.window.document.querySelector(`${root} .task-list-item`));
+});
+
+test('Mdmdt shares task checkbox paint across native and visual markers', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  const markerSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]`,
+    `${root} .task-list-item > p > input[type="checkbox"]`,
+    `${root} .task-list-item > .easymde-task-checkbox`,
+    `${root} .task-list-item > p > .easymde-task-checkbox`
+  ];
+  const sharedDeclarations = [
+    /position:\s*relative;/,
+    /display:\s*inline-block;/,
+    /width:\s*14px\s*!important;/,
+    /height:\s*14px\s*!important;/,
+    /min-width:\s*14px\s*!important;/,
+    /min-height:\s*14px\s*!important;/,
+    /max-width:\s*14px\s*!important;/,
+    /max-height:\s*14px\s*!important;/,
+    /box-sizing:\s*border-box;/,
+    /border:\s*1px\s+solid\s+var\(--border-color\)\s*!important;/
+  ];
+
+  for (const selector of markerSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => sharedDeclarations.every((declaration) => declaration.test(body))),
+      `Mdmdt should share task marker declarations for ${selector}`
+    );
+  }
+
+  for (const selector of markerSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /margin-left:\s*-22px;/.test(body)),
+      `Mdmdt should anchor task markers for ${selector}`
+    );
+  }
+
+  const checkedSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]:checked`,
+    `${root} .task-list-item > p > input[type="checkbox"]:checked`,
+    `${root} .task-list-item > .easymde-task-checkbox.is-checked`,
+    `${root} .task-list-item > p > .easymde-task-checkbox.is-checked`
+  ];
+  for (const selector of checkedSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /background:\s*var\(--color-1\)\s*!important;/.test(body)),
+      `Mdmdt should paint checked task markers for ${selector}`
+    );
+  }
+
+  const checkedPseudoSelectors = [
+    `${root} .task-list-item > input[type="checkbox"]:checked::after`,
+    `${root} .task-list-item > p > input[type="checkbox"]:checked::after`,
+    `${root} .task-list-item > .easymde-task-checkbox.is-checked::after`,
+    `${root} .task-list-item > p > .easymde-task-checkbox.is-checked::after`
+  ];
+  for (const selector of checkedPseudoSelectors) {
+    assert.ok(
+      cssRuleBodyMatching(css, selector, (body) => /border:\s*2px\s+solid\s+#fff;/.test(body)),
+      `Mdmdt should reuse the checked marker tick for ${selector}`
+    );
+  }
+
+  assert.ok(
+    cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > .easymde-task-checkbox.is-checked`,
+      (body) => /font-size:\s*0;/.test(body)
+    ),
+    'Mdmdt should visually hide the span marker text while retaining its DOM/ARIA value'
+  );
+  assert.ok(
+    cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > input[type="checkbox"]::before`,
+      (body) => /content:\s*none\s*!important;/.test(body)
+    ),
+    'Mdmdt should suppress a host input before pseudo'
   );
 });
 

@@ -241,6 +241,25 @@
 .easymde-rendered-content.easymde-markdown-theme-mdmdt ul{
   padding-left: 36px;
 }
+.easymde-rendered-content.easymde-markdown-theme-mdmdt ul:not(.task-list){
+  list-style-type: disc;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt :is(ul, ol) ul:not(.task-list){
+  list-style-type: circle;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt :is(ul, ol) :is(ul, ol) ul:not(.task-list){
+  list-style-type: square;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt ul.task-list,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt ol.task-list{
+  list-style-type: none;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item{
+  list-style-type: none;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item::marker{
+  content: none;
+}
 .easymde-rendered-content.easymde-markdown-theme-mdmdt ol{
   padding-left: 40px;
 }
@@ -434,12 +453,21 @@
   line-height: 1.2;
 }
 
-
-.easymde-rendered-content.easymde-markdown-theme-mdmdt input[type="checkbox"]{
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > input[type="checkbox"],
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > input[type="checkbox"],
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > .easymde-task-checkbox,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > .easymde-task-checkbox{
+  position: relative;
+  display: inline-block;
+  margin-left: -22px;
   margin-right: 10px !important;
   margin-bottom: -2px !important;
   width: 14px !important;
   height: 14px !important;
+  min-width: 14px !important;
+  min-height: 14px !important;
+  max-width: 14px !important;
+  max-height: 14px !important;
   box-sizing: border-box;
   background: transparent !important;
   border: 1px solid var(--border-color) !important;
@@ -452,11 +480,22 @@
   -ms-appearance: none;
   list-style: none;
 }
-.easymde-rendered-content.easymde-markdown-theme-mdmdt input[type="checkbox"]:checked{
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > input[type="checkbox"]::before,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > input[type="checkbox"]::before{
+  content: none !important;
+  display: none !important;
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > input[type="checkbox"]:checked,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > input[type="checkbox"]:checked,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > .easymde-task-checkbox.is-checked,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > .easymde-task-checkbox.is-checked{
   background: var(--color-1) !important;
   border-color: transparent !important;
 }
-.easymde-rendered-content.easymde-markdown-theme-mdmdt input[type="checkbox"]:checked::after{
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > input[type="checkbox"]:checked::after,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > input[type="checkbox"]:checked::after,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > .easymde-task-checkbox.is-checked::after,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > .easymde-task-checkbox.is-checked::after{
   content: "";
   display: block;
   position: absolute;
@@ -472,6 +511,11 @@
   transform: rotate(40deg);
   -webkit-transform: rotate(40deg);
   -ms-transform: rotate(40deg);
+}
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > .easymde-task-checkbox.is-checked,
+.easymde-rendered-content.easymde-markdown-theme-mdmdt .task-list-item > p > .easymde-task-checkbox.is-checked{
+  font-size: 0;
+  color: transparent;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-mdmdt > *:first-child{

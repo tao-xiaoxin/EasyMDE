@@ -615,7 +615,8 @@ current exception; Verify Upload remains single-attempt.
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
 WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
-While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The `RefreshCcw` pending glyph preserves control geometry and respects reduced-motion preferences. Native `disabled` remains reserved for an unavailable capability.
+While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
+An article-theme, code-theme, or Custom CSS change owns cancellation of an active Copy. The session returns `status: cancelled` with `wechat-copy-cancelled`, emits an info diagnostic for the intentional cancellation, and emits no success or failure status. A real Adapter failure or residual upload remains an explicit diagnostic and side-effect result. The appearance change refreshes Preview only; it never starts Copy automatically, so a new theme requires a new explicit Copy. During style loading, both controls remain focusable with `aria-disabled="true"` and without `aria-busy`.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
 and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
@@ -645,16 +646,82 @@ that whole root with the native image. It therefore skips descendant,
 pseudo-element, and theme-background portable serialization for the converted
 candidate while native capture reads the current source tree; portable,
 background, legacy, table, and ordinary-SVG serialization remains unchanged.
-When the resolved Preview is hidden for explicit PNG Copy, the Clipboard
-adapter attaches a temporary measurement tree from the current stable enhanced
-Preview and uses it for the complete HTML, plain-text, and PNG serialization.
-It retains Preview context CSS while neutralizing ancestor layout at the
-authoritative width. `EditorRoot` supplies the optional `rememberPreviewWidth`
-value at Preview-ready and immediately before source-mode hiding; if no
-positive visible width exists, the measurement tree derives live workspace
-width and content constraints rather than falling back to the viewport or an
-old content/rectangle cache. Freshness remains keyed to the original resolved
-Preview, and all terminal paths clean up the measurement tree and guards.
+When the resolved Safe Preview is hidden or source mode is active, the
+Clipboard adapter obtains one ephemeral measurement lease for the current
+enhanced Preview and reuses it for portable HTML/plain-text serialization and
+PNG visual-root capture, including original parent typography. The original
+Safe Preview remains the source, prepared-cache key, and freshness owner.
+`EditorRoot` keeps `preview`/`split` presentation separate from source mode;
+ordinary entry is `split`, and source-mode entry records the last visible width.
+The lease retains the Preview presentation marker and class context, paper
+geometry, canvas media-query presentation, and full Preview wrapping while
+neutralizing hidden ancestor layout at the measured workspace width. It is not
+a cached measurement DOM; transfer into the active preparation and cleanup
+cover every success, failure, abort, stale, timeout, and teardown path.
+Cloned images settle through load/decode or explicit failure before any
+freshness fingerprint, including warm-cache reuse, or payload commit. Lazy
+clones are temporarily eager and restore their loading attributes; readiness
+stays within the existing per-resource and transaction bounds without resetting
+the transaction clock. Abort cancels immediately, late events cannot publish
+or cache work, and cleanup is terminal.
+Hidden readiness attaches clone image listeners before the temporary host is
+attached; after attachment it forces one layout on the measurement root and
+reads the current owner's `document.fonts.ready`. Initial, current, and final
+freshness fingerprints and payload work wait for that font readiness and every
+clone image load/decode. An absent or already-loaded FontFaceSet with no clone
+images and no active eligible finite CSS effects retains the synchronous
+legacy-ready path. The lease does not listen to
+document-wide `loadingerror`; managed font fetch/parse failures remain owned by
+the visual rasterizer. Abort, cleanup, and late font resolution are terminal.
+The existing 10-second resource deadline, 60-second transaction, 8ms
+serialization yield budget, and write-first activation remain unchanged.
+Initial readiness includes finite native CSS transitions and animations owned
+by Preview and its attached measurement tree before style, geometry, and cache
+snapshots. JavaScript and infinite effects are excluded. Pending, running, or paused finite effects
+share the fonts/images resource deadline, which clears on successful readiness.
+API and `finished` failures remain latched for that lease; synchronous cache and
+legacy paths cannot bypass them. Final gates reject changed finite CSS effects as stale
+without another readiness wait or source rebaseline. Source animations remain
+untouched, and settled uploads retain the transaction deadline.
+Dimension semantics use a bounded raw clone-context batch separate from the
+serialization tree. Visible layout geometry remains measured from the original
+source; hidden/source layout reuses the measurement tree with raw source
+semantics. Authored and computed `auto`, percentage, `calc()`, and pixel
+width/height/min/max values remain semantic inputs rather than being replaced
+with blanket `100%` dimensions. Relative content-box pixels add CSSOM padding
+and border widths for border-box output, while SVG, math, PNG, pseudo-element,
+and other special geometry stays atomic; ordinary images retain semantic width
+growth and `height:auto`. Initial, current, final, and warm semantic reads stay
+paired with actual geometry, and raw/measurement/serialization contexts clean
+up temporary display, attributes, and clones in `finally`.
+The batch uses at most two deep clones, with the raw context and serialization
+tree kept separate. Temporary geometry and raw semantic trees exclude runtime
+sink, acceptance, refresh, error, and editor-owner identity markers on creation
+and refresh; the original Preview remains their only owner.
+Raw CSSOM auto and finite percentage margins remain responsive on ordinary elements, eligible
+static/relative pseudos, and outermost ordinary/Mermaid SVG roots. Other
+computed geometry, fixed margins, absolute pseudos, internal SVG, and math
+remain unchanged. Raw margin semantics join every freshness/cache phase, and
+the raw snapshot refreshes before guarded serialization/signature reads.
+Async serialization uses the existing budget for conditional task checkpoints
+after HTML capture and connected plain-text measurement. Abort and PNG
+currentness checks bracket each actual yield; final source/semantic guards and
+the synchronous legacy path remain intact. This splits layout work without
+changing HTML or deriving text through another renderer.
+The exporter-owned portable root projection adds only `max-width:100%` and
+`margin:0 auto` after computed Preview styles. This root-level declaration step
+is separate from hidden-surface measurement, whose lease retains the original
+paper geometry. Root styles use the current root-export property mask, including
+root background, layout, and pseudo-element styles. Visible serialization reads
+the marked temporary raw context clone, whose marker lasts only for the
+controlled temporary-host lifetime. Hidden measurement briefly sets
+`data-easymde-wechat-export-style-context` on the measurement clone while taking
+the root snapshot and restores it in `finally`; the original Safe Preview root
+is never marked. Neither temporary context is persisted on the live Preview or
+payload, and root-projected styles participate in the prepared freshness
+signature. The live Preview and article content remain unchanged and no fixed
+MDNice
+spacing value is encoded.
 
 For the portable path, a successful modern setup constructs deferred HTML and
 plain text Blob payloads and invokes the browser `write()` owner in the
@@ -694,11 +761,17 @@ geometry handling is unchanged. Portable output retains safe computed inherited
 typography defaults on
 each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
 `letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,
-`tab-size`, and `list-style-position`, while omitting layout defaults. For this
-portable text rule, `overflow-wrap` preserves its computed source value with
+`tab-size`, and `list-style-position`, while omitting layout defaults. Anchors
+retain their computed `text-decoration`, including `none`, rather than
+inheriting a destination platform default. For this portable text rule,
+`overflow-wrap` preserves its computed source value with
 `!important` so it outranks WeChat's global `word-wrap:break-word!important`
 alias; the serializer does not blanket-apply `!important` or hardcode platform
-values, and native PNG capture is unchanged. Each transaction-local source
+values, and native PNG capture is unchanged. Fenced-code hash boundaries use
+root-scoped Text records to prevent destination topic links from overriding
+syntax colors; the shared HTML/plaintext rules are owned by the
+[WeChat export reference](../.agents/skills/easymde/references/wechat-export.md).
+Each transaction-local source
 guard observes the sink before taking
 its immutable initial canonical key and drains `MutationObserver.takeRecords()`
 at initial, current, and final checkpoints. The clean path makes an O(1) reuse
@@ -709,6 +782,17 @@ refresh-bookkeeping attributes on the sink root are ignored; matching
 descendant attributes remain source changes. Abort, timeout, stale, and
 teardown gates reject deferred work, and `finally` disconnects the observer,
 including late cleanup.
+Portable structure normalization maps copied article, div, and blockquote roots
+to sections only after safe computed styles and pseudo-elements are captured;
+blockquote borders, backgrounds, spacing, nested children, and plain-text order
+remain observable in the copied result while the source Preview is unchanged.
+After the HTML string is captured, browser layout measures plain text from the
+exclusive detached serialization tree. Non-layout DOM environments retain the
+existing line-aware source-text fallback when connected text flattens block
+boundaries; the temporary host is removed in `finally`. Source tables
+retain authored/computed `min-width`, while only their generated scroll wrapper
+uses `min-width:0`; source and table RGBA colors remain computed-source values
+with no platform or theme hardcoding.
 
 The visual rasterizer waits for document font readiness and resolves managed
 font roots from the approved `previewEnhancement.assetBaseUrl` and approved
@@ -751,6 +835,17 @@ and a block image; source padding, borders, backgrounds, and capture geometry
 are baked into the PNG once. All output dimensions remain subject to the
 existing 4096-edge and PNG-pixel bounds. Ordinary media keeps its responsive
 sizing.
+PNG natural pixel dimensions use the captured CSS dimensions multiplied by the
+clamped device pixel ratio, while the pasted image keeps the captured CSS width
+and height for display. Responsive destination rules therefore do not replace
+the measured generated-image geometry.
+
+The existing table, block-math, and direct-code normalizers declare intentional
+local horizontal overflow through destination width-check metadata after
+untrusted source attributes are removed. Article roots, PRE/header, and
+ordinary content receive no exemption. Geometry, image dimensions, and plain
+text remain unchanged; the executable boundaries and native negative-case
+verification are owned by the WeChat export reference.
 
 Modern Clipboard preparation has a 60-second bound for the serialized payload
 and deferred HTML/plain Blob values; once they are ready, the actual browser

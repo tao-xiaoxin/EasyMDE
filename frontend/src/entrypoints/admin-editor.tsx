@@ -257,7 +257,10 @@ export function mountAdminEditor(
   });
   const root = createRoot(rootElement);
   let active = true;
-  const onFailure = (code: string) => console.error(`[EasyMDE] ${code}`);
+  const onFailure = (code: string, level: 'error' | 'info' = 'error') => {
+    const log = 'info' === level ? console.info : console.error;
+    log(`[EasyMDE] ${code}`);
+  };
   const enhancementPort = createBrowserPreviewEnhancementPort(
     bootstrap.previewEnhancement,
     { documentRef, runtime: createWindowPreviewEnhancementRuntime(windowRef) }

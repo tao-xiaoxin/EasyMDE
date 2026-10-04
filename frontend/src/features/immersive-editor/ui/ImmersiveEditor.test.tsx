@@ -225,6 +225,7 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
       onConfirmPublish: () => true,
       onCopyWechat: async () => true,
       wechatCopyPending: false,
+      wechatCopyUnavailable: false,
       onExit: () => {},
       onFailure,
       onSelectFeaturedImage: async () => null,

@@ -246,9 +246,78 @@ npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
 
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
+Code-topic verification includes hash tokens split across syntax spans, authored
+FEFF/U2060, punctuation stops, emoji variation/keycap sequences, line boundaries,
+unchanged body/inline code, and plaintext measurement failure cleanup. Compare
+ordinary and immersive payloads through native WeChat insertion, Save and fresh
+desktop/phone Reader: assert no new topic links, original token colors, complete
+long code lines, local scrolling and shared-frame paint. Record destination CSS
+normalization separately from demonstrated layout equivalence.
+For the generated Mac marker, compare native insertion, Save and fresh Reader;
+confirm all three colors, 12px paint, unchanged header geometry and plaintext,
+and that ordinary whitespace or unrelated pseudos were not replaced.
+For an empty painted heading suffix, verify generated-template ownership,
+transparent and hidden negatives, unchanged authored text, and exact plaintext
+restoration after a measurement error. Exercise actual ordinary and hidden
+immersive Source-mode PNG Copy, then native Save and fresh desktop/phone Reader;
+compare the suffix paint and heading geometry at the same article width.
+
+Lossless theme-image encoding changes require matching decoded RGBA, dimensions
+and color interpretation; verify actual copied bytes after cache refresh, then
+native Save, normal draft reload and fresh desktop/phone Reader. Uploaded file
+IDs alone are not persistence or image-decoding evidence.
+
 The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. They also verify that modern `write()` is invoked before freshness style and geometry reads, logical `text-align` values are normalized by source direction, and ordinary content-box pixel dimensions are projected for a border-box destination. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization and bounded upload work; rasterization stays serial while selected-owner uploads are backpressured at three in flight; completion replaces visuals in stable candidate order; and any upload failure aborts remaining uploads without committing a partial Clipboard payload. Only outermost Mermaid and KaTeX math roots become PNG; ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. Math coverage verifies the native Safe Preview capture clone, original inline parent typography, complete safe computed dimensions and normal defaults, native computed `table-layout`, retained KaTeX/table/pstrut dimensions, no portable empty-span leakage, full scroll and descendant bounds for wide formulas, axis-independent clipped versus scrollable inline viewport geometry including `autoX/hiddenY` and `hiddenX/autoY`, retained 4096-edge and PNG-pixel validation, fractional `inlineLayout` allocation with optional viewport and paint offsets, top/bottom neighboring-line-box keywords, measured `B-H` margins for other vertical-align modes, explicit failure for missing or invalid allocation, paint-grid floor/ceil quantization, centered local wrapper overflow, and fixed block-image sizing with padding/borders/background captured once. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+The session matrix must also verify that an owned `theme-change` cancellation
+returns `status: cancelled` without a success or failure toast, preserves a real
+Adapter failure as an error diagnostic and residual-upload detail, refreshes
+Preview without starting Copy, and leaves both controls focusable with
+`aria-disabled="true"` and no `aria-busy` while the new style loads.
+Code-frame verification must compare source Preview geometry, normalized portable
+HTML, and native pasted output. The source-to-portable-to-native check must
+keep the frame circles visible and aligned across every registered code theme
+without arbitrary relocation or clipping. The portable normal-flow header uses
+effective source geometry; portable-import byte/DOM equality alone is insufficient
+evidence for the native destination.
+The theme matrix reads the live article/code registries and checks native
+Clipboard payloads at 375, 578, and 760 CSS pixels. Article fixtures include all
+heading levels, long bilingual headings, nested quotes/lists/tasks, wide tables,
+inline/fenced code, and links. Compare typography, code tokens, normal-flow
+frame paint, local overflow, and article-owned spacing; counts alone do not
+prove fidelity. Exercise ordinary Copy and immersive Split, Preview, and Source
+separately. Payload projection is distinct from a real WeChat paste: inspect
+loaded desktop/phone reader paint and actual horizontal scrolling, and record
+unverified theme/surface cells explicitly. Optional local payload exports are
+private diagnostics, not release assets or a passed native-reader claim.
+For destination structure advice, capture a fresh trusted single-payload paste
+and map each warning to the checker DOM before changing serialization. Cancel
+an earlier advisory before the next trial. Verify that intentional-width markers
+exist only on the generated table, registered block-math, and direct-code scroll
+owners; source/root/unowned markers must be removed. Check decoded media and
+real local scroll endpoints at desktop and phone widths. An unmarked negative
+must actually overflow in the destination's computed geometry and still trigger
+its warning; authored fixed width alone is insufficient when WeChat constrains
+it. Record remaining gradient advice independently. Aggregate theme transfers
+are diagnostic stimuli, not proof of warnings from an actual single Copy.
+The immediate Inkwell-to-Animal regression runs without an external transition
+wait and requires an active finite transition at the actual browser write.
+The PHYcat regression follows predecessor Source mode, exit, remembered Source
+re-entry, and Split reveal. With diagnostic animation waiting disabled, it
+requires an active finite CSS animation and no active CSS transitions at the
+trusted click and native write, then verifies one successful Copy, unchanged
+Source, and payload fidelity at all three widths. Separate hidden-Source tests
+cover finite effects restarted by attaching the measurement clone under the
+same initial resource deadline; JavaScript and infinite effects remain excluded.
 The focused rasterizer tests additionally verify that document font readiness is awaited, approved bootstrap asset roots are used for matching managed local font faces, remote sources are omitted, missing managed KaTeX faces fail explicitly, valid font bytes are signature- and browser-font-validated, successful bytes are cached, failed entries can retry, cancellation remains explicit, nonmanaged/system families retain the browser fallback, and final PNG names use a deterministic SHA-256 content digest.
-The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 10 requires it while older schemas import `false`; background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+The Clipboard regression matrix must cover nested blockquotes with computed
+border, background, spacing, and `::before` content in both modern and legacy
+paths. It must verify identical normalized HTML, blockquotes replaced by
+portable sections, preserved nested text and plain-text order, and an unchanged
+source Preview; this is a verification requirement, not a passed-result claim.
+The freshness-signature property masks must retain per-node `direction`
+context, root `position`, root pseudo `box-sizing`, all-node traversal, source
+markup, element dimensions, viewport signature, cancellation, and initial,
+current, and final comparisons while reducing unrelated computed-style reads.
 Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
 Preview request tests verify that current failures use only the stable privacy-safe
@@ -262,14 +331,68 @@ with a zero-width range at the union end. Both visual surface paths enforce
 Clipboard tests also verify the separate 60-second payload/HTML/plain-Blob
 preparation bound and 10-second browser-commit bound, including fail-fast early
 write rejection and late deferred-payload gating.
-The hidden-surface PNG regression must verify that explicit Copy attaches a
-temporary measurement tree from the current stable enhanced Preview, uses that
-tree for the complete serialization, preserves native candidate geometry, and
-keeps freshness owned by the original Preview. It must cover remembered
-positive root width from Preview-ready and before source-mode hiding, the
-initial-never-visible path using live workspace width and content constraints,
-ancestor layout neutralization with retained context CSS, and cleanup on every
-conversion terminal path.
+The hidden-surface Clipboard regression must verify one ephemeral measurement
+lease from the current enhanced Safe Preview is reused for portable
+HTML/plain-text serialization and PNG visual-root capture, including original
+parent typography and native candidate geometry. It must cover the Root's
+separate `preview`/`split` presentation state, ordinary split entry, source-mode
+last-visible-width retention, the Preview presentation marker/class context,
+paper/canvas media-query wrapping, initial-never-visible workspace constraints,
+original source/cache/freshness ownership, no cached measurement DOM, and lease
+transfer plus cleanup on every terminal path. Image-readiness coverage must
+settle every clone through load/decode or explicit failure before all freshness
+fingerprints, including warm-cache reuse, and before commit; it must temporarily
+promote lazy clones to eager loading, restore attributes, keep readiness inside
+the existing per-resource and transaction bounds without resetting the
+transaction clock, and reject on abort with immediate cleanup and no late cache
+publication. The synchronous legacy case must fail before `execCommand` when
+readiness is unsettled and must perform zero resource work when the lease is
+already ready. Plain-text coverage must capture HTML first, derive browser-layout
+text from the exclusive detached serialization tree, retain the existing
+line-aware source fallback for non-layout DOM environments, compare the
+captured HTML bytes and derived text for parity,
+and verify host removal in
+`finally`. Table coverage must retain authored/computed table `min-width` while
+the generated wrapper owns `min-width:0`, exercise the Crimson intrinsic-width
+regression that must not compress 520 to 412, and preserve source and table
+RGBA colors without theme hardcoding. This remains a verification requirement; no
+new native acceptance result is claimed.
+Font-readiness coverage must attach clone image listeners before host attachment,
+force one initial layout after attachment, and read the current
+`document.fonts.ready`. A cold source case must hold that readiness and verify
+that initial, current, and final freshness fingerprints and payload work wait
+for both fonts and image load/decode. An absent or already-loaded FontFaceSet
+with no clone images and no active eligible finite CSS effects must retain the
+synchronous legacy-ready path. Abort,
+cleanup, and late font resolution must be terminal; the test must verify that no
+document-wide `loadingerror` listener captures unrelated failures while managed
+font fetch/parse failures remain rasterizer-owned. Retain the existing 10-second
+resource deadline, 60-second transaction, 8ms serialization yield budget, and
+write-first activation. This remains a verification requirement and is not a
+passed-result claim.
+The responsive width regression must capture one source payload at a `412.5px`
+source layout and project that same payload through both ordinary and immersive
+Copy entrypoints at destination widths `375`, `578`, and `760`. It must assert
+the authored `300px`, `50%`, and `calc(100% - 32px)` child containing widths,
+automatic text-height growth, local image/code/table overflow ownership, and
+zero overlap among text rectangles. Body-level overflow alone is insufficient;
+the fixture must check each child containing box and its neighboring content.
+This remains a verification requirement until the local implementation and
+browser evidence are complete.
+The portable-root projection regression must verify that the exporter-owned final
+root adds only `max-width:100%` and `margin:0 auto` after computed Preview
+styles. Hidden-surface measurement must retain the original paper geometry,
+while the live Preview and article content remain unchanged and no fixed MDNice
+spacing value is encoded.
+It must also verify the current root-export property mask for root background,
+layout, and pseudo-element styles, root-projected freshness invalidation, the
+marked temporary raw context clone used by visible serialization, and the
+measurement clone's momentary context marker restoration in `finally`; the
+original Safe Preview root must never be marked and hidden raw context markers
+must remain temporary and absent from the payload.
+PNG scale coverage must compare natural pixel dimensions with displayed CSS
+dimensions at DPR 1 and 2 across ordinary and immersive Copy; responsive rules
+must not overwrite the captured display geometry.
 Freshness tests verify that the transaction-local `MutationObserver` is
 installed before the initial snapshot, that `takeRecords()` checkpoints cover
 initial, current, and final comparisons, and that the clean path makes an O(1)
@@ -297,7 +420,18 @@ rendering limits, not exporter offsets. Real R2, WeChat, and CI results remain
 separate evidence.
 
 The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. The focused `tests/e2e/wechat-copy.spec.mjs` covers a cold medium fixture with duplicate-click coalescing, click-to-pending and click-to-write timing, deferred success, rejected browser writes, stable control geometry, and zero document/Preview writes; its warm full-capability case checks rich output and ordinary/immersive pending feedback against the same Preview. PNG conversion owner dispatch, selected-owner failure, ordinary-table preservation, and no-upload background behavior remain covered by the focused frontend tests; native-browser evidence must additionally inspect Mermaid inner-SVG capture, wrapper background/border/padding ownership, complete wide-formula bounds, and responsive image sizing. Settings/editor E2E coverage separately exercises the persisted switch and WordPress image-upload owner contracts. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
-The keyboard-activation regression matrix must verify that ordinary and immersive pending Copy controls retain focus on the originating control before and after native Enter renders the pending state, expose `aria-busy="true"` and `aria-disabled="true"` without native `disabled`, and suppress duplicate click and Enter activation through the shared pending reference. It must also verify stable `RefreshCcw` geometry and no spinner animation under reduced-motion preferences; native `disabled` remains valid only for unavailable capability.
+The keyboard-activation regression matrix must verify that ordinary and immersive pending Copy controls retain focus on the originating control before and after native Enter renders the pending state, expose `aria-busy="true"` and `aria-disabled="true"` without native `disabled`, and suppress duplicate click and Enter activation through the shared pending reference. It must also verify that the static WeChat glyph preserves stable control geometry while pending; native `disabled` remains valid only for unavailable capability.
+
+The registered-theme Clipboard payload matrices read the live registries and
+copy each selected article/code theme through the browser owner. Isolated
+destinations at 375, 578, and 760 CSS pixels check semantic content, code token
+styles, frame markers, last painted rows, and local overflow without EasyMDE
+stylesheets. Code height must match the source rather than add a blank row for
+the renderer's terminal LF; deliberate extra blank rows remain intact.
+These portable-payload projections do not prove WeChat importer or reader
+fidelity. Record actual WeChat desktop/phone checks separately, including loaded
+images and the themes and editor modes actually exercised. Keep any opt-in
+payload captures private and outside the repository and public artifacts.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.

@@ -260,14 +260,23 @@ The table of contents is generated from rendered headings and is inserted where 
 ## Copy To WeChat
 
 Choose **Copy to WeChat** when the rendered Preview is ready. EasyMDE copies the current Preview as rich text, and the ordinary editor and immersive editor use that same current Preview.
+Copied blockquotes retain their borders, backgrounds, spacing, nested text, and
+plain-text order while the editor's Preview remains unchanged.
 
 While a copy is in progress, the ordinary and immersive controls remain
 focusable and share one pending state. They announce busy and temporary
 unavailability with `aria-busy` and `aria-disabled`; repeated click, Enter, or
-Space activation is ignored. The refresh indicator remains static when reduced
-motion is preferred. Settled success or failure clears the pending state after
-the browser Clipboard operation returns, and replacing or leaving the editor
-clears stale pending feedback without reporting a late success.
+Space activation is ignored. The static WeChat glyph preserves control
+geometry while Copy is pending. Settled success or failure clears the pending
+state after the browser Clipboard operation returns, and replacing or leaving
+the editor clears stale pending feedback without reporting a late success.
+
+Changing the article theme, code theme, or Custom CSS intentionally cancels an
+in-flight Copy. That cancellation has no success or failure toast, while a real
+Clipboard or upload failure remains an explicit diagnostic. The change refreshes
+Preview only and never copies automatically; choose Copy again after the new
+style is ready. During style loading, both Copy controls remain focusable and
+use `aria-disabled="true"` without `aria-busy`.
 
 **Convert and upload images for WeChat copy** is disabled by default under
 **EasyMDE > Image Hosting > Upload Behavior**. When enabled, an explicit Copy
@@ -276,8 +285,9 @@ to PNG. Normal tables remain editable HTML; existing images, ordinary SVG,
 code, other media, and unknown content keep their existing rich-text form.
 EasyMDE does not upload during Preview or background preparation.
 Wide formulas retain their full captured extent inside the copied visual's
-horizontal overflow owner, while the visual's surrounding spacing remains part
-of the copied HTML layout. Inline formulas use a measured fractional
+horizontal overflow owner, while outer spacing owned by the selected article
+theme remains part of the copied HTML layout. Editor paper padding, radius, and
+shadow are editor presentation and are not copied. Inline formulas use a measured fractional
 allocation, optional source viewport, and root-local paint offset, including
 superscript, subscript, and middle alignment. Top and bottom alignment retain
 their relationship to the surrounding line box; other modes use the measured
@@ -288,6 +298,13 @@ one axis while clipping on the other.
 Block formulas remain centered and
 horizontally scrollable when their PNG is wider than the pasted column; their
 visual padding and border appear once.
+The same copied payload keeps authored width semantics when it is displayed at
+another destination width. Child content follows its containing box, text
+grows vertically as it wraps, and code, tables, and wide formulas keep overflow
+local without overlapping neighboring content in ordinary or immersive Copy.
+For PNG visuals, natural pixel dimensions use the captured CSS dimensions times
+the device pixel ratio, while the pasted image displays at the captured CSS
+width and height.
 
 Generated PNGs use the same upload owner already selected for editor images:
 Image Hosting when enabled, or the WordPress Media Library when disabled. A
@@ -299,6 +316,11 @@ unsupported or legacy-only paths fail explicitly without uploading.
 Copy uses the current stable Preview: refresh bookkeeping alone does not
 invalidate it, while an actual content or layout change requires a fresh
 payload.
+WeChat also rewrites pasted HTML during insertion and saving. Native validation
+still observes removed links and task-checkbox display, and differences in some
+theme fonts and heading geometry. A successful Copy confirms the Clipboard
+write, not the saved WeChat rendering; inspect the saved desktop and phone
+Reader before publishing.
 
 - **Ready:** The action copies the current rendered Preview and reports success only after the browser confirms the copy.
 - **Empty, loading, or error:** The action does not copy and shows that the Preview is unavailable; wait until the Preview is ready and try again.

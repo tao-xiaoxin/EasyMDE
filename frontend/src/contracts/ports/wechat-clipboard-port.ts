@@ -13,6 +13,8 @@ export type WechatClipboardFailureCode =
   | 'wechat-png-transaction-timeout'
   | 'wechat-png-upload-failed';
 
+export type WechatClipboardCancellationCode = 'wechat-copy-cancelled';
+
 export type WechatClipboardFailureSideEffects = 'none' | 'uploads-may-remain';
 
 export type WechatClipboardCopyOptions = Readonly<{
@@ -28,6 +30,11 @@ export type WechatClipboardCopyOptions = Readonly<{
 
 export type WechatClipboardResult =
   | Readonly<{ status: 'copied'; method: 'clipboard' | 'legacy' }>
+  | Readonly<{
+      code: WechatClipboardCancellationCode;
+      sideEffects?: WechatClipboardFailureSideEffects;
+      status: 'cancelled';
+    }>
   | Readonly<{
       code: WechatClipboardFailureCode;
       sideEffects?: WechatClipboardFailureSideEffects;

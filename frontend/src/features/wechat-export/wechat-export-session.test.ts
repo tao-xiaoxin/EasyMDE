@@ -198,6 +198,85 @@ describe('createWechatExportSession', () => {
     await expect(session.copy()).resolves.toEqual({ code: 'wechat-export-inactive', status: 'failed' });
   });
 
+  it('cancels an intentional theme invalidation without clearing a newer copy', async () => {
+    const first = deferred<WechatClipboardResult>();
+    const second = deferred<WechatClipboardResult>();
+    const clipboard: WechatClipboardPort = {
+      copy: vi.fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+    };
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard,
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    const firstCopy = session.copy();
+    const firstSignal = vi.mocked(clipboard.copy).mock.calls[0]?.[1]?.signal;
+    session.cancelPending('theme-change');
+    expect(firstSignal?.aborted).toBe(true);
+
+    const secondCopy = session.copy();
+    expect(clipboard.copy).toHaveBeenCalledTimes(2);
+
+    first.resolve({
+      code: 'wechat-png-upload-failed',
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    await expect(firstCopy).resolves.toEqual({
+      code: 'wechat-copy-cancelled',
+      sideEffects: 'uploads-may-remain',
+      status: 'cancelled'
+    });
+    expect(onStatus).not.toHaveBeenCalled();
+    expect(onDiagnostic).toHaveBeenCalledWith('wechat-png-upload-failed', 'error');
+
+    // The old finally must not release the second operation's pending slot.
+    expect(session.copy()).toBe(secondCopy);
+
+    second.resolve({ method: 'clipboard', status: 'copied' });
+    await expect(secondCopy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(onDiagnostic).toHaveBeenCalledWith(
+      'wechat-export-cancelled-theme-change',
+      'info'
+    );
+    expect(onStatus).toHaveBeenCalledWith({ message: strings.success, type: 'success' });
+  });
+
+  it('does not manufacture success for an adapter-owned cancellation result', async () => {
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: {
+        copy: vi.fn().mockResolvedValue({
+          code: 'wechat-copy-cancelled',
+          sideEffects: 'none',
+          status: 'cancelled'
+        })
+      },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-copy-cancelled',
+      sideEffects: 'none',
+      status: 'cancelled'
+    });
+    expect(onDiagnostic).toHaveBeenCalledWith('wechat-copy-cancelled', 'info');
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
   it('passes one cancellable PNG conversion transaction to the Clipboard owner', async () => {
     const clipboard: WechatClipboardPort = {
       copy: vi.fn().mockResolvedValue({ method: 'clipboard', status: 'copied' })

@@ -8,12 +8,12 @@ import type {
 } from '../../../contracts/ports/wechat-clipboard-port';
 import {
   CLIPBOARD_COMMIT_TIMEOUT_MS,
+  createBrowserWechatClipboard,
   MAX_WECHAT_PNG_DIMENSION,
-  MAX_WECHAT_PNG_VISUALS,
   MAX_WECHAT_PNG_UPLOAD_CONCURRENCY,
+  MAX_WECHAT_PNG_VISUALS,
   WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS,
-  WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
-  createBrowserWechatClipboard
+  WECHAT_PNG_TRANSACTION_TIMEOUT_MS
 } from './create-browser-wechat-clipboard';
 
 function readyPreview(): HTMLElement {
@@ -43,6 +43,123 @@ function deferred<T>(): Readonly<{
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
+}
+
+function installHiddenImageProbe(): Readonly<{
+  capture: () => HTMLImageElement | null;
+  dispatch: (type: 'error' | 'load') => void;
+  restore: () => void;
+  setReady: (ready: boolean) => void;
+  workspace: HTMLElement;
+  preview: HTMLElement;
+}> {
+  let cloneImageReady = false;
+  const preview = document.createElement('article');
+  preview.setAttribute('data-easymde-preview-html-sink', '1');
+  preview.innerHTML = '<p>Image readiness</p><img loading="lazy" src="https://example.test/ready.png">';
+  Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Image readiness' });
+  const sourceImage = preview.querySelector('img');
+  if (!sourceImage) throw new Error('hidden probe source image missing');
+  Object.defineProperties(sourceImage, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 64 },
+    naturalHeight: { configurable: true, value: 32 }
+  });
+  const workspace = document.createElement('div');
+  workspace.className = 'workspace-shell';
+  workspace.append(preview);
+  document.body.append(workspace);
+  let lastClone: HTMLImageElement | null = null;
+  const originalRect = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'getBoundingClientRect'
+  );
+  const originalComplete = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'complete');
+  const originalNaturalWidth = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalWidth');
+  const originalNaturalHeight = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalHeight');
+  const originalDecode = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'decode');
+  Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+    configurable: true,
+    value: function(this: HTMLElement) {
+      if (this.classList.contains('workspace-shell')) {
+        return {
+          bottom: 240,
+          height: 240,
+          left: 0,
+          right: 400,
+          top: 0,
+          width: 400,
+          x: 0,
+          y: 0
+        };
+      }
+      return originalRect?.value?.call(this) ?? {
+        bottom: 0,
+        height: 0,
+        left: 0,
+        right: 0,
+        top: 0,
+        width: 0,
+        x: 0,
+        y: 0
+      };
+    }
+  });
+  Object.defineProperty(HTMLImageElement.prototype, 'complete', {
+    configurable: true,
+    get(this: HTMLImageElement) {
+      return this.closest('.easymde-wechat-preview-measurement') ? cloneImageReady : true;
+    }
+  });
+  Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+    configurable: true,
+    get(this: HTMLImageElement) {
+      return this.closest('.easymde-wechat-preview-measurement') && cloneImageReady ? 64 : 0;
+    }
+  });
+  Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', {
+    configurable: true,
+    get(this: HTMLImageElement) {
+      return this.closest('.easymde-wechat-preview-measurement') && cloneImageReady ? 32 : 0;
+    }
+  });
+  Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+    configurable: true,
+    value: vi.fn(async () => undefined)
+  });
+
+  return {
+    capture: () => {
+      lastClone = document.querySelector<HTMLImageElement>(
+        '.easymde-wechat-preview-measurement img'
+      );
+      return lastClone;
+    },
+    dispatch: (type) => {
+      const image = document.querySelector<HTMLImageElement>(
+        '.easymde-wechat-preview-measurement img'
+      ) ?? lastClone;
+      if (!image) throw new Error('hidden probe clone image missing');
+      lastClone = image;
+      image.dispatchEvent(new Event(type));
+    },
+    restore: () => {
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (originalComplete) Object.defineProperty(HTMLImageElement.prototype, 'complete', originalComplete);
+      else delete (HTMLImageElement.prototype as unknown as { complete?: unknown }).complete;
+      if (originalNaturalWidth) Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', originalNaturalWidth);
+      else delete (HTMLImageElement.prototype as unknown as { naturalWidth?: unknown }).naturalWidth;
+      if (originalNaturalHeight) Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', originalNaturalHeight);
+      else delete (HTMLImageElement.prototype as unknown as { naturalHeight?: unknown }).naturalHeight;
+      if (originalDecode) Object.defineProperty(HTMLImageElement.prototype, 'decode', originalDecode);
+      else delete (HTMLImageElement.prototype as unknown as { decode?: unknown }).decode;
+      workspace.remove();
+    },
+    setReady: (ready) => { cloneImageReady = ready; },
+    workspace,
+    preview
+  };
 }
 
 function prepareClipboard(
@@ -606,6 +723,9 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelectorAll('img[src^="https://example.test/"]')).toHaveLength(2);
     expect(holder.querySelector('table')).not.toBeNull();
     expect(holder.querySelectorAll('svg')).toHaveLength(0);
+    expect(holder.querySelectorAll('section[data-ignore-width]')).toHaveLength(1);
+    expect(holder.querySelector('section[data-ignore-width] table')).not.toBeNull();
+    expect(holder.querySelectorAll('section[data-ignore-width] code')).toHaveLength(0);
   });
 
   it('does not style discarded PNG descendants twice before native capture', async () => {
@@ -659,7 +779,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('accepts expanded math output while retaining visual-root flow semantics on generated PNGs', async () => {
     const writes: unknown[] = [];
-    const requests: Array<Readonly<{ height: number; kind: string; width: number }>> = [];
+    const requests: Array<Readonly<{ height: number; inline: boolean; kind: string; width: number }>> = [];
     class ClipboardItemStub {
       constructor(public payload: Record<string, Blob>) {}
     }
@@ -669,14 +789,26 @@ describe('createBrowserWechatClipboard', () => {
       source: Element;
       width: number;
     }) => {
-      requests.push({ height, kind, width });
-      const outputWidth = 'math' === kind ? 547 : width;
+      const inline = source.classList.contains('easymde-math-inline');
+      requests.push({ height, inline, kind, width });
+      const outputWidth = inline ? 40 : 'math' === kind ? 547 : width;
       if ('math' === kind) {
         expect(source.querySelector('.katex-mathml')).toBeNull();
       }
       return {
         file: new File([`${kind}-${outputWidth}`], `${kind}-${outputWidth}.png`, { type: 'image/png' }),
         height: height || 1,
+        ...(inline
+          ? {
+            inlineLayout: {
+              baseline: 5,
+              height: 20,
+              paintOffsetX: 0,
+              paintOffsetY: 0,
+              width: 40
+            }
+          }
+          : {}),
         pixelCount: 200,
         width: outputWidth || 1
       };
@@ -688,13 +820,17 @@ describe('createBrowserWechatClipboard', () => {
       url: `https://example.test/${file.name}`
     }));
     const preview = readyPreview();
+    preview.setAttribute('data-ignore-width', 'untrusted-root');
     preview.innerHTML = [
       '<div class="easymde-math-block"><span class="katex"><span class="katex-mathml"><math><annotation>wide formula</annotation></math></span><span class="katex-html">wide formula</span></span></div>',
-      '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>'
+      '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>',
+      '<span class="easymde-math-inline" data-ignore-width="untrusted-inline"><span class="katex"><span class="katex-html">inline formula</span></span></span>',
+      '<section data-ignore-width="untrusted-overflow" style="overflow:auto">Unowned overflow</section>'
     ].join('');
     const math = preview.querySelector('.easymde-math-block');
     const mermaid = preview.querySelector('.easymde-mermaid');
-    if (!math || !mermaid) throw new Error('visual roots missing');
+    const inlineMath = preview.querySelector('.easymde-math-inline');
+    if (!math || !mermaid || !inlineMath) throw new Error('visual roots missing');
     Object.defineProperties(math, {
       getBoundingClientRect: {
         configurable: true,
@@ -706,6 +842,10 @@ describe('createBrowserWechatClipboard', () => {
     Object.defineProperty(mermaid, 'getBoundingClientRect', {
       configurable: true,
       value: () => ({ height: 40, width: 80 })
+    });
+    Object.defineProperty(inlineMath, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 20, width: 40 })
     });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -746,6 +886,14 @@ describe('createBrowserWechatClipboard', () => {
             width: '80px'
           });
         }
+        if (element.classList.contains('easymde-math-inline')) {
+          return declaration({
+            display: 'inline',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            'vertical-align': 'baseline'
+          });
+        }
         if (element.closest('.katex')) return declaration({ display: 'inline', 'white-space': 'nowrap' });
         return declaration({ display: 'block' });
       },
@@ -760,8 +908,9 @@ describe('createBrowserWechatClipboard', () => {
       { upload } as never
     ))).resolves.toEqual({ method: 'clipboard', status: 'copied' });
     expect(requests).toEqual([
-      { height: 30, kind: 'math', width: 180 },
-      { height: 40, kind: 'mermaid', width: 80 }
+      { height: 30, inline: false, kind: 'math', width: 180 },
+      { height: 40, inline: false, kind: 'mermaid', width: 80 },
+      { height: 20, inline: true, kind: 'math', width: 40 }
     ]);
     const item = (writes[0] as ClipboardItemStub[])[0];
     const htmlBlob = item?.payload['text/html'];
@@ -769,7 +918,7 @@ describe('createBrowserWechatClipboard', () => {
     const holder = document.createElement('div');
     holder.innerHTML = await blobText(htmlBlob);
     const images = [...holder.querySelectorAll('img[src^="https://example.test/"]')];
-    expect(images).toHaveLength(2);
+    expect(images).toHaveLength(3);
     expect(images[0]?.getAttribute('style')).toContain('width:547px!important');
     expect(images[0]?.getAttribute('style')).toContain('max-width:none!important');
     expect(images[0]?.getAttribute('style')).toContain('display:block');
@@ -798,6 +947,16 @@ describe('createBrowserWechatClipboard', () => {
     expect(images[1]?.getAttribute('style')).toContain('margin-left:7px');
     expect(images[1]?.getAttribute('style')).toContain('margin-right:9px');
     expect(images[1]?.getAttribute('style')).toContain('vertical-align:middle');
+    expect(images[2]?.getAttribute('style')).toContain('width:40px!important');
+    expect(images[0]?.parentElement?.getAttribute('data-ignore-width')).toBe('');
+    expect(images[1]?.parentElement?.hasAttribute('data-ignore-width')).toBe(false);
+    expect(images[2]?.parentElement?.hasAttribute('data-ignore-width')).toBe(false);
+    expect(holder.querySelectorAll('section[data-ignore-width]')).toHaveLength(1);
+    expect(holder.querySelector('section[data-ignore-width] > img[src^="https://example.test/"]')).not.toBeNull();
+    expect(holder.firstElementChild?.hasAttribute('data-ignore-width')).toBe(false);
+    expect(holder.querySelector('[data-ignore-width="untrusted-root"]')).toBeNull();
+    expect(holder.querySelector('[data-ignore-width="untrusted-inline"]')).toBeNull();
+    expect(holder.querySelector('[data-ignore-width="untrusted-overflow"]')).toBeNull();
   });
 
   it('captures hidden-source PNG visuals with their native candidate geometry', async () => {
@@ -846,7 +1005,7 @@ describe('createBrowserWechatClipboard', () => {
         }
         if (
           this.classList.contains('easymde-math-block')
-          && this.closest('.easymde-wechat-png-measurement')
+          && this.closest('.easymde-wechat-preview-measurement')
         ) {
           return {
             bottom: 24,
@@ -868,7 +1027,7 @@ describe('createBrowserWechatClipboard', () => {
       source: Element;
       width: number;
     }) => {
-      measurementWidth = document.querySelector<HTMLElement>('.easymde-wechat-png-measurement')?.style.width ?? '';
+      measurementWidth = document.querySelector<HTMLElement>('.easymde-wechat-preview-measurement')?.style.width ?? '';
       requests.push({ height, kind, source, width });
       if (width <= 0 || height <= 0) throw new Error('wechat-png-size-invalid');
       return {
@@ -979,7 +1138,2215 @@ describe('createBrowserWechatClipboard', () => {
       sideEffects: 'none',
       status: 'failed'
     });
-    expect(document.querySelector('.easymde-wechat-png-measurement')).toBeNull();
+    expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('waits for fonts on the attached hidden clone before cold PNG layout', async () => {
+    const writes: unknown[] = [];
+    const fontsReady = deferred<unknown>();
+    let cloneLayoutStarted = false;
+    let fontSettled = false;
+    const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      get: () => ({
+        get status(): 'loaded' | 'loading' {
+          return cloneLayoutStarted && !fontSettled ? 'loading' : 'loaded';
+        },
+        get ready(): Promise<unknown> {
+          return cloneLayoutStarted ? fontsReady.promise : Promise.resolve();
+        }
+      })
+    });
+    const preview = readyPreview();
+    preview.className = 'easymde-preview';
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Cold diagram' });
+    const sourceMarkup = preview.innerHTML;
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return { bottom: 300, height: 300, left: 0, right: 500, top: 0, width: 500, x: 0, y: 0 };
+        }
+        if (
+          this.classList.contains('easymde-preview')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          expect(this.isConnected).toBe(true);
+          cloneLayoutStarted = true;
+          const height = fontSettled ? 40.375 : 40;
+          return { bottom: height, height, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        if (
+          this.classList.contains('easymde-mermaid')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          return { bottom: 40, height: 40, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0
+        };
+      }
+    });
+    const rasterize = vi.fn(async ({ height, width }: { height: number; width: number }) => ({
+      file: new File(['cold-font'], 'cold-font.png', { type: 'image/png' }),
+      height,
+      pixelCount: width * height,
+      width
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'cold-font.png',
+      url: 'https://example.test/cold-font.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {} },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '500px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          if (element.classList.contains('easymde-mermaid')) {
+            return declaration({ display: 'block', height: '40px', width: '80px' });
+          }
+          return declaration({ display: 'block' });
+        }
+        if (element === preview) return declaration({ display: 'none' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    try {
+      const copy = clipboard.copy(preview, pngOptions(
+        { rasterize },
+        { upload } as never
+      ));
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      await vi.waitFor(() => expect(cloneLayoutStarted).toBe(true));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(writes).toHaveLength(1);
+      fontSettled = true;
+      fontsReady.resolve(undefined);
+      const result = await copy;
+      expect(rasterize).toHaveBeenCalledOnce();
+      expect(rasterize.mock.calls[0]?.[0]).toMatchObject({ height: 40, width: 80 });
+      expect(upload).toHaveBeenCalledOnce();
+      expect(result).toEqual({ method: 'clipboard', status: 'copied' });
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+      if (originalFonts) {
+        Object.defineProperty(document, 'fonts', originalFonts);
+      } else {
+        delete (document as unknown as { fonts?: unknown }).fonts;
+      }
+    }
+  });
+
+  it('waits for visible finite transitions after modern write before style keys', async () => {
+    const writes: unknown[] = [];
+    const transitionFinished = deferred<Animation>();
+    let transitionState: 'running' | 'finished' = 'running';
+    let styleReads = 0;
+    const animation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      get playState() { return transitionState; },
+      finished: transitionFinished.promise,
+      transitionProperty: 'padding'
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'running' === transitionState ? [animation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (!pseudoElement) styleReads += 1;
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(styleReads).toBe(0);
+    transitionState = 'finished';
+    transitionFinished.resolve(animation);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(styleReads).toBeGreaterThan(0);
+  });
+
+  it('waits for a visible finite CSSAnimation after modern write before style keys', async () => {
+    const writes: unknown[] = [];
+    const animationFinished = deferred<Animation>();
+    let animationState: 'running' | 'finished' = 'running';
+    let styleReads = 0;
+    const animation = {
+      animationName: 'pulse',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return animationState; },
+      finished: animationFinished.promise
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'running' === animationState ? [animation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (!pseudoElement && 'P' === element.tagName) styleReads += 1;
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    let copySettled = false;
+    const copy = clipboard.copy(preview).then((result) => {
+      copySettled = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    expect(copySettled).toBe(false);
+    expect(styleReads).toBe(0);
+    animationState = 'finished';
+    animationFinished.resolve(animation);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(styleReads).toBeGreaterThan(0);
+  });
+
+  it('waits for a finite transition that starts when the first one settles', async () => {
+    const writes: unknown[] = [];
+    const firstFinished = deferred<Animation>();
+    const secondFinished = deferred<Animation>();
+    let phase: 'first' | 'ready' | 'second' | 'done' = 'first';
+    let styleReads = 0;
+    let transitionReads = 0;
+    const firstAnimation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      get playState() { return 'first' === phase ? 'running' : 'finished'; },
+      finished: firstFinished.promise,
+      transitionProperty: 'padding'
+    } as unknown as Animation;
+    const secondAnimation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      get playState() { return 'second' === phase ? 'running' : 'finished'; },
+      finished: secondFinished.promise,
+      transitionProperty: 'margin'
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => {
+        transitionReads += 1;
+        return 'first' === phase ? [firstAnimation] : 'second' === phase ? [secondAnimation] : [];
+      }
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (!pseudoElement) styleReads += 1;
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    await vi.waitFor(() => expect(transitionReads).toBeGreaterThan(0));
+    const styleReadsBeforeReplacement = styleReads;
+    phase = 'second';
+    firstFinished.resolve(firstAnimation);
+    await Promise.resolve();
+    expect(styleReads).toBe(styleReadsBeforeReplacement);
+    phase = 'done';
+    secondFinished.resolve(secondAnimation);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(styleReads).toBeGreaterThan(0);
+  });
+
+  it('waits for a finite CSSAnimation that starts when the first one settles', async () => {
+    const writes: unknown[] = [];
+    const firstFinished = deferred<Animation>();
+    const secondFinished = deferred<Animation>();
+    let phase: 'first' | 'second' | 'done' = 'first';
+    let styleReads = 0;
+    const firstAnimation = {
+      animationName: 'pulse-a',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return 'first' === phase ? 'running' : 'finished'; },
+      finished: firstFinished.promise
+    } as unknown as Animation;
+    const secondAnimation = {
+      animationName: 'pulse-b',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return 'second' === phase ? 'running' : 'finished'; },
+      finished: secondFinished.promise
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'first' === phase ? [firstAnimation] : 'second' === phase ? [secondAnimation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (!pseudoElement) styleReads += 1;
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    await vi.waitFor(() => expect(styleReads).toBeGreaterThan(0));
+    const styleReadsBeforeReplacement = styleReads;
+    phase = 'second';
+    firstFinished.resolve(firstAnimation);
+    await Promise.resolve();
+    expect(styleReads).toBe(styleReadsBeforeReplacement);
+    phase = 'done';
+    secondFinished.resolve(secondAnimation);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(styleReads).toBeGreaterThan(styleReadsBeforeReplacement);
+  });
+
+  it('rejects a new active CSSAnimation after initial readiness without publishing stale cache', async () => {
+    const writes: unknown[] = [];
+    const firstFinished = deferred<Animation>();
+    const secondFinished = deferred<Animation>();
+    let phase: 'first' | 'ready' | 'second' | 'done' = 'first';
+    let styleReads = 0;
+    const firstAnimation = {
+      animationName: 'pulse-a',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return 'first' === phase ? 'running' : 'finished'; },
+      finished: firstFinished.promise
+    } as unknown as Animation;
+    const secondAnimation = {
+      animationName: 'pulse-b',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return 'second' === phase ? 'running' : 'finished'; },
+      finished: secondFinished.promise
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'first' === phase ? [firstAnimation] : 'second' === phase ? [secondAnimation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (!pseudoElement && 'P' === element.tagName) {
+          styleReads += 1;
+          if (1 === styleReads) phase = 'second';
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    phase = 'ready';
+    firstFinished.resolve(firstAnimation);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writes).toHaveLength(1);
+    phase = 'done';
+    secondFinished.resolve(secondAnimation);
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writes).toHaveLength(2);
+  });
+
+  it('waits for visible transitions before PNG rasterization or upload', async () => {
+    const writes: unknown[] = [];
+    const transitionFinished = deferred<Animation>();
+    let transitionState: 'running' | 'finished' = 'running';
+    const animation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      get playState() { return transitionState; },
+      finished: transitionFinished.promise,
+      animationName: 'pulse'
+    } as unknown as Animation;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Visible diagram' });
+    const liveMermaid = preview.querySelector('.easymde-mermaid');
+    if (!liveMermaid) throw new Error('visible transition Mermaid missing');
+    Object.defineProperty(liveMermaid, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 40, width: 80 })
+    });
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'running' === transitionState ? [animation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const rasterize = vi.fn(async ({ height, width }: { height: number; width: number }) => ({
+      file: new File(['transition-png'], 'transition.png', { type: 'image/png' }),
+      height,
+      pixelCount: width * height,
+      width
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'transition.png',
+      url: 'https://example.test/transition.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element.classList.contains('easymde-mermaid')) {
+          return declaration({ display: 'block', height: '40px', width: '80px' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const copy = clipboard.copy(preview, pngOptions(
+      { rasterize },
+      { upload } as never
+    ));
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(rasterize).not.toHaveBeenCalled();
+    transitionState = 'finished';
+    transitionFinished.resolve(animation);
+    await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(rasterize).toHaveBeenCalledOnce();
+    expect(upload).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a PNG copy alive beyond the initial transition deadline while upload is pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const writes: unknown[] = [];
+      const transitionFinished = deferred<Animation>();
+      const uploadResult = deferred<{
+        alt: string;
+        status: 'uploaded';
+        title: string;
+        url: string;
+      }>();
+      let transitionState: 'running' | 'finished' = 'running';
+      const animation = {
+        effect: { getComputedTiming: () => ({ endTime: 120 }) },
+        playState: 'running',
+        finished: transitionFinished.promise,
+        transitionProperty: 'width'
+      } as unknown as Animation;
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>';
+      Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Slow upload diagram' });
+      const mermaid = preview.querySelector('.easymde-mermaid');
+      if (!mermaid) throw new Error('slow upload Mermaid missing');
+      Object.defineProperty(mermaid, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({ height: 40, width: 80 })
+      });
+      Object.defineProperty(preview, 'getAnimations', {
+        configurable: true,
+        value: () => 'running' === transitionState ? [animation] : []
+      });
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const rasterize = vi.fn(async ({ height, width }: { height: number; width: number }) => ({
+        file: new File(['slow-upload'], 'slow-upload.png', { type: 'image/png' }),
+        height,
+        pixelCount: width * height,
+        width
+      }));
+      const upload = vi.fn(() => uploadResult.promise);
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (element, pseudoElement) => {
+          if (pseudoElement) return declaration({});
+          if (element.classList.contains('easymde-mermaid')) {
+            return declaration({ display: 'block', height: '40px', width: '80px' });
+          }
+          return declaration({ display: 'block' });
+        },
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => { writes.push(items); }
+      });
+
+      const sourceMarkup = preview.innerHTML;
+      const copy = clipboard.copy(preview, pngOptions(
+        { rasterize },
+        { upload } as never
+      ));
+      expect(writes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
+      transitionState = 'finished';
+      transitionFinished.resolve(animation);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(10_000);
+      uploadResult.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: 'slow-upload.png',
+        url: 'https://example.test/slow-upload.png'
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    { label: 'pending', pending: true, playState: 'idle' },
+    { label: 'paused', pending: false, playState: 'paused' }
+  ])('fails a $label finite transition at the existing resource deadline', async ({ pending, playState }) => {
+    vi.useFakeTimers();
+    try {
+      const writes: unknown[] = [];
+      const transitionFinished = deferred<Animation>();
+      const animation = {
+        effect: { getComputedTiming: () => ({ endTime: 120 }) },
+        pending,
+        playState,
+        finished: transitionFinished.promise,
+        transitionProperty: 'padding'
+      } as unknown as Animation;
+      const preview = readyPreview();
+      Object.defineProperty(preview, 'getAnimations', {
+        configurable: true,
+        value: () => [animation]
+      });
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => { writes.push(items); }
+      });
+
+      const copy = clipboard.copy(preview);
+      expect(writes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      transitionFinished.resolve(animation);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects visible legacy copy before execCommand while a transition is pending', async () => {
+    const transitionFinished = deferred<Animation>();
+    const animation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      playState: 'running',
+      finished: transitionFinished.promise,
+      transitionProperty: 'padding'
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => [animation]
+    });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    try {
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(execCommand).not.toHaveBeenCalled();
+      transitionFinished.resolve(animation);
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('rejects visible legacy copy before execCommand while a CSSAnimation is pending', async () => {
+    const animationFinished = deferred<Animation>();
+    const animation = {
+      animationName: 'pulse',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      finished: animationFinished.promise,
+      playState: 'running'
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => [animation]
+    });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    try {
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(execCommand).not.toHaveBeenCalled();
+      animationFinished.resolve(animation);
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it.each([
+    { label: 'pending', pending: true, playState: 'idle' },
+    { label: 'paused', pending: false, playState: 'paused' }
+  ])('fails a $label finite CSSAnimation at the existing resource deadline', async ({ pending, playState }) => {
+    vi.useFakeTimers();
+    try {
+      const writes: unknown[] = [];
+      const animationFinished = deferred<Animation>();
+      const animation = {
+        animationName: 'pulse',
+        effect: { getComputedTiming: () => ({ endTime: 400 }) },
+        pending,
+        playState,
+        finished: animationFinished.promise
+      } as unknown as Animation;
+      const preview = readyPreview();
+      Object.defineProperty(preview, 'getAnimations', {
+        configurable: true,
+        value: () => [animation]
+      });
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => { writes.push(items); }
+      });
+
+      const copy = clipboard.copy(preview);
+      expect(writes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      animationFinished.resolve(animation);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('latches a transition API error before visible legacy cache or exec fallback', async () => {
+    let apiCalls = 0;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => {
+        apiCalls += 1;
+        if (1 === apiCalls) throw new Error('transition-api-failed');
+        return [];
+      }
+    });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (_element, _pseudoElement) => declaration({ display: 'block' }),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    try {
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(apiCalls).toBe(1);
+      if (!clipboard.prepare) throw new Error('clipboard preparation unavailable');
+      await clipboard.prepare(preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(execCommand).toHaveBeenCalledOnce();
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('treats a CSS transition cancellation as terminal and publishes no stale cache', async () => {
+    const writes: unknown[] = [];
+    let rejectFinished!: (reason?: unknown) => void;
+    const finished = new Promise<Animation>((_resolve, reject) => {
+      rejectFinished = reject;
+    });
+    let transitionState: 'running' | 'finished' = 'running';
+    let transitionReads = 0;
+    const animation = {
+      effect: { getComputedTiming: () => ({ endTime: 120 }) },
+      get playState() { return transitionState; },
+      finished,
+      transitionProperty: 'padding'
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => {
+        transitionReads += 1;
+        return 'running' === transitionState ? [animation] : [];
+      }
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => (
+        pseudoElement ? declaration({}) : declaration({ display: 'block' })
+      ),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const firstCopy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    await vi.waitFor(() => expect(transitionReads).toBeGreaterThan(0));
+    rejectFinished({ name: 'AbortError' });
+    await expect(firstCopy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    transitionState = 'finished';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writes).toHaveLength(2);
+    expect(preview.innerHTML).toContain('Rendered');
+  });
+
+  it('treats a CSSAnimation cancellation as terminal and publishes no stale cache', async () => {
+    const writes: unknown[] = [];
+    let rejectFinished!: (reason?: unknown) => void;
+    const finished = new Promise<Animation>((_resolve, reject) => {
+      rejectFinished = reject;
+    });
+    void finished.catch(() => undefined);
+    let animationState: 'running' | 'finished' = 'running';
+    const animation = {
+      animationName: 'pulse',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return animationState; },
+      finished
+    } as unknown as Animation;
+    const preview = readyPreview();
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => 'running' === animationState ? [animation] : []
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => (
+        pseudoElement ? declaration({}) : declaration({ display: 'block' })
+      ),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const firstCopy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    rejectFinished({ name: 'AbortError' });
+    await expect(firstCopy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    animationState = 'finished';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writes).toHaveLength(2);
+  });
+
+  it.each(['infinite CSSAnimation', 'JavaScript WAAPI Animation'])(
+    'does not wait for an excluded %s',
+    async (kind) => {
+      const writes: unknown[] = [];
+      const animationFinished = deferred<Animation>();
+      let styleReads = 0;
+      const animation = (
+        'infinite CSSAnimation' === kind
+          ? {
+            animationName: 'pulse',
+            effect: { getComputedTiming: () => ({ endTime: Infinity }) },
+            finished: animationFinished.promise,
+            playState: 'running'
+          }
+          : {
+            effect: { getComputedTiming: () => ({ endTime: 400 }) },
+            finished: animationFinished.promise,
+            playState: 'running'
+          }
+      ) as unknown as Animation;
+      const preview = readyPreview();
+      Object.defineProperty(preview, 'getAnimations', {
+        configurable: true,
+        value: () => [animation]
+      });
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (_element, pseudoElement) => {
+          if (!pseudoElement) styleReads += 1;
+          return declaration({ display: 'block' });
+        },
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => { writes.push(items); }
+      });
+
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(styleReads).toBeGreaterThan(0);
+      animationFinished.resolve(animation);
+    }
+  );
+
+  it('joins hidden source and clone CSSAnimation under the measurement readiness lease', async () => {
+    const writes: unknown[] = [];
+    const animationFinished = deferred<Animation>();
+    let animationState: 'running' | 'finished' = 'running';
+    let cloneLayoutStarted = false;
+    let styleReads = 0;
+    const animation = {
+      animationName: 'pulse',
+      effect: { getComputedTiming: () => ({ endTime: 400 }) },
+      get playState() { return animationState; },
+      finished: animationFinished.promise
+    } as unknown as Animation;
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    const originalAnimations = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getAnimations'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (
+          this.classList.contains('easymde-preview')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          cloneLayoutStarted = true;
+          return { bottom: 40, height: 40, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        if (
+          this.classList.contains('easymde-mermaid')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          return { bottom: 40, height: 40, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0
+        };
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (
+          cloneLayoutStarted
+          && this.classList.contains('easymde-preview')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) return 'running' === animationState ? [animation] : [];
+        return [];
+      }
+    });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Hidden transition'
+    });
+    preview.className = 'easymde-preview';
+    Object.defineProperty(preview, 'getAnimations', {
+      configurable: true,
+      value: () => []
+    });
+    workspace.append(preview);
+    document.body.append(workspace);
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const rasterize = vi.fn(async ({ height, width }: { height: number; width: number }) => ({
+      file: new File(['hidden-css-animation'], 'hidden-css-animation.png', { type: 'image/png' }),
+      height,
+      pixelCount: width * height,
+      width
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'hidden-css-animation.png',
+      url: 'https://example.test/hidden-css-animation.png'
+    }));
+    const sourceMarkup = preview.innerHTML;
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace || element === preview) return declaration({ display: 'none' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          styleReads += 1;
+          if (element.classList.contains('easymde-mermaid')) {
+            return declaration({ display: 'block', height: '40px', width: '80px' });
+          }
+          return declaration({ display: 'block' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    try {
+      const copy = clipboard.copy(preview, pngOptions(
+        { rasterize },
+        { upload } as never
+      ));
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      await vi.waitFor(() => {
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).not.toBeNull();
+      });
+      expect(cloneLayoutStarted).toBe(true);
+      expect(styleReads).toBe(0);
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+      animationState = 'finished';
+      animationFinished.resolve(animation);
+      await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(styleReads).toBeGreaterThan(0);
+      expect(rasterize).toHaveBeenCalledOnce();
+      expect(upload).toHaveBeenCalledOnce();
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      if (originalAnimations) {
+        Object.defineProperty(HTMLElement.prototype, 'getAnimations', originalAnimations);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getAnimations?: unknown }).getAnimations;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('cleans a pending hidden font lease on PNG abort before late font resolution', async () => {
+    const writes: unknown[] = [];
+    const fontsReady = deferred<unknown>();
+    let cloneLayoutStarted = false;
+    const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
+    Object.defineProperty(document, 'fonts', {
+      configurable: true,
+      value: { status: 'loading', ready: fontsReady.promise }
+    });
+    const preview = readyPreview();
+    preview.className = 'easymde-preview';
+    preview.innerHTML = '<div class="easymde-mermaid"><svg width="80" height="40"></svg></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Abort diagram' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return { bottom: 300, height: 300, left: 0, right: 500, top: 0, width: 500, x: 0, y: 0 };
+        }
+        if (
+          this.classList.contains('easymde-preview')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          cloneLayoutStarted = true;
+          return { bottom: 40, height: 40, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        if (
+          this.classList.contains('easymde-mermaid')
+          && this.closest('.easymde-wechat-preview-measurement')
+        ) {
+          return { bottom: 40, height: 40, left: 0, right: 80, top: 0, width: 80, x: 0, y: 0 };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0
+        };
+      }
+    });
+    const rasterize = vi.fn(async ({ height, width }: { height: number; width: number }) => ({
+      file: new File(['abort-font'], 'abort-font.png', { type: 'image/png' }),
+      height,
+      pixelCount: width * height,
+      width
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'abort-font.png',
+      url: 'https://example.test/abort-font.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {} },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '500px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          if (element.classList.contains('easymde-mermaid')) {
+            return declaration({ display: 'block', height: '40px', width: '80px' });
+          }
+          return declaration({ display: 'block' });
+        }
+        if (element === preview) return declaration({ display: 'none' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+    const controller = new AbortController();
+
+    try {
+      const copy = clipboard.copy(preview, pngOptions(
+        { rasterize },
+        { upload } as never,
+        { signal: controller.signal }
+      ));
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      await vi.waitFor(() => expect(cloneLayoutStarted).toBe(true));
+      controller.abort();
+      await expect(copy).resolves.toEqual({
+        code: 'wechat-png-rasterization-cancelled',
+        sideEffects: 'none',
+        status: 'failed'
+      });
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+      fontsReady.resolve(undefined);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(rasterize).not.toHaveBeenCalled();
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+      if (originalFonts) {
+        Object.defineProperty(document, 'fonts', originalFonts);
+      } else {
+        delete (document as unknown as { fonts?: unknown }).fonts;
+      }
+    }
+  });
+
+  it('uses one current attached measurement tree for hidden portable HTML and text', async () => {
+    const writes: Array<{ html: string; text: string }> = [];
+    const measurementHosts = new Set<Element>();
+    let themeColor = 'rgb(1, 2, 3)';
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    preview.innerHTML = '<p>Hidden source</p><pre><code>one\ntwo</code></pre>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Hidden source\none\ntwo'
+    });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 300,
+            height: 300,
+            left: 0,
+            right: 500,
+            top: 0,
+            width: 500,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const copy = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        const measurement = element.closest('.easymde-wechat-preview-measurement');
+        if (measurement) {
+          measurementHosts.add(measurement);
+          if (element.classList.contains('workspace-shell')) {
+            return declaration({
+              display: 'block',
+              'border-left-width': '5px',
+              'border-right-width': '5px',
+              'padding-left': '20px',
+              'padding-right': '20px',
+              width: '450px'
+            });
+          }
+          return declaration({
+            color: themeColor,
+            display: 'block',
+            'padding-left': '28px',
+            'padding-right': '28px'
+          });
+        }
+        if (element === workspace) return declaration({ display: 'none', width: '500px' });
+        if (element === preview) return declaration({ color: 'rgb(200, 0, 0)', display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const item = (items[0] as ClipboardItemStub);
+        const html = await blobText(item.payload['text/html'] as Blob | PromiseLike<Blob>);
+        const text = await blobText(item.payload['text/plain'] as Blob | PromiseLike<Blob>);
+        writes.push({ html, text });
+      }
+    });
+    const sourceMarkup = preview.innerHTML;
+
+    try {
+      await expect(copy.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(writes).toHaveLength(1);
+      expect(writes[0]?.html).toContain('color:rgb(1, 2, 3)');
+      expect(writes[0]?.html).not.toContain('color:rgb(200, 0, 0)');
+      expect(writes[0]?.text).toContain('Hidden source');
+      expect(measurementHosts).toHaveLength(1);
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+
+      themeColor = 'rgb(4, 5, 6)';
+      await expect(copy.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(writes).toHaveLength(2);
+      expect(writes[1]?.html).toContain('color:rgb(4, 5, 6)');
+      expect(writes[1]?.html).not.toContain('color:rgb(1, 2, 3)');
+      expect(measurementHosts).toHaveLength(2);
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('waits for hidden clone image readiness on cold and warm copies', async () => {
+    const writes: unknown[] = [];
+    let cloneImageReady = false;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    preview.innerHTML = '<p>Image geometry</p><img loading="lazy" src="https://example.test/geometry.png">';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Image geometry' });
+    const sourceImage = preview.querySelector('img');
+    if (!sourceImage) throw new Error('source image missing');
+    Object.defineProperties(sourceImage, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 64 },
+      naturalHeight: { configurable: true, value: 32 }
+    });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    const originalComplete = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'complete');
+    const originalNaturalWidth = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalWidth');
+    const originalNaturalHeight = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'naturalHeight');
+    const originalDecode = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'decode');
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 240,
+            height: 240,
+            left: 0,
+            right: 400,
+            top: 0,
+            width: 400,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'complete', {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        return this.closest('.easymde-wechat-preview-measurement') ? cloneImageReady : true;
+      }
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        return this.closest('.easymde-wechat-preview-measurement') && cloneImageReady ? 64 : 0;
+      }
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        return this.closest('.easymde-wechat-preview-measurement') && cloneImageReady ? 32 : 0;
+      }
+    });
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: vi.fn(async () => undefined)
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          return declaration({ display: 'block' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('clone readiness html payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    const restore = (): void => {
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (originalComplete) Object.defineProperty(HTMLImageElement.prototype, 'complete', originalComplete);
+      else delete (HTMLImageElement.prototype as unknown as { complete?: unknown }).complete;
+      if (originalNaturalWidth) Object.defineProperty(HTMLImageElement.prototype, 'naturalWidth', originalNaturalWidth);
+      else delete (HTMLImageElement.prototype as unknown as { naturalWidth?: unknown }).naturalWidth;
+      if (originalNaturalHeight) Object.defineProperty(HTMLImageElement.prototype, 'naturalHeight', originalNaturalHeight);
+      else delete (HTMLImageElement.prototype as unknown as { naturalHeight?: unknown }).naturalHeight;
+      if (originalDecode) Object.defineProperty(HTMLImageElement.prototype, 'decode', originalDecode);
+      else delete (HTMLImageElement.prototype as unknown as { decode?: unknown }).decode;
+      workspace.remove();
+    };
+
+    try {
+      const firstCopy = clipboard.copy(preview);
+      await vi.waitFor(() => {
+        expect(writes).toHaveLength(1);
+        const cloneImage = document.querySelector<HTMLElement>(
+          '.easymde-wechat-preview-measurement img'
+        );
+        expect(cloneImage?.getAttribute('loading')).toBe('eager');
+      });
+      const firstClone = document.querySelector<HTMLImageElement>(
+        '.easymde-wechat-preview-measurement img'
+      );
+      if (!firstClone) throw new Error('cold clone image missing');
+      cloneImageReady = true;
+      firstClone.dispatchEvent(new Event('load'));
+      expect(await firstCopy).toEqual({ method: 'clipboard', status: 'copied' });
+
+      cloneImageReady = false;
+      const secondCopy = clipboard.copy(preview);
+      await vi.waitFor(() => {
+        expect(writes).toHaveLength(2);
+        expect(document.querySelector('.easymde-wechat-preview-measurement img')).not.toBeNull();
+      });
+      const secondClone = document.querySelector<HTMLImageElement>(
+        '.easymde-wechat-preview-measurement img'
+      );
+      if (!secondClone) throw new Error('warm clone image missing');
+      cloneImageReady = true;
+      secondClone.dispatchEvent(new Event('load'));
+      await expect(secondCopy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails and tears down the hidden lease when a clone image errors', async () => {
+    const probe = installHiddenImageProbe();
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('clone image error payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    try {
+      const copy = clipboard.copy(probe.preview);
+      await vi.waitFor(() => {
+        expect(writes).toHaveLength(1);
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).not.toBeNull();
+      });
+      probe.dispatch('error');
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      probe.restore();
+    }
+  });
+
+  it('cancels a pending clone image wait before late events can publish', async () => {
+    const probe = installHiddenImageProbe();
+    const writes: unknown[] = [];
+    const controller = new AbortController();
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('clone cancel payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    try {
+      const copy = clipboard.copy(probe.preview, { signal: controller.signal });
+      await vi.waitFor(() => {
+        expect(writes).toHaveLength(1);
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).not.toBeNull();
+      });
+      expect(probe.capture()).not.toBeNull();
+      controller.abort();
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      probe.setReady(true);
+      probe.dispatch('load');
+      await Promise.resolve();
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      probe.restore();
+    }
+  });
+
+  it('fails a hidden clone image that never settles within the resource budget', async () => {
+    vi.useFakeTimers();
+    const probe = installHiddenImageProbe();
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('clone timeout payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    try {
+      const copy = clipboard.copy(probe.preview);
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      expect(writes).toHaveLength(1);
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      probe.restore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not enter synchronous legacy copy before hidden clone readiness', async () => {
+    const probe = installHiddenImageProbe();
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === probe.workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    try {
+      await expect(clipboard.copy(probe.preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(execCommand).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).not.toBeNull();
+      });
+      probe.setReady(true);
+      probe.dispatch('load');
+      await vi.waitFor(() => {
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      });
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+      probe.restore();
+    }
+  });
+
+  it('cleans a hidden portable measurement after a rejected modern write', async () => {
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 200,
+            height: 200,
+            left: 0,
+            right: 400,
+            top: 0,
+            width: 400,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const write = vi.fn(async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      throw new Error('NotAllowedError');
+    });
+    const copy = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          return declaration({ display: 'block', color: 'rgb(1, 2, 3)' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+
+    try {
+      await expect(copy.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(write).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+      });
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('does not create a second hidden lease while an old background preparation is pending', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/pending-hidden.png', document.baseURI).href;
+    const writes: unknown[] = [];
+    const abortController = new AbortController();
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    preview.innerHTML = '<h1>Pending hidden</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Pending hidden' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 200,
+            height: 200,
+            left: 0,
+            right: 400,
+            top: 0,
+            width: 400,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch: vi.fn(() => pendingImage.promise),
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            content: '""',
+            display: 'block',
+            height: '20px',
+            width: '20px'
+          });
+        }
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          return declaration({ display: 'block' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        await blobText(item.payload['text/html'] as Blob | PromiseLike<Blob>);
+      })
+    });
+    const background = prepareClipboard(clipboard, preview, { background: true });
+
+    try {
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('.easymde-wechat-preview-measurement')).toHaveLength(1);
+      });
+      const copy = clipboard.copy(preview, { signal: abortController.signal });
+      await vi.waitFor(() => expect(writes).toHaveLength(1));
+      abortController.abort();
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      expect(writes).toHaveLength(1);
+      expect(document.querySelectorAll('.easymde-wechat-preview-measurement')).toHaveLength(1);
+
+      pendingImage.resolve({
+        blob: async () => new Blob(['theme image'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as unknown as Response);
+      await expect(background).resolves.toBeUndefined();
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('removes an owned hidden lease immediately on abort while its resource is pending', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/pending-owned.png', document.baseURI).href;
+    const fetch = vi.fn(() => pendingImage.promise);
+    const writes: unknown[] = [];
+    const abortController = new AbortController();
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    preview.innerHTML = '<h1>Owned hidden lease</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Owned hidden lease' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 200,
+            height: 200,
+            left: 0,
+            right: 400,
+            top: 0,
+            width: 400,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            content: '""',
+            display: 'block',
+            height: '20px',
+            width: '20px'
+          });
+        }
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          return declaration({ display: 'block' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('owned lease html payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    try {
+      const copy = clipboard.copy(preview, { signal: abortController.signal });
+      await vi.waitFor(() => {
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(document.querySelectorAll('.easymde-wechat-preview-measurement')).toHaveLength(1);
+      });
+      abortController.abort();
+      await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+      expect(writes).toHaveLength(1);
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+
+      pendingImage.resolve({
+        blob: async () => new Blob(['theme image'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as unknown as Response);
+      await Promise.resolve();
+      expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('starts a fresh copy after aborting its pending preparation', async () => {
+    const oldImage = deferred<Response>();
+    const oldImageUrl = new URL('/assets/images/pending-old-copy.png', document.baseURI).href;
+    const newImageUrl = new URL('/assets/images/fresh-copy.png', document.baseURI).href;
+    const fetch = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes('pending-old-copy')) return oldImage.promise;
+      return Promise.resolve({
+        blob: async () => new Blob(['fresh image'], { type: 'image/png' }),
+        ok: true,
+        url: newImageUrl
+      } as unknown as Response);
+    });
+    const writes: unknown[] = [];
+    const firstAbort = new AbortController();
+    let useFreshImage = false;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const preview = readyPreview();
+    preview.innerHTML = '<h1>Fresh copy after abort</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Fresh copy after abort' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return {
+            bottom: 200,
+            height: 200,
+            left: 0,
+            right: 400,
+            top: 0,
+            width: 400,
+            x: 0,
+            y: 0
+          };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if ('H1' === element.tagName && '::before' === pseudoElement) {
+          const imageUrl = useFreshImage ? newImageUrl : oldImageUrl;
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            content: '""',
+            display: 'block',
+            height: '20px',
+            width: '20px'
+          });
+        }
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) {
+          return declaration({ display: 'block' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        if (!htmlPayload) throw new Error('fresh copy html payload missing');
+        await blobText(htmlPayload);
+      }
+    });
+
+    try {
+      const firstCopy = clipboard.copy(preview, { signal: firstAbort.signal });
+      await vi.waitFor(() => {
+        expect(fetch).toHaveBeenCalledOnce();
+        expect(writes).toHaveLength(1);
+        expect(document.querySelectorAll('.easymde-wechat-preview-measurement')).toHaveLength(1);
+      });
+      firstAbort.abort();
+      await expect(firstCopy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+
+      useFreshImage = true;
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      const secondItem = (writes[1] as ClipboardItemStub[])[0];
+      const secondHtml = secondItem?.payload['text/html'];
+      if (!secondHtml) throw new Error('fresh copy html missing');
+      expect(await blobText(secondHtml)).toContain('data:image/png;base64,ZnJlc2ggaW1hZ2U=');
+
+      oldImage.resolve({
+        blob: async () => new Blob(['old image'], { type: 'image/png' }),
+        ok: true,
+        url: oldImageUrl
+      } as unknown as Response);
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
+      workspace.remove();
+    }
+  });
+
+  it('commits a warm hidden legacy payload when the lease has no media', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Warm hidden</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Warm hidden' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return { bottom: 240, height: 240, left: 0, right: 400, top: 0, width: 400, x: 0, y: 0 };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0
+        };
+      }
+    });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+
+    try {
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(execCommand).toHaveBeenCalledWith('copy');
+    } finally {
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+      workspace.remove();
+    }
+  });
+
+  it('uses a ready hidden payload for synchronous modern fallback commitment', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Ready hidden</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Ready hidden' });
+    const workspace = document.createElement('div');
+    workspace.className = 'workspace-shell';
+    workspace.append(preview);
+    document.body.append(workspace);
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if (this.classList.contains('workspace-shell')) {
+          return { bottom: 240, height: 240, left: 0, right: 400, top: 0, width: 400, x: 0, y: 0 };
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0
+        };
+      }
+    });
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const write = vi.fn(async () => undefined);
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('clipboard-item-constructor-failed');
+      }
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === workspace) return declaration({ display: 'none', width: '400px' });
+        if (element.closest('.easymde-wechat-preview-measurement')) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+
+    try {
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(write).not.toHaveBeenCalled();
+      expect(execCommand).toHaveBeenCalledWith('copy');
+    } finally {
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+      workspace.remove();
+    }
+  });
+
+  it('cleans the hidden measurement tree when modern PNG write rejects immediately', async () => {
+    const preview = readyPreview();
+    preview.innerHTML = '<div class="easymde-math-block"><span class="katex"><span class="katex-html">Held math</span></span></div>';
+    const sourceMarkup = preview.innerHTML;
+    const rasterize = vi.fn(async () => ({
+      file: new File(['late'], 'late.png', { type: 'image/png' }),
+      height: 24,
+      pixelCount: 4320,
+      width: 180
+    }));
+    const upload = vi.fn(async () => ({
+      alt: '',
+      status: 'uploaded' as const,
+      title: 'late.png',
+      url: 'https://example.test/late.png'
+    }));
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class { constructor(public payload: Record<string, Blob>) {} },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if (element === preview) return declaration({ display: 'none' });
+        if (element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '24px', width: '180px' });
+        }
+        return declaration({ display: 'inline' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(() => Promise.reject(new Error('NotAllowedError')))
+    });
+
+    await expect(clipboard.copy(preview, pngOptions(
+      { rasterize },
+      { upload } as never
+    ))).resolves.toEqual({
+      code: 'wechat-png-clipboard-failed',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+    expect(document.querySelector('.easymde-wechat-preview-measurement')).toBeNull();
     expect(rasterize).not.toHaveBeenCalled();
     expect(upload).not.toHaveBeenCalled();
     expect(preview.innerHTML).toBe(sourceMarkup);
@@ -1840,7 +4207,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelectorAll('img[src^="https://example.test/mermaid-"]')).toHaveLength(
       mermaidCategories.length
     );
-    expect(holder.querySelectorAll('.easymde-mermaid, svg')).toHaveLength(0);
+    expect(holder.querySelectorAll('svg')).toHaveLength(0);
   });
 
   it('accepts exactly 32 rendered Mermaid roots in one conversion transaction', async () => {
@@ -1892,7 +4259,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelectorAll('img[src^="https://example.test/mermaid-"]')).toHaveLength(
       renderedRootCount
     );
-    expect(holder.querySelectorAll('.easymde-mermaid, svg')).toHaveLength(0);
+    expect(holder.querySelectorAll('svg')).toHaveLength(0);
   });
 
   it('keeps rasterization serial, limits PNG uploads to three, and replaces visuals in DOM order', async () => {
@@ -2912,6 +5279,100 @@ describe('createBrowserWechatClipboard', () => {
     expect(text).toBe('Rendered');
   });
 
+  it('marks only owned table, math, and code scroll containers across modern and legacy payloads', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.setAttribute('data-ignore-width', 'untrusted-root');
+    preview.innerHTML = [
+      '<p data-ignore-width="untrusted">Before</p>',
+      '<table data-ignore-width="untrusted-table"><tbody><tr><td>Table</td></tr></tbody></table>',
+      '<div class="easymde-math-block" data-ignore-width="untrusted-math"><span class="katex"><span class="katex-html">Math</span></span></div>',
+      '<pre data-ignore-width="untrusted-pre"><code data-ignore-width="untrusted-code">Code</code></pre>',
+      '<code data-ignore-width="untrusted-standalone-code">Standalone code</code>',
+      '<section class="unowned-overflow" data-ignore-width="untrusted-overflow" style="overflow:auto">Unowned overflow</section>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Before\nTable\nMath\nCode\nStandalone code\nUnowned overflow'
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const modernWrites: ClipboardItemStub[] = [];
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items[0] as ClipboardItemStub);
+    });
+
+    await expect(modern.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernHtmlBlob = modernWrites[0]?.payload['text/html'];
+    const modernTextBlob = modernWrites[0]?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('modern payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    expect(await blobText(modernTextBlob)).toBe('Before\nTable\nMath\nCode\nStandalone code\nUnowned overflow');
+
+    const assertOwnedMarkers = (html: string): void => {
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      expect(holder.textContent).toContain('Standalone code');
+      expect(holder.textContent).toContain('Unowned overflow');
+      const markers = [...holder.querySelectorAll('[data-ignore-width]')];
+      expect(markers).toHaveLength(3);
+      expect(markers.every((element) => element.getAttribute('data-ignore-width') === '')).toBe(true);
+      expect(holder.querySelectorAll('section[data-ignore-width]')).toHaveLength(2);
+      expect(holder.querySelectorAll('section[data-ignore-width] table')).toHaveLength(1);
+      expect(holder.querySelectorAll('section[data-ignore-width] img')).toHaveLength(0);
+      expect(holder.querySelectorAll('pre > code[data-ignore-width]')).toHaveLength(1);
+      expect(holder.querySelectorAll('pre[data-ignore-width]')).toHaveLength(0);
+      expect(holder.querySelectorAll('table[data-ignore-width]')).toHaveLength(0);
+      expect(holder.querySelectorAll('code[data-ignore-width]')).toHaveLength(1);
+      expect(holder.firstElementChild?.hasAttribute('data-ignore-width')).toBe(false);
+      expect(holder.querySelector('[data-ignore-width="untrusted"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-table"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-math"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-pre"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-code"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-standalone-code"]')).toBeNull();
+      expect(holder.querySelector('[data-ignore-width="untrusted-overflow"]')).toBeNull();
+    };
+    assertOwnedMarkers(modernHtml);
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacy = createRuntime(null, null);
+    await prepareClipboard(legacy, preview);
+    await expect(legacy.copy(preview)).resolves.toEqual({
+      method: 'legacy',
+      status: 'copied'
+    });
+    expect(legacyHtml).toBe(modernHtml);
+    assertOwnedMarkers(legacyHtml);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+    expect(preview.getAttribute('data-ignore-width')).toBe('untrusted-root');
+  });
+
   it('maps logical text alignment to physical WeChat-compatible values', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {
@@ -2958,6 +5419,406 @@ describe('createBrowserWechatClipboard', () => {
     expect(paragraphs[0]?.getAttribute('style')).toContain('text-align:left');
     expect(paragraphs[1]?.getAttribute('style')).toContain('text-align:right');
     expect(paragraphs[2]?.getAttribute('style')).toContain('text-align:left');
+  });
+
+  it('projects root paper styles through the marked CSSOM context only', async () => {
+    const writes: unknown[] = [];
+    let sawMarkedRoot = false;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p class="theme-child">Theme child</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Theme child'
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+        const marked = '1' === element.getAttribute('data-easymde-wechat-export-style-context');
+        if (element.classList.contains('easymde-preview')) {
+          if (raw && marked) sawMarkedRoot = true;
+          return declaration({
+            background: raw && marked ? 'rgb(247, 248, 250)' : 'rgb(255, 255, 255)',
+            color: 'rgb(1, 2, 3)',
+            display: 'block',
+            'padding-bottom': raw && marked ? '0px' : '28px',
+            'padding-left': raw && marked ? '0px' : '28px',
+            'padding-right': raw && marked ? '0px' : '28px',
+            'padding-top': raw && marked ? '0px' : '22px'
+          });
+        }
+        if (element.classList.contains('theme-child')) {
+          return declaration({
+            color: 'rgb(9, 9, 9)',
+            display: 'block',
+            'margin-top': '12px'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const rootStyle = holder.firstElementChild?.getAttribute('style') ?? '';
+    const childStyle = holder.querySelector('p')?.getAttribute('style') ?? '';
+    expect(sawMarkedRoot).toBe(true);
+    expect(rootStyle).toContain('background:rgb(247, 248, 250)');
+    expect(rootStyle).not.toContain('padding-top:22px');
+    expect(rootStyle).not.toContain('background:rgb(255, 255, 255)');
+    expect(childStyle).toContain('color:rgb(9, 9, 9)');
+    expect(holder.querySelector('[data-easymde-wechat-export-style-context="1"]')).toBeNull();
+  });
+
+  it('refreshes projected root styles when a warm paper context changes', async () => {
+    const writes: unknown[] = [];
+    const paperPadding = '28px';
+    let projectedPadding = '24px';
+    let themeBackground = 'rgb(247, 248, 250)';
+    let markedRootReads = 0;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p class="theme-child">Warm content</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Warm content'
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        const marked = '1' === element.getAttribute('data-easymde-wechat-export-style-context');
+        if (element.classList.contains('easymde-preview')) {
+          if (marked) markedRootReads += 1;
+          return declaration({
+            background: marked ? themeBackground : 'rgb(255, 255, 255)',
+            'background-color': marked ? themeBackground : 'rgb(255, 255, 255)',
+            color: 'rgb(1, 2, 3)',
+            display: 'block',
+            'padding-bottom': marked ? projectedPadding : paperPadding,
+            'padding-left': marked ? projectedPadding : paperPadding,
+            'padding-right': marked ? projectedPadding : paperPadding,
+            'padding-top': marked ? projectedPadding : paperPadding
+          });
+        }
+        if (element.classList.contains('theme-child')) {
+          return declaration({
+            color: 'rgb(9, 9, 9)',
+            display: 'block'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const clipboardHtml = async (index: number): Promise<string> => {
+      const item = (writes[index] as ClipboardItemStub[])[0];
+      const htmlBlob = item?.payload['text/html'];
+      if (!htmlBlob) throw new Error('clipboard html missing');
+      return blobText(htmlBlob);
+    };
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const firstHtml = await clipboardHtml(0);
+    expect(firstHtml).toContain('background:rgb(247, 248, 250)');
+    expect(firstHtml).toContain('padding-top:24px');
+    expect(firstHtml).not.toContain('padding-top:28px');
+
+    projectedPadding = '36px';
+    themeBackground = 'rgb(240, 241, 242)';
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const secondHtml = await clipboardHtml(1);
+    expect(secondHtml).toContain('background:rgb(240, 241, 242)');
+    expect(secondHtml).toContain('padding-top:36px');
+    expect(secondHtml).not.toContain('padding-top:28px');
+    expect(markedRootReads).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not reuse an older projected root in synchronous legacy fallback', async () => {
+    const preview = document.createElement('article');
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Legacy projection</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Legacy projection'
+    });
+    let projectedPadding = '24px';
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('clipboard-item-constructor-failed');
+      }
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        const marked = '1' === element.getAttribute('data-easymde-wechat-export-style-context');
+        if (element.classList.contains('easymde-preview')) {
+          return declaration({
+            background: marked ? 'rgb(247, 248, 250)' : 'rgb(255, 255, 255)',
+            'background-color': marked ? 'rgb(247, 248, 250)' : 'rgb(255, 255, 255)',
+            color: 'rgb(1, 2, 3)',
+            display: 'block',
+            'padding-bottom': marked ? projectedPadding : '28px',
+            'padding-left': marked ? projectedPadding : '28px',
+            'padding-right': marked ? projectedPadding : '28px',
+            'padding-top': marked ? projectedPadding : '28px'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn()
+    });
+
+    try {
+      await prepareClipboard(clipboard, preview);
+      projectedPadding = '36px';
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toContain('padding-top:36px');
+      expect(legacyHtml).not.toContain('padding-top:28px');
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('rejects a projected root change during serialization', async () => {
+    const writes: unknown[] = [];
+    let markedNormalReads = 0;
+    let themeBackground = 'rgb(247, 248, 250)';
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Changing projection</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Changing projection'
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        const marked = '1' === element.getAttribute('data-easymde-wechat-export-style-context');
+        if (element.classList.contains('easymde-preview')) {
+          if (marked) {
+            markedNormalReads += 1;
+            if (5 === markedNormalReads) themeBackground = 'rgb(240, 241, 242)';
+          }
+          const style = declaration({
+            background: marked ? themeBackground : 'rgb(255, 255, 255)',
+            'background-color': marked ? themeBackground : 'rgb(255, 255, 255)',
+            color: 'rgb(1, 2, 3)',
+            display: 'block',
+            'padding-bottom': '28px',
+            'padding-left': '28px',
+            'padding-right': '28px',
+            'padding-top': '28px'
+          });
+          return style;
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    const result = await clipboard.copy(preview);
+    expect(markedNormalReads).toBeGreaterThanOrEqual(5);
+    expect(result).toEqual({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    expect(writes).toHaveLength(1);
+  });
+
+  it('invalidates a warm payload after a direction-only change with unchanged geometry', async () => {
+    const writes: unknown[] = [];
+    let direction = 'ltr';
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Direction only</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Direction only' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('P' === element.tagName) {
+          return declaration({ display: 'block', direction, 'text-align': 'start' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await prepareClipboard(clipboard, preview);
+    direction = 'rtl';
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('direction payload missing');
+    expect(await blobText(htmlBlob)).toContain('text-align:right');
+  });
+
+  it('invalidates a warm payload after a root pseudo box-sizing change with unchanged geometry', async () => {
+    const writes: unknown[] = [];
+    let boxSizing = 'content-box';
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Root pseudo</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Root pseudo' });
+    const clipboardRuntimeStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (
+        ('1' === element.getAttribute('data-easymde-wechat-export-style-context') || element === preview)
+        && '::before' === pseudoElement
+      ) {
+        return declaration({
+          'background-color': 'rgb(9, 10, 11)',
+          'box-sizing': boxSizing,
+          color: 'rgb(12, 13, 14)',
+          content: '""',
+          display: 'block',
+          height: '8px',
+          'padding-bottom': '2px',
+          'padding-left': '2px',
+          'padding-right': '3px',
+          'padding-top': '1px',
+          width: '10px'
+        });
+      }
+      if (pseudoElement) return declaration({});
+      return declaration({ display: 'block' });
+    };
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: clipboardRuntimeStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await prepareClipboard(clipboard, preview);
+    boxSizing = 'border-box';
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('root pseudo payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const markerStyle = holder.querySelector('section > span[aria-hidden="true"]')?.getAttribute('style') ?? '';
+    expect(markerStyle).toContain('width:10px');
+    expect(markerStyle).toContain('height:8px');
+    expect(markerStyle).toContain('background-color:rgb(9, 10, 11)');
+    expect(markerStyle).toContain('color:rgb(12, 13, 14)');
+    expect(markerStyle).not.toContain('width:17px');
+    expect(markerStyle).not.toContain('height:11px');
+
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacyClipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: clipboardRuntimeStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    try {
+      await prepareClipboard(legacyClipboard, preview);
+      await expect(legacyClipboard.copy(preview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(legacyHtml).toContain('width:10px');
+      expect(legacyHtml).toContain('height:8px');
+      expect(legacyHtml).toContain('background-color:rgb(9, 10, 11)');
+      expect(legacyHtml).toContain('color:rgb(12, 13, 14)');
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
   });
 
   it('projects content-box dimensions for a border-box paste destination', async () => {
@@ -3096,6 +5957,518 @@ describe('createBrowserWechatClipboard', () => {
     expect(svgStyle).toContain('box-sizing:content-box');
     expect(svgStyle).toContain('width:40px');
     expect(svgStyle).toContain('height:20px');
+  });
+
+  it('keeps ordinary flow dimensions fluid in modern and legacy payloads', async () => {
+    type DimensionState = Readonly<{
+      height: string;
+      width: string;
+    }>;
+    const authored: Record<'fluid' | 'inner' | 'outer', DimensionState> = {
+      fluid: { height: 'auto', width: 'auto' },
+      inner: { height: 'auto', width: 'auto' },
+      outer: { height: 'auto', width: 'auto' }
+    };
+    const used: Record<'fluid' | 'inner' | 'outer', DimensionState> = {
+      fluid: { height: '64px', width: '356.5px' },
+      inner: { height: '58px', width: '292.5px' },
+      outer: { height: '117px', width: '324.5px' }
+    };
+    const createPreview = (): HTMLElement => {
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = [
+        '<h1 class="fluid">Responsive heading</h1>',
+        '<p class="fluid">A paragraph that must reflow at the destination width.</p>',
+        '<blockquote class="outer"><p>Outer quote content</p>',
+        '<blockquote class="inner"><p>Nested quote content</p></blockquote></blockquote>'
+      ].join('');
+      Object.defineProperty(preview, 'innerText', {
+        configurable: true,
+        value: 'Responsive heading\nA paragraph that must reflow at the destination width.\nOuter quote content\nNested quote content'
+      });
+      const rects: Array<readonly [string, number, number]> = [
+        ['.fluid', 356.5, 64],
+        ['.outer', 324.5, 117],
+        ['.inner', 292.5, 58]
+      ];
+      rects.forEach(([selector, width, height]) => {
+        const element = preview.querySelector<HTMLElement>(selector);
+        if (!element) throw new Error(`missing responsive fixture ${selector}`);
+        Object.defineProperty(element, 'getBoundingClientRect', {
+          configurable: true,
+          value: () => ({ height, width })
+        });
+      });
+      return preview;
+    };
+    const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({ content: 'none' });
+      const key: keyof typeof authored | null = element.classList.contains('inner')
+        ? 'inner'
+        : element.classList.contains('outer')
+          ? 'outer'
+          : element.classList.contains('fluid')
+            ? 'fluid'
+            : null;
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      const dimensions = 'fluid' === key
+        ? raw ? authored.fluid : used.fluid
+        : 'inner' === key
+          ? raw ? authored.inner : used.inner
+          : 'outer' === key
+            ? raw ? authored.outer : used.outer
+            : { height: raw ? 'auto' : '240px', width: raw ? 'auto' : '522px' };
+      return declaration({
+        'box-sizing': 'border-box',
+        display: 'block',
+        height: dimensions.height,
+        'max-height': 'none',
+        'max-width': 'none',
+        'min-height': 'auto',
+        'min-width': 'auto',
+        width: dimensions.width
+      });
+    };
+    const copyModern = async (preview: HTMLElement): Promise<string> => {
+      const writes: unknown[] = [];
+      class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      }
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => { writes.push(items); }
+      });
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        method: 'clipboard',
+        status: 'copied'
+      });
+      const item = (writes[0] as ClipboardItemStub[])[0];
+      const html = item?.payload['text/html'];
+      if (!html) throw new Error('responsive modern HTML missing');
+      return blobText(html);
+    };
+
+    const modernHtml = await copyModern(createPreview());
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    const modernFlowStyles = [...modernHolder.querySelectorAll('h1, p, section')]
+      .map((element) => element.getAttribute('style') ?? '')
+      .join(';');
+    expect(modernFlowStyles).toContain('width:auto');
+    expect(modernFlowStyles).toContain('height:auto');
+    expect(modernFlowStyles).not.toContain('width:356.5px');
+    expect(modernFlowStyles).not.toContain('width:324.5px');
+    expect(modernFlowStyles).not.toContain('width:292.5px');
+    expect(modernFlowStyles).not.toContain('height:64px');
+    expect(modernFlowStyles).not.toContain('height:117px');
+    expect(modernHolder.querySelectorAll('blockquote')).toHaveLength(0);
+    expect(modernHolder.querySelectorAll('section')).toHaveLength(3);
+
+    const legacyPreview = createPreview();
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+      await prepareClipboard(legacy, legacyPreview);
+      await expect(legacy.copy(legacyPreview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      expect(legacyHtml).toContain('width:auto');
+      expect(legacyHtml).toContain('height:auto');
+      expect(legacyHtml).not.toContain('width:356.5px');
+      expect(legacyHtml).not.toContain('width:324.5px');
+      expect(legacyHtml).not.toContain('width:292.5px');
+      expect(legacyHtml).not.toContain('height:117px');
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('preserves authored fixed, percentage, and calc dimensions and refreshes equal geometry', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const authored = {
+      height: 'calc(100% - 20px)',
+      maxHeight: 'calc(100% - 4px)',
+      maxWidth: 'calc(100% - 20px)',
+      minHeight: '40px',
+      minWidth: '30%',
+      width: '50%'
+    };
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<div class="parent"><p class="relative">Relative content-box</p></div>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Relative content-box'
+    });
+    const relative = preview.querySelector<HTMLElement>('.relative');
+    if (!relative) throw new Error('relative dimension fixture missing');
+    Object.defineProperty(relative, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 100, width: 274 })
+    });
+    const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({ content: 'none' });
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if (element.classList.contains('relative')) {
+        return declaration({
+          'border-bottom-width': '2px',
+          'border-left-width': '2px',
+          'border-right-width': '2px',
+          'border-top-width': '2px',
+          'box-sizing': 'content-box',
+          display: 'block',
+          height: raw ? authored.height : '100px',
+          'max-height': raw ? authored.maxHeight : '110px',
+          'max-width': raw ? authored.maxWidth : '476px',
+          'min-height': raw ? authored.minHeight : '54px',
+          'min-width': raw ? authored.minWidth : '143px',
+          'padding-bottom': '5px',
+          'padding-left': '10px',
+          'padding-right': '10px',
+          'padding-top': '5px',
+          width: raw ? authored.width : '250px'
+        });
+      }
+      return declaration({
+        'box-sizing': 'border-box',
+        display: 'block',
+        height: raw ? 'auto' : '120px',
+        width: raw ? 'auto' : '500px'
+      });
+    };
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+    const readHtml = async (index: number): Promise<string> => {
+      const item = (writes[index] as ClipboardItemStub[])[0];
+      const payload = item?.payload['text/html'];
+      if (!payload) throw new Error('relative dimension HTML missing');
+      return blobText(payload);
+    };
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const firstHtml = await readHtml(0);
+    expect(firstHtml).toContain('width:calc(50% + 24px)');
+    expect(firstHtml).toContain('min-width:calc(30% + 24px)');
+    expect(firstHtml).toContain('max-width:calc(');
+    expect(firstHtml).toContain('100% - 20px');
+    expect(firstHtml).toContain('min-height:54px');
+    expect(firstHtml).toContain('max-height:calc(');
+    expect(firstHtml).toContain('height:calc(');
+    expect(firstHtml).toContain('14px');
+    expect(firstHtml).not.toContain('width:274px');
+    expect(firstHtml).not.toContain('height:100px');
+
+    authored.width = '240px';
+    authored.height = '80px';
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const secondHtml = await readHtml(1);
+    // The fixed authored values are projected to border-box for this
+    // content-box source, retaining the same 24px/14px edge contribution.
+    expect(secondHtml).toContain('width:264px');
+    expect(secondHtml).toContain('height:94px');
+    expect(secondHtml).not.toContain('width:calc(50% + 24px)');
+    expect(preview.innerHTML).toContain('Relative content-box');
+  });
+
+  it('rejects a pending preparation when authored dimensions change at equal used geometry', async () => {
+    const pendingImage = deferred<Response>();
+    const fetchStarted = deferred<void>();
+    const imageUrl = new URL('/assets/images/dimension-race.png', document.baseURI).href;
+    const authored = { height: 'auto', width: '50%' };
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p class="dimension-race">Dimension race</p>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Dimension race'
+    });
+    const paragraph = preview.querySelector<HTMLElement>('.dimension-race');
+    if (!paragraph) throw new Error('dimension race fixture missing');
+    Object.defineProperty(paragraph, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 100, width: 274 })
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      fetch: vi.fn(() => {
+        fetchStarted.resolve();
+        return pendingImage.promise;
+      }),
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+        if (element.classList.contains('dimension-race')) {
+          return declaration({
+            'background-image': `url("${imageUrl}")`,
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            'box-sizing': 'content-box',
+            display: 'block',
+            height: raw ? authored.height : '100px',
+            'padding-left': '10px',
+            'padding-right': '10px',
+            width: raw ? authored.width : '250px'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    const prepare = clipboard.prepare;
+    if (!prepare) throw new Error('clipboard preparation is unavailable');
+    const preparation = prepare(preview, { background: true });
+    await fetchStarted.promise;
+    authored.width = '240px';
+    pendingImage.resolve({
+      blob: async () => new Blob(['dimension image'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+
+    await expect(preparation).rejects.toThrow('wechat-copy-stale');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+    expect(document.querySelector('.easymde-wechat-raw-dimension-context')).toBeNull();
+  });
+
+  it('rejects a pending fallback whose authored dimensions no longer match', async () => {
+    const pendingImage = deferred<Response>();
+    const fetchStarted = deferred<void>();
+    const imageUrl = new URL('/assets/images/dimension-fallback-race.png', document.baseURI).href;
+    const authored = { height: 'auto', width: '50%' };
+    let includeDecoration = false;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p class="dimension-fallback-race">Fallback race</p>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Fallback race'
+    });
+    const paragraph = preview.querySelector<HTMLElement>('.dimension-fallback-race');
+    if (!paragraph) throw new Error('dimension fallback fixture missing');
+    Object.defineProperty(paragraph, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 100, width: 274 })
+    });
+    class ThrowingClipboardItem {
+      constructor() {
+        throw new Error('clipboard-item-constructor-failed');
+      }
+    }
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ThrowingClipboardItem,
+      document,
+      fetch: vi.fn(() => {
+        fetchStarted.resolve();
+        return pendingImage.promise;
+      }),
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement && includeDecoration) {
+          return declaration({
+            'background-image': `url("${imageUrl}")`,
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            content: '""',
+            display: 'block',
+            height: '20px',
+            width: '20px'
+          });
+        }
+        if (pseudoElement) return declaration({ content: 'none' });
+        const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+        if (element.classList.contains('dimension-fallback-race')) {
+          return declaration({
+            'box-sizing': 'border-box',
+            display: 'block',
+            height: raw ? authored.height : '100px',
+            width: raw ? authored.width : '274px'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn()
+    });
+    const replacement = async (): Promise<void> => {
+      await prepareClipboard(clipboard, preview);
+    };
+
+    try {
+      await prepareClipboard(clipboard, preview);
+      authored.width = '240px';
+      includeDecoration = true;
+      const pendingReplacement = replacement();
+      await fetchStarted.promise;
+
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(execCommand).not.toHaveBeenCalled();
+
+      pendingImage.resolve({
+        blob: async () => new Blob(['dimension fallback image'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as unknown as Response);
+      await pendingReplacement;
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('keeps the raw dimension mirror out of Preview ownership while preserving CSS context', async () => {
+    const pendingImage = deferred<Response>();
+    const fetchStarted = deferred<void>();
+    const imageUrl = new URL('/assets/images/raw-context-owner.png', document.baseURI).href;
+    const preview = document.createElement('article');
+    const pane = document.createElement('section');
+    pane.className = 'easymde-pane-preview';
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-accepted', '1');
+    preview.setAttribute('data-easymde-preview-error', '0');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.setAttribute('data-easymde-preview-refreshing', '1');
+    preview.setAttribute('data-easymde-editor-owner', 'react');
+    preview.innerHTML = '<h1 class="raw-context-owner">Raw context owner</h1>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Raw context owner'
+    });
+    pane.append(preview);
+    document.body.append(pane);
+    let sawRawPreviewContext = false;
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      fetch: vi.fn(() => {
+        fetchStarted.resolve();
+        return pendingImage.promise;
+      }),
+      getComputedStyle: (element, pseudoElement) => {
+        const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+        if (raw && element.closest('.easymde-pane-preview')) sawRawPreviewContext = true;
+        if (pseudoElement && element.classList.contains('raw-context-owner')) {
+          return declaration({
+            'background-image': `url("${imageUrl}")`,
+            background: `transparent url("${imageUrl}") 0 0 / 100% 100% no-repeat`,
+            content: '""',
+            display: 'block',
+            height: '20px',
+            width: '20px'
+          });
+        }
+        if (pseudoElement) return declaration({ content: 'none' });
+        return declaration({
+          'box-sizing': 'border-box',
+          display: 'block',
+          height: raw ? 'auto' : '100px',
+          width: raw ? 'auto' : '320px'
+        });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    const prepare = clipboard.prepare;
+    if (!prepare) throw new Error('clipboard preparation is unavailable');
+
+    try {
+      const preparation = prepare(preview, { background: true });
+      await fetchStarted.promise;
+      expect(document.querySelectorAll(
+        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      )).toHaveLength(1);
+      expect(preview.getAttribute('data-easymde-editor-owner')).toBe('react');
+      expect(sawRawPreviewContext).toBe(true);
+      expect(document.querySelector('.easymde-wechat-raw-dimension-context')).not.toBeNull();
+      const transientIdentitySelector = [
+        '.easymde-wechat-raw-dimension-context',
+        '.easymde-wechat-preview-measurement'
+      ].map((selector) => (
+        `${selector} [data-easymde-editor-owner],`
+        + `${selector} [data-easymde-preview-accepted],`
+        + `${selector} [data-easymde-preview-error],`
+        + `${selector} [data-easymde-preview-html-sink],`
+        + `${selector} [data-easymde-preview-refreshing]`
+      )).join(',');
+      expect(document.querySelectorAll(transientIdentitySelector)).toHaveLength(0);
+      pendingImage.resolve({
+        blob: async () => new Blob(['raw context owner'], { type: 'image/png' }),
+        ok: true,
+        url: imageUrl
+      } as unknown as Response);
+      await preparation;
+      expect(document.querySelectorAll(
+        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      )).toHaveLength(1);
+    } finally {
+      pane.remove();
+    }
   });
 
   it('keeps pseudo dimensions at their source limits after border-box projection in both Clipboard paths', async () => {
@@ -3414,11 +6787,13 @@ describe('createBrowserWechatClipboard', () => {
       'word-break': 'break-word',
       'overflow-wrap': 'anywhere'
     };
+    const exportStyleContextAttribute = 'data-easymde-wechat-export-style-context';
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
       clipboardItem: ClipboardItemStub,
       document,
       getComputedStyle: (element) => element === preview
+        || '1' === element.getAttribute(exportStyleContextAttribute)
         ? declaration(values)
         : declaration({ display: 'block' }),
       getSelection: window.getSelection.bind(window),
@@ -3445,6 +6820,87 @@ describe('createBrowserWechatClipboard', () => {
     expect(html).not.toContain('unsafe.example');
     expect(html).not.toContain('height:640px');
     expect(text).toContain('Heading');
+  });
+
+  it('maps terminal and intentional code newlines to the source logical lines', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<pre><code><span class="token keyword">alpha  </span>\n<span class="token comment">beta  </span>\n</code></pre>',
+      '<pre><code>double\n\n</code></pre>',
+      '<pre><code>triple\n\n\n</code></pre>',
+      '<pre><code>crlf\r\nnext\r\n</code></pre>',
+      '<pre><code>single</code></pre>',
+      '<pre><code></code></pre>',
+      '<pre><code>\n</code></pre>',
+      '<pre><code>alpha\n\nbeta</code></pre>',
+      '<pre><code><span class="token outer">alpha\n<span class="token inner">beta\n</span></span></code></pre>'
+    ].join('');
+    const sourceText = 'alpha  \nbeta  \ndouble\n\ntriple\n\n\ncrlf\r\nnext\r\nsingle\n\n\nalpha\n\nbeta\nalpha\nbeta';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: sourceText
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('SPAN' === element.tagName && element.classList.contains('token')) {
+          return declaration({ color: 'rgb(1, 2, 3)', display: 'inline' });
+        }
+        if ('PRE' === element.tagName || 'CODE' === element.tagName) {
+          return declaration({ display: 'block', 'white-space': 'pre' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('clipboard payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const codeBlocks = holder.querySelectorAll('pre > code');
+    expect(await blobText(textBlob)).toBe(sourceText);
+    expect(codeBlocks).toHaveLength(9);
+    expect(codeBlocks[0]?.querySelectorAll(':scope > nobr')).toHaveLength(2);
+    expect(codeBlocks[0]?.querySelectorAll(':scope > br')).toHaveLength(1);
+    expect(codeBlocks[0]?.querySelector('nobr')?.textContent?.replaceAll('\u2060', '')).toBe('alpha  ');
+    expect(codeBlocks[0]?.querySelectorAll('span[style*="color:rgb(1, 2, 3)"]')).toHaveLength(2);
+    expect(codeBlocks[1]?.querySelectorAll(':scope > nobr')).toHaveLength(2);
+    expect(codeBlocks[1]?.querySelectorAll(':scope > br')).toHaveLength(1);
+    expect(codeBlocks[2]?.querySelectorAll(':scope > nobr')).toHaveLength(3);
+    expect(codeBlocks[2]?.querySelectorAll(':scope > br')).toHaveLength(2);
+    expect(codeBlocks[3]?.querySelectorAll(':scope > nobr')).toHaveLength(2);
+    expect(codeBlocks[3]?.querySelectorAll(':scope > br')).toHaveLength(1);
+    expect(codeBlocks[4]?.querySelectorAll(':scope > nobr')).toHaveLength(1);
+    expect(codeBlocks[4]?.querySelectorAll(':scope > br')).toHaveLength(0);
+    expect(codeBlocks[5]?.querySelectorAll(':scope > nobr')).toHaveLength(1);
+    expect(codeBlocks[5]?.querySelectorAll(':scope > br')).toHaveLength(0);
+    expect(codeBlocks[6]?.querySelectorAll(':scope > nobr')).toHaveLength(1);
+    expect(codeBlocks[6]?.querySelectorAll(':scope > br')).toHaveLength(0);
+    expect(codeBlocks[7]?.querySelectorAll(':scope > nobr')).toHaveLength(3);
+    expect(codeBlocks[7]?.querySelectorAll(':scope > br')).toHaveLength(2);
+    expect(codeBlocks[8]?.querySelectorAll(':scope > nobr')).toHaveLength(2);
+    expect(codeBlocks[8]?.querySelectorAll(':scope > br')).toHaveLength(1);
+    const nestedTokenSpans = [...(codeBlocks[8]?.querySelectorAll('span[style*="color:rgb(1, 2, 3)"]') ?? [])];
+    expect(nestedTokenSpans.length).toBeGreaterThanOrEqual(2);
+    expect(nestedTokenSpans.every((span) => span.textContent?.includes('alpha') || span.textContent?.includes('beta')))
+      .toBe(true);
+    expect(codeBlocks[8]?.querySelectorAll(':scope > nobr')[0]?.textContent).toContain('alpha');
+    expect(codeBlocks[8]?.querySelectorAll(':scope > nobr')[1]?.textContent).toContain('beta');
   });
 
   it('preserves inherited computed defaults and nested resets in both Clipboard paths', async () => {
@@ -3680,7 +7136,8 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('strong')?.textContent).toBe('Bold');
     expect(holder.querySelector('em')?.textContent).toBe('italic');
     expect(holder.querySelector('a')?.getAttribute('href')).toBe('https://example.test/link');
-    expect(holder.querySelector('blockquote')?.textContent).toBe('Quoted text');
+    expect(holder.querySelectorAll('blockquote')).toHaveLength(0);
+    expect(holder.textContent).toContain('Quoted text');
     expect(holder.querySelectorAll('ul > li')).toHaveLength(2);
     expect(holder.querySelectorAll('ol > li')).toHaveLength(1);
     expect(holder.querySelector('table th')?.textContent).toBe('Header');
@@ -4927,10 +8384,386 @@ describe('createBrowserWechatClipboard', () => {
     expect(suffixStyle).toContain('box-sizing:border-box');
   });
 
+  it('protects a visible painted empty PHP theme heading suffix in both Clipboard paths', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h2><span class="prefix"></span><span class="content">Heading</span><span class="suffix"></span></h2>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Heading' });
+    const suffix = preview.querySelector<HTMLElement>('.suffix');
+    if (!suffix) throw new Error('heading suffix fixture missing');
+    Object.defineProperty(suffix, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({
+        bottom: 30,
+        height: 10,
+        left: 0,
+        right: 200,
+        top: 20,
+        width: 200,
+        x: 0,
+        y: 20
+      })
+    });
+    const styleFor = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({ content: 'none' });
+      if ('SPAN' === element.tagName && element.classList.contains('suffix')) {
+        return declaration({
+          'background-color': 'rgb(1, 2, 3)',
+          display: 'inline-block',
+          height: '10px',
+          opacity: '1',
+          visibility: 'visible',
+          width: '200px'
+        });
+      }
+      if ('SPAN' === element.tagName) {
+        return declaration({ display: 'inline', visibility: 'visible' });
+      }
+      return declaration({ display: 'block', visibility: 'visible' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: styleFor,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modernWrites: unknown[] = [];
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items);
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernItem = (modernWrites[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    const modernTextBlob = modernItem?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('heading suffix payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    expect(await blobText(modernTextBlob)).toBe('Heading');
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    expect(modernHolder.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createRuntime(null, null);
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toBe(modernHtml);
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('keeps a visible suffix marked inside an opacity-zero measurement host', async () => {
+    const host = document.createElement('div');
+    host.className = 'easymde-wechat-preview-measurement';
+    host.style.opacity = '0';
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h2><span class="prefix"></span><span class="content">Hidden host</span><span class="suffix"></span></h2>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Hidden host' });
+    const suffix = preview.querySelector<HTMLElement>('.suffix');
+    if (!suffix) throw new Error('measurement suffix fixture missing');
+    Object.defineProperty(suffix, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 10, width: 200 })
+    });
+    host.append(preview);
+    document.body.append(host);
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('SPAN' === element.tagName && element.classList.contains('suffix')) {
+          return declaration({
+            'background-color': 'rgba(64, 184, 250, 1)',
+            display: 'inline-block',
+            height: '10px',
+            opacity: '1',
+            visibility: 'visible',
+            width: '200px'
+          });
+        }
+        return declaration({ display: 'block', visibility: 'visible' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+    try {
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const item = (writes[0] as ClipboardItemStub[])[0];
+      const htmlBlob = item?.payload['text/html'];
+      if (!htmlBlob) throw new Error('measurement suffix HTML missing');
+      const holder = document.createElement('div');
+      holder.innerHTML = await blobText(htmlBlob);
+      expect(holder.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('does not mark malformed, authored, hidden, unpainted, or ordinary suffix-like spans', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<h2 class="single"><span class="suffix"></span>Single</h2>',
+      '<h2 class="single-class"><span class="prefix"></span><span class="content">Single class</span><span class="suffix extra"></span></h2>',
+      '<h2 class="direct-text"><span class="prefix"></span><span class="content">Direct</span>tail<span class="suffix"></span></h2>',
+      '<h2 class="image-suffix"><span class="prefix"></span><span class="content">Image</span><span class="suffix"><img alt="decoration"></span></h2>',
+      '<h2 class="nonempty"><span class="prefix"></span><span class="content">Nonempty</span><span class="suffix">suffix</span></h2>',
+      '<h2 class="hidden"><span class="prefix"></span><span class="content">Hidden</span><span class="suffix"></span></h2>',
+      '<h2 class="unpainted"><span class="prefix"></span><span class="content">Unpainted</span><span class="suffix"></span></h2>',
+      '<h2 class="unpainted-slash"><span class="prefix"></span><span class="content">Unpainted slash</span><span class="suffix"></span></h2>',
+      '<h2 class="unpainted-color"><span class="prefix"></span><span class="content">Unpainted color</span><span class="suffix"></span></h2>',
+      '<p><span class="suffix">Ordinary</span></p>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    const sourceText = 'Single\nSingle class\nDirecttail\nImage\nNonemptysuffix\nHidden\nUnpainted\nUnpainted slash\nUnpainted color\nOrdinary';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
+    preview.querySelectorAll<HTMLElement>('h2 > span.suffix').forEach((suffix) => {
+      Object.defineProperty(suffix, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          bottom: 30,
+          height: 10,
+          left: 0,
+          right: 200,
+          top: 20,
+          width: 200,
+          x: 0,
+          y: 20
+        })
+      });
+    });
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('SPAN' === element.tagName && element.classList.contains('suffix')) {
+          const parentClass = element.parentElement?.className;
+          if ('hidden' === parentClass) {
+            return declaration({
+              'background-color': 'rgb(1, 2, 3)',
+              display: 'none',
+              height: '10px',
+              visibility: 'hidden',
+              width: '200px'
+            });
+          }
+          if ('unpainted' === parentClass) {
+            return declaration({
+              'background-color': 'rgba(64, 184, 250, 0)',
+              'background-image': 'none',
+              display: 'inline-block',
+              height: '10px',
+              visibility: 'visible',
+              width: '200px'
+            });
+          }
+          if ('unpainted-slash' === parentClass) {
+            return declaration({
+              'background-color': 'rgb(64 184 250 / 0)',
+              display: 'inline-block',
+              height: '10px',
+              visibility: 'visible',
+              width: '200px'
+            });
+          }
+          if ('unpainted-color' === parentClass) {
+            return declaration({
+              'background-color': 'color(srgb 0.25 0.72 0.98 / 0)',
+              display: 'inline-block',
+              height: '10px',
+              visibility: 'visible',
+              width: '200px'
+            });
+          }
+          return declaration({
+            'background-color': 'rgb(1, 2, 3)',
+            display: 'inline-block',
+            height: '10px',
+            visibility: 'visible',
+            width: '200px'
+          });
+        }
+        return declaration({ display: 'block', visibility: 'visible' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('heading suffix negative payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelectorAll('h2')).toHaveLength(9);
+    expect(holder.textContent).not.toContain('\u2060');
+    expect(await blobText(textBlob)).toBe(sourceText);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('restores H2 suffix and code markers around connected plaintext with authored FEFF', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<h2><span class="prefix"></span><span class="content">Heading</span><span class="suffix"></span></h2>',
+      '<p>Body \uFEFF authored</p>',
+      '<pre><code><span>#</span><span>336699</span>\n#\uFEFFauthored</code></pre>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    const sourceText = 'Heading\nBody \uFEFF authored\n#336699\n#\uFEFFauthored';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
+    const suffix = preview.querySelector<HTMLElement>('.suffix');
+    if (!suffix) throw new Error('combined suffix fixture missing');
+    Object.defineProperty(suffix, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: 10, width: 200 })
+    });
+    const styleFor = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({ content: 'none' });
+      if ('SPAN' === element.tagName && element.classList.contains('suffix')) {
+        return declaration({
+          'background-color': 'rgba(64, 184, 250, 1)',
+          display: 'inline-block',
+          height: '10px',
+          opacity: '1',
+          visibility: 'visible',
+          width: '200px'
+        });
+      }
+      if ('PRE' === element.tagName || 'CODE' === element.tagName) {
+        return declaration({ display: 'block', 'white-space': 'pre', visibility: 'visible' });
+      }
+      return declaration({ display: 'block', visibility: 'visible' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: styleFor,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modernWrites: unknown[] = [];
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items);
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernItem = (modernWrites[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    const modernTextBlob = modernItem?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('combined marker payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    expect(await blobText(modernTextBlob)).toBe(sourceText);
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    expect(modernHolder.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
+    expect(modernHolder.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
+    expect(modernHolder.querySelector('pre > code')?.textContent).toContain('#\uFEFFauthored');
+    expect(modernHolder.textContent).toContain('Body \uFEFF authored');
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createRuntime(null, null);
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toBe(modernHtml);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+
+    let measuredClone: HTMLElement | null = null;
+    const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this !== preview && this.querySelector('pre > code') && this.querySelector('h2')) {
+          measuredClone = this;
+          throw new Error('combined-plain-text-measurement-failed');
+        }
+        return this.textContent ?? '';
+      }
+    });
+    try {
+      const throwing = createRuntime(ClipboardItemStub, async () => undefined);
+      await expect(throwing.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      const cloneAfterThrow = measuredClone as HTMLElement | null;
+      expect(cloneAfterThrow?.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
+      expect(cloneAfterThrow?.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
+      expect(cloneAfterThrow?.textContent).toContain('Body \uFEFF authored');
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalInnerText) Object.defineProperty(HTMLElement.prototype, 'innerText', originalInnerText);
+      else delete (HTMLElement.prototype as unknown as { innerText?: unknown }).innerText;
+    }
+  });
+
   it('starts the Clipboard write while a theme image is still pending activation', async () => {
     let activation = true;
     let activationAtWrite = false;
     const pendingImage = deferred<Response>();
+    const writes: unknown[] = [];
     class ClipboardItemStub {
       constructor(public payload: Record<string, Blob>) {}
     }
@@ -4939,7 +8772,6 @@ describe('createBrowserWechatClipboard', () => {
     preview.innerHTML = '<h1>Theme heading</h1>';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
-    const writes: unknown[] = [];
     const clipboard = createBrowserWechatClipboard({
       blob: window.Blob,
       clipboardItem: ClipboardItemStub,
@@ -5549,6 +9381,231 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('yields at both async serialization boundaries when the budget is exhausted', async () => {
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const originalOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+    const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    let clock = 0;
+    let boundary: 'none' | 'html' | 'text' = 'none';
+    const boundaryYields: string[] = [];
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation((
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const delay = Number(timeout ?? 0);
+        if (0 === delay && 'none' !== boundary) boundaryYields.push(boundary);
+        return originalSetTimeout(handler, 0, ...args) as unknown as number;
+      }
+    ) as typeof window.setTimeout);
+    Object.defineProperty(Element.prototype, 'outerHTML', {
+      configurable: true,
+      get(this: Element) {
+        if ('SECTION' === this.tagName && 'none' === boundary) {
+          boundary = 'html';
+          clock = 20;
+        }
+        return originalOuterHTML?.get?.call(this) ?? '';
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if ('html' === boundary) {
+          boundary = 'text';
+          clock = 40;
+        }
+        return this.textContent ?? '';
+      }
+    });
+    try {
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p>First</p><p>Second</p>';
+      Object.defineProperty(preview, 'innerText', {
+        configurable: true,
+        value: 'First\nSecond'
+      });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+
+      await prepareClipboard(clipboard, preview, { background: true });
+      expect(boundaryYields).toEqual(['html', 'text']);
+    } finally {
+      if (originalOuterHTML) Object.defineProperty(Element.prototype, 'outerHTML', originalOuterHTML);
+      else delete (Element.prototype as unknown as { outerHTML?: unknown }).outerHTML;
+      if (originalInnerText) Object.defineProperty(HTMLElement.prototype, 'innerText', originalInnerText);
+      else delete (HTMLElement.prototype as unknown as { innerText?: unknown }).innerText;
+      setTimeout.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
+  it('rejects a source change during the final serialization boundary', async () => {
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const originalOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+    const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    let clock = 0;
+    let boundary: 'none' | 'html' | 'text' = 'none';
+    let preview: HTMLElement | null = null;
+    let mutateAtTextBoundary = true;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation((
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const delay = Number(timeout ?? 0);
+        if (0 === delay && 'text' === boundary && mutateAtTextBoundary) {
+          mutateAtTextBoundary = false;
+          return originalSetTimeout(() => {
+            preview?.querySelector('p')?.replaceChildren('Changed during boundary');
+            if ('function' === typeof handler) handler(...args);
+          }, 0) as unknown as number;
+        }
+        return originalSetTimeout(handler, 0, ...args) as unknown as number;
+      }
+    ) as typeof window.setTimeout);
+    Object.defineProperty(Element.prototype, 'outerHTML', {
+      configurable: true,
+      get(this: Element) {
+        if ('SECTION' === this.tagName && 'none' === boundary) {
+          boundary = 'html';
+          clock = 20;
+        }
+        return originalOuterHTML?.get?.call(this) ?? '';
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if ('html' === boundary) {
+          boundary = 'text';
+          clock = 40;
+        }
+        return this.textContent ?? '';
+      }
+    });
+    try {
+      preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p>Before boundary</p>';
+      Object.defineProperty(preview, 'innerText', {
+        configurable: true,
+        value: 'Before boundary'
+      });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+
+      await expect(prepareClipboard(clipboard, preview, { background: true }))
+        .rejects.toThrow('wechat-copy-stale');
+      expect(preview.innerHTML).toContain('Changed during boundary');
+      expect(boundary).toBe('text');
+    } finally {
+      if (originalOuterHTML) Object.defineProperty(Element.prototype, 'outerHTML', originalOuterHTML);
+      else delete (Element.prototype as unknown as { outerHTML?: unknown }).outerHTML;
+      if (originalInnerText) Object.defineProperty(HTMLElement.prototype, 'innerText', originalInnerText);
+      else delete (HTMLElement.prototype as unknown as { innerText?: unknown }).innerText;
+      setTimeout.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
+  it('rejects an abort during the final serialization boundary without publishing a payload', async () => {
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const originalOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML');
+    const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    const controller = new AbortController();
+    let clock = 0;
+    let boundary: 'none' | 'html' | 'text' = 'none';
+    let abortAtTextBoundary = true;
+    let preview: HTMLElement | null = null;
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation((
+      (handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+        const delay = Number(timeout ?? 0);
+        if (0 === delay && 'text' === boundary && abortAtTextBoundary) {
+          abortAtTextBoundary = false;
+          return originalSetTimeout(() => {
+            controller.abort();
+            if ('function' === typeof handler) handler(...args);
+          }, 0) as unknown as number;
+        }
+        return originalSetTimeout(handler, 0, ...args) as unknown as number;
+      }
+    ) as typeof window.setTimeout);
+    Object.defineProperty(Element.prototype, 'outerHTML', {
+      configurable: true,
+      get(this: Element) {
+        if ('SECTION' === this.tagName && 'none' === boundary) {
+          boundary = 'html';
+          clock = 20;
+        }
+        return originalOuterHTML?.get?.call(this) ?? '';
+      }
+    });
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if ('html' === boundary) {
+          boundary = 'text';
+          clock = 40;
+        }
+        return this.textContent ?? '';
+      }
+    });
+    try {
+      preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML = '<p>Abort boundary</p>';
+      Object.defineProperty(preview, 'innerText', {
+        configurable: true,
+        value: 'Abort boundary'
+      });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement ? declaration({}) : declaration({ display: 'block' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+
+      await expect(prepareClipboard(clipboard, preview, {
+        background: true,
+        signal: controller.signal
+      })).rejects.toMatchObject({ name: 'AbortError' });
+      expect(boundary).toBe('text');
+      await expect(prepareClipboard(clipboard, preview, { background: true })).resolves.toBeUndefined();
+    } finally {
+      if (originalOuterHTML) Object.defineProperty(Element.prototype, 'outerHTML', originalOuterHTML);
+      else delete (Element.prototype as unknown as { outerHTML?: unknown }).outerHTML;
+      if (originalInnerText) Object.defineProperty(HTMLElement.prototype, 'innerText', originalInnerText);
+      else delete (HTMLElement.prototype as unknown as { innerText?: unknown }).innerText;
+      setTimeout.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
   it('cancels an active background serialization when its owner aborts', async () => {
     const pendingImage = deferred<Response>();
     const fetchStarted = deferred<void>();
@@ -5627,7 +9684,9 @@ describe('createBrowserWechatClipboard', () => {
       } as unknown as Response);
       await expect(preparation).rejects.toMatchObject({ name: 'AbortError' });
       await expect(copy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
-      expect(bodyAppend).toHaveBeenCalledTimes(appendCallsBeforeResolution + 1);
+      // The retry owns one raw semantic context and one connected plain-text
+      // layout host; both are removed after the payload settles.
+      expect(bodyAppend).toHaveBeenCalledTimes(appendCallsBeforeResolution + 2);
       expect(sourceInnerTextReads).toBe(1);
       expect(fetch).toHaveBeenCalledOnce();
       const item = (writes[0] as ClipboardItemStub[])[0];
@@ -6896,6 +10955,555 @@ describe('createBrowserWechatClipboard', () => {
     expect(writes).toHaveLength(2);
   });
 
+  it('preserves authored auto margins for eligible flow pseudos and outer Mermaid roots', async () => {
+    const modernWrites: Array<{ html: string; text: string }> = [];
+    let useAutoMargins = true;
+    let rawAutoReads = 0;
+    let rawPseudoReads = 0;
+    const preview = document.createElement('article');
+    preview.className = 'easymde-preview';
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<h1 class="auto-pseudo">Auto pseudo</h1>',
+      '<h1 class="fixed-pseudo">Fixed pseudo</h1>',
+      '<h1 class="absolute-pseudo">Absolute pseudo</h1>',
+      '<div class="easymde-mermaid"><svg width="180.5" height="40"><svg width="90" height="20"></svg><g class="nested-svg"></g></svg></div>',
+      '<div class="ordinary-svg"><svg width="140" height="30"></svg></div>',
+      '<div class="easymde-math-block"><span class="katex">Math</span></div>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Auto pseudo\nFixed pseudo\nAbsolute pseudo\nMath'
+    });
+    const sourceMarkup = preview.innerHTML;
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if (raw && pseudoElement) rawPseudoReads += 1;
+      if ('H1' === element.tagName && '::after' === pseudoElement) {
+        const position = element.classList.contains('absolute-pseudo') ? 'absolute' : 'static';
+        const marginLeft = element.classList.contains('fixed-pseudo')
+          ? '16px'
+          : raw && useAutoMargins ? 'auto' : '285px';
+        if (raw && useAutoMargins && element.classList.contains('auto-pseudo')) rawAutoReads += 1;
+        return declaration({
+          content: '""',
+          display: 'block',
+          height: '10px',
+          'margin-left': marginLeft,
+          'margin-right': '0px',
+          position,
+          width: '110px'
+        });
+      }
+      if ('SVG' === element.localName.toUpperCase()) {
+        return declaration({
+          display: 'block',
+          height: '40px',
+          'margin-left': raw && useAutoMargins ? 'auto' : '249.75px',
+          'margin-right': raw && useAutoMargins ? 'auto' : '0px',
+          width: '180.5px'
+        });
+      }
+      if ('g' === element.localName.toLowerCase()) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw ? 'auto' : '20px',
+          'margin-right': '0px'
+        });
+      }
+      if (element.classList.contains('katex')) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw ? 'auto' : '40px',
+          'margin-right': '0px'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const item = items[0] as ClipboardItemStub;
+        const htmlPayload = item.payload['text/html'];
+        const textPayload = item.payload['text/plain'];
+        if (!htmlPayload || !textPayload) throw new Error('auto margin payload missing');
+        modernWrites.push({ html: await blobText(htmlPayload), text: await blobText(textPayload) });
+      }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(rawPseudoReads).toBeGreaterThan(0);
+    expect(rawAutoReads).toBeGreaterThan(0);
+    const firstHolder = document.createElement('div');
+    firstHolder.innerHTML = modernWrites[0]?.html ?? '';
+    const firstPseudos = firstHolder.querySelectorAll('h1 > span[aria-hidden="true"]');
+    expect(firstPseudos[0]?.getAttribute('style')).toContain('margin-left:auto');
+    expect(firstPseudos[1]?.getAttribute('style')).toContain('margin-left:16px');
+    expect(firstPseudos[2]?.getAttribute('style')).toContain('margin-left:285px');
+    const svgStyles = Array.from(firstHolder.querySelectorAll('svg'))
+      .map((element) => element.getAttribute('style') ?? '');
+    expect(svgStyles[0]).toContain('margin-left:auto');
+    expect(svgStyles[1]).toContain('margin-left:249.75px');
+    expect(svgStyles[2]).toContain('margin-left:auto');
+    expect(firstHolder.querySelector('g')?.getAttribute('style')).toContain('margin-left:20px');
+    expect(Array.from(firstHolder.querySelectorAll('span')).some((element) => (
+      element.getAttribute('style')?.includes('margin-left:40px') ?? false
+    ))).toBe(true);
+
+    useAutoMargins = false;
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(modernWrites).toHaveLength(2);
+    const secondHolder = document.createElement('div');
+    secondHolder.innerHTML = modernWrites[1]?.html ?? '';
+    const secondPseudo = secondHolder.querySelector('h1 > span[aria-hidden="true"]');
+    expect(secondPseudo?.getAttribute('style')).toContain('margin-left:285px');
+    expect(secondPseudo?.getAttribute('style')).not.toContain('margin-left:auto');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('keeps auto-margin HTML identical across modern and legacy Clipboard paths', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1 class="auto-pseudo">Auto pseudo</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Auto pseudo' });
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('H1' === element.tagName && '::after' === pseudoElement) {
+        return declaration({
+          content: '""',
+          display: 'block',
+          height: '10px',
+          'margin-left': 'auto',
+          'margin-right': 'auto',
+          position: 'static',
+          width: '110px'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    let modernHtml = '';
+    const modern = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('modern auto margin HTML missing');
+        modernHtml = await blobText(html);
+      }
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: computed,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toBe(modernHtml);
+      expect(modernHtml).toContain('margin-left:auto');
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('invalidates prepared auto-margin payloads when raw semantics change', async () => {
+    let useAutoMargins = true;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1 class="auto-pseudo">Auto pseudo</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Auto pseudo' });
+    const writes: string[] = [];
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('H1' === element.tagName && '::after' === pseudoElement) {
+        return declaration({
+          content: '""',
+          display: 'block',
+          height: '10px',
+          'margin-left': raw && useAutoMargins ? 'auto' : '285px',
+          position: 'static',
+          width: '110px'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('freshness auto margin HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    await prepareClipboard(clipboard, preview);
+    useAutoMargins = false;
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('margin-left:285px');
+  });
+
+  it('rejects an in-flight auto-margin semantic change before final commit', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/auto-margin-race.png', document.baseURI).href;
+    const writes: string[] = [];
+    const writeCalls: unknown[] = [];
+    let useAutoMargins = true;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h1 class="auto-pseudo">Auto pseudo</h1>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Auto pseudo' });
+    const sourceMarkup = preview.innerHTML;
+    const fetch = vi.fn(() => {
+      useAutoMargins = false;
+      return pendingImage.promise;
+    });
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('H1' === element.tagName && '::after' === pseudoElement) {
+        const marginLeft = raw && useAutoMargins ? 'auto' : '285px';
+        return declaration({
+          background: `url("${imageUrl}")`,
+          'background-image': `url("${imageUrl}")`,
+          content: '""',
+          display: 'block',
+          height: '10px',
+          'margin-left': marginLeft,
+          position: 'static',
+          width: '110px'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writeCalls.push(items);
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('auto margin race HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(useAutoMargins).toBe(false);
+    pendingImage.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writeCalls).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writeCalls).toHaveLength(2);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('margin-left:285px');
+  });
+
+  it('preserves valid percentage margins across ordinary flow and outer SVG HTML paths', async () => {
+    const usePercent = true;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<h2><span class="percent-suffix">Percent suffix</span> <span class="signed-suffix">Signed suffix</span> <span class="leading-suffix">Leading suffix</span> <span class="fixed-suffix">Fixed suffix</span> <span class="invalid-suffix">Invalid suffix</span> <span class="calc-suffix">Calc suffix</span> <span class="malformed-suffix">Malformed suffix</span></h2>',
+      '<div class="ordinary-svg"><svg width="140" height="30"><svg width="90" height="20"></svg></svg></div>',
+      '<div class="easymde-math-block"><span class="katex">Math</span></div>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Percent suffix Signed suffix Leading suffix Fixed suffix Invalid suffix Calc suffix Malformed suffix\nMath'
+    });
+    const sourceMarkup = preview.innerHTML;
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if (pseudoElement) return declaration({ content: 'none' });
+      if (element.classList.contains('percent-suffix')) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw && usePercent ? '95%' : '621.297px',
+          'margin-right': '0px',
+          position: 'static'
+        });
+      }
+      if (element.classList.contains('signed-suffix')) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw ? '+5%' : '5px',
+          position: 'static'
+        });
+      }
+      if (element.classList.contains('leading-suffix')) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw ? '.5%' : '0.5px',
+          position: 'static'
+        });
+      }
+      if (element.classList.contains('fixed-suffix')) {
+        return declaration({ display: 'inline', 'margin-left': '12px', position: 'static' });
+      }
+      if (element.classList.contains('invalid-suffix')) {
+        return declaration({ display: 'inline', 'margin-left': raw ? 'Infinity%' : '7px', position: 'static' });
+      }
+      if (element.classList.contains('calc-suffix')) {
+        return declaration({ display: 'inline', 'margin-left': raw ? 'calc(95% - 1px)' : '8px', position: 'static' });
+      }
+      if (element.classList.contains('malformed-suffix')) {
+        return declaration({ display: 'inline', 'margin-left': raw ? '1.%' : '9px', position: 'static' });
+      }
+      if ('svg' === element.localName.toLowerCase()) {
+        const nested = Boolean(element.parentElement?.closest('svg'));
+        return declaration({
+          display: 'block',
+          height: nested ? '20px' : '30px',
+          'margin-left': nested ? '20px' : raw && usePercent ? '5%' : '18px',
+          width: nested ? '90px' : '140px'
+        });
+      }
+      if ('g' === element.localName.toLowerCase()) {
+        return declaration({ display: 'inline', 'margin-left': raw ? '95%' : '20px' });
+      }
+      if (element.classList.contains('katex')) {
+        return declaration({ display: 'inline', 'margin-left': raw ? '95%' : '40px' });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    let modernHtml = '';
+    const modern = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('percentage margin HTML missing');
+        modernHtml = await blobText(html);
+      }
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: null,
+        document,
+        getComputedStyle: computed,
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: null
+      });
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      expect(legacyHtml).toBe(modernHtml);
+      const holder = document.createElement('div');
+      holder.innerHTML = modernHtml;
+      const styles = Array.from(holder.querySelectorAll('span'))
+        .map((element) => element.getAttribute('style') ?? '');
+      expect(styles.some((style) => style.includes('margin-left:95%'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:+5%'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:.5%'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:12px'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:7px'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:8px'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:9px'))).toBe(true);
+      expect(styles.some((style) => style.includes('margin-left:40px'))).toBe(true);
+      const svgStyles = Array.from(holder.querySelectorAll('svg'))
+        .map((element) => element.getAttribute('style') ?? '');
+      expect(svgStyles[0]).toContain('margin-left:5%');
+      expect(svgStyles[1]).toContain('margin-left:20px');
+      expect(modernHtml).not.toContain('Infinity%');
+      expect(modernHtml).not.toContain('calc(95% - 1px)');
+      expect(modernHtml).not.toContain('1.%');
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('invalidates a prepared percentage-margin payload when raw semantics become fixed pixels', async () => {
+    let usePercent = true;
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h2><span class="percent-suffix">Percent suffix</span></h2>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Percent suffix' });
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('SPAN' === element.tagName && element.classList.contains('percent-suffix') && !pseudoElement) {
+        return declaration({
+          display: 'inline',
+          'margin-left': raw && usePercent ? '95%' : '621.297px',
+          position: 'static'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('percentage freshness HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    await prepareClipboard(clipboard, preview);
+    usePercent = false;
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('margin-left:621.297px');
+    expect(writes[0]).not.toContain('margin-left:95%');
+  });
+
+  it('rejects an in-flight percentage-margin semantic change before final commit', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/percentage-margin-race.png', document.baseURI).href;
+    const writes: string[] = [];
+    const writeCalls: unknown[] = [];
+    let usePercent = true;
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<h2><span class="percent-suffix">Percent suffix</span></h2>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Percent suffix' });
+    const sourceMarkup = preview.innerHTML;
+    const fetch = vi.fn(() => {
+      usePercent = false;
+      return pendingImage.promise;
+    });
+    const computed = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+      if ('SPAN' === element.tagName && element.classList.contains('percent-suffix') && !pseudoElement) {
+        return declaration({
+          background: `url("${imageUrl}")`,
+          'background-image': `url("${imageUrl}")`,
+          display: 'inline',
+          'margin-left': raw && usePercent ? '95%' : '621.297px',
+          position: 'static'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      fetch,
+      getComputedStyle: computed,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writeCalls.push(items);
+        const html = (items[0] as ClipboardItemStub).payload['text/html'];
+        if (!html) throw new Error('percentage race HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(usePercent).toBe(false);
+    pendingImage.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writeCalls).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writeCalls).toHaveLength(2);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain('margin-left:621.297px');
+  });
+
   it('normalizes WeChat structure, leaf text, unsafe URLs, and code overflow', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {
@@ -6985,8 +11593,895 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('pre > code span[leaf]')?.getAttribute('style'))
       .toContain('white-space:pre!important');
     expect(holder.querySelectorAll('pre > code br')).toHaveLength(1);
-    expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('margin:-22px 0 10px 14px');
+    expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).not.toContain('margin:-22px 0 10px 14px');
     expect(holder.querySelector('pre > span[aria-hidden="true"]')?.getAttribute('style')).toContain('box-shadow:rgb(255, 189, 46) 20px 0 0, rgb(39, 201, 63) 40px 0 0');
+  });
+
+  it('preserves code-frame pseudo geometry in modern and legacy payloads', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<pre><code>zero margin</code></pre>',
+      '<pre class="authored-offset"><code>authored margin</code></pre>',
+      '<pre class="boxed-offset"><code>boxed margin</code></pre>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'zero margin\nauthored margin\nboxed margin'
+    });
+    const frameComputedStyle = (
+      element: Element,
+      pseudoElement?: string
+    ): CSSStyleDeclaration => {
+      if ('PRE' === element.tagName && '::before' === pseudoElement) {
+        const authoredMargin = element.classList.contains('authored-offset');
+        const boxedMargin = element.classList.contains('boxed-offset');
+        return declaration({
+          background: 'rgb(255, 95, 86)',
+          'border-radius': '50%',
+          'box-shadow': 'rgb(255, 189, 46) 20px 0 0, rgb(39, 201, 63) 40px 0 0',
+          content: '""',
+          display: 'inline',
+          height: '12px',
+          left: boxedMargin ? '18px' : '14px',
+          'margin-bottom': authoredMargin ? '5px' : '0px',
+          'margin-left': boxedMargin ? '4px' : authoredMargin ? '6px' : '0px',
+          'margin-right': authoredMargin ? '4px' : '0px',
+          'margin-top': boxedMargin ? '2px' : authoredMargin ? '3px' : '0px',
+          position: 'absolute',
+          top: boxedMargin ? '9px' : '13px',
+          width: '12px'
+        });
+      }
+      if ('PRE' === element.tagName) {
+        const boxed = element.classList.contains('boxed-offset');
+        return declaration({
+          display: 'block',
+          'border-left-color': boxed ? 'rgb(0, 0, 0)' : 'none',
+          'border-left-style': boxed ? 'solid' : 'none',
+          'border-left-width': boxed ? '3px' : '0px',
+          'box-sizing': 'border-box',
+          'padding-left': boxed ? '7px' : '0px',
+          'padding-top': boxed ? '41px' : '34px',
+          'white-space': 'pre'
+        });
+      }
+      if ('CODE' === element.tagName) {
+        return declaration({ display: 'block', 'white-space': 'pre' });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const modernWrites: ClipboardItemStub[] = [];
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: frameComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items[0] as ClipboardItemStub);
+    });
+
+    await expect(modern.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernHtmlBlob = modernWrites[0]?.payload['text/html'];
+    if (!modernHtmlBlob) throw new Error('modern frame payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    const modernTextBlob = modernWrites[0]?.payload['text/plain'];
+    if (!modernTextBlob) throw new Error('modern frame text payload missing');
+    expect(await blobText(modernTextBlob)).toBe('zero margin\nauthored margin\nboxed margin');
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacy = createRuntime(null, null);
+    await prepareClipboard(legacy, preview);
+    await expect(legacy.copy(preview)).resolves.toEqual({
+      method: 'legacy',
+      status: 'copied'
+    });
+
+    expect(legacyHtml).toBe(modernHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    const headers = holder.querySelectorAll('pre > div[aria-hidden="true"]');
+    expect(headers).toHaveLength(3);
+    const markers = holder.querySelectorAll('pre > div[aria-hidden="true"] > span[aria-hidden="true"]');
+    expect(markers).toHaveLength(3);
+    const zeroMargin = markers[0] as HTMLElement | undefined;
+    const authoredMargin = markers[1] as HTMLElement | undefined;
+    const boxedMargin = markers[2] as HTMLElement | undefined;
+    const zeroHeader = headers[0] as HTMLElement | undefined;
+    const authoredHeader = headers[1] as HTMLElement | undefined;
+    const boxedHeader = headers[2] as HTMLElement | undefined;
+    expect(holder.querySelectorAll('pre > code[data-ignore-width]')).toHaveLength(3);
+    expect(holder.querySelectorAll('pre[data-ignore-width]')).toHaveLength(0);
+    expect(holder.querySelectorAll('pre > div[aria-hidden="true"][data-ignore-width]')).toHaveLength(0);
+    expect(zeroHeader?.style.display).toBe('block');
+    expect(zeroHeader?.style.width).toBe('100%');
+    expect(zeroHeader?.style.height).toBe('34px');
+    expect(zeroHeader?.style.paddingTop).toBe('13px');
+    expect(zeroHeader?.style.paddingLeft).toBe('14px');
+    expect(authoredHeader?.style.height).toBe('34px');
+    expect(authoredHeader?.style.paddingTop).toBe('16px');
+    expect(authoredHeader?.style.paddingLeft).toBe('20px');
+    expect(boxedHeader?.style.height).toBe('41px');
+    expect(boxedHeader?.style.paddingTop).toBe('11px');
+    expect(boxedHeader?.style.paddingLeft).toBe('15px');
+    expect([...holder.querySelectorAll('pre')].map((pre) => pre.style.paddingTop))
+      .toEqual(['0px', '0px', '0px']);
+    expect(zeroMargin?.style.position).toBe('');
+    expect(zeroMargin?.style.display).toBe('block');
+    expect(zeroMargin?.style.top).toBe('');
+    expect(zeroMargin?.style.left).toBe('');
+    expect(zeroMargin?.style.width).toBe('12px');
+    expect(zeroMargin?.style.height).toBe('12px');
+    expect(zeroMargin?.style.marginTop).toBe('0px');
+    expect(zeroMargin?.style.marginRight).toBe('0px');
+    expect(zeroMargin?.style.marginBottom).toBe('0px');
+    expect(zeroMargin?.style.marginLeft).toBe('0px');
+    expect(authoredMargin?.style.position).toBe('');
+    expect(authoredMargin?.style.display).toBe('block');
+    expect(authoredMargin?.style.top).toBe('');
+    expect(authoredMargin?.style.left).toBe('');
+    expect(authoredMargin?.style.marginTop).toBe('0px');
+    expect(authoredMargin?.style.marginRight).toBe('0px');
+    expect(authoredMargin?.style.marginBottom).toBe('0px');
+    expect(authoredMargin?.style.marginLeft).toBe('0px');
+    expect(boxedMargin?.style.position).toBe('');
+    expect(boxedMargin?.style.display).toBe('block');
+    expect(boxedMargin?.style.top).toBe('');
+    expect(boxedMargin?.style.left).toBe('');
+    expect(boxedMargin?.style.marginTop).toBe('0px');
+    expect(boxedMargin?.style.marginLeft).toBe('0px');
+    expect([...markers].map((marker) => marker.textContent)).toEqual([
+      '\u2060',
+      '\u2060',
+      '\u2060'
+    ]);
+    const flowHolder = document.createElement('div');
+    flowHolder.innerHTML = modernHtml;
+    flowHolder.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+      element.style.removeProperty('position');
+      element.style.removeProperty('top');
+      element.style.removeProperty('left');
+    });
+    const flowFrame = flowHolder.querySelector('pre');
+    const flowHeader = flowFrame?.querySelector<HTMLElement>(':scope > div[aria-hidden="true"]');
+    const flowMarker = flowHeader?.querySelector<HTMLElement>(':scope > span[aria-hidden="true"]');
+    if (!flowFrame || !flowHeader || !flowMarker) throw new Error('normal-flow frame missing');
+    const flowOffset = (value: string): number => Number.parseFloat(value || '0');
+    expect(flowHeader.style.position).toBe('');
+    expect(flowMarker.style.position).toBe('');
+    expect(flowMarker.style.top).toBe('');
+    expect(flowMarker.style.left).toBe('');
+    expect(flowOffset(flowHeader.style.paddingTop) + flowOffset(flowMarker.style.marginTop)).toBe(13);
+    expect(flowOffset(flowHeader.style.paddingLeft) + flowOffset(flowMarker.style.marginLeft)).toBe(14);
+    expect(flowHeader.style.height).toBe('34px');
+    expect(flowFrame.style.paddingTop).toBe('0px');
+    expect(modernHtml).not.toContain('margin:-22px 0 10px 14px');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('leaves non-absolute, hidden, and absent frame decorations in their source states', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<pre class="static-decoration"><code>static decoration</code></pre>',
+      '<pre class="hidden-decoration"><code>hidden decoration</code></pre>',
+      '<pre class="absent-decoration"><code>absent decoration</code></pre>',
+      '<pre class="nonempty-decoration"><code>nonempty decoration</code></pre>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'static decoration\nhidden decoration\nabsent decoration\nnonempty decoration'
+    });
+    const frameComputedStyle = (
+      element: Element,
+      pseudoElement?: string
+    ): CSSStyleDeclaration => {
+      if ('PRE' === element.tagName && '::before' === pseudoElement) {
+        const className = element.className;
+        if ('static-decoration' === className) {
+          return declaration({
+            background: 'rgb(255, 95, 86)',
+            content: '""',
+            display: 'inline',
+            height: '12px',
+            left: '14px',
+            position: 'relative',
+            top: '13px',
+            width: '12px'
+          });
+        }
+        if ('nonempty-decoration' === className) {
+          return declaration({
+            background: 'rgb(255, 95, 86)',
+            content: '"dot"',
+            display: 'inline',
+            height: '12px',
+            left: '14px',
+            position: 'absolute',
+            top: '13px',
+            width: '12px'
+          });
+        }
+        if ('hidden-decoration' === className) {
+          return declaration({
+            background: 'rgb(255, 95, 86)',
+            content: '""',
+            display: 'none',
+            height: '12px',
+            left: '14px',
+            position: 'absolute',
+            top: '13px',
+            width: '12px'
+          });
+        }
+        return declaration({ content: 'none' });
+      }
+      if ('PRE' === element.tagName) {
+        return declaration({
+          display: 'block',
+          'padding-left': '5px',
+          'padding-top': '28px',
+          'white-space': 'pre'
+        });
+      }
+      if ('CODE' === element.tagName) {
+        return declaration({ display: 'block', 'white-space': 'pre' });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const writes: ClipboardItemStub[] = [];
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: frameComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items[0] as ClipboardItemStub); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const htmlBlob = writes[0]?.payload['text/html'];
+    const textBlob = writes[0]?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('frame variant payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const frames = [...holder.querySelectorAll('pre')];
+    expect(frames).toHaveLength(4);
+    expect(frames.every((frame) => !frame.querySelector(':scope > div[aria-hidden="true"]'))).toBe(true);
+    expect(frames.map((frame) => frame.style.paddingTop)).toEqual(['28px', '28px', '28px', '28px']);
+    expect(frames[0]?.querySelector(':scope > span[aria-hidden="true"]')?.getAttribute('style'))
+      .toContain('position:relative');
+    expect(frames[0]?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe(' ');
+    expect(frames[1]?.querySelector(':scope > span[aria-hidden="true"]')).toBeNull();
+    expect(frames[2]?.querySelector(':scope > span[aria-hidden="true"]')).toBeNull();
+    expect(frames[3]?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('dot');
+    expect(await blobText(textBlob)).toBe('static decoration\nhidden decoration\nabsent decoration\nnonempty decoration');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('fails explicitly when a registered frame marker has unsupported geometry', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code>unsupported frame</code></pre>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'unsupported frame' });
+    const frameComputedStyle = (
+      element: Element,
+      pseudoElement?: string
+    ): CSSStyleDeclaration => {
+      if ('PRE' === element.tagName && '::before' === pseudoElement) {
+        return declaration({
+          background: 'rgb(255, 95, 86)',
+          content: '""',
+          display: 'inline',
+          height: '12px',
+          position: 'absolute',
+          width: '12px'
+        });
+      }
+      if ('PRE' === element.tagName) {
+        return declaration({
+          display: 'block',
+          'padding-left': '0px',
+          'padding-top': '28px',
+          'white-space': 'pre'
+        });
+      }
+      if ('CODE' === element.tagName) {
+        return declaration({ display: 'block', 'white-space': 'pre' });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const writes: unknown[] = [];
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: frameComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it.each([
+    { label: 'zero reserved band', paddingTop: '0px', markerTop: '0px' },
+    { label: 'negative marker offset', paddingTop: '28px', markerTop: '-1px' },
+    { label: 'marker beyond reserved band', paddingTop: '28px', markerTop: '29px' }
+  ])('rejects $label code-frame geometry without mutating source', async ({ paddingTop, markerTop }) => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code>unsupported vertical frame</code></pre>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'unsupported vertical frame'
+    });
+    const frameComputedStyle = (
+      element: Element,
+      pseudoElement?: string
+    ): CSSStyleDeclaration => {
+      if ('PRE' === element.tagName && '::before' === pseudoElement) {
+        return declaration({
+          background: 'rgb(255, 95, 86)',
+          content: '""',
+          display: 'inline',
+          height: '12px',
+          left: '14px',
+          position: 'absolute',
+          top: markerTop,
+          width: '12px'
+        });
+      }
+      if ('PRE' === element.tagName) {
+        return declaration({
+          display: 'block',
+          'padding-left': '0px',
+          'padding-top': paddingTop,
+          'white-space': 'pre'
+        });
+      }
+      if ('CODE' === element.tagName) {
+        return declaration({ display: 'block', 'white-space': 'pre' });
+      }
+      return declaration({ display: 'block' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: frameComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async () => {}
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({
+      code: 'wechat-copy-failed',
+      status: 'failed'
+    });
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('normalizes blockquotes before destination pseudos while preserving both Clipboard paths', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<blockquote cite="https://example.test/outer"><p>Outer quote</p>',
+      '<blockquote cite="https://example.test/inner"><p>Inner quote</p></blockquote>',
+      '</blockquote>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Outer quote\nInner quote'
+    });
+
+    const quoteComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('BLOCKQUOTE' === element.tagName && '::before' === pseudoElement) {
+        return declaration({
+          color: 'rgb(120, 10, 10)',
+          content: '"Source marker"',
+          display: 'inline'
+        });
+      }
+      if (pseudoElement) return declaration({});
+      if ('BLOCKQUOTE' === element.tagName) {
+        return declaration({
+          background: 'rgb(255, 249, 249)',
+          'background-color': 'rgb(255, 249, 249)',
+          'border-left-color': 'rgb(239, 112, 96)',
+          'border-left-style': 'solid',
+          'border-left-width': '3px',
+          color: 'rgb(0, 0, 0)',
+          display: 'block',
+          'font-size': '14px',
+          'line-height': '22px',
+          'margin-bottom': '20px',
+          'margin-left': '0px',
+          'margin-right': '0px',
+          'margin-top': '20px',
+          overflow: 'auto',
+          'overflow-wrap': 'normal',
+          'overflow-x': 'auto',
+          'overflow-y': 'auto',
+          'padding-bottom': '10px',
+          'padding-left': '20px',
+          'padding-right': '10px',
+          'padding-top': '10px',
+          position: 'static',
+          'word-break': 'normal'
+        });
+      }
+      if ('ARTICLE' === element.tagName || 'P' === element.tagName) {
+        return declaration({ display: 'block', color: 'rgb(20, 21, 22)' });
+      }
+      return declaration({ display: 'inline' });
+    };
+
+    const modernWrites: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: quoteComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items);
+    });
+
+    await expect(modern.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernItem = (modernWrites[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    const modernTextBlob = modernItem?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('modern quote payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    const modernText = await blobText(modernTextBlob);
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacy = createRuntime(null, null);
+    await prepareClipboard(legacy, preview);
+    await expect(legacy.copy(preview)).resolves.toEqual({
+      method: 'legacy',
+      status: 'copied'
+    });
+
+    expect(modernHtml).toBe(legacyHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    expect(holder.querySelectorAll('blockquote')).toHaveLength(0);
+    const quotes = holder.querySelectorAll('section[cite]');
+    expect(quotes).toHaveLength(2);
+    expect(quotes[0]?.getAttribute('style')).toContain('border-left-width:3px');
+    expect(quotes[0]?.getAttribute('style')).toContain('background:rgb(255, 249, 249)');
+    expect(quotes[1]?.getAttribute('style')).toContain('padding-left:20px');
+    expect(quotes[0]?.querySelector('span[aria-hidden="true"]')?.textContent)
+      .toBe('Source marker');
+    expect(modernText).toContain('Outer quote');
+    expect(modernText).toContain('Inner quote');
+    expect(preview.querySelectorAll('blockquote')).toHaveLength(2);
+  });
+
+  it('preserves undecorated and intentionally underlined links in both Clipboard paths', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<p><a class="plain-link" href="https://example.test/plain">Plain</a> ',
+      '<a class="underlined-link" href="https://example.test/underlined">Underlined</a></p>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Plain Underlined'
+    });
+    const sourceMarkup = preview.innerHTML;
+    const linkComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({});
+      if ('A' === element.tagName) {
+        return declaration({
+          color: 'rgb(30, 107, 184)',
+          display: 'inline',
+          'text-decoration': element.classList.contains('underlined-link') ? 'underline' : 'none'
+        });
+      }
+      return declaration({ display: 'block' });
+    };
+    const modernWrites: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: linkComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items);
+    });
+
+    await expect(modern.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernItem = (modernWrites[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    const modernTextBlob = modernItem?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('modern link payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    const modernText = await blobText(modernTextBlob);
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const legacy = createRuntime(null, null);
+    await prepareClipboard(legacy, preview);
+    await expect(legacy.copy(preview)).resolves.toEqual({
+      method: 'legacy',
+      status: 'copied'
+    });
+
+    expect(modernHtml).toBe(legacyHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    const links = holder.querySelectorAll('section a');
+    expect(links).toHaveLength(2);
+    expect(links[0]?.getAttribute('href')).toBe('https://example.test/plain');
+    expect(links[1]?.getAttribute('href')).toBe('https://example.test/underlined');
+    expect(links[0]?.getAttribute('style')).toContain('text-decoration:none');
+    expect(links[1]?.getAttribute('style')).toContain('text-decoration:underline');
+    expect(modernText).toContain('Plain');
+    expect(modernText).toContain('Underlined');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('protects CSS hash tokens split across syntax spans from WeChat topic parsing', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code><span class="selector">.sample</span><span class="punct"> { color: </span><span class="hash">#</span><span class="number">336699</span><span class="punct">; }</span></code></pre>';
+    const sourceMarkup = preview.innerHTML;
+    const sourceText = '.sample { color: #336699; }';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('clipboard hash payload missing');
+    const html = await blobText(htmlBlob);
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    expect(holder.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
+    expect(await blobText(textBlob)).toBe(sourceText);
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('keeps existing markers, body hashes, inline code, and emoji suffix boundaries unchanged', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<pre><code><span>#</span><span>336699</span></code></pre>',
+      '<pre><code><span>#</span><span>\u2060existing</span></code></pre>',
+      '<pre><code><span>#</span><span>\uFEFFexisting</span></code></pre>',
+      '<pre><code># <span>body</span></code></pre>',
+      '<pre><code><span>#</span><span>\uFE0F</span><span>\u20E3</span></code></pre>',
+      '<pre><code><span>#</span><span>\uFE0E</span></code></pre>',
+      '<pre><code><span>#</span><span>😀</span></code></pre>',
+      '<pre><code><span>#</span><span>;</span></code></pre>',
+      '<pre><code><span>#</span><span>，</span></code></pre>',
+      '<pre><code><span>#</span></code></pre>',
+      '<pre><code><span>#</span>\n<span>next</span></code></pre>',
+      '<p>#body</p>',
+      '<p><code>#inline</code></p>'
+    ].join('');
+    const sourceMarkup = preview.innerHTML;
+    const sourceText = [
+      '#336699',
+      '#\u2060existing',
+      '#\uFEFFexisting',
+      '# body',
+      '#\uFE0F\u20E3',
+      '#\uFE0E',
+      '#😀',
+      '#;',
+      '#，',
+      '#',
+      '#',
+      'next',
+      '#body',
+      '#inline'
+    ].join('\n');
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        return declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => { writes.push(items); }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('marker boundary payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const codeTexts = [...holder.querySelectorAll('pre > code')].map((code) => code.textContent ?? '');
+    expect(codeTexts).toHaveLength(11);
+    expect(codeTexts[0]).toBe('#\uFEFF336699');
+    expect(codeTexts[1]).toBe('#\uFEFF\u2060existing');
+    expect(codeTexts[2]).toBe('#\uFEFFexisting');
+    expect(codeTexts[3]).toBe('#\uFEFF\u2060 \u2060body');
+    expect(codeTexts[4]).toBe('#\uFE0F\u20E3');
+    expect(codeTexts[5]).toBe('#\uFE0E');
+    expect(codeTexts[6]).toBe('#\uFEFF😀');
+    expect(codeTexts[7]).toBe('#;');
+    expect(codeTexts[8]).toBe('#，');
+    expect(codeTexts[9]).toBe('#');
+    expect(codeTexts[10]).toBe('#next');
+    const paragraphs = holder.querySelectorAll('p');
+    expect(paragraphs[0]?.textContent).toBe('#body');
+    expect(paragraphs[1]?.querySelector('code')?.textContent).toBe('#inline');
+    expect(await blobText(textBlob)).toBe(sourceText.replaceAll('\u2060', ''));
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('keeps modern and prepared legacy code payloads identical', async () => {
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code><span class="token">#abc   tail</span></code></pre>';
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: '#abc   tail'
+    });
+    const styleFor = (_element: Element, pseudoElement?: string): CSSStyleDeclaration => (
+      pseudoElement
+        ? declaration({})
+        : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' })
+    );
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: styleFor,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modernWrites: unknown[] = [];
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items);
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernItem = (modernWrites[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    if (!modernHtmlBlob) throw new Error('modern code HTML missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+
+    let legacyHtml = '';
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    const preparedLegacy = createRuntime(null, null);
+    await prepareClipboard(preparedLegacy, preview);
+    await expect(preparedLegacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+    expect(legacyHtml).toBe(modernHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    expect(holder.querySelector('pre > code')?.textContent).toBe(
+      '#\uFEFFabc   tail'.replaceAll(' ', '\u2060 \u2060')
+    );
+  });
+
+  it('restores encoded clone text after connected plaintext measurement throws', async () => {
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code><span class="token">#abc   tail</span></code></pre>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: '#abc   tail'
+    });
+    let measuredClone: HTMLElement | null = null;
+    const originalInnerText = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    Object.defineProperty(HTMLElement.prototype, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this !== preview && this.querySelector('pre > code')) {
+          measuredClone = this;
+          throw new Error('plain-text-measurement-failed');
+        }
+        return this.textContent ?? '';
+      }
+    });
+    try {
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (_element, pseudoElement) => (
+          pseudoElement
+            ? declaration({})
+            : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' })
+        ),
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async () => undefined
+      });
+      await expect(clipboard.copy(preview)).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      const cloneAfterThrow = measuredClone as HTMLElement | null;
+      expect(cloneAfterThrow).not.toBeNull();
+      expect(cloneAfterThrow?.querySelector('pre > code')?.textContent).toBe(
+        '#\uFEFFabc   tail'.replaceAll(' ', '\u2060 \u2060')
+      );
+      expect(preview.innerHTML).toBe(sourceMarkup);
+    } finally {
+      if (originalInnerText) Object.defineProperty(HTMLElement.prototype, 'innerText', originalInnerText);
+      else delete (HTMLElement.prototype as unknown as { innerText?: unknown }).innerText;
+    }
+  });
+
+  it('does not mutate source code when the modern copy is cancelled after serialization starts', async () => {
+    let resolveWrite: (() => void) | null = null;
+    let capturedItem: { payload: Record<string, Blob | PromiseLike<Blob>> } | null = null;
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {
+        capturedItem = this;
+      }
+    }
+    const controller = new AbortController();
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<pre><code><span>#</span><span>336699</span></code></pre>';
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: '#336699' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (_element, pseudoElement) => (
+        pseudoElement
+          ? declaration({})
+          : declaration({ display: 'block', 'white-space': 'pre', color: 'rgb(20, 21, 22)' })
+      ),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: () => new Promise<void>((resolve) => { resolveWrite = resolve; })
+    });
+    const operation = clipboard.copy(preview, { signal: controller.signal });
+    const itemAfterWrite = capturedItem as { payload: Record<string, Blob | PromiseLike<Blob>> } | null;
+    if (!itemAfterWrite) throw new Error('ClipboardItem was not created');
+    const htmlBlob = itemAfterWrite.payload['text/html'];
+    if (!htmlBlob) throw new Error('cancelled code HTML missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    expect(holder.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
+    controller.abort();
+    (resolveWrite as (() => void) | null)?.();
+    await expect(operation).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(preview.innerHTML).toBe(sourceMarkup);
   });
 
   it('keeps syntax-highlighted long lines in one non-wrapping line box', async () => {
@@ -7256,7 +12751,97 @@ describe('createBrowserWechatClipboard', () => {
     expect(table?.parentElement?.getAttribute('style')).toContain('overflow-x:auto!important');
   });
 
-  it('reuses visible full-width table geometry while the Preview pane is hidden', async () => {
+  it('preserves authored table min-width while the wrapper owns overflow', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<table><tbody><tr><td>Wide source</td></tr></tbody></table>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Wide source' });
+    const table = preview.querySelector('table');
+    if (!table) throw new Error('authored min-width table missing');
+    const sourceMarkup = preview.innerHTML;
+    Object.defineProperty(preview, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ bottom: 206, height: 206, left: 0, right: 412, top: 0, width: 412 })
+    });
+    Object.defineProperty(table, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ bottom: 206, height: 206, left: 0, right: 520, top: 0, width: 520 })
+    });
+    const tableComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if (pseudoElement) return declaration({});
+      if ('TABLE' === element.tagName) {
+        return declaration({
+          display: 'table',
+          height: '206px',
+          'max-width': 'none',
+          'min-width': '520px',
+          'overflow-x': 'auto',
+          'overflow-y': 'hidden',
+          width: '100%'
+        });
+      }
+      return declaration({ display: 'table-row' });
+    };
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const modernWrites: ClipboardItemStub[] = [];
+    const createRuntime = (
+      clipboardItem: typeof ClipboardItemStub | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      getComputedStyle: tableComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createRuntime(ClipboardItemStub, async (items) => {
+      modernWrites.push(items[0] as ClipboardItemStub);
+    });
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernHtmlPayload = modernWrites[0]?.payload['text/html'];
+    if (!modernHtmlPayload) throw new Error('authored min-width modern payload missing');
+    const modernHtml = await blobText(modernHtmlPayload);
+
+    let legacyHtml = '';
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createRuntime(null, null);
+      await prepareClipboard(legacy, preview);
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+
+    expect(legacyHtml).toBe(modernHtml);
+    const holder = document.createElement('div');
+    holder.innerHTML = modernHtml;
+    const outputTable = holder.querySelector('table');
+    const outputWrapper = outputTable?.parentElement;
+    const tableStyle = outputTable?.getAttribute('style') ?? '';
+    const wrapperStyle = outputWrapper?.getAttribute('style') ?? '';
+    expect(outputWrapper?.tagName).toBe('SECTION');
+    expect(tableStyle).toContain('min-width:520px');
+    expect(tableStyle).not.toContain('min-width:0!important');
+    expect(tableStyle).toContain('overflow-x:visible!important');
+    expect(wrapperStyle).toContain('min-width:0!important');
+    expect(wrapperStyle).toContain('overflow-x:auto!important');
+    expect(preview.innerHTML).toBe(sourceMarkup);
+  });
+
+  it('uses current hidden table geometry instead of stale visible classification', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub {
       constructor(public payload: Record<string, Blob | Promise<Blob>>) {}
@@ -7269,6 +12854,7 @@ describe('createBrowserWechatClipboard', () => {
     const table = preview.querySelector('table');
     if (!(table instanceof HTMLElement)) throw new Error('table missing');
     let paneHidden = false;
+    let tableWidth = '500px';
     const rect = () => ({
       bottom: 0,
       height: 0,
@@ -7276,12 +12862,53 @@ describe('createBrowserWechatClipboard', () => {
       right: 0,
       toJSON: () => ({}),
       top: 0,
-      width: paneHidden ? 0 : 300,
+      width: paneHidden ? 0 : 500,
       x: 0,
       y: 0
     });
     Object.defineProperty(preview, 'getBoundingClientRect', { configurable: true, value: rect });
-    Object.defineProperty(table, 'getBoundingClientRect', { configurable: true, value: rect });
+    const tableRect = (element: HTMLElement): DOMRect => {
+      const width = 'TABLE' === element.tagName
+        ? paneHidden ? 100 : 500
+        : 500;
+      return {
+        bottom: 0,
+        height: 0,
+        left: 0,
+        right: width,
+        toJSON: () => ({}),
+        top: 0,
+        width,
+        x: 0,
+        y: 0
+      } as DOMRect;
+    };
+    const originalRect = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      'getBoundingClientRect'
+    );
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function(this: HTMLElement) {
+        if ('TABLE' === this.tagName || 'TBODY' === this.tagName) return tableRect(this);
+        if ('ARTICLE' === this.tagName && this.closest('.easymde-wechat-preview-measurement')) {
+          return tableRect(this);
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    Object.defineProperty(table, 'getBoundingClientRect', { configurable: true, value: () => tableRect(table) });
+    const tbody = table.querySelector('tbody');
+    if (tbody) Object.defineProperty(tbody, 'getBoundingClientRect', { configurable: true, value: () => tableRect(tbody) });
     pane.appendChild(preview);
     document.body.appendChild(pane);
     const clipboard = createBrowserWechatClipboard({
@@ -7290,7 +12917,9 @@ describe('createBrowserWechatClipboard', () => {
       document,
       getComputedStyle: (element) => {
         if (element === pane) return declaration({ display: paneHidden ? 'none' : 'block' });
-        if (element === table) return declaration({ display: 'table', width: 'auto' });
+        if ('TABLE' === element.tagName) {
+          return declaration({ display: 'table', width: tableWidth });
+        }
         if ('TBODY' === element.tagName) return declaration({ display: 'table-row-group' });
         if ('TR' === element.tagName) return declaration({ display: 'table-row' });
         if ('TD' === element.tagName) return declaration({ display: 'table-cell' });
@@ -7305,9 +12934,10 @@ describe('createBrowserWechatClipboard', () => {
     try {
       await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
       paneHidden = true;
+      tableWidth = '100px';
       // A hidden SafePreviewHtmlSink refresh replaces innerHTML, so the
-      // second copy must reuse the root-level classification rather than the
-      // old table element's WeakMap entry.
+      // second copy must use current measured CSS rather than the old table
+      // element's WeakMap entry.
       preview.innerHTML = '<table><tbody><tr><td>Cell</td></tr></tbody></table>';
       await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
       const secondItem = (writes[1] as ClipboardItemStub[])[0];
@@ -7316,9 +12946,14 @@ describe('createBrowserWechatClipboard', () => {
       const holder = document.createElement('div');
       holder.innerHTML = await blobText(await htmlBlob);
       const tableStyle = holder.querySelector('table')?.getAttribute('style') ?? '';
-      expect(tableStyle).toContain('width:100%!important');
-      expect(tableStyle).not.toContain('width:max-content!important');
+      expect(tableStyle).toContain('width:max-content!important');
+      expect(tableStyle).not.toContain('width:100%!important');
     } finally {
+      if (originalRect) {
+        Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      } else {
+        delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+      }
       pane.remove();
     }
   });

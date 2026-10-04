@@ -328,6 +328,49 @@ describe('mountAdminEditor', () => {
     ).toBe(false);
   });
 
+  it('logs lifecycle diagnostics at info level without downgrading real failures', () => {
+    const render = vi.fn();
+    vi.mocked(createRoot).mockReturnValue({ render, unmount: vi.fn() } as never);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      mountAdminEditor(bootstrap, {
+        document,
+        failureMessage: 'Editor failed',
+        window,
+        wordpress: {
+          apiFetch: Object.assign(vi.fn(), {
+            nonceMiddleware: { nonce: 'nonce' }
+          }),
+          hooks: { addAction: vi.fn(), removeAction: vi.fn() }
+        }
+      });
+
+      const rendered = render.mock.calls[0]?.[0] as {
+        props: {
+          children: {
+            props: {
+              onFailure: (code: string, level?: 'error' | 'info') => void;
+            };
+          };
+        };
+      };
+      const onFailure = rendered.props.children.props.onFailure;
+      onFailure('wechat-export-cancelled-theme-change', 'info');
+      onFailure('wechat-png-upload-failed');
+
+      expect(info).toHaveBeenCalledWith(
+        '[EasyMDE] wechat-export-cancelled-theme-change'
+      );
+      expect(info).toHaveBeenCalledOnce();
+      expect(error).toHaveBeenCalledWith('[EasyMDE] wechat-png-upload-failed');
+    } finally {
+      info.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   it('creates and disposes the isolated WordPress media frame adapter', () => {
     const render = vi.fn();
     vi.mocked(createRoot).mockReturnValue({

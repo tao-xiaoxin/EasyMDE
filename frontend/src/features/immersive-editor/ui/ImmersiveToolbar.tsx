@@ -5,7 +5,6 @@ import {
   History,
   LayoutGrid,
   Maximize,
-  RefreshCcw,
   SquarePen,
   Table
 } from '../../../generated/lucide-icons';
@@ -28,14 +27,6 @@ function WeChatGlyph() {
   );
 }
 
-function WeChatPendingGlyph() {
-  return (
-    <span className="easymde-wechat-pending-glyph" aria-hidden="true">
-      <RefreshCcw size={16} strokeWidth={2.2} />
-    </span>
-  );
-}
-
 export function ImmersiveToolbar({
   historyAvailable,
   mode,
@@ -44,6 +35,7 @@ export function ImmersiveToolbar({
   styleControls,
   toolbar,
   wechatCopyPending,
+  wechatCopyUnavailable,
   wechatCopied,
   onCopyWechat,
   onExit,
@@ -59,6 +51,7 @@ export function ImmersiveToolbar({
   styleControls: ReactNode;
   toolbar: ReactNode;
   wechatCopyPending: boolean;
+  wechatCopyUnavailable: boolean;
   wechatCopied: boolean;
   onCopyWechat: () => void;
   onExit: () => void;
@@ -116,9 +109,9 @@ export function ImmersiveToolbar({
           onClick={onCopyWechat}
           className={`easymde-immersive-wechat${wechatCopyPending ? ' is-pending' : ''}`}
           aria-busy={wechatCopyPending ? 'true' : undefined}
-          aria-disabled={wechatCopyPending ? 'true' : undefined}
+          aria-disabled={wechatCopyPending || wechatCopyUnavailable ? 'true' : undefined}
         >
-          {wechatCopyPending ? <WeChatPendingGlyph /> : <WeChatGlyph />}
+          <WeChatGlyph />
           <span>{wechatCopied ? strings.wechatCopied : strings.wechat}</span>
         </button>
         <button

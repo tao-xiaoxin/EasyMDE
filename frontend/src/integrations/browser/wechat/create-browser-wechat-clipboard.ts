@@ -386,6 +386,7 @@ type WechatPreviewTransitionLease = Readonly<{
 type WechatDimensionSemanticsContext = Readonly<{
   cleanup: () => void;
   getComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
+  getFormattingOwnerDisplay: (source: Element) => string | null;
   getRootComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   refresh: () => void;
 }>;
@@ -1179,6 +1180,135 @@ function cssomProjectedDimensionValue(
   return normalized;
 }
 
+const CONTENT_BOX_DIMENSION_PROPERTIES = [
+  'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height'
+] as const;
+const CONTENT_BOX_PERCENTAGE_TOKEN = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?[0-9]+)?%$/;
+const CONTENT_BOX_PIXEL_TOKEN = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?[0-9]+)?px$/i;
+const CONTENT_BOX_DIMENSION_KEYWORDS: Readonly<Record<typeof CONTENT_BOX_DIMENSION_PROPERTIES[number], ReadonlySet<string>>> = {
+  width: new Set(['auto']),
+  'min-width': new Set(['auto']),
+  'max-width': new Set(['none']),
+  height: new Set(['auto']),
+  'min-height': new Set(['auto']),
+  'max-height': new Set(['none'])
+};
+const CONTENT_BOX_REPLACED_ELEMENTS = new Set([
+  'audio', 'canvas', 'embed', 'iframe', 'img', 'input', 'object', 'picture',
+  'select', 'source', 'textarea', 'track', 'video'
+]);
+const CONTENT_BOX_PROMOTED_PROPERTIES = new Set(['box-sizing', 'max-width']);
+const CONTENT_BOX_EXCLUDED_PARENT_DISPLAYS = new Set([
+  'flex', 'inline-flex', 'grid', 'inline-grid', 'table', 'inline-table', 'table-caption',
+  'table-cell', 'table-column', 'table-column-group', 'table-footer-group',
+  'table-header-group', 'table-row', 'table-row-group'
+]);
+
+function isContentBoxTransportableDimension(
+  property: typeof CONTENT_BOX_DIMENSION_PROPERTIES[number],
+  value: string
+): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (CONTENT_BOX_DIMENSION_KEYWORDS[property].has(normalized)) return true;
+  if (null !== contentBoxFinitePixelValue(normalized)) return true;
+  const percentage = CONTENT_BOX_PERCENTAGE_TOKEN.exec(normalized);
+  if (!percentage) return false;
+  const parsed = Number.parseFloat(percentage[0].slice(0, -1));
+  return Number.isFinite(parsed) && parsed >= 0;
+}
+
+function contentBoxFinitePixelValue(value: string): number | null {
+  const pixel = CONTENT_BOX_PIXEL_TOKEN.exec(value.trim().toLowerCase());
+  if (!pixel) return null;
+  const parsed = Number.parseFloat(pixel[0]);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function isContentBoxPercentageDimension(value: string): boolean {
+  const match = CONTENT_BOX_PERCENTAGE_TOKEN.exec(value.trim().toLowerCase());
+  if (!match) return false;
+  const parsed = Number.parseFloat(match[0].slice(0, -1));
+  return Number.isFinite(parsed) && parsed >= 0;
+}
+
+function hasExcludedContentBoxParent(
+  source: Element,
+  dimensionSemantics: WechatDimensionSemanticsContext | null
+): boolean {
+  const formattingOwnerDisplay = dimensionSemantics?.getFormattingOwnerDisplay(source);
+  return Boolean(
+    formattingOwnerDisplay
+    && CONTENT_BOX_EXCLUDED_PARENT_DISPLAYS.has(formattingOwnerDisplay)
+  );
+}
+
+function contentBoxEdgeSum(
+  computed: CSSStyleDeclaration,
+  properties: readonly string[]
+): number | null {
+  const values = properties.map((property) => contentBoxFinitePixelValue(
+    computed.getPropertyValue(property)
+  ));
+  if (values.some((value) => null === value || value < 0)) return null;
+  return values.reduce<number>((total, value) => total + (value ?? 0), 0);
+}
+
+function isContentBoxPercentageProjectionCandidate(
+  source: Element,
+  semanticComputed: CSSStyleDeclaration | null,
+  dimensionSemantics: WechatDimensionSemanticsContext | null,
+  pseudoElement: boolean,
+  root: boolean
+): boolean {
+  if (root || pseudoElement || !semanticComputed) return false;
+  const documentNamespace = source.ownerDocument.documentElement?.namespaceURI;
+  if (!documentNamespace || documentNamespace !== source.namespaceURI) return false;
+  if (CONTENT_BOX_REPLACED_ELEMENTS.has(source.localName.toLowerCase())) return false;
+
+  const display = semanticComputed.getPropertyValue('display').trim().toLowerCase();
+  const position = semanticComputed.getPropertyValue('position').trim().toLowerCase();
+  const float = semanticComputed.getPropertyValue('float').trim().toLowerCase();
+  if ('block' !== display || !['static', 'relative'].includes(position) || 'none' !== float) return false;
+  if ('content-box' !== semanticComputed.getPropertyValue('box-sizing').trim().toLowerCase()) return false;
+
+  const rawDimensions = CONTENT_BOX_DIMENSION_PROPERTIES.map((property) => (
+    semanticComputed.getPropertyValue(property).trim()
+  ));
+  if (!rawDimensions.every((value, index) => isContentBoxTransportableDimension(
+    CONTENT_BOX_DIMENSION_PROPERTIES[index] as typeof CONTENT_BOX_DIMENSION_PROPERTIES[number],
+    value
+  ))) return false;
+
+  const horizontalPercentage = rawDimensions.slice(0, 3).some(isContentBoxPercentageDimension);
+  const verticalPercentage = rawDimensions.slice(3).some(isContentBoxPercentageDimension);
+  const horizontalEdges = contentBoxEdgeSum(semanticComputed, [
+    'padding-left', 'padding-right', 'border-left-width', 'border-right-width'
+  ]);
+  const verticalEdges = contentBoxEdgeSum(semanticComputed, [
+    'padding-top', 'padding-bottom', 'border-top-width', 'border-bottom-width'
+  ]);
+  const hasPositivePercentageEdge = Boolean(
+    horizontalPercentage && null !== horizontalEdges && horizontalEdges > 0
+    || verticalPercentage && null !== verticalEdges && verticalEdges > 0
+  );
+  if (!hasPositivePercentageEdge) return false;
+  if (
+    source.closest('svg, math, pre, code, table')
+    || visualRasterizationKind(source)
+    || hasVisualRasterizationAncestor(source)
+    || isKaTeXVisualNode(source)
+    || hasExcludedContentBoxParent(source, dimensionSemantics)
+  ) return false;
+  return !(
+    WECHAT_PNG_GENERATED_IMAGES.has(source)
+    || WECHAT_PNG_VISUAL_CLONES.has(source)
+    || THEME_IMAGE_CLONES.has(source)
+    || CODE_FRAME_PSEUDO_CLONES.has(source)
+    || CODE_FRAME_HEADER_CLONES.has(source)
+    || THEME_HEADING_SUFFIX_CLONES.has(source)
+  );
+}
+
 function contentBoxDimensionValue(
   property: string,
   value: string,
@@ -1284,8 +1414,8 @@ function keepStyle(
   return true;
 }
 
-function portableStyleDeclaration(property: string, value: string): string {
-  return `${property}:${value}${'overflow-wrap' === property ? '!important' : ''}`;
+function portableStyleDeclaration(property: string, value: string, important = false): string {
+  return `${property}:${value}${important || 'overflow-wrap' === property ? '!important' : ''}`;
 }
 
 function supportsSpecialLayout(source: Element): boolean {
@@ -1606,6 +1736,13 @@ async function styleDeclarations(
       ? dimensionSemantics.getComputedStyle(source, pseudoElementName)
       : semanticComputed ?? dimensionSemantics.getComputedStyle(source)
     : null;
+  const promoteContentBoxBounds = isContentBoxPercentageProjectionCandidate(
+    source,
+    semanticComputed ?? null,
+    dimensionSemantics ?? null,
+    pseudoElement,
+    root
+  );
   for (const property of properties) {
     throwIfBackgroundPreparationAborted(signal);
     const value = style.getPropertyValue(property);
@@ -1629,13 +1766,23 @@ async function styleDeclarations(
     const isOrdinaryDimension = !pseudoElement
       && !supportsSpecialLayout(source)
       && ORDINARY_DIMENSION_PROPERTIES.includes(property as (typeof ORDINARY_DIMENSION_PROPERTIES)[number]);
-    const sourceValue = semanticMarginCandidate
-      ?? (isOrdinaryDimension && semanticCandidate
-        ? semanticCandidate
-        : materializedValue);
-    const normalizedValue = portableStyleValue(property, sourceValue, source, style);
+    const preserveRawContentBoxTuple = promoteContentBoxBounds
+      && ('box-sizing' === property || isOrdinaryDimension);
+    const sourceValue = preserveRawContentBoxTuple && semanticCandidate
+      ? semanticCandidate
+      : semanticMarginCandidate
+        ?? (isOrdinaryDimension && semanticCandidate
+          ? semanticCandidate
+          : materializedValue);
+    const normalizedValue = preserveRawContentBoxTuple
+      ? sourceValue
+      : portableStyleValue(property, sourceValue, source, style);
     if (keepStyle(property, normalizedValue, source, pseudoElement, root, value)) {
-      declarations.push(portableStyleDeclaration(property, normalizedValue));
+      declarations.push(portableStyleDeclaration(
+        property,
+        normalizedValue,
+        promoteContentBoxBounds && CONTENT_BOX_PROMOTED_PROPERTIES.has(property)
+      ));
     }
     await yieldToBrowser?.();
   }
@@ -1676,6 +1823,13 @@ function styleDeclarationsSynchronously(
       ? dimensionSemantics.getComputedStyle(source, pseudoElementName)
       : semanticComputed ?? dimensionSemantics.getComputedStyle(source)
     : null;
+  const promoteContentBoxBounds = isContentBoxPercentageProjectionCandidate(
+    source,
+    semanticComputed ?? null,
+    dimensionSemantics ?? null,
+    pseudoElement,
+    root
+  );
   for (const property of properties) {
     const value = style.getPropertyValue(property);
     const materializedValue = materializeBackgroundValueSynchronously(
@@ -1696,13 +1850,23 @@ function styleDeclarationsSynchronously(
     const isOrdinaryDimension = !pseudoElement
       && !supportsSpecialLayout(source)
       && ORDINARY_DIMENSION_PROPERTIES.includes(property as (typeof ORDINARY_DIMENSION_PROPERTIES)[number]);
-    const sourceValue = semanticMarginCandidate
-      ?? (isOrdinaryDimension && semanticCandidate
-        ? semanticCandidate
-        : materializedValue);
-    const normalizedValue = portableStyleValue(property, sourceValue, source, style);
+    const preserveRawContentBoxTuple = promoteContentBoxBounds
+      && ('box-sizing' === property || isOrdinaryDimension);
+    const sourceValue = preserveRawContentBoxTuple && semanticCandidate
+      ? semanticCandidate
+      : semanticMarginCandidate
+        ?? (isOrdinaryDimension && semanticCandidate
+          ? semanticCandidate
+          : materializedValue);
+    const normalizedValue = preserveRawContentBoxTuple
+      ? sourceValue
+      : portableStyleValue(property, sourceValue, source, style);
     if (keepStyle(property, normalizedValue, source, pseudoElement, root, value)) {
-      declarations.push(portableStyleDeclaration(property, normalizedValue));
+      declarations.push(portableStyleDeclaration(
+        property,
+        normalizedValue,
+        promoteContentBoxBounds && CONTENT_BOX_PROMOTED_PROPERTIES.has(property)
+      ));
     }
   }
   return declarations;
@@ -4376,7 +4540,9 @@ function createDimensionSemanticsContext(
   const layoutElements = contextElements(layoutRoot);
   const rawElements = contextElements(rawRoot);
   const rawElementByLayout = new WeakMap<Element, Element>();
+  let formattingOwnerDisplayCache = new WeakMap<Element, string>();
   const refresh = (): void => {
+    formattingOwnerDisplayCache = new WeakMap<Element, string>();
     if (!rawMirror) return;
     rawMirror.pairs.forEach(({ mirror, source }) => {
       syncRawContextAttributes(source, mirror, true);
@@ -4394,12 +4560,28 @@ function createDimensionSemanticsContext(
     if (rawElement) rawElementByLayout.set(element, rawElement);
   });
   refresh();
+  const getFormattingOwnerDisplay = (source: Element): string | null => {
+    let ancestor = source.parentElement;
+    while (ancestor) {
+      const rawAncestor = rawElementByLayout.get(ancestor);
+      if (!rawAncestor) return null;
+      let display = formattingOwnerDisplayCache.get(rawAncestor);
+      if (undefined === display) {
+        display = runtime.getComputedStyle(rawAncestor).getPropertyValue('display').trim().toLowerCase();
+        formattingOwnerDisplayCache.set(rawAncestor, display);
+      }
+      if ('contents' !== display) return display || null;
+      ancestor = ancestor.parentElement;
+    }
+    return null;
+  };
   return {
     cleanup: () => rawMirror?.cleanup(),
     getComputedStyle: (source, pseudoElement) => {
       const rawElement = rawElementByLayout.get(source);
       return rawElement ? runtime.getComputedStyle(rawElement, pseudoElement) : null;
     },
+    getFormattingOwnerDisplay,
     getRootComputedStyle: (source, pseudoElement) => {
       const rawElement = rawElementByLayout.get(source);
       if (rawMirror && rawElement) return runtime.getComputedStyle(rawElement, pseudoElement);
@@ -4669,7 +4851,7 @@ function ordinaryDimensionSemanticsSignature(
   const computed = dimensionSemantics.getComputedStyle(element);
   if (!computed) return '';
   const dimensions = !supportsSpecialLayout(element) && !isSvgElement(element)
-    ? ORDINARY_DIMENSION_PROPERTIES
+    ? ['box-sizing', ...ORDINARY_DIMENSION_PROPERTIES]
       .map((property) => `${property}=${computed.getPropertyValue(property)}`)
       .join(';')
     : '';

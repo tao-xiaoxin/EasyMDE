@@ -271,16 +271,30 @@ signature.
 Dimension semantics use a bounded raw clone-context batch separate from the
 serialization tree. Visible layout geometry remains measured from the original
 source; hidden/source layout reuses the measurement tree with raw source
-semantics. Preserve authored and computed `auto`, percentage, `calc()`, and
-pixel `width`, `min-width`, `max-width`, `height`, `min-height`, and
-`max-height` values instead of forcing ordinary dimensions to `100%`. Relative
-content-box pixel values are projected to border-box with CSSOM padding and
-border widths; SVG, math, PNG, and pseudo-element geometry remains atomic, and
-ordinary images retain semantic width growth with `height:auto`. Initial,
-current, final, and warm semantic reads remain paired with actual geometry
-reads. Raw context and serialization clones are separate and bounded, and all
-temporary display, attributes, and clones are restored or removed in `finally`;
-the batch uses at most two deep clones.
+semantics. The ordinary preservation path has a bounded seven-field raw tuple:
+`box-sizing` plus `width`, `min-width`, `max-width`, `height`, `min-height`, and
+`max-height`. It applies only to same-namespace normal-flow elements with
+`display:block`, `position:static|relative`, `float:none`, a non-replaced
+element, and raw `box-sizing:content-box`; every dimension must be a finite
+non-negative `px` or `%` token or its property-specific `auto`/`none` keyword,
+and at least one percentage must have positive padding-plus-border edges on
+its axis. Root and pseudo-elements, replaced elements, descendants whose raw
+formatting owner (including through `display:contents`) is flex/grid/table,
+elements under `svg`, `math`, `pre`, `code`, or `table`, visual-rasterization
+and KaTeX/Mermaid owners or descendants, and generated clones are excluded.
+An eligible tuple preserves its six raw dimensions and `box-sizing`; only
+`box-sizing` and `max-width` receive `!important` in this dimension path so
+they survive native rules. Ordinary content-box values outside this tuple
+retain the existing serializer behavior: finite pixels project to border-box
+with CSSOM padding and border widths, while percentage and `calc()` values
+retain the CSSOM `calc(semantic + edge pixels)` projection path. SVG, math,
+PNG, pseudo-element, and other special geometry stays atomic; ordinary images
+retain semantic width growth and `height:auto`. Raw `box-sizing` and dimensions
+participate in initial, current, final, and warm freshness signatures, so equal
+used geometry does not hide a raw semantic change. Raw context and
+serialization clones are separate and bounded, and all temporary display,
+attributes, and clones are restored or removed in `finally`; the batch uses at
+most two deep clones.
 portable/default, background, legacy, table, and ordinary-SVG paths otherwise
 remain unchanged.
 
@@ -411,12 +425,15 @@ computed read, or native PNG capture change.
 
 For ordinary flow elements and generated pseudo-elements, map computed logical
 `text-align:start` and `text-align:end` to physical `left` or `right` using the
-source direction from computed style, the nearest `dir`, or the document. WeChat
-forces pasted content to `border-box`, so a finite pixel width, min/max width,
-height, or min/max height computed under ordinary `content-box` is serialized
-with its padding and border widths added and `box-sizing:border-box`. Intrinsic
-or non-pixel dimensions and SVG, Math, KaTeX, and Mermaid special-layout
-geometry retain their existing values.
+source direction from computed style, the nearest `dir`, or the document. The
+bounded raw tuple above is the only ordinary percentage-preservation exception:
+its six dimensions and `box-sizing` are emitted as raw values, with
+`!important` only on `box-sizing` and `max-width` in this dimension path. For
+ordinary content-box values outside that tuple, WeChat's `border-box` rule is
+handled by the existing projection path: finite pixels receive padding and
+border widths, and percentage or `calc()` values retain CSSOM projection.
+Intrinsic values and SVG, Math, KaTeX, and Mermaid special-layout geometry
+retain their existing values.
 
 Materialize only bounded same-origin theme backgrounds as data images. Preserve
 repeating backgrounds as CSS instead of flattening them. For a non-repeating
@@ -554,6 +571,12 @@ paint offsets, and paint-grid quantization, inline baseline variants and
 explicit baseline failure, generated-image sizing inside the HTML overflow
 owner, and single-owner block spacing. Use semantic readiness, not fixed
 sleeps, and record unverified browsers or destination behavior honestly.
+The ordinary dimension matrix must also cover modern/legacy parity for eligible
+raw tuples, the seven-field grammar and positive percentage-edge requirement,
+invalid `calc()`/negative/unit/zero-edge cases, and the excluded root, pseudo,
+replaced, SVG/math/pre/code/table, formatting-owner, and visual-rasterization
+cases. Warm and in-flight cases must change raw `box-sizing` or raw bounds at
+equal used geometry and observe explicit freshness rejection or regeneration.
 The native CSS allocation matrix remains required evidence for fractional and
 superscript formulas; focused unit coverage does not prove final source-to-PNG
 baseline fidelity.

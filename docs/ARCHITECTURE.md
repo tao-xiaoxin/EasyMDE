@@ -686,14 +686,28 @@ untouched, and settled uploads retain the transaction deadline.
 Dimension semantics use a bounded raw clone-context batch separate from the
 serialization tree. Visible layout geometry remains measured from the original
 source; hidden/source layout reuses the measurement tree with raw source
-semantics. Authored and computed `auto`, percentage, `calc()`, and pixel
-width/height/min/max values remain semantic inputs rather than being replaced
-with blanket `100%` dimensions. Relative content-box pixels add CSSOM padding
-and border widths for border-box output, while SVG, math, PNG, pseudo-element,
-and other special geometry stays atomic; ordinary images retain semantic width
-growth and `height:auto`. Initial, current, final, and warm semantic reads stay
-paired with actual geometry, and raw/measurement/serialization contexts clean
-up temporary display, attributes, and clones in `finally`.
+semantics. The ordinary preservation path has a bounded seven-field raw tuple:
+`box-sizing` plus `width`, `min-width`, `max-width`, `height`, `min-height`, and
+`max-height`. It applies only to same-namespace normal-flow elements with
+`display:block`, `position:static|relative`, `float:none`, a non-replaced
+element, and raw `box-sizing:content-box`; every dimension is a finite
+non-negative `px` or `%` token or its property-specific `auto`/`none` keyword,
+and at least one percentage has positive padding-plus-border edges on its
+axis. Root and pseudo-elements, replaced elements, descendants whose raw
+formatting owner (including through `display:contents`) is flex/grid/table,
+elements under `svg`, `math`, `pre`, `code`, or `table`, visual-rasterization
+and KaTeX/Mermaid owners or descendants, and generated clones are excluded.
+Eligible tuples preserve the six raw dimensions and `box-sizing`; only
+`box-sizing` and `max-width` receive `!important` in this dimension path to
+survive native rules. Ordinary content-box values outside this tuple keep the
+existing projection behavior: finite pixels add CSSOM padding and border widths
+for border-box output, while percentage and `calc()` values retain the CSSOM
+projection path. SVG, math, PNG, pseudo-element, and other special geometry
+stays atomic; ordinary images retain semantic width growth and `height:auto`.
+Raw `box-sizing` and dimensions participate in initial, current, final, and
+warm freshness signatures, so equal used geometry does not hide a raw semantic
+change. Raw/measurement/serialization contexts clean up temporary display,
+attributes, and clones in `finally`.
 The batch uses at most two deep clones, with the raw context and serialization
 tree kept separate. Temporary geometry and raw semantic trees exclude runtime
 sink, acceptance, refresh, error, and editor-owner identity markers on creation
@@ -748,10 +762,13 @@ The later freshness walk includes the complete sink markup, root attributes
 except the three refresh bookkeeping attributes, viewport, computed export and
 pseudo-element styles, and element dimensions; scroll-coordinate-only changes
 may reuse a payload. Ordinary and pseudo-element logical text alignment is
-converted to physical values using source direction. Ordinary `content-box`
-finite pixel dimensions are projected to border-box by adding padding and
-borders, while intrinsic values and special SVG/Math/KaTeX/Mermaid geometry
-remain unchanged. The legacy `execCommand` path retains its synchronous
+converted to physical values using source direction. The bounded raw tuple is
+the only ordinary percentage-preservation exception; outside it, ordinary
+`content-box` finite pixel dimensions are projected to border-box by adding
+padding and borders, while percentage and `calc()` values retain the existing
+CSSOM projection path. Intrinsic values and special SVG/Math/KaTeX/Mermaid
+geometry remain unchanged. Raw `box-sizing` remains in the semantic freshness
+signature. The legacy `execCommand` path retains its synchronous
 activation requirement and consumes only a source- and layout-fresh prepared
 payload. A non-emitted pseudo-element (`pseudoContent(rawContent) === null`)
 contributes only its raw `content` sentinel to freshness and skips unused

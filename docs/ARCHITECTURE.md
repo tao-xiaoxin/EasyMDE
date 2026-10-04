@@ -774,8 +774,17 @@ payload. A non-emitted pseudo-element (`pseudoContent(rawContent) === null`)
 contributes only its raw `content` sentinel to freshness and skips unused
 pseudo-style reads, serialization, and asset fetch; quoted empty and text
 pseudos retain full styles and existing limits. Ordinary-node, source, and
-geometry handling is unchanged. Portable output retains safe computed inherited
-typography defaults on
+geometry handling is unchanged.
+For generated H1-H4 `::after` decorations with quoted-empty content, visible
+normal-flow placement, positive emitted dimensions, and retained background
+paint, the paired sync/async serializer marks the generated span and converts
+only its sole ASCII-space Text to U+2060 after normalization. The existing
+root-scoped Text map restores the original space during connected plaintext
+measurement and restores encoded HTML in `finally`. Root, special-layout,
+textual, hidden, transparent, absolute/fixed/sticky, zero-size, filtered-paint, and
+unexportable pseudos are excluded; only heading-after visibility extends the
+pseudo freshness signature.
+Portable output retains safe computed inherited typography defaults on
 each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
 `letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,
 `tab-size`, and `list-style-position`, while omitting layout defaults. Anchors

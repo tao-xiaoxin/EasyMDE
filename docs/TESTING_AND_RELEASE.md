@@ -261,6 +261,13 @@ transparent and hidden negatives, unchanged authored text, and exact plaintext
 restoration after a measurement error. Exercise actual ordinary and hidden
 immersive Source-mode PNG Copy, then native Save and fresh desktop/phone Reader;
 compare the suffix paint and heading geometry at the same article width.
+For a generated empty H1-H4 `::after`, verify sync/async parity, root and
+special-layout exclusions, emitted dimensions and retained paint, filtered URL
+and transparent shorthand negatives, native-like empty-span deletion, scoped
+visibility freshness for warm and in-flight work, unchanged Source bytes, and
+root-scoped plaintext restoration. Actual native evidence must include Paste,
+one Save, normal reload, and fresh desktop/phone Reader; one verified theme is
+not universal theme or pixel acceptance.
 
 Lossless theme-image encoding changes require matching decoded RGBA, dimensions
 and color interpretation; verify actual copied bytes after cache refresh, then

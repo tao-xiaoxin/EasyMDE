@@ -512,6 +512,15 @@ Keep image, pseudo, authored, hidden, transparent and ordinary nodes unchanged.
 Root-scoped export Text records restore its empty original value during connected
 plaintext measurement and restore encoded values in `finally`, alongside the
 fenced-code records; this must add no plaintext character or line boundary.
+The paired pseudo serializer may apply the same transport only to a generated
+H1-H4 `::after` whose parsed content is quoted empty, whose visible block-flow
+box has positive emitted dimensions, and whose emitted CSS retains background
+paint after URL filtering or materialization. Root, special-layout, textual,
+hidden, transparent, absolute/fixed/sticky, zero-size, and unexportable pseudos remain on
+the existing path. Replace only the generated clone's sole ASCII-space Text,
+and register its exact space/U+2060 values with the same root Text owner. The
+heading-after visibility input participates in freshness without widening
+unrelated pseudo signatures.
 The exporter-owned portable root projection adds only `max-width:100%` and
 `margin:0 auto` after computed Preview styles. This root-level declaration step
 is separate from hidden-surface measurement, whose lease retains the original paper

@@ -175,6 +175,7 @@ const HIDDEN_NODES = new WeakSet<Element>();
 const TASK_LIST_CHECKBOX_CLONES = new WeakSet<Element>();
 const FULL_WIDTH_TABLE_CLONES = new WeakSet<Element>();
 const WECHAT_PNG_GENERATED_IMAGES = new WeakSet<Element>();
+const GENERATED_EMPTY_HEADING_SUFFIX_CLONES = new WeakSet<Element>();
 const FULL_WIDTH_TABLE_SOURCE_LAYOUT = new WeakMap<Element, boolean>();
 const FULL_WIDTH_TABLE_ROOT_LAYOUT = new WeakMap<HTMLElement, Map<number, boolean>>();
 const PREVIEW_MEASUREMENT_WIDTHS = new WeakMap<HTMLElement, number>();
@@ -1995,6 +1996,63 @@ function isVisiblePaintedThemeHeadingSuffix(
   );
 }
 
+function isGeneratedEmptyHeadingAfter(
+  source: Element,
+  pseudo: '::before' | '::after',
+  computed: CSSStyleDeclaration,
+  content: string,
+  portableDeclarations: readonly string[],
+  imageLayers: readonly ThemeImageLayer[],
+  root: boolean
+): boolean {
+  if (
+    root
+    ||
+    '::after' !== pseudo
+    || !['H1', 'H2', 'H3', 'H4'].includes(source.tagName)
+    || source.closest('svg, math, .katex, .easymde-math-block, .easymde-math-inline')
+    || '' !== content
+  ) return false;
+  const display = computed.getPropertyValue('display').trim().toLowerCase();
+  const position = computed.getPropertyValue('position').trim().toLowerCase();
+  const visibility = computed.getPropertyValue('visibility').trim().toLowerCase();
+  const opacity = Number.parseFloat(computed.getPropertyValue('opacity'));
+  const width = finiteCssPixelValue(computed.getPropertyValue('width'));
+  const height = finiteCssPixelValue(computed.getPropertyValue('height'));
+  if (
+    'block' !== display
+    || !['static', 'relative'].includes(position)
+    || 'visible' !== visibility
+    || Number.isFinite(opacity) && opacity <= 0
+    || null === width
+    || null === height
+    || width <= 0
+    || height <= 0
+  ) return false;
+  const hasPortableDeclaration = (property: string): boolean => portableDeclarations.some(
+    (declaration) => declaration.startsWith(`${property}:`)
+  );
+  if (!hasPortableDeclaration('width') || !hasPortableDeclaration('height')) return false;
+  if (imageLayers.length > 0) return true;
+  const paint = source.ownerDocument.createElement('span').style;
+  portableDeclarations.forEach((declaration) => {
+    const separator = declaration.indexOf(':');
+    if (separator < 0) return;
+    const property = declaration.slice(0, separator);
+    if (!['background', 'background-image', 'background-color'].includes(property)) return;
+    paint.setProperty(property, declaration.slice(separator + 1));
+  });
+  const backgroundImage = paint.getPropertyValue('background-image').trim().toLowerCase();
+  const backgroundColor = paint.getPropertyValue('background-color').trim().toLowerCase();
+  const rgbaAlpha = /^rgba\([^)]*,\s*([^,)]+)\)$/u.exec(backgroundColor)?.[1];
+  const slashAlpha = /\/\s*([^\s)]+)\s*\)$/u.exec(backgroundColor)?.[1];
+  const alpha = rgbaAlpha ?? slashAlpha;
+  const visibleBackgroundColor = Boolean(backgroundColor)
+    && 'transparent' !== backgroundColor
+    && (undefined === alpha || Number.parseFloat(alpha) > 0);
+  return /(?:url\(|gradient\()/u.test(backgroundImage) || visibleBackgroundColor;
+}
+
 async function addPseudoElement(
   source: Element,
   clone: Element,
@@ -2028,11 +2086,6 @@ async function addPseudoElement(
   );
   throwIfBackgroundPreparationAborted(signal);
   if (!content && !declarations.length) return;
-  const marker = clone.ownerDocument.createElement('span');
-  marker.setAttribute('aria-hidden', 'true');
-  // WeChat drops completely empty decoration spans during paste. A zero-size
-  // whitespace marker keeps CSS-only decorations while remaining invisible.
-  marker.textContent = content || ' ';
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
@@ -2040,10 +2093,25 @@ async function addPseudoElement(
     preserveRepeatingBackground
   );
   if (!content) portableDeclarations.push('font-size:0');
+  const generatedEmptyHeadingSuffix = isGeneratedEmptyHeadingAfter(
+    source,
+    pseudo,
+    computed,
+    content,
+    portableDeclarations,
+    imageLayers,
+    root
+  );
+  const marker = clone.ownerDocument.createElement('span');
+  marker.setAttribute('aria-hidden', 'true');
+  // WeChat drops completely empty decoration spans during paste. A zero-size
+  // whitespace marker keeps CSS-only decorations while remaining invisible.
+  marker.textContent = content || ' ';
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (isCodeFramePseudo(source, pseudo, computed, content)) {
     CODE_FRAME_PSEUDO_CLONES.add(marker);
   }
+  if (generatedEmptyHeadingSuffix) GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(marker);
   appendThemeImages(
     marker,
     preserveRepeatingBackground ? [] : imageLayers,
@@ -2081,9 +2149,6 @@ function addPseudoElementSynchronously(
   );
   if (null === declarations) return false;
   if (!content && !declarations.length) return true;
-  const marker = clone.ownerDocument.createElement('span');
-  marker.setAttribute('aria-hidden', 'true');
-  marker.textContent = content || ' ';
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const portableDeclarations = removeDataImageBackgroundDeclarations(
@@ -2091,10 +2156,23 @@ function addPseudoElementSynchronously(
     preserveRepeatingBackground
   );
   if (!content) portableDeclarations.push('font-size:0');
+  const generatedEmptyHeadingSuffix = isGeneratedEmptyHeadingAfter(
+    source,
+    pseudo,
+    computed,
+    content,
+    portableDeclarations,
+    imageLayers,
+    root
+  );
+  const marker = clone.ownerDocument.createElement('span');
+  marker.setAttribute('aria-hidden', 'true');
+  marker.textContent = content || ' ';
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (isCodeFramePseudo(source, pseudo, computed, content)) {
     CODE_FRAME_PSEUDO_CLONES.add(marker);
   }
+  if (generatedEmptyHeadingSuffix) GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(marker);
   appendThemeImages(
     marker,
     preserveRepeatingBackground ? [] : imageLayers,
@@ -3566,12 +3644,16 @@ function finalizeMarkup(
   });
   wrapKaTeXVisualRoots(clone);
   const themeHeadingSuffixClones: Element[] = [];
+  const generatedEmptyHeadingSuffixClones: Element[] = [];
   clone.querySelectorAll('*').forEach((element) => {
     if (HIDDEN_NODES.has(element)) {
       element.remove();
       return;
     }
     if (THEME_HEADING_SUFFIX_CLONES.has(element)) themeHeadingSuffixClones.push(element);
+    if (GENERATED_EMPTY_HEADING_SUFFIX_CLONES.has(element)) {
+      generatedEmptyHeadingSuffixClones.push(element);
+    }
   });
   clone.querySelectorAll('script, style, button, textarea, select, option, form, iframe, object, embed').forEach((node) => {
     node.remove();
@@ -3687,6 +3769,16 @@ function finalizeMarkup(
     element.appendChild(textNode);
     exportTextNormalizations ??= new Map();
     exportTextNormalizations.set(textNode, { original: '', encoded: '\u2060' });
+  });
+  generatedEmptyHeadingSuffixClones.forEach((element) => {
+    if (!normalized.contains(element)) return;
+    const textNodes = Array.from(element.childNodes)
+      .filter((node): node is Text => node.nodeType === 3);
+    if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
+    const textNode = textNodes[0];
+    textNode.nodeValue = '\u2060';
+    exportTextNormalizations ??= new Map();
+    exportTextNormalizations.set(textNode, { original: ' ', encoded: '\u2060' });
   });
   if (exportTextNormalizations) EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
   return normalized;
@@ -4770,7 +4862,7 @@ function preparedPseudoStyleSignature(
       ? exported
       : dimensionSemantics.getComputedStyle(element, pseudoElement)
     : null;
-  return `${pseudoElement}:${signatureStyleProperties(element, root, true)
+  const signature = `${pseudoElement}:${signatureStyleProperties(element, root, true)
     .map((property) => `${property}=${semanticMarginValue(
       property,
       element,
@@ -4780,6 +4872,12 @@ function preparedPseudoStyleSignature(
       semanticComputed
     ) ?? exported.getPropertyValue(property)}`)
     .join(';')}`;
+  const generatedHeadingVisibility = !root
+    && '::after' === pseudoElement
+    && ['H1', 'H2', 'H3', 'H4'].includes(element.tagName)
+    ? `;visibility=${exported.getPropertyValue('visibility')}`
+    : '';
+  return `${signature}${generatedHeadingVisibility}`;
 }
 
 function preparedChildPseudoMarginSignature(

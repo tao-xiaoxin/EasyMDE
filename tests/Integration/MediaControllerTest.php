@@ -142,7 +142,8 @@ final class MediaControllerTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$post_id    = self::factory()->post->create();
-		$settings['images']['fileNameRule'] = 'easymde-media/{post_id}/{name}.{ext}';
+		$settings['images']['storagePath']  = 'easymde-media/{post_id}';
+		$settings['images']['fileNameRule'] = '{name}.{ext}';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$path       = $this->png_file();
 		$request    = $this->upload_request( $path, '' );
@@ -217,7 +218,8 @@ final class MediaControllerTest extends WP_UnitTestCase {
 	{
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
-		$settings['images']['fileNameRule'] = 'easymde-collision/{name}.{ext}';
+		$settings['images']['storagePath']  = 'easymde-collision';
+		$settings['images']['fileNameRule'] = '{name}.{ext}';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$controller = new MediaController(
 			new Capabilities(),
@@ -260,7 +262,8 @@ final class MediaControllerTest extends WP_UnitTestCase {
 	{
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
-		$settings['images']['fileNameRule'] = '{date}/{md5}-{uuid}.{ext}';
+		$settings['images']['storagePath']  = '{date}';
+		$settings['images']['fileNameRule'] = '{md5}-{uuid}.{ext}';
 		$settings['images']['titleDisplay'] = 'filename';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$path       = $this->png_file();
@@ -339,6 +342,40 @@ final class MediaControllerTest extends WP_UnitTestCase {
 			$this->assertStringNotContainsString( $path, $result->get_error_message(), $case );
 			$this->assertSame( 0, (int) wp_count_posts( 'attachment' )->inherit, $case );
 			unlink( $path );
+		}
+	}
+
+	public function test_corrupt_canonical_settings_fail_media_upload_without_defaulting_the_rule()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => array( 'invalid' ),
+						'fileNameRule' => '{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+		$path    = $this->png_file();
+		$request = $this->upload_request( $path, '' );
+
+		try {
+			$result = ( new MediaController(
+				new Capabilities(),
+				new SettingsCenterRepository( new Options(), new ToolbarRegistry() ),
+				new ObjectKeyBuilder()
+			) )->handle_upload_request( $request );
+
+			$this->assertWPError( $result );
+			$this->assertSame( 'easymde_media_filename_rule_failed', $result->get_error_code() );
+			$this->assertSame( 500, $result->get_error_data()['status'] );
+		} finally {
+			if ( file_exists( $path ) ) {
+				unlink( $path );
+			}
 		}
 	}
 

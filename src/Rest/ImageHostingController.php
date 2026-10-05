@@ -3,9 +3,12 @@
 namespace EasyMDE\Rest;
 
 use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
+use EasyMDE\ImageHosting\ImageHostException;
 use EasyMDE\ImageHosting\ImageHostProviderSupport;
+use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\ImageHosting\RemoteImageDownloader;
 use EasyMDE\Support\Capabilities;
+use EasyMDE\Support\SettingsCenterRepository;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -462,7 +465,19 @@ final class ImageHostingController {
 	}
 
 	private function get_runtime_settings() {
-		$settings = $this->settings_provider->get_image_hosting_settings();
+		try {
+			$settings = $this->settings_provider->get_image_hosting_settings();
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			return new WP_Error(
+				'easymde_image_hosting_configuration_unavailable',
+				__( 'The image-hosting configuration is unavailable.', 'easymde' ),
+				array( 'status' => 500 )
+			);
+		}
 
 		return is_array( $settings )
 			? $settings
@@ -581,12 +596,12 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'imageHostingEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
+		$keys = array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'storagePath', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'imageHostingEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
+		foreach ( array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}
@@ -607,6 +622,7 @@ final class ImageHostingController {
 			'domain'          => 255,
 			'accessKey'       => 255,
 			'secretKey'       => 255,
+			'storagePath'     => 160,
 			'fileNameRule'    => 160,
 			'backupService'   => 32,
 			'backupEndpoint'  => 255,
@@ -636,6 +652,11 @@ final class ImageHostingController {
 			if ( ! is_bool( $enabled ) ) {
 				return false;
 			}
+		}
+		try {
+			( new ObjectKeyBuilder() )->validate( $draft['storagePath'], $draft['fileNameRule'] );
+		} catch ( ImageHostException $exception ) {
+			return false;
 		}
 
 		return true;
@@ -684,11 +705,12 @@ final class ImageHostingController {
 			$backup = array( 'enabled' => $draft['backupEnabled'] ) + $selected;
 		}
 
-			return array(
-				'primary'      => $primary,
-				'backup'       => $backup,
-				'fileNameRule' => $draft['fileNameRule'],
-			);
+		return array(
+			'primary'      => $primary,
+			'backup'       => $backup,
+			'storagePath'  => $draft['storagePath'],
+			'fileNameRule' => $draft['fileNameRule'],
+		);
 	}
 
 	private function verification_config_from_draft( array $draft, $backup ) {

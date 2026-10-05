@@ -169,19 +169,21 @@ final class AdminAssets {
 					'post-new.php' === $hook
 				);
 			} catch ( \Throwable $error ) {
-				if ( ! FrontendAssetContract::is_error( $error ) ) {
+				if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE === $error->getMessage() ) {
+					$root_bootstrap = null;
+				} elseif ( ! FrontendAssetContract::is_error( $error ) ) {
 					throw $error;
+				} else {
+					wp_dequeue_script( $react_editor_assets['loader']['handle'] );
+					$this->react_editor_asset_error = true;
+					wp_trigger_error(
+						__METHOD__,
+						'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
+						E_USER_WARNING
+					);
+
+					return;
 				}
-
-				wp_dequeue_script( $react_editor_assets['loader']['handle'] );
-				$this->react_editor_asset_error = true;
-				wp_trigger_error(
-					__METHOD__,
-					'EasyMDE frontend enhancement asset contract failed (' . FrontendAssetContract::error_code( $error ) . ').',
-					E_USER_WARNING
-				);
-
-				return;
 			}
 
 			wp_add_inline_script(

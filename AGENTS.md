@@ -634,7 +634,8 @@ exists only in current browser memory, and it must not enter persistence,
 browser Storage, exports, HTML bootstrap, logs, diagnostics, or public
 evidence. The Image Hosting verification action performs a real upload: it
 writes one plugin-owned synthetic PNG to the selected provider using the
-current `fileNameRule`, with one attempt and no provider switch, then
+current `storagePath` plus basename `fileNameRule`, with one attempt and no
+provider switch, then
 reports the authoritative object path and public URL in the Settings Center
 dialog. Rules containing time or UUID variables may create a new object on
 each verification. The `{md5}` filename variable is the hexadecimal MD5 digest of
@@ -643,16 +644,30 @@ The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`
 EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
 to the provider and derives the extension from the verified MIME type.
 
-The saved `images.fileNameRule` is a shared naming contract for Image Hosting
-and future EasyMDE-owned local paste/drop uploads sent to `/easymde/v1/media`;
-it remains configurable while Image Hosting is disabled. `ObjectKeyBuilder`
-owns the shared expansion, and the Media owner projects one generated key
-through a request-scoped `MediaUploadPathScope` without falling back to an
-ordinary upload path. WordPress Core remains authoritative for verified MIME,
-unique filenames, attachments, metadata, sub-sizes, URLs, permissions, and
-the native media picker. This contract applies only to future EasyMDE
-paste/drop uploads; it never migrates historical attachments or changes the
-native picker insertion path. Executable checks belong to the
+The canonical image settings are `images.storagePath` and
+`images.fileNameRule`, with defaults `{year}/{month}` and `{md5}.{ext}`.
+`storagePath` may be explicitly empty for the bucket/upload root, while a
+missing field is a legacy shape. A read of that legacy shape splits the old
+complete `fileNameRule` at its last `/` into the storage path and basename rule
+without writing; the next legitimate Save persists both fields. A legacy write
+payload may use the same deterministic split so an already-open page can save.
+The Settings Center bootstrap is schema 3 and Transfer export is schema 11;
+imports 1 through 10 receive the same lossless split, while schema 11 is
+strict.
+
+`ObjectKeyBuilder` is the single owner that combines, validates, and expands
+both fields once for Image Hosting and future EasyMDE-owned local paste/drop
+uploads sent to `/easymde/v1/media`; it remains available while Image Hosting
+is disabled. Combined validation preserves the historical 160-byte and `{ext}`
+semantics, including legacy templates whose basename has no `{ext}`. The Media
+owner projects the resulting key through a request-scoped
+`MediaUploadPathScope` without falling back to an ordinary upload path.
+Changing either field invalidates the Image Hosting verification fingerprint.
+WordPress Core remains authoritative for verified MIME, unique filenames,
+attachments, metadata, sub-sizes, URLs, permissions, and the native media
+picker. This contract applies only to future EasyMDE paste/drop uploads; it
+never migrates historical attachments or changes the native picker insertion
+path. Executable checks belong to the
 [EasyMDE Skill](.agents/skills/easymde/SKILL.md); current implementation facts
 belong to [Architecture](docs/ARCHITECTURE.md), test gates to
 [Testing and Release](docs/TESTING_AND_RELEASE.md), and user/upgrade semantics

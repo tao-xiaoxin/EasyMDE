@@ -53,7 +53,7 @@ function bootstrap({
 		},
 	};
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		closeUrl: "/wp-admin/options-general.php",
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
@@ -1050,8 +1050,7 @@ describe("SettingsCenterRoot images section", () => {
 		await waitFor(() =>
 			expect(screen.getByText("settingsSaved")).not.toBeNull(),
 		);
-		if (!savedPayload.current)
-			throw new Error("settings-save-payload-missing");
+		if (!savedPayload.current) throw new Error("settings-save-payload-missing");
 		expect(
 			(savedPayload.current.settings as SettingsCenterSettings).images
 				.imageHostingEnabled,
@@ -1062,7 +1061,8 @@ describe("SettingsCenterRoot images section", () => {
 	it("edits the disabled filename rule without requests and saves false with the rule", async () => {
 		const user = userEvent.setup();
 		const initialBootstrap = bootstrap({ imageHostingEnabled: false });
-		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		const editedStoragePath = "disabled/{date}";
+		const editedFileNameRule = "{uuid}.{ext}";
 		const savedPayload = { current: null as Record<string, unknown> | null };
 		const savedSettings = {
 			...initialBootstrap.settings,
@@ -1070,6 +1070,7 @@ describe("SettingsCenterRoot images section", () => {
 			images: {
 				...initialBootstrap.settings.images,
 				imageHostingEnabled: false,
+				storagePath: editedStoragePath,
 				fileNameRule: editedFileNameRule,
 			},
 		};
@@ -1094,9 +1095,13 @@ describe("SettingsCenterRoot images section", () => {
 
 		try {
 			render(<SettingsCenterRoot bootstrap={initialBootstrap} />);
+			const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+				name: "storagePath",
+			});
 			const rule = screen.getByRole<HTMLInputElement>("textbox", {
 				name: "fileNameRule",
 			});
+			fireEvent.change(storagePath, { target: { value: editedStoragePath } });
 			fireEvent.change(rule, { target: { value: editedFileNameRule } });
 			expect(fetch).not.toHaveBeenCalled();
 
@@ -1107,6 +1112,7 @@ describe("SettingsCenterRoot images section", () => {
 			await user.click(toggle);
 			expect(toggle.getAttribute("aria-checked")).toBe("false");
 			expect(rule.value).toBe(editedFileNameRule);
+			expect(storagePath.value).toBe(editedStoragePath);
 			expect(fetch).not.toHaveBeenCalled();
 
 			const save = screen.getByRole<HTMLButtonElement>("button", {
@@ -1735,7 +1741,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(10);
+			expect(exported.schemaVersion).toBe(11);
 			expect(exported.settings.images.wechatPngExportEnabled).toBe(false);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
@@ -2239,7 +2245,9 @@ describe("SettingsCenterRoot persistence", () => {
 					responseControl.resolve = resolve;
 				}),
 		);
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");
@@ -2283,7 +2291,9 @@ describe("SettingsCenterRoot persistence", () => {
 				},
 			}),
 		} as Response);
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");
@@ -2535,7 +2545,7 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
-	it("does not revive a pre-save verification after the file-name rule is saved and then restored in the draft", async () => {
+	it("does not revive a pre-save verification after the storage path is saved and then restored in the draft", async () => {
 		const user = userEvent.setup();
 		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
 		const fetch = vi
@@ -2563,7 +2573,8 @@ describe("SettingsCenterRoot persistence", () => {
 							revision: configuredBootstrap.settings.revision + 1,
 							images: {
 								...configuredBootstrap.settings.images,
-								fileNameRule: "changed/{md5}.{ext}",
+								storagePath: "changed",
+								fileNameRule: "{md5}.{ext}",
 							},
 						},
 						credentialStatus: {
@@ -2595,11 +2606,12 @@ describe("SettingsCenterRoot persistence", () => {
 			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
-		const rule = images.getByRole<HTMLInputElement>("textbox", {
-			name: "fileNameRule",
+		const storagePath = images.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
 		});
-		await user.clear(rule);
-		await user.type(rule, "changed/{md5}.{ext}");
+		await user.clear(storagePath);
+		await user.type(storagePath, "changed");
+
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 		await waitFor(() =>
 			expect(
@@ -2608,8 +2620,11 @@ describe("SettingsCenterRoot persistence", () => {
 					?.getAttribute("data-save-status"),
 			).toBe("saved"),
 		);
-		await user.clear(rule);
-		await user.type(rule, SETTINGS_CENTER_TEST_SETTINGS.images.fileNameRule);
+		await user.clear(storagePath);
+		await user.type(
+			storagePath,
+			SETTINGS_CENTER_TEST_SETTINGS.images.storagePath,
+		);
 
 		expect(
 			images.getAllByRole("status").map((status) => status.textContent),
@@ -2800,8 +2815,8 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(reload);
 		await waitFor(() =>
 			expect(
-					screen
-						.getByRole("switch", { name: "showLineNumbers" })
+				screen
+					.getByRole("switch", { name: "showLineNumbers" })
 					.getAttribute("aria-checked"),
 			).toBe("true"),
 		);
@@ -2889,7 +2904,9 @@ describe("SettingsCenterRoot persistence", () => {
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockRejectedValue(new Error("settings-save-failed"));
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");

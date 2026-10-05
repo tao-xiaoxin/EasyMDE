@@ -49,6 +49,9 @@ final class ImageHostingRuntime {
 		if (
 			! in_array( $target, array( 'primary', 'backup' ), true ) ||
 			( 'backup' === $target && empty( $settings['backup']['enabled'] ) ) ||
+			! isset( $settings['storagePath'], $settings['fileNameRule'] ) ||
+			! is_string( $settings['storagePath'] ) ||
+			! is_string( $settings['fileNameRule'] ) ||
 			! isset( $settings['primary'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! isset( $settings['primary']['domain'] ) ||
@@ -76,6 +79,7 @@ final class ImageHostingRuntime {
 			}
 
 			$path = $this->build_object_key(
+				$settings['storagePath'],
 				$settings['fileNameRule'],
 				$bytes,
 				'easymde-editor-icon.png',
@@ -125,9 +129,9 @@ final class ImageHostingRuntime {
 		}
 
 		try {
-			$rule = $settings['fileNameRule'];
-			$key  = $this->build_object_key(
-				$rule,
+			$key = $this->build_object_key(
+				$settings['storagePath'],
+				$settings['fileNameRule'],
 				$prepared['bytes'],
 				$file['name'],
 				$prepared['mime_type'],
@@ -206,14 +210,15 @@ final class ImageHostingRuntime {
 		return null;
 	}
 
-	private function build_object_key( $rule, $bytes, $original_filename, $mime_type, $post_id ) {
+	private function build_object_key( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id ) {
 		$now = call_user_func( $this->clock );
 		if ( ! $now instanceof DateTimeImmutable ) {
 			return $this->operation_error( 'easymde_image_hosting_clock_failed' );
 		}
 
 		return $this->key_builder->build(
-			$rule,
+			$storage_path,
+			$file_name_rule,
 			$bytes,
 			$original_filename,
 			$mime_type,
@@ -416,7 +421,7 @@ final class ImageHostingRuntime {
 
 	private function is_valid_upload_configuration( array $settings ) {
 		if (
-			! isset( $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['behaviors'] ) ||
+			! isset( $settings['primary'], $settings['backup'], $settings['storagePath'], $settings['fileNameRule'], $settings['behaviors'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! is_array( $settings['backup'] ) ||
 			! is_array( $settings['behaviors'] ) ||

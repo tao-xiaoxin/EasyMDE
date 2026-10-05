@@ -25,6 +25,10 @@ import type {
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
 import {
+	DEFAULT_IMAGE_FILE_NAME_RULE,
+	DEFAULT_IMAGE_STORAGE_PATH,
+} from "../../contracts/settings-center-settings";
+import {
 	CircleAlert,
 	CircleCheck,
 	CircleX,
@@ -95,12 +99,12 @@ const FILE_NAME_RULE_PRESETS: ReadonlyArray<
 		value: string;
 	}>
 > = [
-	{ label: "fileNamePresetDate", value: "{date}/{uuid}.{ext}" },
-	{ label: "fileNamePresetMd5", value: "{year}/{month}/{md5}.{ext}" },
-	{ label: "fileNamePresetYearMonth", value: "{year}/{month}/{uuid}.{ext}" },
-	{ label: "fileNamePresetOriginal", value: "{date}/{name}.{ext}" },
-	{ label: "fileNamePresetArticle", value: "{post_id}/{name}.{ext}" },
-	{ label: "fileNamePresetTime", value: "{date}/{time}.{ext}" },
+	{ label: "fileNamePresetDate", value: "{date}.{ext}" },
+	{ label: "fileNamePresetMd5", value: "{md5}.{ext}" },
+	{ label: "fileNamePresetYearMonth", value: "{uuid}.{ext}" },
+	{ label: "fileNamePresetOriginal", value: "{name}.{ext}" },
+	{ label: "fileNamePresetArticle", value: "{post_id}.{ext}" },
+	{ label: "fileNamePresetTime", value: "{time}.{ext}" },
 ];
 
 const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
@@ -688,37 +692,52 @@ function ImageBehaviorRow({
 }
 
 function FileNameRuleEditor({
+	fileNameRule,
 	onChange,
+	storagePath,
 	strings,
-	value,
 }: {
-	onChange: (value: string) => void;
+	fileNameRule: string;
+	onChange: (field: "fileNameRule" | "storagePath", value: string) => void;
+	storagePath: string;
 	strings: SettingsCenterBootstrap["strings"];
-	value: string;
 }) {
-	const inputRef = useRef<HTMLInputElement>(null);
-	const pendingCursorRef = useRef<number | null>(null);
+	const storagePathInputRef = useRef<HTMLInputElement>(null);
+	const fileNameRuleInputRef = useRef<HTMLInputElement>(null);
+	const activeFieldRef = useRef<"fileNameRule" | "storagePath">("fileNameRule");
+	const pendingCursorRef = useRef<{
+		field: "fileNameRule" | "storagePath";
+		position: number;
+	} | null>(null);
 
 	useEffect(() => {
-		const cursor = pendingCursorRef.current;
-		if (cursor === null) return;
-		const input = inputRef.current;
+		const pendingCursor = pendingCursorRef.current;
+		if (pendingCursor === null) return;
+		const input =
+			pendingCursor.field === "storagePath"
+				? storagePathInputRef.current
+				: fileNameRuleInputRef.current;
 		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
 		pendingCursorRef.current = null;
 		input.focus();
-		input.setSelectionRange(cursor, cursor);
-	}, [value]);
+		input.setSelectionRange(pendingCursor.position, pendingCursor.position);
+	}, [fileNameRule, storagePath]);
 
 	const insertVariable = (token: string) => {
-		const input = inputRef.current;
+		const field = activeFieldRef.current;
+		const input =
+			field === "storagePath"
+				? storagePathInputRef.current
+				: fileNameRuleInputRef.current;
 		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
 		const start = input.selectionStart;
 		const end = input.selectionEnd;
 		if (start === null || end === null) {
 			throw new Error("settings-center-file-name-rule-selection-unavailable");
 		}
-		pendingCursorRef.current = start + token.length;
-		onChange(`${value.slice(0, start)}${token}${value.slice(end)}`);
+		const value = field === "storagePath" ? storagePath : fileNameRule;
+		pendingCursorRef.current = { field, position: start + token.length };
+		onChange(field, `${value.slice(0, start)}${token}${value.slice(end)}`);
 	};
 
 	const exampleValues: Readonly<Record<string, string>> = {
@@ -733,12 +752,34 @@ function FileNameRuleEditor({
 		"{name}": "easymde-image",
 		"{ext}": "webp",
 	};
-	const example = Object.entries(exampleValues).reduce(
-		(current, [token, replacement]) => current.replaceAll(token, replacement),
-		value,
-	);
+	const expandExample = (value: string) =>
+		Object.entries(exampleValues).reduce(
+			(current, [token, replacement]) => current.replaceAll(token, replacement),
+			value,
+		);
+	const examplePath = expandExample(storagePath);
+	const exampleFileName = expandExample(fileNameRule);
+	const example = [examplePath, exampleFileName].filter(Boolean).join("/");
 	return (
 		<div className="easymde-settings-center__file-name-editor">
+			<SettingsRow
+				label={strings.storagePath}
+				description={strings.storagePathDescription}
+				minHeight={60}
+			>
+				<div className="easymde-settings-center__image-field-control">
+					<input
+						ref={storagePathInputRef}
+						className="easymde-settings-center__file-name-input"
+						aria-label={strings.storagePath}
+						value={storagePath}
+						onFocus={() => {
+							activeFieldRef.current = "storagePath";
+						}}
+						onChange={(event) => onChange("storagePath", event.target.value)}
+					/>
+				</div>
+			</SettingsRow>
 			<SettingsRow
 				label={strings.fileNameRule}
 				description={strings.fileNameRuleDescription}
@@ -746,11 +787,14 @@ function FileNameRuleEditor({
 			>
 				<div className="easymde-settings-center__image-field-control">
 					<input
-						ref={inputRef}
+						ref={fileNameRuleInputRef}
 						className="easymde-settings-center__file-name-input"
 						aria-label={strings.fileNameRule}
-						value={value}
-						onChange={(event) => onChange(event.target.value)}
+						value={fileNameRule}
+						onFocus={() => {
+							activeFieldRef.current = "fileNameRule";
+						}}
+						onChange={(event) => onChange("fileNameRule", event.target.value)}
 					/>
 				</div>
 			</SettingsRow>
@@ -763,7 +807,7 @@ function FileNameRuleEditor({
 					</div>
 					<div className="easymde-settings-center__file-name-presets">
 						{FILE_NAME_RULE_PRESETS.map((preset, index) => {
-							const active = value === preset.value;
+							const active = fileNameRule === preset.value;
 							return (
 								<button
 									key={preset.value}
@@ -771,7 +815,7 @@ function FileNameRuleEditor({
 									aria-label={strings[preset.label]}
 									aria-pressed={active}
 									data-preset-index={index}
-									onClick={() => onChange(preset.value)}
+									onClick={() => onChange("fileNameRule", preset.value)}
 								>
 									<span className="easymde-settings-center__preset-radio">
 										{active ? <span /> : null}
@@ -818,6 +862,7 @@ function verificationFingerprint(
 	const values =
 		target === "primary"
 			? [
+					settings.storagePath,
 					settings.fileNameRule,
 					settings.service,
 					settings.endpoint,
@@ -827,6 +872,7 @@ function verificationFingerprint(
 					settings.secretKey,
 				]
 			: [
+					settings.storagePath,
 					settings.fileNameRule,
 					settings.domain,
 					settings.backupEnabled ? "enabled" : "disabled",
@@ -964,7 +1010,8 @@ export function ImagesSettingsPage({
 			domain: draft.domain,
 			accessKey: "",
 			secretKey: "",
-			fileNameRule: "{year}/{month}/{md5}.{ext}",
+			storagePath: DEFAULT_IMAGE_STORAGE_PATH,
+			fileNameRule: DEFAULT_IMAGE_FILE_NAME_RULE,
 			uploadRetryCount: 0,
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
@@ -1306,8 +1353,9 @@ export function ImagesSettingsPage({
 						) : null}
 						<FileNameRuleEditor
 							strings={strings}
-							value={settings.fileNameRule}
-							onChange={(value) => setValue("fileNameRule", value)}
+							storagePath={settings.storagePath}
+							fileNameRule={settings.fileNameRule}
+							onChange={(field, value) => setValue(field, value)}
 						/>
 						{settings.imageHostingEnabled ? (
 							<Fragment>

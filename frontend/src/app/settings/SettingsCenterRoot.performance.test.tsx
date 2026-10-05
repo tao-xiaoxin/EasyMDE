@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+	act,
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+} from "@testing-library/react";
 import { createElement } from "@wordpress/element";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,7 +28,9 @@ const pageRenders = vi.hoisted(() => ({
 }));
 
 vi.mock("./GeneralSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		GeneralSettingsPage: ({
 			onChange,
@@ -32,7 +40,8 @@ vi.mock("./GeneralSettingsPage", async () => {
 			settings?: SettingsCenterSettings["general"];
 		}) => {
 			pageRenders.general += 1;
-			if (!settings) throw new Error("settings-center-general-settings-missing");
+			if (!settings)
+				throw new Error("settings-center-general-settings-missing");
 			return createMockElement(
 				"button",
 				{
@@ -50,7 +59,9 @@ vi.mock("./GeneralSettingsPage", async () => {
 });
 
 vi.mock("./ShortcutsSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		findShortcutConflicts: () => [],
 		ShortcutsSettingsPage: () => {
@@ -61,7 +72,9 @@ vi.mock("./ShortcutsSettingsPage", async () => {
 });
 
 vi.mock("./ImagesSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		DuplicateImageHostDialog: () => null,
 		hasDuplicateImageHostConfiguration: () => false,
@@ -73,7 +86,9 @@ vi.mock("./ImagesSettingsPage", async () => {
 });
 
 vi.mock("./MarkdownSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		MarkdownSettingsPage: () => {
 			pageRenders.markdown += 1;
@@ -83,7 +98,9 @@ vi.mock("./MarkdownSettingsPage", async () => {
 });
 
 vi.mock("./TransferSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		TransferSettingsPage: () => {
 			pageRenders.transfer += 1;
@@ -93,7 +110,9 @@ vi.mock("./TransferSettingsPage", async () => {
 });
 
 vi.mock("./AboutSettingsPage", async () => {
-	const { createElement: createMockElement } = await import("@wordpress/element");
+	const { createElement: createMockElement } = await import(
+		"@wordpress/element"
+	);
 	return {
 		AboutDialog: () => null,
 		AboutSettingsPage: () => {
@@ -107,7 +126,7 @@ import { SettingsCenterRoot } from "./SettingsCenterRoot";
 
 function bootstrap(): SettingsCenterBootstrap {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		closeUrl: "/wp-admin/options-general.php",
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
@@ -160,31 +179,35 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 	});
 
 	it("keeps unchanged page props stable when reconciling an authoritative save", async () => {
-		const fetch = vi.spyOn(window, "fetch").mockImplementation(async (_input, init) => {
-			const payload = JSON.parse(String(init?.body)) as {
-				settings: SettingsCenterSettings;
-			};
-			return {
-				ok: true,
-				json: async () => ({
-					settings: {
-						...payload.settings,
-						revision: payload.settings.revision + 1,
-					},
-					credentialStatus: {
-						primaryConfigured: false,
-						backupConfigured: false,
-					},
-				}),
-			} as Response;
-		});
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (_input, init) => {
+				const payload = JSON.parse(String(init?.body)) as {
+					settings: SettingsCenterSettings;
+				};
+				return {
+					ok: true,
+					json: async () => ({
+						settings: {
+							...payload.settings,
+							revision: payload.settings.revision + 1,
+						},
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "edit-general" }));
 		const rendersBeforeSave = { ...pageRenders };
 		fireEvent.click(screen.getByRole("button", { name: "saveSettings" }));
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		expect(pageRenders.general).toBe(rendersBeforeSave.general);
 		expect(pageRenders.shortcuts).toBe(rendersBeforeSave.shortcuts);
 		expect(pageRenders.markdown).toBe(rendersBeforeSave.markdown);
@@ -213,14 +236,19 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 				}),
 			} as Response;
 		});
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const root = container.querySelector(".easymde-settings-center");
 		if (!(root instanceof HTMLDivElement))
 			throw new Error("settings-center-root-missing");
 
-		fireEvent.change(screen.getByRole("searchbox", { name: "searchSettings" }), {
-			target: { value: "missing-setting" },
-		});
+		fireEvent.change(
+			screen.getByRole("searchbox", { name: "searchSettings" }),
+			{
+				target: { value: "missing-setting" },
+			},
+		);
 		await waitFor(() =>
 			expect(screen.getByText("noSearchResults")).not.toBeNull(),
 		);
@@ -228,7 +256,9 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 		fireEvent.click(screen.getByRole("button", { name: "edit-general" }));
 		fireEvent.click(screen.getByRole("button", { name: "saveSettings" }));
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		expect(querySelectorAll).not.toHaveBeenCalled();
 	});
 
@@ -250,7 +280,8 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 		});
 
 		expect(fetch).toHaveBeenCalledOnce();
-		if (!resolveResponse) throw new Error("settings-save-response-resolver-missing");
+		if (!resolveResponse)
+			throw new Error("settings-save-response-resolver-missing");
 		resolveResponse({
 			ok: true,
 			json: async () => ({
@@ -264,7 +295,9 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 				},
 			}),
 		} as Response);
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 	});
 
 	it("releases the synchronous save lock after a rejected request", async () => {
@@ -299,7 +332,9 @@ describe("SettingsCenterRoot save performance boundaries", () => {
 		);
 		fireEvent.click(save);
 
-		await waitFor(() => expect(screen.getByText("settingsSaved")).not.toBeNull());
+		await waitFor(() =>
+			expect(screen.getByText("settingsSaved")).not.toBeNull(),
+		);
 		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 });

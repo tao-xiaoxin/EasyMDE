@@ -39,27 +39,53 @@ Hosting settings, Verify Upload, and the explicit secret-reveal action remain
 available under their own administrator, Nonce, and transient-memory
 contracts.
 
-### Shared File Name Rule
+### Shared Storage Path And File Name Rule
 
-The saved `fileNameRule` remains configurable and visible while Image Hosting
-is disabled. `ObjectKeyBuilder` is the single expansion owner for provider
-uploads and future EasyMDE local paste/drop uploads sent to `/easymde/v1/media`.
+The canonical image settings are `images.storagePath` and
+`images.fileNameRule`. Their defaults are `{year}/{month}` and
+`{md5}.{ext}`. `storagePath` may be empty, which means the provider bucket or
+WordPress upload root; an absent field is a legacy shape and is not equivalent
+to an explicitly empty path. `fileNameRule` is the basename rule and does not
+contain the storage directory.
+
+When a stored settings document has no `storagePath`, the settings owner splits
+the old complete `fileNameRule` at its last `/`. The prefix becomes
+`storagePath`, the suffix becomes the basename rule, and a rule without `/`
+gets an empty path. This is a read-time projection only: it must not write or
+increment the settings revision. The next legitimate Settings Save persists
+both canonical fields. A legacy write payload from an already-open page may
+omit `storagePath` and receives the same deterministic split; a canonical
+schema 11 transfer must include both fields.
+
+`ObjectKeyBuilder` is the single owner that combines, validates, and expands
+the two fields exactly once for provider uploads and EasyMDE local paste/drop
+uploads sent to `/easymde/v1/media`. Combined validation preserves the
+historical 160-byte limit and `{ext}` behavior, including legacy complete rules
+whose basename did not contain `{ext}`. It rejects empty or malformed rules,
+separators and traversal outside the storage-path boundary, unknown
+placeholders, and invalid combined object keys. UTC, UUID, `post_id`, digest,
+date/time, sanitized name, and verified-extension variables are expanded only
+by this builder. Any path or rule failure is explicit; neither owner falls back
+to another key builder or an ordinary upload path.
+
 The Media controller takes one credential-free settings snapshot, validates the
-real MIME and size, then reads bounded exact bytes before expanding UTC, UUID,
-`post_id`, digest, date/time, name, and verified-extension variables. Its
-`MediaUploadPathScope` matches the exact temporary file plus a one-time internal
-token. Its final-priority sideload prefilter restores the generated basename;
-the matching final overrides hook only registers an exact-file final
-`wp_check_filetype_and_ext` callback. That final MIME callback arms the one-shot
-`upload_dir` projection, so upload-directory reads from earlier overrides or
-MIME callbacks remain ordinary. Every operation removes the prefilter,
-overrides, MIME, and upload-directory hooks in `finally`.
+real MIME and size, then reads bounded exact bytes before calling the shared
+builder. Its `MediaUploadPathScope` matches the exact temporary file plus a
+one-time internal token. Its final-priority sideload prefilter restores the
+generated basename; the matching final overrides hook only registers an
+exact-file final `wp_check_filetype_and_ext` callback. That final MIME callback
+arms the one-shot `upload_dir` projection, so upload-directory reads from
+earlier overrides or MIME callbacks remain ordinary. Every operation removes
+the prefilter, overrides, MIME, and upload-directory hooks in `finally`.
 WordPress Core remains authoritative for MIME handling, `wp_unique_filename()`,
 attachment creation, metadata, sub-sizes, URLs, permissions, and the native
 media picker. Original sanitized client names supply the response filename,
 alt text, title response, and attachment title stem; generated hash/UUID values
-must not leak into those human fields. A scope or rule failure is explicit and
-must never fall back to an ordinary upload path.
+must not leak into those human fields.
+
+Changing either canonical field invalidates the Settings Center's prior
+verification result and its stale-result fingerprint. Provider verification and
+future Media uploads therefore observe one current pair of fields.
 
 This behavior covers future EasyMDE paste/drop uploads only. It does not move
 historical attachments or change the explicit native media-picker insertion

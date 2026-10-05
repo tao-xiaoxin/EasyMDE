@@ -114,7 +114,8 @@ final class MediaController {
 		}
 		if (
 			! is_array( $media_settings ) ||
-			! isset( $media_settings['file_name_rule'], $media_settings['max_bytes'], $media_settings['mime_types'], $media_settings['title_display'] ) ||
+			! isset( $media_settings['storage_path'], $media_settings['file_name_rule'], $media_settings['max_bytes'], $media_settings['mime_types'], $media_settings['title_display'] ) ||
+			! is_string( $media_settings['storage_path'] ) ||
 			! is_string( $media_settings['file_name_rule'] ) ||
 			! is_int( $media_settings['max_bytes'] ) ||
 			$media_settings['max_bytes'] <= 0 ||
@@ -164,6 +165,7 @@ final class MediaController {
 				throw new ImageHostException( 'easymde_media_clock_invalid' );
 			}
 			$key           = $this->key_builder->build(
+				$media_settings['storage_path'],
 				$media_settings['file_name_rule'],
 				$bytes,
 				$original_filename,

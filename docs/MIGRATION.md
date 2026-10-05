@@ -120,6 +120,43 @@ values remain stored but do not affect rendering.
 `images.wechatPngExportEnabled` is a strict boolean and defaults to `false`.
 Reading settings that predate the field returns `false` in memory without
 writing or normalizing the stored option. Settings transfer schemas 1 through
-9 import the field as `false`; schema 10 requires an explicit boolean. The next
+9 import the field as `false`; schema 10 requires an explicit boolean. Schema
+11 is the current transfer format and retains that PNG requirement. The next
 authorized complete Settings Save establishes the field through the normal
 Settings Center persistence path.
+
+## Image Object-Key Rule Split
+
+The canonical Image Hosting settings are:
+
+```text
+images.storagePath   = {year}/{month}
+images.fileNameRule  = {md5}.{ext}
+```
+
+`storagePath` is a directory template and `fileNameRule` is a basename
+template. An explicitly empty `storagePath` targets the provider bucket or
+WordPress upload root. It is distinct from a missing field.
+
+Existing settings may contain one complete path template in
+`images.fileNameRule` and no `images.storagePath`. Reads project that legacy
+shape by splitting at the last `/`; the prefix is the storage path, the suffix
+is the basename, and a rule without `/` produces an empty storage path. This
+projection is lazy and read-only: it does not write the option or change its
+revision. The next legitimate Settings Save persists both canonical fields.
+A legacy write payload from an already-open Settings page is accepted through
+the same deterministic split; canonical Transfer schema 11 payloads must carry
+both fields.
+
+Transfer imports from schemas 1 through 10 receive this lossless split before
+the normal validation path. Transfer export uses schema 11. The Settings
+Center bootstrap is schema 3 and includes both fields. No attachment, provider
+object, or historical path is renamed or moved by this compatibility step.
+
+`ObjectKeyBuilder` is the sole runtime owner of combining, validating, and
+expanding `storagePath` plus the basename rule. Image Hosting and future
+EasyMDE local paste/drop uploads through `/easymde/v1/media` pass the same pair
+to that builder, so the selected upload owner cannot produce a divergent key.
+Combined validation preserves the historical 160-byte and `{ext}` behavior,
+including legacy rules whose basename lacks `{ext}`. Changing either field
+invalidates the prior verification fingerprint and any stale completion.

@@ -124,6 +124,7 @@ function mutationAffectsSettingsSearch(mutation: MutationRecord): boolean {
 	);
 }
 const PRIMARY_VERIFICATION_SETTING_KEYS = [
+	"storagePath",
 	"fileNameRule",
 	"service",
 	"endpoint",
@@ -133,6 +134,7 @@ const PRIMARY_VERIFICATION_SETTING_KEYS = [
 	"secretKey",
 ] as const;
 const BACKUP_VERIFICATION_SETTING_KEYS = [
+	"storagePath",
 	"fileNameRule",
 	"domain",
 	"backupEnabled",
@@ -308,10 +310,7 @@ export function SettingsCenterRoot({
 			),
 		[bootstrap.reservedShortcuts, settings.shortcuts.values, strings],
 	);
-	const showSaveFeedback = (
-		kind: SaveFeedback["kind"],
-		message: string,
-	) => {
+	const showSaveFeedback = (kind: SaveFeedback["kind"], message: string) => {
 		saveFeedbackIdRef.current += 1;
 		setSaveFeedbackFocused(false);
 		setSaveFeedback({ id: saveFeedbackIdRef.current, kind, message });
@@ -597,8 +596,7 @@ export function SettingsCenterRoot({
 	}, [saveStatus]);
 
 	useEffect(() => {
-		if ("success" !== saveFeedback?.kind || saveFeedbackFocused)
-			return;
+		if ("success" !== saveFeedback?.kind || saveFeedbackFocused) return;
 		const windowRef = scrollContainerRef.current?.ownerDocument.defaultView;
 		if (!windowRef)
 			throw new Error("settings-center-save-feedback-window-missing");
@@ -886,10 +884,7 @@ export function SettingsCenterRoot({
 				{ resetSecrets },
 			);
 			if (controller.signal.aborted) return;
-			const saved = reconcileSavedSettings(
-				requestedSettings,
-				result.settings,
-			);
+			const saved = reconcileSavedSettings(requestedSettings, result.settings);
 			setImageDraft((current) => {
 				if (
 					current.primaryCredentialsConfigured ===
@@ -902,8 +897,7 @@ export function SettingsCenterRoot({
 					...current,
 					primaryCredentialsConfigured:
 						result.credentialStatus.primaryConfigured,
-					backupCredentialsConfigured:
-						result.credentialStatus.backupConfigured,
+					backupCredentialsConfigured: result.credentialStatus.backupConfigured,
 				};
 			});
 			if (verificationInvalidation.primary || verificationInvalidation.backup) {
@@ -1007,12 +1001,13 @@ export function SettingsCenterRoot({
 					error instanceof Error
 						? error.message
 						: "settings-center-get-rejected";
-				const nextError: Exclude<SaveError, "conflict" | null> =
-					code.endsWith("-network-failed")
-						? "network"
-						: code.endsWith("-response-invalid")
-							? "invalid"
-							: "rejected";
+				const nextError: Exclude<SaveError, "conflict" | null> = code.endsWith(
+					"-network-failed",
+				)
+					? "network"
+					: code.endsWith("-response-invalid")
+						? "invalid"
+						: "rejected";
 				showSaveFeedback(
 					"error",
 					"network" === nextError

@@ -171,6 +171,8 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"imageHostFailureTimeout",
 	"imageHostFailureProvider",
 	"imageHostFailureInvalidResponse",
+	"storagePath",
+	"storagePathDescription",
 	"fileNameRule",
 	"fileNameRuleDescription",
 	"commonFileNameTemplates",
@@ -377,7 +379,7 @@ export type SettingsCenterStringKey =
 	(typeof SETTINGS_CENTER_STRING_KEYS)[number];
 
 export type SettingsCenterBootstrap = Readonly<{
-	schemaVersion: 2;
+	schemaVersion: 3;
 	closeUrl: string;
 	uploadLimits: Readonly<{ systemMaxBytes: number }>;
 	api: SettingsCenterApi;
@@ -565,8 +567,79 @@ const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"ext",
 ]);
 
+function assertImageStoragePath(value: unknown): void {
+	if (typeof value !== "string" || value.length > 160) {
+		throw new Error("settings-center-images-storagePath-invalid");
+	}
+	if (value === "") return;
+
+	const variables = [...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(
+		(match) => match[1] ?? "",
+	);
+	const literal = value.replace(/\{[A-Za-z0-9_]+\}/g, "");
+	const hasControlCharacter = [...value].some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+
+		return codePoint < 32 || codePoint === 127;
+	});
+	if (
+		value.startsWith("/") ||
+		value.endsWith("/") ||
+		value.includes("\\") ||
+		value.includes("..") ||
+		value.includes("//") ||
+		hasControlCharacter ||
+		value.includes("?") ||
+		value.includes("#") ||
+		variables.some(
+			(variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
+		) ||
+		!/^[A-Za-z0-9._/-]*$/.test(literal) ||
+		literal.includes("{") ||
+		literal.includes("}")
+	) {
+		throw new Error("settings-center-images-storagePath-invalid");
+	}
+}
+
 function assertImageFileNameRule(value: unknown): void {
 	if (typeof value !== "string" || value.length === 0 || value.length > 160) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+
+	const variables = [...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(
+		(match) => match[1] ?? "",
+	);
+	const literal = value.replace(/\{[A-Za-z0-9_]+\}/g, "");
+	const hasControlCharacter = [...value].some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+
+		return codePoint < 32 || codePoint === 127;
+	});
+	if (
+		value.includes("/") ||
+		value.includes("\\") ||
+		value.includes("..") ||
+		value.includes("//") ||
+		hasControlCharacter ||
+		value.includes("?") ||
+		value.includes("#") ||
+		variables.some(
+			(variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
+		) ||
+		!/^[A-Za-z0-9._/-]*$/.test(literal) ||
+		literal.includes("{") ||
+		literal.includes("}")
+	) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+}
+
+function assertImageObjectKeyTemplate(value: unknown): void {
+	if (typeof value !== "string" || value.length === 0) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+	if (utf8ByteLength(value) > 160) {
 		throw new Error("settings-center-images-fileNameRule-invalid");
 	}
 
@@ -598,6 +671,22 @@ function assertImageFileNameRule(value: unknown): void {
 	) {
 		throw new Error("settings-center-images-fileNameRule-invalid");
 	}
+}
+
+export function assertLegacyImageObjectKeyTemplate(value: unknown): void {
+	assertImageObjectKeyTemplate(value);
+}
+
+function assertCombinedImageObjectKeyTemplate(
+	storagePath: unknown,
+	fileNameRule: unknown,
+): void {
+	if (typeof storagePath !== "string" || typeof fileNameRule !== "string") {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+	assertImageObjectKeyTemplate(
+		storagePath === "" ? fileNameRule : `${storagePath}/${fileNameRule}`,
+	);
 }
 
 function parseSettingsBooleanFields(
@@ -704,6 +793,7 @@ export function parseSettingsCenterSettings(
 		domain: 255,
 		accessKey: 255,
 		secretKey: 255,
+		storagePath: 160,
 		fileNameRule: 160,
 		backupService: 32,
 		backupEndpoint: 255,
@@ -748,7 +838,9 @@ export function parseSettingsCenterSettings(
 		],
 		"settings-center-images-settings-invalid",
 	);
+	assertImageStoragePath(images.storagePath);
 	assertImageFileNameRule(images.fileNameRule);
+	assertCombinedImageObjectKeyTemplate(images.storagePath, images.fileNameRule);
 	assertEnumFields(images, "images", {
 		service: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
 		backupService: ["cloudflare-r2", "qiniu-kodo", "aliyun-oss", "tencent-cos"],
@@ -838,7 +930,8 @@ export function parseSettingsCenterSettings(
 			throw new Error(`settings-center-shortcut-${id}-invalid`);
 		}
 		if (
-			canonicalizeKeyboardShortcut(shortcut.windows, "win") !== shortcut.windows ||
+			canonicalizeKeyboardShortcut(shortcut.windows, "win") !==
+				shortcut.windows ||
 			canonicalizeKeyboardShortcut(shortcut.mac, "mac") !== shortcut.mac
 		) {
 			throw new Error(`settings-center-shortcut-${id}-invalid`);
@@ -857,7 +950,7 @@ export function parseSettingsCenterBootstrap(
 	value: unknown,
 ): SettingsCenterBootstrap {
 	const root = parseObject(value, "settings-center-bootstrap-invalid");
-	if (root.schemaVersion !== 2) {
+	if (root.schemaVersion !== 3) {
 		throw new Error("settings-center-bootstrap-version-unsupported");
 	}
 
@@ -955,7 +1048,7 @@ export function parseSettingsCenterBootstrap(
 		}
 	}
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		closeUrl: parseString(root.closeUrl, "settings-center-close-url-invalid"),
 		uploadLimits: {
 			systemMaxBytes: (() => {

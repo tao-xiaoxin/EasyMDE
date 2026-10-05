@@ -25,6 +25,27 @@ export type ImageHostProvider =
 	| "aliyun-oss"
 	| "tencent-cos";
 
+export const DEFAULT_IMAGE_STORAGE_PATH = "{year}/{month}";
+export const DEFAULT_IMAGE_FILE_NAME_RULE = "{md5}.{ext}";
+
+export type LegacyImageObjectKeySplit = Readonly<{
+	storagePath: string;
+	fileNameRule: string;
+}>;
+
+export function splitLegacyImageFileNameRule(
+	value: string,
+): LegacyImageObjectKeySplit {
+	const separator = value.lastIndexOf("/");
+	if (separator < 0) {
+		return { storagePath: "", fileNameRule: value };
+	}
+	return {
+		storagePath: value.slice(0, separator),
+		fileNameRule: value.slice(separator + 1),
+	};
+}
+
 export type ImageSettings = Readonly<{
 	imageHostingEnabled: boolean;
 	wechatPngExportEnabled: boolean;
@@ -34,6 +55,7 @@ export type ImageSettings = Readonly<{
 	domain: string;
 	accessKey: string;
 	secretKey: string;
+	storagePath: string;
 	fileNameRule: string;
 	uploadRetryCount: number;
 	backupEnabled: boolean;

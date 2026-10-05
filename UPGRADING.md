@@ -23,21 +23,33 @@ EasyMDE metadata now describes document state, not editor admission. Existing po
 
 Opening an ordinary existing supported post imports current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
 
-## File Name Rule And Media Uploads
+## Storage Path And File Name Rule
 
-The saved File Name Rule is shared by Image Hosting and future EasyMDE local
-paste/drop uploads. It remains configurable while Image Hosting is disabled;
-in that state, the protected WordPress Media Library `/easymde/v1/media` owner
-uses the rule for new EasyMDE paste/drop uploads. WordPress Core still chooses
-the verified MIME, unique filename, attachment, metadata, sub-sizes, URL, and
-permissions. Image Hosting continues to use the same rule for its provider
-object key when enabled.
+Image Hosting now exposes two settings: **Storage Path** and **File Name Rule**.
+The canonical defaults are `{year}/{month}` and `{md5}.{ext}`. The first is a
+directory template; the second is a basename template. An explicitly empty
+Storage Path means the provider bucket or WordPress upload root.
 
-This is not a data migration. Existing attachment files and paths are not
-renamed or moved, and the explicit native WordPress media picker is unchanged.
-After upgrading, test one synthetic EasyMDE paste/drop upload if the rule is
-important to your workflow; do not expect historical attachments to follow a
-new rule.
+Existing settings that have only the old complete `fileNameRule` are read
+without an option write. EasyMDE splits that value at the last `/`; the prefix
+becomes Storage Path and the suffix becomes File Name Rule. A legacy rule with
+no slash uses an empty Storage Path. The next legitimate Settings Save stores
+both fields. An already-open legacy page may submit its old shape once and is
+normalized through the same deterministic split. Transfer schemas 1 through
+10 receive the same lossless import behavior; schema 11 is strict and exports
+the two canonical fields.
+
+`ObjectKeyBuilder` combines the two fields for both Image Hosting and future
+EasyMDE local paste/drop uploads through `/easymde/v1/media`. Combined
+validation retains the historical 160-byte and `{ext}` behavior, including
+legacy basename rules without `{ext}`. Changing either field makes the prior
+Verify Upload result stale. Existing attachment files, provider objects, and
+paths are not renamed or moved, and the explicit native WordPress media picker
+is unchanged.
+
+After upgrading, test one synthetic EasyMDE paste/drop upload and Verify Upload
+if the naming layout is important to your workflow; do not expect historical
+attachments to follow a new rule.
 
 ## Before Upgrading
 

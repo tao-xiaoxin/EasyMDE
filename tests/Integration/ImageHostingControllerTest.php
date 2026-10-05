@@ -2,6 +2,7 @@
 
 use EasyMDE\Rest\ImageHostingController;
 use EasyMDE\Support\Capabilities;
+use EasyMDE\Support\SettingsCenterRepository;
 use EasyMDE\Plugin;
 
 final class ImageHostingControllerTest extends WP_UnitTestCase {
@@ -27,8 +28,13 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			public $remote_image_upload_mode = 'both';
 			public $include_remote_image_upload_mode = true;
 			public $enabled = true;
+			public $configuration_error = false;
 
 			public function get_image_hosting_settings() {
+				if ( $this->configuration_error ) {
+					throw new RuntimeException( SettingsCenterRepository::CONFIGURATION_ERROR_CODE );
+				}
+
 				$settings = array(
 					'enabled'     => $this->enabled,
 					'revision'    => 7,
@@ -57,7 +63,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'titleDisplay'  => $this->title_display,
 						'remoteImageUploadMode' => $this->remote_image_upload_mode,
 					),
-					'fileNameRule' => '{date}/{uuid}.{ext}',
+					'storagePath'  => '{date}',
+					'fileNameRule' => '{uuid}.{ext}',
 				);
 				if ( ! $this->include_remote_image_upload_mode ) {
 					unset( $settings['behaviors']['remoteImageUploadMode'] );
@@ -152,7 +159,8 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		);
 		$this->assertCount( 1, $this->runtime->validation_calls );
 		$this->assertSame( 'synthetic-secret', $this->runtime->validation_calls[0][0]['primary']['secretKey'] );
-		$this->assertSame( '{date}/{uuid}.{ext}', $this->runtime->validation_calls[0][0]['fileNameRule'] );
+		$this->assertSame( '{date}', $this->runtime->validation_calls[0][0]['storagePath'] );
+		$this->assertSame( '{uuid}.{ext}', $this->runtime->validation_calls[0][0]['fileNameRule'] );
 		$this->assertArrayNotHasKey( 'retryCount', $this->runtime->validation_calls[0][0]['primary'] );
 		$this->assertArrayNotHasKey( 'retryCount', $this->runtime->validation_calls[0][0]['backup'] );
 		$this->assertStringNotContainsString( 'synthetic-secret', wp_json_encode( $data ) );
@@ -165,6 +173,23 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 
 		$this->assertSame( 500, $response->get_status() );
 		$this->assertSame( 'easymde_image_hosting_invalid_runtime_result', $response->as_error()->get_error_code() );
+	}
+
+	public function test_image_hosting_runtime_reports_corrupt_canonical_settings_explicitly() {
+		$this->settings_provider->configuration_error = true;
+		$file = $this->png_file();
+
+		try {
+			$response = rest_do_request( $this->upload_request( $file ) );
+
+			$this->assertSame( 500, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_configuration_unavailable', $response->as_error()->get_error_code() );
+			$this->assertCount( 0, $this->runtime->upload_calls );
+		} finally {
+			if ( file_exists( $file['tmp_name'] ) ) {
+				unlink( $file['tmp_name'] );
+			}
+		}
 	}
 
 	public function test_validation_upload_supports_an_http_primary_viewing_domain_with_the_exact_encoded_path() {
@@ -301,6 +326,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $this->runtime->validation_calls );
 		$this->assertArrayNotHasKey( 'autoUploadPastedImages', $this->runtime->validation_calls[0][0] );
 		$this->assertArrayNotHasKey( 'remoteImageUploadMode', $this->runtime->validation_calls[0][0] );
+		$this->assertArrayNotHasKey( 'wechatPngExportEnabled', $this->runtime->validation_calls[0][0] );
 	}
 
 	public function test_verification_accepts_both_image_hosting_enablement_values_without_projecting_the_flag() {
@@ -326,12 +352,16 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$invalid_auto_upload['settings']['autoUploadPastedImages'] = 'true';
 		$invalid_image_hosting = $this->verification_payload( 'primary' );
 		$invalid_image_hosting['settings']['imageHostingEnabled'] = 'true';
+		$missing_wechat_png = $this->verification_payload( 'primary' );
+		unset( $missing_wechat_png['settings']['wechatPngExportEnabled'] );
+		$invalid_wechat_png = $this->verification_payload( 'primary' );
+		$invalid_wechat_png['settings']['wechatPngExportEnabled'] = 'true';
 		$invalid_remote_mode = $this->verification_payload( 'primary' );
 		$invalid_remote_mode['settings']['remoteImageUploadMode'] = 'enabled';
 		$extra_field = $this->verification_payload( 'primary' );
 		$extra_field['settings']['editorOnly'] = true;
 
-		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $invalid_remote_mode, $extra_field ) as $payload ) {
+		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $missing_wechat_png, $invalid_wechat_png, $invalid_remote_mode, $extra_field ) as $payload ) {
 			$response = rest_do_request( $this->verification_request( $payload ) );
 
 			$this->assertSame( 400, $response->get_status() );
@@ -1090,14 +1120,16 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			'target'   => $target,
 			'revision' => 7,
 			'settings' => array(
-				'service'             => 'cloudflare-r2',
-				'imageHostingEnabled' => false,
+			'service'             => 'cloudflare-r2',
+			'imageHostingEnabled' => false,
+			'wechatPngExportEnabled' => false,
 				'endpoint'            => 'https://synthetic-account.r2.cloudflarestorage.com',
 				'bucket'              => 'synthetic-primary',
 				'domain'              => 'https://images.example.test',
 				'accessKey'           => '',
 				'secretKey'           => '',
-				'fileNameRule'        => '{date}/{uuid}.{ext}',
+				'storagePath'         => '{date}',
+				'fileNameRule'        => '{uuid}.{ext}',
 				'uploadRetryCount'    => 3,
 				'backupEnabled'       => true,
 				'backupService'       => 'qiniu-kodo',

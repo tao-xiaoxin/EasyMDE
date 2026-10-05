@@ -108,15 +108,17 @@ GIF, or WebP image file into either the ordinary Markdown source or immersive
 editor sends it through the selected protected same-origin upload owner and
 inserts the configured Markdown or URL form only after the upload succeeds.
 With Image Hosting enabled, that owner is Image Hosting; with it disabled, the
-WordPress Media Library `/media` owner handles the upload. The saved File Name
-Rule is used by both owners for future EasyMDE paste/drop uploads, so it remains
-visible and configurable even while Image Hosting is disabled.
+WordPress Media Library `/media` owner handles the upload. The saved Storage
+Path and File Name Rule are used together by both owners for future EasyMDE
+paste/drop uploads, so both controls remain visible and configurable even while
+Image Hosting is disabled. A selected owner failure stays explicit and never
+switches to the other owner.
 When **Automatically upload pasted images** is disabled, image-file paste does
 not call the upload endpoint and does not insert a Base64 replacement. Ordinary
 text or HTML paste and the toolbar media picker are unaffected. Drag-and-drop
-retains its existing upload behavior and uses the selected owner and File Name
-Rule. The rule does not move historical attachments or change the explicit
-native media-picker insertion path.
+retains its existing upload behavior and uses the selected owner plus the same
+Storage Path and File Name Rule. These settings do not move historical
+attachments or change the explicit native media-picker insertion path.
 
 **Remote image import** defaults to **Visual and source editors**. It applies
 only to remote images contained in the current paste: the visual editor accepts
@@ -141,8 +143,9 @@ A failed, cancelled, or stale request leaves the later editor content unchanged 
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
 Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates
 the current form without saving it by uploading the EasyMDE icon as a synthetic
-PNG through the current file-name rule on the selected provider. Rules that use
-time or UUID variables may create a new object on each verification.
+PNG through the current Storage Path plus File Name Rule on the selected
+provider. Rules that use time or UUID variables may create a new object on each
+verification.
 The button remains disabled and shows its in-progress state until the result is
 known. Success opens a structured Settings Center message dialog that confirms
 the test-image upload, explains that the shown URL is inserted into articles,
@@ -151,7 +154,8 @@ Failure states that no article image URL was created, shows the redacted error,
 and asks the administrator to check the configuration before verifying again. Any
 supported provider can be the primary or the optional
 backup. Primary and backup writes always use the same generated object key;
-there is no setting for changing that invariant. **Upload Retry Count** appears
+there is no setting for changing that invariant. Editing either naming control
+makes an earlier verification result stale. **Upload Retry Count** appears
 once in the primary settings, accepts `0` through `5`, and defaults to `0`, so
 protected uploads are not retried automatically unless an administrator
 explicitly opts in.
@@ -202,16 +206,19 @@ EasyMDE
 does not offer an all-or-nothing mode because these providers do not expose a
 reliable cross-provider rollback transaction.
 
-The File Name Rule supports `{year}`, `{month}`, `{day}`, `{date}`, `{time}`,
-`{post_id}`, `{md5}`, `{uuid}`, `{name}`, and `{ext}`. Date and time variables
-use UTC; `{post_id}` is the associated post ID (or `0` when there is no post),
-`{uuid}` is generated for the upload, `{name}` is the sanitized original file
-stem, and `{ext}` comes from the verified MIME type. `{md5}` is the lowercase
-hexadecimal digest of the exact bytes used by the selected upload owner. The
-default rule is `{year}/{month}/{md5}.{ext}`, and the default image title
-setting is **Leave Empty**, so inserted Markdown has no title unless the
-administrator changes it. WordPress remains responsible for final unique
-filenames, attachment metadata, sub-sizes, and URLs in its Media Library.
+The **Storage Path** accepts the directory part of the object key. The **File
+Name Rule** accepts the basename part. Together they support `{year}`,
+`{month}`, `{day}`, `{date}`, `{time}`, `{post_id}`, `{md5}`, `{uuid}`, `{name}`,
+and `{ext}`. Date and time variables use UTC; `{post_id}` is the associated
+post ID (or `0` when there is no post), `{uuid}` is generated for the upload,
+`{name}` is the sanitized original file stem, and `{ext}` comes from the
+verified MIME type. `{md5}` is the lowercase hexadecimal digest of the exact
+bytes used by the selected upload owner. The defaults are Storage Path
+`{year}/{month}` and File Name Rule `{md5}.{ext}`. An empty Storage Path means
+the bucket or upload root. The combined rule keeps the historical 160-byte
+limit and permits legacy basenames without `{ext}`. WordPress remains
+responsible for final unique filenames, attachment metadata, sub-sizes, and
+URLs in its Media Library.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

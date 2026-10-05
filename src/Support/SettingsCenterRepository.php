@@ -3,7 +3,9 @@
 namespace EasyMDE\Support;
 
 use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
+use EasyMDE\ImageHosting\ImageHostException;
 use EasyMDE\ImageHosting\ImageHostProviderSupport;
+use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use WP_Error;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -11,6 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class SettingsCenterRepository {
+
+	const CONFIGURATION_ERROR_CODE = 'easymde_settings_configuration_invalid';
 
 	private $options;
 	private $toolbar_registry;
@@ -38,6 +42,7 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
+		$this->assert_canonical_image_settings( $settings );
 		$settings = $this->migrate_legacy_image_settings( $settings );
 
 		$settings                             = $this->normalize_enum_settings( $this->merge_settings( $defaults, $settings ) );
@@ -45,7 +50,8 @@ final class SettingsCenterRepository {
 		$settings['images']['domain']         = $this->sanitize_domain( $settings['images']['domain'] );
 		$settings['images']['backupEndpoint'] = $this->sanitize_endpoint( $settings['images']['backupEndpoint'] );
 		$settings['images']['backupDomain']   = $this->sanitize_domain( $settings['images']['backupDomain'] );
-		if ( ! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] ) ) {
+		if ( ! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] ) ) {
+			$settings['images']['storagePath']  = $defaults['images']['storagePath'];
 			$settings['images']['fileNameRule'] = $defaults['images']['fileNameRule'];
 		}
 		foreach ( array( 'accessKey', 'secretKey', 'backupAccessKey', 'backupSecretKey' ) as $secret_key ) {
@@ -149,7 +155,7 @@ final class SettingsCenterRepository {
 	 * The option is read once so MIME, size, filename rule, and title behavior
 	 * stay on one settings snapshot for the complete upload operation.
 	 *
-	 * @return array{file_name_rule: string, max_bytes: int, mime_types: string[], title_display: string}
+	 * @return array{storage_path: string, file_name_rule: string, max_bytes: int, mime_types: string[], title_display: string}
 	 */
 	public function get_media_upload_settings() {
 		$settings             = $this->settings_from_stored( $this->options->get_editor_settings() );
@@ -169,6 +175,7 @@ final class SettingsCenterRepository {
 		}
 
 		return array(
+			'storage_path'   => $settings['images']['storagePath'],
 			'file_name_rule' => $settings['images']['fileNameRule'],
 			'max_bytes'      => min( $settings['images']['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ),
 			'mime_types'     => $mime_types,
@@ -238,6 +245,7 @@ final class SettingsCenterRepository {
 		$settings = isset( $stored['settings_center'] ) && is_array( $stored['settings_center'] )
 			? $stored['settings_center']
 			: array();
+		$this->assert_canonical_image_settings( $settings );
 		$settings = $this->migrate_legacy_image_settings( $settings );
 		$settings = $this->normalize_enum_settings( $this->merge_settings( $this->get_defaults(), $settings ) );
 		$images   = $settings['images'];
@@ -252,8 +260,10 @@ final class SettingsCenterRepository {
 		$images['backupDomain']    = $this->sanitize_domain( $images['backupDomain'] );
 		$images['backupAccessKey'] = $this->bounded_text( $images['backupAccessKey'], 255 );
 		$images['backupSecretKey'] = $this->bounded_text( $images['backupSecretKey'], 255 );
-		if ( ! $this->is_valid_file_name_rule( $images['fileNameRule'] ) ) {
-			$images['fileNameRule'] = $this->get_defaults()['images']['fileNameRule'];
+		if ( ! $this->is_valid_file_name_rule( $images['storagePath'], $images['fileNameRule'] ) ) {
+			$defaults               = $this->get_defaults();
+			$images['storagePath']  = $defaults['images']['storagePath'];
+			$images['fileNameRule'] = $defaults['images']['fileNameRule'];
 		}
 
 		return array(
@@ -278,6 +288,7 @@ final class SettingsCenterRepository {
 				'accessKey'  => $images['backupAccessKey'],
 				'secretKey'  => $images['backupSecretKey'],
 			),
+			'storagePath'      => $images['storagePath'],
 			'fileNameRule'     => $images['fileNameRule'],
 			'behaviors'        => array(
 				'autoCompress'          => $images['compressImages'],
@@ -340,12 +351,20 @@ final class SettingsCenterRepository {
 		if ( null === $expected ) {
 			return $this->persistence_error();
 		}
-		$stored           = is_array( $expected ) ? $expected : array();
+		$stored = is_array( $expected ) ? $expected : array();
+		$this->assert_canonical_image_settings( $stored );
 		$current_revision = $this->revision_from_stored( $stored );
 		if ( $input['revision'] !== $current_revision ) {
 			return $this->conflict_error();
 		}
 
+		if ( isset( $input['images'] ) && is_array( $input['images'] ) ) {
+			foreach ( array( 'storagePath', 'fileNameRule' ) as $template_field ) {
+				if ( array_key_exists( $template_field, $input['images'] ) && ! is_string( $input['images'][ $template_field ] ) ) {
+					return $this->invalid_payload_error();
+				}
+			}
+		}
 		$stored_settings = $this->stored_settings_for_write( $stored );
 		$settings        = $this->sanitize_settings( $input, $stored_settings, (bool) $reset_secrets );
 		if ( is_wp_error( $settings ) ) {
@@ -393,7 +412,36 @@ final class SettingsCenterRepository {
 			$settings['images']['titleDisplay'] = 'filename' === $settings['images']['captionMode'] ? 'filename' : 'none';
 		}
 
+		if ( ! array_key_exists( 'storagePath', $settings['images'] ) && array_key_exists( 'fileNameRule', $settings['images'] ) ) {
+			try {
+				( new ObjectKeyBuilder() )->validate_legacy_template( $settings['images']['fileNameRule'] );
+			} catch ( ImageHostException $exception ) {
+				return $settings;
+			}
+
+			$split = ObjectKeyBuilder::split_legacy_template( $settings['images']['fileNameRule'] );
+			if ( is_array( $split ) ) {
+				$settings['images']['storagePath']  = $split[0];
+				$settings['images']['fileNameRule'] = $split[1];
+			}
+		}
+
 		return $settings;
+	}
+
+	private function assert_canonical_image_settings( array $settings ) {
+		if ( ! isset( $settings['images'] ) || ! is_array( $settings['images'] ) || ! array_key_exists( 'storagePath', $settings['images'] ) ) {
+			return;
+		}
+
+		if (
+			! array_key_exists( 'fileNameRule', $settings['images'] ) ||
+			! is_string( $settings['images']['storagePath'] ) ||
+			! is_string( $settings['images']['fileNameRule'] ) ||
+			! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] )
+		) {
+			throw new \RuntimeException( 'easymde_settings_configuration_invalid' );
+		}
 	}
 
 	private function conflict_error() {
@@ -473,7 +521,8 @@ final class SettingsCenterRepository {
 				'domain'                 => '',
 				'accessKey'              => '',
 				'secretKey'              => '',
-				'fileNameRule'           => '{year}/{month}/{md5}.{ext}',
+				'storagePath'            => '{year}/{month}',
+				'fileNameRule'           => '{md5}.{ext}',
 				'backupEnabled'          => false,
 				'backupService'          => 'qiniu-kodo',
 				'backupEndpoint'         => '',
@@ -615,6 +664,7 @@ final class SettingsCenterRepository {
 			}
 		}
 		$stored_settings = $this->migrate_legacy_image_settings( $stored_settings );
+		$input           = $this->migrate_legacy_image_settings( $input );
 		$base            = $this->merge_settings( $defaults, $stored_settings );
 		$settings        = $this->merge_settings( $base, $input );
 		if ( isset( $input['images']['uploadFormats'] ) && is_array( $input['images']['uploadFormats'] ) ) {
@@ -627,7 +677,7 @@ final class SettingsCenterRepository {
 		if (
 			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'] ) ||
 			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'] ) ||
-			! $this->is_valid_file_name_rule( $settings['images']['fileNameRule'] )
+			! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] )
 		) {
 			return new WP_Error(
 				'easymde_settings_invalid_payload',
@@ -881,25 +931,14 @@ final class SettingsCenterRepository {
 		);
 	}
 
-	private function is_valid_file_name_rule( $rule ) {
-		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+	private function is_valid_file_name_rule( $storage_path, $file_name_rule ) {
+		try {
+			( new ObjectKeyBuilder() )->validate( $storage_path, $file_name_rule );
+
+			return true;
+		} catch ( ImageHostException $exception ) {
 			return false;
 		}
-
-		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
-			return false;
-		}
-
-		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
-		foreach ( $matches[1] as $variable ) {
-			if ( ! in_array( $variable, $allowed, true ) ) {
-				return false;
-			}
-		}
-
-		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
-
-		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
 	}
 
 	private function normalize_shortcut( $value, $is_mac ) {

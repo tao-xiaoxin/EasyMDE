@@ -7,10 +7,12 @@ import {
 	useState,
 } from "@wordpress/element";
 import {
+	assertLegacyImageObjectKeyTemplate,
 	parseSettingsCenterSettings,
 	type SettingsCenterBootstrap,
 } from "../../contracts/bootstrap/settings-center-bootstrap";
 import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
+import { splitLegacyImageFileNameRule } from "../../contracts/settings-center-settings";
 import {
 	CircleCheck,
 	CircleX,
@@ -98,7 +100,7 @@ function redactImageSecrets(
 	};
 }
 
-async function readImportedSettings(
+export async function readImportedSettings(
 	file: File,
 ): Promise<SettingsCenterSettings> {
 	if (file.size > 1024 * 1024)
@@ -118,7 +120,8 @@ async function readImportedSettings(
 		payload.schemaVersion !== 7 &&
 		payload.schemaVersion !== 8 &&
 		payload.schemaVersion !== 9 &&
-		payload.schemaVersion !== 10
+		payload.schemaVersion !== 10 &&
+		payload.schemaVersion !== 11
 	) {
 		throw new Error("settings-center-transfer-import-version-invalid");
 	}
@@ -208,6 +211,36 @@ async function readImportedSettings(
 			throw new Error("settings-center-transfer-import-invalid");
 		}
 		(images as Record<string, unknown>).wechatPngExportEnabled = false;
+		importedSettings = migrated;
+	}
+	const isLegacyTransfer = payload.schemaVersion < 11;
+	if (isLegacyTransfer) {
+		if (
+			!importedSettings ||
+			typeof importedSettings !== "object" ||
+			Array.isArray(importedSettings)
+		) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		const migrated = structuredClone(importedSettings) as Record<
+			string,
+			unknown
+		>;
+		const images = migrated.images;
+		if (!images || typeof images !== "object" || Array.isArray(images)) {
+			throw new Error("settings-center-transfer-import-invalid");
+		}
+		const imageSettings = images as Record<string, unknown>;
+		if (!("storagePath" in imageSettings)) {
+			if (typeof imageSettings.fileNameRule !== "string") {
+				throw new Error("settings-center-transfer-import-invalid");
+			}
+			assertLegacyImageObjectKeyTemplate(imageSettings.fileNameRule);
+			Object.assign(
+				imageSettings,
+				splitLegacyImageFileNameRule(imageSettings.fileNameRule),
+			);
+		}
 		importedSettings = migrated;
 	}
 	return redactImageSecrets(parseSettingsCenterSettings(importedSettings));
@@ -439,7 +472,7 @@ export function TransferSettingsPage({
 			const blob = new Blob(
 				[
 					JSON.stringify(
-						{ schemaVersion: 10, settings: redactImageSecrets(settings) },
+						{ schemaVersion: 11, settings: redactImageSecrets(settings) },
 						null,
 						2,
 					),

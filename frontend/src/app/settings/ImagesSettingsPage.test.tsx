@@ -251,7 +251,11 @@ describe("ImagesSettingsPage", () => {
 		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
 		});
+		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
+		});
 		expect(fileNameRule.value).toBe(draft.fileNameRule);
+		expect(storagePath.value).toBe(draft.storagePath);
 		expect(screen.getByText("fileNameRuleDescription")).not.toBeNull();
 		expect(
 			screen.getAllByRole("button", { name: /^fileNamePreset/u }),
@@ -260,10 +264,14 @@ describe("ImagesSettingsPage", () => {
 			screen.getAllByRole("button", { name: /^insertFileNameVariable/u }),
 		).toHaveLength(10);
 		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
-		fireEvent.change(fileNameRule, {
-			target: { value: "disabled/{date}/{uuid}.{ext}" },
+		fireEvent.change(storagePath, {
+			target: { value: "disabled/{date}" },
 		});
-		expect(fileNameRule.value).toBe("disabled/{date}/{uuid}.{ext}");
+		fireEvent.change(fileNameRule, {
+			target: { value: "{uuid}.{ext}" },
+		});
+		expect(storagePath.value).toBe("disabled/{date}");
+		expect(fileNameRule.value).toBe("{uuid}.{ext}");
 
 		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
 		await user.click(toggle);
@@ -286,7 +294,11 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}.{ext}");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "storagePath" })
+				.value,
+		).toBe("disabled/{date}");
 		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
@@ -304,7 +316,7 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}.{ext}");
 		await user.click(toggle);
 		expect(
 			screen.getByRole("combobox", { name: "selectImageHostService" })
@@ -318,7 +330,11 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}.{ext}");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "storagePath" })
+				.value,
+		).toBe("disabled/{date}");
 		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
@@ -352,6 +368,7 @@ describe("ImagesSettingsPage", () => {
 			"imageFallbackDomain",
 			"accessKey",
 			"secretKey",
+			"storagePath",
 			"fileNameRule",
 			"uploadRetryCount",
 			"uploadVerificationStatus",
@@ -834,6 +851,70 @@ describe("ImagesSettingsPage", () => {
 		expect(input.value).toBe("folder/{uuid}.webp");
 		expect(input.selectionStart).toBe(13);
 		expect(input.selectionEnd).toBe(13);
+	});
+
+	it("keeps storage path and file name rule independent while hosting is disabled", async () => {
+		const user = userEvent.setup();
+		const initialSettings = {
+			...settings({
+				imageHostingEnabled: false,
+				fileNameRule: "{md5}.{ext}",
+			}),
+			storagePath: "{year}/{month}",
+		} as ImageSettings;
+		render(<Harness initialSettings={initialSettings} />);
+
+		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
+		});
+		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		expect(storagePath.value).toBe("{year}/{month}");
+		expect(fileNameRule.value).toBe("{md5}.{ext}");
+		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
+
+		storagePath.focus();
+		storagePath.setSelectionRange(0, 0);
+		await user.click(
+			screen.getByRole("button", {
+				name: "insertFileNameVariable {year}",
+			}),
+		);
+		expect(storagePath.value).toBe("{year}{year}/{month}");
+		expect(document.activeElement).toBe(storagePath);
+
+		await user.click(
+			screen.getByRole("button", {
+				name: "fileNamePresetDate",
+			}),
+		);
+		expect(fileNameRule.value).toBe("{date}.{ext}");
+		expect(storagePath.value).toBe("{year}{year}/{month}");
+		await user.click(
+			screen.getByRole("button", {
+				name: "fileNamePresetYearMonth",
+			}),
+		);
+		expect(fileNameRule.value).toBe("{uuid}.{ext}");
+		expect(storagePath.value).toBe("{year}{year}/{month}");
+		await user.click(
+			screen.getByRole("button", {
+				name: "fileNamePresetArticle",
+			}),
+		);
+		expect(fileNameRule.value).toBe("{post_id}.{ext}");
+		expect(storagePath.value).toBe("{year}{year}/{month}");
+
+		fileNameRule.focus();
+		fileNameRule.setSelectionRange(0, 0);
+		await user.click(
+			screen.getByRole("button", {
+				name: "insertFileNameVariable {md5}",
+			}),
+		);
+		expect(fileNameRule.value).toBe("{md5}{post_id}.{ext}");
+		expect(document.activeElement).toBe(fileNameRule);
 	});
 
 	it("conditionally removes backup fields when backup upload is disabled", async () => {

@@ -321,7 +321,7 @@ JS;
 		$credential_status = $settings_response['credentialStatus'];
 
 		return array(
-			'schemaVersion'     => 2,
+			'schemaVersion'     => 3,
 			'closeUrl'          => admin_url( 'options-general.php' ),
 			'api'               => array(
 				'settingsUrl'                         => rest_url( 'easymde/v1/settings' ),

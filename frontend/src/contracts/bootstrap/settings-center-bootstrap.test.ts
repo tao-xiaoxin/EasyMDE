@@ -11,7 +11,7 @@ import {
 
 function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 3,
 		closeUrl: "/wp-admin/options-general.php",
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
@@ -123,9 +123,31 @@ describe("parseSettingsCenterBootstrap", () => {
 		) as unknown as MutableSettingsRecord;
 		settings.images.imageHostingEnabled = true;
 
-		expect(parseSettingsCenterSettings(settings).images.imageHostingEnabled).toBe(
-			true,
+		expect(
+			parseSettingsCenterSettings(settings).images.imageHostingEnabled,
+		).toBe(true);
+	});
+
+	it("accepts the canonical split image object-key fields", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "{year}/{month}";
+		settings.images.fileNameRule = "{md5}.{ext}";
+
+		expect(parseSettingsCenterSettings(settings).images).toEqual(
+			expect.objectContaining({
+				storagePath: "{year}/{month}",
+				fileNameRule: "{md5}.{ext}",
+			}),
 		);
+	});
+
+	it("accepts Settings Center Bootstrap schema 3", () => {
+		const value = bootstrap() as unknown as Record<string, unknown>;
+		value.schemaVersion = 3;
+
+		expect(parseSettingsCenterBootstrap(value).schemaVersion).toBe(3);
 	});
 
 	it("accepts the explicit WeChat PNG export enablement flag", () => {
@@ -487,6 +509,83 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("accepts an empty storage path for the bucket root", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "";
+
+		expect(parseSettingsCenterSettings(settings).images.storagePath).toBe("");
+	});
+
+	it("validates the combined object-key template instead of each field alone", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "{ext}";
+		settings.images.fileNameRule = "image";
+
+		expect(parseSettingsCenterSettings(settings).images).toEqual(
+			expect.objectContaining({
+				storagePath: "{ext}",
+				fileNameRule: "image",
+			}),
+		);
+	});
+
+	it.each([
+		["combined template at 160 bytes", "a".repeat(154), true],
+		["combined template at 161 bytes", "a".repeat(155), false],
+	] as const)(
+		"enforces the combined UTF-8 byte limit for %s",
+		(_label, storagePath, valid) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.storagePath = storagePath;
+			settings.images.fileNameRule = "{ext}";
+
+			if (valid) {
+				expect(parseSettingsCenterSettings(settings).images.storagePath).toBe(
+					storagePath,
+				);
+				return;
+			}
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-images-fileNameRule-invalid",
+			);
+		},
+	);
+
+	it("rejects a canonical pair whose combined key has no extension variable", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "year";
+		settings.images.fileNameRule = "image";
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-fileNameRule-invalid",
+		);
+	});
+
+	it.each([
+		"/absolute",
+		"../traversal",
+		"nested//path",
+		"nested\\path",
+		"{unknown}",
+	] as const)("rejects an unsafe storage path: %s", (storagePath) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = storagePath;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-storagePath-invalid",
+		);
+	});
+
 	it("does not admit AI strings into the settings bootstrap contract", () => {
 		expect(
 			SETTINGS_CENTER_STRING_KEYS.some(
@@ -518,10 +617,7 @@ describe("parseSettingsCenterBootstrap", () => {
 
 	it("omits the Code Highlighting setting strings but keeps the About capability string", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
-			expect.arrayContaining([
-				"syntaxHighlight",
-				"syntaxHighlightDescription",
-			]),
+			expect.arrayContaining(["syntaxHighlight", "syntaxHighlightDescription"]),
 		);
 		expect(SETTINGS_CENTER_STRING_KEYS).toContain("aboutCodeHighlighting");
 	});

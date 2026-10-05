@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -9,6 +11,7 @@ import type {
 import {
   CLIPBOARD_COMMIT_TIMEOUT_MS,
   createBrowserWechatClipboard,
+  type ClipboardItemConstructor,
   MAX_WECHAT_PNG_DIMENSION,
   MAX_WECHAT_PNG_UPLOAD_CONCURRENCY,
   MAX_WECHAT_PNG_VISUALS,
@@ -30,6 +33,25 @@ function computedStyle(element: Element, pseudoElement?: string): CSSStyleDeclar
 
 function declaration(values: Record<string, string>): CSSStyleDeclaration {
   return { getPropertyValue: (property: string) => values[property] ?? '' } as unknown as CSSStyleDeclaration;
+}
+
+function mdmdtNormalPngDataUrl(): string {
+  const css = readFileSync(join(
+    process.cwd(),
+    'assets/themes/article/mdmdt.css'
+  ), 'utf8');
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  let match;
+  while ((match = rulePattern.exec(css)) !== null) {
+    const selectors = match[1].split(',').map((selector) => selector.trim());
+    if (!selectors.includes(
+      '.easymde-rendered-content.easymde-markdown-theme-mdmdt p a::before'
+    )) continue;
+    const dataUrl = /background-image:\s*url\(["'](data:image\/png;base64,[^"']+)["']\)/u
+      .exec(match[2])?.[1];
+    if (dataUrl) return dataUrl;
+  }
+  throw new Error('Mdmdt normal PNG data URI missing');
 }
 
 async function blobText(value: Blob | PromiseLike<Blob>): Promise<string> {
@@ -14165,6 +14187,122 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('img[src="data:image/png;base64,AAAA"]')).not.toBeNull();
     expect(holder.querySelector('img[srcset*="javascript:"]')).toBeNull();
     expect(holder.querySelector('img[srcset*="https://example.test/image.png"]')).not.toBeNull();
+  });
+
+  it('materializes Mdmdt link pseudo paint in modern and synchronous Clipboard payloads', async () => {
+    const writes: unknown[] = [];
+    const fetch = vi.fn();
+    const pngDataUrl = mdmdtNormalPngDataUrl();
+    const sourceText = 'Visible link\n1\nFootnote body';
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<p><a href="https://example.test/link">Visible link</a></p>',
+      '<p><sup><a href="#fn1">1</a></sup></p>',
+      '<section class="footnotes"><p id="fn1">Footnote body</p></section>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
+    const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement && 'A' === element.tagName && '#fn1' === element.getAttribute('href')) {
+        return declaration({ content: '""', display: 'none' });
+      }
+      if ('::before' === pseudoElement && 'A' === element.tagName && 'https://example.test/link' === element.getAttribute('href')) {
+        return declaration({
+          background: `url("${pngDataUrl}")`,
+          'background-image': `url("${pngDataUrl}")`,
+          'background-position': 'center',
+          'background-repeat': 'no-repeat',
+          'background-size': '100%',
+          content: '""',
+          display: 'inline-block',
+          height: '14px',
+          position: 'relative',
+          width: '14px'
+        });
+      }
+      if ('::after' === pseudoElement) return declaration({ content: 'none' });
+      if (pseudoElement) return declaration({ content: 'none' });
+      return declaration({ display: 'block' });
+    };
+    const createClipboard = (
+      clipboardItem: ClipboardItemConstructor | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      fetch,
+      getComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    const modern = createClipboard(
+      ClipboardItemStub,
+      async (items) => { writes.push(items); }
+    );
+
+    await expect(modern.copy(preview)).resolves.toEqual({
+      method: 'clipboard',
+      status: 'copied'
+    });
+    const modernItem = (writes[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    const modernTextBlob = modernItem?.payload['text/plain'];
+    if (!modernHtmlBlob || !modernTextBlob) throw new Error('Mdmdt pseudo payload missing');
+    const modernHtml = await blobText(modernHtmlBlob);
+    const modernText = await blobText(modernTextBlob);
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = modernHtml;
+    const link = modernHolder.querySelector('a[href="https://example.test/link"]');
+    expect(link).not.toBeNull();
+    expect(link?.querySelector('span[aria-hidden="true"] img[src^="data:image/png;base64,"]')).not.toBeNull();
+    expect(link?.querySelector('span[aria-hidden="true"] img[src^="data:image/svg+xml"]')).toBeNull();
+    expect(modernHolder.querySelector('a[href="#fn1"] > span[aria-hidden="true"]')).toBeNull();
+    expect(modernText).toBe(sourceText);
+    expect(fetch).not.toHaveBeenCalled();
+
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    class ThrowingClipboardItem {
+      constructor(_payload: Record<string, Blob>) {
+        throw new Error('synchronous-clipboard-item-failure');
+      }
+    }
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createClipboard(ThrowingClipboardItem, vi.fn(async () => undefined));
+      await expect(legacy.copy(preview)).resolves.toEqual({
+        method: 'legacy',
+        status: 'copied'
+      });
+      const legacyHolder = document.createElement('div');
+      legacyHolder.innerHTML = legacyHtml;
+      const legacyLink = legacyHolder.querySelector('a[href="https://example.test/link"]');
+      expect(legacyLink).not.toBeNull();
+      expect(legacyLink?.querySelector('span[aria-hidden="true"] img[src^="data:image/png;base64,"]')).not.toBeNull();
+      expect(legacyLink?.textContent).toContain('Visible link');
+      expect(legacyHolder.textContent).toContain('Footnote body');
+      expect(legacyHolder.querySelector('a[href="#fn1"] > span[aria-hidden="true"]')).toBeNull();
+      expect(legacyHtml).not.toContain('data:image/svg+xml');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
   });
 
   it('preserves hidden SVG definitions referenced by visible shapes', async () => {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,6 +75,48 @@ function assertInlineCodeRule(theme, selectorSuffix, declarations) {
 
   assert.ok(body, `${theme} should preserve the pinned inline-code rule ${selectorSuffix}`);
   return css;
+}
+
+function dataImageUrlsFromRule(css, selector) {
+  const body = cssRuleBodyMatching(css, selector);
+  assert.ok(body, `Mdmdt should define ${selector}`);
+  return [...body.matchAll(/url\(\s*["']?(data:image\/[^"')\s]+)["']?\s*\)/g)]
+    .map((match) => match[1]);
+}
+
+function decodePngDataUrl(value, label) {
+  assert.match(value, /^data:image\/png;base64,/i, `${label} should be a PNG data URI`);
+  const bytes = Buffer.from(value.slice(value.indexOf(',') + 1), 'base64');
+  assert.deepEqual(
+    [...bytes.subarray(0, 8)],
+    [137, 80, 78, 71, 13, 10, 26, 10],
+    `${label} should have a PNG signature`
+  );
+  assert.equal(bytes.readUInt32BE(16), 200, `${label} width`);
+  assert.equal(bytes.readUInt32BE(20), 200, `${label} height`);
+  assert.equal(bytes[24], 8, `${label} bit depth`);
+  assert.equal(bytes[25], 6, `${label} RGBA color type`);
+
+  const chunkTypes = [];
+  let offset = 8;
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    chunkTypes.push(type);
+    offset += 12 + length;
+  }
+  assert.equal(offset, bytes.length, `${label} should have complete PNG chunks`);
+  assert.deepEqual(
+    chunkTypes,
+    ['IHDR', 'sRGB', 'IDAT', 'IEND'],
+    `${label} should contain only the deterministic image chunks`
+  );
+  assert.deepEqual(
+    chunkTypes.filter((type) => ['tEXt', 'zTXt', 'iTXt', 'eXIf', 'tIME'].includes(type)),
+    [],
+    `${label} must not contain textual, EXIF, or timestamp metadata`
+  );
+  return bytes;
 }
 
 const TYPORA_ARTICLE_THEME_IDS = Object.freeze([
@@ -1000,6 +1043,35 @@ test('Mdmdt restores ordinary unordered-list marker semantics without task bulle
       `Mdmdt should define ${selector} with ${declaration}`
     );
   }
+});
+
+test('Mdmdt link pseudo assets are deterministic 200x200 PNG data images', () => {
+  const css = readFileSync(join(repoRoot, 'assets/themes/article/mdmdt.css'), 'utf8');
+  const root = scopedArticleRoot('mdmdt');
+  assert.match(css, /\* \(c\) 2024-2025/);
+  assert.match(css, /\* Author: cayxc/);
+  assert.match(css, /\* Homepage:\s+https:\/\/gitee\.com\/cayxc\/mdmdt\s+https:\/\/github\.com\/cayxc\/Mdmdt/);
+  assert.match(css, /\* License: Apache-2\.0/);
+  assert.match(css, /cayxc\/Mdmdt fixed commit a2f7d357144e38670727e876243a7fe58df2e848/);
+  const normal = dataImageUrlsFromRule(css, `${root} p a::before`);
+  const hover = dataImageUrlsFromRule(css, `${root} a:hover::before`);
+
+  assert.equal(normal.length, 1, 'Mdmdt normal link pseudo should have one image');
+  assert.equal(hover.length, 1, 'Mdmdt hover link pseudo should have one image');
+  const normalBytes = decodePngDataUrl(normal[0], 'Mdmdt normal link icon');
+  const hoverBytes = decodePngDataUrl(hover[0], 'Mdmdt hover link icon');
+  assert.equal(
+    createHash('sha256').update(normalBytes).digest('hex'),
+    'bc3e0e6608577697dc637543cc18da1b1693885074c886f85dec8ef4827ebf0b',
+    'Mdmdt normal link icon must remain deterministic'
+  );
+  assert.equal(
+    createHash('sha256').update(hoverBytes).digest('hex'),
+    'ce19afa2113e61b3e357aee067188386f5b847ac3b7e225543e33a0c6b9713d7',
+    'Mdmdt hover link icon must remain deterministic'
+  );
+  assert.notEqual(normal[0], hover[0], 'Mdmdt normal and hover colors must differ');
+  assert.doesNotMatch(css, /data:image\/svg\+xml/i, 'Mdmdt must not ship SVG link pseudo data');
 });
 
 test('Mdmdt list markers follow ancestor list depth through wrappers and mixed lists', () => {

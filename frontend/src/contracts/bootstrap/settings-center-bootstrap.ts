@@ -585,6 +585,7 @@ function assertImageStoragePath(value: unknown): void {
 	if (
 		value.startsWith("/") ||
 		value.endsWith("/") ||
+		value.split("/").some((segment) => segment === ".") ||
 		value.includes("\\") ||
 		value.includes("..") ||
 		value.includes("//") ||
@@ -655,6 +656,7 @@ function assertImageObjectKeyTemplate(value: unknown): void {
 	if (
 		value.startsWith("/") ||
 		value.endsWith("/") ||
+		value.split("/").some((segment) => segment === ".") ||
 		value.includes("\\") ||
 		value.includes("..") ||
 		value.includes("//") ||

@@ -123,8 +123,6 @@ The shared Storage Path/File Name Rule and WordPress Media owner gate is covered
 `ImageHostObjectKeyBuilderTest`. It exercises deterministic rule variables,
 credential-free settings snapshots, bounded exact bytes, Core unique filenames,
 attachment metadata and sub-sizes, original-name response/title semantics,
-scope token matching, one-shot filter cleanup, nested isolation, and fail-closed
-attachment metadata and sub-sizes, original-name response/title semantics,
 one builder result shared by Media and Image Hosting, scope token matching,
 one-shot filter cleanup, nested isolation, and fail-closed scope/rule errors.
 Run it with the same disposable CI database:

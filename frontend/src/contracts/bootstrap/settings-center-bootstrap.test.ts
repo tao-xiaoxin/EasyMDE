@@ -572,6 +572,8 @@ describe("parseSettingsCenterBootstrap", () => {
 	it.each([
 		"/absolute",
 		"../traversal",
+		".",
+		"a/./b",
 		"nested//path",
 		"nested\\path",
 		"{unknown}",

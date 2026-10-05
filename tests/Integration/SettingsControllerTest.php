@@ -282,6 +282,28 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 200, $extension_in_path_response->get_status() );
 	}
 
+	public function test_post_rejects_dot_segments_in_storage_path_before_saving()
+	{
+		foreach ( array( '.', 'a/./b' ) as $storage_path ) {
+			$settings = $this->current_settings();
+			$settings['images']['storagePath'] = $storage_path;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $storage_path );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $storage_path );
+			$this->assertFalse( get_option( Options::EDITOR_SETTINGS, false ), $storage_path );
+		}
+
+		$settings = $this->current_settings();
+		$settings['images']['storagePath']  = '{ext}';
+		$settings['images']['fileNameRule'] = '.';
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+	}
+
 	public function test_status_bar_mode_rest_contract_accepts_only_canonical_values() {
 		foreach ( array( 'detailed', 'compact', 'hidden' ) as $mode ) {
 			$settings = $this->current_settings();

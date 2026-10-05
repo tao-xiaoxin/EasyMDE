@@ -68,6 +68,54 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		$builder->validate_legacy_template( '/{name}.{ext}' );
 	}
 
+	public function test_storage_path_rejects_dot_segments_before_object_key_expansion()
+	{
+		$builder = new ObjectKeyBuilder();
+
+		foreach ( array( '.', 'a/./b' ) as $storage_path ) {
+			try {
+				$builder->validate( $storage_path, '{md5}.{ext}' );
+				$this->fail( 'Expected dot storage path segments to be rejected.' );
+			} catch ( ImageHostException $exception ) {
+				$this->assertSame( 'image_host_invalid_key_template', $exception->get_error_code(), $storage_path );
+			}
+		}
+	}
+
+	public function test_valid_placeholder_storage_path_remains_accepted()
+	{
+		$builder = new ObjectKeyBuilder();
+
+		$this->assertSame( '2026/07/' . md5( 'bytes' ) . '.png', $builder->build(
+			'{year}/{month}',
+			'{md5}.{ext}',
+			'bytes',
+			'image.png',
+			'image/png',
+			0,
+			new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) ),
+			'00000000-0000-4000-8000-000000000000'
+		) );
+	}
+
+	public function test_complete_template_rejects_dot_segments_in_the_file_name_rule()
+	{
+		$builder = new ObjectKeyBuilder();
+
+		$this->expectException( ImageHostException::class );
+		$this->expectExceptionMessage( 'image_host_invalid_key_template' );
+		$builder->validate( '{ext}', '.' );
+	}
+
+	public function test_legacy_template_validation_rejects_nested_dot_segments()
+	{
+		$builder = new ObjectKeyBuilder();
+
+		$this->expectException( ImageHostException::class );
+		$this->expectExceptionMessage( 'image_host_invalid_key_template' );
+		$builder->validate_legacy_template( 'a/./b/{name}.{ext}' );
+	}
+
 	public function test_builds_a_key_from_validated_content_and_template() {
 		$builder = new ObjectKeyBuilder();
 		$bytes   = 'synthetic-image-bytes';

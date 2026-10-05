@@ -149,6 +149,11 @@ final class ObjectKeyBuilder {
 		) {
 			return false;
 		}
+		foreach ( explode( '/', $template ) as $segment ) {
+			if ( '.' === $segment ) {
+				return false;
+			}
+		}
 
 		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name|ext)';
 		$without_known      = preg_replace( '/\{' . $known_placeholders . '\}/', '', $template );
@@ -176,7 +181,6 @@ final class ObjectKeyBuilder {
 		) {
 			return false;
 		}
-
 		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name|ext)';
 		$without_known      = preg_replace( '/\{' . $known_placeholders . '\}/', '', $value );
 

@@ -12,7 +12,10 @@ import type {
 	SettingsCenterBootstrap,
 	SettingsCenterStringKey,
 } from "../../contracts/bootstrap/settings-center-bootstrap";
-import type { SettingsCenterSettings } from "../../contracts/settings-center-settings";
+import {
+	IMAGE_UPLOAD_EXTENSIONS,
+	type SettingsCenterSettings,
+} from "../../contracts/settings-center-settings";
 import { ChevronRight, X } from "../../generated/lucide-icons";
 import { createWordPressImageHostingVerificationPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-verification-port";
 import { createWordPressImageHostingSecretRevealPort } from "../../integrations/wordpress/settings/create-wordpress-image-hosting-secret-reveal-port";
@@ -151,14 +154,20 @@ function imageVerificationInvalidation(
 	requested: SettingsCenterSettings["images"],
 	resetSecrets: boolean,
 ): ImageVerificationInvalidation {
+	const uploadFormatsChanged = IMAGE_UPLOAD_EXTENSIONS.some(
+		(extension) =>
+			previous.uploadFormats[extension] !== requested.uploadFormats[extension],
+	);
 	return {
 		primary:
 			resetSecrets ||
+			uploadFormatsChanged ||
 			PRIMARY_VERIFICATION_SETTING_KEYS.some(
 				(key) => previous[key] !== requested[key],
 			),
 		backup:
 			resetSecrets ||
+			uploadFormatsChanged ||
 			BACKUP_VERIFICATION_SETTING_KEYS.some(
 				(key) => previous[key] !== requested[key],
 			),

@@ -2635,6 +2635,171 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
+	it("does not revive either verification after upload formats are saved and then restored", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const savedUploadFormats = {
+			...configuredBootstrap.settings.images.uploadFormats,
+			webp: false,
+		};
+		const savedSettings = {
+			...configuredBootstrap.settings,
+			revision: configuredBootstrap.settings.revision + 1,
+			images: {
+				...configuredBootstrap.settings.images,
+				uploadFormats: savedUploadFormats,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		try {
+			const { container } = render(
+				<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+			);
+			const imagesSection = container.querySelector(
+				'[data-settings-section="images"]',
+			);
+			if (!(imagesSection instanceof HTMLElement))
+				throw new Error("settings-center-images-section-missing");
+			const images = within(imagesSection);
+
+			await user.click(
+				images.getByRole("button", { name: "verifyPrimaryUpload" }),
+			);
+			await user.click(
+				images.getByRole("button", { name: "verifyBackupUpload" }),
+			);
+			await waitFor(() =>
+				expect(
+					images.getAllByRole("status").map((status) => status.textContent),
+				).toEqual(["uploadVerified", "uploadVerified"]),
+			);
+
+			const webp = images.getByRole<HTMLInputElement>("checkbox", {
+				name: "allowUploadWebp",
+			});
+			await user.click(webp);
+			await user.click(screen.getByRole("button", { name: "saveSettings" }));
+			await waitFor(() =>
+				expect(
+					container
+						.querySelector("[data-save-status]")
+						?.getAttribute("data-save-status"),
+				).toBe("saved"),
+			);
+
+			await user.click(webp);
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
+		} finally {
+			fetch.mockRestore();
+		}
+	});
+
+	it("does not invalidate verified uploads for an equal-value new upload format map", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: configuredBootstrap.settings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		try {
+			const { container } = render(
+				<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+			);
+			const imagesSection = container.querySelector(
+				'[data-settings-section="images"]',
+			);
+			if (!(imagesSection instanceof HTMLElement))
+				throw new Error("settings-center-images-section-missing");
+			const images = within(imagesSection);
+
+			await user.click(
+				images.getByRole("button", { name: "verifyPrimaryUpload" }),
+			);
+			await user.click(
+				images.getByRole("button", { name: "verifyBackupUpload" }),
+			);
+			await waitFor(() =>
+				expect(
+					images.getAllByRole("status").map((status) => status.textContent),
+				).toEqual(["uploadVerified", "uploadVerified"]),
+			);
+
+			const webp = images.getByRole<HTMLInputElement>("checkbox", {
+				name: "allowUploadWebp",
+			});
+			await user.click(webp);
+			await user.click(webp);
+			await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
+			await user.click(screen.getByRole("button", { name: "saveSettings" }));
+			await waitFor(() =>
+				expect(
+					container
+						.querySelector("[data-save-status]")
+						?.getAttribute("data-save-status"),
+				).toBe("saved"),
+			);
+
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]);
+		} finally {
+			fetch.mockRestore();
+		}
+	});
+
 	it("clears configured credential presentation after a reset is saved", async () => {
 		const user = userEvent.setup();
 		const configuredBootstrap = bootstrap({ configuredImageDomains: true });

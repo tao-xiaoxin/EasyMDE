@@ -357,12 +357,20 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		unset( $missing_wechat_png['settings']['wechatPngExportEnabled'] );
 		$invalid_wechat_png = $this->verification_payload( 'primary' );
 		$invalid_wechat_png['settings']['wechatPngExportEnabled'] = 'true';
+		$png_disabled_other_enabled = $this->verification_payload( 'primary' );
+		$png_disabled_other_enabled['settings']['uploadFormats']['png']  = false;
+		$png_disabled_other_enabled['settings']['uploadFormats']['webp'] = true;
+		$backup_png_disabled_other_enabled = $this->verification_payload( 'backup' );
+		$backup_png_disabled_other_enabled['settings']['uploadFormats']['png']  = false;
+		$backup_png_disabled_other_enabled['settings']['uploadFormats']['webp'] = true;
+		$all_formats_disabled = $this->verification_payload( 'primary' );
+		$all_formats_disabled['settings']['uploadFormats'] = array_fill_keys( array_keys( $all_formats_disabled['settings']['uploadFormats'] ), false );
 		$invalid_remote_mode = $this->verification_payload( 'primary' );
 		$invalid_remote_mode['settings']['remoteImageUploadMode'] = 'enabled';
 		$extra_field = $this->verification_payload( 'primary' );
 		$extra_field['settings']['editorOnly'] = true;
 
-		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $missing_wechat_png, $invalid_wechat_png, $invalid_remote_mode, $extra_field ) as $payload ) {
+		foreach ( array( $missing_auto_upload, $missing_remote_mode, $invalid_auto_upload, $invalid_image_hosting, $missing_wechat_png, $invalid_wechat_png, $png_disabled_other_enabled, $backup_png_disabled_other_enabled, $all_formats_disabled, $invalid_remote_mode, $extra_field ) as $payload ) {
 			$response = rest_do_request( $this->verification_request( $payload ) );
 
 			$this->assertSame( 400, $response->get_status() );

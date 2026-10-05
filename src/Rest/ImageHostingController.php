@@ -659,7 +659,7 @@ final class ImageHostingController {
 				return false;
 			}
 		}
-		if ( ! in_array( true, $draft['uploadFormats'], true ) ) {
+		if ( ! in_array( true, $draft['uploadFormats'], true ) || true !== $draft['uploadFormats']['png'] ) {
 			return false;
 		}
 		try {

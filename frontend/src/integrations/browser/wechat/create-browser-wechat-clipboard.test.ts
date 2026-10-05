@@ -41,14 +41,19 @@ function mdmdtNormalPngDataUrl(): string {
     'assets/themes/article/mdmdt.css'
   ), 'utf8');
   const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
-  let match;
-  while ((match = rulePattern.exec(css)) !== null) {
-    const selectors = match[1].split(',').map((selector) => selector.trim());
+  let match: RegExpExecArray | null;
+  while (true) {
+    match = rulePattern.exec(css);
+    if (null === match) break;
+    const selectorText = match[1];
+    const ruleText = match[2];
+    if (undefined === selectorText || undefined === ruleText) continue;
+    const selectors = selectorText.split(',').map((selector) => selector.trim());
     if (!selectors.includes(
       '.easymde-rendered-content.easymde-markdown-theme-mdmdt p a::before'
     )) continue;
     const dataUrl = /background-image:\s*url\(["'](data:image\/png;base64,[^"']+)["']\)/u
-      .exec(match[2])?.[1];
+      .exec(ruleText)?.[1];
     if (dataUrl) return dataUrl;
   }
   throw new Error('Mdmdt normal PNG data URI missing');
@@ -14260,7 +14265,9 @@ describe('createBrowserWechatClipboard', () => {
     modernHolder.innerHTML = modernHtml;
     const link = modernHolder.querySelector('a[href="https://example.test/link"]');
     expect(link).not.toBeNull();
-    expect(link?.querySelector('span[aria-hidden="true"] img[src^="data:image/png;base64,"]')).not.toBeNull();
+    const modernMarker = link?.querySelector('span[aria-hidden="true"]');
+    expect(modernMarker?.querySelector('img[src^="data:image/png;base64,"]')).not.toBeNull();
+    expect(modernMarker?.textContent).toBe('');
     expect(link?.querySelector('span[aria-hidden="true"] img[src^="data:image/svg+xml"]')).toBeNull();
     expect(modernHolder.querySelector('a[href="#fn1"] > span[aria-hidden="true"]')).toBeNull();
     expect(modernText).toBe(sourceText);
@@ -14290,11 +14297,176 @@ describe('createBrowserWechatClipboard', () => {
       legacyHolder.innerHTML = legacyHtml;
       const legacyLink = legacyHolder.querySelector('a[href="https://example.test/link"]');
       expect(legacyLink).not.toBeNull();
-      expect(legacyLink?.querySelector('span[aria-hidden="true"] img[src^="data:image/png;base64,"]')).not.toBeNull();
+      const legacyMarker = legacyLink?.querySelector('span[aria-hidden="true"]');
+      expect(legacyMarker?.querySelector('img[src^="data:image/png;base64,"]')).not.toBeNull();
+      expect(legacyMarker?.textContent).toBe('');
       expect(legacyLink?.textContent).toContain('Visible link');
       expect(legacyHolder.textContent).toContain('Footnote body');
       expect(legacyHolder.querySelector('a[href="#fn1"] > span[aria-hidden="true"]')).toBeNull();
       expect(legacyHtml).not.toContain('data:image/svg+xml');
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      if (originalExecCommand) {
+        Object.defineProperty(document, 'execCommand', originalExecCommand);
+      } else {
+        delete (document as unknown as { execCommand?: unknown }).execCommand;
+      }
+    }
+  });
+
+  it('keeps pseudo carriers alive without duplicating or leaking unsafe image layers', async () => {
+    const writes: unknown[] = [];
+    const fetch = vi.fn();
+    const pngDataUrl = mdmdtNormalPngDataUrl();
+    const svgDataUrl = 'data:image/svg+xml;base64,PHN2Zy8+';
+    const unknownImageUrl = 'https://unknown.example.test/pseudo.png';
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<p id="safe">Safe</p>',
+      '<p id="repeat">Repeat</p>',
+      '<p id="repeat-x">Repeat X</p>',
+      '<p id="gradient">Gradient</p>',
+      '<p id="color">Color</p>',
+      '<p id="shadow">Shadow</p>',
+      '<p id="text">Text</p>',
+      '<p id="svg">SVG</p>',
+      '<p id="unknown">Unknown</p>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Safe\nRepeat\nRepeat X\nGradient\nColor\nShadow\nText\nSVG\nUnknown'
+    });
+    const pseudoStyle = (id: string): Record<string, string> => {
+      const base = {
+        content: '""',
+        display: 'inline-block',
+        height: '14px',
+        width: '14px'
+      };
+      if ('safe' === id) {
+        return {
+          ...base,
+          'background-image': `url("${pngDataUrl}")`,
+          'background-position': 'center',
+          'background-repeat': 'no-repeat',
+          'background-size': '100%'
+        };
+      }
+      if ('repeat' === id || 'repeat-x' === id) {
+        const repeat = 'repeat-x' === id ? 'repeat-x' : 'repeat';
+        return {
+          ...base,
+          background: `transparent url("${pngDataUrl}") ${repeat} 0 0`,
+          'background-image': `url("${pngDataUrl}")`,
+          'background-repeat': repeat
+        };
+      }
+      if ('gradient' === id) {
+        return {
+          ...base,
+          'background-image': 'linear-gradient(rgb(1, 2, 3), rgb(4, 5, 6))'
+        };
+      }
+      if ('color' === id) return { ...base, 'background-color': 'rgb(7, 8, 9)' };
+      if ('shadow' === id) return { ...base, 'box-shadow': 'rgb(10, 11, 12) 0 1px 2px' };
+      if ('text' === id) return { ...base, content: '"Caption"' };
+      if ('svg' === id) return { ...base, 'background-image': `url("${svgDataUrl}")` };
+      return { ...base, 'background-image': `url("${unknownImageUrl}")` };
+    };
+    const getComputedStyle = (element: Element, pseudoElement?: string): CSSStyleDeclaration => {
+      if ('::before' === pseudoElement && element instanceof HTMLElement) {
+        return declaration(pseudoStyle(element.id));
+      }
+      if (pseudoElement) return declaration({ content: 'none' });
+      return declaration({ display: 'block' });
+    };
+    const createClipboard = (
+      clipboardItem: ClipboardItemConstructor | null,
+      write: ((items: unknown[]) => Promise<void>) | null
+    ) => createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem,
+      document,
+      fetch,
+      getComputedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob>) {}
+    }
+    const modern = createClipboard(
+      ClipboardItemStub,
+      async (items) => { writes.push(items); }
+    );
+    await expect(modern.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const modernItem = (writes[0] as ClipboardItemStub[])[0];
+    const modernHtmlBlob = modernItem?.payload['text/html'];
+    if (!modernHtmlBlob) throw new Error('pseudo carrier modern payload missing');
+    const modernHolder = document.createElement('div');
+    modernHolder.innerHTML = await blobText(modernHtmlBlob);
+
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let legacyHtml = '';
+    class ThrowingClipboardItem {
+      constructor(_payload: Record<string, Blob>) {
+        throw new Error('forced-synchronous-pseudo-carrier');
+      }
+    }
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+    try {
+      const legacy = createClipboard(ThrowingClipboardItem, vi.fn(async () => undefined));
+      await expect(legacy.copy(preview)).resolves.toEqual({ method: 'legacy', status: 'copied' });
+      const legacyHolder = document.createElement('div');
+      legacyHolder.innerHTML = legacyHtml;
+      for (const holder of [modernHolder, legacyHolder]) {
+        const marker = (index: number): Element | null => (
+          holder.querySelectorAll('p')[index]?.querySelector(':scope > span[aria-hidden="true"]') ?? null
+        );
+        const safe = marker(0);
+        expect(safe?.textContent).toBe('');
+        expect(safe?.querySelectorAll(':scope > img')).toHaveLength(1);
+        expect(safe?.querySelectorAll('img')).toHaveLength(1);
+
+        for (const id of ['repeat', 'repeat-x']) {
+          const repeated = marker('repeat-x' === id ? 2 : 1);
+          expect(repeated?.textContent).toBe(' ');
+          expect(repeated?.querySelectorAll('img')).toHaveLength(0);
+          expect(repeated?.getAttribute('style')).toContain('background-image:url("data:image/png;base64,');
+          expect(repeated?.getAttribute('style')).toContain(`background-repeat:${'repeat-x' === id ? 'repeat-x' : 'repeat'}`);
+        }
+
+        const gradient = marker(3);
+        expect(gradient?.textContent).toBe(' ');
+        expect(gradient?.querySelectorAll('img')).toHaveLength(0);
+        expect(gradient?.getAttribute('style')).toContain('background-image:linear-gradient(');
+        const color = marker(4);
+        expect(color?.textContent).toBe(' ');
+        expect(color?.querySelectorAll('img')).toHaveLength(0);
+        expect(color?.getAttribute('style')).toContain('background-color:rgb(7, 8, 9)');
+        const shadow = marker(5);
+        expect(shadow?.textContent).toBe(' ');
+        expect(shadow?.querySelectorAll('img')).toHaveLength(0);
+        expect(shadow?.getAttribute('style')).toContain('box-shadow:rgb(10, 11, 12) 0 1px 2px');
+
+        expect(marker(6)?.textContent).toBe('Caption');
+        for (const index of [7, 8]) {
+          const filtered = marker(index);
+          expect(filtered?.textContent).toBe(' ');
+          expect(filtered?.querySelectorAll('img')).toHaveLength(0);
+          expect(filtered?.getAttribute('style')).not.toContain('data:image/svg+xml');
+          expect(filtered?.getAttribute('style')).not.toContain(unknownImageUrl);
+        }
+      }
       expect(fetch).not.toHaveBeenCalled();
     } finally {
       if (originalExecCommand) {

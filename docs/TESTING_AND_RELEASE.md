@@ -437,6 +437,16 @@ destinations at 375, 578, and 760 CSS pixels check semantic content, code token
 styles, frame markers, last painted rows, and local overflow without EasyMDE
 stylesheets. Code height must match the source rather than add a blank row for
 the renderer's terminal LF; deliberate extra blank rows remain intact.
+The Mdmdt link-decoration gate decodes the actual Clipboard raster, requires a
+200x200 intrinsic PNG to match its 14x14 marker on every edge, and proves that
+real isolated SVG and wrong-size mutations fail. The code-mode matrix exercises
+every dynamically registered code theme through ordinary, immersive Split,
+Preview, and Source Copy while rotating Cupid, Phycat, and Mdmdt article owners.
+Each activation requires a finite pending measurement, the existing activation
+and pending budgets, one native write, no Copy-window Long Task, stable Source
+and Preview, exact token/frame/text projection at 335 and 677 CSS pixels, and
+an ordinary live long line that reaches both horizontal ends through wheel input
+without moving the page.
 These portable-payload projections do not prove WeChat importer or reader
 fidelity. Record actual WeChat desktop/phone checks separately, including loaded
 images and the themes and editor modes actually exercised. Keep any opt-in

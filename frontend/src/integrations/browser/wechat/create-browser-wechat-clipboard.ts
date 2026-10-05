@@ -2088,6 +2088,7 @@ async function addPseudoElement(
   if (!content && !declarations.length) return;
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const appendedImageLayers = preserveRepeatingBackground ? [] : imageLayers;
   const portableDeclarations = removeDataImageBackgroundDeclarations(
     declarations,
     preserveRepeatingBackground
@@ -2106,7 +2107,7 @@ async function addPseudoElement(
   marker.setAttribute('aria-hidden', 'true');
   // WeChat drops completely empty decoration spans during paste. A zero-size
   // whitespace marker keeps CSS-only decorations while remaining invisible.
-  marker.textContent = content || ' ';
+  marker.textContent = content || (appendedImageLayers.length ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (isCodeFramePseudo(source, pseudo, computed, content)) {
     CODE_FRAME_PSEUDO_CLONES.add(marker);
@@ -2114,7 +2115,7 @@ async function addPseudoElement(
   if (generatedEmptyHeadingSuffix) GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(marker);
   appendThemeImages(
     marker,
-    preserveRepeatingBackground ? [] : imageLayers,
+    appendedImageLayers,
     computed,
     !content
   );
@@ -2151,6 +2152,7 @@ function addPseudoElementSynchronously(
   if (!content && !declarations.length) return true;
   const imageLayers = dataImageLayersFromDeclarations(declarations);
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
+  const appendedImageLayers = preserveRepeatingBackground ? [] : imageLayers;
   const portableDeclarations = removeDataImageBackgroundDeclarations(
     declarations,
     preserveRepeatingBackground
@@ -2167,7 +2169,7 @@ function addPseudoElementSynchronously(
   );
   const marker = clone.ownerDocument.createElement('span');
   marker.setAttribute('aria-hidden', 'true');
-  marker.textContent = content || ' ';
+  marker.textContent = content || (appendedImageLayers.length ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (isCodeFramePseudo(source, pseudo, computed, content)) {
     CODE_FRAME_PSEUDO_CLONES.add(marker);
@@ -2175,7 +2177,7 @@ function addPseudoElementSynchronously(
   if (generatedEmptyHeadingSuffix) GENERATED_EMPTY_HEADING_SUFFIX_CLONES.add(marker);
   appendThemeImages(
     marker,
-    preserveRepeatingBackground ? [] : imageLayers,
+    appendedImageLayers,
     computed,
     !content
   );

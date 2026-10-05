@@ -446,6 +446,16 @@ equivalence, numeric size tokens, four-value edge offsets, and `max-width:none`
 for fixed decoration images. Generated image dimensions must not be overwritten
 by generic responsive media rules.
 
+An empty generated pseudo retains an invisible whitespace carrier only when no
+image child is actually materialized. A safe non-repeating raster child itself
+keeps the pseudo clone non-empty, so adding a preceding whitespace Text node is
+forbidden: a block materialized image would otherwise start after the inherited
+line box and paint outside the pseudo's fixed geometry. Repeating raster
+backgrounds, gradients, colors, shadows, filtered SVG/remote URLs, and other
+CSS-only empty decorations still retain the whitespace carrier because they do
+not append an image child. Textual pseudo content remains unchanged. The modern
+and synchronous serializers use the same actual-appended-layer decision.
+
 Materialized overlays sit at an isolated negative stacking level behind copied
 text. Normalize percentage positions before centered-axis composition; follow
 CSS missing-axis defaults for one-token positions and axis order for

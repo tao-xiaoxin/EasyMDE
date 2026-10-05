@@ -48,6 +48,33 @@ describe('image upload response parsers', () => {
 });
 
 describe('createWordPressImageUploadPort', () => {
+  it('preserves the JFIF multipart filename and lowercases its extension', async () => {
+    const apiFetch = vi.fn().mockResolvedValue({
+      ...validMediaResponse,
+      filename: 'photo.jfif',
+    });
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'unused-image-hosting-nonce',
+      apiFetch,
+      endpoint: '/wp-json/easymde/v1/media',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'media',
+    });
+
+    await port.upload({
+      altText: 'image',
+      file: new File(['image'], 'photo.JFIF', { type: 'image/jpeg' }),
+      postId: 17,
+      signal: new AbortController().signal,
+    });
+
+    const request = apiFetch.mock.calls[0]?.[0];
+    if (!request) throw new Error('image-upload-request-missing');
+    expect((request.body.get('file') as File).name).toBe('photo.jfif');
+  });
+
   it('accepts a filtered CDN media URL with a query and fragment', async () => {
     const url =
       'https://cdn.example.test/wp-content/uploads/image.png?ver=20260901#preview';

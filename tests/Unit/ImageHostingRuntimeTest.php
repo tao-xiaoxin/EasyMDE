@@ -104,7 +104,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		);
 		$settings = $this->settings();
 		$settings['storagePath']  = '{year}/{month}/{day}/{time}/{post_id}';
-		$settings['fileNameRule'] = '{md5}-{uuid}-{name}.{ext}';
+		$settings['fileNameRule'] = '{md5}-{uuid}-{name}';
 		$expected_path = '2026/07/13/153045/0/' . md5( $bytes ) . '-00000000-0000-4000-8000-000000000000-easymde-editor-icon.png';
 
 		$result = $runtime->validate_upload( $settings, 'primary' );
@@ -627,10 +627,11 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 				'secretKey'     => 'SYNTHETIC_BACKUP_SECRET',
 				),
 			'storagePath'  => '{date}',
-			'fileNameRule' => '{uuid}.{ext}',
+			'fileNameRule' => '{uuid}',
 			'behaviors'    => array(
 				'autoCompress'  => false,
 				'maxBytes'      => 5 * MB_IN_BYTES,
+				'uploadFormats' => array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' ),
 				'titleDisplay'  => 'none',
 			),
 		);

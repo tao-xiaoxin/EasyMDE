@@ -10,9 +10,9 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		$bytes   = 'synthetic-image-bytes';
 		$key     = $builder->build(
 			'{year}/{month}',
-			'{md5}.{ext}',
+			'{md5}',
 			$bytes,
-			'Example Image.exe',
+			'Example Image.png',
 			'image/png',
 			42,
 			new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) ),
@@ -25,21 +25,12 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_combined_validation_requires_ext_but_allows_it_in_storage_path() {
+	public function test_combined_validation_rejects_ext_in_storage_path() {
 		$builder = new ObjectKeyBuilder();
-		$bytes   = 'synthetic-image-bytes';
-		$key     = $builder->build(
-			'prefix/{ext}',
-			'{md5}',
-			$bytes,
-			'image.png',
-			'image/png',
-			0,
-			new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) ),
-			'00000000-0000-4000-8000-000000000000'
-		);
 
-		$this->assertSame( 'prefix/png/' . md5( $bytes ), $key );
+		$this->expectException( ImageHostException::class );
+		$this->expectExceptionMessage( 'image_host_invalid_key_template' );
+		$builder->validate( 'prefix/{ext}', '{md5}' );
 	}
 
 	public function test_combined_template_length_is_limited_to_160_bytes() {
@@ -49,8 +40,8 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		$this->expectException( ImageHostException::class );
 		$this->expectExceptionMessage( 'image_host_invalid_key_template' );
 		$builder->build(
-			str_repeat( 'a', 159 ),
-			'{ext}',
+			str_repeat( 'a', 156 ),
+			'{md5}',
 			'bytes',
 			'x.png',
 			'image/png',
@@ -74,7 +65,7 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 
 		foreach ( array( '.', 'a/./b' ) as $storage_path ) {
 			try {
-				$builder->validate( $storage_path, '{md5}.{ext}' );
+				$builder->validate( $storage_path, '{md5}' );
 				$this->fail( 'Expected dot storage path segments to be rejected.' );
 			} catch ( ImageHostException $exception ) {
 				$this->assertSame( 'image_host_invalid_key_template', $exception->get_error_code(), $storage_path );
@@ -88,7 +79,7 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 
 		$this->assertSame( '2026/07/' . md5( 'bytes' ) . '.png', $builder->build(
 			'{year}/{month}',
-			'{md5}.{ext}',
+			'{md5}',
 			'bytes',
 			'image.png',
 			'image/png',
@@ -104,7 +95,7 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 
 		$this->expectException( ImageHostException::class );
 		$this->expectExceptionMessage( 'image_host_invalid_key_template' );
-		$builder->validate( '{ext}', '.' );
+		$builder->validate( 'prefix', '.' );
 	}
 
 	public function test_legacy_template_validation_rejects_nested_dot_segments()
@@ -121,9 +112,9 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 		$bytes   = 'synthetic-image-bytes';
 		$key     = $builder->build(
 			'{date}/{post_id}',
-			'{md5}-{uuid}-{name}.{ext}',
+			'{md5}-{uuid}-{name}',
 			$bytes,
-			'Example Image.exe',
+			'Example Image.png',
 			'image/png',
 			42,
 			new DateTimeImmutable( '2026-07-13 15:30:45', new DateTimeZone( 'UTC' ) ),
@@ -142,7 +133,7 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 
 		$key = $builder->build(
 			'',
-			'{md5}.{ext}',
+			'{md5}',
 			$bytes,
 			'image.png',
 			'image/png',
@@ -160,10 +151,10 @@ final class ImageHostObjectKeyBuilderTest extends WP_UnitTestCase {
 
 		foreach (
 			array(
-				array( '{date}', '{uuid}.{ext}', 'bytes', 'x.svg', 'image/svg+xml', 'image_host_unsupported_mime' ),
-				array( '{date}', '{uuid}.{ext}', '', 'x.png', 'image/png', 'image_host_empty_file' ),
-				array( '../', '{uuid}.{ext}', 'bytes', 'x.png', 'image/png', 'image_host_invalid_key_template' ),
-				array( '', '{unknown}.{ext}', 'bytes', 'x.png', 'image/png', 'image_host_invalid_key_template' ),
+				array( '{date}', '{uuid}', 'bytes', 'x.svg', 'image/svg+xml', 'image_host_unsupported_mime' ),
+				array( '{date}', '{uuid}', '', 'x.png', 'image/png', 'image_host_empty_file' ),
+				array( '../', '{uuid}', 'bytes', 'x.png', 'image/png', 'image_host_invalid_key_template' ),
+				array( '', '{unknown}', 'bytes', 'x.png', 'image/png', 'image_host_invalid_key_template' ),
 			) as $case
 		) {
 			try {

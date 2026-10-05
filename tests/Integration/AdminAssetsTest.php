@@ -81,6 +81,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			$bootstrap['imageUpload']['allowedMimeTypes']
 		);
 		$this->assertSame(
+			array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' ),
+			$bootstrap['imageUpload']['allowedExtensions']
+		);
+		$this->assertSame(
 			array( 'titleDisplay' => 'none' ),
 			$bootstrap['imageUpload']['insertion']
 		);
@@ -236,7 +240,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertArrayNotHasKey( 'insertAfterUpload', $bootstrap['imageUpload'] );
 		$this->assertSame( 3 * MB_IN_BYTES, $bootstrap['imageUpload']['maxBytes'] );
-		$this->assertSame( 'Supports JPG, PNG, WebP, and GIF, max 3 MB', $bootstrap['strings']['immersive']['imageRequirements'] );
+		$this->assertSame( 'Supports WebP, PNG, JPG, JPEG, JFIF, and GIF, max 3 MB', $bootstrap['strings']['immersive']['imageRequirements'] );
 		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['imageUpload']['insertion'] );
 		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['mediaPicker']['insertion'] );
 	}

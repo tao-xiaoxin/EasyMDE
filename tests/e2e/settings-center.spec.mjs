@@ -1991,14 +1991,14 @@ test("runs the image-hosting interaction contract without exposing credentials",
 				'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
 			)
 			.click();
-		await expect(rule).toHaveValue("{md5}.{ext}");
+		await expect(rule).toHaveValue("{md5}");
 		await expect(storagePath).toHaveValue(editedStoragePath);
 		await rule.fill(".");
 		await primary
 			.locator(".easymde-settings-center__file-name-variables button")
 			.last()
 			.click();
-		await expect(rule).toHaveValue(".{ext}");
+		await expect(rule).toHaveValue(".{name}");
 
 		const backup = images.locator(".is-backup-host");
 		const backupToggle = backup.locator('[role="switch"]').first();
@@ -2025,14 +2025,14 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		const formats = images.locator(
 			".easymde-settings-center__upload-formats input",
 		);
-		for (let index = 0; index < 4; index += 1) {
+		for (let index = 0; index < 6; index += 1) {
 			const format = formats.nth(index);
 			if (!(await format.isChecked())) await format.check();
 		}
-		for (let index = 0; index < 3; index += 1)
+		for (let index = 0; index < 5; index += 1)
 			await formats.nth(index).uncheck();
-		await formats.nth(3).click();
-		await expect(formats.nth(3)).toBeChecked();
+		await formats.nth(5).click();
+		await expect(formats.nth(5)).toBeChecked();
 		const uploadFormatRequired = await page.evaluate(
 			() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
 		);
@@ -2905,7 +2905,7 @@ test("persists all remote image import modes and resets the documented defaults"
 				name: strings.fileNameRule,
 				exact: true,
 			}),
-		).toHaveValue("{md5}.{ext}");
+		).toHaveValue("{md5}");
 		await expect(
 			page.getByRole("button", {
 				name: strings.fileNamePresetMd5,
@@ -3645,12 +3645,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		).toHaveCount(6);
 		await expect(
 			images.locator(".easymde-settings-center__file-name-variables button"),
-		).toHaveCount(10);
+		).toHaveCount(9);
 		await expect(
 			images.locator(".easymde-settings-center__file-name-preview code"),
 		).toHaveText("2026/07/a8f4c2d1.webp");
 		const editedStoragePath = "disabled/{date}";
-		const editedFileNameRule = "{uuid}.{ext}";
+		const editedFileNameRule = "{uuid}";
 		await storagePath.fill(editedStoragePath);
 		await fileNameRule.fill(editedFileNameRule);
 		await expect(storagePath).toHaveValue(editedStoragePath);

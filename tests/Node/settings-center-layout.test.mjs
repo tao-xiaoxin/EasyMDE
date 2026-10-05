@@ -70,11 +70,7 @@ function cssRuleBody(selector) {
 }
 
 test("Settings Center feedback reuses the shared editor message alert", () => {
-	for (const source of [
-		settingsRootSource,
-		imagesSettingsSource,
-		transferSettingsSource,
-	]) {
+	for (const source of [settingsRootSource, transferSettingsSource]) {
 		assert.match(
 			source,
 			/import \{ EditorMessageAlert \} from "\.\.\/\.\.\/shared\/ui\/EditorMessageAlert";/,
@@ -83,6 +79,9 @@ test("Settings Center feedback reuses the shared editor message alert", () => {
 		assert.match(source, /<EditorMessageAlert/);
 		assert.doesNotMatch(source, /SettingsFeedbackAlert/);
 	}
+	assert.match(imagesSettingsSource, /className="easymde-settings-center__upload-format-error"/);
+	assert.match(imagesSettingsSource, /role="alert"/);
+	assert.doesNotMatch(imagesSettingsSource, /SettingsFeedbackAlert/);
 	assert.doesNotMatch(settingsCss, /easymde-settings-center__transfer-feedback/);
 });
 

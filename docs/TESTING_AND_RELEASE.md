@@ -101,17 +101,31 @@ under the primary Viewing Image Domain. Secret-reveal coverage must prove
 `Cache-Control: no-store`, one-field response projection, and continued
 redaction from bootstrap, ordinary settings, exports, and diagnostics.
 
-Split-rule tests must prove the defaults `{year}/{month}` and `{md5}.{ext}`;
-an explicit empty storage path targets the bucket root; missing legacy
-`storagePath` splits the old complete rule at its last `/` without a Read-time
-write; the next legitimate Save persists both fields; an already-open legacy
-write payload follows the same split; and canonical schema 11 payloads reject a
-missing field. Combined validation must enforce the historical 160-byte and
-`{ext}` semantics, including a legacy basename without `{ext}`, while rejecting
-empty or malformed basenames, separators, traversal, unknown placeholders,
-and invalid combined object keys. Object-key tests must prove `{md5}` uses the
-final bytes sent to the provider after optional processing, matching PicFast
-PicGo's content-MD5 algorithm while deriving the extension from verified MIME.
+Split-rule tests must prove the defaults `{year}/{month}` and suffix-free
+`{md5}`; the fixed registry order is `webp`, `png`, `jpg`, `jpeg`, `jfif`,
+`gif`, all six default to enabled, canonical payloads contain exactly those
+boolean keys, and an empty selection is rejected. The preview must append the
+first enabled entry and equal `2026/07/a8f4c2d1.webp` by default. An explicit
+empty storage path targets the bucket root; missing legacy `storagePath` splits
+the old complete rule at its last `/` and removes exactly one terminal
+`.{ext}` without a Read-time write; the next legitimate Save persists both
+fields; an already-open legacy write payload follows the same conversion; and
+canonical schema 12 payloads reject a missing or extra field. Legacy four-key
+format maps must expand `jpg` to independent `jpg`, `jpeg`, and `jfif` values.
+Combined validation must enforce the historical 160-byte and object-key rules,
+reject every canonical `{ext}` placement, and report explicit errors for a
+legacy `{ext}` in a directory, in the middle, repeated, or leaving an empty
+stem. Object-key tests must prove `{md5}` uses the final bytes sent to the
+provider after optional processing, matching PicFast PicGo's content-MD5
+algorithm, then appends exactly one verified source extension.
+
+Extension admission tests must cover each of the six exact lowercased suffixes,
+real-MIME mismatch, disabled-checkbox rejection, and independent JPG/JPEG/JFIF
+behavior. A real JFIF upload must persist through a scoped `jfif => image/jpeg`
+Core allowance and prove the allowance and all related hooks are removed on
+success and failure; no global MIME registry may be changed. Remote-import
+tests must cover extensionless MIME-derived suffixes and supplied mismatched or
+disabled suffixes as explicit failures.
 The focused PHP suite is:
 
 ```bash
@@ -136,10 +150,15 @@ TypeScript contract and feature coverage must prove strict
 `image-hosting`), local paste/drop dispatch to the selected owner, remote mode
 forced to `off` while hosting is disabled, and an explicit selected-owner
 failure without retrying through another owner or destination. Settings Center
-bootstrap schema `3` must expose both split fields, and Transfer export schema
-`11` must export both fields; imports `1` through `10` must receive the same
-lossless split while schema `11` remains strict. Editing either field must
-invalidate verification fingerprints and stale completion.
+bootstrap schema `4` must expose both split fields and the exact ordered six-key
+format map, and Transfer export schema `12` must export that canonical shape;
+imports `1` through `11` must receive the explicit legacy split and four-key
+format conversion while schema `12` remains strict. The preview must use only
+the first enabled suffix and show the fixed default example without changing
+multipart upload names. Editing either split field or the format map must
+invalidate verification fingerprints and stale completion. Browser admission
+must preserve `.jpg`, `.jpeg`, and `.jfif` independently, including multipart
+JFIF filename preservation.
 
 Browser tests may intercept the same-origin WordPress
 verification/upload/secret routes to exercise pending, success, failure,
@@ -255,7 +274,7 @@ npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser
 
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
-The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schema 11 requires it while schemas 1 through 10 import the compatible value; the split image settings are present in Settings Center bootstrap schema 3; legacy imports 1 through 10 derive `storagePath` and basename `fileNameRule` losslessly, while schema 11 rejects missing fields; and changing either field invalidates verification state. Background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
+The focused frontend tests verify modern and legacy output parity, activation timing, preparation failure, unsafe-value removal, theme and layout-sensitive content, Preview readiness, concurrent requests, and teardown. PNG coverage verifies that the default-disabled strict boolean reaches `wechatExport.pngConversionEnabled`; transfer schemas 1 through 11 import compatible values and schema 12 requires the explicit boolean; the split image settings and exact six-key extension map are present in Settings Center bootstrap schema 4; legacy imports 1 through 11 derive `storagePath` and the suffix-free basename `fileNameRule`, expand the old four-key format map, and migrate only one terminal `.{ext}`; schema 12 rejects missing or extra canonical fields; and changing either split field or the format map invalidates verification state. Preview coverage asserts first-enabled ordering and the exact default `2026/07/a8f4c2d1.webp`, while real upload coverage preserves the verified source extension and rejects MIME mismatches, disabled suffixes, and independent JPG/JPEG/JFIF violations. Background preparation, legacy Clipboard, and synchronous modern setup failure upload nothing; the modern path invokes `write()` before serial rasterization/upload; only outermost Mermaid and KaTeX math roots become PNG; and ordinary tables, existing images, ordinary SVG, code, media, and unknown content remain HTML. It also exercises the 32-candidate, 4096-edge, DPR `1..2`, 16/32-megapixel, per-file authoritative `maxBytes`, 32 MiB total, 10-second raster, and 60-second transaction bounds; selected-owner dispatch, no owner switch, no partial Clipboard result, residual-upload reporting, cancellation, stale Preview, timeout, and failure paths.
 Focused cancellation coverage verifies Root cancellation when visual editing starts, per-sink adapter cancellation of an active serialization while explicit Copy remains independent, and all-waiter cancellation followed by a fresh background run; it also verifies no post-await plain-text work or prepared-cache publication after cancellation and preserves shared asset-fetch work. The same cancellation contract applies when Preview leaves `ready` status, an ordinary or immersive sink is disposed or replaced, the Root tears down, or the WeChat Port/export owner changes; canceled background work is not a Copy failure.
 
 The Chromium E2E coverage exercises Copy to WeChat from ordinary and immersive surfaces against the same ready Preview and confirms local runtime assets remain the only loaded executable resources. With conversion enabled, it must also prove generated Mermaid and formula PNG upload requests use the selected WordPress Media or Image Hosting owner, ordinary tables remain HTML, no request occurs before explicit Copy, and the live Preview and document do not change. Shared Preview enhancements are scheduled per code, math, and Mermaid node with stale/abort checks between slices so connected-staging work does not monopolize the main thread; focused runtime tests cover yield counts and serial Mermaid cancellation.
@@ -760,14 +779,16 @@ The destructive-edit browser cases are parameterized for first input `~`, `*`,
 independent Markdown AST lookup, then verify the escaped source/caret result,
 Undo/Redo, protected node identity, and no formal Preview rematerialization.
 
-The installed-ZIP Settings Center workflow also saves synthetic Storage Path
-and File Name Rule values while Image Hosting is disabled, performs an EasyMDE
-local drop through `/easymde/v1/media`, verifies the resulting URL and
-WordPress relative path with a successful GET, and confirms that provider,
-remote-import, and verify routes were not used. Its `finally` cleanup restores
-the original split fields and toggle and deletes the synthetic attachment;
-settings, attachment, and route cleanup failures are aggregated with the test
-failure.
+The installed-ZIP Settings Center workflow also saves synthetic Storage Path,
+suffix-free File Name Rule, and six-format selections while Image Hosting is
+disabled, asserts the first-enabled preview and the default
+`2026/07/a8f4c2d1.webp`, performs an EasyMDE local drop through
+`/easymde/v1/media`, and verifies the resulting URL and WordPress relative path
+with a successful GET. It must exercise at least one disabled JPEG alias and a
+JFIF upload, confirming that provider, remote-import, and verify routes were
+not used. Its `finally` cleanup restores the original split fields, format map,
+and toggle and deletes the synthetic attachment; settings, attachment, and
+route cleanup failures are aggregated with the test failure.
 
 The Settings Center first-paint gate uses a Chromium CDP screencast rather than
 a DOM-mutation screenshot. Its CI default runs the installed ZIP once for each

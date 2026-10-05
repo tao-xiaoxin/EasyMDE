@@ -27,6 +27,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 			public $title_display = 'filename';
 			public $remote_image_upload_mode = 'both';
 			public $include_remote_image_upload_mode = true;
+			public $upload_formats = array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' );
 			public $enabled = true;
 			public $configuration_error = false;
 
@@ -58,13 +59,13 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 						'secretKey'     => 'synthetic-backup-secret',
 					),
 					'behaviors'   => array(
-						'uploadFormats' => array( 'jpg', 'png', 'webp', 'gif' ),
+						'uploadFormats' => $this->upload_formats,
 						'maxBytes'      => $this->max_bytes,
 						'titleDisplay'  => $this->title_display,
 						'remoteImageUploadMode' => $this->remote_image_upload_mode,
 					),
 					'storagePath'  => '{date}',
-					'fileNameRule' => '{uuid}.{ext}',
+					'fileNameRule' => '{uuid}',
 				);
 				if ( ! $this->include_remote_image_upload_mode ) {
 					unset( $settings['behaviors']['remoteImageUploadMode'] );
@@ -160,7 +161,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $this->runtime->validation_calls );
 		$this->assertSame( 'synthetic-secret', $this->runtime->validation_calls[0][0]['primary']['secretKey'] );
 		$this->assertSame( '{date}', $this->runtime->validation_calls[0][0]['storagePath'] );
-		$this->assertSame( '{uuid}.{ext}', $this->runtime->validation_calls[0][0]['fileNameRule'] );
+		$this->assertSame( '{uuid}', $this->runtime->validation_calls[0][0]['fileNameRule'] );
 		$this->assertArrayNotHasKey( 'retryCount', $this->runtime->validation_calls[0][0]['primary'] );
 		$this->assertArrayNotHasKey( 'retryCount', $this->runtime->validation_calls[0][0]['backup'] );
 		$this->assertStringNotContainsString( 'synthetic-secret', wp_json_encode( $data ) );
@@ -552,6 +553,42 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		} finally {
 			unlink( $extension_mismatch['tmp_name'] );
 			unlink( $declared_size_mismatch['tmp_name'] );
+		}
+	}
+
+	public function test_upload_enforces_jpeg_aliases_independently_before_runtime_upload() {
+		$declared_types = array( 'jpg' => 'image/jpg', 'jpeg' => 'image/jpeg', 'jfif' => 'image/jfif' );
+		foreach ( $declared_types as $extension => $declared_type ) {
+			$file = $this->jpeg_file( $extension, $declared_type );
+			$request = $this->upload_request( $file );
+			$response = rest_do_request( $request );
+
+			try {
+				$this->assertSame( 200, $response->get_status(), $extension );
+				$this->assertSame( $file['name'], $this->runtime->upload_calls[ count( $this->runtime->upload_calls ) - 1 ][1]['name'], $extension );
+			} finally {
+				unlink( $file['tmp_name'] );
+			}
+		}
+
+		$this->settings_provider->upload_formats = array( 'png' );
+		$blocked = $this->jpeg_file( 'jpeg' );
+		$response = rest_do_request( $this->upload_request( $blocked ) );
+
+		try {
+			$this->assertSame( 415, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_unsupported_media_type', $response->as_error()->get_error_code() );
+		} finally {
+			unlink( $blocked['tmp_name'] );
+		}
+
+		$spoof = $this->jpeg_file( 'jfif', 'image/png' );
+		$response = rest_do_request( $this->upload_request( $spoof ) );
+		try {
+			$this->assertSame( 415, $response->get_status() );
+			$this->assertSame( 'easymde_image_hosting_unsupported_media_type', $response->as_error()->get_error_code() );
+		} finally {
+			unlink( $spoof['tmp_name'] );
 		}
 	}
 
@@ -1129,7 +1166,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 				'accessKey'           => '',
 				'secretKey'           => '',
 				'storagePath'         => '{date}',
-				'fileNameRule'        => '{uuid}.{ext}',
+				'fileNameRule'        => '{uuid}',
 				'uploadRetryCount'    => 3,
 				'backupEnabled'       => true,
 				'backupService'       => 'qiniu-kodo',
@@ -1142,7 +1179,7 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 				'autoUploadPastedImages' => true,
 				'remoteImageUploadMode'  => 'both',
 				'maxImageSizeMb'         => 5,
-				'uploadFormats'          => array( 'jpg' => true, 'png' => true, 'webp' => true, 'gif' => true ),
+				'uploadFormats'          => array( 'webp' => true, 'png' => true, 'jpg' => true, 'jpeg' => true, 'jfif' => true, 'gif' => true ),
 				'titleDisplay'           => 'none',
 			),
 		);
@@ -1177,6 +1214,19 @@ final class ImageHostingControllerTest extends WP_UnitTestCase {
 		return array(
 			'name'     => 'image.png',
 			'type'     => 'image/png',
+			'tmp_name' => $path,
+			'error'    => UPLOAD_ERR_OK,
+			'size'     => filesize( $path ),
+		);
+	}
+
+	private function jpeg_file( $extension, $declared_type = 'image/jpeg' ) {
+		$path = wp_tempnam( 'image.' . $extension );
+		file_put_contents( $path, base64_decode( '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=', true ) );
+
+		return array(
+			'name'     => 'image.' . $extension,
+			'type'     => $declared_type,
 			'tmp_name' => $path,
 			'error'    => UPLOAD_ERR_OK,
 			'size'     => filesize( $path ),

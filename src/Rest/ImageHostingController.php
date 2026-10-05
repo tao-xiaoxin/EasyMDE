@@ -5,6 +5,8 @@ namespace EasyMDE\Rest;
 use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
 use EasyMDE\ImageHosting\ImageHostException;
 use EasyMDE\ImageHosting\ImageHostProviderSupport;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
+use EasyMDE\ImageHosting\JfifMimeScope;
 use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\ImageHosting\RemoteImageDownloader;
 use EasyMDE\Support\Capabilities;
@@ -526,17 +528,22 @@ final class ImageHostingController {
 			return $this->invalid_file_error();
 		}
 
-		$checked        = wp_check_filetype_and_ext( $file['tmp_name'], $file_name );
+		$checked        = JfifMimeScope::run(
+			$file['tmp_name'],
+			$file_name,
+			static function () use ( $file, $file_name ) {
+				return wp_check_filetype_and_ext( $file['tmp_name'], $file_name );
+			}
+		);
 		$type           = isset( $checked['type'] ) && is_string( $checked['type'] ) ? $checked['type'] : '';
-		$ext            = isset( $checked['ext'] ) && is_string( $checked['ext'] ) ? strtolower( $checked['ext'] ) : '';
-		$declared_type  = is_string( $file['type'] ) ? strtolower( trim( $file['type'] ) ) : '';
+		$declared_type  = ImageUploadExtensionPolicy::normalize_declared_mime( $file['type'] );
 		$name_extension = strtolower( pathinfo( $file_name, PATHINFO_EXTENSION ) );
 		if (
 			'' === $type ||
 			$declared_type !== $type ||
 			! $this->extension_matches_type( $name_extension, $type ) ||
 			0 !== strpos( $type, 'image/' ) ||
-			! $this->format_is_allowed( $ext, $settings )
+			! $this->format_is_allowed( $name_extension, $settings )
 		) {
 			return new WP_Error(
 				'easymde_image_hosting_unsupported_media_type',
@@ -587,8 +594,7 @@ final class ImageHostingController {
 	}
 
 	private function format_is_allowed( $extension, array $settings ) {
-		$extension = in_array( $extension, array( 'jpeg', 'jfif' ), true ) ? 'jpg' : $extension;
-		$formats   = isset( $settings['behaviors']['uploadFormats'] ) && is_array( $settings['behaviors']['uploadFormats'] )
+		$formats = isset( $settings['behaviors']['uploadFormats'] ) && is_array( $settings['behaviors']['uploadFormats'] )
 			? $settings['behaviors']['uploadFormats']
 			: array();
 
@@ -644,7 +650,7 @@ final class ImageHostingController {
 			! $this->is_valid_public_result_url( $draft['backupDomain'], true ) ||
 			! in_array( $draft['titleDisplay'], array( 'none', 'filename' ), true ) ||
 			! is_array( $draft['uploadFormats'] ) ||
-			! $this->has_exact_keys( $draft['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) )
+			! $this->has_exact_keys( $draft['uploadFormats'], ImageUploadExtensionPolicy::extensions() )
 		) {
 			return false;
 		}
@@ -652,6 +658,9 @@ final class ImageHostingController {
 			if ( ! is_bool( $enabled ) ) {
 				return false;
 			}
+		}
+		if ( ! in_array( true, $draft['uploadFormats'], true ) ) {
+			return false;
 		}
 		try {
 			( new ObjectKeyBuilder() )->validate( $draft['storagePath'], $draft['fileNameRule'] );

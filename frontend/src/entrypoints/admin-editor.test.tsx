@@ -83,6 +83,7 @@ const bootstrap = {
   fonts: {},
   imageUpload: {
     actionNonce: 'image-hosting-nonce',
+    allowedExtensions: ['webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif'],
     endpoint: '/image-hosting/upload',
     importEndpoint: '/image-hosting/import',
     nonce: 'nonce',

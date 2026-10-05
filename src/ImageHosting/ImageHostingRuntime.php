@@ -107,7 +107,7 @@ final class ImageHostingRuntime {
 	}
 
 	public function upload( array $settings, array $file ) {
-		if ( ! $this->is_valid_upload_configuration( $settings ) || ! $this->is_valid_file( $file ) ) {
+		if ( ! $this->is_valid_upload_configuration( $settings ) || ! $this->is_valid_file( $file, $settings['behaviors']['uploadFormats'] ) ) {
 			return $this->configuration_error();
 		}
 		if ( $this->has_duplicate_destinations( $settings ) ) {
@@ -135,7 +135,8 @@ final class ImageHostingRuntime {
 				$prepared['bytes'],
 				$file['name'],
 				$prepared['mime_type'],
-				isset( $file['post_id'] ) ? (int) $file['post_id'] : 0
+				isset( $file['post_id'] ) ? (int) $file['post_id'] : 0,
+				$settings['behaviors']['uploadFormats']
 			);
 			if ( is_wp_error( $key ) ) {
 				return $key;
@@ -210,7 +211,7 @@ final class ImageHostingRuntime {
 		return null;
 	}
 
-	private function build_object_key( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id ) {
+	private function build_object_key( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id, $enabled_extensions = null ) {
 		$now = call_user_func( $this->clock );
 		if ( ! $now instanceof DateTimeImmutable ) {
 			return $this->operation_error( 'easymde_image_hosting_clock_failed' );
@@ -224,7 +225,8 @@ final class ImageHostingRuntime {
 			$mime_type,
 			$post_id,
 			$now->setTimezone( new DateTimeZone( 'UTC' ) ),
-			call_user_func( $this->uuid_factory )
+			call_user_func( $this->uuid_factory ),
+			$enabled_extensions
 		);
 	}
 
@@ -444,7 +446,9 @@ final class ImageHostingRuntime {
 			is_int( $settings['behaviors']['maxBytes'] ) &&
 			$settings['behaviors']['maxBytes'] > 0 &&
 			$settings['behaviors']['maxBytes'] <= ImageHostProviderSupport::MAX_IMAGE_BYTES &&
-			in_array( $settings['behaviors']['titleDisplay'], array( 'filename', 'none' ), true );
+			in_array( $settings['behaviors']['titleDisplay'], array( 'filename', 'none' ), true ) &&
+			is_array( $settings['behaviors']['uploadFormats'] ?? null ) &&
+			array() !== $settings['behaviors']['uploadFormats'];
 	}
 
 	private function is_valid_public_domain( $value ) {
@@ -464,14 +468,15 @@ final class ImageHostingRuntime {
 			( ! isset( $parts['path'] ) || '' === $parts['path'] || '/' === $parts['path'] );
 	}
 
-	private function is_valid_file( array $file ) {
+	private function is_valid_file( array $file, array $enabled_extensions = array() ) {
 		return isset( $file['name'], $file['type'], $file['tmp_name'] ) &&
 			is_string( $file['name'] ) &&
 			is_string( $file['type'] ) &&
 			is_string( $file['tmp_name'] ) &&
 			is_file( $file['tmp_name'] ) &&
 			is_readable( $file['tmp_name'] ) &&
-			in_array( $file['type'], ImageHostProviderSupport::ALLOWED_MIME_TYPES, true );
+			in_array( $file['type'], ImageHostProviderSupport::ALLOWED_MIME_TYPES, true ) &&
+			false !== ImageUploadExtensionPolicy::verify( $file['name'], $file['type'], $enabled_extensions );
 	}
 
 	private function configuration_error() {

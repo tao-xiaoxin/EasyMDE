@@ -53,7 +53,7 @@ function bootstrap({
 		},
 	};
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		closeUrl: "/wp-admin/options-general.php",
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
@@ -630,22 +630,26 @@ describe("SettingsCenterRoot global search", () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const formats = [
-			"allowUploadJpg",
-			"allowUploadPng",
 			"allowUploadWebp",
+			"allowUploadPng",
+			"allowUploadJpg",
+			"allowUploadJpeg",
+			"allowUploadJfif",
 			"allowUploadGif",
 		];
 		const controls = formats.map((name) =>
 			screen.getByRole<HTMLInputElement>("checkbox", { name }),
 		);
-		const [jpg, png, webp, gif] = controls;
-		if (!jpg || !png || !webp || !gif)
+		const [webp, png, jpg, jpeg, jfif, gif] = controls;
+		if (!jpg || !png || !webp || !jpeg || !jfif || !gif)
 			throw new Error("settings-upload-format-controls-missing");
 
 		expect(controls.every((control) => !control.disabled)).toBe(true);
-		await user.click(jpg);
-		await user.click(png);
 		await user.click(webp);
+		await user.click(png);
+		await user.click(jpg);
+		await user.click(jpeg);
+		await user.click(jfif);
 
 		expect(gif.checked).toBe(true);
 		expect(gif.disabled).toBe(false);
@@ -654,9 +658,8 @@ describe("SettingsCenterRoot global search", () => {
 		expect(screen.getByRole("alert").textContent).toContain(
 			"uploadFormatRequired",
 		);
-		await user.click(
-			screen.getByRole("button", { name: "closeImageFeedback" }),
-		);
+		await user.click(webp);
+		expect(webp.checked).toBe(true);
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(
 			screen
@@ -1062,7 +1065,7 @@ describe("SettingsCenterRoot images section", () => {
 		const user = userEvent.setup();
 		const initialBootstrap = bootstrap({ imageHostingEnabled: false });
 		const editedStoragePath = "disabled/{date}";
-		const editedFileNameRule = "{uuid}.{ext}";
+		const editedFileNameRule = "{uuid}";
 		const savedPayload = { current: null as Record<string, unknown> | null };
 		const savedSettings = {
 			...initialBootstrap.settings,
@@ -1741,7 +1744,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(11);
+		expect(exported.schemaVersion).toBe(12);
 			expect(exported.settings.images.wechatPngExportEnabled).toBe(false);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
@@ -2574,7 +2577,7 @@ describe("SettingsCenterRoot persistence", () => {
 							images: {
 								...configuredBootstrap.settings.images,
 								storagePath: "changed",
-								fileNameRule: "{md5}.{ext}",
+							fileNameRule: "{md5}",
 							},
 						},
 						credentialStatus: {

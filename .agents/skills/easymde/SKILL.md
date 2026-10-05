@@ -41,42 +41,63 @@ contracts.
 
 ### Shared Storage Path And File Name Rule
 
-The canonical image settings are `images.storagePath` and
-`images.fileNameRule`. Their defaults are `{year}/{month}` and
-`{md5}.{ext}`. `storagePath` may be empty, which means the provider bucket or
-WordPress upload root; an absent field is a legacy shape and is not equivalent
-to an explicitly empty path. `fileNameRule` is the basename rule and does not
-contain the storage directory.
+The canonical image settings are `images.storagePath`,
+`images.fileNameRule`, and the exact `images.uploadFormats` map. Their defaults
+are `{year}/{month}`, `{md5}`, and all six ordered entries enabled:
+`webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif`. `storagePath` may be empty, which
+means the provider bucket or WordPress upload root; an absent field is a legacy
+shape and is not equivalent to an explicitly empty path. `fileNameRule` is a
+suffix-free basename stem and never contains `{ext}`. Canonical payloads must
+contain exactly those six boolean extension keys, with at least one enabled;
+`jpg`, `jpeg`, and `jfif` are independent selections even though the latter
+two use the JPEG MIME family.
 
-When a stored settings document has no `storagePath`, the settings owner splits
-the old complete `fileNameRule` at its last `/`. The prefix becomes
-`storagePath`, the suffix becomes the basename rule, and a rule without `/`
-gets an empty path. This is a read-time projection only: it must not write or
-increment the settings revision. The next legitimate Settings Save persists
-both canonical fields. A legacy write payload from an already-open page may
-omit `storagePath` and receives the same deterministic split; a canonical
-schema 11 transfer must include both fields.
+The Settings Center preview expands the path and stem and appends the first
+enabled entry from that fixed registry. With the defaults its example is
+`2026/07/a8f4c2d1.webp`. Preview ordering is presentation-only: each local or
+hosted upload preserves its lowercased, verified source extension, and that
+extension must match the real MIME family and its own enabled checkbox. No
+JPEG sibling checkbox authorizes or renames another sibling. An extensionless
+remote image receives the documented MIME-derived compatible suffix; a supplied
+but mismatched or disabled suffix fails explicitly.
 
-`ObjectKeyBuilder` is the single owner that combines, validates, and expands
-the two fields exactly once for provider uploads and EasyMDE local paste/drop
-uploads sent to `/easymde/v1/media`. Combined validation preserves the
-historical 160-byte limit and `{ext}` behavior, including legacy complete rules
-whose basename did not contain `{ext}`. It rejects empty or malformed rules,
-separators and traversal outside the storage-path boundary, unknown
-placeholders, and invalid combined object keys. UTC, UUID, `post_id`, digest,
-date/time, sanitized name, and verified-extension variables are expanded only
-by this builder. Any path or rule failure is explicit; neither owner falls back
-to another key builder or an ordinary upload path.
+When a stored settings document has no `storagePath`, the settings owner first
+splits the old complete `fileNameRule` at its last `/`. It then removes exactly
+one terminal `.{ext}` from the basename. Only that terminal placement is
+representable. `{ext}` in a directory, in the middle, repeated, or leaving an
+empty stem is an explicit configuration/import error; the settings owner never
+silently drops or relocates it. This is a read-time projection only: it must not
+write or increment the settings revision. The next legitimate Settings Save
+persists both canonical fields. A legacy write payload from an already-open page
+may omit `storagePath` and receives the same deterministic conversion. Legacy
+four-key `uploadFormats` maps expand `jpg` to `jpg`, `jpeg`, and `jfif`, while
+PNG, WebP, and GIF retain their values. Settings Center bootstrap schema 4 and
+Transfer schema 12 are canonical; schemas 1 through 11 receive the explicit
+legacy conversion, while schema 12 is strict.
+
+`ObjectKeyBuilder` is the single owner that combines, validates, and expands the
+path and suffix-free stem exactly once for provider uploads and EasyMDE
+local paste/drop uploads sent to `/easymde/v1/media`. It appends exactly one
+verified source extension after MIME and checkbox validation; no canonical rule
+or preset can use `{ext}`. Combined validation preserves the historical
+160-byte limit, traversal/character rules, and final object-key checks. UTC,
+UUID, `post_id`, digest, date/time, and sanitized-name variables are expanded
+only by this builder. Any path, stem, extension, MIME, or rule failure is
+explicit; neither owner falls back to another key builder or an ordinary upload
+path.
 
 The Media controller takes one credential-free settings snapshot, validates the
-real MIME and size, then reads bounded exact bytes before calling the shared
-builder. Its `MediaUploadPathScope` matches the exact temporary file plus a
-one-time internal token. Its final-priority sideload prefilter restores the
-generated basename; the matching final overrides hook only registers an
-exact-file final `wp_check_filetype_and_ext` callback. That final MIME callback
-arms the one-shot `upload_dir` projection, so upload-directory reads from
-earlier overrides or MIME callbacks remain ordinary. Every operation removes
-the prefilter, overrides, MIME, and upload-directory hooks in `finally`.
+real MIME, exact source extension, enabled format, and size, then reads bounded
+exact bytes before calling the shared builder. Its `MediaUploadPathScope`
+matches the exact temporary file plus a one-time internal token. Its
+final-priority sideload prefilter restores the generated basename; the matching
+final overrides hook only registers an exact-file final
+`wp_check_filetype_and_ext` callback. That final MIME callback arms the one-shot
+`upload_dir` projection, so upload-directory reads from earlier overrides or
+MIME callbacks remain ordinary. For the owned upload operation only, a scoped
+`jfif => image/jpeg` allowance lets WordPress Core persist a JFIF upload; it is
+removed in `finally` and never changes the global MIME policy. Every operation
+removes the prefilter, overrides, MIME, and upload-directory hooks in `finally`.
 WordPress Core remains authoritative for MIME handling, `wp_unique_filename()`,
 attachment creation, metadata, sub-sizes, URLs, permissions, and the native
 media picker. Original sanitized client names supply the response filename,

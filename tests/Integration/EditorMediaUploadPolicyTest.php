@@ -81,6 +81,28 @@ final class EditorMediaUploadPolicyTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_jpeg_aliases_are_admitted_independently_by_exact_filename_extension() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		wp_set_current_user( $user_id );
+		$_REQUEST['post_id'] = (string) $post_id;
+
+		foreach ( array( 'jpg', 'jpeg', 'jfif' ) as $extension ) {
+			$repository = $this->repository_with_only_format_enabled( $extension );
+			$file       = $this->image_file( 'allowed.' . $extension, $this->jpeg_bytes(), 'image/jpeg' );
+
+			try {
+				$this->assertSame(
+					$file,
+					( new EditorMediaUploadPolicy( new PostDocument(), $repository ) )->validate_upload( $file ),
+					$extension
+				);
+			} finally {
+				unlink( $file['tmp_name'] );
+			}
+		}
+	}
+
 	public function test_leaves_uploads_for_unrelated_post_types_unchanged() {
 		register_post_type( 'easymde_policy_test', array( 'public' => false ) );
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
@@ -265,10 +287,12 @@ final class EditorMediaUploadPolicyTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$settings['images']['uploadFormats'] = array(
-			'jpg'  => 'jpg' === $enabled_format,
+			'webp' => 'webp' === $enabled_format,
 			'png'  => 'png' === $enabled_format,
-			'webp' => false,
-			'gif'  => false,
+			'jpg'  => 'jpg' === $enabled_format,
+			'jpeg' => 'jpeg' === $enabled_format,
+			'jfif' => 'jfif' === $enabled_format,
+			'gif'  => 'gif' === $enabled_format,
 		);
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 

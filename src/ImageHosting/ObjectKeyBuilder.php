@@ -12,6 +12,10 @@ final class ObjectKeyBuilder {
 
 	const MAX_TEMPLATE_BYTES = 160;
 
+	/**
+	 * MIME defaults are retained for internal validation uploads. Real uploads
+	 * use the exact source extension from ImageUploadExtensionPolicy.
+	 */
 	const MIME_EXTENSIONS = array(
 		'image/gif'  => 'gif',
 		'image/jpeg' => 'jpg',
@@ -20,7 +24,8 @@ final class ObjectKeyBuilder {
 	);
 
 	/**
-	 * Split a legacy complete object-key template at its final separator.
+	 * Split a legacy complete object-key template after removing one terminal
+	 * `.{ext}` marker. Invalid or unrepresentable placements return null.
 	 *
 	 * @param mixed $template Legacy complete template.
 	 * @return array{0:string,1:string}|null
@@ -29,23 +34,42 @@ final class ObjectKeyBuilder {
 		if ( ! is_string( $template ) ) {
 			return null;
 		}
-
-		$separator = strrpos( $template, '/' );
-		if ( false === $separator ) {
-			return array( '', $template );
+		if ( '' === $template || '/' === $template[0] || '/' === substr( $template, -1 ) ) {
+			return null;
 		}
 
-		return array(
-			substr( $template, 0, $separator ),
-			substr( $template, $separator + 1 ),
-		);
+		$separator = strrpos( $template, '/' );
+		$storage   = false === $separator ? '' : substr( $template, 0, $separator );
+		$basename  = false === $separator ? $template : substr( $template, $separator + 1 );
+		$marker    = '.{ext}';
+
+		if (
+			1 !== substr_count( $template, '{ext}' ) ||
+			strlen( $basename ) <= strlen( $marker ) ||
+			substr( $basename, -strlen( $marker ) ) !== $marker
+		) {
+			return null;
+		}
+
+		$rule = substr( $basename, 0, -strlen( $marker ) );
+		if ( '' === $rule ) {
+			return null;
+		}
+
+		try {
+			( new self() )->validate_legacy_components( $storage, $rule );
+		} catch ( ImageHostException $exception ) {
+			return null;
+		}
+
+		return array( $storage, $rule );
 	}
 
 	/**
-	 * Validate and return one combined object-key template.
+	 * Validate and return one combined suffix-free object-key template.
 	 *
 	 * @param mixed $storage_path Storage path template.
-	 * @param mixed $file_name_rule File name template.
+	 * @param mixed $file_name_rule File name stem template.
 	 * @return string
 	 * @throws ImageHostException When the combined template is invalid.
 	 */
@@ -73,7 +97,7 @@ final class ObjectKeyBuilder {
 	 * @throws ImageHostException When the legacy template is invalid.
 	 */
 	public function validate_legacy_template( $template ) {
-		if ( ! $this->is_valid_template( $template ) ) {
+		if ( null === self::split_legacy_template( $template ) ) {
 			throw new ImageHostException( 'image_host_invalid_key_template' );
 		}
 
@@ -84,7 +108,7 @@ final class ObjectKeyBuilder {
 	 * Combine the split settings without applying any expansion.
 	 *
 	 * @param mixed $storage_path Storage path template.
-	 * @param mixed $file_name_rule File name template.
+	 * @param mixed $file_name_rule File name stem template.
 	 * @return string
 	 * @throws ImageHostException When either part is not a string.
 	 */
@@ -96,7 +120,13 @@ final class ObjectKeyBuilder {
 		return '' === $storage_path ? $file_name_rule : $storage_path . '/' . $file_name_rule;
 	}
 
-	public function build( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id, DateTimeImmutable $now, $uuid ) {
+	/**
+	 * Build one object key and append exactly one verified source extension.
+	 *
+	 * @param mixed $enabled_extensions Canonical map, legacy map, or enabled list.
+	 * @return string
+	 */
+	public function build( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id, DateTimeImmutable $now, $uuid, $enabled_extensions = null ) {
 		if ( ! is_string( $bytes ) || '' === $bytes ) {
 			throw new ImageHostException( 'image_host_empty_file' );
 		}
@@ -107,6 +137,11 @@ final class ObjectKeyBuilder {
 
 		if ( ! isset( self::MIME_EXTENSIONS[ $mime_type ] ) ) {
 			throw new ImageHostException( 'image_host_unsupported_mime' );
+		}
+
+		$extension = ImageUploadExtensionPolicy::verify( $original_filename, $mime_type, $enabled_extensions );
+		if ( false === $extension ) {
+			throw new ImageHostException( 'image_host_invalid_extension' );
 		}
 
 		$template = $this->validate( $storage_path, $file_name_rule );
@@ -123,9 +158,8 @@ final class ObjectKeyBuilder {
 			'{md5}'     => md5( $bytes ),
 			'{uuid}'    => $this->sanitize_uuid( $uuid ),
 			'{name}'    => $name,
-			'{ext}'     => self::MIME_EXTENSIONS[ $mime_type ],
 		);
-		$object_key   = strtr( $template, $replacements );
+		$object_key   = strtr( $template, $replacements ) . '.' . $extension;
 
 		if ( ! ImageHostProviderSupport::is_valid_object_key( $object_key ) ) {
 			throw new ImageHostException( 'image_host_invalid_object_key' );
@@ -135,7 +169,7 @@ final class ObjectKeyBuilder {
 	}
 
 	private function is_valid_template( $template ) {
-		if ( ! is_string( $template ) || '' === $template || strlen( $template ) > self::MAX_TEMPLATE_BYTES ) {
+		if ( ! is_string( $template ) || '' === $template || strlen( $template ) + 5 > self::MAX_TEMPLATE_BYTES ) {
 			return false;
 		}
 
@@ -145,6 +179,7 @@ final class ObjectKeyBuilder {
 			false !== strpos( $template, '\\' ) ||
 			false !== strpos( $template, '..' ) ||
 			false !== strpos( $template, '//' ) ||
+			false !== strpos( $template, '{ext}' ) ||
 			1 === preg_match( '/[\\x00-\\x1F\\x7F?#]/', $template )
 		) {
 			return false;
@@ -155,14 +190,13 @@ final class ObjectKeyBuilder {
 			}
 		}
 
-		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name|ext)';
+		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name)';
 		$without_known      = preg_replace( '/\{' . $known_placeholders . '\}/', '', $template );
 
 		return is_string( $without_known ) &&
-			in_array( 'ext', $this->template_variables( $template ), true ) &&
 			false === strpos( $without_known, '{' ) &&
 			false === strpos( $without_known, '}' ) &&
-			1 === preg_match( '/^[A-Za-z0-9._\/-]*$/', $without_known );
+			1 === preg_match( '/^[A-Za-z0-9._\/\-]*$/', $without_known );
 	}
 
 	private function is_valid_component( $value, $allow_separator, $allow_empty ) {
@@ -176,24 +210,36 @@ final class ObjectKeyBuilder {
 			false !== strpos( $value, '\\' ) ||
 			false !== strpos( $value, '..' ) ||
 			false !== strpos( $value, '//' ) ||
+			false !== strpos( $value, '{ext}' ) ||
 			1 === preg_match( '/[\\x00-\\x1F\\x7F?#]/', $value ) ||
 			( ! $allow_separator && false !== strpos( $value, '/' ) )
 		) {
 			return false;
 		}
-		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name|ext)';
+		if ( ! $allow_separator && 1 === preg_match( '/\.(?:webp|png|jpg|jpeg|jfif|gif)$/i', $value ) ) {
+			return false;
+		}
+		$known_placeholders = '(?:year|month|day|date|time|post_id|md5|uuid|name)';
 		$without_known      = preg_replace( '/\{' . $known_placeholders . '\}/', '', $value );
 
 		return is_string( $without_known ) &&
 			false === strpos( $without_known, '{' ) &&
 			false === strpos( $without_known, '}' ) &&
-			1 === preg_match( '/^[A-Za-z0-9._\/-]*$/', $without_known );
+			1 === preg_match( '/^[A-Za-z0-9._\/\-]*$/', $without_known );
 	}
 
-	private function template_variables( $template ) {
-		preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $template, $matches );
+	private function validate_legacy_components( $storage_path, $file_name_rule ) {
+		if (
+			! $this->is_valid_component( $storage_path, true, true ) ||
+			! $this->is_valid_component( $file_name_rule, false, false )
+		) {
+			throw new ImageHostException( 'image_host_invalid_key_template' );
+		}
 
-		return isset( $matches[1] ) && is_array( $matches[1] ) ? $matches[1] : array();
+		$template = $this->combine( $storage_path, $file_name_rule );
+		if ( ! $this->is_valid_template( $template ) ) {
+			throw new ImageHostException( 'image_host_invalid_key_template' );
+		}
 	}
 
 	private function sanitize_name( $name ) {

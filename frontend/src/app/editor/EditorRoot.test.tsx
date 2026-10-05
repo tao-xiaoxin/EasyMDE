@@ -416,6 +416,7 @@ function fixture(): EditorRootProps &
       toolbar: 'Markdown toolbar'
     },
     imageUpload: {
+      allowedExtensions: ['webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif'],
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       autoUploadPastedImages: true,
       enabled: true,

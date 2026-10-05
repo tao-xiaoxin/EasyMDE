@@ -38,7 +38,7 @@ vi.mock(
 function bootstrap(): SettingsCenterBootstrap {
 	const origin = window.location.origin;
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		closeUrl: `${origin}/wp-admin/options-general.php`,
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {

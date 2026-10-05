@@ -3,6 +3,7 @@
 namespace EasyMDE\Admin;
 
 use EasyMDE\Frontend\FrontendAssets;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
 use EasyMDE\Support\Asset;
 use EasyMDE\Support\FrontendAssetContract;
 use EasyMDE\Support\ManifestAssetResolver;
@@ -280,9 +281,10 @@ final class AdminAssets {
 
 		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
 		$settings                 = $this->settings_center_repository->get_settings();
-		$image_upload_config      = $this->get_image_upload_config();
+		$image_upload_config      = $this->get_image_upload_config( $settings );
 		$image_hosting_enabled    = isset( $settings['images']['imageHostingEnabled'] ) && true === $settings['images']['imageHostingEnabled'];
-		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types();
+		$allowed_image_extensions = ImageUploadExtensionPolicy::enabled( $settings['images']['uploadFormats'] );
+		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types( $settings['images']['uploadFormats'] );
 		$code_themes              = array_map(
 			static function ( $theme ) {
 				return array(
@@ -346,8 +348,9 @@ final class AdminAssets {
 			),
 			'imageUpload'        => array(
 				'allowedMimeTypes'       => $allowed_image_mime_types,
+				'allowedExtensions'      => $allowed_image_extensions,
 				'autoUploadPastedImages' => $settings['images']['autoUploadPastedImages'],
-				'enabled'                => $image_upload_config['enabled'] && ! empty( $allowed_image_mime_types ),
+				'enabled'                => $image_upload_config['enabled'] && ! empty( $allowed_image_extensions ),
 				'endpoint'               => esc_url_raw( rest_url( $image_hosting_enabled ? 'easymde/v1/image-hosting/upload' : 'easymde/v1/media' ) ),
 				'importEndpoint'         => esc_url_raw( rest_url( 'easymde/v1/image-hosting/import' ) ),
 				'insertion'              => array(
@@ -529,7 +532,7 @@ final class AdminAssets {
 					'imageRecommendation'         => __( 'Landscape images are recommended', 'easymde' ),
 					'imageRequirements'           => sprintf(
 						/* translators: %s: Effective maximum image upload size, for example "5 MB". */
-						__( 'Supports JPG, PNG, WebP, and GIF, max %s', 'easymde' ),
+						__( 'Supports WebP, PNG, JPG, JPEG, JFIF, and GIF, max %s', 'easymde' ),
 						size_format( $image_upload_config['maxBytes'] )
 					),
 					'noWriteBeforeSubmit'         => __( 'Nothing is written to WordPress before submission.', 'easymde' ),
@@ -745,15 +748,21 @@ final class AdminAssets {
 		);
 	}
 
-	private function get_image_upload_config() {
+	private function get_image_upload_config( array $settings = array() ) {
+		$max_bytes = empty( $settings )
+			? $this->settings_center_repository->get_effective_image_upload_max_bytes()
+			: min( $settings['images']['maxImageSizeMb'] * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES );
+
 		return array(
 			'enabled'  => current_user_can( 'upload_files' ),
-			'maxBytes' => $this->settings_center_repository->get_effective_image_upload_max_bytes(),
+			'maxBytes' => $max_bytes,
 		);
 	}
 
-	private function get_allowed_editor_image_mime_types() {
-		$configured = $this->settings_center_repository->get_allowed_image_mime_types();
+	private function get_allowed_editor_image_mime_types( $formats = null ) {
+		$configured = null === $formats
+			? $this->settings_center_repository->get_allowed_image_mime_types()
+			: ImageUploadExtensionPolicy::mime_types( $formats );
 		$wordpress  = array_values( get_allowed_mime_types() );
 
 		return array_values( array_intersect( $configured, $wordpress ) );

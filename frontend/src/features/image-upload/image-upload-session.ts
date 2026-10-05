@@ -5,11 +5,13 @@ import type {
   ImageUploadSelection,
 } from '../../contracts/ports/image-upload-port';
 import type {
+  ImageUploadExtension,
   ImageUploadInsertion,
   ImageUploadMimeType,
   ImageUploadStrings,
   RemoteImageUploadMode,
 } from '../../contracts/bootstrap/image-upload-bootstrap';
+import { IMAGE_UPLOAD_EXTENSIONS } from '../../contracts/settings-center-settings';
 import type { RemoteImageImportPort } from '../../contracts/ports/remote-image-import-port';
 import { defaultImageAlt, imageInsertionText, imageMarkdownText } from './image-insertion';
 import {
@@ -43,6 +45,7 @@ export type RemoteImageImportCoordinator = Readonly<{
 }>;
 
 type CreateImageUploadSessionOptions = Readonly<{
+  allowedExtensions: ReadonlyArray<ImageUploadExtension>;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   autoUploadPastedImages: boolean;
   document: ImageUploadDocumentPort;
@@ -61,22 +64,36 @@ type CreateImageUploadSessionOptions = Readonly<{
   upload: ImageUploadPort;
 }>;
 
-function imageMimeType(file: File): ImageUploadMimeType | null {
-  const mimeType = file.type.toLowerCase();
-  if ('image/jpg' === mimeType) return 'image/jpeg';
-  if (['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(mimeType)) {
-    return mimeType as ImageUploadMimeType;
-  }
+const IMAGE_EXTENSION_MIME_TYPES: Readonly<
+  Record<ImageUploadExtension, ImageUploadMimeType>
+> = {
+  webp: 'image/webp',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  jfif: 'image/jpeg',
+  gif: 'image/gif',
+};
+
+function imageFileExtension(file: File): ImageUploadExtension | null {
   const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
-  const extensionMimeTypes: Readonly<Record<string, ImageUploadMimeType>> = {
-    gif: 'image/gif',
-    jfif: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    jpg: 'image/jpeg',
-    png: 'image/png',
-    webp: 'image/webp',
-  };
-  return extension ? (extensionMimeTypes[extension] ?? null) : null;
+  return extension && IMAGE_UPLOAD_EXTENSIONS.includes(extension as ImageUploadExtension)
+    ? (extension as ImageUploadExtension)
+    : null;
+}
+
+function imageMimeType(
+  file: File,
+  extension: ImageUploadExtension,
+): ImageUploadMimeType | null {
+  const expectedMimeType = IMAGE_EXTENSION_MIME_TYPES[extension];
+  const suppliedMimeType = file.type.toLowerCase();
+  if (!suppliedMimeType) return expectedMimeType;
+	const normalizedMimeType =
+		suppliedMimeType === 'image/jpg' || suppliedMimeType === 'image/jfif'
+			? 'image/jpeg'
+			: suppliedMimeType;
+  return normalizedMimeType === expectedMimeType ? expectedMimeType : null;
 }
 
 function validSelection(selection: ImageUploadSelection, value: string): boolean {
@@ -307,6 +324,7 @@ export function createRemoteImageImportCoordinator({
 }
 
 export function createImageUploadSession({
+  allowedExtensions,
   allowedMimeTypes,
   autoUploadPastedImages,
   document,
@@ -362,8 +380,14 @@ export function createImageUploadSession({
       reportStatus(statusMessage(strings, source, 'TooLarge'), 'error');
       return;
     }
-    const mimeType = imageMimeType(file);
-    if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
+    const extension = imageFileExtension(file);
+    const mimeType = extension ? imageMimeType(file, extension) : null;
+    if (
+      !extension ||
+      !allowedExtensions.includes(extension) ||
+      !mimeType ||
+      !allowedMimeTypes.includes(mimeType)
+    ) {
       reportStatus(statusMessage(strings, source, 'Failed'), 'error');
       return;
     }

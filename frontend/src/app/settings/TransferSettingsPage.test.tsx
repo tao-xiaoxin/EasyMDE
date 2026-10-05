@@ -12,7 +12,7 @@ function configurationFile(schemaVersion: number, settings: unknown): File {
 }
 
 describe("readImportedSettings", () => {
-	it("losslessly splits a legacy complete object key for schema 1 through 10", async () => {
+	it("splits a legacy complete object key and removes its terminal suffix for schema 1 through 11", async () => {
 		const legacySettings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
 		) as unknown as {
@@ -26,7 +26,7 @@ describe("readImportedSettings", () => {
 		);
 
 		expect(imported.images.storagePath).toBe("legacy/{year}/{month}");
-		expect(imported.images.fileNameRule).toBe("{md5}.{ext}");
+		expect(imported.images.fileNameRule).toBe("{md5}");
 	});
 
 	it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const)(
@@ -67,15 +67,15 @@ describe("readImportedSettings", () => {
 			images: Record<string, unknown>;
 		};
 		delete atLimit.images.storagePath;
-		atLimit.images.fileNameRule = `${"a".repeat(154)}/{ext}`;
+		atLimit.images.fileNameRule = `${"a".repeat(148)}/{md5}.{ext}`;
 
 		const imported = await readImportedSettings(configurationFile(10, atLimit));
-		expect(imported.images.storagePath).toBe("a".repeat(154));
-		expect(imported.images.fileNameRule).toBe("{ext}");
+		expect(imported.images.storagePath).toBe("a".repeat(148));
+		expect(imported.images.fileNameRule).toBe("{md5}");
 
 		const overLimit = structuredClone(atLimit);
 		(overLimit.images as Record<string, unknown>).fileNameRule =
-			`${"a".repeat(155)}/{ext}`;
+			`${"a".repeat(149)}/{md5}.{ext}`;
 		await expect(
 			readImportedSettings(configurationFile(10, overLimit)),
 		).rejects.toThrow("settings-center-images-fileNameRule-invalid");
@@ -83,14 +83,12 @@ describe("readImportedSettings", () => {
 		const extensionInDirectory = structuredClone(atLimit);
 		(extensionInDirectory.images as Record<string, unknown>).fileNameRule =
 			"{ext}/image";
-		const directoryExtension = await readImportedSettings(
-			configurationFile(10, extensionInDirectory),
-		);
-		expect(directoryExtension.images.storagePath).toBe("{ext}");
-		expect(directoryExtension.images.fileNameRule).toBe("image");
+		await expect(
+			readImportedSettings(configurationFile(10, extensionInDirectory)),
+		).rejects.toThrow("settings-center-images-fileNameRule-invalid");
 	});
 
-	it("requires strict split fields in schema 11", async () => {
+	it("migrates the legacy complete key in schema 11", async () => {
 		const invalidSettings = structuredClone(
 			SETTINGS_CENTER_TEST_SETTINGS,
 		) as unknown as {
@@ -98,17 +96,81 @@ describe("readImportedSettings", () => {
 		};
 		delete invalidSettings.images.storagePath;
 
+		const imported = await readImportedSettings(
+			configurationFile(11, {
+				...invalidSettings,
+				images: {
+					...invalidSettings.images,
+					fileNameRule: "legacy/{md5}.{ext}",
+				},
+			}),
+		);
+		expect(imported.images.storagePath).toBe("legacy");
+		expect(imported.images.fileNameRule).toBe("{md5}");
+	});
+
+	it("preserves the storage path while migrating a schema 11 two-field rule", async () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as { images: Record<string, unknown> };
+		settings.images.storagePath = "legacy";
+		settings.images.fileNameRule = "{md5}.{ext}";
+
+		const imported = await readImportedSettings(
+			configurationFile(11, settings),
+		);
+		expect(imported.images.storagePath).toBe("legacy");
+		expect(imported.images.fileNameRule).toBe("{md5}");
+	});
+
+	it("rejects a nested basename in a schema 11 two-field rule", async () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as { images: Record<string, unknown> };
+		settings.images.storagePath = "legacy";
+		settings.images.fileNameRule = "nested/{md5}.{ext}";
+
 		await expect(
-			readImportedSettings(configurationFile(11, invalidSettings)),
+			readImportedSettings(configurationFile(11, settings)),
+		).rejects.toThrow("settings-center-images-fileNameRule-invalid");
+	});
+
+	it("requires strict canonical split fields in schema 12", async () => {
+		const invalidSettings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as { images: Record<string, unknown> };
+		delete invalidSettings.images.storagePath;
+		await expect(
+			readImportedSettings(configurationFile(12, invalidSettings)),
 		).rejects.toThrow("settings-center-images-storagePath-invalid");
 	});
 
-	it("accepts the canonical schema 11 split fields", async () => {
+	it("accepts canonical schema 12 split fields", async () => {
 		const imported = await readImportedSettings(
-			configurationFile(11, SETTINGS_CENTER_TEST_SETTINGS),
+			configurationFile(12, SETTINGS_CENTER_TEST_SETTINGS),
 		);
 
 		expect(imported.images.storagePath).toBe("{year}/{month}");
-		expect(imported.images.fileNameRule).toBe("{md5}.{ext}");
+		expect(imported.images.fileNameRule).toBe("{md5}");
+	});
+
+	it.each([
+		"photo.webp",
+		"photo.PNG",
+		"photo.jpg",
+		"photo.JPEG",
+		"photo.jfif",
+		"photo.GIF",
+	])("rejects a schema 12 filename stem ending in a supported extension: %s", async (fileNameRule) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as {
+			images: Record<string, unknown>;
+		};
+		settings.images.fileNameRule = fileNameRule;
+
+		await expect(
+			readImportedSettings(configurationFile(12, settings)),
+		).rejects.toThrow("settings-center-images-fileNameRule-invalid");
 	});
 });

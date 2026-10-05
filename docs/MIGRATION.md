@@ -120,8 +120,8 @@ values remain stored but do not affect rendering.
 `images.wechatPngExportEnabled` is a strict boolean and defaults to `false`.
 Reading settings that predate the field returns `false` in memory without
 writing or normalizing the stored option. Settings transfer schemas 1 through
-9 import the field as `false`; schema 10 requires an explicit boolean. Schema
-11 is the current transfer format and retains that PNG requirement. The next
+9 import the field as `false`; schema 10 and later require an explicit boolean.
+Schema 12 is the current transfer format and retains that PNG requirement. The next
 authorized complete Settings Save establishes the field through the normal
 Settings Center persistence path.
 
@@ -131,32 +131,54 @@ The canonical Image Hosting settings are:
 
 ```text
 images.storagePath   = {year}/{month}
-images.fileNameRule  = {md5}.{ext}
+images.fileNameRule  = {md5}
+images.uploadFormats = webp:true, png:true, jpg:true, jpeg:true, jfif:true, gif:true
 ```
 
-`storagePath` is a directory template and `fileNameRule` is a basename
-template. An explicitly empty `storagePath` targets the provider bucket or
-WordPress upload root. It is distinct from a missing field.
+`storagePath` is a directory template and `fileNameRule` is a suffix-free
+basename stem. An explicitly empty `storagePath` targets the provider bucket or
+WordPress upload root. It is distinct from a missing field. The ordered
+extension registry is `webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif`; every entry
+defaults to enabled, canonical payloads require exactly these six boolean keys,
+and at least one must remain enabled. JPG, JPEG, and JFIF are independent
+choices even though JFIF uses the `image/jpeg` MIME family.
 
-Existing settings may contain one complete path template in
-`images.fileNameRule` and no `images.storagePath`. Reads project that legacy
-shape by splitting at the last `/`; the prefix is the storage path, the suffix
-is the basename, and a rule without `/` produces an empty storage path. This
-projection is lazy and read-only: it does not write the option or change its
-revision. The next legitimate Settings Save persists both canonical fields.
+The Settings Center preview expands the path and stem, then appends the first
+enabled registry entry. Its default example is exactly
+`2026/07/a8f4c2d1.webp`; this presentation choice never changes the extension
+of a real upload.
+
+Existing settings may contain either one complete path template in
+`images.fileNameRule` without `images.storagePath`, or the prior split pair
+whose basename still ends in `.{ext}`. Reads split the single-field shape at
+the last `/` and preserve an existing `storagePath`, then remove exactly one
+terminal `.{ext}` from the basename. A legacy rule without `/` produces an
+empty storage path. Only the terminal suffix is representable: `{ext}` in a
+directory, in the middle, repeated, or reducing the stem to empty is an
+explicit configuration/import error. No invalid legacy value is silently
+repaired or routed to a fallback.
+This projection is lazy and read-only: it does not write the option or change
+its revision. The next legitimate Settings Save persists both canonical fields.
 A legacy write payload from an already-open Settings page is accepted through
-the same deterministic split; canonical Transfer schema 11 payloads must carry
-both fields.
+the same deterministic conversion. The old four-key `uploadFormats` map is
+expanded by copying `jpg` to independent `jpg`, `jpeg`, and `jfif` entries;
+PNG, WebP, and GIF values remain unchanged.
 
-Transfer imports from schemas 1 through 10 receive this lossless split before
-the normal validation path. Transfer export uses schema 11. The Settings
-Center bootstrap is schema 3 and includes both fields. No attachment, provider
-object, or historical path is renamed or moved by this compatibility step.
+Transfer imports from schemas 1 through 11 receive this explicit conversion
+before the normal validation path. Transfer export uses schema 12. The
+Settings Center bootstrap is schema 4 and includes both split fields plus the
+exact six-key format map. Schema 12 is strict and rejects missing or extra
+canonical fields. No attachment, provider object, or historical path is
+renamed or moved by this compatibility step.
 
 `ObjectKeyBuilder` is the sole runtime owner of combining, validating, and
-expanding `storagePath` plus the basename rule. Image Hosting and future
-EasyMDE local paste/drop uploads through `/easymde/v1/media` pass the same pair
-to that builder, so the selected upload owner cannot produce a divergent key.
-Combined validation preserves the historical 160-byte and `{ext}` behavior,
-including legacy rules whose basename lacks `{ext}`. Changing either field
+expanding `storagePath` plus the suffix-free basename stem. Image Hosting and
+future EasyMDE local paste/drop uploads through `/easymde/v1/media` pass the
+same pair and format map to that builder, so the selected upload owner cannot
+produce a divergent key. After real MIME, exact source-extension, and checkbox
+validation, it appends exactly one lowercased verified extension. Canonical
+rules never contain `{ext}`. Changing either split field or the format map
 invalidates the prior verification fingerprint and any stale completion.
+JFIF receives only a scoped `jfif => image/jpeg` WordPress Core allowance for
+the owned upload operation; the hook is removed on every exit and global MIME
+behavior is unchanged.

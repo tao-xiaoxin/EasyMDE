@@ -25,8 +25,11 @@ import type {
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
 import {
+	buildImageObjectKeyPreview,
 	DEFAULT_IMAGE_FILE_NAME_RULE,
 	DEFAULT_IMAGE_STORAGE_PATH,
+	DEFAULT_IMAGE_UPLOAD_FORMATS,
+	IMAGE_UPLOAD_EXTENSIONS,
 } from "../../contracts/settings-center-settings";
 import {
 	CircleAlert,
@@ -43,7 +46,6 @@ import {
 	RefreshCcw,
 	X,
 } from "../../generated/lucide-icons";
-import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import {
 	SettingsRow,
 	SettingsSelect,
@@ -99,12 +101,12 @@ const FILE_NAME_RULE_PRESETS: ReadonlyArray<
 		value: string;
 	}>
 > = [
-	{ label: "fileNamePresetDate", value: "{date}.{ext}" },
-	{ label: "fileNamePresetMd5", value: "{md5}.{ext}" },
-	{ label: "fileNamePresetYearMonth", value: "{uuid}.{ext}" },
-	{ label: "fileNamePresetOriginal", value: "{name}.{ext}" },
-	{ label: "fileNamePresetArticle", value: "{post_id}.{ext}" },
-	{ label: "fileNamePresetTime", value: "{time}.{ext}" },
+	{ label: "fileNamePresetDate", value: "{date}" },
+	{ label: "fileNamePresetMd5", value: "{md5}" },
+	{ label: "fileNamePresetYearMonth", value: "{uuid}" },
+	{ label: "fileNamePresetOriginal", value: "{name}" },
+	{ label: "fileNamePresetArticle", value: "{post_id}" },
+	{ label: "fileNamePresetTime", value: "{time}" },
 ];
 
 const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
@@ -122,7 +124,6 @@ const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
 	{ token: "{md5}", label: "fileMd5Variable" },
 	{ token: "{uuid}", label: "uuidVariable" },
 	{ token: "{name}", label: "originalNameVariable" },
-	{ token: "{ext}", label: "extensionVariable" },
 ];
 
 const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
@@ -132,12 +133,22 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 		accessibleLabel: SettingsCenterStringKey;
 	}>
 > = [
-	{ key: "jpg", label: "uploadFormatJpg", accessibleLabel: "allowUploadJpg" },
-	{ key: "png", label: "uploadFormatPng", accessibleLabel: "allowUploadPng" },
 	{
 		key: "webp",
 		label: "uploadFormatWebp",
 		accessibleLabel: "allowUploadWebp",
+	},
+	{ key: "png", label: "uploadFormatPng", accessibleLabel: "allowUploadPng" },
+	{ key: "jpg", label: "uploadFormatJpg", accessibleLabel: "allowUploadJpg" },
+	{
+		key: "jpeg",
+		label: "uploadFormatJpeg",
+		accessibleLabel: "allowUploadJpeg",
+	},
+	{
+		key: "jfif",
+		label: "uploadFormatJfif",
+		accessibleLabel: "allowUploadJfif",
 	},
 	{ key: "gif", label: "uploadFormatGif", accessibleLabel: "allowUploadGif" },
 ];
@@ -696,11 +707,13 @@ function FileNameRuleEditor({
 	onChange,
 	storagePath,
 	strings,
+	uploadFormats,
 }: {
 	fileNameRule: string;
 	onChange: (field: "fileNameRule" | "storagePath", value: string) => void;
 	storagePath: string;
 	strings: SettingsCenterBootstrap["strings"];
+	uploadFormats: ImageSettings["uploadFormats"];
 }) {
 	const storagePathInputRef = useRef<HTMLInputElement>(null);
 	const fileNameRuleInputRef = useRef<HTMLInputElement>(null);
@@ -740,26 +753,11 @@ function FileNameRuleEditor({
 		onChange(field, `${value.slice(0, start)}${token}${value.slice(end)}`);
 	};
 
-	const exampleValues: Readonly<Record<string, string>> = {
-		"{year}": "2026",
-		"{month}": "07",
-		"{day}": "13",
-		"{date}": "20260713",
-		"{time}": "153042",
-		"{post_id}": "128",
-		"{md5}": "a8f4c2d1",
-		"{uuid}": "a8f4c2d1",
-		"{name}": "easymde-image",
-		"{ext}": "webp",
-	};
-	const expandExample = (value: string) =>
-		Object.entries(exampleValues).reduce(
-			(current, [token, replacement]) => current.replaceAll(token, replacement),
-			value,
-		);
-	const examplePath = expandExample(storagePath);
-	const exampleFileName = expandExample(fileNameRule);
-	const example = [examplePath, exampleFileName].filter(Boolean).join("/");
+	const example = buildImageObjectKeyPreview(
+		storagePath,
+		fileNameRule,
+		uploadFormats,
+	);
 	return (
 		<div className="easymde-settings-center__file-name-editor">
 			<SettingsRow
@@ -864,6 +862,9 @@ function verificationFingerprint(
 			? [
 					settings.storagePath,
 					settings.fileNameRule,
+					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
+						settings.uploadFormats[extension] ? "enabled" : "disabled",
+					),
 					settings.service,
 					settings.endpoint,
 					settings.bucket,
@@ -874,6 +875,9 @@ function verificationFingerprint(
 			: [
 					settings.storagePath,
 					settings.fileNameRule,
+					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
+						settings.uploadFormats[extension] ? "enabled" : "disabled",
+					),
 					settings.domain,
 					settings.backupEnabled ? "enabled" : "disabled",
 					settings.backupService,
@@ -1024,7 +1028,7 @@ export function ImagesSettingsPage({
 			autoUploadPastedImages: true,
 			remoteImageUploadMode: "both",
 			maxImageSizeMb: 5,
-			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
+			uploadFormats: { ...DEFAULT_IMAGE_UPLOAD_FORMATS },
 			titleDisplay: "none",
 		}),
 	);
@@ -1096,10 +1100,6 @@ export function ImagesSettingsPage({
 		const checked = settings.uploadFormats[key];
 		if (checked && selectedFormats.length === 1) {
 			setFormatError(true);
-			console.error("[EasyMDE settings] Upload format change rejected", {
-				format: key,
-				reason: "no-upload-format",
-			});
 			return;
 		}
 		setFormatError(false);
@@ -1209,20 +1209,6 @@ export function ImagesSettingsPage({
 			}
 		}
 	}
-	const feedbackPortal =
-		formatError && overlayRoot
-			? createPortal(
-					<div className="easymde-editor-message-alert-host">
-						<EditorMessageAlert
-							closeLabel={strings.closeImageFeedback}
-							message={strings.uploadFormatRequired}
-							onDismiss={() => setFormatError(false)}
-							type="error"
-						/>
-					</div>,
-					overlayRoot,
-				)
-			: null;
 	const duplicatePortal =
 		duplicateTrigger && overlayRoot
 			? createPortal(
@@ -1351,11 +1337,12 @@ export function ImagesSettingsPage({
 								</div>
 							</div>
 						) : null}
-						<FileNameRuleEditor
-							strings={strings}
-							storagePath={settings.storagePath}
-							fileNameRule={settings.fileNameRule}
-							onChange={(field, value) => setValue(field, value)}
+		<FileNameRuleEditor
+			strings={strings}
+			storagePath={settings.storagePath}
+			fileNameRule={settings.fileNameRule}
+			uploadFormats={settings.uploadFormats}
+			onChange={(field, value) => setValue(field, value)}
 						/>
 						{settings.imageHostingEnabled ? (
 							<Fragment>
@@ -1662,12 +1649,20 @@ export function ImagesSettingsPage({
 										);
 									},
 								)}
+								{formatError ? (
+									<small
+										className="easymde-settings-center__upload-format-error"
+										role="alert"
+									>
+										<CircleAlert size={15} strokeWidth={2} />
+										<span>{strings.uploadFormatRequired}</span>
+									</small>
+								) : null}
 							</div>
 						</SettingsRow>
 					</section>
 				</div>
 			</div>
-			{feedbackPortal}
 			{duplicatePortal}
 			{verificationFeedbackPortal}
 		</div>

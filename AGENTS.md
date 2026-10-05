@@ -644,30 +644,51 @@ The inspected PicFast PicGo helper computes `hashlib.md5(file_data).hexdigest()`
 EasyMDE mirrors that content-digest algorithm over the exact final bytes sent
 to the provider and derives the extension from the verified MIME type.
 
-The canonical image settings are `images.storagePath` and
-`images.fileNameRule`, with defaults `{year}/{month}` and `{md5}.{ext}`.
+The canonical image settings are `images.storagePath`,
+`images.fileNameRule`, and the exact `images.uploadFormats` map. Defaults are
+`{year}/{month}`, `{md5}`, and all six ordered entries enabled:
+`webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif`. The file-name rule is a
+suffix-free basename stem; `{ext}` is not a canonical variable or preset.
+Canonical payloads require exactly those six boolean keys and at least one
+enabled key. JPG, JPEG, and JFIF are independent extension selections; MIME
+family equivalence does not make one checkbox authorize another.
+
+The Settings Center preview expands the path and stem and appends the first
+enabled registry entry. The default preview is exactly
+`2026/07/a8f4c2d1.webp`. Preview ordering never renames real uploads: local and
+hosted uploads preserve the lowercased, verified source extension, which must
+match its real MIME family and its own enabled checkbox. Extensionless remote
+images receive the documented MIME-derived compatible suffix; a supplied but
+mismatched or disabled suffix fails explicitly.
+
 `storagePath` may be explicitly empty for the bucket/upload root, while a
 missing field is a legacy shape. A read of that legacy shape splits the old
-complete `fileNameRule` at its last `/` into the storage path and basename rule
-without writing; the next legitimate Save persists both fields. A legacy write
-payload may use the same deterministic split so an already-open page can save.
-The Settings Center bootstrap is schema 3 and Transfer export is schema 11;
-imports 1 through 10 receive the same lossless split, while schema 11 is
-strict.
+complete `fileNameRule` at its last `/`, then removes exactly one terminal
+`.{ext}` from the basename. `{ext}` in a directory, in the middle, repeated,
+or reducing the stem to empty is an explicit configuration/import error; it is
+never silently relocated or dropped. Reads do not write or increment the
+revision, and the next legitimate Save persists both canonical fields. A
+legacy write payload may use the same deterministic conversion so an
+already-open page can save. The legacy four-key `uploadFormats` map expands
+`jpg` to `jpg`, `jpeg`, and `jfif`; PNG, WebP, and GIF values remain unchanged.
+Settings Center bootstrap is schema 4 and Transfer export is schema 12;
+schemas 1 through 11 receive the explicit conversion and schema 12 is strict.
 
 `ObjectKeyBuilder` is the single owner that combines, validates, and expands
 both fields once for Image Hosting and future EasyMDE-owned local paste/drop
 uploads sent to `/easymde/v1/media`; it remains available while Image Hosting
-is disabled. Combined validation preserves the historical 160-byte and `{ext}`
-semantics, including legacy templates whose basename has no `{ext}`. The Media
-owner projects the resulting key through a request-scoped
+is disabled. It appends exactly one verified source extension after MIME and
+checkbox validation, preserving the historical 160-byte and object-key safety
+rules. The Media owner projects the resulting key through a request-scoped
 `MediaUploadPathScope` without falling back to an ordinary upload path.
-Changing either field invalidates the Image Hosting verification fingerprint.
 WordPress Core remains authoritative for verified MIME, unique filenames,
 attachments, metadata, sub-sizes, URLs, permissions, and the native media
-picker. This contract applies only to future EasyMDE paste/drop uploads; it
-never migrates historical attachments or changes the native picker insertion
-path. Executable checks belong to the
+picker. JFIF receives only a scoped `jfif => image/jpeg` Core MIME allowance
+for the owned upload operation; it is always removed afterward and never
+changes global MIME policy. Changing the path, stem, or enabled-format map
+invalidates the Image Hosting verification fingerprint. This contract applies
+only to future EasyMDE paste/drop uploads; it never migrates historical
+attachments or changes the native picker insertion path. Executable checks belong to the
 [EasyMDE Skill](.agents/skills/easymde/SKILL.md); current implementation facts
 belong to [Architecture](docs/ARCHITECTURE.md), test gates to
 [Testing and Release](docs/TESTING_AND_RELEASE.md), and user/upgrade semantics

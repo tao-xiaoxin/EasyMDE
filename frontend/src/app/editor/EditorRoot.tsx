@@ -217,7 +217,7 @@ export type EditorRootProps = Readonly<{
   fonts: FontControlsBootstrap;
   imageUpload: Pick<
     ImageUploadBootstrap,
-    'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'remoteImageUploadMode' | 'strings'
+    'allowedExtensions' | 'allowedMimeTypes' | 'autoUploadPastedImages' | 'enabled' | 'insertion' | 'maxBytes' | 'postId' | 'remoteImageUploadMode' | 'strings'
   >;
   imageUploadPort: ImageUploadPort;
   remoteImageImportPort: RemoteImageImportPort;
@@ -2254,6 +2254,7 @@ export function EditorRoot(props: EditorRootProps) {
       ? visualEditorRuntimeRef.current
       : null;
     return createImageUploadSession({
+      allowedExtensions: props.imageUpload.allowedExtensions,
       allowedMimeTypes: props.imageUpload.allowedMimeTypes,
       autoUploadPastedImages: props.imageUpload.autoUploadPastedImages,
       document: visualRuntime

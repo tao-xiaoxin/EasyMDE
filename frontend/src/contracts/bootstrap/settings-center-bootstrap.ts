@@ -2,7 +2,10 @@ import type {
 	SettingsCenterApi,
 	SettingsCenterSettings,
 } from "../settings-center-settings";
-import { SHORTCUT_IDS } from "../settings-center-settings";
+import {
+	IMAGE_UPLOAD_EXTENSIONS,
+	SHORTCUT_IDS,
+} from "../settings-center-settings";
 import { canonicalizeKeyboardShortcut } from "../../shared/keyboard/keyboard-shortcut";
 
 export const SETTINGS_CENTER_STRING_KEYS = [
@@ -193,7 +196,6 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"fileMd5Variable",
 	"uuidVariable",
 	"originalNameVariable",
-	"extensionVariable",
 	"insertFileNameVariable",
 	"examplePreview",
 	"enterFileNameRule",
@@ -234,10 +236,14 @@ export const SETTINGS_CENTER_STRING_KEYS = [
 	"allowedUploadFormatsDescription",
 	"uploadFormatRequired",
 	"uploadFormatJpg",
+	"uploadFormatJpeg",
+	"uploadFormatJfif",
 	"uploadFormatPng",
 	"uploadFormatWebp",
 	"uploadFormatGif",
 	"allowUploadJpg",
+	"allowUploadJpeg",
+	"allowUploadJfif",
 	"allowUploadPng",
 	"allowUploadWebp",
 	"allowUploadGif",
@@ -379,7 +385,7 @@ export type SettingsCenterStringKey =
 	(typeof SETTINGS_CENTER_STRING_KEYS)[number];
 
 export type SettingsCenterBootstrap = Readonly<{
-	schemaVersion: 3;
+	schemaVersion: 4;
 	closeUrl: string;
 	uploadLimits: Readonly<{ systemMaxBytes: number }>;
 	api: SettingsCenterApi;
@@ -564,6 +570,12 @@ const IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
 	"md5",
 	"uuid",
 	"name",
+]);
+
+const SUPPORTED_IMAGE_EXTENSION_SUFFIX = /\.(?:webp|png|jpg|jpeg|jfif|gif)$/i;
+
+const LEGACY_IMAGE_FILE_NAME_RULE_VARIABLES = new Set([
+	...IMAGE_FILE_NAME_RULE_VARIABLES,
 	"ext",
 ]);
 
@@ -625,6 +637,7 @@ function assertImageFileNameRule(value: unknown): void {
 		hasControlCharacter ||
 		value.includes("?") ||
 		value.includes("#") ||
+		SUPPORTED_IMAGE_EXTENSION_SUFFIX.test(value) ||
 		variables.some(
 			(variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
 		) ||
@@ -663,9 +676,11 @@ function assertImageObjectKeyTemplate(value: unknown): void {
 		hasControlCharacter ||
 		value.includes("?") ||
 		value.includes("#") ||
-		!variables.includes("ext") ||
+		!value.endsWith(".{ext}") ||
+		value.split("{ext}").length - 1 !== 1 ||
+		value.slice(value.lastIndexOf("/") + 1, -6) === "" ||
 		variables.some(
-			(variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
+			(variable) => !LEGACY_IMAGE_FILE_NAME_RULE_VARIABLES.has(variable),
 		) ||
 		!/^[A-Za-z0-9._/-]*$/.test(literal) ||
 		literal.includes("{") ||
@@ -686,9 +701,35 @@ function assertCombinedImageObjectKeyTemplate(
 	if (typeof storagePath !== "string" || typeof fileNameRule !== "string") {
 		throw new Error("settings-center-images-fileNameRule-invalid");
 	}
-	assertImageObjectKeyTemplate(
-		storagePath === "" ? fileNameRule : `${storagePath}/${fileNameRule}`,
+	const combined = storagePath === "" ? fileNameRule : `${storagePath}/${fileNameRule}`;
+	if (utf8ByteLength(`${combined}.webp`) > 160) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
+	const variables = [...combined.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(
+		(match) => match[1] ?? "",
 	);
+	const literal = combined.replace(/\{[A-Za-z0-9_]+\}/g, "");
+	const hasControlCharacter = [...combined].some((character) => {
+		const codePoint = character.codePointAt(0) ?? 0;
+		return codePoint < 32 || codePoint === 127;
+	});
+	if (
+		combined.startsWith("/") ||
+		combined.endsWith("/") ||
+		combined.split("/").some((segment) => segment === "." || segment === "..") ||
+		combined.includes("\\") ||
+		combined.includes("//") ||
+		combined.includes("..") ||
+		hasControlCharacter ||
+		combined.includes("?") ||
+		combined.includes("#") ||
+		variables.some((variable) => !IMAGE_FILE_NAME_RULE_VARIABLES.has(variable)) ||
+		!/^[A-Za-z0-9._/-]*$/.test(literal) ||
+		literal.includes("{") ||
+		literal.includes("}")
+	) {
+		throw new Error("settings-center-images-fileNameRule-invalid");
+	}
 }
 
 function parseSettingsBooleanFields(
@@ -866,15 +907,15 @@ export function parseSettingsCenterSettings(
 	);
 	assertExactKeys(
 		uploadFormats,
-		["jpg", "png", "webp", "gif"],
+		IMAGE_UPLOAD_EXTENSIONS,
 		"settings-center-images-upload-formats-invalid",
 	);
-	for (const format of ["jpg", "png", "webp", "gif"]) {
+	for (const format of IMAGE_UPLOAD_EXTENSIONS) {
 		if (typeof uploadFormats[format] !== "boolean") {
 			throw new Error(`settings-center-images-upload-format-${format}-invalid`);
 		}
 	}
-	if (!["jpg", "png", "webp", "gif"].some((format) => uploadFormats[format])) {
+	if (!IMAGE_UPLOAD_EXTENSIONS.some((format) => uploadFormats[format])) {
 		throw new Error("settings-center-images-upload-formats-empty");
 	}
 
@@ -952,7 +993,7 @@ export function parseSettingsCenterBootstrap(
 	value: unknown,
 ): SettingsCenterBootstrap {
 	const root = parseObject(value, "settings-center-bootstrap-invalid");
-	if (root.schemaVersion !== 3) {
+	if (root.schemaVersion !== 4) {
 		throw new Error("settings-center-bootstrap-version-unsupported");
 	}
 
@@ -1050,7 +1091,7 @@ export function parseSettingsCenterBootstrap(
 		}
 	}
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		closeUrl: parseString(root.closeUrl, "settings-center-close-url-invalid"),
 		uploadLimits: {
 			systemMaxBytes: (() => {

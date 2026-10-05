@@ -126,7 +126,7 @@ import { SettingsCenterRoot } from "./SettingsCenterRoot";
 
 function bootstrap(): SettingsCenterBootstrap {
 	return {
-		schemaVersion: 3,
+		schemaVersion: 4,
 		closeUrl: "/wp-admin/options-general.php",
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {

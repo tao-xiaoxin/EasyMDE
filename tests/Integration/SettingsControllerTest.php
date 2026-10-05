@@ -48,7 +48,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		}
 		$this->assertSame( '30', $data['settings']['general']['autoSaveInterval'] );
 		$this->assertSame( '{year}/{month}', $data['settings']['images']['storagePath'] );
-		$this->assertSame( '{md5}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( '{md5}', $data['settings']['images']['fileNameRule'] );
 		$this->assertSame( 0, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertSame( 5, $data['settings']['images']['maxImageSizeMb'] );
 		$this->assertTrue( $data['settings']['images']['autoUploadPastedImages'] );
@@ -200,7 +200,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 5, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertFalse( $data['settings']['images']['autoUploadPastedImages'] );
 		$this->assertSame( '{year}/{month}', $data['settings']['images']['storagePath'] );
-		$this->assertSame( '{md5}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( '{md5}', $data['settings']['images']['fileNameRule'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
 
@@ -208,6 +208,12 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$settings = $this->current_settings();
 		unset( $settings['images']['storagePath'] );
 		$settings['images']['fileNameRule'] = 'legacy/{post_id}/{name}.{ext}';
+		$settings['images']['uploadFormats'] = array(
+			'jpg'  => true,
+			'png'  => true,
+			'webp' => true,
+			'gif'  => true,
+		);
 
 		$response = $this->post_json( array( 'settings' => $settings ) );
 		$data     = $response->get_data();
@@ -215,9 +221,32 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertArrayNotHasKey( 'storagePath', $data['settings']['images'] );
 		$this->assertSame( 'legacy/{post_id}/{name}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( array( 'jpg', 'png', 'webp', 'gif' ), array_keys( $data['settings']['images']['uploadFormats'] ) );
 		$this->assertSame( 1, $data['settings']['revision'] );
 		$this->assertSame( 'legacy/{post_id}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['storagePath'] );
-		$this->assertSame( '{name}.{ext}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['fileNameRule'] );
+		$this->assertSame( '{name}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['fileNameRule'] );
+	}
+
+	public function test_already_open_split_legacy_page_preserves_storage_path_and_four_key_response_shape() {
+		$settings = $this->current_settings();
+		$settings['images']['storagePath']  = 'legacy';
+		$settings['images']['fileNameRule'] = '{name}.{ext}';
+		$settings['images']['uploadFormats'] = array(
+			'jpg'  => true,
+			'png'  => false,
+			'webp' => true,
+			'gif'  => false,
+		);
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+		$data     = $response->get_data();
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 'legacy', $data['settings']['images']['storagePath'] );
+		$this->assertSame( '{name}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( array( 'jpg', 'png', 'webp', 'gif' ), array_keys( $data['settings']['images']['uploadFormats'] ) );
+		$this->assertSame( '{name}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['fileNameRule'] );
+		$this->assertSame( array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' ), array_keys( get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['uploadFormats'] ) );
 	}
 
 	public function test_get_reports_corrupt_canonical_image_settings_without_defaulting()
@@ -244,13 +273,13 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 	public function test_post_preserves_an_explicit_empty_storage_path() {
 		$settings = $this->current_settings();
 		$settings['images']['storagePath']  = '';
-		$settings['images']['fileNameRule'] = 'root-{name}.{ext}';
+		$settings['images']['fileNameRule'] = 'root-{name}';
 
 		$response = $this->post_json( array( 'settings' => $settings ) );
 
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertSame( '', $response->get_data()['settings']['images']['storagePath'] );
-		$this->assertSame( 'root-{name}.{ext}', $response->get_data()['settings']['images']['fileNameRule'] );
+		$this->assertSame( 'root-{name}', $response->get_data()['settings']['images']['fileNameRule'] );
 	}
 
 	public function test_legacy_post_rejects_a_leading_separator_before_split()
@@ -268,8 +297,8 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 
 	public function test_post_validates_the_combined_rule_length_and_global_extension_placeholder() {
 		$too_long = $this->current_settings();
-		$too_long['images']['storagePath']  = str_repeat( 'a', 158 );
-		$too_long['images']['fileNameRule'] = '{ext}';
+		$too_long['images']['storagePath']  = str_repeat( 'a', 156 );
+		$too_long['images']['fileNameRule'] = '{md5}';
 		$too_long_response = $this->post_json( array( 'settings' => $too_long ) );
 
 		$extension_in_path = $this->current_settings();
@@ -279,7 +308,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 
 		$this->assertSame( 400, $too_long_response->get_status() );
 		$this->assertSame( 'easymde_settings_invalid_payload', $too_long_response->as_error()->get_error_code() );
-		$this->assertSame( 200, $extension_in_path_response->get_status() );
+		$this->assertSame( 400, $extension_in_path_response->get_status() );
 	}
 
 	public function test_post_rejects_dot_segments_in_storage_path_before_saving()
@@ -296,7 +325,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		}
 
 		$settings = $this->current_settings();
-		$settings['images']['storagePath']  = '{ext}';
+		$settings['images']['storagePath']  = 'prefix';
 		$settings['images']['fileNameRule'] = '.';
 		$response = $this->post_json( array( 'settings' => $settings ) );
 
@@ -699,7 +728,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $invalid_domain_response = $this->post_json( array( 'settings' => $invalid_domain ) );
 
 		$invalid_rule = $this->current_settings();
-		$invalid_rule['images']['fileNameRule'] = '../{name}.{ext}';
+		$invalid_rule['images']['fileNameRule'] = '../{name}';
 		$invalid_rule_response = $this->post_json( array( 'settings' => $invalid_rule ) );
 
 		$unsupported_provider = $this->current_settings();

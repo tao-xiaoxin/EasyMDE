@@ -4,7 +4,7 @@
   </a>
 </p>
 <h1 align="center">EasyMDE - WordPress Markdown 编辑器插件</h1>
-<p align="center">面向 WordPress 写作者、技术博客作者和微信内容创作者的 Markdown 编辑器插件，提供分栏实时预览。</p>
+<p align="center"> 专为 WordPress 打造的最好的 Markdown 编辑插件，获得极致沉浸的写作体验</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.9-2563eb?style=flat-square&logo=github&logoColor=white" alt="版本 0.1.9" />
@@ -21,7 +21,7 @@
 
 <p align="center">简体中文 | <a href="README.en.md">English</a></p>
 
-EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容创作者的 Markdown 编辑器插件。用 Markdown 写作，在分栏实时预览中检查内容，并沿用 WordPress 的编辑、保存、发布和分享流程。
+为内容创作者打造的新一代 WordPress Markdown 编辑器，支持实时预览、Mermaid 图表、KaTeX 公式、图床设置、原生发布、版本修订与微信公众号一键复制，让写作、排版与发布更加高效。
 
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>下载插件</strong></a>
@@ -51,41 +51,33 @@ EasyMDE 是一个面向 WordPress 写作者、技术博客作者和微信内容�
 
 ### ✍️ 专注写作
 
-- 分栏 Markdown 源文档编辑器和实时预览。
-- 源文档与预览窗格滚动同步。
-- 用于常见 Markdown 操作的紧凑图标工具栏。
-- 受 Typora 启发的快捷键，并支持站点级 Windows/Linux 和 macOS 覆盖设置。
-- 沉浸式编辑器支持可转换为标准语法的 `~~~` 或反引号围栏快捷输入；按 Enter 新建的代码块在源码中统一使用同宽反引号语法，已有或粘贴的波浪线围栏保持原样。
-- 浏览器本地草稿恢复支持明确恢复、丢弃和跨标签页冲突处理。
-- 桌面端并排写作与预览，窄屏下上下排列。
+- ✅ **支持分栏实时预览：** 源文档与预览窗格同步滚动。
+- ✅ **专业的快捷工具栏：** 通过工具栏媒体选择器插入图片，Markdown 加粗等一键完成。
+- ✅ **参考 Typora 风格快捷键：** 支持站点级 Windows/Linux 和 macOS 覆盖设置。
+- ✅ **支持沉浸式编辑：** 沉浸式编辑器支持 `~~~` 或反引号围栏快捷输入代码块。
+- ✅ **支持自动保存：** 支持草稿自动定时保存，永不丢失。
+- ✅ **支持本地草稿恢复：** 可以明确处理恢复不同时间段的编辑草稿。
+- ✅ **支持 Markdown 常用编辑语法：** 代码语法高亮、Mermaid 图表、KaTeX 公式。
 
-### 🧩 丰富内容
+### ⚙️ 设置中心
 
-- 支持标题、列表、链接、图片、表格、任务列表和代码块等常用 Markdown 内容。
-- 支持代码语法高亮、Mermaid 图表和 KaTeX 数学公式。
-- 支持 `[TOC]` 和 `[toc]` 目录。
-- 通过工具栏媒体选择器插入 WordPress 媒体库内容。
-- 可选的图床上传用于本地图片粘贴和拖放，支持 Cloudflare R2、七牛云 Kodo、阿里云 OSS 和腾讯云 COS。
+- ✅ **内置图床托管：** 支持 Cloudflare R2、七牛云 Kodo、阿里云 OSS、腾讯云 COS，可配置主/备目的地、文件名规则与上传重试。
+- ✅ **支持快捷键自定义：** 工具栏快捷键可分别配置 Windows/Linux 与 macOS，自动检测冲突。
+- ✅ **支持 Markdown 偏好：** 自动换行、GFM、智能标点、表格对齐、代码行号、粘贴为 Markdown。
+- ✅ **支持通用偏好：** 自动保存间隔、编辑器主题应用到前台、已发布代码块复制按钮。
+- ✅ **支持设置导入导出：** 一键迁移与备份全部偏好设置。
 
 ### 🎨 个性外观
 
-- 每篇文章独立选择文章主题和代码主题。
-- 选定外观可应用于已发布内容，也可以只用于编辑器预览。
-- 已发布代码块默认显示复制按钮；可按需隐藏，同时保留代码渲染和语法高亮。
-- 每篇文章独立选择文章字体栈。
-- 具备相应权限时，可保存命名的自定义 CSS 样式，并按需复用于文章。
-
-### 🧭 融入 WordPress
-
-- 在 WordPress 正常的 **文章** 和 **页面** 编辑入口中写作。
-- 继续使用 WordPress 的媒体库、分类、标签、摘要、特色图片和修订版本。
-- 使用 WordPress 原生的保存、发布和权限流程。
-- 不需要 Jetpack、Classic Editor 或其他 Markdown 插件。
+- ✅ **内置10+字体样式：** 每篇文章独立选择**独立字体样式**。
+- ✅ **支持代码复制：** 已发布文章默认显示代码块复制按钮，可按需隐藏。
+- ✅ **内置40+文章主题和10+ 代码主题：** 每篇文章可以独立选择**文章主题**与**代码主题**，方便快捷的支持微信公众号复制导出发布。
+- ✅ **支持自定义设置：** 外观可作用于已发布内容，也可仅用于编辑器预览。
+- ✅ **支持自定义代码与文章主题样式：** 可按需定制并且自动下次保存复用代码与文章主题样式。
 
 ### 📤 发布与分享
 
-- 在 WordPress 页面中发布排版后的文章内容。
-- 将当前预览以富文本 **复制到微信**，用于微信公众号编辑器。
+- ✅ **一键复制发布到微信公众号：** 将当前预览以富文本粘贴到公众号编辑器。
 
 ## 技术文档
 
@@ -116,7 +108,7 @@ npm run assets:check
 ## 支持 EasyMDE
 
 <p align="center">
-  如果 EasyMDE 改善了你的 WordPress 写作流程，点亮 Star 可以帮助更多作者发现这个项目。
+  如果 EasyMDE 改善了你的 WordPress 写作流程，请你点个 Star 支持一下。
 </p>
 
 ## 许可证

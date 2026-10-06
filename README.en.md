@@ -55,7 +55,7 @@ A next-generation WordPress Markdown editor built for content creators, with liv
 - ✅ **Professional quick toolbar:** insert images through the toolbar media picker and format bold and other Markdown with one click.
 - ✅ **Typora-inspired keyboard shortcuts:** site-wide Windows/Linux and macOS override settings.
 - ✅ **Immersive editing:** the immersive editor accepts `~~~` or backtick fence shortcuts for quick code-block input.
-- ✅ **Auto-save:** drafts are saved automatically on a schedule, so your work is never lost.
+- ✅ **Auto-save:** drafts are saved at the configured interval to reduce the risk of losing work.
 - ✅ **Local draft recovery:** explicitly restore editing drafts from different points in time.
 - ✅ **Common Markdown syntax:** code highlighting, Mermaid diagrams, and KaTeX formulas.
 

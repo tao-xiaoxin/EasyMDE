@@ -36,6 +36,45 @@ function settings(overrides: Partial<ImageSettings> = {}): ImageSettings {
 	};
 }
 
+const COMBINED_FILE_NAME_PRESETS = [
+	{
+		label: "fileNamePresetDate",
+		storagePath: "{date}",
+		fileNameRule: "{uuid}",
+		preview: "20260713/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetMd5",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{md5}",
+		preview: "2026/07/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetYearMonth",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{uuid}",
+		preview: "2026/07/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetOriginal",
+		storagePath: "{date}",
+		fileNameRule: "{name}",
+		preview: "20260713/easymde-image.webp",
+	},
+	{
+		label: "fileNamePresetArticle",
+		storagePath: "{post_id}",
+		fileNameRule: "{name}",
+		preview: "128/easymde-image.webp",
+	},
+	{
+		label: "fileNamePresetTime",
+		storagePath: "{date}",
+		fileNameRule: "{time}",
+		preview: "20260713/153042.webp",
+	},
+] as const;
+
 function deferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -864,9 +903,7 @@ describe("ImagesSettingsPage", () => {
 		});
 
 		expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
-		expect(
-			screen.queryByRole("button", { name: /\{ext\}/u }),
-		).toBeNull();
+		expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
 		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
 
 		storagePath.focus();
@@ -897,16 +934,18 @@ describe("ImagesSettingsPage", () => {
 		expect(screen.getByText("20262026/07/sta8f4c2d1em.webp")).not.toBeNull();
 	});
 
-	it("keeps storage path and file name rule independent while hosting is disabled", async () => {
+	it("applies each common filename template to both fields and derives active state from the pair", async () => {
 		const user = userEvent.setup();
-		const initialSettings = {
-			...settings({
-				imageHostingEnabled: false,
-			fileNameRule: "{md5}",
-			}),
-			storagePath: "{year}/{month}",
-		} as ImageSettings;
-		render(<Harness initialSettings={initialSettings} />);
+		const onSettingsChange = vi.fn();
+		render(
+			<Harness
+				initialSettings={settings({
+					storagePath: "{date}",
+					fileNameRule: "{name}",
+				})}
+				onSettingsChange={onSettingsChange}
+			/>,
+		);
 
 		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "storagePath",
@@ -914,51 +953,43 @@ describe("ImagesSettingsPage", () => {
 		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
 		});
-		expect(storagePath.value).toBe("{year}/{month}");
-		expect(fileNameRule.value).toBe("{md5}");
-		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
+		const presetButtons = new Map(
+			COMBINED_FILE_NAME_PRESETS.map(({ label }) => [
+				label,
+				screen.getByRole<HTMLButtonElement>("button", { name: label }),
+			]),
+		);
 
-		storagePath.focus();
-		storagePath.setSelectionRange(0, 0);
-		await user.click(
-			screen.getByRole("button", {
-				name: "insertFileNameVariable {year}",
-			}),
-		);
-		expect(storagePath.value).toBe("{year}{year}/{month}");
-		expect(document.activeElement).toBe(storagePath);
+		for (const { label } of COMBINED_FILE_NAME_PRESETS) {
+			expect(presetButtons.get(label)?.getAttribute("aria-pressed")).toBe(
+				label === "fileNamePresetOriginal" ? "true" : "false",
+			);
+		}
+		expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
+		expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
 
-		await user.click(
-			screen.getByRole("button", {
-				name: "fileNamePresetDate",
-			}),
-		);
-		expect(fileNameRule.value).toBe("{date}");
-		expect(storagePath.value).toBe("{year}{year}/{month}");
-		await user.click(
-			screen.getByRole("button", {
-				name: "fileNamePresetYearMonth",
-			}),
-		);
-		expect(fileNameRule.value).toBe("{uuid}");
-		expect(storagePath.value).toBe("{year}{year}/{month}");
-		await user.click(
-			screen.getByRole("button", {
-				name: "fileNamePresetArticle",
-			}),
-		);
-		expect(fileNameRule.value).toBe("{post_id}");
-		expect(storagePath.value).toBe("{year}{year}/{month}");
+		for (const [index, preset] of COMBINED_FILE_NAME_PRESETS.entries()) {
+			await user.click(presetButtons.get(preset.label) as HTMLButtonElement);
 
-		fileNameRule.focus();
-		fileNameRule.setSelectionRange(0, 0);
-		await user.click(
-			screen.getByRole("button", {
-				name: "insertFileNameVariable {md5}",
-			}),
-		);
-		expect(fileNameRule.value).toBe("{md5}{post_id}");
-		expect(document.activeElement).toBe(fileNameRule);
+			expect(onSettingsChange).toHaveBeenCalledTimes(index + 1);
+			expect(onSettingsChange).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					storagePath: preset.storagePath,
+					fileNameRule: preset.fileNameRule,
+				}),
+			);
+			expect(storagePath.value).toBe(preset.storagePath);
+			expect(fileNameRule.value).toBe(preset.fileNameRule);
+			expect(screen.getByText(preset.preview, { exact: true })).not.toBeNull();
+
+			for (const { label } of COMBINED_FILE_NAME_PRESETS) {
+				expect(presetButtons.get(label)?.getAttribute("aria-pressed")).toBe(
+					label === preset.label ? "true" : "false",
+				);
+			}
+			expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
+			expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
+		}
 	});
 
 	it("conditionally removes backup fields when backup upload is disabled", async () => {
@@ -983,14 +1014,14 @@ describe("ImagesSettingsPage", () => {
 			<Harness
 				overlayRoot={overlayRoot}
 				initialSettings={settings({
-						uploadFormats: {
-							webp: false,
-							png: false,
-							jpg: true,
-							jpeg: false,
-							jfif: false,
-							gif: false,
-						},
+					uploadFormats: {
+						webp: false,
+						png: false,
+						jpg: true,
+						jpeg: false,
+						jfif: false,
+						gif: false,
+					},
 				})}
 			/>,
 		);
@@ -1152,7 +1183,9 @@ describe("ImagesSettingsPage", () => {
 			/>,
 		);
 
-		await user.click(screen.getByRole("button", { name: "verifyPrimaryUpload" }));
+		await user.click(
+			screen.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
 		await within(overlayRoot).findByRole("dialog", {
 			name: "uploadVerificationSucceeded",
 		});

@@ -1987,7 +1987,7 @@ msgid "Select one to fill the rule automatically"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:186
-msgid "Date File Name"
+msgid "Date Archive"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:187
@@ -1995,20 +1995,19 @@ msgid "MD5 Content Hash"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:188
-msgid "UUID File Name"
+msgid "Year and Month Directory"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:189
-#: src/Admin/SettingsCenterStrings.php:201
-msgid "Original File Name"
+msgid "Keep Original Name"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:190
-msgid "Post ID File Name"
+msgid "Article Directory"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:191
-msgid "Time-based File Name"
+msgid "Time-based Name"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:192
@@ -2045,6 +2044,10 @@ msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:200
 msgid "Unique Identifier"
+msgstr ""
+
+#: src/Admin/SettingsCenterStrings.php:201
+msgid "Original File Name"
 msgstr ""
 
 #. translators: %s: file-name rule variable label.

@@ -318,12 +318,6 @@ msgstr "建议使用横向图片"
 #. translators: %s: Effective maximum image upload size, for example "5 MB".
 #: src/Admin/AdminAssets.php:535
 #, php-format
-msgid "Supports JPG, PNG, WebP, and GIF, max %s"
-msgstr "支持 JPG、PNG、WebP、GIF 格式，最大 %s"
-
-#. translators: %s: Effective maximum image upload size, for example "5 MB".
-#: src/Admin/AdminAssets.php:535
-#, php-format
 msgid "Supports WebP, PNG, JPG, JPEG, JFIF, and GIF, max %s"
 msgstr "支持 WebP、PNG、JPG、JPEG、JFIF 和 GIF 格式，最大 %s"
 
@@ -1249,7 +1243,7 @@ msgstr "主题名称已经存在，请更换后重试。"
 #: src/ImageHosting/RemoteImageDownloader.php:101
 #: src/Rest/ImageHostingController.php:454
 #: src/Rest/ImageHostingController.php:550 src/Rest/MediaController.php:138
-#: src/Rest/MediaController.php:280
+#: src/Rest/MediaController.php:281
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr "当前 EasyMDE 设置不允许上传这种图片格式。"
 
@@ -1737,8 +1731,8 @@ msgid "Close Settings Feedback"
 msgstr "关闭设置反馈"
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:440
-#: src/Support/SettingsCenterRepository.php:448
+#: src/Support/SettingsCenterRepository.php:460
+#: src/Support/SettingsCenterRepository.php:468
 msgid "Settings could not be saved. Try again."
 msgstr "设置无法保存，请重试。"
 
@@ -2006,29 +2000,28 @@ msgid "Select one to fill the rule automatically"
 msgstr "选择一项以自动填充规则"
 
 #: src/Admin/SettingsCenterStrings.php:186
-msgid "Date File Name"
-msgstr "日期文件名"
+msgid "Date Archive"
+msgstr "按日期归档"
 
 #: src/Admin/SettingsCenterStrings.php:187
 msgid "MD5 Content Hash"
 msgstr "MD5 内容哈希"
 
 #: src/Admin/SettingsCenterStrings.php:188
-msgid "UUID File Name"
-msgstr "UUID 文件名"
+msgid "Year and Month Directory"
+msgstr "年/月目录"
 
 #: src/Admin/SettingsCenterStrings.php:189
-#: src/Admin/SettingsCenterStrings.php:201
-msgid "Original File Name"
-msgstr "原始文件名"
+msgid "Keep Original Name"
+msgstr "保留原始名称"
 
 #: src/Admin/SettingsCenterStrings.php:190
-msgid "Post ID File Name"
-msgstr "文章 ID 文件名"
+msgid "Article Directory"
+msgstr "文章目录"
 
 #: src/Admin/SettingsCenterStrings.php:191
-msgid "Time-based File Name"
-msgstr "按时间命名的文件名"
+msgid "Time-based Name"
+msgstr "按时间命名"
 
 #: src/Admin/SettingsCenterStrings.php:192
 msgid "Available Variables"
@@ -2065,6 +2058,10 @@ msgstr "文件 MD5"
 #: src/Admin/SettingsCenterStrings.php:200
 msgid "Unique Identifier"
 msgstr "唯一标识符"
+
+#: src/Admin/SettingsCenterStrings.php:201
+msgid "Original File Name"
+msgstr "原始文件名"
 
 #. translators: %s: file-name rule variable label.
 #: src/Admin/SettingsCenterStrings.php:203
@@ -2942,7 +2939,7 @@ msgstr "无法复制代码，请重试。"
 
 #: src/ImageHosting/ImageHostingRuntime.php:489
 #: src/Rest/ImageHostingController.php:911
-#: src/Support/SettingsCenterRepository.php:747
+#: src/Support/SettingsCenterRepository.php:767
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr "主图床和备份图床必须使用不同的存储目标。"
@@ -2991,7 +2988,7 @@ msgstr "所选图床服务尚未配置。"
 #: src/Rest/ImageHostingController.php:479
 #: src/Rest/ImageHostingController.php:488
 #: src/Rest/ImageHostingController.php:903
-#: src/Support/SettingsCenterRepository.php:464
+#: src/Support/SettingsCenterRepository.php:484
 msgid "The image-hosting configuration is unavailable."
 msgstr "图床配置不可用。"
 
@@ -3041,11 +3038,11 @@ msgstr "未提供要上传的图片文件。"
 msgid "The image could not be uploaded."
 msgstr "无法上传图片。"
 
-#: src/Rest/MediaController.php:227
+#: src/Rest/MediaController.php:228
 msgid "The uploaded image URL is unavailable."
 msgstr "上传后的图片 URL 不可用。"
 
-#: src/Rest/MediaController.php:270 src/Rest/MediaController.php:338
+#: src/Rest/MediaController.php:271 src/Rest/MediaController.php:339
 msgid "The image could not be saved to the WordPress media library."
 msgstr "无法将图片保存到 WordPress 媒体库。"
 
@@ -3078,23 +3075,23 @@ msgstr "无法验证设置请求。"
 msgid "The settings payload is too large."
 msgstr "设置负载过大。"
 
-#: src/Rest/SettingsController.php:140 src/Rest/SettingsController.php:428
-#: src/Support/SettingsCenterRepository.php:332
-#: src/Support/SettingsCenterRepository.php:456
-#: src/Support/SettingsCenterRepository.php:627
-#: src/Support/SettingsCenterRepository.php:677
+#: src/Rest/SettingsController.php:140 src/Rest/SettingsController.php:477
+#: src/Support/SettingsCenterRepository.php:334
+#: src/Support/SettingsCenterRepository.php:476
+#: src/Support/SettingsCenterRepository.php:647
+#: src/Support/SettingsCenterRepository.php:697
 msgid "The settings payload is invalid."
 msgstr "The settings payload is invalid."
 
-#: src/Rest/SettingsController.php:436
+#: src/Rest/SettingsController.php:485
 msgid "The settings configuration is unavailable."
 msgstr "设置配置不可用。"
 
-#: src/Support/SettingsCenterRepository.php:717
+#: src/Support/SettingsCenterRepository.php:737
 msgid "One or more shortcut values are invalid."
 msgstr "One or more shortcut values are invalid."
 
-#: src/Support/SettingsCenterRepository.php:728
+#: src/Support/SettingsCenterRepository.php:748
 msgid "One or more shortcut values conflict."
 msgstr "一个或多个快捷键存在冲突。"
 
@@ -3553,20 +3550,21 @@ msgid "%s word"
 msgid_plural "%s words"
 msgstr[0] "%s 个词"
 
-#~ msgid "Date Archive"
-#~ msgstr "按日期归档"
+#, php-format
+#~ msgid "Supports JPG, PNG, WebP, and GIF, max %s"
+#~ msgstr "支持 JPG、PNG、WebP、GIF 格式，最大 %s"
 
-#~ msgid "Year and Month Directory"
-#~ msgstr "年/月目录"
+#~ msgid "Date File Name"
+#~ msgstr "日期文件名"
 
-#~ msgid "Keep Original Name"
-#~ msgstr "保留原始名称"
+#~ msgid "UUID File Name"
+#~ msgstr "UUID 文件名"
 
-#~ msgid "Article Directory"
-#~ msgstr "文章目录"
+#~ msgid "Post ID File Name"
+#~ msgstr "文章 ID 文件名"
 
-#~ msgid "Time-based Name"
-#~ msgstr "按时间命名"
+#~ msgid "Time-based File Name"
+#~ msgstr "按时间命名的文件名"
 
 #~ msgid ""
 #~ "Choose a template or combine variables to customize the storage path."

@@ -1880,8 +1880,7 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		const verificationButton = verification.locator("> button");
 		const verificationStrings = await page.evaluate(() => ({
 			close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
-			fileNameRule:
-				window.EasyMDESettingsCenterBootstrap.strings.fileNameRule,
+			fileNameRule: window.EasyMDESettingsCenterBootstrap.strings.fileNameRule,
 			storagePath: window.EasyMDESettingsCenterBootstrap.strings.storagePath,
 			success:
 				window.EasyMDESettingsCenterBootstrap.strings
@@ -1985,14 +1984,13 @@ test("runs the image-hosting interaction contract without exposing credentials",
 			name: verificationStrings.fileNameRule,
 			exact: true,
 		});
-		const editedStoragePath = await storagePath.inputValue();
 		await primary
 			.locator(
 				'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
 			)
 			.click();
 		await expect(rule).toHaveValue("{md5}");
-		await expect(storagePath).toHaveValue(editedStoragePath);
+		await expect(storagePath).toHaveValue("{year}/{month}");
 		await rule.fill(".");
 		await primary
 			.locator(".easymde-settings-center__file-name-variables button")
@@ -2913,10 +2911,10 @@ test("persists all remote image import modes and resets the documented defaults"
 			}),
 		).toHaveAttribute("aria-pressed", "true");
 		expect(strings.fileNamePresetYearMonth).toMatch(
-			/UUID File Name|UUID 文件名/u,
+			/Year and Month Directory|年\/月目录/u,
 		);
 		expect(strings.fileNamePresetArticle).toMatch(
-			/Post ID File Name|文章 ID 文件名/u,
+			/Article Directory|文章目录/u,
 		);
 
 		for (const mode of ["both", "visual", "source", "off"]) {

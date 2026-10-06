@@ -95,18 +95,48 @@ const DEFAULT_VERIFICATION_INVALIDATION_TOKENS: VerificationInvalidationTokens =
 		backup: 0,
 	};
 
+type FileNameRulePair = Readonly<{
+	storagePath: string;
+	fileNameRule: string;
+}>;
+
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<
-	Readonly<{
-		label: SettingsCenterStringKey;
-		value: string;
-	}>
+	Readonly<
+		FileNameRulePair & {
+			label: SettingsCenterStringKey;
+		}
+	>
 > = [
-	{ label: "fileNamePresetDate", value: "{date}" },
-	{ label: "fileNamePresetMd5", value: "{md5}" },
-	{ label: "fileNamePresetYearMonth", value: "{uuid}" },
-	{ label: "fileNamePresetOriginal", value: "{name}" },
-	{ label: "fileNamePresetArticle", value: "{post_id}" },
-	{ label: "fileNamePresetTime", value: "{time}" },
+	{
+		label: "fileNamePresetDate",
+		storagePath: "{date}",
+		fileNameRule: "{uuid}",
+	},
+	{
+		label: "fileNamePresetMd5",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{md5}",
+	},
+	{
+		label: "fileNamePresetYearMonth",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{uuid}",
+	},
+	{
+		label: "fileNamePresetOriginal",
+		storagePath: "{date}",
+		fileNameRule: "{name}",
+	},
+	{
+		label: "fileNamePresetArticle",
+		storagePath: "{post_id}",
+		fileNameRule: "{name}",
+	},
+	{
+		label: "fileNamePresetTime",
+		storagePath: "{date}",
+		fileNameRule: "{time}",
+	},
 ];
 
 const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
@@ -705,12 +735,14 @@ function ImageBehaviorRow({
 function FileNameRuleEditor({
 	fileNameRule,
 	onChange,
+	onPresetChange,
 	storagePath,
 	strings,
 	uploadFormats,
 }: {
 	fileNameRule: string;
 	onChange: (field: "fileNameRule" | "storagePath", value: string) => void;
+	onPresetChange: (pair: FileNameRulePair) => void;
 	storagePath: string;
 	strings: SettingsCenterBootstrap["strings"];
 	uploadFormats: ImageSettings["uploadFormats"];
@@ -805,22 +837,31 @@ function FileNameRuleEditor({
 					</div>
 					<div className="easymde-settings-center__file-name-presets">
 						{FILE_NAME_RULE_PRESETS.map((preset, index) => {
-							const active = fileNameRule === preset.value;
+							const active =
+								storagePath === preset.storagePath &&
+								fileNameRule === preset.fileNameRule;
 							return (
 								<button
-									key={preset.value}
+									key={preset.label}
 									type="button"
 									aria-label={strings[preset.label]}
 									aria-pressed={active}
 									data-preset-index={index}
-									onClick={() => onChange("fileNameRule", preset.value)}
+									onClick={() =>
+										onPresetChange({
+											storagePath: preset.storagePath,
+											fileNameRule: preset.fileNameRule,
+										})
+									}
 								>
 									<span className="easymde-settings-center__preset-radio">
 										{active ? <span /> : null}
 									</span>
 									<span>
 										<span>{strings[preset.label]}</span>
-										<code>{preset.value}</code>
+										<code>
+											{`${preset.storagePath}/${preset.fileNameRule}`}
+										</code>
 									</span>
 								</button>
 							);
@@ -1337,12 +1378,13 @@ export function ImagesSettingsPage({
 								</div>
 							</div>
 						) : null}
-		<FileNameRuleEditor
-			strings={strings}
-			storagePath={settings.storagePath}
-			fileNameRule={settings.fileNameRule}
-			uploadFormats={settings.uploadFormats}
-			onChange={(field, value) => setValue(field, value)}
+						<FileNameRuleEditor
+							strings={strings}
+							storagePath={settings.storagePath}
+							fileNameRule={settings.fileNameRule}
+							uploadFormats={settings.uploadFormats}
+							onChange={(field, value) => setValue(field, value)}
+							onPresetChange={(pair) => setValues(pair)}
 						/>
 						{settings.imageHostingEnabled ? (
 							<Fragment>

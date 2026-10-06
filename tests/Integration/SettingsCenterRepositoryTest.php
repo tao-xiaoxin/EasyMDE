@@ -267,13 +267,17 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		update_option(Options::EDITOR_SETTINGS, $stored, false);
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
 
-		$this->expectException( RuntimeException::class );
-		$this->expectExceptionMessage( SettingsCenterRepository::CONFIGURATION_ERROR_CODE );
-		$repository->get_media_upload_settings();
+		try {
+			$repository->get_media_upload_settings();
+			$this->fail( 'Unrepresentable legacy image settings should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
+
 		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
 	}
 
-	public function test_legacy_complete_file_name_rule_is_split_on_read_without_writing()
+	public function test_legacy_extension_variable_in_storage_path_is_rejected_without_writing()
 	{
 		$stored = array(
 			'settings_center' => array(
@@ -285,9 +289,14 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		update_option(Options::EDITOR_SETTINGS, $stored, false);
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
 
-		$this->expectException( RuntimeException::class );
-		$this->expectExceptionMessage( SettingsCenterRepository::CONFIGURATION_ERROR_CODE );
-		$repository->get_settings();
+		try {
+			$repository->get_settings();
+			$this->fail( 'A legacy extension variable in the storage path should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
+
+		$this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
 	}
 
 	public function test_explicit_empty_storage_path_is_not_migrated()
@@ -380,9 +389,13 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		update_option( Options::EDITOR_SETTINGS, $stored, false );
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 
-		$this->expectException( RuntimeException::class );
-		$this->expectExceptionMessage( SettingsCenterRepository::CONFIGURATION_ERROR_CODE );
-		$repository->get_settings();
+		try {
+			$repository->get_settings();
+			$this->fail( 'A legacy leading separator should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
+
 		$this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
 	}
 

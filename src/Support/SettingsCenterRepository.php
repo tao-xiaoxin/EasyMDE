@@ -450,7 +450,8 @@ final class SettingsCenterRepository {
 			! is_string( $settings['images']['fileNameRule'] ) ||
 			! $this->is_valid_file_name_rule( $settings['images']['storagePath'], $settings['images']['fileNameRule'] )
 		) {
-			throw new \RuntimeException( 'easymde_settings_configuration_invalid' );
+			// phpcs:ignore WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Stable internal configuration code, not output.
+			throw new \RuntimeException( self::CONFIGURATION_ERROR_CODE );
 		}
 	}
 

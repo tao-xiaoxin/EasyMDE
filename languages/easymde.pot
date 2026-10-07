@@ -1236,7 +1236,7 @@ msgstr ""
 #: src/Rest/ImageHostingController.php:479
 #: src/Rest/ImageHostingController.php:488
 #: src/Rest/ImageHostingController.php:903
-#: src/Support/SettingsCenterRepository.php:484
+#: src/Support/SettingsCenterRepository.php:485
 msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
@@ -1728,8 +1728,8 @@ msgid "Close Settings Feedback"
 msgstr ""
 
 #: src/Admin/SettingsCenterStrings.php:124
-#: src/Support/SettingsCenterRepository.php:460
-#: src/Support/SettingsCenterRepository.php:468
+#: src/Support/SettingsCenterRepository.php:461
+#: src/Support/SettingsCenterRepository.php:469
 msgid "Settings could not be saved. Try again."
 msgstr ""
 
@@ -2921,7 +2921,7 @@ msgstr ""
 
 #: src/ImageHosting/ImageHostingRuntime.php:489
 #: src/Rest/ImageHostingController.php:911
-#: src/Support/SettingsCenterRepository.php:767
+#: src/Support/SettingsCenterRepository.php:768
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
@@ -3052,9 +3052,9 @@ msgstr ""
 
 #: src/Rest/SettingsController.php:140 src/Rest/SettingsController.php:477
 #: src/Support/SettingsCenterRepository.php:334
-#: src/Support/SettingsCenterRepository.php:476
-#: src/Support/SettingsCenterRepository.php:647
-#: src/Support/SettingsCenterRepository.php:697
+#: src/Support/SettingsCenterRepository.php:477
+#: src/Support/SettingsCenterRepository.php:648
+#: src/Support/SettingsCenterRepository.php:698
 msgid "The settings payload is invalid."
 msgstr ""
 
@@ -3062,11 +3062,11 @@ msgstr ""
 msgid "The settings configuration is unavailable."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:737
+#: src/Support/SettingsCenterRepository.php:738
 msgid "One or more shortcut values are invalid."
 msgstr ""
 
-#: src/Support/SettingsCenterRepository.php:748
+#: src/Support/SettingsCenterRepository.php:749
 msgid "One or more shortcut values conflict."
 msgstr ""
 

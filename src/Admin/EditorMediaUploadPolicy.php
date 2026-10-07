@@ -50,7 +50,17 @@ final class EditorMediaUploadPolicy {
 			return $file;
 		}
 
-		$media_settings = $this->settings_repository->get_media_upload_settings();
+		try {
+			$media_settings = $this->settings_repository->get_media_upload_settings();
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			$file['error'] = __( 'The image-hosting configuration is unavailable.', 'easymde' );
+
+			return $file;
+		}
 		if (
 			! in_array( $type, $media_settings['mime_types'], true ) ||
 			false === ImageUploadExtensionPolicy::verify( $name, $type, $media_settings['allowed_extensions'] )

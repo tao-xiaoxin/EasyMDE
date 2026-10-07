@@ -1232,7 +1232,15 @@ msgid ""
 "again."
 msgstr ""
 
-#: src/Admin/EditorMediaUploadPolicy.php:58
+#: src/Admin/EditorMediaUploadPolicy.php:60
+#: src/Rest/ImageHostingController.php:479
+#: src/Rest/ImageHostingController.php:488
+#: src/Rest/ImageHostingController.php:903
+#: src/Support/SettingsCenterRepository.php:484
+msgid "The image-hosting configuration is unavailable."
+msgstr ""
+
+#: src/Admin/EditorMediaUploadPolicy.php:68
 #: src/ImageHosting/RemoteImageDownloader.php:95
 #: src/ImageHosting/RemoteImageDownloader.php:101
 #: src/Rest/ImageHostingController.php:454
@@ -1241,7 +1249,7 @@ msgstr ""
 msgid "This image format is not allowed by the current EasyMDE settings."
 msgstr ""
 
-#: src/Admin/EditorMediaUploadPolicy.php:65
+#: src/Admin/EditorMediaUploadPolicy.php:75
 #: src/ImageHosting/RemoteImageDownloader.php:78
 #: src/Rest/ImageHostingController.php:453
 #: src/Rest/ImageHostingController.php:521 src/Rest/MediaController.php:147
@@ -2957,13 +2965,6 @@ msgstr ""
 
 #: src/Rest/ImageHostingController.php:213
 msgid "The selected image-hosting service is not configured."
-msgstr ""
-
-#: src/Rest/ImageHostingController.php:479
-#: src/Rest/ImageHostingController.php:488
-#: src/Rest/ImageHostingController.php:903
-#: src/Support/SettingsCenterRepository.php:484
-msgid "The image-hosting configuration is unavailable."
 msgstr ""
 
 #: src/Rest/ImageHostingController.php:847

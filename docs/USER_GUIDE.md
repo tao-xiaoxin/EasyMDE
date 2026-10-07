@@ -221,6 +221,12 @@ An empty Storage Path means the bucket or upload root. The combined rule keeps
 the historical 160-byte limit. WordPress remains responsible for final unique
 filenames, attachment metadata, sub-sizes, and URLs in its Media Library.
 
+Selecting a common naming template fills both fields together. For example,
+**Date Archive** sets Storage Path to `{date}` and File Name Rule to `{uuid}`;
+**Article Directory** sets them to `{post_id}` and `{name}`. A template is
+selected only while both fields match its combination. Extensions are appended
+separately and are never part of the template.
+
 The upload-format checkboxes are presented in this fixed order: **WebP, PNG,
 JPG, JPEG, JFIF, GIF**. All six are enabled by default, and at least one must
 remain selected. Each checkbox admits only its exact lowercased filename suffix

@@ -119,6 +119,13 @@ stem. Object-key tests must prove `{md5}` uses the final bytes sent to the
 provider after optional processing, matching PicFast PicGo's content-MD5
 algorithm, then appends exactly one verified source extension.
 
+Common-template tests must exercise all six established directory/name pairs,
+one atomic settings update per activation, pair-based selection, suffix-free
+display, keyboard activation, and save/reload persistence. Native upload
+prefilter tests must reach WordPress Core's upload error boundary with corrupt
+settings, prove no persistence or source-file mutation, and ensure unexpected
+exceptions are not converted into ordinary configuration errors.
+
 Extension admission tests must cover each of the six exact lowercased suffixes,
 real-MIME mismatch, disabled-checkbox rejection, and independent JPG/JPEG/JFIF
 behavior. A real JFIF upload must persist through a scoped `jfif => image/jpeg`

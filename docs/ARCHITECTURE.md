@@ -920,10 +920,17 @@ Posts and administration surfaces unchanged. The Editor bootstrap uses that
 same effective limit for direct-upload validation and the featured-image
 guidance shown in the immersive Publish dialog.
 
+The native upload prefilter converts the repository's known configuration
+error into an explicit WordPress upload error. It does not rewrite invalid
+settings or continue the upload; unexpected exceptions remain visible.
+
 The canonical image settings split the object key into `images.storagePath`,
 the suffix-free basename stem `images.fileNameRule`, and the exact
 `images.uploadFormats` map. Their defaults are `{year}/{month}`, `{md5}`, and
 the ordered entries `webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif` all enabled.
+The six common naming presets retain their established directory/name
+combinations without `.{ext}`. Selecting one atomically updates both fields;
+selection state compares the complete pair rather than the basename alone.
 An explicit empty `storagePath` means the bucket or WordPress upload root; it
 is distinct from a missing legacy field. When the stored document has no
 `storagePath`, `SettingsCenterRepository` derives it by splitting the old

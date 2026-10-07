@@ -858,13 +858,14 @@ Current routes:
 
 Preview and theme requests with `post_id` require `current_user_can( 'edit_post', $post_id )`. Preview without a `post_id` requires `edit_posts`. Article image upload requires `upload_files`; when a `post_id` is present it also requires `current_user_can( 'edit_post', $post_id )`, and without a `post_id` it requires `edit_posts`. `/image-hosting/upload` additionally requires its action-specific Nonce. `/image-hosting/import` requires a positive `post_id`, `upload_files`, target-specific `edit_post`, the WordPress REST Nonce, and the image-upload action Nonce. Image Hosting verification and secret reveal require `manage_options`, the WordPress REST Nonce, and their own action-specific Nonces. Custom CSS endpoints access only the current user's user meta, and write/delete operations require `unfiltered_html`.
 
-Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings, the explicit `imageHostingEnabled` owner choice (default `false`), the strict-boolean `wechatPngExportEnabled` preference (default `false`), local pasted-image automatic-upload preference, and four-state remote-image paste preference. A missing stored PNG preference reads as `false` without a write. Settings transfer schema 10 requires it; schemas 1 through 9 import it as `false`. The current development defaults are a 30-second autosave interval, no automatic retry after a failed provider write, no Markdown image title, and `{year}/{month}/{md5}.{ext}` object paths. The new `remoteImageUploadMode` contract has no legacy parser, migration, compatibility alias, or schema-version branch. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
+Settings reads and writes require `manage_options`; updates are sanitized and persisted with the existing editor-settings option, including the 19 toolbar shortcut mappings, the explicit `imageHostingEnabled` owner choice (default `false`), the strict-boolean `wechatPngExportEnabled` preference (default `false`), local pasted-image automatic-upload preference, and four-state remote-image paste preference. A missing stored PNG preference reads as `false` without a write. The Settings Center bootstrap schema is `4`; Transfer export schema is `12`. Transfer imports `1` through `11` receive the explicit legacy image-rule and four-format conversion, while schema `12` requires the canonical fields. The current development defaults are a 30-second autosave interval, no automatic retry after a failed provider write, no Markdown image title, `storagePath` `{year}/{month}`, suffix-free basename `fileNameRule` `{md5}`, and all six ordered upload formats enabled: `webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif`. The new `remoteImageUploadMode` contract has no legacy parser, migration, compatibility alias, or schema-version branch. A POST requires the action-specific settings Nonce, a body no larger than 64 KiB, and the complete exact-key settings contract with the current nonnegative `revision`. Missing, extra, conflicting, or invalid fields are rejected, stale revisions return `easymde_settings_conflict` with HTTP 409, and an option-write failure returns `easymde_settings_persistence_failed` with HTTP 500. A legacy write payload that omits `storagePath` or uses the old four-key format map is accepted only through the same deterministic conversion used for legacy Reads; a canonical payload must carry both split fields and exactly six boolean format keys with at least one enabled. The option write uses a byte-exact compare-and-swap predicate so concurrent saves cannot silently clobber each other; an unchanged current submission is a successful no-op and does not increment the revision. Settings bootstrap, ordinary settings responses, transfer exports, logs, and diagnostics do not expose image-provider credentials. The optional top-level `resetSecrets: true` flag is the explicit destructive path that clears all four image-provider credentials; ordinary blank secret fields retain stored credentials. A password-field eye action is a separate explicit disclosure: `/image-hosting/secret` accepts an exact primary/backup target and Access Key/Secret Key field, returns only that saved value with `Cache-Control: no-store`, and leaves it only in current React component memory. It is never persisted, copied into browser Storage, or loaded implicitly.
 
 Preview Markdown payloads are capped at 1 MiB. The persisted
 `imageHostingEnabled` setting is the explicit owner choice for local image-file
 paste and drop, and defaults to `false`. The
 `autoUploadPastedImages` setting defaults to enabled and controls whether a
-pasted local JPEG, PNG, GIF, or WebP is uploaded in both the ordinary source
+pasted local image with one of the six supported suffixes (`.webp`, `.png`,
+`.jpg`, `.jpeg`, `.jfif`, or `.gif`) is uploaded in both the ordinary source
 editor and immersive editor. When automatic upload is enabled and
 `imageHostingEnabled` is false, the existing protected same-origin `/media`
 WordPress Media Library owner handles the local file; when it is true, the
@@ -875,9 +876,11 @@ ordinary text/HTML paste and the toolbar media command remain under their
 existing owners. Remote image import is forced off while Image Hosting is
 disabled. This is an explicit owner selection, not a failure fallback: a
 selected owner failure remains explicit and never switches to the other owner.
-PHP validates the current capability, action Nonce, real MIME, extension, byte
-size, configured format, and optional post authority before it reads server-only
-credentials or contacts a provider.
+PHP validates the current capability, action Nonce, real MIME, lowercased source
+extension, its exact enabled format, byte size, and optional post authority
+before it reads server-only credentials or contacts a provider. JPG, JPEG, and
+JFIF are separate admission choices even when their verified MIME is
+`image/jpeg`.
 
 `remoteImageUploadMode` controls only remote images discovered in the current
 paste and defaults to `both`. Its exact values are `both` (visual and source),
@@ -897,7 +900,12 @@ Every other eligible source continues through the normal `imported` validation, 
 
 The browser sends every eligible URL to the protected same-origin `/image-hosting/import` route and never fetches its cross-origin bytes.
 For an `imported` result, the server accepts only canonical absolute HTTP/HTTPS URLs without credentials or fragments, resolves all A and AAAA addresses, rejects any address outside the explicit public CIDR policy, and uses the forced WordPress Requests cURL transport pinned to one validated address with TLS verification, redirects disabled, a ten-second timeout, streaming to a temporary file, and a response-size limit.
-The imported path verifies the real GIF, JPEG, PNG, or WebP MIME and the configured size and format limits before passing the temporary file to the existing Image Hosting runtime, and every exit removes that temporary file.
+The imported path verifies the real GIF, JPEG, PNG, or WebP MIME and the
+configured size and format limits before passing the temporary file to the
+existing Image Hosting runtime, and every exit removes that temporary file.
+An extensionless remote image receives the documented MIME-derived compatible
+suffix; a supplied suffix that mismatches the verified MIME or is disabled by
+the exact format map fails explicitly rather than being relabeled.
 Stable, redacted REST failures never expose the source URL, provider response, or credentials.
 Only an authoritative result may update the current paste; cancellation, stale completion, runtime replacement, and teardown cannot alter later editor content.
 
@@ -912,16 +920,54 @@ Posts and administration surfaces unchanged. The Editor bootstrap uses that
 same effective limit for direct-upload validation and the featured-image
 guidance shown in the immersive Publish dialog.
 
-The saved `images.fileNameRule` is shared by the Image Hosting owner and
-future EasyMDE local paste/drop uploads through `/easymde/v1/media`, including
-when Image Hosting is disabled. `Plugin` constructs one
-`ImageHosting\ObjectKeyBuilder` and injects it into both runtimes. The Media
-controller reads one credential-free `file_name_rule`/`max_bytes`/`mime_types`/
-`title_display` snapshot, validates the real MIME and declared size, reads
-bounded exact bytes, and expands the rule with UTC time, UUID, `post_id`, MD5,
-date/time, sanitized name, and the verified extension. Original sanitized names
-remain separate from the generated storage key and drive default alt text,
-response filename/title, and the attachment title stem.
+The native upload prefilter converts the repository's known configuration
+error into an explicit WordPress upload error. It does not rewrite invalid
+settings or continue the upload; unexpected exceptions remain visible.
+
+The canonical image settings split the object key into `images.storagePath`,
+the suffix-free basename stem `images.fileNameRule`, and the exact
+`images.uploadFormats` map. Their defaults are `{year}/{month}`, `{md5}`, and
+the ordered entries `webp`, `png`, `jpg`, `jpeg`, `jfif`, `gif` all enabled.
+The six common naming presets retain their established directory/name
+combinations without `.{ext}`. Selecting one atomically updates both fields;
+selection state compares the complete pair rather than the basename alone.
+An explicit empty `storagePath` means the bucket or WordPress upload root; it
+is distinct from a missing legacy field. When the stored document has no
+`storagePath`, `SettingsCenterRepository` derives it by splitting the old
+complete `fileNameRule` at its last `/`, then removes exactly one terminal
+`.{ext}` from the basename. A legacy `{ext}` in a directory, in the middle,
+repeated, or leaving an empty stem is an explicit configuration/import error;
+it is not normalized by fallback. This read-time projection does not write or
+advance the settings revision. A legitimate Save establishes both fields, and
+an already-open legacy write payload is normalized through the same conversion.
+The legacy four-key map expands `jpg` to independent `jpg`, `jpeg`, and `jfif`
+entries. Settings Center bootstrap schema 4 and Transfer schema 12 are
+canonical; schemas 1 through 11 receive this explicit conversion and schema 12
+is strict.
+
+`Plugin` constructs one `ImageHosting\ObjectKeyBuilder` and injects it into
+both runtimes. The builder combines, validates, and expands the path and
+suffix-free stem once; it is the only key-expansion owner for the Image Hosting
+provider and future EasyMDE local paste/drop uploads through
+`/easymde/v1/media`, including when Image Hosting is disabled. It appends
+exactly one lowercased, verified source extension after checking the real MIME
+and that extension's enabled checkbox. Canonical templates, presets, exports,
+and persisted settings never contain `{ext}`. Combined validation retains the
+historical 160-byte and object-key safety rules. UTC time, UUID, `post_id`, MD5,
+date/time, and sanitized name are expanded only after the real bytes and MIME
+are validated. Original sanitized names remain separate from the generated
+storage key and drive default alt text, response filename/title, and the
+attachment title stem.
+
+The Media controller reads one credential-free
+`storage_path`/`file_name_rule`/`allowed_extensions`/`max_bytes`/`mime_types`/
+`title_display` snapshot, validates the real MIME, exact source extension,
+enabled format, and declared size, reads bounded exact bytes, and passes both
+canonical fields to the shared builder. A key, extension, or scope failure is
+explicit and never falls back to the ordinary upload path. A scoped
+`jfif => image/jpeg` MIME allowance is installed only for the owned JFIF
+operation and removed with all other hooks in `finally`; WordPress's global MIME
+policy is unchanged.
 
 `MediaUploadPathScope` adds a one-time internal token to the exact temporary
 file. Its final-priority `wp_handle_sideload_prefilter` restores only the
@@ -996,11 +1042,12 @@ not perform a metadata-only bucket probe. The protected same-origin request
 carries the exact draft and settings revision, while newly entered credentials
 remain inside that request. Blank draft credentials may reuse stored
 credentials only when both revision and physical destination identity still
-match. The runtime generates the plugin-owned EasyMDE PNG object key through
-the current `fileNameRule`, the shared `ObjectKeyBuilder`, the current UTC
-clock and UUID owner, and `post_id = 0`, then uploads only to the selected
-target. Rules containing time or UUID variables may create a new object on
-each verification. Success returns `status: uploaded`, the object path, and the
+match. The runtime generates the plugin-owned EasyMDE PNG object key by passing
+the current `storagePath` and basename `fileNameRule` to the shared
+`ObjectKeyBuilder`, with the current UTC clock and UUID owner and
+`post_id = 0`, then uploads only to the selected target. Rules containing time
+or UUID variables may create a new object on each verification. Success returns
+`status: uploaded`, the object path, and the
 primary Viewing Image Domain URL; the accessible dialog identifies the
 successful test-image upload, explains that the URL is inserted into articles,
 and warns when an HTTP URL could be blocked on an HTTPS article page. Failure
@@ -1015,10 +1062,15 @@ protected, `no-store`, browser-memory-only contract above.
 `ObjectKeyBuilder` defines `{md5}` as the lowercase hexadecimal MD5 digest of
 the final bytes sent to the provider, after optional resize/compression. This
 mirrors PicFast PicGo's `hashlib.md5(file_data).hexdigest()` content-digest
-algorithm; EasyMDE derives the extension from the verified MIME type. The
-default `fileNameRule` is `{year}/{month}/{md5}.{ext}`, and the default
-`titleDisplay` is `none`, so generated Markdown image syntax has no title
-unless the administrator explicitly changes that setting.
+algorithm. The builder uses the verified lowercased source extension only after
+the exact MIME-family and enabled-format checks, then appends it once. The
+default `storagePath` is `{year}/{month}`, the default suffix-free basename
+`fileNameRule` is `{md5}`, and the default `titleDisplay` is `none`, so
+generated Markdown image syntax has no title unless the administrator
+explicitly changes that setting. The Settings Center preview alone appends the
+first enabled extension; with defaults it displays
+`2026/07/a8f4c2d1.webp`. Changing either split field or the enabled-format map
+invalidates a pending or completed verification fingerprint.
 
 ## Compatibility Facade
 

@@ -3,9 +3,14 @@
 namespace EasyMDE\Rest;
 
 use EasyMDE\ImageHosting\ImageHostDestinationIdentity;
+use EasyMDE\ImageHosting\ImageHostException;
 use EasyMDE\ImageHosting\ImageHostProviderSupport;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
+use EasyMDE\ImageHosting\JfifMimeScope;
+use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\ImageHosting\RemoteImageDownloader;
 use EasyMDE\Support\Capabilities;
+use EasyMDE\Support\SettingsCenterRepository;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -462,7 +467,19 @@ final class ImageHostingController {
 	}
 
 	private function get_runtime_settings() {
-		$settings = $this->settings_provider->get_image_hosting_settings();
+		try {
+			$settings = $this->settings_provider->get_image_hosting_settings();
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			return new WP_Error(
+				'easymde_image_hosting_configuration_unavailable',
+				__( 'The image-hosting configuration is unavailable.', 'easymde' ),
+				array( 'status' => 500 )
+			);
+		}
 
 		return is_array( $settings )
 			? $settings
@@ -511,17 +528,22 @@ final class ImageHostingController {
 			return $this->invalid_file_error();
 		}
 
-		$checked        = wp_check_filetype_and_ext( $file['tmp_name'], $file_name );
+		$checked        = JfifMimeScope::run(
+			$file['tmp_name'],
+			$file_name,
+			static function () use ( $file, $file_name ) {
+				return wp_check_filetype_and_ext( $file['tmp_name'], $file_name );
+			}
+		);
 		$type           = isset( $checked['type'] ) && is_string( $checked['type'] ) ? $checked['type'] : '';
-		$ext            = isset( $checked['ext'] ) && is_string( $checked['ext'] ) ? strtolower( $checked['ext'] ) : '';
-		$declared_type  = is_string( $file['type'] ) ? strtolower( trim( $file['type'] ) ) : '';
+		$declared_type  = ImageUploadExtensionPolicy::normalize_declared_mime( $file['type'] );
 		$name_extension = strtolower( pathinfo( $file_name, PATHINFO_EXTENSION ) );
 		if (
 			'' === $type ||
 			$declared_type !== $type ||
 			! $this->extension_matches_type( $name_extension, $type ) ||
 			0 !== strpos( $type, 'image/' ) ||
-			! $this->format_is_allowed( $ext, $settings )
+			! $this->format_is_allowed( $name_extension, $settings )
 		) {
 			return new WP_Error(
 				'easymde_image_hosting_unsupported_media_type',
@@ -572,8 +594,7 @@ final class ImageHostingController {
 	}
 
 	private function format_is_allowed( $extension, array $settings ) {
-		$extension = in_array( $extension, array( 'jpeg', 'jfif' ), true ) ? 'jpg' : $extension;
-		$formats   = isset( $settings['behaviors']['uploadFormats'] ) && is_array( $settings['behaviors']['uploadFormats'] )
+		$formats = isset( $settings['behaviors']['uploadFormats'] ) && is_array( $settings['behaviors']['uploadFormats'] )
 			? $settings['behaviors']['uploadFormats']
 			: array();
 
@@ -581,12 +602,12 @@ final class ImageHostingController {
 	}
 
 	private function is_valid_verification_draft( array $draft ) {
-		$keys = array( 'imageHostingEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
+		$keys = array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'storagePath', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' );
 		if ( ! $this->has_exact_keys( $draft, $keys ) ) {
 			return false;
 		}
 
-		foreach ( array( 'imageHostingEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
+		foreach ( array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'backupEnabled', 'compressImages', 'autoUploadPastedImages' ) as $field ) {
 			if ( ! is_bool( $draft[ $field ] ) ) {
 				return false;
 			}
@@ -607,6 +628,7 @@ final class ImageHostingController {
 			'domain'          => 255,
 			'accessKey'       => 255,
 			'secretKey'       => 255,
+			'storagePath'     => 160,
 			'fileNameRule'    => 160,
 			'backupService'   => 32,
 			'backupEndpoint'  => 255,
@@ -628,7 +650,7 @@ final class ImageHostingController {
 			! $this->is_valid_public_result_url( $draft['backupDomain'], true ) ||
 			! in_array( $draft['titleDisplay'], array( 'none', 'filename' ), true ) ||
 			! is_array( $draft['uploadFormats'] ) ||
-			! $this->has_exact_keys( $draft['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) )
+			! $this->has_exact_keys( $draft['uploadFormats'], ImageUploadExtensionPolicy::extensions() )
 		) {
 			return false;
 		}
@@ -636,6 +658,14 @@ final class ImageHostingController {
 			if ( ! is_bool( $enabled ) ) {
 				return false;
 			}
+		}
+		if ( ! in_array( true, $draft['uploadFormats'], true ) || true !== $draft['uploadFormats']['png'] ) {
+			return false;
+		}
+		try {
+			( new ObjectKeyBuilder() )->validate( $draft['storagePath'], $draft['fileNameRule'] );
+		} catch ( ImageHostException $exception ) {
+			return false;
 		}
 
 		return true;
@@ -684,11 +714,12 @@ final class ImageHostingController {
 			$backup = array( 'enabled' => $draft['backupEnabled'] ) + $selected;
 		}
 
-			return array(
-				'primary'      => $primary,
-				'backup'       => $backup,
-				'fileNameRule' => $draft['fileNameRule'],
-			);
+		return array(
+			'primary'      => $primary,
+			'backup'       => $backup,
+			'storagePath'  => $draft['storagePath'],
+			'fileNameRule' => $draft['fileNameRule'],
+		);
 	}
 
 	private function verification_config_from_draft( array $draft, $backup ) {

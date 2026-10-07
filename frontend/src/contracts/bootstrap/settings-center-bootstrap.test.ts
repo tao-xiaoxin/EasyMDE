@@ -11,7 +11,7 @@ import {
 
 function bootstrap(noSearchResults = 'No settings related to "%s" were found') {
 	return {
-		schemaVersion: 2,
+		schemaVersion: 4,
 		closeUrl: "/wp-admin/options-general.php",
 		api: {
 			settingsUrl: "/wp-json/easymde/v1/settings",
@@ -123,9 +123,31 @@ describe("parseSettingsCenterBootstrap", () => {
 		) as unknown as MutableSettingsRecord;
 		settings.images.imageHostingEnabled = true;
 
-		expect(parseSettingsCenterSettings(settings).images.imageHostingEnabled).toBe(
-			true,
+		expect(
+			parseSettingsCenterSettings(settings).images.imageHostingEnabled,
+		).toBe(true);
+	});
+
+	it("accepts the canonical split image object-key fields", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "{year}/{month}";
+		settings.images.fileNameRule = "{md5}";
+
+		expect(parseSettingsCenterSettings(settings).images).toEqual(
+			expect.objectContaining({
+				storagePath: "{year}/{month}",
+				fileNameRule: "{md5}",
+			}),
 		);
+	});
+
+	it("accepts Settings Center Bootstrap schema 4", () => {
+		const value = bootstrap() as unknown as Record<string, unknown>;
+		value.schemaVersion = 4;
+
+		expect(parseSettingsCenterBootstrap(value).schemaVersion).toBe(4);
 	});
 
 	it("accepts the explicit WeChat PNG export enablement flag", () => {
@@ -222,9 +244,11 @@ describe("parseSettingsCenterBootstrap", () => {
 			"no enabled upload format",
 			(settings: MutableSettingsRecord) => {
 				settings.images.uploadFormats = {
-					jpg: false,
-					png: false,
 					webp: false,
+					png: false,
+					jpg: false,
+					jpeg: false,
+					jfif: false,
 					gif: false,
 				};
 			},
@@ -487,6 +511,99 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it.each([
+		"photo.webp",
+		"photo.PNG",
+		"photo.jpg",
+		"photo.JPEG",
+		"photo.jfif",
+		"photo.GIF",
+		"{name}.png",
+	])("rejects a canonical filename stem ending in a supported extension: %s", (fileNameRule) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.fileNameRule = fileNameRule;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-fileNameRule-invalid",
+		);
+	});
+
+	it("accepts an empty storage path for the bucket root", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "";
+
+		expect(parseSettingsCenterSettings(settings).images.storagePath).toBe("");
+	});
+
+	it("rejects the ext placeholder in the storage path", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "{ext}";
+		settings.images.fileNameRule = "image";
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-storagePath-invalid",
+		);
+	});
+
+	it.each([
+		["combined template at 160 bytes", "a".repeat(153), true],
+		["combined template at 161 bytes", "a".repeat(154), false],
+	] as const)(
+		"enforces the combined UTF-8 byte limit for %s",
+		(_label, storagePath, valid) => {
+			const settings = structuredClone(
+				SETTINGS_CENTER_TEST_SETTINGS,
+			) as unknown as MutableSettingsRecord;
+			settings.images.storagePath = storagePath;
+			settings.images.fileNameRule = "x";
+
+			if (valid) {
+				expect(parseSettingsCenterSettings(settings).images.storagePath).toBe(
+					storagePath,
+				);
+				return;
+			}
+			expect(() => parseSettingsCenterSettings(settings)).toThrow(
+				"settings-center-images-fileNameRule-invalid",
+			);
+		},
+	);
+
+	it("accepts a canonical suffix-free stem without an extension variable", () => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = "year";
+		settings.images.fileNameRule = "image";
+
+		expect(parseSettingsCenterSettings(settings).images.fileNameRule).toBe("image");
+	});
+
+	it.each([
+		"/absolute",
+		"../traversal",
+		".",
+		"a/./b",
+		"nested//path",
+		"nested\\path",
+		"{unknown}",
+	] as const)("rejects an unsafe storage path: %s", (storagePath) => {
+		const settings = structuredClone(
+			SETTINGS_CENTER_TEST_SETTINGS,
+		) as unknown as MutableSettingsRecord;
+		settings.images.storagePath = storagePath;
+
+		expect(() => parseSettingsCenterSettings(settings)).toThrow(
+			"settings-center-images-storagePath-invalid",
+		);
+	});
+
 	it("does not admit AI strings into the settings bootstrap contract", () => {
 		expect(
 			SETTINGS_CENTER_STRING_KEYS.some(
@@ -516,12 +633,13 @@ describe("parseSettingsCenterBootstrap", () => {
 		);
 	});
 
+	it("does not expose an extension placeholder variable", () => {
+		expect(SETTINGS_CENTER_STRING_KEYS).not.toContain("extensionVariable");
+	});
+
 	it("omits the Code Highlighting setting strings but keeps the About capability string", () => {
 		expect(SETTINGS_CENTER_STRING_KEYS).not.toEqual(
-			expect.arrayContaining([
-				"syntaxHighlight",
-				"syntaxHighlightDescription",
-			]),
+			expect.arrayContaining(["syntaxHighlight", "syntaxHighlightDescription"]),
 		);
 		expect(SETTINGS_CENTER_STRING_KEYS).toContain("aboutCodeHighlighting");
 	});

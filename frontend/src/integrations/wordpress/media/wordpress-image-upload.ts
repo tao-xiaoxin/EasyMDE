@@ -3,6 +3,10 @@ import type {
   ImageUploadPort,
   ImageUploadResult
 } from '../../../contracts/ports/image-upload-port';
+import {
+  IMAGE_UPLOAD_EXTENSIONS,
+  type ImageUploadExtension
+} from '../../../contracts/settings-center-settings';
 import { wordpressEndpoint } from '../shared/wordpress-endpoint';
 
 type ApiFetch = (
@@ -26,13 +30,15 @@ type CreateWordPressImageUploadPortOptions = Readonly<{
 }>;
 
 function uploadFileName(file: File): string {
-  if (/\.(?:gif|jpe?g|png|webp)$/i.test(file.name)) {
-    return file.name;
+  const match = file.name.match(/^(.*)\.([^.]+)$/);
+  if (match && IMAGE_UPLOAD_EXTENSIONS.includes(match[2]?.toLowerCase() as ImageUploadExtension)) {
+    return `${match[1]}.${match[2]?.toLowerCase()}`;
   }
-  const extensions: Readonly<Record<string, string>> = {
+  const extensions: Readonly<Record<string, ImageUploadExtension>> = {
     'image/gif': 'gif',
     'image/jpeg': 'jpg',
     'image/jpg': 'jpg',
+    'image/jfif': 'jfif',
     'image/png': 'png',
     'image/webp': 'webp'
   };

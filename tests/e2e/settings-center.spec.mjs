@@ -147,9 +147,7 @@ async function selectSettingsOption(page, label, optionLabel) {
 	await trigger.click();
 	const listbox = page.getByRole("listbox", { name: label, exact: true });
 	await expect(listbox).toBeVisible();
-	await listbox
-		.getByRole("option", { name: optionLabel, exact: true })
-		.click();
+	await listbox.getByRole("option", { name: optionLabel, exact: true }).click();
 	await expect(trigger).toHaveText(optionLabel);
 }
 
@@ -217,7 +215,10 @@ async function setRemoteImageUploadMode(page, mode) {
 		optionLabels[mode],
 	);
 	await saveSettingsCenter(page);
-	return { label: strings.remoteImageUploadMode, optionLabel: optionLabels[mode] };
+	return {
+		label: strings.remoteImageUploadMode,
+		optionLabel: optionLabels[mode],
+	};
 }
 
 async function dispatchBrowserPaste(target, { html = "", plainText }) {
@@ -548,7 +549,7 @@ const SETTINGS_CENTER_FIRST_PAINT_PROFILES = [
 			offline: false,
 			latency: 150,
 			downloadThroughput: 200 * 1024,
-			uploadThroughput: 750 * 1024 / 8,
+			uploadThroughput: (750 * 1024) / 8,
 			connectionType: "cellular3g",
 		},
 	},
@@ -946,9 +947,7 @@ async function captureSettingsCenterNavigationEvidence(
 		if (!frame.parentId && frame.id === mainFrameId) {
 			committed = true;
 			navigationLoaderId = frame.loaderId;
-			navigationInitTimestamp = lifecycleInitTimestamps.get(
-				navigationLoaderId,
-			);
+			navigationInitTimestamp = lifecycleInitTimestamps.get(navigationLoaderId);
 		}
 	};
 	const handleLifecycleEvent = ({ frameId, loaderId, name, timestamp }) => {
@@ -1134,8 +1133,7 @@ async function captureSettingsCenterNavigationEvidence(
 			firstNewSettingsIndex,
 		);
 		const frameFingerprintDistances = postSettingsFrameAnalyses.map(
-			(analysis) =>
-				settingsCenterFingerprintDistance(analysis, beforeAnalysis),
+			(analysis) => settingsCenterFingerprintDistance(analysis, beforeAnalysis),
 		);
 		return {
 			beforeVisible,
@@ -1149,9 +1147,7 @@ async function captureSettingsCenterNavigationEvidence(
 			retainedPixels: false,
 			allFramesMatch: true,
 			maxDarkTopRatio: Math.max(
-				...postSettingsFrameAnalyses.map(
-					(analysis) => analysis.darkTopRatio,
-				),
+				...postSettingsFrameAnalyses.map((analysis) => analysis.darkTopRatio),
 			),
 			maxFingerprintDistance: Math.max(...frameFingerprintDistances),
 			analysis: postSettingsFrameAnalyses[0],
@@ -1375,9 +1371,7 @@ test("keeps a dedicated exit when the Settings Center stylesheet cannot load", a
 		await expect(page.locator("#wpwrap")).toHaveCount(0);
 		await expect(page.locator("#wpadminbar")).toHaveCount(0);
 		await expect(page.locator("#adminmenu")).toHaveCount(0);
-		const error = page.locator(
-			'#easymde-settings-center-root [role="alert"]',
-		);
+		const error = page.locator('#easymde-settings-center-root [role="alert"]');
 		await expect(error).toBeVisible();
 		await expect(error).toContainText(/could not start|无法启动/iu);
 		const exit = error.locator("a");
@@ -1886,6 +1880,8 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		const verificationButton = verification.locator("> button");
 		const verificationStrings = await page.evaluate(() => ({
 			close: window.EasyMDESettingsCenterBootstrap.strings.closeImageFeedback,
+			fileNameRule: window.EasyMDESettingsCenterBootstrap.strings.fileNameRule,
+			storagePath: window.EasyMDESettingsCenterBootstrap.strings.storagePath,
 			success:
 				window.EasyMDESettingsCenterBootstrap.strings
 					.uploadVerificationSucceeded,
@@ -1939,8 +1935,11 @@ test("runs the image-hosting interaction contract without exposing credentials",
 			target: "primary",
 		});
 
-		const bucket = primary.locator("input").nth(1);
-		await bucket.fill(`${await bucket.inputValue()}-draft`);
+		const storagePath = primary.getByRole("textbox", {
+			name: verificationStrings.storagePath,
+			exact: true,
+		});
+		await storagePath.fill(`${await storagePath.inputValue()}/draft`);
 		await expect(uploadVerificationStatus).toHaveAttribute(
 			"data-state",
 			"stale",
@@ -1956,8 +1955,8 @@ test("runs the image-hosting interaction contract without exposing credentials",
 			.locator("footer button")
 			.click();
 		expect(verificationPayloads).toHaveLength(2);
-		expect(verificationPayloads[1].settings.bucket).toBe(
-			await bucket.inputValue(),
+		expect(verificationPayloads[1].settings.storagePath).toBe(
+			await storagePath.inputValue(),
 		);
 		await expect(
 			primary.getByRole("textbox", {
@@ -1981,19 +1980,23 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		await expect(accessInput).toHaveAttribute("type", "password");
 		await expect(revealButton).toHaveCount(0);
 
-		const rule = primary.locator(".easymde-settings-center__file-name-input");
+		const rule = primary.getByRole("textbox", {
+			name: verificationStrings.fileNameRule,
+			exact: true,
+		});
 		await primary
 			.locator(
 				'.easymde-settings-center__file-name-presets [data-preset-index="1"]',
 			)
 			.click();
-		await expect(rule).toHaveValue("{year}/{month}/{md5}.{ext}");
-		await rule.fill("assets/.");
+		await expect(rule).toHaveValue("{md5}");
+		await expect(storagePath).toHaveValue("{year}/{month}");
+		await rule.fill(".");
 		await primary
 			.locator(".easymde-settings-center__file-name-variables button")
 			.last()
 			.click();
-		await expect(rule).toHaveValue("assets/.{ext}");
+		await expect(rule).toHaveValue(".{name}");
 
 		const backup = images.locator(".is-backup-host");
 		const backupToggle = backup.locator('[role="switch"]').first();
@@ -2020,14 +2023,14 @@ test("runs the image-hosting interaction contract without exposing credentials",
 		const formats = images.locator(
 			".easymde-settings-center__upload-formats input",
 		);
-		for (let index = 0; index < 4; index += 1) {
+		for (let index = 0; index < 6; index += 1) {
 			const format = formats.nth(index);
 			if (!(await format.isChecked())) await format.check();
 		}
-		for (let index = 0; index < 3; index += 1)
+		for (let index = 0; index < 5; index += 1)
 			await formats.nth(index).uncheck();
-		await formats.nth(3).click();
-		await expect(formats.nth(3)).toBeChecked();
+		await formats.nth(5).click();
+		await expect(formats.nth(5)).toBeChecked();
 		const uploadFormatRequired = await page.evaluate(
 			() => window.EasyMDESettingsCenterBootstrap.strings.uploadFormatRequired,
 		);
@@ -2138,8 +2141,8 @@ test("reports a real settings save network failure in the shared message popup",
 	await login(page);
 	await page.goto("/wp-admin/admin.php?page=easymde&route=/general_setting");
 	await expect(page.locator(".easymde-settings-center")).toBeVisible();
-	const strings = await page.evaluate(() =>
-		window.EasyMDESettingsCenterBootstrap.strings,
+	const strings = await page.evaluate(
+		() => window.EasyMDESettingsCenterBootstrap.strings,
 	);
 	await page.route("**/wp-json/easymde/v1/settings", async (route) => {
 		if (route.request().method() === "POST") {
@@ -2149,9 +2152,7 @@ test("reports a real settings save network failure in the shared message popup",
 		await route.continue();
 	});
 
-	await page
-		.getByRole("switch", { name: strings.showLineNumbers })
-		.click();
+	await page.getByRole("switch", { name: strings.showLineNumbers }).click();
 	const saveButton = page.getByRole("button", { name: strings.saveSettings });
 	await saveButton.click();
 	const feedback = page
@@ -2603,9 +2604,7 @@ test("records, persists, and executes a customized shortcut through real keyboar
 			throw new Error("The shortcut geometry could not be measured.");
 		}
 		expect(geometry.menuLeft).toBeGreaterThanOrEqual(12);
-		expect(geometry.menuRight).toBeLessThanOrEqual(
-			geometry.viewportWidth - 12,
-		);
+		expect(geometry.menuRight).toBeLessThanOrEqual(geometry.viewportWidth - 12);
 		expect(geometry.shortcutLeft).toBeGreaterThanOrEqual(geometry.menuLeft);
 		expect(geometry.shortcutRight).toBeLessThanOrEqual(geometry.menuRight);
 	};
@@ -2673,7 +2672,10 @@ test("records, persists, and executes a customized shortcut through real keyboar
 		const immersiveHeadingThreeItem = immersiveHeadingMenu.locator(
 			'[data-easymde-command="heading3"]',
 		);
-		await expect(immersiveHeadingTrigger).toHaveAttribute("title", headingLabel);
+		await expect(immersiveHeadingTrigger).toHaveAttribute(
+			"title",
+			headingLabel,
+		);
 		await immersiveHeadingTrigger.click();
 		await expect(immersiveHeadingMenu).toBeVisible();
 		await expect(
@@ -2892,16 +2894,28 @@ test("persists all remote image import modes and resets the documented defaults"
 		).toHaveText(strings.leaveEmpty);
 		await expect(
 			page.getByRole("textbox", {
+				name: strings.storagePath,
+				exact: true,
+			}),
+		).toHaveValue("{year}/{month}");
+		await expect(
+			page.getByRole("textbox", {
 				name: strings.fileNameRule,
 				exact: true,
 			}),
-		).toHaveValue("{year}/{month}/{md5}.{ext}");
+		).toHaveValue("{md5}");
 		await expect(
 			page.getByRole("button", {
 				name: strings.fileNamePresetMd5,
 				exact: true,
 			}),
 		).toHaveAttribute("aria-pressed", "true");
+		expect(strings.fileNamePresetYearMonth).toMatch(
+			/Year and Month Directory|年\/月目录/u,
+		);
+		expect(strings.fileNamePresetArticle).toMatch(
+			/Article Directory|文章目录/u,
+		);
 
 		for (const mode of ["both", "visual", "source", "off"]) {
 			const selected = await setRemoteImageUploadMode(page, mode);
@@ -2973,9 +2987,7 @@ test("imports source Markdown images only for source-enabled modes", async ({
 			await page.goto("/wp-admin/post-new.php");
 			await expect(page.locator("#easymde-editor")).toBeVisible();
 			const source = page.locator("#easymde-source");
-			const sourceEditor = page.locator(
-				".easymde-source-react .cm-content",
-			);
+			const sourceEditor = page.locator(".easymde-source-react .cm-content");
 			const postId = Number(await page.locator("#post_ID").inputValue());
 			const originalUrl = `https://source.synthetic.test/${mode}.png`;
 			const altText = `Remote ${mode}`;
@@ -2985,9 +2997,9 @@ test("imports source Markdown images only for source-enabled modes", async ({
 			await sourceEditor.focus();
 			await sourceEditor.press("End");
 			await dispatchBrowserPaste(sourceEditor, { plainText: markdown });
-			await expect.poll(() => importRequests.length).toBe(
-				previousRequestCount + 1,
-			);
+			await expect
+				.poll(() => importRequests.length)
+				.toBe(previousRequestCount + 1);
 			const imported = importRequests.at(-1);
 			expect(imported.body).toEqual({
 				alt_text: altText,
@@ -3004,9 +3016,7 @@ test("imports source Markdown images only for source-enabled modes", async ({
 			await page.goto("/wp-admin/post-new.php");
 			await expect(page.locator("#easymde-editor")).toBeVisible();
 			const source = page.locator("#easymde-source");
-			const sourceEditor = page.locator(
-				".easymde-source-react .cm-content",
-			);
+			const sourceEditor = page.locator(".easymde-source-react .cm-content");
 			const markdown = `![Keep ${mode}](https://source.synthetic.test/${mode}.png)`;
 			const previousRequestCount = importRequests.length;
 			await sourceEditor.fill("Before ");
@@ -3137,7 +3147,8 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 	const primaryOrigin = "https://images.example.test";
 	const sourceImageUrl = `${primaryOrigin}/already-source.png`;
 	const visualImageUrl = `${primaryOrigin}/already-visual.png`;
-	const schemeMismatchUrl = "http://images.example.test/not-the-primary-origin.png";
+	const schemeMismatchUrl =
+		"http://images.example.test/not-the-primary-origin.png";
 	const waitForRealImport = () =>
 		page.waitForResponse((response) => {
 			const request = response.request();
@@ -3154,9 +3165,7 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 		);
 		expect(strings.pasteAlreadyHosted).toEqual(expect.any(String));
 		await expect(
-			page
-				.getByRole("status")
-				.filter({ hasText: strings.pasteAlreadyHosted }),
+			page.getByRole("status").filter({ hasText: strings.pasteAlreadyHosted }),
 		).toBeVisible();
 		await expect(
 			page.getByRole("status").filter({ hasText: strings.pasteUploaded }),
@@ -3228,9 +3237,7 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 		await page.goto("/wp-admin/post-new.php");
 		await expect(page.locator("#easymde-editor")).toBeVisible();
 		const source = page.locator("#easymde-source");
-		const sourceEditor = page.locator(
-			".easymde-source-react .cm-content",
-		);
+		const sourceEditor = page.locator(".easymde-source-react .cm-content");
 		const sourceAlt = "Already hosted source";
 		const sourceMarkdown = `![${sourceAlt}](${sourceImageUrl})`;
 		const sourcePostId = Number(await page.locator("#post_ID").inputValue());
@@ -3283,9 +3290,7 @@ test("keeps exact primary-domain remote images unchanged without bypassing origi
 		await page.goto("/wp-admin/post-new.php");
 		await expect(page.locator("#easymde-editor")).toBeVisible();
 		const boundarySource = page.locator("#easymde-source");
-		const boundaryEditor = page.locator(
-			".easymde-source-react .cm-content",
-		);
+		const boundaryEditor = page.locator(".easymde-source-react .cm-content");
 		const boundaryAlt = "Scheme mismatch";
 		const boundaryMarkdown = `![${boundaryAlt}](${schemeMismatchUrl})`;
 		const boundaryPostId = Number(await page.locator("#post_ID").inputValue());
@@ -3531,18 +3536,21 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 	const mediaRequests = [];
 	const imageHostingRequests = [];
 	const uploadedAttachmentIds = [];
-	const settingsPath = "/wp-admin/admin.php?page=easymde&route=/general_setting";
+	const settingsPath =
+		"/wp-admin/admin.php?page=easymde&route=/general_setting";
 	const gravatarPattern = /^https:\/\/secure\.gravatar\.com\//u;
 	const routeMatches = (value, routePath) => {
 		const url = new URL(String(value));
-		return url.pathname.endsWith(routePath)
-			|| (url.searchParams.get("rest_route") || "").endsWith(
+		return (
+			url.pathname.endsWith(routePath) ||
+			(url.searchParams.get("rest_route") || "").endsWith(
 				routePath.replace("/wp-json", ""),
-			);
+			)
+		);
 	};
 	const blockImageHosting = (url) =>
-		routeMatches(url, "/wp-json/easymde/v1/image-hosting/upload")
-		|| routeMatches(url, "/wp-json/easymde/v1/image-hosting/import");
+		routeMatches(url, "/wp-json/easymde/v1/image-hosting/upload") ||
+		routeMatches(url, "/wp-json/easymde/v1/image-hosting/import");
 
 	page.on("console", (message) => {
 		if (["error", "warning"].includes(message.type())) {
@@ -3578,6 +3586,7 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 	);
 
 	let originalImageHostingEnabled;
+	let originalStoragePath;
 	let originalFileNameRule;
 	let restNonce;
 	let testError;
@@ -3615,28 +3624,34 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 			name: strings.fileNameRule,
 			exact: true,
 		});
+		const storagePath = page.getByRole("textbox", {
+			name: strings.storagePath,
+			exact: true,
+		});
+		originalStoragePath = await storagePath.inputValue();
 		originalFileNameRule = await fileNameRule.inputValue();
+		await expect(storagePath).toBeEnabled();
 		await expect(fileNameRule).toBeEnabled();
+		await expect(
+			images.getByText(strings.storagePathDescription, { exact: true }),
+		).toBeVisible();
 		await expect(
 			images.getByText(strings.fileNameRuleDescription, { exact: true }),
 		).toBeVisible();
 		await expect(
-			images.locator(
-				".easymde-settings-center__file-name-presets > button",
-			),
+			images.locator(".easymde-settings-center__file-name-presets > button"),
 		).toHaveCount(6);
 		await expect(
-			images.locator(
-				".easymde-settings-center__file-name-variables button",
-			),
-		).toHaveCount(10);
+			images.locator(".easymde-settings-center__file-name-variables button"),
+		).toHaveCount(9);
 		await expect(
-			images.locator(
-				".easymde-settings-center__file-name-preview code",
-			),
+			images.locator(".easymde-settings-center__file-name-preview code"),
 		).toHaveText("2026/07/a8f4c2d1.webp");
-		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		const editedStoragePath = "disabled/{date}";
+		const editedFileNameRule = "{uuid}";
+		await storagePath.fill(editedStoragePath);
 		await fileNameRule.fill(editedFileNameRule);
+		await expect(storagePath).toHaveValue(editedStoragePath);
 		await expect(fileNameRule).toHaveValue(editedFileNameRule);
 		await expect(
 			page.getByRole("combobox", {
@@ -3721,6 +3736,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				exact: true,
 			}),
 		).toBeVisible();
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.storagePath,
+				exact: true,
+			}),
+		).toHaveValue(editedStoragePath);
 		await expect(
 			page.getByRole("textbox", {
 				name: strings.fileNameRule,
@@ -3819,6 +3840,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		).toHaveCount(0);
 		await expect(
 			page.getByRole("textbox", {
+				name: strings.storagePath,
+				exact: true,
+			}),
+		).toHaveValue(editedStoragePath);
+		await expect(
+			page.getByRole("textbox", {
 				name: strings.fileNameRule,
 				exact: true,
 			}),
@@ -3835,6 +3862,12 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 			exact: true,
 		});
 		await expect(toggle).toHaveAttribute("aria-checked", "false");
+		await expect(
+			page.getByRole("textbox", {
+				name: strings.storagePath,
+				exact: true,
+			}),
+		).toHaveValue(editedStoragePath);
 		await expect(
 			page.getByRole("textbox", {
 				name: strings.fileNameRule,
@@ -3855,9 +3888,9 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		}));
 		restNonce = bootstrap.nonce;
 		expect(bootstrap.uploadOwner).toBe("media");
-		expect(
-			routeMatches(bootstrap.endpoint, "/wp-json/easymde/v1/media"),
-		).toBe(true);
+		expect(routeMatches(bootstrap.endpoint, "/wp-json/easymde/v1/media")).toBe(
+			true,
+		);
 		expect(
 			routeMatches(
 				bootstrap.importEndpoint,
@@ -3871,9 +3904,10 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		await sourceEditor.fill("Local upload baseline");
 		await sourceEditor.focus();
 		await sourceEditor.press("End");
-		const mediaResponse = page.waitForResponse((response) =>
-			response.request().method() === "POST"
-				&& routeMatches(response.url(), "/wp-json/easymde/v1/media"),
+		const mediaResponse = page.waitForResponse(
+			(response) =>
+				response.request().method() === "POST" &&
+				routeMatches(response.url(), "/wp-json/easymde/v1/media"),
 		);
 		await sourceEditor.evaluate((editor) => {
 			const binary = atob(
@@ -3943,12 +3977,23 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 				await page.keyboard.press("Space");
 				await saveSettingsCenter(page);
 			}
-			if (typeof originalFileNameRule === "string") {
+			if (
+				typeof originalStoragePath === "string" &&
+				typeof originalFileNameRule === "string"
+			) {
+				const storagePath = page.getByRole("textbox", {
+					name: strings.storagePath,
+					exact: true,
+				});
 				const fileNameRule = page.getByRole("textbox", {
 					name: strings.fileNameRule,
 					exact: true,
 				});
-				if ((await fileNameRule.inputValue()) !== originalFileNameRule) {
+				if (
+					(await storagePath.inputValue()) !== originalStoragePath ||
+					(await fileNameRule.inputValue()) !== originalFileNameRule
+				) {
+					await storagePath.fill(originalStoragePath);
 					await fileNameRule.fill(originalFileNameRule);
 					await saveSettingsCenter(page);
 				}
@@ -3992,7 +4037,10 @@ test("image hosting is opt-in and disabled local uploads use WordPress media", a
 		throw testError;
 	}
 	if (cleanupFailures.length) {
-		throw new AggregateError(cleanupFailures, "Image hosting E2E cleanup failed.");
+		throw new AggregateError(
+			cleanupFailures,
+			"Image hosting E2E cleanup failed.",
+		);
 	}
 });
 

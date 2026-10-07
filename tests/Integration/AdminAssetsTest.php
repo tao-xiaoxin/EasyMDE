@@ -81,6 +81,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 			$bootstrap['imageUpload']['allowedMimeTypes']
 		);
 		$this->assertSame(
+			array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' ),
+			$bootstrap['imageUpload']['allowedExtensions']
+		);
+		$this->assertSame(
 			array( 'titleDisplay' => 'none' ),
 			$bootstrap['imageUpload']['insertion']
 		);
@@ -127,6 +131,53 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( rest_url( 'easymde/v1/image-hosting/upload' ), $bootstrap['imageUpload']['endpoint'] );
 		$this->assertNotEmpty( $bootstrap['wordpress']['nonce'] );
 		$this->assertSame( $bootstrap['wordpress']['nonce'], $bootstrap['imageUpload']['nonce'] );
+	}
+
+	public function test_corrupt_canonical_settings_enter_the_accessible_editor_start_failure_path()
+	{
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$post_id = self::factory()->post->create( array( 'post_author' => $user_id ) );
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => array( 'invalid' ),
+						'fileNameRule' => '{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+		$previous_get    = $_GET;
+		$previous_screen = array_key_exists( 'current_screen', $GLOBALS ) ? $GLOBALS['current_screen'] : null;
+		$had_screen      = array_key_exists( 'current_screen', $GLOBALS );
+
+		try {
+			wp_set_current_user( $user_id );
+			$_GET              = array( 'post' => (string) $post_id );
+			$GLOBALS['pagenow'] = 'post.php';
+			set_current_screen( 'post' );
+			wp_dequeue_script( 'easymde-admin-editor-toolbar' );
+
+			$this->admin_assets->enqueue_admin_assets( 'post.php' );
+			$before = wp_scripts()->get_data( 'easymde-admin-editor-toolbar', 'before' );
+			$inline = is_array( $before ) ? implode( "\n", $before ) : (string) $before;
+			ob_start();
+			$this->admin_assets->render_react_editor_asset_notice();
+			$notice = ob_get_clean();
+
+			$this->assertStringContainsString( 'EasyMDEAdminEditorLoaderBootstrap', $inline );
+			$this->assertStringContainsString( '"editorBootstrap":null', $inline );
+			$this->assertSame( '', $notice );
+		} finally {
+			$_GET = $previous_get;
+			if ( $had_screen ) {
+				$GLOBALS['current_screen'] = $previous_screen;
+			} else {
+				unset( $GLOBALS['current_screen'] );
+			}
+		}
 	}
 
 	public function test_editor_root_bootstrap_projects_the_saved_wechat_png_conversion_setting() {
@@ -189,7 +240,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$this->assertArrayNotHasKey( 'insertAfterUpload', $bootstrap['imageUpload'] );
 		$this->assertSame( 3 * MB_IN_BYTES, $bootstrap['imageUpload']['maxBytes'] );
-		$this->assertSame( 'Supports JPG, PNG, WebP, and GIF, max 3 MB', $bootstrap['strings']['immersive']['imageRequirements'] );
+		$this->assertSame( 'Supports WebP, PNG, JPG, JPEG, JFIF, and GIF, max 3 MB', $bootstrap['strings']['immersive']['imageRequirements'] );
 		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['imageUpload']['insertion'] );
 		$this->assertSame( array( 'titleDisplay' => 'filename' ), $bootstrap['mediaPicker']['insertion'] );
 	}

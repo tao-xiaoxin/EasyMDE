@@ -142,7 +142,8 @@ final class MediaControllerTest extends WP_UnitTestCase {
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
 		$post_id    = self::factory()->post->create();
-		$settings['images']['fileNameRule'] = 'easymde-media/{post_id}/{name}.{ext}';
+		$settings['images']['storagePath']  = 'easymde-media/{post_id}';
+		$settings['images']['fileNameRule'] = '{name}';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$path       = $this->png_file();
 		$request    = $this->upload_request( $path, '' );
@@ -213,11 +214,53 @@ final class MediaControllerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_jfif_upload_uses_a_scoped_core_mime_mapping_and_preserves_the_jfif_suffix()
+	{
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+		$settings   = $repository->get_settings();
+		$settings['images']['storagePath']  = 'easymde-jfif';
+		$settings['images']['fileNameRule'] = '{md5}';
+		$settings['images']['uploadFormats'] = array(
+			'webp' => false,
+			'png'  => false,
+			'jpg'  => false,
+			'jpeg' => false,
+			'jfif' => true,
+			'gif'  => false,
+		);
+		$this->assertIsArray( $repository->update_settings( $settings ) );
+		$path       = $this->jpeg_file();
+		$request    = $this->upload_request_named( $path, '', 'camera.jfif', 'image/jpeg' );
+		$hash       = md5( file_get_contents( $path ) );
+		$controller = new MediaController( new Capabilities(), $repository, new ObjectKeyBuilder() );
+		$attachment = 0;
+		$baseline_check_filetype = has_filter( 'wp_check_filetype_and_ext' );
+		$baseline_mimes          = has_filter( 'upload_mimes' );
+
+		try {
+			$response = $controller->handle_upload_request( $request );
+			$this->assertNotWPError( $response );
+			$attachment = (int) $response->get_data()['id'];
+			$this->assertSame( 'easymde-jfif/' . $hash . '.jfif', get_post_meta( $attachment, '_wp_attached_file', true ) );
+			$this->assertSame( 'image/jpeg', get_post( $attachment )->post_mime_type );
+			$this->assertSame( $baseline_check_filetype, has_filter( 'wp_check_filetype_and_ext' ) );
+			$this->assertSame( $baseline_mimes, has_filter( 'upload_mimes' ) );
+		} finally {
+			if ( $attachment ) {
+				wp_delete_attachment( $attachment, true );
+			}
+			if ( file_exists( $path ) ) {
+				unlink( $path );
+			}
+		}
+	}
+
 	public function test_core_unique_filename_adds_a_suffix_without_overwriting_a_previous_rule_upload()
 	{
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
-		$settings['images']['fileNameRule'] = 'easymde-collision/{name}.{ext}';
+		$settings['images']['storagePath']  = 'easymde-collision';
+		$settings['images']['fileNameRule'] = '{name}';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$controller = new MediaController(
 			new Capabilities(),
@@ -260,7 +303,8 @@ final class MediaControllerTest extends WP_UnitTestCase {
 	{
 		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
 		$settings   = $repository->get_settings();
-		$settings['images']['fileNameRule'] = '{date}/{md5}-{uuid}.{ext}';
+		$settings['images']['storagePath']  = '{date}';
+		$settings['images']['fileNameRule'] = '{md5}-{uuid}';
 		$settings['images']['titleDisplay'] = 'filename';
 		$this->assertIsArray( $repository->update_settings( $settings ) );
 		$path       = $this->png_file();
@@ -339,6 +383,40 @@ final class MediaControllerTest extends WP_UnitTestCase {
 			$this->assertStringNotContainsString( $path, $result->get_error_message(), $case );
 			$this->assertSame( 0, (int) wp_count_posts( 'attachment' )->inherit, $case );
 			unlink( $path );
+		}
+	}
+
+	public function test_corrupt_canonical_settings_fail_media_upload_without_defaulting_the_rule()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => array( 'invalid' ),
+						'fileNameRule' => '{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+		$path    = $this->png_file();
+		$request = $this->upload_request( $path, '' );
+
+		try {
+			$result = ( new MediaController(
+				new Capabilities(),
+				new SettingsCenterRepository( new Options(), new ToolbarRegistry() ),
+				new ObjectKeyBuilder()
+			) )->handle_upload_request( $request );
+
+			$this->assertWPError( $result );
+			$this->assertSame( 'easymde_media_filename_rule_failed', $result->get_error_code() );
+			$this->assertSame( 500, $result->get_error_data()['status'] );
+		} finally {
+			if ( file_exists( $path ) ) {
+				unlink( $path );
+			}
 		}
 	}
 
@@ -655,18 +733,25 @@ final class MediaControllerTest extends WP_UnitTestCase {
 		return $path;
 	}
 
+	private function jpeg_file() {
+		$path = wp_tempnam( 'camera.jfif' );
+		file_put_contents( $path, base64_decode( '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=', true ) );
+
+		return $path;
+	}
+
 	private function upload_request( $path, $alt_text ) {
 		return $this->upload_request_named( $path, $alt_text, 'fallback-image.png' );
 	}
 
-	private function upload_request_named( $path, $alt_text, $name ) {
+	private function upload_request_named( $path, $alt_text, $name, $type = 'image/png' ) {
 		$request = new WP_REST_Request( 'POST', '/easymde/v1/media' );
 		$request->set_param( 'alt_text', $alt_text );
 		$request->set_file_params(
 			array(
 				'file' => array(
 					'name'     => $name,
-					'type'     => 'image/png',
+					'type'     => $type,
 					'tmp_name' => $path,
 					'error'    => UPLOAD_ERR_OK,
 					'size'     => filesize( $path ),

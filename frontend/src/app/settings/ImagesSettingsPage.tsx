@@ -25,6 +25,13 @@ import type {
 	ImageUploadFormat,
 } from "../../contracts/settings-center-settings";
 import {
+	buildImageObjectKeyPreview,
+	DEFAULT_IMAGE_FILE_NAME_RULE,
+	DEFAULT_IMAGE_STORAGE_PATH,
+	DEFAULT_IMAGE_UPLOAD_FORMATS,
+	IMAGE_UPLOAD_EXTENSIONS,
+} from "../../contracts/settings-center-settings";
+import {
 	CircleAlert,
 	CircleCheck,
 	CircleX,
@@ -39,7 +46,6 @@ import {
 	RefreshCcw,
 	X,
 } from "../../generated/lucide-icons";
-import { EditorMessageAlert } from "../../shared/ui/EditorMessageAlert";
 import {
 	SettingsRow,
 	SettingsSelect,
@@ -89,18 +95,48 @@ const DEFAULT_VERIFICATION_INVALIDATION_TOKENS: VerificationInvalidationTokens =
 		backup: 0,
 	};
 
+type FileNameRulePair = Readonly<{
+	storagePath: string;
+	fileNameRule: string;
+}>;
+
 const FILE_NAME_RULE_PRESETS: ReadonlyArray<
-	Readonly<{
-		label: SettingsCenterStringKey;
-		value: string;
-	}>
+	Readonly<
+		FileNameRulePair & {
+			label: SettingsCenterStringKey;
+		}
+	>
 > = [
-	{ label: "fileNamePresetDate", value: "{date}/{uuid}.{ext}" },
-	{ label: "fileNamePresetMd5", value: "{year}/{month}/{md5}.{ext}" },
-	{ label: "fileNamePresetYearMonth", value: "{year}/{month}/{uuid}.{ext}" },
-	{ label: "fileNamePresetOriginal", value: "{date}/{name}.{ext}" },
-	{ label: "fileNamePresetArticle", value: "{post_id}/{name}.{ext}" },
-	{ label: "fileNamePresetTime", value: "{date}/{time}.{ext}" },
+	{
+		label: "fileNamePresetDate",
+		storagePath: "{date}",
+		fileNameRule: "{uuid}",
+	},
+	{
+		label: "fileNamePresetMd5",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{md5}",
+	},
+	{
+		label: "fileNamePresetYearMonth",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{uuid}",
+	},
+	{
+		label: "fileNamePresetOriginal",
+		storagePath: "{date}",
+		fileNameRule: "{name}",
+	},
+	{
+		label: "fileNamePresetArticle",
+		storagePath: "{post_id}",
+		fileNameRule: "{name}",
+	},
+	{
+		label: "fileNamePresetTime",
+		storagePath: "{date}",
+		fileNameRule: "{time}",
+	},
 ];
 
 const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
@@ -118,7 +154,6 @@ const FILE_NAME_RULE_VARIABLES: ReadonlyArray<
 	{ token: "{md5}", label: "fileMd5Variable" },
 	{ token: "{uuid}", label: "uuidVariable" },
 	{ token: "{name}", label: "originalNameVariable" },
-	{ token: "{ext}", label: "extensionVariable" },
 ];
 
 const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
@@ -128,12 +163,22 @@ const UPLOAD_FORMAT_OPTIONS: ReadonlyArray<
 		accessibleLabel: SettingsCenterStringKey;
 	}>
 > = [
-	{ key: "jpg", label: "uploadFormatJpg", accessibleLabel: "allowUploadJpg" },
-	{ key: "png", label: "uploadFormatPng", accessibleLabel: "allowUploadPng" },
 	{
 		key: "webp",
 		label: "uploadFormatWebp",
 		accessibleLabel: "allowUploadWebp",
+	},
+	{ key: "png", label: "uploadFormatPng", accessibleLabel: "allowUploadPng" },
+	{ key: "jpg", label: "uploadFormatJpg", accessibleLabel: "allowUploadJpg" },
+	{
+		key: "jpeg",
+		label: "uploadFormatJpeg",
+		accessibleLabel: "allowUploadJpeg",
+	},
+	{
+		key: "jfif",
+		label: "uploadFormatJfif",
+		accessibleLabel: "allowUploadJfif",
 	},
 	{ key: "gif", label: "uploadFormatGif", accessibleLabel: "allowUploadGif" },
 ];
@@ -688,57 +733,83 @@ function ImageBehaviorRow({
 }
 
 function FileNameRuleEditor({
+	fileNameRule,
 	onChange,
+	onPresetChange,
+	storagePath,
 	strings,
-	value,
+	uploadFormats,
 }: {
-	onChange: (value: string) => void;
+	fileNameRule: string;
+	onChange: (field: "fileNameRule" | "storagePath", value: string) => void;
+	onPresetChange: (pair: FileNameRulePair) => void;
+	storagePath: string;
 	strings: SettingsCenterBootstrap["strings"];
-	value: string;
+	uploadFormats: ImageSettings["uploadFormats"];
 }) {
-	const inputRef = useRef<HTMLInputElement>(null);
-	const pendingCursorRef = useRef<number | null>(null);
+	const storagePathInputRef = useRef<HTMLInputElement>(null);
+	const fileNameRuleInputRef = useRef<HTMLInputElement>(null);
+	const activeFieldRef = useRef<"fileNameRule" | "storagePath">("fileNameRule");
+	const pendingCursorRef = useRef<{
+		field: "fileNameRule" | "storagePath";
+		position: number;
+	} | null>(null);
 
 	useEffect(() => {
-		const cursor = pendingCursorRef.current;
-		if (cursor === null) return;
-		const input = inputRef.current;
+		const pendingCursor = pendingCursorRef.current;
+		if (pendingCursor === null) return;
+		const input =
+			pendingCursor.field === "storagePath"
+				? storagePathInputRef.current
+				: fileNameRuleInputRef.current;
 		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
 		pendingCursorRef.current = null;
 		input.focus();
-		input.setSelectionRange(cursor, cursor);
-	}, [value]);
+		input.setSelectionRange(pendingCursor.position, pendingCursor.position);
+	}, [fileNameRule, storagePath]);
 
 	const insertVariable = (token: string) => {
-		const input = inputRef.current;
+		const field = activeFieldRef.current;
+		const input =
+			field === "storagePath"
+				? storagePathInputRef.current
+				: fileNameRuleInputRef.current;
 		if (!input) throw new Error("settings-center-file-name-rule-input-missing");
 		const start = input.selectionStart;
 		const end = input.selectionEnd;
 		if (start === null || end === null) {
 			throw new Error("settings-center-file-name-rule-selection-unavailable");
 		}
-		pendingCursorRef.current = start + token.length;
-		onChange(`${value.slice(0, start)}${token}${value.slice(end)}`);
+		const value = field === "storagePath" ? storagePath : fileNameRule;
+		pendingCursorRef.current = { field, position: start + token.length };
+		onChange(field, `${value.slice(0, start)}${token}${value.slice(end)}`);
 	};
 
-	const exampleValues: Readonly<Record<string, string>> = {
-		"{year}": "2026",
-		"{month}": "07",
-		"{day}": "13",
-		"{date}": "20260713",
-		"{time}": "153042",
-		"{post_id}": "128",
-		"{md5}": "a8f4c2d1",
-		"{uuid}": "a8f4c2d1",
-		"{name}": "easymde-image",
-		"{ext}": "webp",
-	};
-	const example = Object.entries(exampleValues).reduce(
-		(current, [token, replacement]) => current.replaceAll(token, replacement),
-		value,
+	const example = buildImageObjectKeyPreview(
+		storagePath,
+		fileNameRule,
+		uploadFormats,
 	);
 	return (
 		<div className="easymde-settings-center__file-name-editor">
+			<SettingsRow
+				label={strings.storagePath}
+				description={strings.storagePathDescription}
+				minHeight={60}
+			>
+				<div className="easymde-settings-center__image-field-control">
+					<input
+						ref={storagePathInputRef}
+						className="easymde-settings-center__file-name-input"
+						aria-label={strings.storagePath}
+						value={storagePath}
+						onFocus={() => {
+							activeFieldRef.current = "storagePath";
+						}}
+						onChange={(event) => onChange("storagePath", event.target.value)}
+					/>
+				</div>
+			</SettingsRow>
 			<SettingsRow
 				label={strings.fileNameRule}
 				description={strings.fileNameRuleDescription}
@@ -746,11 +817,14 @@ function FileNameRuleEditor({
 			>
 				<div className="easymde-settings-center__image-field-control">
 					<input
-						ref={inputRef}
+						ref={fileNameRuleInputRef}
 						className="easymde-settings-center__file-name-input"
 						aria-label={strings.fileNameRule}
-						value={value}
-						onChange={(event) => onChange(event.target.value)}
+						value={fileNameRule}
+						onFocus={() => {
+							activeFieldRef.current = "fileNameRule";
+						}}
+						onChange={(event) => onChange("fileNameRule", event.target.value)}
 					/>
 				</div>
 			</SettingsRow>
@@ -763,22 +837,31 @@ function FileNameRuleEditor({
 					</div>
 					<div className="easymde-settings-center__file-name-presets">
 						{FILE_NAME_RULE_PRESETS.map((preset, index) => {
-							const active = value === preset.value;
+							const active =
+								storagePath === preset.storagePath &&
+								fileNameRule === preset.fileNameRule;
 							return (
 								<button
-									key={preset.value}
+									key={preset.label}
 									type="button"
 									aria-label={strings[preset.label]}
 									aria-pressed={active}
 									data-preset-index={index}
-									onClick={() => onChange(preset.value)}
+									onClick={() =>
+										onPresetChange({
+											storagePath: preset.storagePath,
+											fileNameRule: preset.fileNameRule,
+										})
+									}
 								>
 									<span className="easymde-settings-center__preset-radio">
 										{active ? <span /> : null}
 									</span>
 									<span>
 										<span>{strings[preset.label]}</span>
-										<code>{preset.value}</code>
+										<code>
+											{`${preset.storagePath}/${preset.fileNameRule}`}
+										</code>
 									</span>
 								</button>
 							);
@@ -818,7 +901,11 @@ function verificationFingerprint(
 	const values =
 		target === "primary"
 			? [
+					settings.storagePath,
 					settings.fileNameRule,
+					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
+						settings.uploadFormats[extension] ? "enabled" : "disabled",
+					),
 					settings.service,
 					settings.endpoint,
 					settings.bucket,
@@ -827,7 +914,11 @@ function verificationFingerprint(
 					settings.secretKey,
 				]
 			: [
+					settings.storagePath,
 					settings.fileNameRule,
+					...IMAGE_UPLOAD_EXTENSIONS.map((extension) =>
+						settings.uploadFormats[extension] ? "enabled" : "disabled",
+					),
 					settings.domain,
 					settings.backupEnabled ? "enabled" : "disabled",
 					settings.backupService,
@@ -964,7 +1055,8 @@ export function ImagesSettingsPage({
 			domain: draft.domain,
 			accessKey: "",
 			secretKey: "",
-			fileNameRule: "{year}/{month}/{md5}.{ext}",
+			storagePath: DEFAULT_IMAGE_STORAGE_PATH,
+			fileNameRule: DEFAULT_IMAGE_FILE_NAME_RULE,
 			uploadRetryCount: 0,
 			backupEnabled: true,
 			backupService: "qiniu-kodo",
@@ -977,7 +1069,7 @@ export function ImagesSettingsPage({
 			autoUploadPastedImages: true,
 			remoteImageUploadMode: "both",
 			maxImageSizeMb: 5,
-			uploadFormats: { jpg: true, png: true, webp: true, gif: true },
+			uploadFormats: { ...DEFAULT_IMAGE_UPLOAD_FORMATS },
 			titleDisplay: "none",
 		}),
 	);
@@ -1049,10 +1141,6 @@ export function ImagesSettingsPage({
 		const checked = settings.uploadFormats[key];
 		if (checked && selectedFormats.length === 1) {
 			setFormatError(true);
-			console.error("[EasyMDE settings] Upload format change rejected", {
-				format: key,
-				reason: "no-upload-format",
-			});
 			return;
 		}
 		setFormatError(false);
@@ -1162,20 +1250,6 @@ export function ImagesSettingsPage({
 			}
 		}
 	}
-	const feedbackPortal =
-		formatError && overlayRoot
-			? createPortal(
-					<div className="easymde-editor-message-alert-host">
-						<EditorMessageAlert
-							closeLabel={strings.closeImageFeedback}
-							message={strings.uploadFormatRequired}
-							onDismiss={() => setFormatError(false)}
-							type="error"
-						/>
-					</div>,
-					overlayRoot,
-				)
-			: null;
 	const duplicatePortal =
 		duplicateTrigger && overlayRoot
 			? createPortal(
@@ -1306,8 +1380,11 @@ export function ImagesSettingsPage({
 						) : null}
 						<FileNameRuleEditor
 							strings={strings}
-							value={settings.fileNameRule}
-							onChange={(value) => setValue("fileNameRule", value)}
+							storagePath={settings.storagePath}
+							fileNameRule={settings.fileNameRule}
+							uploadFormats={settings.uploadFormats}
+							onChange={(field, value) => setValue(field, value)}
+							onPresetChange={(pair) => setValues(pair)}
 						/>
 						{settings.imageHostingEnabled ? (
 							<Fragment>
@@ -1614,12 +1691,20 @@ export function ImagesSettingsPage({
 										);
 									},
 								)}
+								{formatError ? (
+									<small
+										className="easymde-settings-center__upload-format-error"
+										role="alert"
+									>
+										<CircleAlert size={15} strokeWidth={2} />
+										<span>{strings.uploadFormatRequired}</span>
+									</small>
+								) : null}
 							</div>
 						</SettingsRow>
 					</section>
 				</div>
 			</div>
-			{feedbackPortal}
 			{duplicatePortal}
 			{verificationFeedbackPortal}
 		</div>

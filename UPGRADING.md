@@ -23,21 +23,49 @@ EasyMDE metadata now describes document state, not editor admission. Existing po
 
 Opening an ordinary existing supported post imports current `post_content` into Markdown in memory for the editor. It does not write metadata, rewrite `post_content`, or create revisions. Legacy posts and ordinary supported posts are lazily marked with `_easymde_enabled = 1` only during the next legitimate EasyMDE save.
 
-## File Name Rule And Media Uploads
+## Storage Path And File Name Rule
 
-The saved File Name Rule is shared by Image Hosting and future EasyMDE local
-paste/drop uploads. It remains configurable while Image Hosting is disabled;
-in that state, the protected WordPress Media Library `/easymde/v1/media` owner
-uses the rule for new EasyMDE paste/drop uploads. WordPress Core still chooses
-the verified MIME, unique filename, attachment, metadata, sub-sizes, URL, and
-permissions. Image Hosting continues to use the same rule for its provider
-object key when enabled.
+Image Hosting now exposes two settings: **Storage Path** and **File Name Rule**.
+The canonical defaults are `{year}/{month}` and the suffix-free stem `{md5}`.
+The first is a directory template; the second is a basename stem. An
+explicitly empty Storage Path means the provider bucket or WordPress upload
+root. The upload-format checkboxes are ordered **WebP, PNG, JPG, JPEG, JFIF,
+GIF**; all six are enabled by default, and at least one must remain enabled.
+JPG, JPEG, and JFIF are independent selections even though JFIF uses the
+`image/jpeg` MIME family.
 
-This is not a data migration. Existing attachment files and paths are not
-renamed or moved, and the explicit native WordPress media picker is unchanged.
-After upgrading, test one synthetic EasyMDE paste/drop upload if the rule is
-important to your workflow; do not expect historical attachments to follow a
-new rule.
+Existing settings may have only the old complete `fileNameRule`, or may have
+the prior split Storage Path and a File Name Rule that still ends in
+`.{ext}`. EasyMDE reads either shape without an option write, splits only the
+single-field form at the last `/`, preserves an existing Storage Path, and
+removes exactly one terminal `.{ext}` from the basename. A legacy rule with no
+slash uses an empty Storage Path. `{ext}` in a directory, in the middle,
+repeated, or leaving an empty stem is an explicit configuration/import error;
+it is never silently dropped or relocated. Reads remain zero-write, and the
+next legitimate Settings Save stores both fields. An already-open legacy page
+may submit its old shape once and is normalized through the same deterministic
+conversion. The old
+four-key format map expands `jpg` into independent `jpg`, `jpeg`, and `jfif`
+entries. Transfer schemas 1 through 11 receive this explicit conversion;
+schema 12 is strict and exports the two canonical fields plus the exact
+six-key format map. Settings Center bootstrap schema is 4.
+
+`ObjectKeyBuilder` combines the path and suffix-free stem for both Image
+Hosting and future EasyMDE local paste/drop uploads through
+`/easymde/v1/media`. After real MIME, exact source-extension, and checkbox
+validation, it appends exactly one lowercased verified extension. Canonical
+rules do not accept `{ext}`. Changing either field or the format map makes the
+prior Verify Upload result stale. Existing attachment files, provider objects,
+and paths are not renamed or moved, and the explicit native WordPress media
+picker is unchanged. A JFIF upload receives only the scoped `jfif =>
+image/jpeg` allowance for that owned operation; the global WordPress MIME
+policy is not changed.
+
+After upgrading, confirm the default preview is
+`2026/07/a8f4c2d1.webp`, test one synthetic EasyMDE paste/drop upload for each
+JPEG alias you intend to allow, and run Verify Upload if the naming layout is
+important to your workflow. Real uploads retain their source suffix; do not
+expect historical attachments or provider objects to follow a new rule.
 
 ## Before Upgrading
 
@@ -62,7 +90,14 @@ Verify representative content before broad author use:
 
 If you roll back EasyMDE, keep the database backup until you have verified edited posts. Older releases may not understand newer render settings, theme choices, custom CSS snapshots, or font metadata even though `_easymde_markdown` remains stored.
 
-When rolling back after a failed upgrade, prefer restoring both files and database from the same backup point. Restoring only plugin files can leave newer metadata paired with older rendering behavior.
+The suffix-free image rule, six-key format map, Settings Center bootstrap schema
+4, and Transfer schema 12 are also newer data contracts. A pre-change release
+may not understand them or may still expect `{ext}`; it must not be allowed to
+silently rewrite them. When rolling back after a failed upgrade, restore both
+plugin files and the database from the same backup point, or first restore the
+pre-change settings option. Restoring only plugin files can leave newer image
+metadata paired with older naming and MIME behavior. Existing uploaded objects
+and attachments are not renamed by either upgrade or rollback.
 
 ## Related Docs
 

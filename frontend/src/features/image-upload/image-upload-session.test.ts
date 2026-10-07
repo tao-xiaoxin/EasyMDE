@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ImageUploadDocumentSnapshot, ImageUploadRequest, ImageUploadResult } from '../../contracts/ports/image-upload-port';
-import type { ImageUploadInsertion, ImageUploadMimeType } from '../../contracts/bootstrap/image-upload-bootstrap';
+import type {
+  ImageUploadExtension,
+  ImageUploadInsertion,
+  ImageUploadMimeType
+} from '../../contracts/bootstrap/image-upload-bootstrap';
 import type {
   RemoteImageImportRequest,
   RemoteImageImportResult,
@@ -84,6 +88,14 @@ function setup(
       code: 'unused',
       status: 'failed',
     }),
+  allowedExtensions: ReadonlyArray<ImageUploadExtension> = [
+    'webp',
+    'png',
+    'jpg',
+    'jpeg',
+    'jfif',
+    'gif',
+  ],
 ) {
   let snapshot: ImageUploadDocumentSnapshot = {
     selection: { direction: 'none', end: 5, start: 5 },
@@ -116,6 +128,7 @@ function setup(
     remoteImageImport: { import: remoteImageImport },
   });
   const cleanupSurface = createImageUploadSession({
+    allowedExtensions,
     allowedMimeTypes,
     autoUploadPastedImages,
     document: documentPort,
@@ -413,6 +426,59 @@ describe('createImageUploadSession', () => {
     ]);
   });
 
+  it('enforces the exact selected extension for independent JPEG aliases', () => {
+    const session = setup(
+      Promise.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: '',
+        url: '/unused',
+      }),
+      operationIdSequence(),
+      ['image/jpeg'],
+      { titleDisplay: 'none' },
+      true,
+      Promise.resolve({ code: 'unused', status: 'failed' }),
+      ['jpeg'],
+    );
+    const jpgEvent = transferEvent(
+      'paste',
+      new File(['image'], 'photo.jpg', { type: 'image/jpeg' }),
+    );
+    session.target.dispatchEvent(jpgEvent);
+    expect(session.upload).not.toHaveBeenCalled();
+
+    const jpegEvent = transferEvent(
+      'paste',
+      new File(['image'], 'photo.jpeg', { type: 'image/jpeg' }),
+    );
+    session.target.dispatchEvent(jpegEvent);
+    expect(session.upload).toHaveBeenCalledOnce();
+  });
+
+  it('accepts a JFIF file only when the JFIF extension is selected', () => {
+    const session = setup(
+      Promise.resolve({
+        alt: '',
+        status: 'uploaded',
+        title: '',
+        url: '/unused',
+      }),
+      operationIdSequence(),
+      ['image/jpeg'],
+      { titleDisplay: 'none' },
+      true,
+      Promise.resolve({ code: 'unused', status: 'failed' }),
+      ['jfif'],
+    );
+    const event = transferEvent(
+      'paste',
+      new File(['image'], 'photo.jfif', { type: 'image/jpeg' }),
+    );
+    session.target.dispatchEvent(event);
+    expect(session.upload).toHaveBeenCalledOnce();
+  });
+
   it('keeps concurrent upload statuses bound to distinct operation IDs', async () => {
     const pending: Array<(value: ImageUploadResult) => void> = [];
     let snapshot: ImageUploadDocumentSnapshot = {
@@ -426,6 +492,7 @@ describe('createImageUploadSession', () => {
     }> = [];
     const target = document.createElement('div');
     createImageUploadSession({
+      allowedExtensions: ['webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif'],
       allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
       autoUploadPastedImages: true,
       document: {

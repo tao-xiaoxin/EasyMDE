@@ -47,7 +47,8 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 			$this->assertArrayHasKey( $field, $data['settings']['images'] );
 		}
 		$this->assertSame( '30', $data['settings']['general']['autoSaveInterval'] );
-		$this->assertSame( '{year}/{month}/{md5}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( '{year}/{month}', $data['settings']['images']['storagePath'] );
+		$this->assertSame( '{md5}', $data['settings']['images']['fileNameRule'] );
 		$this->assertSame( 0, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertSame( 5, $data['settings']['images']['maxImageSizeMb'] );
 		$this->assertTrue( $data['settings']['images']['autoUploadPastedImages'] );
@@ -198,8 +199,139 @@ final class SettingsControllerTest extends WP_UnitTestCase {
 		$this->assertSame( '5', $data['settings']['general']['autoSaveInterval'] );
 		$this->assertSame( 5, $data['settings']['images']['uploadRetryCount'] );
 		$this->assertFalse( $data['settings']['images']['autoUploadPastedImages'] );
+		$this->assertSame( '{year}/{month}', $data['settings']['images']['storagePath'] );
+		$this->assertSame( '{md5}', $data['settings']['images']['fileNameRule'] );
         $this->assertSame( 'Ctrl+Alt+B', $data['settings']['shortcuts']['values']['bold']['windows'] );
     }
+
+	public function test_post_accepts_a_legacy_complete_file_name_rule_without_storage_path() {
+		$settings = $this->current_settings();
+		unset( $settings['images']['storagePath'] );
+		$settings['images']['fileNameRule'] = 'legacy/{post_id}/{name}.{ext}';
+		$settings['images']['uploadFormats'] = array(
+			'jpg'  => true,
+			'png'  => true,
+			'webp' => true,
+			'gif'  => true,
+		);
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+		$data     = $response->get_data();
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertArrayNotHasKey( 'storagePath', $data['settings']['images'] );
+		$this->assertSame( 'legacy/{post_id}/{name}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( array( 'jpg', 'png', 'webp', 'gif' ), array_keys( $data['settings']['images']['uploadFormats'] ) );
+		$this->assertSame( 1, $data['settings']['revision'] );
+		$this->assertSame( 'legacy/{post_id}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['storagePath'] );
+		$this->assertSame( '{name}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['fileNameRule'] );
+	}
+
+	public function test_already_open_split_legacy_page_preserves_storage_path_and_four_key_response_shape() {
+		$settings = $this->current_settings();
+		$settings['images']['storagePath']  = 'legacy';
+		$settings['images']['fileNameRule'] = '{name}.{ext}';
+		$settings['images']['uploadFormats'] = array(
+			'jpg'  => true,
+			'png'  => false,
+			'webp' => true,
+			'gif'  => false,
+		);
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+		$data     = $response->get_data();
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( 'legacy', $data['settings']['images']['storagePath'] );
+		$this->assertSame( '{name}.{ext}', $data['settings']['images']['fileNameRule'] );
+		$this->assertSame( array( 'jpg', 'png', 'webp', 'gif' ), array_keys( $data['settings']['images']['uploadFormats'] ) );
+		$this->assertSame( '{name}', get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['fileNameRule'] );
+		$this->assertSame( array( 'webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif' ), array_keys( get_option( Options::EDITOR_SETTINGS )['settings_center']['images']['uploadFormats'] ) );
+	}
+
+	public function test_get_reports_corrupt_canonical_image_settings_without_defaulting()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => array( 'invalid' ),
+						'fileNameRule' => '{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+
+		$response = rest_do_request( new WP_REST_Request( 'GET', '/easymde/v1/settings' ) );
+
+		$this->assertSame( 500, $response->get_status() );
+		$this->assertSame( 'easymde_settings_configuration_invalid', $response->as_error()->get_error_code() );
+	}
+
+	public function test_post_preserves_an_explicit_empty_storage_path() {
+		$settings = $this->current_settings();
+		$settings['images']['storagePath']  = '';
+		$settings['images']['fileNameRule'] = 'root-{name}';
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertSame( '', $response->get_data()['settings']['images']['storagePath'] );
+		$this->assertSame( 'root-{name}', $response->get_data()['settings']['images']['fileNameRule'] );
+	}
+
+	public function test_legacy_post_rejects_a_leading_separator_before_split()
+	{
+		$settings = $this->current_settings();
+		unset( $settings['images']['storagePath'] );
+		$settings['images']['fileNameRule'] = '/{name}.{ext}';
+
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+		$this->assertFalse( get_option( Options::EDITOR_SETTINGS, false ) );
+	}
+
+	public function test_post_validates_the_combined_rule_length_and_global_extension_placeholder() {
+		$too_long = $this->current_settings();
+		$too_long['images']['storagePath']  = str_repeat( 'a', 156 );
+		$too_long['images']['fileNameRule'] = '{md5}';
+		$too_long_response = $this->post_json( array( 'settings' => $too_long ) );
+
+		$extension_in_path = $this->current_settings();
+		$extension_in_path['images']['storagePath']  = 'prefix/{ext}';
+		$extension_in_path['images']['fileNameRule'] = '{md5}';
+		$extension_in_path_response = $this->post_json( array( 'settings' => $extension_in_path ) );
+
+		$this->assertSame( 400, $too_long_response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $too_long_response->as_error()->get_error_code() );
+		$this->assertSame( 400, $extension_in_path_response->get_status() );
+	}
+
+	public function test_post_rejects_dot_segments_in_storage_path_before_saving()
+	{
+		foreach ( array( '.', 'a/./b' ) as $storage_path ) {
+			$settings = $this->current_settings();
+			$settings['images']['storagePath'] = $storage_path;
+
+			$response = $this->post_json( array( 'settings' => $settings ) );
+
+			$this->assertSame( 400, $response->get_status(), $storage_path );
+			$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code(), $storage_path );
+			$this->assertFalse( get_option( Options::EDITOR_SETTINGS, false ), $storage_path );
+		}
+
+		$settings = $this->current_settings();
+		$settings['images']['storagePath']  = 'prefix';
+		$settings['images']['fileNameRule'] = '.';
+		$response = $this->post_json( array( 'settings' => $settings ) );
+
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'easymde_settings_invalid_payload', $response->as_error()->get_error_code() );
+	}
 
 	public function test_status_bar_mode_rest_contract_accepts_only_canonical_values() {
 		foreach ( array( 'detailed', 'compact', 'hidden' ) as $mode ) {
@@ -596,7 +728,7 @@ final class SettingsControllerTest extends WP_UnitTestCase {
         $invalid_domain_response = $this->post_json( array( 'settings' => $invalid_domain ) );
 
 		$invalid_rule = $this->current_settings();
-		$invalid_rule['images']['fileNameRule'] = '../{name}.{ext}';
+		$invalid_rule['images']['fileNameRule'] = '../{name}';
 		$invalid_rule_response = $this->post_json( array( 'settings' => $invalid_rule ) );
 
 		$unsupported_provider = $this->current_settings();

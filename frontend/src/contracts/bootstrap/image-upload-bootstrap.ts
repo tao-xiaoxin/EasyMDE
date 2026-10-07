@@ -1,3 +1,8 @@
+import {
+  IMAGE_UPLOAD_EXTENSIONS,
+  type ImageUploadExtension
+} from '../settings-center-settings';
+
 export type ImageUploadStrings = Readonly<{
   defaultAlt: string;
   dropFailed: string;
@@ -15,6 +20,8 @@ export type ImageUploadStrings = Readonly<{
 
 export type ImageUploadMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
+export type { ImageUploadExtension } from '../settings-center-settings';
+
 export type ImageUploadOwner = 'media' | 'image-hosting';
 
 export type RemoteImageUploadMode = 'both' | 'visual' | 'source' | 'off';
@@ -25,6 +32,7 @@ export type ImageUploadInsertion = Readonly<{
 
 export type ImageUploadBootstrap = Readonly<{
   actionNonce: string;
+  allowedExtensions: ReadonlyArray<ImageUploadExtension>;
   allowedMimeTypes: ReadonlyArray<ImageUploadMimeType>;
   autoUploadPastedImages: boolean;
   enabled: boolean;
@@ -45,6 +53,28 @@ const IMAGE_UPLOAD_MIME_TYPES: ReadonlyArray<ImageUploadMimeType> = [
   'image/webp',
   'image/gif',
 ];
+
+function extensionsValue(value: unknown): ReadonlyArray<ImageUploadExtension> {
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.some(
+      (extension) =>
+        'string' !== typeof extension ||
+        !IMAGE_UPLOAD_EXTENSIONS.includes(extension as ImageUploadExtension),
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error('image-upload-extensions-invalid');
+  }
+  const ordered = IMAGE_UPLOAD_EXTENSIONS.filter((extension) =>
+    value.includes(extension),
+  );
+  if (ordered.length !== value.length || ordered.some((extension, index) => extension !== value[index])) {
+    throw new Error('image-upload-extensions-invalid');
+  }
+  return ordered;
+}
 
 function mimeTypesValue(value: unknown): ReadonlyArray<ImageUploadMimeType> {
   if (
@@ -94,6 +124,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
   const bootstrap = value as Record<string, unknown>;
   const expectedKeys = [
     'actionNonce',
+    'allowedExtensions',
     'allowedMimeTypes',
     'autoUploadPastedImages',
     'enabled',
@@ -143,6 +174,7 @@ export function parseImageUploadBootstrap(value: unknown): ImageUploadBootstrap 
 
   return {
     actionNonce: stringValue(actionNonce, 'image-upload-action-nonce-invalid'),
+    allowedExtensions: extensionsValue(bootstrap.allowedExtensions),
     allowedMimeTypes: mimeTypesValue(bootstrap.allowedMimeTypes),
     autoUploadPastedImages: bootstrap.autoUploadPastedImages,
     enabled: true === bootstrap.enabled,

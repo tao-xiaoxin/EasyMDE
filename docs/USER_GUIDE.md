@@ -103,20 +103,23 @@ URL and available alt/title text. This WordPress-native picker is an explicit
 toolbar entry point; it does not own image paste or drag-and-drop uploads.
 
 **Automatically upload pasted images** is enabled by default in **EasyMDE >
-Image Hosting > Upload Behavior**. When enabled, pasting a local JPEG, PNG,
-GIF, or WebP image file into either the ordinary Markdown source or immersive
-editor sends it through the selected protected same-origin upload owner and
-inserts the configured Markdown or URL form only after the upload succeeds.
+Image Hosting > Upload Behavior**. When enabled, pasting a local image whose
+lowercased suffix is `.webp`, `.png`, `.jpg`, `.jpeg`, `.jfif`, or `.gif` into
+either the ordinary Markdown source or immersive editor sends it through the
+selected protected same-origin upload owner and inserts the configured Markdown
+or URL form only after the upload succeeds.
 With Image Hosting enabled, that owner is Image Hosting; with it disabled, the
-WordPress Media Library `/media` owner handles the upload. The saved File Name
-Rule is used by both owners for future EasyMDE paste/drop uploads, so it remains
-visible and configurable even while Image Hosting is disabled.
+WordPress Media Library `/media` owner handles the upload. The saved Storage
+Path, File Name Rule, and the six extension checkboxes are used together by both
+owners for future EasyMDE paste/drop uploads, so these controls remain visible
+and configurable even while Image Hosting is disabled. A selected owner failure
+stays explicit and never switches to the other owner.
 When **Automatically upload pasted images** is disabled, image-file paste does
 not call the upload endpoint and does not insert a Base64 replacement. Ordinary
 text or HTML paste and the toolbar media picker are unaffected. Drag-and-drop
-retains its existing upload behavior and uses the selected owner and File Name
-Rule. The rule does not move historical attachments or change the explicit
-native media-picker insertion path.
+retains its existing upload behavior and uses the selected owner plus the same
+Storage Path and File Name Rule. These settings do not move historical
+attachments or change the explicit native media-picker insertion path.
 
 **Remote image import** defaults to **Visual and source editors**. It applies
 only to remote images contained in the current paste: the visual editor accepts
@@ -141,7 +144,9 @@ A failed, cancelled, or stale request leaves the later editor content unchanged 
 An administrator selects Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or
 Tencent Cloud COS in **EasyMDE > Image Hosting**. **Verify Upload** validates
 the current form without saving it by uploading the EasyMDE icon as a synthetic
-PNG through the current file-name rule on the selected provider. Rules that use
+PNG through the current Storage Path plus suffix-free File Name Rule and
+enabled-format map on the selected provider. The synthetic PNG must pass the
+`png` checkbox and receives exactly one verified `.png` suffix. Rules that use
 time or UUID variables may create a new object on each verification.
 The button remains disabled and shows its in-progress state until the result is
 known. Success opens a structured Settings Center message dialog that confirms
@@ -151,7 +156,8 @@ Failure states that no article image URL was created, shows the redacted error,
 and asks the administrator to check the configuration before verifying again. Any
 supported provider can be the primary or the optional
 backup. Primary and backup writes always use the same generated object key;
-there is no setting for changing that invariant. **Upload Retry Count** appears
+there is no setting for changing that invariant. Editing either naming control
+makes an earlier verification result stale. **Upload Retry Count** appears
 once in the primary settings, accepts `0` through `5`, and defaults to `0`, so
 protected uploads are not retried automatically unless an administrator
 explicitly opts in.
@@ -202,16 +208,34 @@ EasyMDE
 does not offer an all-or-nothing mode because these providers do not expose a
 reliable cross-provider rollback transaction.
 
-The File Name Rule supports `{year}`, `{month}`, `{day}`, `{date}`, `{time}`,
-`{post_id}`, `{md5}`, `{uuid}`, `{name}`, and `{ext}`. Date and time variables
-use UTC; `{post_id}` is the associated post ID (or `0` when there is no post),
-`{uuid}` is generated for the upload, `{name}` is the sanitized original file
-stem, and `{ext}` comes from the verified MIME type. `{md5}` is the lowercase
+The **Storage Path** accepts the directory part of the object key. The **File
+Name Rule** accepts a suffix-free basename stem. Together they support
+`{year}`, `{month}`, `{day}`, `{date}`, `{time}`, `{post_id}`, `{md5}`, `{uuid}`,
+and `{name}`. Date and time variables use UTC; `{post_id}` is the associated
+post ID (or `0` when there is no post), `{uuid}` is generated for the upload,
+and `{name}` is the sanitized original file stem. `{md5}` is the lowercase
 hexadecimal digest of the exact bytes used by the selected upload owner. The
-default rule is `{year}/{month}/{md5}.{ext}`, and the default image title
-setting is **Leave Empty**, so inserted Markdown has no title unless the
-administrator changes it. WordPress remains responsible for final unique
+canonical defaults are Storage Path `{year}/{month}` and File Name Rule
+`{md5}`. `{ext}` is not a valid canonical variable, preset, or saved suffix.
+An empty Storage Path means the bucket or upload root. The combined rule keeps
+the historical 160-byte limit. WordPress remains responsible for final unique
 filenames, attachment metadata, sub-sizes, and URLs in its Media Library.
+
+Selecting a common naming template fills both fields together. For example,
+**Date Archive** sets Storage Path to `{date}` and File Name Rule to `{uuid}`;
+**Article Directory** sets them to `{post_id}` and `{name}`. A template is
+selected only while both fields match its combination. Extensions are appended
+separately and are never part of the template.
+
+The upload-format checkboxes are presented in this fixed order: **WebP, PNG,
+JPG, JPEG, JFIF, GIF**. All six are enabled by default, and at least one must
+remain selected. Each checkbox admits only its exact lowercased filename suffix
+after the real MIME is verified; JPG, JPEG, and JFIF are not interchangeable.
+The preview expands the path and stem, then appends the first selected suffix.
+With the defaults the example is exactly `2026/07/a8f4c2d1.webp`. This example
+does not rename or override the extension of an actual upload. A remote image
+without a suffix uses the documented MIME-derived compatible suffix; a supplied
+suffix that is mismatched or disabled fails explicitly.
 
 If the WordPress media frame is unavailable, the command falls back to inserting Markdown image delimiters so the source text remains editable.
 

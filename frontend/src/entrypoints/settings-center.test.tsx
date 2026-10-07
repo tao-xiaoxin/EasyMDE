@@ -38,7 +38,7 @@ vi.mock(
 function bootstrap(): SettingsCenterBootstrap {
 	const origin = window.location.origin;
 	return {
-		schemaVersion: 2,
+		schemaVersion: 4,
 		closeUrl: `${origin}/wp-admin/options-general.php`,
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
@@ -83,9 +83,7 @@ function bootstrap(): SettingsCenterBootstrap {
 describe("mountSettingsCenter", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		document
-			.querySelector("#easymde-admin-settings-center-css")
-			?.remove();
+		document.querySelector("#easymde-admin-settings-center-css")?.remove();
 		const stylesheet = document.createElement("link");
 		stylesheet.id = "easymde-admin-settings-center-css";
 		stylesheet.rel = "stylesheet";
@@ -235,9 +233,7 @@ describe("mountSettingsCenter", () => {
 			render: vi.fn(),
 			unmount: vi.fn(),
 		} as never);
-		document
-			.querySelector("#easymde-admin-settings-center-css")
-			?.remove();
+		document.querySelector("#easymde-admin-settings-center-css")?.remove();
 		document.documentElement.style.removeProperty(
 			"--easymde-settings-center-styles-ready",
 		);

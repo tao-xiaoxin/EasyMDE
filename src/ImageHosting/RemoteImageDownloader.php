@@ -94,9 +94,15 @@ final class RemoteImageDownloader {
 
 			return $this->error( 'easymde_image_hosting_import_unsupported_media_type', 415, __( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' ) );
 		}
+		$name = $this->filename( $url, $mime_type );
+		if ( false === $name ) {
+			$this->delete_file( $temporary_path );
+
+			return $this->error( 'easymde_image_hosting_import_unsupported_media_type', 415, __( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' ) );
+		}
 
 		return array(
-			'name'     => $this->filename( $url, $mime_type ),
+			'name'     => $name,
 			'type'     => $mime_type,
 			'tmp_name' => $temporary_path,
 			'error'    => UPLOAD_ERR_OK,
@@ -240,21 +246,28 @@ final class RemoteImageDownloader {
 	}
 
 	private function filename( $url, $mime_type ) {
-		$extensions = array(
-			'image/gif'  => 'gif',
-			'image/jpeg' => 'jpg',
-			'image/png'  => 'png',
-			'image/webp' => 'webp',
-		);
-		$parts      = wp_parse_url( $url );
-		$path       = is_array( $parts ) && isset( $parts['path'] ) ? rawurldecode( $parts['path'] ) : '';
-		$basename   = sanitize_file_name( basename( $path ) );
-		$stem       = sanitize_file_name( pathinfo( $basename, PATHINFO_FILENAME ) );
+		$parts            = wp_parse_url( $url );
+		$path             = is_array( $parts ) && isset( $parts['path'] ) ? rawurldecode( $parts['path'] ) : '';
+		$basename         = sanitize_file_name( basename( $path ) );
+		$source_extension = ImageUploadExtensionPolicy::filename_extension( $basename );
+		if ( '' === $source_extension ) {
+			if ( false !== strpos( $basename, '.' ) ) {
+				return false;
+			}
+			$extension = ImageUploadExtensionPolicy::compatible_extension( $mime_type );
+		} else {
+			$extension = ImageUploadExtensionPolicy::verify( $basename, $mime_type );
+		}
+		if ( false === $extension || '' === $extension ) {
+			return false;
+		}
+
+		$stem = sanitize_file_name( pathinfo( $basename, PATHINFO_FILENAME ) );
 		if ( '' === $stem ) {
 			$stem = 'remote-image';
 		}
 
-		return $stem . '.' . $extensions[ $mime_type ];
+		return $stem . '.' . $extension;
 	}
 
 	private function delete_file( $path ) {

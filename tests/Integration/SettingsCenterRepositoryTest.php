@@ -241,10 +241,12 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertSame(1, $reads);
 		$this->assertSame(
 			array(
-				'file_name_rule' => 'media/{post_id}/{name}.{ext}',
-				'max_bytes'     => 2 * MB_IN_BYTES,
-				'mime_types'    => array('image/png'),
-				'title_display' => 'filename',
+					'storage_path'   => 'media/{post_id}',
+					'file_name_rule' => '{name}',
+					'max_bytes'      => 2 * MB_IN_BYTES,
+					'mime_types'     => array('image/png'),
+					'allowed_extensions' => array('png'),
+					'title_display'  => 'filename',
 			),
 			$settings
 		);
@@ -253,7 +255,7 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
 	}
 
-	public function test_media_upload_settings_uses_the_default_rule_for_legacy_invalid_data_without_writing()
+	public function test_media_upload_settings_rejects_unrepresentable_legacy_data_without_writing()
 	{
 		$stored = array(
 			'settings_center' => array(
@@ -265,16 +267,136 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 		update_option(Options::EDITOR_SETTINGS, $stored, false);
 		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
 
-		$settings = $repository->get_media_upload_settings();
+		try {
+			$repository->get_media_upload_settings();
+			$this->fail( 'Unrepresentable legacy image settings should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
 
-		$this->assertSame('{year}/{month}/{md5}.{ext}', $settings['file_name_rule']);
-		$this->assertSame( min( 5 * MB_IN_BYTES, (int) wp_max_upload_size(), 10 * MB_IN_BYTES ), $settings['max_bytes'] );
-		$this->assertSame(
-			array('image/jpeg', 'image/png', 'image/webp', 'image/gif'),
-			$settings['mime_types']
-		);
-		$this->assertSame('none', $settings['title_display']);
 		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+	}
+
+	public function test_legacy_extension_variable_in_storage_path_is_rejected_without_writing()
+	{
+		$stored = array(
+			'settings_center' => array(
+				'images' => array(
+					'fileNameRule' => 'legacy/{ext}/{md5}',
+				),
+			),
+		);
+		update_option(Options::EDITOR_SETTINGS, $stored, false);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		try {
+			$repository->get_settings();
+			$this->fail( 'A legacy extension variable in the storage path should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
+
+		$this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
+	}
+
+	public function test_explicit_empty_storage_path_is_not_migrated()
+	{
+		$stored = array(
+			'settings_center' => array(
+				'images' => array(
+					'storagePath'  => '',
+					'fileNameRule' => 'legacy-{name}',
+				),
+			),
+		);
+		update_option(Options::EDITOR_SETTINGS, $stored, false);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$settings = $repository->get_settings();
+
+		$this->assertSame('', $settings['images']['storagePath']);
+		$this->assertSame('legacy-{name}', $settings['images']['fileNameRule']);
+		$this->assertSame($stored, get_option(Options::EDITOR_SETTINGS));
+	}
+
+	public function test_legacy_complete_file_name_rule_is_split_on_save_and_persisted_canonically()
+	{
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+		$settings   = $repository->get_settings();
+		unset($settings['images']['storagePath']);
+		$settings['images']['fileNameRule'] = 'saved/{post_id}/{name}.{ext}';
+
+		$saved = $repository->update_settings($settings);
+
+		$this->assertIsArray($saved);
+		$this->assertSame('saved/{post_id}', $saved['images']['storagePath']);
+		$this->assertSame('{name}', $saved['images']['fileNameRule']);
+		$this->assertSame('saved/{post_id}', get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['storagePath']);
+		$this->assertSame('{name}', get_option(Options::EDITOR_SETTINGS)['settings_center']['images']['fileNameRule']);
+	}
+
+	public function test_canonical_storage_path_type_failure_is_explicit_on_public_read()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => array( 'invalid' ),
+						'fileNameRule' => '{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'easymde_settings_configuration_invalid' );
+		$repository->get_settings();
+	}
+
+	public function test_canonical_invalid_split_combination_failure_is_explicit_on_runtime_read()
+	{
+		update_option(
+			Options::EDITOR_SETTINGS,
+			array(
+				'settings_center' => array(
+					'images' => array(
+						'storagePath'  => 'canonical/path',
+						'fileNameRule' => 'nested/{md5}.{ext}',
+					),
+				),
+			),
+			false
+		);
+		$repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
+
+		$this->expectException( RuntimeException::class );
+		$this->expectExceptionMessage( 'easymde_settings_configuration_invalid' );
+		$repository->get_image_hosting_settings();
+	}
+
+	public function test_legacy_leading_separator_is_rejected_without_writing()
+	{
+		$stored = array(
+			'settings_center' => array(
+				'images' => array(
+					'fileNameRule' => '/{name}.{ext}',
+				),
+			),
+		);
+		update_option( Options::EDITOR_SETTINGS, $stored, false );
+		$repository = new SettingsCenterRepository( new Options(), new ToolbarRegistry() );
+
+		try {
+			$repository->get_settings();
+			$this->fail( 'A legacy leading separator should raise a configuration error.' );
+		} catch ( RuntimeException $exception ) {
+			$this->assertSame( SettingsCenterRepository::CONFIGURATION_ERROR_CODE, $exception->getMessage() );
+		}
+
+		$this->assertSame( $stored, get_option( Options::EDITOR_SETTINGS ) );
 	}
 
 	public function test_image_upload_runtime_snapshot_keeps_credentials_server_side()
@@ -429,7 +551,8 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
 			$this->assertArrayHasKey($field, $settings['images']);
 		}
 		$this->assertSame('30', $settings['general']['autoSaveInterval']);
-		$this->assertSame('{year}/{month}/{md5}.{ext}', $settings['images']['fileNameRule']);
+		$this->assertSame('{year}/{month}', $settings['images']['storagePath']);
+		$this->assertSame('{md5}', $settings['images']['fileNameRule']);
 		$this->assertSame(0, $settings['images']['uploadRetryCount']);
 		$this->assertSame(5, $settings['images']['maxImageSizeMb']);
 		$this->assertSame('both', $settings['images']['remoteImageUploadMode']);
@@ -1381,12 +1504,14 @@ final class SettingsCenterRepositoryTest extends WP_UnitTestCase
         wp_set_current_user($administrator_id);
         $repository = new SettingsCenterRepository(new Options(), new ToolbarRegistry());
         $settings = $repository->get_settings();
-        $settings['images']['uploadFormats'] = array(
-            'jpg' => false,
-            'png' => false,
-            'webp' => false,
-            'gif' => false,
-        );
+		$settings['images']['uploadFormats'] = array(
+			'webp' => false,
+			'png'  => false,
+			'jpg'  => false,
+			'jpeg' => false,
+			'jfif' => false,
+			'gif'  => false,
+		);
 
         $request = new WP_REST_Request('POST', '/easymde/v1/settings');
         $request->set_header('X-EasyMDE-Settings-Nonce', wp_create_nonce('easymde_update_settings'));

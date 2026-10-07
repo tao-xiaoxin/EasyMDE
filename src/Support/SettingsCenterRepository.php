@@ -680,14 +680,7 @@ final class SettingsCenterRepository {
 		$input           = $this->migrate_legacy_image_settings( $input );
 		$base            = $this->merge_settings( $defaults, $stored_settings );
 		$settings        = $this->merge_settings( $base, $input );
-		if ( isset( $input['images']['uploadFormats'] ) ) {
-			$formats = ImageUploadExtensionPolicy::normalize( $input['images']['uploadFormats'] );
-			if ( false === $formats ) {
-				return $this->invalid_payload_error();
-			}
-			$settings['images']['uploadFormats'] = $formats;
-		}
-		$settings = $this->normalize_enum_settings( $settings );
+		$settings        = $this->normalize_enum_settings( $settings );
 		if (
 			! $this->is_valid_provider_coordinates( $settings['images']['service'], $settings['images']['endpoint'] ) ||
 			! $this->is_valid_provider_coordinates( $settings['images']['backupService'], $settings['images']['backupEndpoint'] ) ||

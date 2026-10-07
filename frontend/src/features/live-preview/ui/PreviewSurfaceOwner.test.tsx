@@ -317,7 +317,7 @@ function setup(options?: {
     syncCodeFrameBackgrounds: vi.fn(),
     enhance: options?.enhance ?? vi.fn().mockResolvedValue(undefined)
   };
-  const onDiagnostic = options?.onDiagnostic ?? vi.fn();
+  let onDiagnostic = options?.onDiagnostic ?? vi.fn();
   const defaultScrollPort: PreviewScrollPort = {
     capture: (surface) => ({
       left: surface.scrollLeft,
@@ -396,6 +396,10 @@ function setup(options?: {
     surface,
     ...result,
     rerender: () => result.rerender(owner()),
+    setDiagnostic: (next: (code: string) => void) => {
+      onDiagnostic = next;
+      result.rerender(owner());
+    },
     setWindowed: (value: boolean) => {
       windowed = value;
       result.rerender(owner());
@@ -571,6 +575,61 @@ describe('PreviewSurfaceOwner', () => {
       .toBe(oldFootnoteSeparator);
 
     replaceChildren.mockRestore();
+  });
+
+  it('projects noneditable Preview map roots into both read-only and editable DOM', async () => {
+    const signature = 'noneditable-preview-roots';
+    const editMap: PreviewEditMap = {
+      version: 1,
+      coordinate: 'line',
+      signature,
+      blocks: [
+        { id: 'b0', startLine: 0, endLine: 1, editable: true },
+        { id: 'b1', startLine: 1, endLine: 1, editable: false },
+        { id: 'b2', startLine: 1, endLine: 1, editable: false },
+        { id: 'b3', startLine: 1, endLine: 1, editable: false },
+        { id: 'b4', startLine: 1, endLine: 2, editable: true }
+      ]
+    };
+    const current = setup({
+      contentEditable: true,
+      initialHtml: '',
+      initialSignature: '',
+      windowed: false
+    });
+
+    act(() => current.session.schedule(request('before\ndisplay\nafter', signature), true));
+    await act(async () => {
+      current.responses[0]?.resolve({
+        editMap,
+        features: {},
+        html: safeHtml([
+          '<p data-easymde-visual-block-id="b0">Before</p>',
+          '<p data-easymde-visual-block-id="b1">Display math: </p>',
+          '<div data-easymde-visual-block-id="b2">Formula</div>',
+          '<p data-easymde-visual-block-id="b3">.</p>',
+          '<p data-easymde-visual-block-id="b4">After</p>'
+        ].join(''))
+      });
+      for (let index = 0; index < 12; index += 1) await Promise.resolve();
+      await flushAnimationFrames(4);
+    });
+
+    expect(current.surface.getAttribute('contenteditable')).toBe('true');
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b0"]'
+    )?.getAttribute('contenteditable')).toBeNull();
+    expect(current.surface.querySelectorAll(
+      `${VISUAL_MARKDOWN_READ_ONLY_SELECTOR}`
+    )).toHaveLength(3);
+    for (const id of ['b1', 'b2', 'b3']) {
+      expect(current.surface.querySelector(
+        `[data-easymde-visual-block-id="${id}"]`
+      )?.getAttribute('contenteditable')).toBe('false');
+    }
+    expect(current.surface.querySelector(
+      '[data-easymde-visual-block-id="b4"]'
+    )?.getAttribute('contenteditable')).toBeNull();
   });
 
   it('does not expose an editable visual surface as a live region', async () => {
@@ -3290,6 +3349,44 @@ describe('PreviewSurfaceOwner', () => {
     });
     expect(current.surface.getAttribute('data-easymde-preview-error')).toBe('1');
     expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('reports current response validation failures and suppresses stale ones', async () => {
+    const initialDiagnostic = vi.fn();
+    const onDiagnostic = vi.fn();
+    const current = setup({
+      initialHtml: '',
+      onDiagnostic: initialDiagnostic
+    });
+    current.setDiagnostic(onDiagnostic);
+
+    act(() => current.session.schedule(request('# Invalid response'), true));
+    await act(async () => {
+      current.responses[0]?.reject(new Error('preview-response-invalid'));
+      await Promise.resolve();
+    });
+
+    expect(onDiagnostic).toHaveBeenCalledWith('preview-response-invalid');
+    expect(initialDiagnostic).not.toHaveBeenCalled();
+    expect(current.surface.textContent).toBe(messages.error);
+    expect(current.surface.getAttribute('data-easymde-preview-error')).toBeNull();
+    current.unmount();
+
+    const staleDiagnostic = vi.fn();
+    const staleOwner = setup({
+      initialHtml: '',
+      onDiagnostic: staleDiagnostic
+    });
+    act(() => staleOwner.session.schedule(request('# First', 'first'), true));
+    const staleResponse = staleOwner.responses[0];
+    act(() => staleOwner.session.schedule(request('# Second', 'second'), true));
+    await act(async () => {
+      staleResponse?.reject(new Error('preview-response-invalid'));
+      await Promise.resolve();
+    });
+
+    expect(staleDiagnostic).not.toHaveBeenCalled();
+    staleOwner.unmount();
   });
 
   it('ignores superseded enhancement completion and does not restore after teardown', async () => {

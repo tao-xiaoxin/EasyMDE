@@ -173,7 +173,13 @@ describe('createPreviewRequestSession', () => {
   it('handles empty input without transport and reports failures honestly', async () => {
     const render = vi.fn().mockRejectedValue(new Error('synthetic'));
     const onState = vi.fn();
-    const session = createPreviewRequestSession({ initialRevision: 0, onState, port: { render } });
+    const onDiagnostic = vi.fn();
+    const session = createPreviewRequestSession({
+      initialRevision: 0,
+      onDiagnostic,
+      onState,
+      port: { render }
+    });
 
     session.schedule(request('   '), true);
     session.schedule(request('broken'), true);
@@ -182,7 +188,54 @@ describe('createPreviewRequestSession', () => {
 
     expect(render).toHaveBeenCalledTimes(1);
     expect(onState.mock.calls.map(([state]) => state.kind)).toEqual(['empty', 'loading', 'error']);
+    expect(onDiagnostic).toHaveBeenCalledWith('preview-request-failed');
+    expect(onDiagnostic.mock.calls.flat().join(' ')).not.toContain('synthetic');
     session.destroy();
+  });
+
+  it('preserves the stable response-invalid diagnostic code', async () => {
+    const render = vi.fn().mockRejectedValue(new Error('preview-response-invalid'));
+    const onDiagnostic = vi.fn();
+    const session = createPreviewRequestSession({
+      initialRevision: 0,
+      onDiagnostic,
+      onState: vi.fn(),
+      port: { render }
+    });
+
+    session.schedule(request('invalid response'), true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onDiagnostic).toHaveBeenCalledOnce();
+    expect(onDiagnostic).toHaveBeenCalledWith('preview-response-invalid');
+    session.destroy();
+  });
+
+  it('suppresses stale and teardown failure diagnostics', async () => {
+    const stale = deferred<PreviewResponse>();
+    const tornDown = deferred<PreviewResponse>();
+    const render = vi
+      .fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockReturnValueOnce(tornDown.promise);
+    const onDiagnostic = vi.fn();
+    const session = createPreviewRequestSession({
+      initialRevision: 0,
+      onDiagnostic,
+      onState: vi.fn(),
+      port: { render }
+    });
+
+    session.schedule(request('stale'), true);
+    session.schedule(request('teardown'), true);
+    stale.reject(new Error('preview-response-invalid'));
+    await Promise.resolve();
+    session.destroy();
+    tornDown.reject(new Error('preview-response-invalid'));
+    await Promise.resolve();
+
+    expect(onDiagnostic).not.toHaveBeenCalled();
   });
 
   it('aborts in-flight work during teardown and rejects later scheduling', async () => {

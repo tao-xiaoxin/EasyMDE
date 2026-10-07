@@ -292,6 +292,7 @@ function validBootstrap() {
       pngConversionEnabled: false,
       strings: {
         failed: 'Copy failed',
+        failedWithUploads: 'Copy failed after uploading images',
         success: 'Copied',
         unsupported: 'Clipboard unsupported'
       }

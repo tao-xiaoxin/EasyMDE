@@ -4,7 +4,7 @@
   </a>
 </p>
 <h1 align="center">EasyMDE - WordPress Markdown Editor Plugin</h1>
-<p align="center">A Markdown editor plugin for WordPress writers, technical bloggers, and WeChat content creators, with split-pane live preview.</p>
+<p align="center">The best Markdown editing plugin built for WordPress, delivering an ultimate immersive writing experience.</p>
 <p align="center">
   <a href="https://github.com/tao-xiaoxin/EasyMDE/releases">
     <img src="https://img.shields.io/badge/version-0.1.9-2563eb?style=flat-square&logo=github&logoColor=white" alt="Version 0.1.9" />
@@ -21,11 +21,11 @@
 
 <p align="center"><a href="README.md">简体中文</a> | English</p>
 
-EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, and WeChat content creators. Write in Markdown, review a split-pane live preview, and keep using WordPress for editing, saving, publishing, and sharing.
+A next-generation WordPress Markdown editor built for content creators, with live preview, Mermaid diagrams, KaTeX formulas, image hosting, native publishing, revisions, and one-click copying to WeChat Official Accounts, making writing, formatting, and publishing more efficient.
 
 <p align="center">
-  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>Download the installable EasyMDE.zip plugin</strong></a>
-  · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">Release notes</a>
+  <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest/download/EasyMDE.zip"><strong>Download Plugin</strong></a>
+  · <a href="https://github.com/tao-xiaoxin/EasyMDE/releases/latest">Latest Release</a>
 </p>
 
 <p align="center">
@@ -51,41 +51,33 @@ EasyMDE is a Markdown editor plugin for WordPress writers, technical bloggers, a
 
 ### ✍️ Focused writing
 
-- Split Markdown source editor and live preview.
-- Scroll synchronization between source and preview panes.
-- Compact icon toolbar for common Markdown actions.
-- Typora-inspired keyboard shortcuts with site-wide Windows/Linux and macOS overrides.
-- Immersive editing accepts `~~~` or backtick fence shortcuts that can be represented as valid backtick syntax; a newly formed block uses an equally wide backtick fence in source, while existing or pasted tilde fences retain their family.
-- Browser local draft recovery with explicit restore, discard, and cross-tab conflict handling.
-- Write beside the live preview on desktop; the panes stack vertically on narrow screens.
+- ✅ **Split-pane live preview:** the source document and preview pane scroll in sync.
+- ✅ **Professional quick toolbar:** insert images through the toolbar media picker and format bold and other Markdown with one click.
+- ✅ **Typora-inspired keyboard shortcuts:** site-wide Windows/Linux and macOS override settings.
+- ✅ **Immersive editing:** the immersive editor accepts `~~~` or backtick fence shortcuts for quick code-block input.
+- ✅ **Auto-save:** drafts are saved at the configured interval to reduce the risk of losing work.
+- ✅ **Local draft recovery:** explicitly restore editing drafts from different points in time.
+- ✅ **Common Markdown syntax:** code highlighting, Mermaid diagrams, and KaTeX formulas.
 
-### 🧩 Rich content
+### ⚙️ Settings Center
 
-- Common Markdown content such as headings, lists, links, images, tables, task lists, and code blocks.
-- Code syntax highlighting, Mermaid diagrams, and KaTeX mathematical formulas.
-- `[TOC]` and `[toc]` table of contents support.
-- WordPress Media Library insertion through the toolbar media picker.
-- Optional Image Hosting for local image paste and drag-and-drop, with Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, or Tencent Cloud COS.
+- ✅ **Built-in image hosting:** Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS, with optional primary/backup destinations, file-name rules, and upload retries.
+- ✅ **Customizable shortcuts:** configure toolbar shortcuts separately for Windows/Linux and macOS, with automatic conflict detection.
+- ✅ **Markdown preferences:** word wrap, GitHub-flavored Markdown, smart punctuation, table alignment, code line numbers, and paste as Markdown.
+- ✅ **General preferences:** auto-save interval, applying the editor theme to the frontend, and published code-copy buttons.
+- ✅ **Settings transfer:** import and export all preferences for easy migration and backup.
 
 ### 🎨 Personal appearance
 
-- Per-post article themes and code themes.
-- Use the selected appearance on published content, or keep it in editor Preview only.
-- Show published code-block copy buttons by default; hide them when you prefer while keeping code rendering and syntax highlighting.
-- Per-post article font stack selection.
-- With the required permission, save named custom CSS styles and reuse them when needed.
-
-### 🧭 WordPress integration
-
-- Write from the normal WordPress **Posts** and **Pages** editing screens.
-- Continue using WordPress Media Library, categories, tags, excerpts, featured images, and revisions.
-- Use WordPress's native save, publishing, and permission workflows.
-- No Jetpack, Classic Editor, or another Markdown plugin is required.
+- ✅ **10+ font styles built in:** choose an independent font style per post.
+- ✅ **Code copy:** published posts show code-block copy buttons by default; hide them when you prefer.
+- ✅ **40+ article themes and 10+ code themes built in:** pick an independent article theme and code theme per post.
+- ✅ **Custom appearance:** apply the selected look to published content, or keep it in the editor preview only.
+- ✅ **Custom code and article styles:** customize and reuse code and article theme styles when you save.
 
 ### 📤 Publishing and sharing
 
-- Publish formatted articles through WordPress.
-- Copy the current preview as rich text to the WeChat Official Accounts editor.
+- ✅ **One-click copy to WeChat Official Accounts:** copy the current preview as rich text and paste it into the Official Accounts editor.
 
 ## Documentation
 
@@ -116,7 +108,7 @@ For more, see [Development setup](docs/DEVELOPMENT.md) and [Testing and release]
 ## Support EasyMDE
 
 <p align="center">
-  If EasyMDE improves your WordPress writing flow, a star helps more writers discover the project.
+  If EasyMDE improves your WordPress writing flow, please give us a star.
 </p>
 
 ## License

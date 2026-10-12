@@ -441,6 +441,39 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_qiniu_upload_preserves_json_error_status_without_sdk_parser_warnings() {
+		foreach ( array( 400 => 'qiniu_upload_rejected', 401 => 'image_host_unauthorized' ) as $status_code => $error_code ) {
+			$transport = new ImageHostFakeTransport(
+				array(
+					$this->qiniu_region_response(),
+					HttpResponse::success( $status_code, '{}', array( 'Content-Type' => 'application/json' ) ),
+				)
+			);
+			$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+			$warnings = 0;
+			set_error_handler(
+				static function ( $level ) use ( &$warnings ) {
+					if ( in_array( $level, array( E_WARNING, E_NOTICE ), true ) ) {
+						++$warnings;
+						return true;
+					}
+					return false;
+				}
+			);
+
+			try {
+				$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+			} finally {
+				restore_error_handler();
+			}
+
+			$this->assertFalse( $result->is_success(), (string) $status_code );
+			$this->assertSame( $error_code, $result->get_error_code(), (string) $status_code );
+			$this->assertSame( 0, $warnings, (string) $status_code );
+			$this->assertCount( 2, $transport->requests, (string) $status_code );
+		}
+	}
+
 	public function test_qiniu_region_transport_exception_is_a_stable_failure() {
 		$transport = new ImageHostThrowingTransport();
 		$provider  = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );

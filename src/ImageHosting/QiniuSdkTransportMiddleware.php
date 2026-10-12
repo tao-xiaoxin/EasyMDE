@@ -60,8 +60,13 @@ final class QiniuSdkTransportMiddleware implements Middleware {
 			return new Response( 0, 0, array(), null, 'response_too_large' );
 		}
 
+		$status_code = $response->get_status_code();
+		if ( 200 !== $status_code ) {
+			return new Response( $status_code, 0, array(), null, 'http_error' );
+		}
+
 		return new Response(
-			$response->get_status_code(),
+			$status_code,
 			0,
 			$response->get_headers(),
 			$body,

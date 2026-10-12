@@ -1,5 +1,16 @@
 export type WechatVisualRasterizationKind = 'math' | 'mermaid';
 
+export type WechatVisualRasterizationMermaidCapture =
+  | 'intrinsic-viewport'
+  | 'responsive-viewport';
+
+/** Mermaid roles whose renderer-owned viewBox may become a local scroll width. */
+export type WechatVisualRasterizationMermaidLayoutRole = 'gantt' | 'sequence' | 'timeline';
+
+export type WechatVisualRasterizationYield = (() => Promise<void>) & {
+  shouldYield: () => boolean;
+};
+
 export type WechatVisualRasterizationFailureCode =
   | 'wechat-png-baseline-failed'
   | 'wechat-png-decode-failed'
@@ -16,10 +27,16 @@ export type WechatVisualRasterizationRequest = Readonly<{
   /** Original Preview parent used to preserve inline line-box typography. */
   inlineParent?: Element;
   kind: WechatVisualRasterizationKind;
+  /** Mermaid-only final display magnification; intrinsic local-scroll roles require 1. */
+  layoutMagnification?: number;
+  /** Clipboard-proven Mermaid SVG viewport capture mode. */
+  mermaidCapture?: WechatVisualRasterizationMermaidCapture;
   maxPixels: number;
   scale: number;
   signal: AbortSignal;
   source: Element;
+  /** Reuses the Clipboard owner's bounded task scheduler at safe raster stages. */
+  yieldToBrowser?: WechatVisualRasterizationYield;
   width: number;
 }>;
 

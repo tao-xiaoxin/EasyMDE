@@ -25,6 +25,13 @@ const contractSpec = {
 const productionSpec = {
 	outputRoot: join(repositoryRoot, "assets/build"),
 	sourceEntry: "frontend/src/entrypoints/admin-editor.tsx",
+	manifestResources: [
+		{
+			sourceEntry:
+				"frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts",
+			filePattern: /^assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/,
+		},
+	],
 	expectedHandle: "easymde-admin-editor-toolbar",
 	expectedDependencies: [
 		"wp-api-fetch",
@@ -33,9 +40,9 @@ const productionSpec = {
 		"wp-i18n",
 	],
 	resourceField: null,
-	expectedResourceCount: 0,
+	expectedResourceCount: 1,
 	resourceHasManifestRecord: false,
-	resourceReferencedByScript: false,
+	resourceReferencedByScript: true,
 	label: "production build",
 	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
 	requiredRuntimePatterns: [
@@ -412,13 +419,44 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 		);
 	}
 
+	const explicitManifestResources = (spec.manifestResources ?? []).map(
+		(resource) => {
+			assertRelativeAssetPath(resource.sourceEntry, "Vite resource source");
+			if (undefined === manifest[resource.sourceEntry]) {
+				throw new Error(
+					`Vite manifest is missing the resource record ${resource.sourceEntry}.`,
+				);
+			}
+			const record = assertObject(
+				manifest[resource.sourceEntry],
+				`Vite resource ${resource.sourceEntry}`,
+			);
+			if (
+				record.isEntry !== false ||
+				record.src !== resource.sourceEntry ||
+				"string" !== typeof record.file
+			) {
+				throw new Error(
+					`Vite manifest resource ${resource.sourceEntry} must be a non-entry record.`,
+				);
+			}
+			assertRelativeAssetPath(record.file, `Vite resource ${resource.sourceEntry} file`);
+			resource.filePattern.lastIndex = 0;
+			if (!resource.filePattern.test(record.file)) {
+				throw new Error(
+					`Vite manifest resource ${resource.sourceEntry} has an unexpected file name.`,
+				);
+			}
+			return record.file;
+		},
+	);
 	const viteResources = spec.resourceField
 		? assertAssetList(
 				viteEntry[spec.resourceField],
 				spec.expectedResourceCount,
 				"Vite resources",
 			)
-		: [];
+		: explicitManifestResources;
 	const wordpressResources = assertAssetList(
 		wordpressEntry.resources,
 		spec.expectedResourceCount,
@@ -429,7 +467,17 @@ function validateBuild(spec, outputRoot = spec.outputRoot) {
 			"WordPress resource metadata does not match the Vite entry.",
 		);
 	}
-	if (spec.resourceHasManifestRecord) {
+	if (spec.manifestResources?.length) {
+		const expectedManifestKeys = [
+			spec.sourceEntry,
+			...spec.manifestResources.map((resource) => resource.sourceEntry),
+		].sort();
+		if (JSON.stringify(manifestKeys.sort()) !== JSON.stringify(expectedManifestKeys)) {
+			throw new Error(
+				"Vite manifest contains missing or unowned resource records.",
+			);
+		}
+	} else if (spec.resourceHasManifestRecord) {
 		const viteResourceRecords = manifestKeys
 			.filter((key) => key !== spec.sourceEntry)
 			.map((key) => {

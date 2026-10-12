@@ -395,10 +395,14 @@ test('Mermaid labels use stable geometry independent of article typography', () 
   assert.match(labelGeometry, /font-size:\s*16px\s*!important;/);
   assert.match(labelGeometry, /font-weight:\s*400\s*!important;/);
   assert.match(labelGeometry, /line-height:\s*20px\s*!important;/);
-  assert.match(labelGeometry, /letter-spacing:\s*normal\s*!important;/);
   assert.match(labelGeometry, /white-space:\s*nowrap\s*!important;/);
   assert.match(labelGeometry, /margin:\s*0\s*!important;/);
   assert.match(labelGeometry, /padding:\s*0\s*!important;/);
+  assert.doesNotMatch(labelGeometry, /(?:letter|word)-spacing:/);
+
+  const mermaidSvgTypographyRule = cssRule(frontendCss, '.easymde-mermaid > svg');
+  assert.match(mermaidSvgTypographyRule, /letter-spacing:\s*normal;/);
+  assert.match(mermaidSvgTypographyRule, /word-spacing:\s*normal;/);
 
   const foreignObjectLabelRule = cssRule(
     frontendCss,

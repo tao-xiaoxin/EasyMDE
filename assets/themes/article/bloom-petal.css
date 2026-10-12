@@ -361,7 +361,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-petal .easymde-mermaid text{
     fill: var(--text) !important;
-    font-family: var(--font-sans) !important;
 }
 
 

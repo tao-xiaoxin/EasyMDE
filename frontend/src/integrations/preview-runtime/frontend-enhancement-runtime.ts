@@ -37,6 +37,7 @@ type MermaidInitializationOptions = Readonly<{
   fontFamily: string;
   fontSize: number;
   flowchart: Readonly<{ diagramPadding: number }>;
+  gantt: Readonly<{ useMaxWidth: boolean; useWidth: number }>;
   themeCSS: string;
 }>;
 
@@ -78,6 +79,11 @@ let mermaidRenderIndex = 0;
 
 const MERMAID_LABEL_FONT_FAMILY = '"trebuchet ms", verdana, arial, sans-serif';
 const MERMAID_LABEL_GEOMETRY_CSS = `
+& {
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+
 .node .label,
 .node .label *,
 .edgeLabel,
@@ -89,8 +95,6 @@ foreignObject > div * {
   font-size: 16px !important;
   font-weight: 400 !important;
   line-height: 20px !important;
-  letter-spacing: normal !important;
-  word-spacing: normal !important;
   white-space: nowrap !important;
   margin: 0 !important;
   padding: 0 !important;
@@ -205,6 +209,47 @@ function isMermaidCode(element: Element): boolean {
   return [...element.classList].some(
     (className) => 'language-mermaid' === className.toLowerCase()
   );
+}
+
+type MermaidLayoutViewBox = Readonly<{
+  height: number;
+  width: number;
+}>;
+
+const INTRINSIC_MERMAID_LAYOUT_ROLES = new Set([
+  'gantt',
+  'sequence',
+  'timeline'
+]);
+
+function mermaidLayoutViewBox(source: SVGSVGElement): MermaidLayoutViewBox | null {
+  const values = source.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+  const width = values[2];
+  const height = values[3];
+  if (
+    4 !== values.length
+    || values.some((value) => !Number.isFinite(value))
+    || undefined === width
+    || undefined === height
+    || width <= 0
+    || height <= 0
+  ) return null;
+  return { height, width };
+}
+
+function markIntrinsicMermaidLayout(
+  container: HTMLElement
+): void {
+  delete container.dataset.easymdeMermaidLayout;
+  if (1 !== container.children.length || !(container.children[0] instanceof SVGSVGElement)) return;
+  const svg = container.children[0];
+  const role = svg.getAttribute('aria-roledescription')?.trim().toLowerCase();
+  if (!role || !INTRINSIC_MERMAID_LAYOUT_ROLES.has(role)) return;
+  const viewBox = mermaidLayoutViewBox(svg);
+  if (!viewBox) return;
+  container.dataset.easymdeMermaidLayout = role;
+  svg.style.setProperty('width', `${viewBox.width}px`);
+  svg.style.setProperty('height', 'auto');
 }
 
 function isLargeImmersivePreviewRoot(root: ParentNode): boolean {
@@ -459,6 +504,10 @@ function initializeMermaid(windowRef: FrontendEnhancementWindow): boolean {
     flowchart: {
       diagramPadding: 12
     },
+    gantt: {
+      useMaxWidth: true,
+      useWidth: 1200
+    },
     themeCSS: MERMAID_LABEL_GEOMETRY_CSS
   });
 
@@ -498,6 +547,7 @@ export function renderMermaidContent(
         const result = await mermaid.render(renderId, source);
         if (!enhancementIsCurrent(control) || !pre.parentNode) return;
         container.innerHTML = result.svg;
+        markIntrinsicMermaidLayout(container);
         pre.parentNode.replaceChild(container, pre);
       } catch {
         if (!enhancementIsCurrent(control)) return;

@@ -1,8 +1,13 @@
 {
   "frontend/src/entrypoints/admin-editor.tsx": {
-    "file": "assets/admin-editor-MrKsUooy.js",
+    "file": "assets/admin-editor-BHBAVYXo.js",
     "name": "editor",
     "src": "frontend/src/entrypoints/admin-editor.tsx",
     "isEntry": true
+  },
+  "frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts": {
+    "file": "assets/wechat-png-encoder-VLhJRlsW.js",
+    "isEntry": false,
+    "src": "frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts"
   }
 }

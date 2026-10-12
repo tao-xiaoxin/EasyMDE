@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseEditorRootBootstrap } from '../contracts/bootstrap/editor-root-bootstrap';
 import { createBrowserLocalDraftStorage } from '../integrations/browser/local-drafts/browser-local-draft-storage';
 import { createBrowserWechatClipboard } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import { createBrowserWechatPngEncoder } from '../integrations/browser/wechat/create-browser-wechat-png-encoder';
 import { createWordPressImageUploadPort } from '../integrations/wordpress/media/wordpress-image-upload';
 import { createWordPressMediaFramePort } from '../integrations/wordpress/media/wordpress-media-frame';
 import { mountAdminEditor } from './admin-editor';
@@ -42,6 +43,10 @@ vi.mock(
 vi.mock(
   '../integrations/browser/wechat/create-browser-wechat-clipboard',
   () => ({ createBrowserWechatClipboard: vi.fn(() => ({})) })
+);
+vi.mock(
+  '../integrations/browser/wechat/create-browser-wechat-png-encoder',
+  () => ({ createBrowserWechatPngEncoder: vi.fn(() => null) })
 );
 vi.mock('../integrations/preview-runtime/browser-preview-enhancement', () => ({
   createBrowserPreviewEnhancementPort: vi.fn(() => ({})),
@@ -279,6 +284,9 @@ describe('mountAdminEditor', () => {
 
     expect(createRoot).toHaveBeenCalledWith(
       document.querySelector('#easymde-editor-root')
+    );
+    expect(createBrowserWechatPngEncoder).toHaveBeenCalledWith(
+      expect.objectContaining({ workerUrl: expect.any(String) })
     );
     expect(createBrowserLocalDraftStorage).toHaveBeenCalledWith(
       expect.objectContaining({

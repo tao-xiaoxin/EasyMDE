@@ -614,6 +614,121 @@ async function canonicalMarkdownForPage(page) {
   return canonicalMarkdownForSite(fixtureImageUrl);
 }
 
+function classifyReadonlyPostRequest({ pathname, search = '', contentType = '', postData = '' }) {
+  const stableAction = (value) => (
+    'string' === typeof value
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/u.test(value)
+      ? value
+      : 'missing'
+  );
+  const safeKey = (key) => !/(?:content|cookie|nonce|password|token)/iu.test(key);
+  const knownDataKeys = new Set([
+    'nonces_expired',
+    'rest_nonce',
+    'wp-auth-check',
+    'wp-refresh-post-lock'
+  ]);
+  const isRecord = (value) => (
+    !!value && 'object' === typeof value && !Array.isArray(value)
+  );
+  const queryParams = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const contentTypeValue = contentType.toLowerCase();
+  const isJson = contentTypeValue.includes('application/json');
+  const isForm = contentTypeValue.includes('application/x-www-form-urlencoded')
+    || (!contentTypeValue && postData.includes('='));
+  const parameters = isForm ? new URLSearchParams(postData) : new URLSearchParams();
+  const keyNames = new Set(queryParams.keys());
+  const parameterKeys = [...parameters.keys()];
+  for (const key of parameterKeys) keyNames.add(key);
+  let action = queryParams.get('action') ?? parameters.get('action');
+  const bracketDataKeys = [];
+  parameterKeys.forEach((key) => {
+    if (!key.startsWith('data[')) return;
+    const end = key.indexOf(']', 5);
+    bracketDataKeys.push(end > 5 ? key.slice(5, end) : '');
+  });
+  const dataKeys = [];
+  const bracketDataUnknown = bracketDataKeys.some(
+    (key) => !knownDataKeys.has(key) && key !== 'wp_autosave'
+  );
+  let dataState = bracketDataKeys.length > 0
+    ? bracketDataUnknown ? 'unknown' : 'known'
+    : 'absent';
+  let wpAutosave = parameterKeys.some((key) => key.includes('wp_autosave'));
+  const applyDataRecord = (record) => {
+    const parsedKeys = Object.keys(record);
+    dataKeys.push(...parsedKeys.filter(safeKey));
+    wpAutosave ||= parsedKeys.includes('wp_autosave');
+    if (wpAutosave) {
+      dataState = 'autosave';
+    } else if (parsedKeys.every((key) => knownDataKeys.has(key))) {
+      dataState = 'known';
+    } else {
+      dataState = 'unknown';
+    }
+  };
+  const dataValue = parameters.get('data');
+  if (dataValue !== null) {
+    dataState = 'invalid';
+    try {
+      const parsed = JSON.parse(dataValue);
+      if (isRecord(parsed)) applyDataRecord(parsed);
+    } catch {
+      // Keep diagnostics limited to stable key names when data is not JSON.
+    }
+  }
+  if (isJson) {
+    try {
+      const body = JSON.parse(postData);
+      if (isRecord(body)) {
+        const parsedKeys = Object.keys(body);
+        for (const key of parsedKeys.filter(safeKey)) keyNames.add(key);
+        if (null === action && 'string' === typeof body.action) action = body.action;
+        if (Object.prototype.hasOwnProperty.call(body, 'wp_autosave')) {
+          wpAutosave = true;
+          dataState = 'autosave';
+        }
+        if (Object.prototype.hasOwnProperty.call(body, 'data')) {
+          if (isRecord(body.data)) {
+            applyDataRecord(body.data);
+          } else if ('string' === typeof body.data) {
+            dataState = 'invalid';
+            try {
+              const parsedData = JSON.parse(body.data);
+              if (isRecord(parsedData)) applyDataRecord(parsedData);
+            } catch {
+              // Keep diagnostics limited to stable key names when data is not JSON.
+            }
+          } else {
+            dataState = 'invalid';
+          }
+        }
+      }
+    } catch {
+      dataState = 'invalid';
+    }
+  }
+  for (const key of dataKeys) keyNames.add(key);
+  const metadata = {
+    pathname,
+    action: stableAction(action),
+    keys: [...keyNames].filter(safeKey).sort()
+  };
+  if (pathname.endsWith('/wp-admin/admin-ajax.php') && 'get-community-events' === action) {
+    return { classification: 'community-events-readonly', metadata };
+  }
+  if (
+    pathname.endsWith('/wp-admin/admin-ajax.php')
+    && 'heartbeat' === action
+    && (isJson || '' === postData || postData.includes('='))
+    && ['absent', 'known'].includes(dataState)
+    && !wpAutosave
+  ) {
+    return { classification: 'heartbeat-readonly', metadata };
+  }
+  return { classification: 'unexpected-write', metadata };
+}
+
 async function editorThemeCatalog(page) {
   return page.evaluate(() => ({
     articleThemes: window.EasyMDEEditorRootBootstrap.appearance.articleThemes
@@ -626,7 +741,7 @@ async function editorThemeCatalog(page) {
         swatch
       })),
     codeThemes: window.EasyMDEEditorRootBootstrap.appearance.codeThemes
-      .map(({ id, cssUrl }) => ({ id, cssUrl })),
+      .map(({ id, label, cssUrl }) => ({ id, label, cssUrl })),
     selectedArticleTheme:
       window.EasyMDEEditorRootBootstrap.appearance.state.markdownTheme
   }));
@@ -2528,6 +2643,844 @@ test.describe('EasyMDE editor workflows', () => {
     await expect(source).toHaveValue('##### Heading parity');
     await expect(sourceEditor).toHaveText('##### Heading parity');
     await expect(sourceEditor).toBeFocused();
+  });
+
+  test('keeps the immersive mobile header, toolbar rows, and outline geometrically usable', async ({ page }, testInfo) => {
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, null);
+
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.setViewportSize({ width: 375, height: 667 });
+    const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveRoot = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(immersiveRoot).toHaveCount(1);
+    await expect(immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const selector = (value) => root.querySelector(value);
+      const box = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          height: rect.height,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          width: rect.width
+        };
+      };
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const withinViewport = (rect) => !!rect
+        && rect.left >= 0
+        && rect.top >= 0
+        && rect.right <= window.innerWidth + 1
+        && rect.bottom <= window.innerHeight + 1;
+      const intersects = (first, second) => !!first && !!second
+        && first.left < second.right - 1
+        && first.right > second.left + 1
+        && first.top < second.bottom - 1
+        && first.bottom > second.top + 1;
+      const centerHit = (element, rect) => {
+        if (!(element instanceof HTMLElement) || !rect) return false;
+        const target = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+        return target === element || element.contains(target);
+      };
+
+      const header = selector('.easymde-immersive-header');
+      const toolbar = selector('.easymde-immersive-toolbar-row');
+      const formatting = selector('.easymde-immersive-formatting');
+      const secondary = selector('.easymde-immersive-secondary-actions');
+      const publish = selector('.easymde-immersive-publish');
+      const wechat = selector('.easymde-immersive-wechat');
+      const title = selector('.easymde-immersive-title-field');
+      const titleMeasure = selector('.easymde-immersive-title-measure');
+      const titleSpan = selector('.easymde-immersive-title-measure > span');
+      const titleInput = selector('.easymde-immersive-title-measure > textarea');
+      const viewSwitch = selector('.easymde-immersive-view-switch');
+      const saveState = selector('.easymde-immersive-save-state');
+      const outline = selector('.easymde-immersive-outline');
+      const headerBox = box(header);
+      const toolbarBox = box(toolbar);
+      const formattingBox = box(formatting);
+      const secondaryBox = box(secondary);
+      const publishBox = box(publish);
+      const wechatBox = box(wechat);
+      const titleBox = box(title);
+      const titleMeasureBox = box(titleMeasure);
+      const titleInputBox = box(titleInput);
+      const viewSwitchBox = box(viewSwitch);
+      const saveStateBox = box(saveState);
+      const outlineBox = box(outline);
+      const secondaryDirection = secondary instanceof HTMLElement
+        ? getComputedStyle(secondary).direction
+        : 'ltr';
+      const headerStyle = header instanceof HTMLElement ? getComputedStyle(header) : null;
+      const titleStyle = title instanceof HTMLElement ? getComputedStyle(title) : null;
+      const titleMeasureStyle = titleMeasure instanceof HTMLElement
+        ? getComputedStyle(titleMeasure)
+        : null;
+      const titleInputStyle = titleInput instanceof HTMLElement
+        ? getComputedStyle(titleInput)
+        : null;
+      const headerPaddingTop = Number.parseFloat(headerStyle?.paddingTop ?? '0') || 0;
+      const firstGridRowHeight = Number.parseFloat(
+        headerStyle?.gridTemplateRows.split(/\s+/u)[0] ?? '0'
+      ) || 0;
+      const firstGridRowBottom = headerBox
+        ? headerBox.top + headerPaddingTop + firstGridRowHeight
+        : null;
+
+      return {
+        devicePixelRatio: window.devicePixelRatio,
+        viewport: { height: window.innerHeight, width: window.innerWidth },
+        header: {
+          box: headerBox,
+          display: headerStyle?.display ?? null,
+          visible: visible(header)
+        },
+        toolbar: {
+          box: toolbarBox,
+          centerHit: centerHit(toolbar, toolbarBox),
+          scrollLeft: toolbar instanceof HTMLElement ? toolbar.scrollLeft : null,
+          visible: visible(toolbar)
+        },
+        formatting: {
+          box: formattingBox,
+          scrollLeft: formatting instanceof HTMLElement ? formatting.scrollLeft : null,
+          visible: visible(formatting)
+        },
+        secondary: {
+          box: secondaryBox,
+          scrollLeft: secondary instanceof HTMLElement ? secondary.scrollLeft : null,
+          visible: visible(secondary)
+        },
+        publish: {
+          box: publishBox,
+          centerHit: centerHit(publish, publishBox),
+          fullBoxVisible: !!publishBox
+            && publishBox.width > 0
+            && publishBox.height > 0
+            && withinViewport(publishBox),
+          visible: visible(publish),
+          withinViewport: withinViewport(publishBox)
+        },
+        wechat: {
+          box: wechatBox,
+          centerHit: centerHit(wechat, wechatBox),
+          visible: visible(wechat),
+          withinViewport: withinViewport(wechatBox)
+        },
+        title: {
+          box: titleBox,
+          centerHit: centerHit(title, titleBox),
+          firstGridRowBottom,
+          fieldMaxWidth: titleStyle?.maxWidth ?? null,
+          inputBox: titleInputBox,
+          inputValue: titleInput instanceof HTMLTextAreaElement ? titleInput.value : null,
+          inputFontSize: titleInputStyle?.fontSize ?? null,
+          inputLineHeight: titleInputStyle?.lineHeight ?? null,
+          inputWithinHeader: !!titleInputBox && !!headerBox
+            && titleInputBox.left >= headerBox.left
+            && titleInputBox.right <= headerBox.right
+            && titleInputBox.top >= headerBox.top
+            && titleInputBox.bottom <= headerBox.bottom,
+          inputWithinOwner: titleInput instanceof HTMLElement && root.contains(titleInput),
+          measureBox: titleMeasureBox,
+          measureMaxWidth: titleMeasureStyle?.maxWidth ?? null,
+          measureText: titleSpan instanceof HTMLElement ? titleSpan.textContent : null,
+          visible: visible(title),
+          withinHeader: !!titleBox && !!headerBox
+            && titleBox.left >= headerBox.left
+            && titleBox.right <= headerBox.right
+        },
+        saveState: { box: saveStateBox, visible: visible(saveState) },
+        viewSwitch: { box: viewSwitchBox, visible: visible(viewSwitch) },
+        outline: { box: outlineBox, visible: visible(outline) },
+        intersections: {
+          publishTitle: intersects(publishBox, titleBox),
+          publishViewSwitch: intersects(publishBox, viewSwitchBox),
+          titlePublish: intersects(titleBox, publishBox),
+          titleSaveState: intersects(titleBox, saveStateBox),
+          titleViewSwitch: intersects(titleBox, viewSwitchBox),
+          formattingSecondary: intersects(formattingBox, secondaryBox),
+          outlineToolbar: intersects(outlineBox, toolbarBox)
+        },
+        copyStartsSecondaryLogicalStart: !!wechatBox && !!secondaryBox
+          && ('rtl' === secondaryDirection
+            ? Math.abs(wechatBox.right - secondaryBox.right) <= 1
+            : Math.abs(wechatBox.left - secondaryBox.left) <= 1)
+      };
+    });
+
+    const mobileLongTitle = `移动端沉浸式标题几何验证MobileTitleWithoutSpaces${'中文标题测试'.repeat(14)}`;
+
+    for (const viewport of [
+      { width: 375, height: 667 },
+      { width: 280, height: 653 },
+      { width: 641, height: 800 },
+      { width: 1080, height: 800 }
+    ]) {
+      await page.setViewportSize(viewport);
+      const originalDir = 375 === viewport.width
+        ? await immersiveRoot.getAttribute('dir')
+        : null;
+      try {
+        if (375 === viewport.width) {
+          await immersiveRoot.evaluate((root) => root.setAttribute('dir', 'rtl'));
+        }
+        await expect(immersiveRoot.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+        const titleInput = immersiveRoot.locator('.easymde-immersive-title-measure > textarea');
+        await titleInput.fill(mobileLongTitle);
+        await expect(titleInput).toHaveValue(mobileLongTitle);
+        await expect(immersiveRoot.locator('.easymde-immersive-title-measure > span'))
+          .toHaveText(mobileLongTitle);
+        const initial = await geometry();
+
+      expect(initial.devicePixelRatio).toBe(1);
+      expect(initial.viewport).toEqual(viewport);
+      expect(initial.header.visible).toBe(true);
+      expect(initial.toolbar.visible).toBe(true);
+      expect(initial.toolbar.scrollLeft).toBe(0);
+      expect(initial.toolbar.centerHit).toBe(true);
+      expect(initial.formatting.visible).toBe(true);
+      expect(initial.secondary.visible).toBe(true);
+      expect(initial.formatting.scrollLeft).toBe(0);
+      expect(initial.secondary.scrollLeft).toBe(0);
+      expect(initial.publish.visible).toBe(true);
+      expect(initial.publish.withinViewport).toBe(true);
+      expect(initial.publish.fullBoxVisible).toBe(true);
+      expect(initial.publish.centerHit).toBe(true);
+      expect(initial.wechat.visible).toBe(true);
+      expect(initial.wechat.withinViewport).toBe(true);
+      expect(initial.wechat.centerHit).toBe(true);
+      expect(initial.title.visible).toBe(true);
+      expect(initial.title.withinHeader).toBe(true);
+      expect(initial.title.centerHit).toBe(true);
+      expect(initial.title.inputWithinOwner).toBe(true);
+      expect(initial.title.inputWithinHeader).toBe(true);
+      expect(initial.title.inputValue).toBe(mobileLongTitle);
+      expect(initial.title.measureText).toBe(mobileLongTitle);
+      expect(initial.title.box?.width).toBeGreaterThan(0);
+      expect(initial.title.box?.height).toBeGreaterThan(0);
+      expect(initial.title.inputBox?.height).toBeGreaterThan(0);
+      expect(initial.title.measureBox?.height).toBeGreaterThan(0);
+      expect(initial.title.box?.top).toBeGreaterThanOrEqual(
+        (initial.header.box?.top ?? 0) - 1
+      );
+      expect(initial.title.box?.bottom).toBeLessThanOrEqual(
+        (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+      );
+      expect(initial.title.inputBox?.bottom).toBeLessThanOrEqual(
+        (initial.title.firstGridRowBottom ?? Number.POSITIVE_INFINITY) + 1
+      );
+      expect(initial.secondary.box?.top).toBeGreaterThanOrEqual(
+        (initial.formatting.box?.bottom ?? 0) - 1
+      );
+      expect(initial.copyStartsSecondaryLogicalStart).toBe(true);
+      expect(initial.intersections.publishTitle).toBe(false);
+      expect(initial.intersections.publishViewSwitch).toBe(false);
+      expect(initial.intersections.titlePublish).toBe(false);
+      expect(initial.intersections.titleSaveState).toBe(false);
+      expect(initial.intersections.titleViewSwitch).toBe(false);
+      expect(initial.intersections.formattingSecondary).toBe(false);
+      expect(initial.intersections.outlineToolbar).toBe(false);
+
+      const showOutlineLabel = immersiveLabels.showOutline;
+      const hideOutlineLabel = immersiveLabels.hideOutline;
+      const showOutline = immersiveRoot.getByRole('button', { name: showOutlineLabel });
+      if (await showOutline.isVisible()) await showOutline.click();
+      await expect(immersiveRoot.locator('.easymde-immersive-outline')).toBeVisible();
+      const expanded = await geometry();
+      expect(expanded.intersections.outlineToolbar).toBe(false);
+      expect(expanded.toolbar.centerHit).toBe(true);
+      expect(expanded.toolbar.scrollLeft).toBe(0);
+
+      await immersiveRoot.getByRole('button', { name: hideOutlineLabel }).first().click();
+      await expect(immersiveRoot.locator('.easymde-immersive-outline')).toHaveCount(0);
+      const collapsed = await geometry();
+      expect(collapsed.intersections.outlineToolbar).toBe(false);
+      expect(collapsed.toolbar.centerHit).toBe(true);
+      expect(collapsed.toolbar.scrollLeft).toBe(0);
+
+      await immersiveRoot.getByRole('button', { name: showOutlineLabel }).click();
+      await expect(immersiveRoot.locator('.easymde-immersive-outline')).toBeVisible();
+      const reopened = await geometry();
+      expect(reopened.intersections.outlineToolbar).toBe(false);
+      expect(reopened.toolbar.centerHit).toBe(true);
+      } finally {
+        if (375 === viewport.width) {
+          await immersiveRoot.evaluate((root, dir) => {
+            if (null === dir) {
+              root.removeAttribute('dir');
+            } else {
+              root.setAttribute('dir', dir);
+            }
+          }, originalDir);
+        }
+      }
+    }
+  });
+
+  test('keeps the immersive long title contained across the header breakpoint boundary', async ({ page }, testInfo) => {
+    const unexpectedPostRequests = [];
+    const heartbeatPostRequests = [];
+    const communityEventsPostRequests = [];
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/admin-ajax.php',
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat'
+    })).toEqual({
+      classification: 'heartbeat-readonly',
+      metadata: {
+        pathname: '/wp-admin/admin-ajax.php',
+        action: 'heartbeat',
+        keys: ['action']
+      }
+    });
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/admin-ajax.php',
+      contentType: 'application/x-www-form-urlencoded',
+      postData: 'action=heartbeat&data%5Bwp_autosave%5D='
+    }).classification).toBe('unexpected-write');
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/admin-ajax.php',
+      contentType: 'application/json',
+      postData: '{"action":"heartbeat","data":{"wp_autosave":{}}}'
+    }).classification).toBe('unexpected-write');
+    expect(classifyReadonlyPostRequest({
+      pathname: '/wp-admin/admin-ajax.php',
+      contentType: 'application/json',
+      postData: '{"action":"heartbeat","data":{"unknown":{}}}'
+    }).classification).toBe('unexpected-write');
+    await login(page, testInfo.easymdeUser);
+    page.on('request', (request) => {
+      if ('POST' !== request.method()) return;
+      let url;
+      try {
+        url = new URL(request.url());
+      } catch {
+        unexpectedPostRequests.push({ pathname: 'invalid-url', action: 'missing', keys: [] });
+        return;
+      }
+      const pathname = url.pathname;
+      if (pathname.endsWith('/wp-json/easymde/v1/preview')) return;
+      const classified = classifyReadonlyPostRequest({
+        pathname,
+        search: url.search,
+        contentType: request.headers()['content-type'] ?? '',
+        postData: request.postData() ?? ''
+      });
+      if ('community-events-readonly' === classified.classification) {
+        communityEventsPostRequests.push(classified.metadata);
+        return;
+      }
+      if ('heartbeat-readonly' === classified.classification) {
+        heartbeatPostRequests.push(classified.metadata);
+        return;
+      }
+      if ('unexpected-write' === classified.classification) {
+        unexpectedPostRequests.push(classified.metadata);
+        return;
+      }
+      unexpectedPostRequests.push(classified.metadata);
+    });
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+
+    const bootstrap = await page.evaluate(() => ({
+      immersive: window.EasyMDEEditorRootBootstrap.strings.immersive,
+      statusBarMode: window.EasyMDEEditorRootBootstrap.settings.general.statusBarMode
+    }));
+    expect(bootstrap.statusBarMode).toBe('detailed');
+
+    const editorOwner = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"]'
+    );
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveRoot = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(immersiveRoot).toHaveCount(1);
+    await expect(immersiveRoot.getByRole('region', {
+      name: bootstrap.immersive.immersive
+    })).toBeVisible();
+    await expect(immersiveRoot.locator('.easymde-immersive-stats > span'))
+      .toHaveCount(3);
+
+    const titleValue = '沉浸式长标题中文EnglishTitleWithoutSpaces'.repeat(6);
+    const titleInput = immersiveRoot.locator('.easymde-immersive-title-measure > textarea');
+    const titleMeasure = immersiveRoot.locator('.easymde-immersive-title-measure > span');
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const select = (selector) => root.querySelector(selector);
+      const rect = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const box = element.getBoundingClientRect();
+        return {
+          bottom: box.bottom,
+          height: box.height,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+          width: box.width
+        };
+      };
+      const visible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && box.width > 0
+          && box.height > 0;
+      };
+      const withinViewport = (box) => !!box
+        && box.left >= -1
+        && box.top >= -1
+        && box.right <= window.innerWidth + 1
+        && box.bottom <= window.innerHeight + 1;
+      const centerHit = (element, box) => {
+        if (!(element instanceof HTMLElement) || !box) return false;
+        const target = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2
+        );
+        return target === element || element.contains(target);
+      };
+      const intersects = (first, second) => !!first && !!second
+        && first.left < second.right - 1
+        && first.right > second.left + 1
+        && first.top < second.bottom - 1
+        && first.bottom > second.top + 1;
+
+      const header = select('.easymde-immersive-header');
+      const title = select('.easymde-immersive-title-field');
+      const titleMeasure = select('.easymde-immersive-title-measure');
+      const titleInput = select('.easymde-immersive-title-measure > textarea');
+      const titleSpan = select('.easymde-immersive-title-measure > span');
+      const publish = select('.easymde-immersive-publish');
+      const saveState = select('.easymde-immersive-save-state');
+      const stats = select('.easymde-immersive-stats');
+      const viewSwitch = select('.easymde-immersive-view-switch');
+      const headerBox = rect(header);
+      const titleBox = rect(title);
+      const titleMeasureBox = rect(titleMeasure);
+      const titleInputBox = rect(titleInput);
+      const publishBox = rect(publish);
+      const saveStateBox = rect(saveState);
+      const statsBox = rect(stats);
+      const viewSwitchBox = rect(viewSwitch);
+      const headerStyle = header instanceof HTMLElement ? getComputedStyle(header) : null;
+      const inputStyle = titleInput instanceof HTMLElement ? getComputedStyle(titleInput) : null;
+
+      return {
+        direction: root.getAttribute('dir') || getComputedStyle(root).direction,
+        header: {
+          box: headerBox,
+          display: headerStyle?.display ?? null,
+          height: headerBox?.height ?? 0,
+          variable: getComputedStyle(root)
+            .getPropertyValue('--easymde-immersive-header-height').trim()
+        },
+        title: {
+          box: titleBox,
+          centerHit: centerHit(title, titleBox),
+          inputBox: titleInputBox,
+          inputClientHeight: titleInput instanceof HTMLElement ? titleInput.clientHeight : 0,
+          inputLineHeight: inputStyle?.lineHeight ?? null,
+          inputValue: titleInput instanceof HTMLTextAreaElement ? titleInput.value : null,
+          measureBox: titleMeasureBox,
+          measureClientHeight: titleMeasure instanceof HTMLElement
+            ? titleMeasure.clientHeight
+            : 0,
+          measureText: titleSpan instanceof HTMLElement ? titleSpan.textContent : null,
+          withinHeader: !!titleBox && !!headerBox
+            && titleBox.left >= headerBox.left - 1
+            && titleBox.right <= headerBox.right + 1
+            && titleBox.top >= headerBox.top - 1
+            && titleBox.bottom <= headerBox.bottom + 1,
+          inputWithinHeader: !!titleInputBox && !!headerBox
+            && titleInputBox.left >= headerBox.left - 1
+            && titleInputBox.right <= headerBox.right + 1
+            && titleInputBox.top >= headerBox.top - 1
+            && titleInputBox.bottom <= headerBox.bottom + 1,
+          visible: visible(title)
+        },
+        publish: {
+          box: publishBox,
+          centerHit: centerHit(publish, publishBox),
+          fullBoxVisible: visible(publish) && withinViewport(publishBox),
+          visible: visible(publish)
+        },
+        saveState: {
+          box: saveStateBox,
+          centerHit: centerHit(saveState, saveStateBox),
+          fullBoxVisible: visible(saveState) && withinViewport(saveStateBox),
+          visible: visible(saveState)
+        },
+        stats: {
+          box: statsBox,
+          count: stats?.querySelectorAll(':scope > span').length ?? 0,
+          centerHit: centerHit(stats, statsBox),
+          fullBoxVisible: visible(stats) && withinViewport(statsBox),
+          visible: visible(stats)
+        },
+        viewSwitch: {
+          box: viewSwitchBox,
+          centerHit: centerHit(viewSwitch, viewSwitchBox),
+          fullBoxVisible: visible(viewSwitch) && withinViewport(viewSwitchBox),
+          visible: visible(viewSwitch)
+        },
+        dirty: !!root.querySelector('.easymde-immersive-save-state.is-dirty'),
+        intersections: {
+          publishTitle: intersects(publishBox, titleBox),
+          titleSaveState: intersects(titleBox, saveStateBox),
+          titleStats: intersects(titleBox, statsBox),
+          titleViewSwitch: intersects(titleBox, viewSwitchBox)
+        }
+      };
+    });
+
+    for (const viewport of [
+      { width: 1081, height: 800 },
+      { width: 1097, height: 800 },
+      { width: 1113, height: 800 },
+      { width: 1129, height: 800 },
+      { width: 1145, height: 800 },
+      { width: 1161, height: 800 },
+      { width: 1177, height: 800 },
+      { width: 1193, height: 800 },
+      { width: 1209, height: 800 },
+      { width: 1225, height: 800 },
+      { width: 1231, height: 800 },
+      { width: 1232, height: 800 },
+      { width: 1233, height: 800 },
+      { width: 1241, height: 800 },
+      { width: 1257, height: 800 },
+      { width: 1273, height: 800 },
+      { width: 1279, height: 800 },
+      { width: 1280, height: 800 },
+      { width: 1440, height: 800 }
+    ]) {
+      await page.setViewportSize(viewport);
+      const useRtl = viewport.width === 1232;
+      const originalDir = useRtl ? await immersiveRoot.getAttribute('dir') : null;
+      try {
+        if (useRtl) {
+          await immersiveRoot.evaluate((root) => root.setAttribute('dir', 'rtl'));
+        }
+        await titleInput.fill(titleValue);
+        await expect(titleInput).toHaveValue(titleValue);
+        await expect(titleMeasure).toHaveText(titleValue);
+        const state = await geometry();
+        const isTwoRowHeader = viewport.width <= 1232;
+
+        expect(state.header.display).toBe(isTwoRowHeader ? 'grid' : 'flex');
+        expect(state.header.variable).toBe(isTwoRowHeader ? '76px' : '60px');
+        expect(state.header.height).toBeGreaterThanOrEqual(isTwoRowHeader ? 75 : 59);
+        expect(state.title.visible).toBe(true);
+        expect(state.title.withinHeader).toBe(true);
+        expect(state.title.inputWithinHeader).toBe(true);
+        expect(state.title.centerHit).toBe(true);
+        expect(state.title.inputValue).toBe(titleValue);
+        expect(state.title.measureText).toBe(titleValue);
+        expect(state.title.inputClientHeight).toBeGreaterThanOrEqual(19);
+        expect(state.title.measureClientHeight).toBeGreaterThanOrEqual(19);
+        expect(state.title.inputLineHeight).toBe('18.75px');
+        expect(state.publish.visible).toBe(true);
+        expect(state.publish.fullBoxVisible).toBe(true);
+        expect(state.publish.centerHit).toBe(true);
+        expect(state.stats.visible).toBe(true);
+        expect(state.stats.count).toBe(3);
+        expect(state.dirty).toBe(true);
+        expect(state.intersections.publishTitle).toBe(false);
+        expect(state.intersections.titleSaveState).toBe(false);
+        expect(state.intersections.titleStats).toBe(false);
+        expect(state.intersections.titleViewSwitch).toBe(false);
+
+        if (viewport.width >= 1280) {
+          expect(state.viewSwitch.visible).toBe(true);
+          expect(state.viewSwitch.fullBoxVisible).toBe(true);
+          expect(state.viewSwitch.centerHit).toBe(true);
+          expect(state.saveState.visible).toBe(true);
+          expect(state.saveState.fullBoxVisible).toBe(true);
+          expect(state.saveState.centerHit).toBe(true);
+          expect(state.stats.fullBoxVisible).toBe(true);
+          expect(state.stats.centerHit).toBe(true);
+        }
+        if (useRtl) expect(state.direction).toBe('rtl');
+      } finally {
+        if (useRtl) {
+          await immersiveRoot.evaluate((root, dir) => {
+            if (null === dir) root.removeAttribute('dir');
+            else root.setAttribute('dir', dir);
+          }, originalDir);
+        }
+      }
+    }
+    expect(
+      unexpectedPostRequests,
+      `non-readonly POSTs observed; heartbeat-count=${heartbeatPostRequests.length}; community-events-count=${communityEventsPostRequests.length}`
+    ).toEqual([]);
+  });
+
+  test('keeps split panes usable beside an outline at intermediate widths', async ({ page }, testInfo) => {
+    await login(page, testInfo.easymdeUser);
+    await openEasyMdeNewPost(page);
+    const markdown = await canonicalMarkdownForPage(page);
+    await fillMarkdownAndWaitForPreview(page, markdown, null);
+
+    const labels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.setViewportSize({ width: 641, height: 800 });
+    const editorOwner = page.locator('.easymde-editor[data-easymde-editor-owner="react"]');
+    await editorOwner.locator('.easymde-toolbar-immersive-toggle').click();
+
+    const editor = page.locator(
+      '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+    );
+    await expect(editor).toHaveCount(1);
+    await expect(editor.getByRole('region', { name: labels.immersive })).toBeVisible();
+    const splitPreviewSetting = editor.getByRole('button', {
+      name: labels.editorSettings
+    });
+    await splitPreviewSetting.click();
+    const settingsDialog = editor.getByRole('dialog', { name: labels.editorSettings });
+    await expect(settingsDialog).toBeVisible();
+    const splitCheckbox = settingsDialog.getByRole('checkbox', { name: labels.splitPreview });
+    if (!await splitCheckbox.isChecked()) await splitCheckbox.click();
+    await page.keyboard.press('Escape');
+    await expect(editor).toHaveClass(/is-immersive-split/);
+
+    const geometry = () => page.evaluate(() => {
+      const root = document.querySelector(
+        '.easymde-editor[data-easymde-editor-owner="react"].is-immersive'
+      );
+      if (!(root instanceof HTMLElement)) throw new Error('react-immersive-root-unavailable');
+      const element = (selector) => root.querySelector(selector);
+      const box = (node) => {
+        if (!(node instanceof HTMLElement)) return null;
+        const rect = node.getBoundingClientRect();
+        return {
+          bottom: rect.bottom,
+          height: rect.height,
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          width: rect.width
+        };
+      };
+      const visible = (node) => {
+        if (!(node instanceof HTMLElement)) return false;
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const centerHit = (node, rect) => {
+        if (!(node instanceof HTMLElement) || !rect) return false;
+        const target = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        );
+        return target === node || node.contains(target);
+      };
+
+      const workspace = element('.easymde-workspace.is-split-resizable');
+      const source = element('.easymde-pane-source');
+      const preview = element('.easymde-pane-preview');
+      const divider = element('.easymde-immersive-pane-divider');
+      const outline = element('.easymde-immersive-outline');
+      const outlineShow = element('.easymde-immersive-outline-show');
+      const outlineClose = element('.easymde-immersive-outline-close');
+      const toolbar = element('.easymde-immersive-toolbar-row');
+      const formatting = element('.easymde-immersive-formatting');
+      const secondary = element('.easymde-immersive-secondary-actions');
+      const copy = element('.easymde-immersive-wechat');
+      const sourceBox = box(source);
+      const previewBox = box(preview);
+      const workspaceBox = box(workspace);
+      const toolbarBox = box(toolbar);
+      const dividerStyle = divider instanceof HTMLElement ? getComputedStyle(divider) : null;
+
+      return {
+        mode: root instanceof HTMLElement
+          ? ['is-immersive-source', 'is-immersive-split', 'is-immersive-preview']
+            .find((name) => root.classList.contains(name)) ?? null
+          : null,
+        source: { box: sourceBox, visible: visible(source) },
+        preview: { box: previewBox, visible: visible(preview) },
+        workspace: { box: workspaceBox, visible: visible(workspace) },
+        divider: {
+          exists: !!divider,
+          display: dividerStyle?.display ?? null
+        },
+        outline: { box: box(outline), visible: visible(outline) },
+        outlineShow: {
+          box: box(outlineShow),
+          centerHit: centerHit(outlineShow, box(outlineShow)),
+          visible: visible(outlineShow)
+        },
+        outlineClose: {
+          box: box(outlineClose),
+          centerHit: centerHit(outlineClose, box(outlineClose)),
+          visible: visible(outlineClose)
+        },
+        toolbar: {
+          box: toolbarBox,
+          centerHit: centerHit(toolbar, toolbarBox),
+          scrollLeft: toolbar instanceof HTMLElement ? toolbar.scrollLeft : null
+        },
+        formatting: {
+          box: box(formatting),
+          scrollLeft: formatting instanceof HTMLElement ? formatting.scrollLeft : null
+        },
+        secondary: {
+          box: box(secondary),
+          scrollLeft: secondary instanceof HTMLElement ? secondary.scrollLeft : null
+        },
+        copy: {
+          box: box(copy),
+          centerHit: centerHit(copy, box(copy)),
+          visible: visible(copy)
+        }
+      };
+    });
+
+    const assertSharedMobileControls = (state) => {
+      expect(state.copy.visible).toBe(true);
+      expect(state.copy.centerHit).toBe(true);
+      expect(state.toolbar.centerHit).toBe(true);
+      expect(state.toolbar.scrollLeft).toBe(0);
+      expect(state.formatting.scrollLeft).toBe(0);
+      expect(state.secondary.scrollLeft).toBe(0);
+    };
+
+    const assertOpenSplit = (state) => {
+      expect(state.mode).toBe('is-immersive-split');
+      expect(state.outline.visible).toBe(true);
+      expect(state.outlineClose.centerHit).toBe(true);
+      expect(state.divider.display).toBe('none');
+      expect(state.source.visible).toBe(true);
+      expect(state.preview.visible).toBe(true);
+      expect(Math.abs(state.source.box.left - state.preview.box.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(state.source.box.width - state.preview.box.width)).toBeLessThanOrEqual(1);
+      expect(state.source.box.top).toBeLessThan(state.preview.box.top);
+      expect(state.source.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      expect(state.preview.box.right).toBeLessThanOrEqual(state.workspace.box.right + 1);
+      assertSharedMobileControls(state);
+    };
+
+    const assertClosedSplit = (state) => {
+      expect(state.mode).toBe('is-immersive-split');
+      expect(state.outline.visible).toBe(false);
+      expect(state.outlineShow.visible).toBe(true);
+      expect(state.outlineShow.centerHit).toBe(true);
+      expect(state.divider.display).not.toBe('none');
+      expect(state.source.visible).toBe(true);
+      expect(state.preview.visible).toBe(true);
+      expect(Math.abs(state.source.box.top - state.preview.box.top)).toBeLessThanOrEqual(1);
+      expect(state.source.box.left).toBeLessThan(state.preview.box.left);
+      assertSharedMobileControls(state);
+    };
+
+    for (const viewport of [
+      { width: 641, height: 800 },
+      { width: 782, height: 800 },
+      { width: 783, height: 800 }
+    ]) {
+      await page.setViewportSize(viewport);
+      await expect(editor).toHaveClass(/is-immersive-split/);
+      if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+        await editor.getByRole('button', { name: labels.showOutline }).click();
+      }
+      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+      assertOpenSplit(await geometry());
+
+      await editor.getByRole('button', { name: labels.hideOutline }).first().click();
+      await expect(editor.locator('.easymde-immersive-outline')).toHaveCount(0);
+      assertClosedSplit(await geometry());
+
+      await editor.getByRole('button', { name: labels.showOutline }).click();
+      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+    }
+
+    await page.setViewportSize({ width: 1081, height: 800 });
+    await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+    const wideOpen = await geometry();
+    expect(wideOpen.mode).toBe('is-immersive-split');
+    expect(wideOpen.source.box.top).toBeLessThanOrEqual(wideOpen.preview.box.top + 1);
+    expect(wideOpen.source.box.left).toBeLessThan(wideOpen.preview.box.left);
+    assertSharedMobileControls(wideOpen);
+
+    await editor.getByRole('button', { name: labels.preview, exact: true }).click();
+    await expect(editor).toHaveClass(/is-immersive-preview/);
+    const previewMode = await geometry();
+    expect(previewMode.source.visible).toBe(false);
+    expect(previewMode.preview.visible).toBe(true);
+    expect(previewMode.divider.exists).toBe(false);
+    await editor.getByRole('button', { name: labels.edit, exact: true }).click();
+    await expect(editor).toHaveClass(/is-immersive-source/);
+    const sourceMode = await geometry();
+    expect(sourceMode.source.visible).toBe(true);
+    expect(sourceMode.preview.visible).toBe(false);
+    expect(sourceMode.divider.exists).toBe(false);
+
+    await page.setViewportSize({ width: 783, height: 800 });
+    const originalDir = await editor.getAttribute('dir');
+    try {
+      await editor.evaluate((root) => root.setAttribute('dir', 'rtl'));
+      await editor.getByRole('button', { name: labels.split, exact: true }).click();
+      await expect(editor).toHaveClass(/is-immersive-split/);
+      if (!await editor.locator('.easymde-immersive-outline').isVisible()) {
+        await editor.getByRole('button', { name: labels.showOutline }).click();
+      }
+      await expect(editor.locator('.easymde-immersive-outline')).toBeVisible();
+      assertOpenSplit(await geometry());
+    } finally {
+      await editor.evaluate((root, dir) => {
+        if (null === dir) root.removeAttribute('dir');
+        else root.setAttribute('dir', dir);
+      }, originalDir);
+    }
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(editor).toHaveClass(/is-immersive-split/);
+    const desktopSplit = await geometry();
+    expect(desktopSplit.source.box.top).toBeLessThanOrEqual(desktopSplit.preview.box.top + 1);
+    expect(desktopSplit.source.box.left).toBeLessThan(desktopSplit.preview.box.left);
+    assertSharedMobileControls(desktopSplit);
   });
 
   test('keeps immersive split preview session-only across re-entry and restores Settings Center mode after reloads', async ({ page, context }, testInfo) => {
@@ -7135,6 +8088,472 @@ test.describe('EasyMDE editor workflows', () => {
     await expect.poll(() => source.inputValue()).toBe(expectedSourceAfterRepeatedDeletion);
     expect(browserFailures).toEqual([]);
   });
+
+  for (const viewportWidth of [1280, 375, 320]) {
+    test(`keeps Crimson Focus native task markers bounded at ${viewportWidth}px`, async ({ page }, testInfo) => {
+    test.setTimeout(180_000);
+    const browserFailures = [];
+    const geometryEvidence = [];
+    page.on('pageerror', (error) => browserFailures.push(`pageerror:${error.name}`));
+    page.on('console', (message) => {
+      if ('error' !== message.type()) return;
+      const code = message.text().match(/^\[EasyMDE\] ([a-z0-9-]+)$/u)?.[1];
+      browserFailures.push(code ?? 'console-error');
+    });
+
+    const readTaskGeometry = async (preview, phase) => {
+      const evidence = await preview.evaluate((root, currentPhase) => {
+        const number = (value) => {
+          const parsed = Number.parseFloat(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        };
+        const structuralClass = /^(?:admin|edit|easymde|editor|post|postbox|wp|wrap)/u;
+        const structuralId = /^(?:admin|content|editor|post|title|wp)/u;
+        const stableSelector = (element) => {
+          const segments = [];
+          let current = element;
+          for (let depth = 0; current instanceof Element && depth < 8; depth += 1) {
+            const tag = current.tagName.toLowerCase();
+            const id = current.id && structuralId.test(current.id) ? `#${current.id}` : '';
+            const classes = [...current.classList]
+              .filter((className) => structuralClass.test(className))
+              .slice(0, 3)
+              .map((className) => `.${className}`)
+              .join('');
+            if (id) {
+              segments.unshift(`${tag}${id}`);
+              break;
+            }
+            const siblings = current.parentElement
+              ? [...current.parentElement.children].filter(
+                (sibling) => sibling.tagName === current.tagName
+              )
+              : [];
+            const index = siblings.indexOf(current) + 1;
+            segments.unshift(`${tag}${classes || `:nth-of-type(${index})`}`);
+            current = current.parentElement;
+          }
+          return segments.join(' > ');
+        };
+        const rect = (element) => {
+          const box = element.getBoundingClientRect();
+          return {
+            bottom: box.bottom,
+            height: box.height,
+            left: box.left,
+            right: box.right,
+            top: box.top,
+            width: box.width
+          };
+        };
+        const ownerMetric = (element, label = stableSelector(element)) => {
+          if (!(element instanceof Element)) return null;
+          const style = getComputedStyle(element);
+          return {
+            clientWidth: element.clientWidth,
+            overflowX: style.overflowX,
+            overflowY: style.overflowY,
+            rect: rect(element),
+            scrollWidth: element.scrollWidth,
+            selector: label
+          };
+        };
+        const overflowOwner = (element) => {
+          let current = element.parentElement;
+          while (current) {
+            if (current.scrollWidth - current.clientWidth > 1) {
+              return ownerMetric(current);
+            }
+            current = current.parentElement;
+          }
+          return null;
+        };
+        const diagnosticOwners = [
+          ['documentElement', document.documentElement],
+          ['body', document.body],
+          ['wpwrap', document.querySelector('#wpwrap')],
+          ['wpcontent', document.querySelector('#wpcontent')],
+          ['wpbody', document.querySelector('#wpbody')],
+          ['wpbody-content', document.querySelector('#wpbody-content')],
+          ['wrap', document.querySelector('.wrap')],
+          ['editor', root.closest('[data-easymde-editor-owner="react"]')],
+          ['preview-pane', root.closest('.easymde-pane-preview')],
+          ['preview-canvas', root.closest('.easymde-immersive-preview-canvas')],
+          ['article', root]
+        ].map(([label, element]) => ownerMetric(element, label)).filter(Boolean);
+        const ownerNames = new Set(['editor', 'preview-pane', 'preview-canvas', 'article']);
+        const ownerSummary = diagnosticOwners
+          .filter(({ selector }) => ownerNames.has(selector))
+          .map(({ clientWidth, overflowX, overflowY, scrollWidth, selector }) => ({
+            clientWidth,
+            overflowX,
+            overflowY,
+            scrollWidth,
+            selector
+          }));
+        const shellSummary = diagnosticOwners
+          .filter(({ selector }) => !ownerNames.has(selector))
+          .map(({ clientWidth, overflowX, overflowY, scrollWidth, selector }) => ({
+            clientWidth,
+            overflowX,
+            overflowY,
+            scrollWidth,
+            selector
+          }));
+        const hasEasyMdeOwnerOverflow = ownerSummary.some(
+          ({ clientWidth, scrollWidth }) => scrollWidth - clientWidth > 1
+        );
+        const viewportWidth = document.documentElement.clientWidth;
+        const viewportOffenders = hasEasyMdeOwnerOverflow
+          ? [...document.querySelectorAll('*')]
+            .map((element) => {
+              const box = element.getBoundingClientRect();
+              const outsideLeft = Math.max(0, -box.left);
+              const outsideRight = Math.max(0, box.right - viewportWidth);
+              return {
+                element,
+                outsideLeft,
+                outsideRight,
+                rect: box
+              };
+            })
+            .filter(({ rect, outsideLeft, outsideRight }) => (
+              rect.width > 0
+              && rect.height > 0
+              && (outsideLeft > 1 || outsideRight > 1)
+            ))
+            .sort((first, second) => (
+              Math.max(second.outsideLeft, second.outsideRight)
+              - Math.max(first.outsideLeft, first.outsideRight)
+            ))
+            .slice(0, 24)
+            .map(({ element, outsideLeft, outsideRight, rect: box }) => ({
+              ancestorOverflowOwner: overflowOwner(element),
+              outsideLeft,
+              outsideRight,
+              rect: {
+                bottom: box.bottom,
+                height: box.height,
+                left: box.left,
+                right: box.right,
+                top: box.top,
+                width: box.width
+              },
+              selector: stableSelector(element)
+            }))
+          : [];
+        const textNodeFor = (item) => {
+          const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+          let node = walker.nextNode();
+          while (node) {
+            if (
+              node.parentElement?.closest('li.task-list-item') === item
+              && node.data.trim()
+            ) return node;
+            node = walker.nextNode();
+          }
+          return null;
+        };
+        const textGeometry = (item) => {
+          const node = textNodeFor(item);
+          if (!node) return null;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const boxes = [...range.getClientRects()];
+          if (!boxes.length) return null;
+          return {
+            bottom: Math.max(...boxes.map(({ bottom }) => bottom)),
+            left: Math.min(...boxes.map(({ left }) => left)),
+            lineCount: boxes.length,
+            right: Math.max(...boxes.map(({ right }) => right)),
+            top: Math.min(...boxes.map(({ top }) => top))
+          };
+        };
+        const items = [...root.querySelectorAll('li.task-list-item')].map((item) => {
+          const input = item.querySelector(':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]');
+          if (!(item instanceof HTMLElement) || !(input instanceof HTMLInputElement)) {
+            throw new Error('crimson-task-marker-input-unavailable');
+          }
+          const shape = input.parentElement === item
+            ? 'direct'
+            : input.parentElement?.tagName === 'P'
+              && input.parentElement.parentElement === item
+              ? 'p-wrapped'
+              : 'other';
+          const itemStyle = getComputedStyle(item);
+          const inputStyle = getComputedStyle(input);
+          const before = getComputedStyle(input, '::before');
+          const after = getComputedStyle(input, '::after');
+          const text = textGeometry(item);
+          return {
+            checked: input.checked,
+            frame: rect(input),
+            item: rect(item),
+            itemLineHeight: number(itemStyle.lineHeight),
+            marker: {
+              after: {
+                bottom: number(after.bottom),
+                content: after.content,
+                display: after.display,
+                height: number(after.height),
+                left: number(after.left),
+                position: after.position,
+                right: number(after.right),
+                top: number(after.top),
+                width: number(after.width)
+              },
+              before: {
+                content: before.content,
+                display: before.display,
+                float: before.float,
+                height: number(before.height),
+                width: number(before.width)
+              },
+              inputDisplay: inputStyle.display
+            },
+            phase: currentPhase,
+            shape,
+            text
+          };
+        });
+        const rootBox = root.getBoundingClientRect();
+        const scrolling = document.scrollingElement;
+        return {
+          direction: getComputedStyle(root).direction,
+          hasEasyMdeOwnerOverflow,
+          items,
+          ownerSummary,
+          pageOverflowX: scrolling ? scrolling.scrollWidth - scrolling.clientWidth : null,
+          shellSummary,
+          viewportOffenders,
+          root: {
+            height: rootBox.height,
+            width: rootBox.width
+          },
+          shapeCounts: {
+            direct: items.filter(({ shape }) => 'direct' === shape).length,
+            other: items.filter(({ shape }) => 'other' === shape).length,
+            pWrapped: items.filter(({ shape }) => 'p-wrapped' === shape).length
+          }
+        };
+      }, phase);
+
+      if (Number.isFinite(evidence.pageOverflowX) && evidence.pageOverflowX > 1) {
+        process.stdout.write(`[easymde-owner-summary] ${JSON.stringify({
+          ownerSummary: evidence.ownerSummary,
+          pageOverflowX: evidence.pageOverflowX,
+          phase: evidence.phase,
+          shellSummary: evidence.shellSummary
+        })}\n`);
+      }
+      if (evidence.hasEasyMdeOwnerOverflow) {
+        const overflowDiagnosticJson = JSON.stringify({
+          ownerSummary: evidence.ownerSummary,
+          pageOverflowX: evidence.pageOverflowX,
+          phase: evidence.phase,
+          viewportOffenders: evidence.viewportOffenders
+        }, null, 2);
+        await testInfo.attach(`crimson-focus-overflow-${phase}.json`, {
+          body: overflowDiagnosticJson,
+          contentType: 'application/json'
+        });
+      }
+
+      expect(evidence.root.width, `${phase} Preview root width`).toBeGreaterThan(0);
+      expect(evidence.root.height, `${phase} Preview root height`).toBeGreaterThan(0);
+      expect(evidence.items, `${phase} task items`).not.toHaveLength(0);
+      expect(evidence.items.some(({ checked }) => checked), `${phase} checked task`).toBe(true);
+      expect(evidence.items.some(({ checked }) => !checked), `${phase} unchecked task`).toBe(true);
+      expect(evidence.shapeCounts.other, `${phase} unknown task shape`).toBe(0);
+      expect(evidence.items.every(({ text }) => text?.lineCount === 1), `${phase} task text wrapping`)
+        .toBe(true);
+      for (const ownerName of ['editor', 'preview-pane', 'preview-canvas', 'article']) {
+        const owner = evidence.ownerSummary.find(({ selector }) => selector === ownerName);
+        expect(owner, `${phase} ${ownerName} geometry`).not.toBeNull();
+        if (owner) {
+          expect(
+            owner.scrollWidth - owner.clientWidth,
+            `${phase} ${ownerName} horizontal overflow`
+          ).toBeLessThanOrEqual(1);
+        }
+      }
+
+      for (const item of evidence.items) {
+        expect(item.frame.width, `${phase} marker width`).toBeCloseTo(13, 1);
+        expect(item.frame.height, `${phase} marker height`).toBeCloseTo(13, 1);
+        expect(item.frame.right, `${phase} marker inside item`).toBeLessThanOrEqual(item.item.right + 1);
+        expect(item.text, `${phase} task text geometry`).not.toBeNull();
+        expect(item.text.top, `${phase} task text baseline`).toBeGreaterThanOrEqual(item.item.top - 1);
+        expect(item.marker.before.content, `${phase} WP before content`).toBe('none');
+        expect(item.marker.before.display, `${phase} WP before display`).toBe('none');
+        if (item.checked) {
+          expect(item.marker.after.content, `${phase} checked glyph content`).toContain('✓');
+          expect(item.marker.after.display, `${phase} checked glyph display`).toBe('block');
+          expect(item.marker.after.position, `${phase} checked glyph position`).toBe('absolute');
+          for (const edge of ['top', 'right', 'bottom', 'left']) {
+            expect(item.marker.after[edge], `${phase} checked glyph ${edge}`).toBeCloseTo(0, 1);
+          }
+          expect(item.marker.after.width, `${phase} checked glyph width`).toBeLessThanOrEqual(item.frame.width + 1);
+          expect(item.marker.after.height, `${phase} checked glyph height`).toBeLessThanOrEqual(item.frame.height + 1);
+        }
+      }
+
+      for (const shape of ['direct', 'p-wrapped']) {
+        const shaped = evidence.items.filter(({ shape: actualShape }) => actualShape === shape);
+        const checked = shaped.filter(({ checked }) => checked);
+        const unchecked = shaped.filter(({ checked }) => !checked);
+        if (!checked.length || !unchecked.length) continue;
+        const heights = shaped.map(({ item }) => item.height);
+        const baselines = shaped.map(({ item, text }) => text.top - item.top);
+        expect(Math.max(...heights) - Math.min(...heights), `${phase} ${shape} LI height spread`)
+          .toBeLessThanOrEqual(1);
+        expect(
+          Math.max(...baselines) - Math.min(...baselines),
+          `${phase} ${shape} text baseline spread`
+        ).toBeLessThanOrEqual(1);
+      }
+
+      return evidence;
+    };
+
+    const assertCrimsonTheme = async () => {
+      const catalog = await editorThemeCatalog(page);
+      const crimson = catalog.articleThemes.find(({ id }) => 'crimson-focus' === id);
+      if (!crimson) throw new Error('crimson-focus-article-theme-unavailable');
+      const codeTheme = catalog.codeThemes.find(
+        ({ id }) => id === crimson.defaultCodeTheme
+      );
+      if (!codeTheme) throw new Error('crimson-focus-default-code-theme-unavailable');
+      const labels = await page.evaluate(() => ({
+        ...window.EasyMDEEditorRootBootstrap.strings.immersive,
+        articleTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.articleTheme,
+        codeTheme: window.EasyMDEEditorRootBootstrap.appearance.strings.codeTheme
+      }));
+      for (const key of [
+        'articleTheme',
+        'codeTheme',
+        'editorSettings',
+        'enter',
+        'previewMode',
+        'previewContentLoaded',
+        'editMode',
+        'exit',
+        'immersive'
+      ]) {
+        if ('string' !== typeof labels[key] || !labels[key].trim()) {
+          throw new Error(`crimson-label-unavailable:${key}`);
+        }
+      }
+      const settingsTrigger = page.locator('.easymde-toolbar-section-secondary')
+        .getByRole('button', { name: labels.editorSettings, exact: true });
+      await settingsTrigger.click();
+      const settingsDialog = page.getByRole('dialog', { name: labels.editorSettings });
+      const articleSelect = settingsDialog.getByRole('combobox', {
+        name: labels.articleTheme,
+        exact: true
+      });
+      const codeSelect = settingsDialog.getByRole('combobox', {
+        name: labels.codeTheme,
+        exact: true
+      });
+      await selectOrdinaryOption(page, articleSelect, crimson.label);
+      await expect(page.locator(
+        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      )).toHaveClass(/easymde-markdown-theme-crimson-focus/);
+      await selectOrdinaryOption(page, codeSelect, codeTheme.label);
+      await expect(page.locator(
+        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+      )).toHaveClass(new RegExp(`easymde-code-theme-${codeTheme.id}`));
+      await page.keyboard.press('Escape');
+      await expect(settingsDialog).toHaveCount(0);
+      return labels;
+    };
+
+    await login(page, testInfo.easymdeUser);
+    await page.setViewportSize({ width: viewportWidth, height: 900 });
+    await openEasyMdeNewPost(page);
+    const fixtureImageUrl = new URL(
+      '/easymde-e2e-fixtures/markdown-full-capability-image.png',
+      page.url()
+    ).href;
+    await page.route(fixtureImageUrl, (route) => route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: fullCapabilityImage
+    }));
+    const markdown = canonicalMarkdownForSite(fixtureImageUrl);
+    expect(fullCapabilityFixtureEvidence.sha256)
+      .toBe('ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb');
+
+    try {
+      const width = viewportWidth;
+        const labels = await assertCrimsonTheme();
+        const source = page.locator('#easymde-source');
+        await fillMarkdownAndWaitForPreview(page, markdown, 'Markdown 全量能力测试文档');
+        await expect(source).toHaveValue(markdown);
+        const ordinaryPreview = page.locator(
+          '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+        );
+        await expect(ordinaryPreview).toHaveClass(/easymde-code-theme-atom-one-dark/);
+        await expect(ordinaryPreview).toHaveAttribute('aria-busy', 'false');
+        await expect(ordinaryPreview).not.toHaveAttribute('data-easymde-preview-error', '1');
+        const ordinary = await readTaskGeometry(ordinaryPreview, `ordinary-${width}`);
+
+        await page.getByRole('button', { name: labels.enter, exact: true }).click();
+        await page.getByRole('button', { name: labels.previewMode, exact: true }).click();
+        await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+        const immersivePreview = page.locator(
+          '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+        );
+        await expect(immersivePreview).toBeVisible();
+        await expect(immersivePreview).toHaveClass(/easymde-code-theme-atom-one-dark/);
+        await expect(immersivePreview).toHaveAttribute('aria-busy', 'false');
+        const immersive = await readTaskGeometry(immersivePreview, `immersive-preview-${width}`);
+
+        await page.getByRole('button', { name: labels.editMode, exact: true }).click();
+        await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-source/);
+        await expect(source).toHaveValue(markdown);
+        await page.getByRole('button', { name: labels.previewMode, exact: true }).click();
+        await expect(page.getByText(labels.previewContentLoaded)).toBeVisible();
+        await expect(page.locator('.easymde-editor')).toHaveClass(/is-immersive-preview/);
+        await expect(immersivePreview).toBeVisible();
+        await expect(immersivePreview).toHaveAttribute('aria-busy', 'false');
+        const roundtrip = await readTaskGeometry(immersivePreview, `immersive-roundtrip-${width}`);
+        await expect(source).toHaveValue(markdown);
+
+        geometryEvidence.push({
+          direction: ordinary.direction,
+          immersive,
+          ordinary,
+          roundtrip,
+          rtl: {
+            reason: 'canonical fixture remains LTR; no source or DOM direction mutation was applied',
+            verified: false
+          },
+          shapeCoverage: {
+            pWrapped: ordinary.shapeCounts.pWrapped > 0,
+            pWrappedCount: ordinary.shapeCounts.pWrapped
+          },
+          viewportWidth: width
+        });
+
+        await page.getByRole('button', { name: labels.exit, exact: true }).click();
+        await expect(page.getByRole('region', { name: labels.immersive })).toHaveCount(0);
+    } finally {
+      await page.unroute(fixtureImageUrl);
+    }
+
+    await testInfo.attach('crimson-focus-task-marker-geometry.json', {
+      body: JSON.stringify({
+        browserFailures,
+        fixture: fullCapabilityFixtureEvidence,
+        geometryEvidence
+      }, null, 2),
+      contentType: 'application/json'
+    });
+    expect(browserFailures).toEqual([]);
+    });
+  }
 
   test('parses the exact full-capability fixture after immersive unlock at empty and prefixed document ends', async ({ page }, testInfo) => {
     const browserFailures = [];
@@ -18425,6 +19844,694 @@ JSON text: {"path":"C:\\Temp\\file","quote":"\"value\""}
     expect(skippedViewTransitions.length).toBeLessThanOrEqual(1);
     expect(browserFailures).toEqual([]);
     await cdp.detach();
+  });
+
+  test('renders the published full-capability Gantt at its intrinsic local-scroll width', async ({ page }, testInfo) => {
+    test.setTimeout(120_000);
+    const originalImageUrl = 'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
+    const imageRequestUrls = [];
+    const expectedImageOccurrences = (fullCapabilityMarkdown.match(
+      new RegExp(originalImageUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+    ) || []).length;
+    expect(expectedImageOccurrences).toBeGreaterThan(0);
+    await page.route(originalImageUrl, async (route) => {
+      imageRequestUrls.push(route.request().url());
+      await route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: fullCapabilityImage
+      });
+    });
+
+    const viewportEvidence = [];
+    try {
+      expect(fullCapabilityFixtureEvidence).toEqual({
+        sha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',
+        characters: 9254,
+        bytes: 11959,
+        endsWithSingleLf: true
+      });
+
+      await login(page, testInfo.easymdeUser);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await openEasyMdeNewPost(page);
+      const title = `Published Gantt ${testSlug(testInfo)}`;
+      await page.locator('#title').fill(title);
+      await fillMarkdownAndWaitForPreview(
+        page,
+        fullCapabilityMarkdown,
+        'Markdown 全量能力测试文档'
+      );
+      await expect(page.locator('#easymde-source')).toHaveValue(fullCapabilityMarkdown);
+      const postId = await currentPostId(page);
+      const labels = await page.evaluate(
+        () => window.EasyMDEEditorRootBootstrap.strings.immersive
+      );
+      await page.locator('.easymde-toolbar-immersive-toggle').click();
+      await page.getByRole('button', { name: labels.publish, exact: true }).click();
+      const publishDialog = page.getByRole('dialog', { name: labels.publish, exact: true });
+      const openAfterPublish = publishDialog.getByRole('switch', {
+        name: labels.openAfterPublish
+      });
+      if (!await openAfterPublish.isChecked()) await openAfterPublish.click();
+      const navigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+      await publishDialog.getByRole('button', { name: labels.publish, exact: true }).click();
+      await navigation;
+      const permalink = postPermalink(postId);
+      expect(page.url()).toBe(permalink);
+
+      for (const viewport of [
+        { width: 1440, height: 900 },
+        { width: 375, height: 812 },
+        { width: 320, height: 720 }
+      ]) {
+        await page.setViewportSize(viewport);
+        await page.goto(permalink, { waitUntil: 'load' });
+        const article = page.locator('.easymde-rendered-content').first();
+        await expect(article).toBeVisible();
+        await expect.poll(() => article.evaluate((root) => {
+          const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+          const math = [...root.querySelectorAll('.easymde-math[data-easymde-rendered]')];
+          const code = [...root.querySelectorAll('pre > code:not(.language-mermaid)')];
+          const tables = [...root.querySelectorAll('table')];
+          return {
+            codeCount: code.length,
+            mathCount: math.length,
+            mathReady: 14 === math.length && math.every((element) => {
+              const box = element.getBoundingClientRect();
+              return !!element.querySelector('.katex') && box.width > 0 && box.height > 0;
+            }),
+            mermaidCount: mermaids.length,
+            mermaidReady: 10 === mermaids.length && mermaids.every((element) => {
+              const box = element.getBoundingClientRect();
+              const svg = element.querySelector(':scope > svg');
+              return !!svg && box.width > 0 && box.height > 0;
+            }),
+            tableCount: tables.length
+          };
+        }), { timeout: 30_000 }).toEqual({
+          codeCount: 8,
+          mathCount: 14,
+          mathReady: true,
+          mermaidCount: 10,
+          mermaidReady: true,
+          tableCount: 4
+        });
+
+        const gantt = article.locator('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]');
+        await expect(gantt).toHaveCount(1);
+        const ganttGeometry = await expect.poll(() => gantt.evaluate((owner) => {
+          const svg = owner.querySelector(':scope > svg');
+          if (!(svg instanceof SVGSVGElement)) return null;
+          const viewBox = svg.getAttribute('viewBox');
+          const rect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          const ownerRect = owner.getBoundingClientRect();
+          const root = owner.closest('.easymde-rendered-content');
+          const rootRect = root?.getBoundingClientRect();
+          owner.scrollLeft = 0;
+          const leftScroll = owner.scrollLeft;
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+          const rightScroll = owner.scrollLeft;
+          owner.scrollLeft = 0;
+          return {
+            ctmA: ctm?.a ?? null,
+            ctmD: ctm?.d ?? null,
+            height: rect.height,
+            leftScroll,
+            localOverflow: owner.scrollWidth - owner.clientWidth,
+            ownerWithinArticle: !!rootRect
+              && ownerRect.left >= rootRect.left - 1
+              && ownerRect.right <= rootRect.right + 1,
+            pageOverflow: document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+            rightScroll,
+            viewBox,
+            width: rect.width
+          };
+        }), { timeout: 30_000 }).not.toBeNull();
+        const geometry = await gantt.evaluate((owner) => {
+          const svg = owner.querySelector(':scope > svg');
+          if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-svg-missing');
+          const rect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          const root = owner.closest('.easymde-rendered-content');
+          const rootRect = root?.getBoundingClientRect();
+          owner.scrollLeft = 0;
+          const leftScroll = owner.scrollLeft;
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+          const rightScroll = owner.scrollLeft;
+          owner.scrollLeft = 0;
+          return {
+            ctmA: ctm?.a ?? null,
+            ctmD: ctm?.d ?? null,
+            height: rect.height,
+            leftScroll,
+            localOverflow: owner.scrollWidth - owner.clientWidth,
+            ownerWithinArticle: !!rootRect
+              && owner.getBoundingClientRect().left >= rootRect.left - 1
+              && owner.getBoundingClientRect().right <= rootRect.right + 1,
+            pageOverflow: document.documentElement.scrollWidth
+              - document.documentElement.clientWidth,
+            rightScroll,
+            viewBox: svg.getAttribute('viewBox'),
+            width: rect.width
+          };
+        });
+        const ownerSummary = await article.evaluate((root) => {
+          const read = (element, index = null) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              bottom: rect.bottom,
+              clientHeight: element.clientHeight,
+              clientWidth: element.clientWidth,
+              height: rect.height,
+              index,
+              left: rect.left,
+              overflowX: element.scrollWidth - element.clientWidth,
+              overflowY: element.scrollHeight - element.clientHeight,
+              right: rect.right,
+              scrollHeight: element.scrollHeight,
+              scrollWidth: element.scrollWidth,
+              top: rect.top,
+              width: rect.width
+            };
+          };
+          const readAll = (selector) => [...root.querySelectorAll(selector)].map(read);
+          const pageWidth = window.innerWidth;
+          const svgElements = [...root.querySelectorAll('svg')];
+          const divergent = (element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.left < -1 || rect.right > pageWidth + 1;
+          };
+          const candidates = [...root.querySelectorAll('*')]
+            .filter(divergent)
+            .sort((left, right) => {
+              const leftRect = left.getBoundingClientRect();
+              const rightRect = right.getBoundingClientRect();
+              return Math.max(
+                rightRect.right - pageWidth,
+                -rightRect.left
+              ) - Math.max(
+                leftRect.right - pageWidth,
+                -leftRect.left
+              );
+            });
+          const offending = candidates[0] ?? null;
+          const ownerContext = (element) => {
+            let depth = 0;
+            for (let current = element; current && current !== root; current = current.parentElement) {
+              if (current.matches('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]')) {
+                return {
+                  index: [...root.querySelectorAll('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]')]
+                    .indexOf(current),
+                  owner: 'gantt',
+                  depth
+                };
+              }
+              if (current.matches('.easymde-mermaid')) {
+                return {
+                  index: [...root.querySelectorAll('.easymde-mermaid:not([data-easymde-mermaid-layout="gantt"])')]
+                    .indexOf(current),
+                  owner: 'otherDiagram',
+                  depth
+                };
+              }
+              if (current.matches('svg')) {
+                return { index: svgElements.indexOf(current), owner: 'svg', depth };
+              }
+              if (current.matches('table')) return { depth, index: null, owner: 'table' };
+              if (current.matches('pre > code:not(.language-mermaid)')) {
+                return { depth, index: null, owner: 'code' };
+              }
+              if (current.matches('pre')) return { depth, index: null, owner: 'pre' };
+              if (current.matches('img')) return { depth, index: null, owner: 'image' };
+              depth += 1;
+            }
+            return { depth, index: null, owner: 'other' };
+          };
+          const contextFor = (element) => {
+            const mermaidRoot = element?.closest('.easymde-mermaid');
+            const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+            const svg = element?.closest('svg');
+            const svgRect = svg?.getBoundingClientRect();
+            const viewBox = svg?.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number);
+            const ancestors = [];
+            let current = element;
+            let depth = 0;
+            while (current && current !== root && depth < 8) {
+              const style = getComputedStyle(current);
+              const rect = current.getBoundingClientRect();
+              ancestors.push({
+                depth,
+                overflowX: style.overflowX,
+                overflowY: style.overflowY,
+                rect: {
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height
+                }
+              });
+              current = current.parentElement;
+              depth += 1;
+            }
+            return {
+              closestKaTeX: !!element?.closest('.katex, .katex-display'),
+              closestMermaid: !!mermaidRoot,
+              mermaidOrdinal: mermaidRoot ? mermaids.indexOf(mermaidRoot) : null,
+              mermaidRole: svg?.getAttribute('aria-roledescription')?.trim().toLowerCase() || null,
+              svg: svg && svgRect ? {
+                height: svgRect.height,
+                width: svgRect.width,
+                viewBox: Array.isArray(viewBox) && viewBox.every(Number.isFinite)
+                  ? viewBox
+                  : null,
+                authoredWidth: Number.parseFloat(svg.getAttribute('width') || ''),
+                authoredHeight: Number.parseFloat(svg.getAttribute('height') || '')
+              } : null,
+              ancestors
+            };
+          };
+          const clipBoundary = (element) => {
+            for (let current = element.parentElement; current && current !== root; current = current.parentElement) {
+              const style = getComputedStyle(current);
+              if (!['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && !['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
+                continue;
+              }
+              const rect = current.getBoundingClientRect();
+              const target = element.getBoundingClientRect();
+              const clipsX = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && (target.left < rect.left - 1 || target.right > rect.right + 1);
+              const clipsY = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)
+                && (target.top < rect.top - 1 || target.bottom > rect.bottom + 1);
+              if (clipsX || clipsY) return true;
+            }
+            return false;
+          };
+          const visibleCandidates = [
+            ...root.querySelectorAll('img, table, pre, pre > code:not(.language-mermaid), .easymde-mermaid')
+          ];
+          const realOverflowCandidates = visibleCandidates
+            .map((element, index) => {
+              const rect = element.getBoundingClientRect();
+              const outsideRoot = rect.left < root.getBoundingClientRect().left - 1
+                || rect.right > root.getBoundingClientRect().right + 1;
+              return {
+                index,
+                outsideRoot,
+                rect: {
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top,
+                  width: rect.width,
+                  height: rect.height
+                },
+                clipped: clipBoundary(element)
+              };
+            })
+            .filter(({ outsideRoot, clipped }) => outsideRoot && !clipped);
+          const ancestorChain = [];
+          for (let current = offending; current; current = current.parentElement) {
+            if (divergent(current)) ancestorChain.push(read(current));
+          }
+          return {
+            document: read(document.documentElement),
+            body: read(document.body),
+            publicEasyMdeRoot: read(root),
+            gantt: readAll('.easymde-mermaid[data-easymde-mermaid-layout="gantt"]'),
+            table: readAll('table'),
+            pre: readAll('pre'),
+            code: readAll('pre > code:not(.language-mermaid)'),
+            image: readAll('img'),
+            otherDiagram: readAll('.easymde-mermaid:not([data-easymde-mermaid-layout="gantt"])'),
+            firstDivergentAncestor: ancestorChain.at(-1) ?? null,
+            offending: offending ? read(offending) : null,
+            offendingOwner: offending ? ownerContext(offending) : null,
+            offendingContext: offending ? contextFor(offending) : null,
+            realOverflowCandidates
+          };
+        });
+        const overflowHandle = await article.evaluateHandle((root) => {
+          const pageWidth = window.innerWidth;
+          const clipBoundary = (element) => {
+            for (let current = element.parentElement; current && current !== root; current = current.parentElement) {
+              const style = getComputedStyle(current);
+              const rect = current.getBoundingClientRect();
+              const target = element.getBoundingClientRect();
+              const clipsX = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)
+                && (target.left < rect.left - 1 || target.right > rect.right + 1);
+              const clipsY = ['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)
+                && (target.top < rect.top - 1 || target.bottom > rect.bottom + 1);
+              if (clipsX || clipsY) return true;
+            }
+            return false;
+          };
+          const rootRect = root.getBoundingClientRect();
+          return [...root.querySelectorAll('img, table, pre, pre > code:not(.language-mermaid), .easymde-mermaid')]
+            .find((element) => {
+              const rect = element.getBoundingClientRect();
+              return !clipBoundary(element)
+                && (rect.left < rootRect.left - 1 || rect.right > rootRect.right + 1)
+                && (rect.left < -1 || rect.right > pageWidth + 1);
+            }) ?? null;
+        });
+        const overflowElement = overflowHandle.asElement();
+        if (overflowElement && ownerSummary.offending) {
+          await overflowElement.screenshot({
+            path: testInfo.outputPath(`public-gantt-overflow-${viewport.width}.png`)
+          });
+        }
+        await overflowHandle.dispose();
+        console.log(`public-gantt-owner-summary ${JSON.stringify({
+          offendingContext: ownerSummary.offendingContext,
+          offendingOwner: ownerSummary.offendingOwner,
+          realOverflowCandidates: ownerSummary.realOverflowCandidates,
+          viewport
+        })}`);
+        expect(geometry.viewBox).toBe('0 0 1200 268');
+        expect(Math.abs(geometry.width - 1200)).toBeLessThanOrEqual(1);
+        expect(Math.abs(geometry.height - 268)).toBeLessThanOrEqual(1);
+        expect(geometry.ctmA).not.toBeNull();
+        expect(geometry.ctmD).not.toBeNull();
+        expect(Math.abs(geometry.ctmA - 1)).toBeLessThanOrEqual(0.02);
+        expect(Math.abs(geometry.ctmD - 1)).toBeLessThanOrEqual(0.02);
+        expect(geometry.leftScroll).toBe(0);
+        expect(geometry.ownerWithinArticle).toBe(true);
+        if (viewport.width <= 375) {
+          expect(geometry.localOverflow).toBeGreaterThan(1);
+          expect(geometry.rightScroll).toBeGreaterThan(1);
+        }
+
+        await expect.poll(() => article.evaluate((root, source) => (
+          [...root.querySelectorAll('img')]
+            .filter((image) => image.getAttribute('src') === source)
+            .map((image) => image.complete && image.naturalWidth > 0)
+        ), originalImageUrl), { timeout: 30_000 }).toEqual(
+          Array.from({ length: expectedImageOccurrences }, () => true)
+        );
+        const imageEvidence = await article.evaluate((root, source) => {
+          const rootWidth = root.getBoundingClientRect().width;
+          const fixtureImages = [...root.querySelectorAll('img')]
+            .filter((image) => image.getAttribute('src') === source);
+          const smallImages = [...root.querySelectorAll('img')]
+            .filter((image) => image.complete && image.naturalWidth > 0)
+            .filter((image) => image.naturalWidth < rootWidth)
+            .map((image) => {
+              const rect = image.getBoundingClientRect();
+              return {
+                height: rect.height,
+                naturalHeight: image.naturalHeight,
+                naturalWidth: image.naturalWidth,
+                width: rect.width
+              };
+            });
+          return {
+            fixture: fixtureImages.map((image) => {
+              const rect = image.getBoundingClientRect();
+              return {
+                height: rect.height,
+                naturalHeight: image.naturalHeight,
+                naturalWidth: image.naturalWidth,
+                width: rect.width
+              };
+            }),
+            rootWidth,
+            small: smallImages
+          };
+        }, originalImageUrl);
+        expect(imageEvidence.fixture).toHaveLength(expectedImageOccurrences);
+        for (const image of imageEvidence.fixture) {
+          expect(image.naturalWidth).toBe(1414);
+          expect(image.naturalHeight).toBe(475);
+          expect(image.width).toBeLessThanOrEqual(imageEvidence.rootWidth + 1);
+          expect(Math.abs(image.width / image.height - image.naturalWidth / image.naturalHeight))
+            .toBeLessThanOrEqual(0.02);
+        }
+        expect(imageEvidence.small.every((image) => (
+          image.width <= image.naturalWidth + 1
+          && image.height <= image.naturalHeight + 1
+        ))).toBe(true);
+
+        const screenshotPrefix = testInfo.outputPath(`public-gantt-${viewport.width}`);
+        await gantt.screenshot({ path: `${screenshotPrefix}-left.png` });
+        await gantt.evaluate((owner) => {
+          owner.scrollLeft = Number.MAX_SAFE_INTEGER;
+        });
+        if (viewport.width <= 375) {
+          await expect.poll(() => gantt.evaluate((owner) => owner.scrollLeft)).toBeGreaterThan(1);
+        }
+        await gantt.screenshot({ path: `${screenshotPrefix}-right.png` });
+        viewportEvidence.push({ geometry, imageEvidence, ownerSummary, viewport });
+      }
+
+      const rtlMechanismEvidence = await page.locator(
+        '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      ).evaluate((owner) => {
+        const svg = owner.querySelector(':scope > svg');
+        if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-rtl-svg-missing');
+        const originalDirection = owner.style.direction;
+        const originalScrollLeft = owner.scrollLeft;
+        const readState = (label) => {
+          const ownerRect = owner.getBoundingClientRect();
+          const svgRect = svg.getBoundingClientRect();
+          const ctm = svg.getScreenCTM();
+          return {
+            ctm: {
+              a: ctm?.a ?? null,
+              b: ctm?.b ?? null,
+              c: ctm?.c ?? null,
+              d: ctm?.d ?? null
+            },
+            label,
+            ownerRect: {
+              height: ownerRect.height,
+              left: ownerRect.left,
+              top: ownerRect.top,
+              width: ownerRect.width
+            },
+            scrollLeft: owner.scrollLeft,
+            scrollWidth: owner.scrollWidth,
+            clientWidth: owner.clientWidth,
+            svgRect: {
+              height: svgRect.height,
+              left: svgRect.left,
+              top: svgRect.top,
+              width: svgRect.width
+            }
+          };
+        };
+        let states;
+        try {
+          owner.style.direction = 'rtl';
+          states = [
+            readState('initial'),
+            (owner.scrollLeft = -400, readState('scrollLeft=-400')),
+            (owner.scrollLeft = 400, readState('scrollLeft=400')),
+            (owner.scrollLeft = -Number.MAX_SAFE_INTEGER, readState('left-end'))
+          ];
+        } finally {
+          owner.style.direction = originalDirection;
+          owner.scrollLeft = originalScrollLeft;
+        }
+        return {
+          originalDirection,
+          originalScrollLeft,
+          restoredDirection: owner.style.direction,
+          restoredScrollLeft: owner.scrollLeft,
+          states
+        };
+      });
+      expect(rtlMechanismEvidence.restoredDirection).toBe(
+        rtlMechanismEvidence.originalDirection
+      );
+      expect(rtlMechanismEvidence.restoredScrollLeft).toBe(
+        rtlMechanismEvidence.originalScrollLeft
+      );
+      expect(rtlMechanismEvidence.states).toHaveLength(4);
+      console.log(`published-gantt-rtl-mechanism ${JSON.stringify(rtlMechanismEvidence)}`);
+      for (const state of rtlMechanismEvidence.states) {
+        expect(Number.isFinite(state.scrollLeft)).toBe(true);
+        expect(Number.isFinite(state.clientWidth)).toBe(true);
+        expect(Number.isFinite(state.scrollWidth)).toBe(true);
+        expect(state.ownerRect).toEqual({
+          height: expect.any(Number),
+          left: expect.any(Number),
+          top: expect.any(Number),
+          width: expect.any(Number)
+        });
+        expect(state.svgRect).toEqual({
+          height: expect.any(Number),
+          left: expect.any(Number),
+          top: expect.any(Number),
+          width: expect.any(Number)
+        });
+        expect(state.ctm).toEqual({
+          a: expect.any(Number),
+          b: expect.any(Number),
+          c: expect.any(Number),
+          d: expect.any(Number)
+        });
+      }
+
+      const typedOmProbe = await page.locator(
+        '.easymde-rendered-content .easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      ).evaluate((owner) => {
+        const svg = owner.querySelector(':scope > svg');
+        if (!(svg instanceof SVGSVGElement)) throw new Error('public-gantt-typed-om-svg-missing');
+        const ownerStyle = owner.style;
+        const svgStyle = svg.style;
+        const properties = [
+          [ownerStyle, 'width'],
+          [ownerStyle, 'max-width'],
+          [svgStyle, 'margin-left'],
+          [svgStyle, 'margin-right']
+        ];
+        const original = properties.map(([style, property]) => ({
+          property,
+          priority: style.getPropertyPriority(property),
+          value: style.getPropertyValue(property)
+        }));
+        const originalScrollLeft = owner.scrollLeft;
+        const safeTypedValue = (value) => {
+          if (!value) return null;
+          const primitive = value.value;
+          return {
+            typeName: value.constructor?.name ?? null,
+            value: 'number' === typeof primitive || 'string' === typeof primitive
+              ? primitive
+              : null,
+            toString: 'function' === typeof value.toString ? value.toString() : null
+          };
+        };
+        const usedValue = (value) => {
+          const normalized = value.trim().toLowerCase();
+          if ('auto' === normalized) return { keyword: 'auto', px: null };
+          const px = Number.parseFloat(normalized);
+          return { keyword: null, px: Number.isFinite(px) ? px : null };
+        };
+        const readState = (label, map) => {
+          const ownerRect = owner.getBoundingClientRect();
+          const svgRect = svg.getBoundingClientRect();
+          const computed = getComputedStyle(svg);
+          return {
+            label,
+            ownerRect: {
+              left: ownerRect.left,
+              width: ownerRect.width,
+              right: ownerRect.right
+            },
+            svgRect: {
+              left: svgRect.left,
+              width: svgRect.width,
+              right: svgRect.right
+            },
+            used: {
+              left: usedValue(computed.marginLeft),
+              right: usedValue(computed.marginRight)
+            },
+            typed: map ? {
+              left: safeTypedValue(map.get('margin-left')),
+              right: safeTypedValue(map.get('margin-right'))
+            } : null
+          };
+        };
+        let result;
+        try {
+          ownerStyle.setProperty('width', '1600px');
+          ownerStyle.setProperty('max-width', 'none');
+          svgStyle.setProperty('margin-left', 'auto');
+          svgStyle.setProperty('margin-right', 'auto');
+          const computedStyleMap = svg.computedStyleMap;
+          if ('function' !== typeof computedStyleMap) {
+            result = {
+              available: false,
+              reason: 'computedStyleMap-unavailable'
+            };
+          } else {
+            const autoMap = computedStyleMap.call(svg);
+            const auto = readState('auto-derived', autoMap);
+            svgStyle.setProperty('margin-left', '200px');
+            svgStyle.setProperty('margin-right', '200px');
+            const fixedMap = computedStyleMap.call(svg);
+            const fixed = readState('author-fixed-200px', fixedMap);
+            result = {
+              available: true,
+              auto,
+              fixed
+            };
+          }
+        } finally {
+          for (const { property, priority, value } of original) {
+            if (value) {
+              const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+              style.setProperty(property, value, priority);
+            } else {
+              const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+              style.removeProperty(property);
+            }
+          }
+          owner.scrollLeft = originalScrollLeft;
+        }
+        const restored = original.every(({ property, priority, value }) => {
+          const style = property.startsWith('margin-') ? svgStyle : ownerStyle;
+          return style.getPropertyValue(property) === value
+            && style.getPropertyPriority(property) === priority;
+        });
+        return {
+          ...result,
+          originalScrollLeft,
+          restored,
+          restoredScrollLeft: owner.scrollLeft
+        };
+      });
+      console.log(`public-gantt-typed-om ${JSON.stringify(typedOmProbe)}`);
+      expect(typedOmProbe.available).toBe(true);
+      expect(typedOmProbe.restored).toBe(true);
+      expect(typedOmProbe.restoredScrollLeft).toBe(typedOmProbe.originalScrollLeft);
+      expect(typedOmProbe.auto.ownerRect.width).toBeCloseTo(1600, 5);
+      expect(typedOmProbe.auto.svgRect.width).toBeCloseTo(1200, 5);
+      expect(typedOmProbe.auto.used).toEqual({
+        left: { keyword: null, px: 200 },
+        right: { keyword: null, px: 200 }
+      });
+      expect(typedOmProbe.auto.typed).toEqual({
+        left: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' },
+        right: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' }
+      });
+      expect(typedOmProbe.fixed.used).toEqual({
+        left: { keyword: null, px: 200 },
+        right: { keyword: null, px: 200 }
+      });
+      expect(typedOmProbe.fixed.typed).toEqual({
+        left: { typeName: 'CSSUnitValue', value: 200, toString: '200px' },
+        right: { typeName: 'CSSUnitValue', value: 200, toString: '200px' }
+      });
+
+      expect(imageRequestUrls.length).toBeGreaterThanOrEqual(expectedImageOccurrences);
+      await testInfo.attach('published-gantt-evidence.json', {
+        body: JSON.stringify({
+          expectedImageOccurrences,
+          imageRequestCount: imageRequestUrls.length,
+          rtlMechanismEvidence,
+          typedOmProbe,
+          viewportEvidence
+        }, null, 2),
+        contentType: 'application/json'
+      });
+      for (const { geometry, viewport } of viewportEvidence) {
+        expect(
+          geometry.pageOverflow,
+          JSON.stringify({ geometry, viewport })
+        ).toBeLessThanOrEqual(1);
+      }
+    } finally {
+      await page.unroute(originalImageUrl);
+    }
   });
 
   test('projects only publish fields owned by the current WordPress Post Type', async ({ page }, testInfo) => {

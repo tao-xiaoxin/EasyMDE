@@ -1,8 +1,19 @@
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 // DevTools snapshots can add browser tasks inside the click-to-pending window.
@@ -21,6 +32,40 @@ const fullCapabilityImage = readFileSync(
 );
 const fullCapabilityImageSource =
   'https://raw.githubusercontent.com/tao-xiaoxin/EasyMDE/main/docs/assets/easymde-logo-rounded.png';
+const fullCapabilityTaskStates = [
+  ...Array(3).fill(true),
+  ...Array(3).fill(false),
+  ...Array(13).fill(true)
+];
+const canonicalMermaidRoles = [
+  'flowchart-v2',
+  'sequence',
+  'pie',
+  'gantt',
+  'classDiagram',
+  'stateDiagram',
+  'er',
+  'mindmap',
+  'timeline',
+  'xychart'
+];
+const intrinsicGeometryTolerance = 1 / 64;
+const taskMarkerSourceViewportBounds = { max: 4096, min: 1 };
+const pngWorkerResourcePattern = /\/assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/u;
+const bloomArticleThemeIds = [
+  'bloom-petal',
+  'bloom-mist',
+  'bloom-verdant',
+  'bloom-stone',
+  'bloom-wheat',
+  'bloom-ink',
+  'bloom-amber',
+  'bloom-lapis',
+  'bloom-ripple',
+  'bloom-cinnabar',
+  'bloom-sage',
+  'bloom-spring'
+];
 const mdmdtCss = readFileSync(
   new URL('../../assets/themes/article/mdmdt.css', import.meta.url),
   'utf8'
@@ -35,6 +80,7 @@ const copyDiagnosticsEnabled = '1' === process.env.EASYMDE_E2E_COPY_DIAGNOSTICS;
 const finiteTransitionsProbeEnabled = '1' === process.env.EASYMDE_E2E_PROBE_FINITE_TRANSITIONS;
 const finitePreviewAnimationsProbeEnabled = '1' === process.env.EASYMDE_E2E_PROBE_FINITE_PREVIEW_ANIMATIONS;
 const positionStrippedFrameProbeEnabled = '1' === process.env.EASYMDE_E2E_PROBE_POSITION_STRIPPED_FRAME;
+const visibleSelectorDiagnosticsByPage = new WeakMap();
 const mediumMarkdown = [
   '# Medium WeChat copy fixture',
   '',
@@ -448,7 +494,7 @@ async function finalizeNativePayloadExport(state) {
   await chmod(manifestPath, 0o600);
 }
 
-function multipartFileDigest(request) {
+function multipartFileBytes(request) {
   const contentType = request.headers()['content-type'] ?? '';
   const boundaryMatch = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/iu);
   const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
@@ -465,8 +511,12 @@ function multipartFileDigest(request) {
   if (fileHeaderStart < 0 || fileStart < 0 || fileEnd < 0) {
     throw new Error('wechat-png-upload-file-part-unavailable');
   }
+  return body.subarray(fileStart + fileStartMarker.length, fileEnd);
+}
+
+function multipartFileDigest(request) {
   return createHash('sha256')
-    .update(body.subarray(fileStart + fileStartMarker.length, fileEnd))
+    .update(multipartFileBytes(request))
     .digest('hex');
 }
 
@@ -496,6 +546,148 @@ function runWp(args) {
 
 function testSlug(testInfo) {
   return `wechat-${testInfo.workerIndex}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
+
+test('rejects private pixel evidence symlink escapes before outside creation', async ({ baseURL: _baseURL }, testInfo) => {
+  const originalTempRoot = resolve(tmpdir());
+  const allowedTempRoot = await mkdtemp(join(originalTempRoot, 'easymde-private-pixel-boundary-'));
+  const outsideRoot = await mkdtemp(join(originalTempRoot, 'easymde-private-pixel-outside-'));
+  const tempVariables = ['TMPDIR', 'TMP', 'TEMP'];
+  const previousTempVariables = Object.fromEntries(
+    tempVariables.map((name) => [name, process.env[name]])
+  );
+  tempVariables.forEach((name) => { process.env[name] = allowedTempRoot; });
+  const symlinkAncestor = join(allowedTempRoot, 'escape');
+  const target = join(symlinkAncestor, 'nested');
+  const outsideChild = join(outsideRoot, 'nested');
+
+  try {
+    await symlink(
+      outsideRoot,
+      symlinkAncestor,
+      process.platform === 'win32' ? 'junction' : 'dir'
+    );
+    await expect(writePrivatePixelEvidence(
+      testInfo,
+      'symlink-escape',
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      { schemaVersion: 1 },
+      target
+    )).rejects.toThrow('wechat-private-pixel-evidence-directory-realpath-invalid');
+    await expect(lstat(outsideChild)).rejects.toMatchObject({ code: 'ENOENT' });
+  } finally {
+    tempVariables.forEach((name) => {
+      if (undefined === previousTempVariables[name]) {
+        delete process.env[name];
+      } else {
+        process.env[name] = previousTempVariables[name];
+      }
+    });
+    await Promise.all([
+      rm(allowedTempRoot, { force: true, recursive: true }),
+      rm(outsideRoot, { force: true, recursive: true })
+    ]);
+  }
+});
+
+function privatePixelEvidencePath(configured = process.env.EASYMDE_E2E_PRIVATE_PIXEL_EVIDENCE_DIR) {
+  const value = configured?.trim() ?? '';
+  if (!value) return null;
+  if (!isAbsolute(value)) {
+    throw new Error('wechat-private-pixel-evidence-directory-must-be-absolute');
+  }
+  const tempRoot = resolve(tmpdir());
+  const target = resolve(value);
+  const relation = relative(tempRoot, target);
+  if (
+    !relation
+    || '..' === relation
+    || relation.startsWith(`..${sep}`)
+    || isAbsolute(relation)
+  ) {
+    throw new Error('wechat-private-pixel-evidence-directory-must-be-temp-child');
+  }
+  return { target, tempRoot };
+}
+
+function assertPrivatePixelEvidencePath(realTempRoot, realDirectory, requireChild) {
+  const realRelation = relative(realTempRoot, realDirectory);
+  if (
+    (requireChild && !realRelation)
+    || '..' === realRelation
+    || realRelation.startsWith(`..${sep}`)
+    || isAbsolute(realRelation)
+  ) {
+    throw new Error('wechat-private-pixel-evidence-directory-realpath-invalid');
+  }
+}
+
+async function preparePrivatePixelEvidenceDirectory(configuredPath) {
+  const realTempRoot = await realpath(configuredPath.tempRoot);
+  const pathParts = relative(configuredPath.tempRoot, configuredPath.target).split(sep);
+  let existingPath = configuredPath.tempRoot;
+  let firstMissingIndex = pathParts.length;
+
+  for (let index = 0; index < pathParts.length; index += 1) {
+    const candidatePath = join(configuredPath.tempRoot, ...pathParts.slice(0, index + 1));
+    try {
+      await lstat(candidatePath);
+      existingPath = candidatePath;
+    } catch (error) {
+      if ('ENOENT' !== error?.code) throw error;
+      firstMissingIndex = index;
+      break;
+    }
+  }
+
+  const realExistingPath = await realpath(existingPath);
+  if (!(await stat(existingPath)).isDirectory()) {
+    throw new Error('wechat-private-pixel-evidence-directory-realpath-invalid');
+  }
+  assertPrivatePixelEvidencePath(realTempRoot, realExistingPath, false);
+
+  let currentPath = existingPath;
+  for (let index = firstMissingIndex; index < pathParts.length; index += 1) {
+    currentPath = join(currentPath, pathParts[index]);
+    await mkdir(currentPath, { mode: 0o700 });
+    const realCurrentPath = await realpath(currentPath);
+    if (!(await stat(currentPath)).isDirectory()) {
+      throw new Error('wechat-private-pixel-evidence-directory-realpath-invalid');
+    }
+    assertPrivatePixelEvidencePath(realTempRoot, realCurrentPath, true);
+  }
+
+  const realDirectory = await realpath(configuredPath.target);
+  if (!(await stat(configuredPath.target)).isDirectory()) {
+    throw new Error('wechat-private-pixel-evidence-directory-realpath-invalid');
+  }
+  assertPrivatePixelEvidencePath(realTempRoot, realDirectory, true);
+  return { realDirectory, realTempRoot };
+}
+
+async function writePrivatePixelEvidence(
+  testInfo,
+  role,
+  pngBytes,
+  evidence,
+  configured = process.env.EASYMDE_E2E_PRIVATE_PIXEL_EVIDENCE_DIR
+) {
+  const configuredPath = privatePixelEvidencePath(configured);
+  if (!configuredPath) return;
+  const { realDirectory } = await preparePrivatePixelEvidenceDirectory(configuredPath);
+  await chmod(realDirectory, 0o700);
+  const runId = testInfo.wechatPrivatePixelEvidenceRunId
+    ??= randomUUID().replace(/[^a-z0-9]/giu, '').slice(0, 16);
+  const stem = `wechat-${testInfo.workerIndex}-${runId}-${role}`;
+  const pngPath = join(realDirectory, `${stem}-candidate.png`);
+  const jsonPath = join(realDirectory, `${stem}-evidence.json`);
+  await writeFile(pngPath, pngBytes, { mode: 0o600 });
+  await chmod(pngPath, 0o600);
+  await writeFile(jsonPath, `${JSON.stringify(evidence, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600
+  });
+  await chmod(jsonPath, 0o600);
 }
 
 function createUser(slug) {
@@ -552,13 +744,107 @@ async function openEasyMdeNewPost(page) {
   await waitForVisibleSelector(page, '#easymde-editor', 'easymde-editor-unavailable');
 }
 
+function visibleSelectorRole(selector) {
+  if (selector === '#wpadminbar') return 'adminbar';
+  if (selector === '#easymde-editor') return 'editor';
+  if (selector === '.easymde-editor > .easymde-editor-message-alert-host') return 'status';
+  return 'unknown';
+}
+
+function visibleSelectorFailureKind(error) {
+  const name = typeof error?.name === 'string' ? error.name : '';
+  const message = typeof error?.message === 'string' ? error.message.toLowerCase() : '';
+  if (name === 'TimeoutError' || message.includes('timeout')) return 'timeout';
+  if (
+    message.includes('target page, context or browser has been closed')
+    || message.includes('target closed')
+    || message.includes('page closed')
+  ) return 'targetclosed';
+  if (message.includes('execution context was destroyed') || message.includes('context destroyed')) {
+    return 'contextdestroyed';
+  }
+  if (
+    message.includes('evaluation failed')
+    || message.includes('javascript error')
+    || message.includes('execution context')
+  ) return 'js-evaluate';
+  if (message.includes('content security policy') || message.includes('csp')) return 'csp';
+  return 'unknown';
+}
+
+function visibleSelectorExceptionType(error) {
+  const name = typeof error?.name === 'string' ? error.name : '';
+  return ['Error', 'ReferenceError', 'TimeoutError', 'TypeError'].includes(name)
+    ? name
+    : 'unknown';
+}
+
+async function readVisibleSelectorFailureSnapshot(page, selector, role) {
+  try {
+    return await page.evaluate(({ candidate, candidateRole }) => {
+      const readyState = ['loading', 'interactive', 'complete'].includes(document.readyState)
+        ? document.readyState
+        : 'unknown';
+      const path = window.location.pathname;
+      const pathPhase = path === '/wp-login.php'
+        ? 'login'
+        : path.startsWith('/wp-admin/post-new.php')
+          ? 'editor'
+          : 'dashboard';
+      const element = document.querySelector(candidate);
+      const rects = element ? [...element.getClientRects()] : [];
+      const rect = rects[0] ?? null;
+      return {
+        element: element
+          ? {
+              connected: element.isConnected,
+              height: rect ? Math.round(rect.height * 100) / 100 : 0,
+              instanceofElement: element instanceof Element,
+              instanceofHTMLElement: element instanceof HTMLElement,
+              rectCount: rects.length,
+              tag: element.tagName.toLowerCase(),
+              width: rect ? Math.round(rect.width * 100) / 100 : 0
+            }
+          : null,
+        pathPhase,
+        readyState,
+        role: candidateRole
+      };
+    }, { candidate: selector, candidateRole: role });
+  } catch (error) {
+    return {
+      element: null,
+      pathPhase: 'dashboard',
+      readyState: 'unknown',
+      role,
+      snapshotFailure: visibleSelectorFailureKind(error)
+    };
+  }
+}
+
 async function waitForVisibleSelector(page, selector, failureCode) {
+  const startedAt = Date.now();
   try {
     await page.waitForFunction((candidate) => {
       const element = document.querySelector(candidate);
       return element instanceof HTMLElement && element.getClientRects().length > 0;
     }, selector, { timeout: 15_000 });
-  } catch {
+  } catch (error) {
+    const role = visibleSelectorRole(selector);
+    const snapshot = await readVisibleSelectorFailureSnapshot(page, selector, role);
+    const testInfo = visibleSelectorDiagnosticsByPage.get(page);
+    if (testInfo) {
+      testInfo.wechatVisibleSelectorDiagnostics ??= [];
+      testInfo.wechatVisibleSelectorDiagnostics.push({
+        elapsedMs: Date.now() - startedAt,
+        exceptionType: visibleSelectorExceptionType(error),
+        failureCode,
+        failureKind: visibleSelectorFailureKind(error),
+        phase: snapshot.pathPhase,
+        role,
+        snapshot
+      });
+    }
     throw new Error(failureCode);
   }
 }
@@ -612,12 +898,65 @@ async function installWechatConsoleDiagnostics(page) {
       'wechat-png-transaction-timeout',
       'wechat-png-upload-failed'
     ]);
+    const allowedDiagnosticStages = new Set([
+      'capture',
+      'inline-validation',
+      'intrinsic-gate',
+      'layout',
+      'rasterization',
+      'result-validation'
+    ]);
+    const allowedDiagnosticKeys = new Set([
+      'candidate',
+      'height',
+      'kind',
+      'originalCode',
+      'stage',
+      'width'
+    ]);
+    const readPngDiagnostic = (value) => {
+      if (!value || 'object' !== typeof value || Array.isArray(value)) return null;
+      try {
+        const prototype = Object.getPrototypeOf(value);
+        if (prototype !== Object.prototype && null !== prototype) return null;
+        const keys = Reflect.ownKeys(value);
+        if (
+          keys.length !== allowedDiagnosticKeys.size
+          || keys.some((key) => 'string' !== typeof key || !allowedDiagnosticKeys.has(key))
+        ) return null;
+        const descriptors = Object.fromEntries(keys.map((key) => [
+          key,
+          Object.getOwnPropertyDescriptor(value, key)
+        ]));
+        if (keys.some((key) => !descriptors[key] || !('value' in descriptors[key]))) return null;
+        const candidate = value.candidate;
+        const height = value.height;
+        const kind = value.kind;
+        const originalCode = value.originalCode;
+        const stage = value.stage;
+        const width = value.width;
+        if (
+          !Number.isInteger(candidate)
+          || candidate < 0
+          || !['math', 'mermaid'].includes(kind)
+          || !allowedDiagnosticStages.has(stage)
+          || !(
+            'string' === typeof originalCode
+            && (/^(?:wechat-png-[a-z0-9-]+|unknown)$/u).test(originalCode)
+          )
+          || ![height, width].every((dimension) => null === dimension || Number.isFinite(dimension))
+        ) return null;
+        return { candidate, height, kind, originalCode, stage, width };
+      } catch {
+        return null;
+      }
+    };
     const events = [];
     const methods = ['error', 'info', 'warn'];
     for (const level of methods) {
       const original = console[level];
       console[level] = (...args) => {
-        const text = args.length === 1 && 'string' === typeof args[0] ? args[0] : '';
+        const text = args.length >= 1 && 'string' === typeof args[0] ? args[0] : '';
         const match = text.match(/^\[EasyMDE\] (wechat-[a-z0-9-]+)$/u);
         const startedAt = globalThis.__easymdeWechatCopyTrace?.startedAt;
         if (match && allowedCodes.has(match[1]) && Number.isFinite(startedAt)) {
@@ -628,6 +967,7 @@ async function installWechatConsoleDiagnostics(page) {
           }
           events.push({
             code: match[1],
+            diagnostic: 2 === args.length ? readPngDiagnostic(args[1]) : null,
             durationMs,
             level
           });
@@ -1017,6 +1357,90 @@ async function installClipboardInstrumentation(page) {
   });
 }
 
+async function installPngWorkerLifecycleProbe(page) {
+  await page.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    if ('function' !== typeof NativeWorker) {
+      throw new Error('native-png-worker-unavailable');
+    }
+    const state = {
+      created: [],
+      terminateCount: 0
+    };
+    function CountingWorker(scriptURL, options) {
+      const worker = new NativeWorker(scriptURL, options);
+      state.created.push({
+        sameOrigin: (() => {
+          try {
+            return new URL(String(scriptURL), window.location.href).origin
+              === window.location.origin;
+          } catch {
+            return false;
+          }
+        })(),
+        type: options?.type ?? null,
+        url: String(scriptURL)
+      });
+      const terminate = worker.terminate.bind(worker);
+      Object.defineProperty(worker, 'terminate', {
+        configurable: true,
+        value() {
+          state.terminateCount += 1;
+          return terminate();
+        },
+        writable: true
+      });
+      return worker;
+    }
+    CountingWorker.prototype = NativeWorker.prototype;
+    Object.setPrototypeOf(CountingWorker, NativeWorker);
+    Object.defineProperty(window, 'Worker', {
+      configurable: true,
+      value: CountingWorker,
+      writable: true
+    });
+    globalThis.__easymdePngWorkerLifecycle = {
+      read() {
+        return {
+          created: state.created.slice(),
+          terminateCount: state.terminateCount
+        };
+      },
+      reset() {
+        state.created.length = 0;
+        state.terminateCount = 0;
+      }
+    };
+  });
+}
+
+async function installNoReplyPngWorkerRoute(page) {
+  const origin = new URL(page.url()).origin;
+  const requests = [];
+  const matcher = (url) => {
+    try {
+      const parsed = new URL(url);
+      return parsed.origin === origin && pngWorkerResourcePattern.test(parsed.pathname);
+    } catch {
+      return false;
+    }
+  };
+  await page.route(matcher, async (route) => {
+    const request = route.request();
+    requests.push({
+      method: request.method(),
+      resourceType: request.resourceType(),
+      url: request.url()
+    });
+    await route.fulfill({
+      body: "globalThis.addEventListener('message', () => {});",
+      contentType: 'text/javascript',
+      status: 200
+    });
+  });
+  return { matcher, requests };
+}
+
 async function capturePreviewStructureDiagnostics(page, failureCode) {
   await page.evaluate((code) => {
     const markerAttributes = [
@@ -1323,6 +1747,9 @@ async function collectFailureDiagnostics(page) {
         },
         pngMeasurement: typeof globalThis.__easymdePngMeasurementProbe?.read === 'function'
           ? globalThis.__easymdePngMeasurementProbe.read()
+          : { code: 'not-installed' },
+        pngWorkerLifecycle: typeof globalThis.__easymdePngWorkerLifecycle?.read === 'function'
+          ? globalThis.__easymdePngWorkerLifecycle.read()
           : { code: 'not-installed' },
         consoleDiagnostics: typeof globalThis.__easymdeWechatConsoleDiagnostics?.read === 'function'
           ? globalThis.__easymdeWechatConsoleDiagnostics.read()
@@ -2133,6 +2560,37 @@ async function settlePreviewFiniteTransitions(page) {
   });
 }
 
+async function settleFinitePreviewAnimations(page, selector) {
+  return page.evaluate(async (rootSelector) => {
+    const preview = document.querySelector(rootSelector);
+    if (!(preview instanceof Element)) {
+      throw new Error('wechat-preview-finite-animation-root-unavailable');
+    }
+    const nodes = new Set([preview, ...preview.querySelectorAll('*')]);
+    const finiteAnimations = () => document.getAnimations().filter((animation) => {
+      const effect = animation.effect;
+      const target = effect && 'target' in effect ? effect.target : null;
+      const owner = target instanceof Element
+        ? target
+        : target?.parentElement ?? target?.element ?? null;
+      const timing = effect && typeof effect.getComputedTiming === 'function'
+        ? effect.getComputedTiming()
+        : null;
+      const currentTime = Number(animation.currentTime);
+      const endTime = Number(timing?.endTime);
+      return owner instanceof Element
+        && nodes.has(owner)
+        && Number.isFinite(currentTime)
+        && Number.isFinite(endTime)
+        && endTime > currentTime
+        && ['CSSAnimation', 'CSSTransition'].includes(animation.constructor?.name ?? '');
+    });
+    const animations = finiteAnimations();
+    await Promise.all(animations.map((animation) => animation.finished));
+    return finiteAnimations().length;
+  }, selector);
+}
+
 async function readPreviewFiniteAnimationEvidence(page) {
   return page.evaluate(() => {
     const preview = document.querySelector(
@@ -2528,9 +2986,14 @@ async function copyNativePayload(
 async function readNativeCodeSurfaceEvidence(
   page,
   html = null,
-  { signatureSentinels = [], stripPosition = false, widths = nativeClipboardSurfaceWidths } = {}
+  {
+    signatureSentinels = [],
+    sourceSelector = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]',
+    stripPosition = false,
+    widths = nativeClipboardSurfaceWidths
+  } = {}
 ) {
-  return page.evaluate(async ({ signatureSentinels, sourceHtml, stripPosition, widths }) => {
+  return page.evaluate(async ({ signatureSentinels, sourceHtml, sourceSelector, stripPosition, widths }) => {
     const styleProperties = [
       'color',
       'fontFamily',
@@ -2774,6 +3237,210 @@ async function readNativeCodeSurfaceEvidence(
       return parts.map((part) => Number.parseFloat(part));
     };
     const safeEnum = (value, values) => values.has(value) ? value : 'other';
+    const cssPixel = (style, property, label) => {
+      const value = Number.parseFloat(style.getPropertyValue(property));
+      if (!Number.isFinite(value)) throw new Error(`wechat-native-${label}-invalid`);
+      return value;
+    };
+    const optionalCssPixel = (style, property) => {
+      const value = style.getPropertyValue(property).trim();
+      if (!value || value === 'auto' || value === 'normal' || value === 'none') return null;
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const contentBox = (element, rect, style, label) => ({
+      height: finite(
+        rect.height
+          - cssPixel(style, 'border-top-width', `${label}-border-top`)
+          - cssPixel(style, 'border-bottom-width', `${label}-border-bottom`)
+          - cssPixel(style, 'padding-top', `${label}-padding-top`)
+          - cssPixel(style, 'padding-bottom', `${label}-padding-bottom`),
+        `${label}-height`
+      ),
+      width: finite(
+        rect.width
+          - cssPixel(style, 'border-left-width', `${label}-border-left`)
+          - cssPixel(style, 'border-right-width', `${label}-border-right`)
+          - cssPixel(style, 'padding-left', `${label}-padding-left`)
+          - cssPixel(style, 'padding-right', `${label}-padding-right`),
+        `${label}-width`
+      )
+    });
+    const taskMarkerStyle = (element, view, pseudo = null) => {
+      const style = view.getComputedStyle(element, pseudo);
+      return {
+        appearance: style.appearance,
+        backgroundColor: style.backgroundColor,
+        borderBottomColor: style.borderBottomColor,
+        borderBottomStyle: style.borderBottomStyle,
+        borderBottomWidth: optionalCssPixel(style, 'border-bottom-width'),
+        borderLeftColor: style.borderLeftColor,
+        borderLeftStyle: style.borderLeftStyle,
+        borderLeftWidth: optionalCssPixel(style, 'border-left-width'),
+        borderRightColor: style.borderRightColor,
+        borderRightStyle: style.borderRightStyle,
+        borderRightWidth: optionalCssPixel(style, 'border-right-width'),
+        borderTopColor: style.borderTopColor,
+        borderTopStyle: style.borderTopStyle,
+        borderTopWidth: optionalCssPixel(style, 'border-top-width'),
+        boxSizing: style.boxSizing,
+        content: style.content,
+        display: style.display,
+        height: style.height,
+        marginBottom: style.marginBottom,
+        marginLeft: style.marginLeft,
+        marginRight: style.marginRight,
+        marginTop: style.marginTop,
+        opacity: style.opacity,
+        paddingBottom: optionalCssPixel(style, 'padding-bottom'),
+        paddingLeft: optionalCssPixel(style, 'padding-left'),
+        paddingRight: optionalCssPixel(style, 'padding-right'),
+        paddingTop: optionalCssPixel(style, 'padding-top'),
+        position: style.position,
+        transform: style.transform,
+        transformOrigin: style.transformOrigin,
+        verticalAlign: style.verticalAlign,
+        visibility: style.visibility,
+        width: style.width
+      };
+    };
+    const firstMeaningfulTextRange = (element, documentRef, view) => {
+      const walker = documentRef.createTreeWalker(element, view.NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const parent = node.parentElement;
+        const value = node.nodeValue ?? '';
+        if (
+          parent
+          && !parent.closest('script,style,[aria-hidden="true"]')
+        ) {
+          const offset = [...value].findIndex((character) => !/\s/u.test(character));
+          if (offset >= 0) {
+            const range = documentRef.createRange();
+            range.setStart(node, offset);
+            range.setEnd(node, offset + 1);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              return {
+                box: boxFromRect(rect, 'task-text-anchor'),
+                connected: node.isConnected && parent.isConnected,
+                text: value.slice(offset).trim().slice(0, 64)
+              };
+            }
+          }
+        }
+        node = walker.nextNode();
+      }
+      throw new Error('wechat-native-task-text-anchor-unavailable');
+    };
+    const boxFromRect = (rect, label) => ({
+      bottom: finite(rect.bottom, `${label}-bottom`),
+      height: finite(rect.height, `${label}-height`),
+      left: finite(rect.left, `${label}-left`),
+      right: finite(rect.right, `${label}-right`),
+      top: finite(rect.top, `${label}-top`),
+      width: finite(rect.width, `${label}-width`)
+    });
+    const taskEvidence = (root, rootBox, label, view, documentRef) => {
+      const sourceInputs = [...root.querySelectorAll('input[type="checkbox"]')]
+        .filter((element) => element.closest('.task-list-item, .task-list'));
+      const staticOwners = [...root.querySelectorAll('[role="checkbox"]')]
+        .filter((element) => Boolean(element.closest('li')));
+      const markerElements = sourceInputs.length ? sourceInputs : staticOwners;
+      const markerType = sourceInputs.length ? 'source-input' : 'static-owner';
+      const items = markerElements.map((marker, index) => {
+        const li = marker.closest('li.task-list-item, li');
+        if (!li) throw new Error(`wechat-native-${label}-task-li-unavailable`);
+        const markerRect = marker.getBoundingClientRect();
+        const markerComputed = view.getComputedStyle(marker);
+        const liRect = li.getBoundingClientRect();
+        const liComputed = view.getComputedStyle(li);
+        const text = firstMeaningfulTextRange(li, documentRef, view);
+        const markerBox = boxFromRect(markerRect, `${label}-task-marker-${index}`);
+        const liBox = boxFromRect(liRect, `${label}-task-li-${index}`);
+        const textBox = text.box;
+        const markerPseudos = sourceInputs.length
+          ? ['::before', '::after']
+            .map((pseudo) => ({
+              pseudo,
+                style: taskMarkerStyle(marker, view, pseudo)
+            }))
+            .filter(({ style }) => (
+              style.content !== 'none'
+              && style.content !== 'normal'
+              && style.display !== 'none'
+              && style.visibility !== 'hidden'
+            ))
+          : [...marker.children]
+            .filter((element) => element.getAttribute('aria-hidden') === 'true')
+            .map((element, markerIndex) => ({
+              box: boxFromRect(
+                element.getBoundingClientRect(),
+                `${label}-task-static-marker-${index}-${markerIndex}`
+              ),
+              pseudo: `static-${markerIndex}`,
+              style: taskMarkerStyle(element, view)
+            }));
+        const markerContentBox = contentBox(
+          marker,
+          markerRect,
+          markerComputed,
+          `${label}-task-marker-content-${index}`
+        );
+        const marginRight = cssPixel(
+          markerComputed,
+          'margin-right',
+          `${label}-task-marker-margin-right-${index}`
+        );
+        return {
+          checked: sourceInputs.length
+            ? marker.checked
+            : marker.getAttribute('aria-checked') === 'true',
+          connected: marker.isConnected && li.isConnected && text.connected,
+          flowAdvance: finite(textBox.left - markerBox.left, `${label}-task-flow-${index}`),
+          index,
+          li: {
+            box: liBox,
+            connected: li.isConnected,
+            lineHeight: cssPixel(liComputed, 'line-height', `${label}-task-line-height-${index}`)
+          },
+          marker: {
+            ariaChecked: marker.getAttribute('aria-checked'),
+            ariaDisabled: marker.getAttribute('aria-disabled'),
+            box: markerBox,
+            connected: marker.isConnected,
+            contentBox: markerContentBox,
+            marginRight,
+            pseudoMarkers: markerPseudos,
+            style: taskMarkerStyle(marker, view)
+          },
+          text: {
+            box: textBox,
+            connected: text.connected,
+            relativeToLi: {
+              bottom: finite(textBox.bottom - liBox.top, `${label}-task-text-bottom-${index}`),
+              left: finite(textBox.left - liBox.left, `${label}-task-text-left-${index}`),
+              right: finite(textBox.right - liBox.left, `${label}-task-text-right-${index}`),
+              top: finite(textBox.top - liBox.top, `${label}-task-text-top-${index}`)
+            },
+            text: text.text
+          }
+        };
+      });
+      return {
+        checkedStates: items.map(({ checked }) => checked),
+        inputCount: root.querySelectorAll('input').length,
+        markerType,
+        ownerCount: staticOwners.length,
+        rootContentBox: contentBox(
+          root,
+          rootBox,
+          view.getComputedStyle(root),
+          `${label}-task-root-content`
+        ),
+        items
+      };
+    };
     const collect = (root, view, documentRef, label) => {
       if (!root || root.nodeType !== 1) throw new Error(`wechat-native-${label}-root-unavailable`);
       const rootBox = box(root, `${label}-root`);
@@ -2856,12 +3523,35 @@ async function readNativeCodeSurfaceEvidence(
         const codeBox = box(code, `${label}-code-${index}`);
         const preBox = box(pre, `${label}-pre-${index}`);
         const codeText = normalizeVisibleCodeText(textWithBreaks(code));
-        const lineElements = [...code.children].filter(
+        const rows = [...code.children].find((element) => (
+          element.nodeType === 1
+          && element.tagName === 'SPAN'
+          && element.getAttribute('style')?.includes('display:block!important')
+          && element.getAttribute('style')?.includes('width:max-content!important')
+        ));
+        const rowElement = rows && rows.nodeType === 1 && rows.tagName === 'SPAN'
+          ? rows
+          : null;
+        const lineElements = rowElement ? [...rowElement.children].filter(
           (element) => element.nodeType === 1 && element.tagName === 'NOBR'
-        );
+        ) : [];
+        const rowBreakCount = rowElement ? [...rowElement.children].filter(
+          (element) => element.nodeType === 1 && element.tagName === 'BR'
+        ).length : null;
         const lastLine = [...lineElements].reverse().find(
           (element) => normalizeText(element.textContent ?? '').trim() !== ''
         ) ?? code;
+        const codeStyle = view.getComputedStyle(code);
+        const cssPixels = (value, property) => {
+          const parsed = Number.parseFloat(value);
+          if (!Number.isFinite(parsed)) throw new Error(`wechat-native-${label}-${property}-invalid`);
+          return parsed;
+        };
+        const codeContentWidth = codeBox.width
+          - cssPixels(codeStyle.borderLeftWidth, 'code-border-left')
+          - cssPixels(codeStyle.borderRightWidth, 'code-border-right')
+          - cssPixels(codeStyle.paddingLeft, 'code-padding-left')
+          - cssPixels(codeStyle.paddingRight, 'code-padding-right');
         const paintedLines = readPaintedLines(code, documentRef);
         const headerElement = [...pre.children]
           .find((element) => element.nodeType === 1
@@ -2910,8 +3600,26 @@ async function readNativeCodeSurfaceEvidence(
         return {
           code: {
             box: codeBox,
+            contentWidth: codeContentWidth,
             style: frameStyle(code, view)
           },
+          rows: rowElement ? {
+            box: box(rowElement, `${label}-code-rows-${index}`),
+            breakCount: rowBreakCount,
+            lineCount: lineElements.length,
+            style: {
+              display: rowElement.style.display,
+              maxWidth: rowElement.style.maxWidth,
+              minWidth: rowElement.style.minWidth,
+              overflow: rowElement.style.overflow,
+              overflowWrap: rowElement.style.overflowWrap,
+              overflowX: rowElement.style.overflowX,
+              overflowY: rowElement.style.overflowY,
+              whiteSpace: rowElement.style.whiteSpace,
+              width: rowElement.style.width,
+              wordBreak: rowElement.style.wordBreak
+            }
+          } : null,
           characters: readCharacters(code, view, documentRef),
           frame: {
             box: preBox,
@@ -2995,6 +3703,7 @@ async function readNativeCodeSurfaceEvidence(
           unorderedLists: root.querySelectorAll('ul').length
         },
         linkDecorations,
+        taskLists: taskEvidence(root, rootBox, label, view, documentRef),
         visualSignatures: readVisualSignatures(root, view, documentRef),
         markers: [
           'data-easymde-editor-owner',
@@ -3012,9 +3721,7 @@ async function readNativeCodeSurfaceEvidence(
     };
 
     if (typeof sourceHtml !== 'string') {
-      const root = document.querySelector(
-        '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
-      );
+      const root = document.querySelector(sourceSelector);
       if (!root || root.nodeType !== 1) throw new Error('wechat-native-source-root-unavailable');
       return { source: collect(root, window, document, 'source') };
     }
@@ -3053,6 +3760,13 @@ async function readNativeCodeSurfaceEvidence(
               element.style.removeProperty(property);
             });
           });
+        root.querySelectorAll('[role="checkbox"], [role="checkbox"] *')
+          .forEach((element) => {
+            if (element.nodeType !== 1) return;
+            ['position', 'top', 'right', 'bottom', 'left'].forEach((property) => {
+              element.style.removeProperty(property);
+            });
+          });
       }
       const payload = [];
       for (const width of widths) {
@@ -3085,9 +3799,426 @@ async function readNativeCodeSurfaceEvidence(
   }, {
     signatureSentinels,
     sourceHtml: html,
+    sourceSelector,
     stripPosition,
     widths
   });
+}
+
+async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRects, cssWidth) {
+  if (!Number.isFinite(cssWidth) || cssWidth <= 0) {
+    throw new Error('wechat-task-marker-pixel-css-width-invalid');
+  }
+  return page.evaluate(async ({ encodedPng, markerRegions, sourceCssWidth }) => {
+    const binary = atob(encodedPng);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('wechat-task-marker-pixel-canvas-unavailable');
+    context.drawImage(bitmap, 0, 0);
+    const values = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    const scale = bitmap.width / sourceCssWidth;
+    const sample = (x, y) => {
+      const index = (y * bitmap.width + x) * 4;
+      return [values[index], values[index + 1], values[index + 2], values[index + 3]];
+    };
+    const background = sample(0, 0);
+    const results = markerRegions.map((region, markerIndex) => {
+      const left = Math.max(0, Math.floor(region.left * scale));
+      const right = Math.min(bitmap.width, Math.ceil(region.right * scale));
+      const top = Math.max(0, Math.floor(region.top * scale));
+      const bottom = Math.min(bitmap.height, Math.ceil(region.bottom * scale));
+      let hash = 2166136261;
+      let inkPixels = 0;
+      let minInkX = right;
+      let minInkY = bottom;
+      let maxInkX = -1;
+      let maxInkY = -1;
+      for (let y = top; y < bottom; y += 1) {
+        for (let x = left; x < right; x += 1) {
+          const pixel = sample(x, y);
+          for (const channel of pixel) {
+            hash ^= channel;
+            hash = Math.imul(hash, 16777619);
+          }
+          if (
+            pixel[3] > 0
+            && pixel.slice(0, 3).some((channel, channelIndex) => (
+              channel !== background[channelIndex]
+            ))
+          ) {
+            inkPixels += 1;
+            minInkX = Math.min(minInkX, x - left);
+            minInkY = Math.min(minInkY, y - top);
+            maxInkX = Math.max(maxInkX, x - left);
+            maxInkY = Math.max(maxInkY, y - top);
+          }
+        }
+      }
+      return {
+        inkBounds: maxInkX < 0
+          ? null
+          : {
+              bottom: maxInkY + 1,
+              height: maxInkY - minInkY + 1,
+              left: minInkX,
+              right: maxInkX + 1,
+              top: minInkY,
+              width: maxInkX - minInkX + 1
+            },
+        inkPixels,
+        markerIndex,
+        pixelHash: (hash >>> 0).toString(16).padStart(8, '0')
+      };
+    });
+    const bitmapSize = { height: bitmap.height, width: bitmap.width };
+    bitmap.close();
+    return { bitmap: bitmapSize, results };
+  }, {
+    encodedPng: screenshot.toString('base64'),
+    markerRegions: markerRects,
+    sourceCssWidth: cssWidth
+  });
+}
+
+async function readTaskMarkerPixelEvidence(page, html, { stripPosition = false, width }) {
+  if ('string' !== typeof html || !html) throw new Error('wechat-task-marker-pixel-html-unavailable');
+  if (!Number.isFinite(width) || width <= 0) throw new Error('wechat-task-marker-pixel-width-invalid');
+  await page.evaluate(async ({ sourceHtml, destinationWidth, removePosition }) => {
+    document.querySelector('[data-easymde-task-marker-pixel-probe="1"]')?.remove();
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.setAttribute('data-easymde-task-marker-pixel-probe', '1');
+    iframe.style.cssText = [
+      'position:fixed',
+      'left:0',
+      'top:0',
+      'z-index:2147483647',
+      'width:0',
+      'height:1000px',
+      'border:0',
+      'visibility:visible',
+      'opacity:1',
+      'pointer-events:none',
+      'background:#fff'
+    ].join(';');
+    document.body.append(iframe);
+    await new Promise((resolve, reject) => {
+      iframe.addEventListener('load', resolve, { once: true });
+      iframe.addEventListener('error', () => reject(new Error('wechat-task-marker-pixel-frame-load-failed')), {
+        once: true
+      });
+      iframe.srcdoc = '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>';
+    });
+    const documentRef = iframe.contentDocument;
+    const view = iframe.contentWindow;
+    if (!documentRef?.body || !view) throw new Error('wechat-task-marker-pixel-frame-unavailable');
+    documentRef.documentElement.style.cssText = 'margin:0;padding:0;width:100%;';
+    documentRef.body.style.cssText = 'margin:0;padding:0;width:100%;background:#fff;';
+    documentRef.body.innerHTML = sourceHtml;
+    const root = documentRef.body.firstElementChild;
+    if (!root || root.nodeType !== 1) throw new Error('wechat-task-marker-pixel-root-unavailable');
+    if (removePosition) {
+      root.querySelectorAll('[role="checkbox"], [role="checkbox"] *').forEach((element) => {
+        if (element.nodeType !== 1) return;
+        ['position', 'top', 'right', 'bottom', 'left'].forEach((property) => {
+          element.style.removeProperty(property);
+        });
+      });
+    }
+    iframe.style.width = `${destinationWidth}px`;
+    documentRef.documentElement.style.width = `${destinationWidth}px`;
+    documentRef.body.style.width = `${destinationWidth}px`;
+    if (documentRef.fonts?.ready) await documentRef.fonts.ready;
+    await Promise.all([...documentRef.querySelectorAll('img')].map(async (image) => {
+      if (!image.complete) {
+        await new Promise((resolve, reject) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', () => reject(new Error('wechat-task-marker-pixel-image-load-failed')), {
+            once: true
+          });
+        });
+      }
+      if ('function' === typeof image.decode) await image.decode();
+    }));
+    await new Promise((resolve) => view.requestAnimationFrame(() => resolve()));
+  }, { destinationWidth: width, removePosition: stripPosition, sourceHtml: html }).catch(async (error) => {
+    await page.evaluate(() => {
+      document.querySelector('[data-easymde-task-marker-pixel-probe="1"]')?.remove();
+    });
+    throw error;
+  });
+
+  const iframe = page.locator('[data-easymde-task-marker-pixel-probe="1"]');
+  try {
+    const geometry = await page.evaluate(() => {
+      const iframe = document.querySelector('[data-easymde-task-marker-pixel-probe="1"]');
+      const documentRef = iframe?.contentDocument;
+      const root = documentRef?.body?.firstElementChild;
+      if (!root || root.nodeType !== 1 || typeof root.getBoundingClientRect !== 'function') {
+        throw new Error('wechat-task-marker-pixel-root-missing');
+      }
+      const rootRect = root.getBoundingClientRect();
+      const markerRects = [...root.querySelectorAll('[role="checkbox"]')].map((marker, index) => {
+        const paintElements = [marker, ...marker.querySelectorAll('[aria-hidden="true"]')];
+        const rects = paintElements.map((element) => element.getBoundingClientRect());
+        if (!rects.length) throw new Error(`wechat-task-marker-pixel-marker-${index}-missing`);
+        const markerRect = marker.getBoundingClientRect();
+        return {
+          box: {
+            bottom: markerRect.bottom,
+            left: markerRect.left,
+            right: markerRect.right,
+            top: markerRect.top
+          },
+          paint: {
+            bottom: Math.max(...rects.map((rect) => rect.bottom)),
+            left: Math.min(...rects.map((rect) => rect.left)),
+            right: Math.max(...rects.map((rect) => rect.right)),
+            top: Math.min(...rects.map((rect) => rect.top))
+          }
+        };
+      });
+      return {
+        markerRects,
+        root: {
+          bottom: rootRect.bottom,
+          left: rootRect.left,
+          right: rootRect.right,
+          top: rootRect.top
+        }
+      };
+    });
+    const screenshot = await iframe.screenshot({ animations: 'disabled' });
+    const frameWidth = await page.evaluate(() => {
+      const frame = document.querySelector('[data-easymde-task-marker-pixel-probe="1"]');
+      const width = frame?.getBoundingClientRect().width;
+      if (!Number.isFinite(width) || width <= 0) {
+        throw new Error('wechat-task-marker-pixel-frame-width-unavailable');
+      }
+      return width;
+    });
+    const pixels = await decodeTaskMarkerPixelEvidence(
+      page,
+      screenshot,
+      geometry.markerRects.map(({ paint }) => paint),
+      frameWidth
+    );
+    return { geometry, pixels, screenshot };
+  } finally {
+    await page.evaluate(() => {
+      document.querySelector('[data-easymde-task-marker-pixel-probe="1"]')?.remove();
+    });
+  }
+}
+
+async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
+  const geometry = await page.evaluate((selector) => {
+    const root = document.querySelector(selector);
+    if (!root || root.nodeType !== 1 || typeof root.getBoundingClientRect !== 'function') {
+      throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+    }
+    const rootRect = root.getBoundingClientRect();
+    const finite = (value) => Number.isFinite(value) ? value : null;
+    const transformBounds = (width, height, transform) => {
+      if (!transform || transform === 'none') return { height, width };
+      const matrixMatch = transform.match(/^matrix\(([^)]+)\)$/u);
+      const matrix3dMatch = transform.match(/^matrix3d\(([^)]+)\)$/u);
+      let values;
+      if (matrixMatch) {
+        values = matrixMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
+      } else if (matrix3dMatch) {
+        const matrix = matrix3dMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
+        values = [matrix[0], matrix[1], matrix[4], matrix[5]];
+      } else {
+        return { height, width };
+      }
+      const [a, b, c, d] = values;
+      if (![a, b, c, d].every(Number.isFinite)) return { height, width };
+      return {
+        height: Math.abs(b) * width + Math.abs(d) * height,
+        width: Math.abs(a) * width + Math.abs(c) * height
+      };
+    };
+    const rectValue = (rect, origin) => ({
+      bottom: rect.bottom - origin.top,
+      left: rect.left - origin.left,
+      right: rect.right - origin.left,
+      top: rect.top - origin.top
+    });
+    const markerRects = [...root.querySelectorAll('input[type="checkbox"]')]
+      .filter((element) => element.closest('.task-list-item, .task-list'))
+      .map((marker, index) => {
+        const markerRect = marker.getBoundingClientRect();
+        const paintRects = [markerRect];
+        for (const pseudo of ['::before', '::after']) {
+          const style = getComputedStyle(marker, pseudo);
+          if (
+            style.content === 'none'
+            || style.content === 'normal'
+            || style.display === 'none'
+            || style.visibility === 'hidden'
+          ) continue;
+          const width = finite(Number.parseFloat(style.width));
+          const height = finite(Number.parseFloat(style.height));
+          const left = finite(Number.parseFloat(style.left));
+          const top = finite(Number.parseFloat(style.top));
+          if (width === null || height === null || left === null || top === null) continue;
+          const paint = transformBounds(width, height, style.transform);
+          paintRects.push({
+            bottom: markerRect.top + top + paint.height,
+            left: markerRect.left + left,
+            right: markerRect.left + left + paint.width,
+            top: markerRect.top + top
+          });
+        }
+        return {
+          box: rectValue(markerRect, rootRect),
+          index,
+          paint: rectValue({
+            bottom: Math.max(...paintRects.map((rect) => rect.bottom)),
+            left: Math.min(...paintRects.map((rect) => rect.left)),
+            right: Math.max(...paintRects.map((rect) => rect.right)),
+            top: Math.min(...paintRects.map((rect) => rect.top))
+          }, { left: rootRect.left, top: rootRect.top })
+        };
+      });
+    if (markerRects.length !== 19) throw new Error('wechat-task-marker-source-pixel-count-invalid');
+    return {
+      markerRects,
+      root: {
+        height: rootRect.height,
+        width: rootRect.width
+      }
+    };
+  }, sourceSelector);
+  const root = page.locator(sourceSelector);
+  const screenshot = await root.screenshot({ animations: 'disabled' });
+  const pixels = await decodeTaskMarkerPixelEvidence(
+    page,
+    screenshot,
+    geometry.markerRects.map(({ paint }) => paint),
+    geometry.root.width
+  );
+  return { geometry, pixels, screenshot };
+}
+
+async function readTaskMarkerSourceContentWidth(page, sourceSelector) {
+  return page.evaluate((selector) => {
+    const root = document.querySelector(selector);
+    if (!root || root.nodeType !== 1 || typeof root.getBoundingClientRect !== 'function') {
+      throw new Error('wechat-task-marker-source-content-root-unavailable');
+    }
+    const rect = root.getBoundingClientRect();
+    const style = getComputedStyle(root);
+    const pixel = (value) => {
+      const parsed = Number.parseFloat(value);
+      if (!Number.isFinite(parsed)) throw new Error('wechat-task-marker-source-content-style-invalid');
+      return parsed;
+    };
+    const border = pixel(style.borderLeftWidth)
+      + pixel(style.borderRightWidth);
+    const padding = pixel(style.paddingLeft)
+      + pixel(style.paddingRight);
+    return {
+      contentWidth: rect.width - border - padding,
+      viewportWidth: window.innerWidth
+    };
+  }, sourceSelector);
+}
+
+async function calibrateTaskMarkerSourceViewport(page, sourceSelector, requestedContent) {
+  const calibrationUnavailable = () => {
+    throw new Error('wechat-task-marker-source-content-calibration-unavailable');
+  };
+  const validViewport = (value) => {
+    if (
+      !Number.isFinite(value)
+      || !Number.isSafeInteger(value)
+      || value < taskMarkerSourceViewportBounds.min
+      || value > taskMarkerSourceViewportBounds.max
+    ) {
+      calibrationUnavailable();
+    }
+    return value;
+  };
+  if (
+    !Number.isFinite(requestedContent)
+    || !Number.isSafeInteger(requestedContent)
+    || requestedContent < taskMarkerSourceViewportBounds.min
+    || requestedContent > taskMarkerSourceViewportBounds.max
+  ) {
+    throw new Error('wechat-task-marker-source-content-calibration-unavailable');
+  }
+  const probeDelta = Math.max(32, Math.min(128, Math.round(requestedContent / 8)));
+  const firstViewport = validViewport(Math.max(320, Math.round(requestedContent - probeDelta)));
+  const secondViewport = validViewport(
+    Math.max(firstViewport + 1, Math.round(requestedContent + probeDelta))
+  );
+  const samples = [];
+  const read = async (viewportWidth) => {
+    validViewport(viewportWidth);
+    await page.setViewportSize({ width: viewportWidth, height: 1000 });
+    await expect(page.locator(sourceSelector)).toBeVisible();
+    const sample = await readTaskMarkerSourceContentWidth(page, sourceSelector);
+    if (
+      !Number.isFinite(sample.contentWidth)
+      || sample.contentWidth <= 0
+      || !Number.isFinite(sample.viewportWidth)
+      || !Number.isSafeInteger(sample.viewportWidth)
+      || sample.viewportWidth < taskMarkerSourceViewportBounds.min
+      || sample.viewportWidth > taskMarkerSourceViewportBounds.max
+    ) {
+      calibrationUnavailable();
+    }
+    samples.push({ ...sample, viewportWidth });
+    return sample.contentWidth;
+  };
+  await read(firstViewport);
+  const secondContentWidth = await read(secondViewport);
+  if (Math.abs(secondContentWidth - requestedContent) <= intrinsicGeometryTolerance) {
+    return {
+      requestedContent,
+      samples,
+      sourceContent: secondContentWidth,
+      sourceViewport: secondViewport
+    };
+  }
+  for (let attempt = 2; attempt < 8; attempt += 1) {
+    const previous = samples.at(-1);
+    const predecessor = samples.at(-2);
+    if (!previous || !predecessor) {
+      throw new Error('wechat-task-marker-source-content-calibration-unavailable');
+    }
+    const viewportDelta = previous.viewportWidth - predecessor.viewportWidth;
+    const contentDelta = previous.contentWidth - predecessor.contentWidth;
+    const slope = contentDelta / viewportDelta;
+    if (!Number.isFinite(slope) || slope <= 0) {
+      calibrationUnavailable();
+    }
+    const predictedRaw = previous.viewportWidth
+      + (requestedContent - previous.contentWidth) / slope;
+    if (!Number.isFinite(predictedRaw) || !Number.isSafeInteger(Math.round(predictedRaw))) {
+      calibrationUnavailable();
+    }
+    const predictedViewport = validViewport(Math.max(320, Math.round(predictedRaw)));
+    if (samples.some(({ viewportWidth }) => viewportWidth === predictedViewport)) {
+      calibrationUnavailable();
+    }
+    const contentWidth = await read(predictedViewport);
+    if (Math.abs(contentWidth - requestedContent) <= intrinsicGeometryTolerance) {
+      return {
+        requestedContent,
+        samples,
+        sourceContent: contentWidth,
+        sourceViewport: predictedViewport
+      };
+    }
+  }
+  calibrationUnavailable();
 }
 
 async function mutateMdmdtLinkPayload(page, html, mutation) {
@@ -3166,6 +4297,28 @@ function assertNativeCodeSurface(sourceEvidence, targetEvidence, label, { requir
       .toBe(sourceBlock.code.style.fontSize);
     expect(targetBlock.code.style.lineHeight, `${label} code line height ${sourceBlock.index}`)
       .toBe(sourceBlock.code.style.lineHeight);
+    expect(targetBlock.rows, `${label} intrinsic code rows ${sourceBlock.index}`)
+      .toBeDefined();
+    const rows = targetBlock.rows;
+    if (!rows) throw new Error(`wechat-native-${label}-code-rows-unavailable`);
+    expect(rows.style, `${label} code rows style ${sourceBlock.index}`).toMatchObject({
+      display: 'block',
+      maxWidth: 'none',
+      minWidth: '100%',
+      overflow: '',
+      overflowWrap: 'normal',
+      overflowX: '',
+      overflowY: '',
+      whiteSpace: 'pre',
+      width: 'max-content',
+      wordBreak: 'normal'
+    });
+    expect(rows.lineCount, `${label} logical code rows ${sourceBlock.index}`)
+      .toBeGreaterThan(0);
+    expect(rows.breakCount, `${label} logical row separators ${sourceBlock.index}`)
+      .toBe(rows.lineCount - 1);
+    expect(rows.box.width, `${label} intrinsic rows width ${sourceBlock.index}`)
+      .toBeGreaterThanOrEqual(targetBlock.code.contentWidth - 0.5);
     expect(targetBlock.markers, `${label} frame markers ${sourceBlock.index}`)
       .toHaveLength(1);
     const marker = targetBlock.markers[0];
@@ -3345,6 +4498,856 @@ function assertNativeArticleSurface(sourceEvidence, targetEvidence, label) {
     `${label} root horizontal overflow`).toBeLessThanOrEqual(1);
   expect(targetEvidence.root.box.width, `${label} root width`).toBeGreaterThan(0);
   assertNativeCodeSurface(sourceEvidence, targetEvidence, label, { requireLongLine: false });
+}
+
+function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, themeId) {
+  const closeGeometry = (actual, expected, message) => {
+    expect(
+      Math.abs(actual - expected),
+      `${label} ${message}`
+    ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  };
+  const cssNumber = (value, message) => {
+    const parsed = Number.parseFloat(value);
+    expect(Number.isFinite(parsed), `${label} ${message} must be finite`).toBe(true);
+    return parsed;
+  };
+  const boxModelDimensions = (style, axis, message) => {
+    const horizontal = axis === 'width';
+    const declared = cssNumber(style[axis], `${message} declared ${axis}`);
+    const padding = (horizontal
+      ? [style.paddingLeft, style.paddingRight]
+      : [style.paddingTop, style.paddingBottom])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const border = (horizontal
+      ? [style.borderLeftWidth, style.borderRightWidth]
+      : [style.borderTopWidth, style.borderBottomWidth])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const edge = padding + border;
+    const borderBox = style.boxSizing === 'border-box' ? declared : declared + edge;
+    const contentBox = style.boxSizing === 'border-box' ? declared - edge : declared;
+    expect(contentBox, `${label} ${message} content ${axis}`).toBeGreaterThanOrEqual(0);
+    return { borderBox, contentBox };
+  };
+  const transformedPaintDimension = (dimensions, transform, axis, message) => {
+    const normalized = transform.trim();
+    if (!normalized || normalized === 'none') return dimensions[axis];
+    const matrixMatch = normalized.match(/^matrix\(([^)]+)\)$/u);
+    const matrix3dMatch = normalized.match(/^matrix3d\(([^)]+)\)$/u);
+    let a;
+    let b;
+    let c;
+    let d;
+    if (matrixMatch) {
+      const values = matrixMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
+      [a, b, c, d] = values;
+    } else if (matrix3dMatch) {
+      const values = matrix3dMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
+      [a, b, c, d] = [values[0], values[1], values[4], values[5]];
+    } else {
+      throw new Error(`${label} ${message} transform unavailable`);
+    }
+    expect([a, b, c, d].every(Number.isFinite), `${label} ${message} transform finite`).toBe(true);
+    return axis === 'width'
+      ? Math.abs(a) * dimensions.width + Math.abs(c) * dimensions.height
+      : Math.abs(b) * dimensions.width + Math.abs(d) * dimensions.height;
+  };
+  const compareRelativeBox = (actual, expected, message) => {
+    for (const edge of ['left', 'right', 'top', 'bottom']) {
+      closeGeometry(actual[edge], expected[edge], `${message} ${edge}`);
+    }
+  };
+  expect(sourceEvidence.markerType, `${label} source marker type`).toBe('source-input');
+  expect(sourceEvidence.inputCount, `${label} source input count`).toBe(19);
+  expect(sourceEvidence.ownerCount, `${label} source static owner count`).toBe(0);
+  expect(sourceEvidence.checkedStates, `${label} source checkbox states`)
+    .toEqual(fullCapabilityTaskStates);
+  expect(targetEvidence.markerType, `${label} payload marker type`).toBe('static-owner');
+  expect(targetEvidence.inputCount, `${label} payload input count`).toBe(0);
+  expect(targetEvidence.ownerCount, `${label} payload static owner count`).toBe(19);
+  expect(targetEvidence.checkedStates, `${label} payload checkbox states`)
+    .toEqual(fullCapabilityTaskStates);
+  expect(sourceEvidence.items, `${label} source task count`).toHaveLength(19);
+  expect(targetEvidence.items, `${label} payload task count`).toHaveLength(19);
+  closeGeometry(
+    targetEvidence.rootContentBox.width,
+    sourceEvidence.rootContentBox.width,
+    'root content width'
+  );
+
+  for (const sourceItem of sourceEvidence.items) {
+    const targetItem = targetEvidence.items[sourceItem.index];
+    expect(targetItem, `${label} payload task ${sourceItem.index}`).toBeDefined();
+    if (!targetItem) throw new Error(`wechat-native-${label}-task-target-unavailable`);
+    expect(sourceItem.connected, `${label} source task ${sourceItem.index} connected`).toBe(true);
+    expect(targetItem.connected, `${label} payload task ${sourceItem.index} connected`).toBe(true);
+    expect(sourceItem.li.connected, `${label} source li ${sourceItem.index} connected`).toBe(true);
+    expect(targetItem.li.connected, `${label} payload li ${sourceItem.index} connected`).toBe(true);
+    expect(sourceItem.marker.connected, `${label} source marker ${sourceItem.index} connected`).toBe(true);
+    expect(targetItem.marker.connected, `${label} payload marker ${sourceItem.index} connected`).toBe(true);
+    expect(targetItem.marker.ariaChecked, `${label} payload aria-checked ${sourceItem.index}`)
+      .toBe(sourceItem.checked ? 'true' : 'false');
+    expect(targetItem.marker.ariaDisabled, `${label} payload aria-disabled ${sourceItem.index}`)
+      .toBe('true');
+    expect(targetItem.text.text, `${label} text anchor ${sourceItem.index}`)
+      .toBe(sourceItem.text.text);
+    closeGeometry(
+      targetItem.flowAdvance,
+      sourceItem.flowAdvance,
+      `task flow advance ${sourceItem.index}`
+    );
+    closeGeometry(
+      targetItem.li.box.height,
+      sourceItem.li.box.height,
+      `li height ${sourceItem.index}`
+    );
+    closeGeometry(
+      targetItem.li.lineHeight,
+      sourceItem.li.lineHeight,
+      `li line-height ${sourceItem.index}`
+    );
+    compareRelativeBox(
+      targetItem.text.relativeToLi,
+      sourceItem.text.relativeToLi,
+      `text anchor ${sourceItem.index}`
+    );
+    compareRelativeBox(
+      {
+        bottom: targetItem.marker.box.bottom - targetItem.li.box.top,
+        left: targetItem.marker.box.left - targetItem.li.box.left,
+        right: targetItem.marker.box.right - targetItem.li.box.left,
+        top: targetItem.marker.box.top - targetItem.li.box.top
+      },
+      {
+        bottom: sourceItem.marker.box.bottom - sourceItem.li.box.top,
+        left: sourceItem.marker.box.left - sourceItem.li.box.left,
+        right: sourceItem.marker.box.right - sourceItem.li.box.left,
+        top: sourceItem.marker.box.top - sourceItem.li.box.top
+      },
+      `marker ${sourceItem.index}`
+    );
+    closeGeometry(
+      targetItem.marker.contentBox.width,
+      sourceItem.marker.contentBox.width,
+      `marker content width ${sourceItem.index}`
+    );
+    closeGeometry(
+      targetItem.marker.contentBox.height,
+      sourceItem.marker.contentBox.height,
+      `marker content height ${sourceItem.index}`
+    );
+    expect(targetItem.marker.style.boxSizing, `${label} marker box sizing ${sourceItem.index}`)
+      .toBe(sourceItem.marker.style.boxSizing);
+    expect(targetItem.marker.pseudoMarkers, `${label} pseudo marker count ${sourceItem.index}`)
+      .toHaveLength(sourceItem.marker.pseudoMarkers.length);
+    for (const [pseudoIndex, sourcePseudo] of sourceItem.marker.pseudoMarkers.entries()) {
+      const targetPseudo = targetItem.marker.pseudoMarkers[pseudoIndex];
+      expect(targetPseudo, `${label} pseudo marker ${sourceItem.index}/${pseudoIndex}`)
+        .toBeDefined();
+      if (!targetPseudo) throw new Error(`wechat-native-${label}-pseudo-target-unavailable`);
+      expect(targetPseudo.style.backgroundColor, `${label} pseudo background ${sourceItem.index}/${pseudoIndex}`)
+        .toBe(sourcePseudo.style.backgroundColor);
+      expect(targetPseudo.style.transform, `${label} pseudo transform ${sourceItem.index}/${pseudoIndex}`)
+        .toBe(sourcePseudo.style.transform);
+      expect(targetPseudo.style.opacity, `${label} pseudo opacity ${sourceItem.index}/${pseudoIndex}`)
+        .toBe(sourcePseudo.style.opacity);
+      for (const property of [
+        'borderBottomWidth',
+        'borderLeftWidth',
+        'borderRightWidth',
+        'borderTopWidth'
+      ]) {
+        if (sourcePseudo.style[property] === null) continue;
+        expect(
+          targetPseudo.style[property],
+          `${label} pseudo ${property} ${sourceItem.index}/${pseudoIndex}`
+        ).toBe(sourcePseudo.style[property]);
+      }
+      const sourceWidth = sourcePseudo.style.width !== 'auto' && sourcePseudo.style.width !== 'none'
+        ? boxModelDimensions(
+          sourcePseudo.style,
+          'width',
+          `source pseudo ${sourceItem.index}/${pseudoIndex}`
+        )
+        : null;
+      const targetWidth = sourceWidth
+        ? boxModelDimensions(
+          targetPseudo.style,
+          'width',
+          `payload pseudo ${sourceItem.index}/${pseudoIndex}`
+        )
+        : null;
+      const sourceHeight = sourcePseudo.style.height !== 'auto' && sourcePseudo.style.height !== 'none'
+        ? boxModelDimensions(
+          sourcePseudo.style,
+          'height',
+          `source pseudo ${sourceItem.index}/${pseudoIndex}`
+        )
+        : null;
+      const targetHeight = sourceHeight
+        ? boxModelDimensions(
+          targetPseudo.style,
+          'height',
+          `payload pseudo ${sourceItem.index}/${pseudoIndex}`
+        )
+        : null;
+      const sourcePaint = sourceWidth && sourceHeight
+        ? {
+          height: transformedPaintDimension(
+            { height: sourceHeight.borderBox, width: sourceWidth.borderBox },
+            sourcePseudo.style.transform,
+            'height',
+            `source pseudo ${sourceItem.index}/${pseudoIndex}`
+          ),
+          width: transformedPaintDimension(
+            { height: sourceHeight.borderBox, width: sourceWidth.borderBox },
+            sourcePseudo.style.transform,
+            'width',
+            `source pseudo ${sourceItem.index}/${pseudoIndex}`
+          )
+        }
+        : null;
+      if (sourceWidth && targetWidth) {
+        closeGeometry(
+          targetWidth.contentBox,
+          sourceWidth.contentBox,
+          `pseudo content width ${sourceItem.index}/${pseudoIndex}`
+        );
+        closeGeometry(
+          targetWidth.borderBox,
+          sourceWidth.borderBox,
+          `pseudo layout border-box width ${sourceItem.index}/${pseudoIndex}`
+        );
+        if (sourcePaint) {
+          closeGeometry(targetPseudo.box.width, sourcePaint.width,
+            `pseudo painted width ${sourceItem.index}/${pseudoIndex}`);
+        }
+      }
+      if (sourceHeight && targetHeight) {
+        closeGeometry(
+          targetHeight.contentBox,
+          sourceHeight.contentBox,
+          `pseudo content height ${sourceItem.index}/${pseudoIndex}`
+        );
+        closeGeometry(
+          targetHeight.borderBox,
+          sourceHeight.borderBox,
+          `pseudo layout border-box height ${sourceItem.index}/${pseudoIndex}`
+        );
+        if (sourcePaint) {
+          closeGeometry(targetPseudo.box.height, sourcePaint.height,
+            `pseudo painted height ${sourceItem.index}/${pseudoIndex}`);
+        }
+      }
+    }
+  }
+
+  if (themeId === 'default') {
+    const first = sourceEvidence.items[0];
+    if (!first) throw new Error(`wechat-native-${label}-default-task-unavailable`);
+    expect(first.marker.box.width, `${label} Default source marker width`).toBe(16);
+    expect(first.marker.marginRight, `${label} Default source marker margin-end`).toBe(4);
+    expect(first.flowAdvance, `${label} Default source flow advance`).toBe(20);
+  }
+
+  if (themeId === 'phycat-sky') {
+    const sourceChecked = sourceEvidence.items.find(({ checked }) => checked);
+    const targetChecked = targetEvidence.items.find(({ checked }) => checked);
+    if (!sourceChecked || !targetChecked) {
+      throw new Error(`wechat-native-${label}-checked-sky-task-unavailable`);
+    }
+    const sourceAfter = sourceChecked.marker.pseudoMarkers.find(({ pseudo }) => pseudo === '::after');
+    const targetAfter = targetChecked.marker.pseudoMarkers[1];
+    if (!sourceAfter || !targetAfter) {
+      throw new Error(`wechat-native-${label}-sky-check-paint-unavailable`);
+    }
+    const sourceWidth = boxModelDimensions(sourceAfter.style, 'width', `${label} sky source check`);
+    const targetWidth = boxModelDimensions(targetAfter.style, 'width', `${label} sky payload check`);
+    expect(sourceAfter.style.boxSizing, `${label} sky source check box sizing`)
+      .toBe('content-box');
+    expect(targetAfter.style.boxSizing, `${label} sky payload check box sizing`)
+      .toBe('border-box');
+    expect(targetAfter.style.width, `${label} sky payload converted width`)
+      .not.toBe(sourceAfter.style.width);
+    const sourceHeight = boxModelDimensions(sourceAfter.style, 'height', `${label} sky source check`);
+    closeGeometry(
+      targetWidth.borderBox,
+      sourceWidth.borderBox,
+      `${label} sky check content-box to border-box conversion`
+    );
+    closeGeometry(
+      targetAfter.box.width,
+      transformedPaintDimension(
+        { height: sourceHeight.borderBox, width: sourceWidth.borderBox },
+        sourceAfter.style.transform,
+        'width',
+        `${label} sky source check`
+      ),
+      `${label} sky check actual border-box paint`
+    );
+  }
+}
+
+function assertTaskMarkerPositionStripped(normalEvidence, strippedEvidence, label) {
+  expect(strippedEvidence.inputCount, `${label} stripped input count`).toBe(0);
+  expect(strippedEvidence.ownerCount, `${label} stripped owner count`).toBe(19);
+  expect(strippedEvidence.checkedStates, `${label} stripped checkbox states`)
+    .toEqual(fullCapabilityTaskStates);
+  for (const normalItem of normalEvidence.items) {
+    const strippedItem = strippedEvidence.items[normalItem.index];
+    expect(strippedItem, `${label} stripped task ${normalItem.index}`).toBeDefined();
+    if (!strippedItem) throw new Error(`wechat-native-${label}-stripped-task-unavailable`);
+    expect(strippedItem.marker.style.position, `${label} stripped marker position ${normalItem.index}`)
+      .toBe('static');
+    expect(strippedItem.marker.pseudoMarkers.every(({ style }) => style.position === 'static'))
+      .toBe(true);
+    for (const edge of ['left', 'right', 'top', 'bottom', 'width', 'height']) {
+      expect(
+        Math.abs(strippedItem.marker.box[edge] - normalItem.marker.box[edge]),
+        `${label} stripped marker ${edge} ${normalItem.index}`
+      ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+    }
+    for (const edge of ['left', 'right', 'top', 'bottom']) {
+      expect(
+        Math.abs(strippedItem.text.relativeToLi[edge] - normalItem.text.relativeToLi[edge]),
+        `${label} stripped text ${edge} ${normalItem.index}`
+      ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+    }
+    expect(
+      Math.abs(strippedItem.li.box.height - normalItem.li.box.height),
+      `${label} stripped li height ${normalItem.index}`
+    ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+    expect(strippedItem.marker.pseudoMarkers, `${label} stripped pseudo count ${normalItem.index}`)
+      .toHaveLength(normalItem.marker.pseudoMarkers.length);
+    for (const [pseudoIndex, normalPseudo] of normalItem.marker.pseudoMarkers.entries()) {
+      const strippedPseudo = strippedItem.marker.pseudoMarkers[pseudoIndex];
+      expect(strippedPseudo, `${label} stripped pseudo ${normalItem.index}/${pseudoIndex}`)
+        .toBeDefined();
+      if (!strippedPseudo) throw new Error(`wechat-native-${label}-stripped-pseudo-unavailable`);
+      for (const edge of ['left', 'right', 'top', 'bottom', 'width', 'height']) {
+        expect(
+          Math.abs(strippedPseudo.box[edge] - normalPseudo.box[edge]),
+          `${label} stripped pseudo ${edge} ${normalItem.index}/${pseudoIndex}`
+        ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+      }
+    }
+  }
+}
+
+function assertTaskMarkerPixelPaint(pixels, label) {
+  expect(pixels.results, `${label} marker pixel results`).toHaveLength(19);
+  for (const result of pixels.results) {
+    expect(result.inkPixels, `${label} marker ${result.markerIndex} painted pixels`)
+      .toBeGreaterThan(0);
+    expect(result.inkBounds, `${label} marker ${result.markerIndex} paint bounds`).not.toBeNull();
+  }
+}
+
+function assertTaskMarkerPixelParity(sourcePixels, payloadPixels, strippedPixels, label) {
+  expect(sourcePixels.results, `${label} source marker pixel results`).toHaveLength(19);
+  expect(payloadPixels.results, `${label} payload marker pixel results`).toHaveLength(19);
+  expect(strippedPixels.results, `${label} stripped marker pixel results`).toHaveLength(19);
+  for (const source of sourcePixels.results) {
+    const payload = payloadPixels.results[source.markerIndex];
+    const stripped = strippedPixels.results[source.markerIndex];
+    expect(payload, `${label} payload marker ${source.markerIndex}`).toBeDefined();
+    expect(stripped, `${label} stripped marker ${source.markerIndex}`).toBeDefined();
+    if (!payload || !stripped) throw new Error(`wechat-task-marker-${label}-pixel-result-unavailable`);
+    expect(source.inkPixels, `${label} source/payload ink ${source.markerIndex}`)
+      .toBe(payload.inkPixels);
+    expect({
+      height: payload.inkBounds?.height,
+      width: payload.inkBounds?.width
+    }, `${label} payload bounds ${source.markerIndex}`).toEqual({
+      height: source.inkBounds?.height,
+      width: source.inkBounds?.width
+    });
+    expect(stripped.inkBounds, `${label} stripped bounds ${source.markerIndex}`)
+      .toEqual(payload.inkBounds);
+    expect(stripped.inkPixels, `${label} stripped ink ${source.markerIndex}`)
+      .toBe(payload.inkPixels);
+    expect(stripped.pixelHash, `${label} stripped pixels ${source.markerIndex}`)
+      .toBe(payload.pixelHash);
+  }
+}
+
+function assertTaskMarkerGeometryProjection(sourceEvidence, targetEvidence, label, themeId) {
+  const closeGeometry = (actual, expected, errorCode) => {
+    if (
+      !Number.isFinite(actual)
+      || !Number.isFinite(expected)
+      || Math.abs(actual - expected) > intrinsicGeometryTolerance
+    ) {
+      throw new Error(errorCode);
+    }
+  };
+  const cssNumber = (value, errorCode) => {
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) throw new Error(errorCode);
+    return parsed;
+  };
+  const boxModel = (style, axis) => {
+    const horizontal = axis === 'width';
+    const declared = cssNumber(style[axis], 'wechat-task-marker-pseudo-dimension-invalid');
+    const padding = (horizontal
+      ? [style.paddingLeft, style.paddingRight]
+      : [style.paddingTop, style.paddingBottom])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const border = (horizontal
+      ? [style.borderLeftWidth, style.borderRightWidth]
+      : [style.borderTopWidth, style.borderBottomWidth])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const edge = padding + border;
+    const borderBox = style.boxSizing === 'border-box' ? declared : declared + edge;
+    const contentBox = style.boxSizing === 'border-box' ? declared - edge : declared;
+    if (contentBox < 0) throw new Error('wechat-task-marker-pseudo-content-box-invalid');
+    return { borderBox, contentBox };
+  };
+  const paintDimension = (dimensions, transform, axis) => {
+    if (!transform || transform === 'none') return dimensions[axis];
+    const matrixMatch = transform.match(/^matrix\(([^)]+)\)$/u);
+    const values = matrixMatch
+      ? matrixMatch[1].split(',').map((value) => Number.parseFloat(value.trim()))
+      : null;
+    if (!values || values.length < 4 || !values.slice(0, 4).every(Number.isFinite)) {
+      throw new Error('wechat-task-marker-transform-unavailable');
+    }
+    const [a, b, c, d] = values;
+    return axis === 'width'
+      ? Math.abs(a) * dimensions.width + Math.abs(c) * dimensions.height
+      : Math.abs(b) * dimensions.width + Math.abs(d) * dimensions.height;
+  };
+  closeGeometry(
+    targetEvidence.rootContentBox.width,
+    sourceEvidence.rootContentBox.width,
+    'wechat-task-marker-root-content-width-mismatch'
+  );
+  if (!Array.isArray(sourceEvidence.items) || sourceEvidence.items.length !== 19) {
+    throw new Error('wechat-task-marker-source-item-count-mismatch');
+  }
+  if (!Array.isArray(targetEvidence.items) || targetEvidence.items.length !== 19) {
+    throw new Error('wechat-task-marker-target-item-count-mismatch');
+  }
+  for (const sourceItem of sourceEvidence.items) {
+    const targetItem = targetEvidence.items[sourceItem.index];
+    if (!targetItem) throw new Error('wechat-task-marker-target-item-unavailable');
+    closeGeometry(
+      targetItem.flowAdvance,
+      sourceItem.flowAdvance,
+      'wechat-task-marker-flow-advance-mismatch'
+    );
+  }
+  if (themeId !== 'phycat-sky') return;
+  const sourceChecked = sourceEvidence.items.find(({ checked }) => checked);
+  const targetChecked = targetEvidence.items.find(({ checked }) => checked);
+  if (!sourceChecked || !targetChecked) {
+    throw new Error('wechat-task-marker-checked-item-unavailable');
+  }
+  const sourceAfter = sourceChecked.marker.pseudoMarkers.find(({ pseudo }) => pseudo === '::after');
+  const targetAfter = targetChecked.marker.pseudoMarkers[1];
+  if (!sourceAfter || !targetAfter?.box) {
+    throw new Error('wechat-task-marker-pseudo-paint-unavailable');
+  }
+  const sourceWidth = boxModel(sourceAfter.style, 'width');
+  const sourceHeight = boxModel(sourceAfter.style, 'height');
+  const targetWidth = boxModel(targetAfter.style, 'width');
+  const targetHeight = boxModel(targetAfter.style, 'height');
+  closeGeometry(
+    targetWidth.contentBox,
+    sourceWidth.contentBox,
+    'wechat-task-marker-pseudo-content-width-mismatch'
+  );
+  closeGeometry(
+    targetHeight.contentBox,
+    sourceHeight.contentBox,
+    'wechat-task-marker-pseudo-content-height-mismatch'
+  );
+  closeGeometry(
+    targetWidth.borderBox,
+    sourceWidth.borderBox,
+    'wechat-task-marker-pseudo-border-width-mismatch'
+  );
+  closeGeometry(
+    targetHeight.borderBox,
+    sourceHeight.borderBox,
+    'wechat-task-marker-pseudo-border-height-mismatch'
+  );
+  closeGeometry(
+    targetAfter.box.width,
+    paintDimension({ height: sourceHeight.borderBox, width: sourceWidth.borderBox }, sourceAfter.style.transform, 'width'),
+    'wechat-task-marker-pseudo-paint-width-mismatch'
+  );
+  closeGeometry(
+    targetAfter.box.height,
+    paintDimension({ height: sourceHeight.borderBox, width: sourceWidth.borderBox }, sourceAfter.style.transform, 'height'),
+    'wechat-task-marker-pseudo-paint-height-mismatch'
+  );
+}
+
+function assertTaskMarkerOracleNegativeCases(sourceEvidence, targetEvidence, label, themeId) {
+  assertTaskMarkerGeometryProjection(sourceEvidence, targetEvidence, `${label}/baseline`, themeId);
+  const expectRejected = (mutation, suffix, expectedError) => {
+    const invalidTarget = structuredClone(targetEvidence);
+    mutation(invalidTarget);
+    let actualError = null;
+    try {
+      assertTaskMarkerGeometryProjection(sourceEvidence, invalidTarget, `${label}/${suffix}`, themeId);
+    } catch (error) {
+      actualError = error;
+    }
+    if (actualError?.message !== expectedError) {
+      throw new Error('wechat-task-marker-negative-error-mismatch');
+    }
+  };
+
+  expectRejected((invalidTarget) => {
+    invalidTarget.items[0].flowAdvance += 24;
+  }, 'badadvance-shift24', 'wechat-task-marker-flow-advance-mismatch');
+
+  if (themeId !== 'phycat-sky') return;
+  const checked = targetEvidence.items.find(({ checked }) => checked);
+  if (!checked) throw new Error(`wechat-native-${label}-negative-checked-task-unavailable`);
+  const after = checked.marker.pseudoMarkers[1];
+  if (!after?.box) throw new Error(`wechat-native-${label}-negative-border-box-unavailable`);
+  expectRejected((invalidTarget) => {
+    const invalidChecked = invalidTarget.items[checked.index];
+    const invalidAfter = invalidChecked?.marker.pseudoMarkers[1];
+    if (!invalidAfter?.box) throw new Error(`wechat-native-${label}-negative-border-box-unavailable`);
+    invalidAfter.box.width -= 2.5;
+    invalidAfter.box.right -= 2.5;
+  }, 'badborderbox-minus2_5', 'wechat-task-marker-pseudo-paint-width-mismatch');
+}
+
+function createTaskMarkerLegalProjection(sourceEvidence) {
+  const dimension = (style, axis) => {
+    const declared = Number.parseFloat(style[axis]);
+    if (!Number.isFinite(declared)) return null;
+    const horizontal = axis === 'width';
+    const padding = (horizontal
+      ? [style.paddingLeft, style.paddingRight]
+      : [style.paddingTop, style.paddingBottom])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const border = (horizontal
+      ? [style.borderLeftWidth, style.borderRightWidth]
+      : [style.borderTopWidth, style.borderBottomWidth])
+      .reduce((total, value) => total + (value ?? 0), 0);
+    const borderBox = style.boxSizing === 'border-box' ? declared : declared + padding + border;
+    return { borderBox };
+  };
+  const paint = (width, height, transform) => {
+    if (!transform || transform === 'none') return { height, width };
+    const match = transform.match(/^matrix\(([^)]+)\)$/u);
+    const values = match
+      ? match[1].split(',').map((value) => Number.parseFloat(value.trim()))
+      : null;
+    if (!values || values.length < 4 || !values.slice(0, 4).every(Number.isFinite)) {
+      throw new Error('wechat-task-marker-transform-unavailable');
+    }
+    const [a, b, c, d] = values;
+    return {
+      height: Math.abs(b) * width + Math.abs(d) * height,
+      width: Math.abs(a) * width + Math.abs(c) * height
+    };
+  };
+  const target = structuredClone(sourceEvidence);
+  target.items = sourceEvidence.items.map((sourceItem) => ({
+    ...sourceItem,
+    marker: {
+      ...sourceItem.marker,
+      pseudoMarkers: sourceItem.marker.pseudoMarkers.map((sourcePseudo) => {
+        const width = dimension(sourcePseudo.style, 'width');
+        const height = dimension(sourcePseudo.style, 'height');
+        const style = {
+          ...sourcePseudo.style,
+          boxSizing: 'border-box',
+          ...(width ? { width: `${width.borderBox}px` } : {}),
+          ...(height ? { height: `${height.borderBox}px` } : {})
+        };
+        const painted = width && height
+          ? paint(width.borderBox, height.borderBox, sourcePseudo.style.transform)
+          : { height: 0, width: 0 };
+        return {
+          ...sourcePseudo,
+          box: {
+            bottom: painted.height,
+            height: painted.height,
+            left: 0,
+            right: painted.width,
+            top: 0,
+            width: painted.width
+          },
+          style
+        };
+      })
+    }
+  }));
+  return target;
+}
+
+async function runTaskMarkerGeometryOracle(page, context, testInfo, { mode, themeId }) {
+  const destinationWidths = [335, 677];
+  const ordinaryPreviewSelector = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
+  const immersivePreviewSelector = '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]';
+  testInfo.wechatTaskMarkerOracle = {
+    hiddenLease: 'unverified',
+    mode,
+    themeId,
+    widths: destinationWidths
+  };
+  await login(page, testInfo.wechatUser);
+  const origin = new URL(page.url()).origin;
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+  await installClipboardInstrumentation(page);
+  await installEditorBootstrapOverride(page, false);
+  await page.route(fullCapabilityImageSource, async (route) => {
+    await route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 });
+  });
+  await page.setViewportSize({ width: 760, height: 1000 });
+  await openEasyMdeNewPost(page);
+  await assertPngConversionDisabled(page);
+  await fillMarkdownAndWaitForPreview(page, fullCapabilityMarkdown, 'Markdown 全量能力测试文档');
+  expect(await page.locator('#easymde-source').inputValue()).toBe(fullCapabilityMarkdown);
+  expect(createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'))
+    .toBe('ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb');
+
+  const catalog = await readAppearanceCatalog(page);
+  const articleTheme = catalog.articleThemes.find(({ id }) => id === themeId);
+  if (!articleTheme) throw new Error(`wechat-task-marker-${themeId}-theme-unavailable`);
+  const dialog = await openOrdinaryAppearanceDialog(page, catalog.labels.editorSettings);
+  await selectOrdinaryAppearanceTheme(
+    page,
+    dialog,
+    catalog.labels.articleTheme,
+    articleTheme.label
+  );
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await waitForArticleThemeStylesheet(page, articleTheme);
+
+  let sourceSelector = ordinaryPreviewSelector;
+  let copyButton = page.locator('.easymde-toolbar-copy-action');
+  let immersiveLabels = null;
+  if (mode === 'immersive-source') {
+    immersiveLabels = catalog.immersive;
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+    await page.getByRole('button', {
+      name: immersiveLabels.splitMode,
+      exact: true
+    }).click();
+    sourceSelector = immersivePreviewSelector;
+    await expect(page.locator(sourceSelector)).toBeVisible();
+    copyButton = page.getByRole('button', {
+      name: immersiveLabels.wechat,
+      exact: true
+    });
+  } else {
+    await expect(page.locator(ordinaryPreviewSelector)).toBeVisible();
+  }
+  const sourceEvidenceByWidth = new Map();
+  testInfo.wechatTaskMarkerOracle.calibration = [];
+  for (const destinationWidth of destinationWidths) {
+    const calibration = await calibrateTaskMarkerSourceViewport(
+      page,
+      sourceSelector,
+      destinationWidth
+    );
+    await waitForPreviewVisualReadiness(page);
+    const finiteAnimationCount = await settleFinitePreviewAnimations(page, sourceSelector);
+    expect(finiteAnimationCount, `${themeId}/${mode}/${destinationWidth} finite Preview animations`)
+      .toBe(0);
+    await waitForPreviewVisualReadiness(page);
+    const evidence = await readNativeCodeSurfaceEvidence(page, null, { sourceSelector });
+    const pixels = await readSourceTaskMarkerPixelEvidence(page, sourceSelector);
+    const sample = {
+      calibration,
+      pixels,
+      taskLists: evidence.source.taskLists,
+      viewportWidth: calibration.sourceViewport
+    };
+    sourceEvidenceByWidth.set(destinationWidth, sample);
+    testInfo.wechatTaskMarkerOracle.calibration.push({
+      requestedContent: destinationWidth,
+      sourceContent: sample.taskLists.rootContentBox.width,
+      sourceViewport: calibration.sourceViewport,
+      targetContent: null
+    });
+    await testInfo.attach(
+      `wechat-task-marker-${themeId}-${mode}-source-${destinationWidth}-${calibration.sourceViewport}.png`,
+      {
+        body: await page.screenshot({ animations: 'disabled' }),
+        contentType: 'image/png'
+      }
+    );
+  }
+  const finalSourceSample = sourceEvidenceByWidth.get(destinationWidths.at(-1));
+  const sourceEvidence = finalSourceSample?.taskLists;
+  if (!sourceEvidence) throw new Error('wechat-task-marker-source-evidence-unavailable');
+  assertTaskMarkerOracleNegativeCases(
+    sourceEvidence,
+    createTaskMarkerLegalProjection(sourceEvidence),
+    `${themeId}/${mode}/source-self-check`,
+    themeId
+  );
+  const sourceSnapshot = await page.evaluate((selector) => {
+    const source = document.querySelector('#easymde-source');
+    const preview = document.querySelector(selector);
+    if (!(source instanceof HTMLTextAreaElement) || !(preview instanceof HTMLElement)) {
+      throw new Error('wechat-task-marker-source-snapshot-unavailable');
+    }
+    return {
+      previewClass: preview.getAttribute('class'),
+      previewHtml: preview.innerHTML,
+      previewSignature: preview.easymdePreviewSignature ?? null,
+      previewStyle: preview.getAttribute('style'),
+      source: source.value,
+      viewport: window.innerWidth
+    };
+  }, sourceSelector);
+
+  if (mode === 'immersive-source') {
+    if (!immersiveLabels) throw new Error('wechat-task-marker-immersive-labels-unavailable');
+    await page.getByRole('button', {
+      name: immersiveLabels.editMode,
+      exact: true
+    }).click();
+    await expect(page.locator(sourceSelector)).toBeHidden();
+    await expect(page.locator('#easymde-source')).toHaveValue(fullCapabilityMarkdown);
+    await expect.poll(() => page.evaluate((selector) => {
+      const preview = document.querySelector(selector);
+      if (!(preview instanceof HTMLElement)) return null;
+      const rect = preview.getBoundingClientRect();
+      const style = getComputedStyle(preview);
+      return {
+        display: style.display,
+        height: rect.height,
+        visibility: style.visibility,
+        width: rect.width
+      };
+    }, sourceSelector)).toMatchObject({ display: 'none', height: 0, width: 0 });
+  }
+
+  const payload = await copyNativePayload(page, copyButton);
+  const ordinaryPayload = await readNativeCodeSurfaceEvidence(page, payload.html, {
+    widths: destinationWidths
+  });
+  const positionStrippedPayload = await readNativeCodeSurfaceEvidence(page, payload.html, {
+    stripPosition: true,
+    widths: destinationWidths
+  });
+  expect(ordinaryPayload.payload, `${themeId}/${mode} payload widths`).toHaveLength(2);
+  expect(positionStrippedPayload.payload, `${themeId}/${mode} stripped payload widths`)
+    .toHaveLength(2);
+  const selectedSourceByWidth = new Map();
+  for (const destination of ordinaryPayload.payload) {
+    const label = `${themeId}/${mode}/${destination.destinationWidth}`;
+    expect(destination.fontStatus, `${label} fonts`).toBe('loaded');
+    expect(destination.surface.root.box.width, `${label} root width`).toBeGreaterThan(0);
+    const sourceSample = sourceEvidenceByWidth.get(destination.destinationWidth);
+    if (!sourceSample) throw new Error(`wechat-native-${label}-source-evidence-unavailable`);
+    const sourceContentWidth = sourceSample.taskLists.rootContentBox.width;
+    const targetContentWidth = destination.surface.taskLists.rootContentBox.width;
+    if (Math.abs(sourceContentWidth - targetContentWidth) > intrinsicGeometryTolerance) {
+      throw new Error(`wechat-native-${label}-source-content-width-unavailable`);
+    }
+    const calibration = testInfo.wechatTaskMarkerOracle.calibration.find(
+      ({ requestedContent }) => requestedContent === destination.destinationWidth
+    );
+    if (!calibration) throw new Error(`wechat-native-${label}-calibration-unavailable`);
+    calibration.targetContent = targetContentWidth;
+    const sourceAtWidth = sourceSample.taskLists;
+    selectedSourceByWidth.set(destination.destinationWidth, sourceAtWidth);
+    expect(destination.surface.taskLists.inputCount, `${label} payload input count`)
+      .toBe(0);
+    assertTaskMarkerSurface(
+      sourceAtWidth,
+      destination.surface.taskLists,
+      label,
+      themeId
+    );
+    const stripped = positionStrippedPayload.payload.find(
+      ({ destinationWidth }) => destinationWidth === destination.destinationWidth
+    );
+    expect(stripped, `${label} stripped destination`).toBeDefined();
+    if (!stripped) throw new Error(`wechat-native-${label}-stripped-destination-unavailable`);
+    assertTaskMarkerPositionStripped(destination.surface.taskLists, stripped.surface.taskLists, label);
+    const markerPixels = await readTaskMarkerPixelEvidence(page, payload.html, {
+      width: destination.destinationWidth
+    });
+    assertTaskMarkerPixelPaint(markerPixels.pixels, `${label} payload`);
+    await testInfo.attach(`wechat-task-marker-${themeId}-${mode}-${destination.destinationWidth}-payload.png`, {
+      body: markerPixels.screenshot,
+      contentType: 'image/png'
+    });
+    const strippedPixels = await readTaskMarkerPixelEvidence(page, payload.html, {
+      stripPosition: true,
+      width: destination.destinationWidth
+    });
+    assertTaskMarkerPixelPaint(strippedPixels.pixels, `${label} position-stripped payload`);
+    const sourcePixels = sourceSample.pixels;
+    assertTaskMarkerPixelParity(
+      sourcePixels.pixels,
+      markerPixels.pixels,
+      strippedPixels.pixels,
+      label
+    );
+    await testInfo.attach(
+      `wechat-task-marker-${themeId}-${mode}-${destination.destinationWidth}-position-stripped.png`,
+      {
+        body: strippedPixels.screenshot,
+        contentType: 'image/png'
+      }
+    );
+  }
+  const afterSnapshot = await page.evaluate((selector) => {
+    const source = document.querySelector('#easymde-source');
+    const preview = document.querySelector(selector);
+    if (!(source instanceof HTMLTextAreaElement) || !(preview instanceof HTMLElement)) {
+      throw new Error('wechat-task-marker-after-snapshot-unavailable');
+    }
+    return {
+      previewClass: preview.getAttribute('class'),
+      previewHtml: preview.innerHTML,
+      previewSignature: preview.easymdePreviewSignature ?? null,
+      previewStyle: preview.getAttribute('style'),
+      source: source.value,
+      viewport: window.innerWidth
+    };
+  }, sourceSelector);
+  expect(afterSnapshot, `${themeId}/${mode} source and Preview mutation`).toEqual(sourceSnapshot);
+  await testInfo.attach(`wechat-task-marker-${themeId}-${mode}-geometry.json`, {
+    body: JSON.stringify({
+      fixtureSha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',
+      hiddenLease: 'unverified',
+      calibration: testInfo.wechatTaskMarkerOracle.calibration,
+      mode,
+      sourceByWidth: destinationWidths.map((destinationWidth) => ({
+        destinationWidth,
+        taskLists: selectedSourceByWidth.get(destinationWidth)
+      })),
+      destinations: ordinaryPayload.payload.map(({ destinationWidth, surface }) => ({
+        destinationWidth,
+        taskLists: surface.taskLists
+      })),
+      positionStripped: positionStrippedPayload.payload.map(({ destinationWidth, surface }) => ({
+        destinationWidth,
+        taskLists: surface.taskLists
+      })),
+      themeId,
+      widths: destinationWidths
+    }, null, 2),
+    contentType: 'application/json'
+  });
+  if (mode === 'immersive-source') {
+    if (!immersiveLabels) throw new Error('wechat-task-marker-immersive-labels-unavailable');
+    await page.getByRole('button', {
+      name: immersiveLabels.exit,
+      exact: true
+    }).click();
+    await expect(page.getByRole('region', {
+      name: immersiveLabels.immersive
+    })).toHaveCount(0);
+  }
 }
 
 function assertMdmdtLinkDecorationEvidence(decorations, label) {
@@ -3695,6 +5698,15 @@ async function installEditorBootstrapOverride(page, pngConversionEnabled) {
         const forceSource = '1' === window.sessionStorage.getItem(
           'easymde-e2e-source-presentation'
         );
+        const requestedEditingMode = window.sessionStorage.getItem(
+          'easymde-e2e-editing-mode'
+        );
+        if (
+          requestedEditingMode
+          && !['live-preview', 'source', 'preview'].includes(requestedEditingMode)
+        ) {
+          throw new Error('wechat-e2e-editing-mode-invalid');
+        }
         loaderBootstrap = {
           ...value,
           editorBootstrap: {
@@ -3703,7 +5715,11 @@ async function installEditorBootstrapOverride(page, pngConversionEnabled) {
               ...editorBootstrap.settings,
               general: {
                 ...editorBootstrap.settings?.general,
-                ...(forceSource ? { editingMode: 'source' } : {})
+                ...(forceSource
+                  ? { editingMode: 'source' }
+                  : requestedEditingMode
+                    ? { editingMode: requestedEditingMode }
+                    : {})
               }
             },
             wechatExport: {
@@ -3727,9 +5743,12 @@ async function installControlledPngUploadRoute(page) {
   }
   const uploadPath = new URL(bootstrap.endpoint, page.url()).pathname;
   const uploads = [];
+  const pngs = [];
   const matcher = (url) => new URL(url).pathname === uploadPath;
   await page.route(matcher, async (route) => {
-    const index = uploads.push(route.request().method()) - 1;
+    const request = route.request();
+    const index = uploads.push(request.method()) - 1;
+    pngs.push(multipartFileBytes(request).toString('base64'));
     const url = `https://images.example.test/e2e/source-png-${index}.png`;
     const response = bootstrap.owner === 'image-hosting'
       ? { alt: '', backup: { status: 'disabled' }, title: '', url }
@@ -3740,7 +5759,7 @@ async function installControlledPngUploadRoute(page) {
       status: 200
     });
   });
-  return { matcher, uploads };
+  return { matcher, pngs, uploads };
 }
 
 async function assertSourcePresentation(page, preview, expectedPresentation = 'split') {
@@ -3843,6 +5862,230 @@ async function readAppearanceCatalog(page) {
       }
     };
   });
+}
+
+function bloomThemesForE2E() {
+  const configured = process.env.EASYMDE_E2E_BLOOM_THEME_IDS?.trim();
+  if (!configured) return ['bloom-petal'];
+  const values = 'all' === configured.toLowerCase()
+    ? bloomArticleThemeIds
+    : configured.split(',').map((value) => value.trim()).filter(Boolean);
+  if (!values.length || values.some((value) => !bloomArticleThemeIds.includes(value))) {
+    throw new Error('wechat-bloom-theme-ids-invalid');
+  }
+  return [...new Set(values)];
+}
+
+function bloomDprsForE2E() {
+  const configured = process.env.EASYMDE_E2E_BLOOM_DPRS?.trim();
+  const values = (configured ? configured.split(',') : ['1', '2'])
+    .map((value) => Number(value.trim()));
+  if (!values.length || values.some((value) => ![1, 2].includes(value))) {
+    throw new Error('wechat-bloom-dprs-invalid');
+  }
+  return [...new Set(values)];
+}
+
+async function setBloomViewport(page, cdp, width, dpr) {
+  const height = 900;
+  await page.setViewportSize({ height, width });
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    deviceScaleFactor: dpr,
+    height,
+    mobile: false,
+    width
+  });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width);
+  await expect.poll(() => page.evaluate(() => window.devicePixelRatio)).toBe(dpr);
+}
+
+async function readBloomIntrinsicMermaidLiveEvidence(
+  preview,
+  role,
+  { allowMissingCtm = false } = {}
+) {
+  return preview.evaluate((root, { expectedRole, allowMissingCtm }) => {
+    const owner = [...root.querySelectorAll('.easymde-mermaid')].find((candidate) => (
+      candidate.querySelector(':scope > svg')?.getAttribute('aria-roledescription')
+        ?.trim()
+        === expectedRole
+    ));
+    const svg = owner?.querySelector(':scope > svg');
+    if (!(owner instanceof HTMLElement) || !(svg instanceof SVGSVGElement)) {
+      throw new Error(`wechat-bloom-${expectedRole}-live-evidence-unavailable`);
+    }
+    const ownerStyle = getComputedStyle(owner);
+    const svgStyle = getComputedStyle(svg);
+    const sourceRootStyleProperties = [
+      'box-sizing',
+      'border-bottom-style',
+      'border-bottom-width',
+      'border-left-style',
+      'border-left-width',
+      'border-right-style',
+      'border-right-width',
+      'border-top-style',
+      'border-top-width',
+      'display',
+      'height',
+      'margin-bottom',
+      'margin-left',
+      'margin-right',
+      'margin-top',
+      'max-height',
+      'max-width',
+      'min-height',
+      'min-width',
+      'direction',
+      'overflow',
+      'overflow-x',
+      'overflow-y',
+      'padding-bottom',
+      'padding-left',
+      'padding-right',
+      'padding-top',
+      'text-align',
+      'width'
+    ];
+    const sourceRootStyles = Object.fromEntries(
+      sourceRootStyleProperties.map((property) => [property, ownerStyle.getPropertyValue(property).trim()])
+    );
+    const typedOwnerStyle = (property) => {
+      if ('function' !== typeof owner.computedStyleMap) return null;
+      try {
+        const value = owner.computedStyleMap().get(property);
+        return value && 'function' === typeof value.toString
+          ? value.toString().replace(/\s+/gu, ' ').trim().toLowerCase()
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const typedSvgStyle = (property) => {
+      if ('function' !== typeof svg.computedStyleMap) return null;
+      try {
+        const value = svg.computedStyleMap().get(property);
+        if (!value || 'object' !== typeof value) return null;
+        if ('string' === typeof value.value) return value.value.trim().toLowerCase();
+        const unit = 'string' === typeof value.unit
+          ? value.unit.toLowerCase()
+          : value.unit?.toString?.().toLowerCase() ?? '';
+        return 'number' === typeof value.value && Number.isFinite(value.value) && unit
+          ? `${value.value}${'percent' === unit ? '%' : unit}`
+          : null;
+      } catch {
+        return null;
+      }
+    };
+    const authoredOwnerProperties = [
+      'margin-top',
+      'margin-right',
+      'margin-bottom',
+      'margin-left',
+      'float',
+      'clear',
+      'direction',
+      'text-align',
+      'unicode-bidi',
+      'writing-mode'
+    ];
+    const authoredOwnerStyles = Object.fromEntries(
+      authoredOwnerProperties.flatMap((property) => {
+        const value = owner.style.getPropertyValue(property).trim();
+        return value ? [[property, value]] : [];
+      })
+    );
+    const svgRect = svg.getBoundingClientRect();
+    const ownerRect = owner.getBoundingClientRect();
+    const viewBox = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+    if (
+      4 !== viewBox.length
+      || viewBox.some((value) => !Number.isFinite(value))
+      || viewBox[2] <= 0
+      || viewBox[3] <= 0
+    ) {
+      throw new Error(`wechat-bloom-${expectedRole}-live-viewbox-invalid`);
+    }
+    const screenCtm = svg.getScreenCTM?.() ?? null;
+    const ctm = screenCtm && [
+      screenCtm.a,
+      screenCtm.b,
+      screenCtm.c,
+      screenCtm.d,
+      screenCtm.e,
+      screenCtm.f
+    ].every(Number.isFinite)
+      ? screenCtm
+      : null;
+    if (!ctm && !allowMissingCtm) {
+      throw new Error(`wechat-bloom-${expectedRole}-live-ctm-unavailable`);
+    }
+    return {
+      backgroundColor: ownerStyle.backgroundColor,
+      borderRadius: ownerStyle.borderRadius,
+      clientWidth: owner.clientWidth,
+      authoredOwnerStyles,
+      height: ownerRect.height,
+      layout: owner.getAttribute('data-easymde-mermaid-layout')?.trim() || null,
+      ownerLayout: {
+        display: ownerStyle.display,
+        float: ownerStyle.float,
+        opacity: ownerStyle.opacity,
+        position: ownerStyle.position,
+        transform: ownerStyle.transform
+      },
+      formattingOwnerDisplay: owner.parentElement
+        ? getComputedStyle(owner.parentElement).display
+        : '',
+      overflowX: ownerStyle.overflowX,
+      overflowY: ownerStyle.overflowY,
+      padding: ownerStyle.padding,
+      sourceRootStyles,
+      sourceRootTypedDimensions: {
+        height: typedOwnerStyle('height'),
+        maxWidth: typedOwnerStyle('max-width'),
+        width: typedOwnerStyle('width')
+      },
+      scrollWidth: owner.scrollWidth,
+      svg: {
+        ctm: {
+          a: ctm?.a ?? null,
+          b: ctm?.b ?? null,
+          c: ctm?.c ?? null,
+          d: ctm?.d ?? null,
+          e: ctm?.e ?? null,
+          f: ctm?.f ?? null
+        },
+        height: svgRect.height,
+        style: {
+          height: svgStyle.height,
+          marginLeft: svgStyle.marginLeft,
+          marginRight: svgStyle.marginRight,
+          maxWidth: svgStyle.maxWidth,
+          width: svgStyle.width
+        },
+        semanticStyle: {
+          height: typedSvgStyle('height'),
+          marginLeft: typedSvgStyle('margin-left'),
+          marginRight: typedSvgStyle('margin-right'),
+          maxHeight: typedSvgStyle('max-height'),
+          maxWidth: typedSvgStyle('max-width'),
+          width: typedSvgStyle('width')
+        },
+        preserveAspectRatio: svg.getAttribute('preserveAspectRatio')?.trim() || null,
+        transform: svg.getAttribute('transform'),
+        viewBox: {
+          height: viewBox[3],
+          width: viewBox[2],
+          x: viewBox[0],
+          y: viewBox[1]
+        },
+        width: svgRect.width
+      },
+      width: ownerRect.width,
+      role: expectedRole
+    };
+  }, { expectedRole: role, allowMissingCtm });
 }
 
 async function openOrdinaryAppearanceDialog(page, editorSettingsLabel) {
@@ -4026,6 +6269,1335 @@ async function readProjectedPreviewBoundary(page, destinationWidth = null) {
   }, destinationWidth);
 }
 
+async function readDecodedPngEvidence(page, encodedPngs, edgeCssWidth = 200) {
+  return page.evaluate(async ({ edgeCssWidth: requestedEdgeCssWidth, values }) => {
+    const decode = async (value) => {
+      const binary = atob(value);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('wechat-png-evidence-canvas-unavailable');
+      context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      const edgeCssPixels = Number.isFinite(requestedEdgeCssWidth)
+        && requestedEdgeCssWidth > 0
+        ? requestedEdgeCssWidth
+        : 200;
+      const edgeWidth = Math.min(
+        bitmap.width,
+        Math.max(1, Math.round(edgeCssPixels * window.devicePixelRatio))
+      );
+      const upperBandEnd = Math.max(1, Math.floor(bitmap.height * 0.45));
+      let inkPixels = 0;
+      let leftEdgeInkPixels = 0;
+      let rightEdgeInkPixels = 0;
+      let leftUpperEdgeInkPixels = 0;
+      let rightUpperEdgeInkPixels = 0;
+      let leftLowerEdgeInkPixels = 0;
+      let rightLowerEdgeInkPixels = 0;
+      let minInkX = bitmap.width;
+      let maxInkX = -1;
+      let minInkY = bitmap.height;
+      let maxInkY = -1;
+      for (let y = 0; y < bitmap.height; y += 1) {
+        for (let x = 0; x < bitmap.width; x += 1) {
+          const index = (y * bitmap.width + x) * 4;
+          if (
+            pixels[index + 3] <= 0
+            || (
+              pixels[index] >= 250
+              && pixels[index + 1] >= 250
+              && pixels[index + 2] >= 250
+            )
+          ) continue;
+          inkPixels += 1;
+          minInkX = Math.min(minInkX, x);
+          maxInkX = Math.max(maxInkX, x);
+          minInkY = Math.min(minInkY, y);
+          maxInkY = Math.max(maxInkY, y);
+          if (x < edgeWidth) {
+            leftEdgeInkPixels += 1;
+            if (y < upperBandEnd) leftUpperEdgeInkPixels += 1;
+            else leftLowerEdgeInkPixels += 1;
+          }
+          if (x >= bitmap.width - edgeWidth) {
+            rightEdgeInkPixels += 1;
+            if (y < upperBandEnd) rightUpperEdgeInkPixels += 1;
+            else rightLowerEdgeInkPixels += 1;
+          }
+        }
+      }
+      const result = {
+        edgeBands: {
+          height: bitmap.height,
+          left: {
+            inkPixels: leftEdgeInkPixels,
+            lowerInkPixels: leftLowerEdgeInkPixels,
+            upperInkPixels: leftUpperEdgeInkPixels,
+            width: edgeWidth
+          },
+          right: {
+            inkPixels: rightEdgeInkPixels,
+            lowerInkPixels: rightLowerEdgeInkPixels,
+            upperInkPixels: rightUpperEdgeInkPixels,
+            width: edgeWidth
+          },
+          upperBandEnd
+        },
+        height: bitmap.height,
+        inkBounds: maxInkX < 0
+          ? null
+          : {
+              bottom: maxInkY,
+              left: minInkX,
+              right: maxInkX,
+              top: minInkY
+            },
+        inkPixels,
+        width: bitmap.width
+      };
+      bitmap.close();
+      return result;
+    };
+    return Promise.all(values.map(decode));
+  }, { edgeCssWidth, values: encodedPngs });
+}
+
+async function readBloomDecoratedMermaidPngEvidence(
+  page,
+  encodedPng,
+  {
+    backgroundColor,
+    expectedHeight,
+    expectedWidth,
+    frameCssPixels = 10,
+    edgeCssWidth = 180,
+    role
+  }
+) {
+  return page.evaluate(({
+    backgroundCss,
+    encoded,
+    expectedImageHeight,
+    expectedImageWidth,
+    frameCssWidth,
+    requestedEdgeCssWidth,
+    expectedRole
+  }) => {
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const cssColorToRgba = (value, label) => {
+      if ('string' !== typeof value || !value.trim()) {
+        throw new Error(`wechat-bloom-${expectedRole}-css-color-invalid:${label}`);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = 1;
+      canvas.height = 1;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error(`wechat-bloom-${expectedRole}-color-canvas-unavailable`);
+      const normalized = value.trim();
+      const sentinel = 'rgb(1, 2, 3)';
+      context.fillStyle = sentinel;
+      const before = context.fillStyle;
+      const supported = 'function' !== typeof globalThis.CSS?.supports
+        || globalThis.CSS.supports('color', normalized);
+      if (!supported) throw new Error(`wechat-bloom-${expectedRole}-css-color-invalid:${label}`);
+      context.fillStyle = normalized;
+      if (context.fillStyle === before && normalized.toLowerCase() !== sentinel) {
+        throw new Error(`wechat-bloom-${expectedRole}-css-color-invalid:${label}`);
+      }
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = normalized;
+      context.fillRect(0, 0, 1, 1);
+      const pixel = context.getImageData(0, 0, 1, 1).data;
+      return {
+        a: pixel[3],
+        b: pixel[2],
+        g: pixel[1],
+        r: pixel[0]
+      };
+    };
+    const background = cssColorToRgba(backgroundCss, 'background');
+    const oklchSelfCheck = cssColorToRgba('oklch(0.96 0.015 350)', 'oklch-self-check');
+    if (
+      Math.abs(oklchSelfCheck.r - 250) > 4
+      || Math.abs(oklchSelfCheck.g - 238) > 4
+      || Math.abs(oklchSelfCheck.b - 243) > 4
+      || oklchSelfCheck.a < 240
+    ) {
+      throw new Error(`wechat-bloom-${expectedRole}-css-color-self-check-failed`);
+    }
+    try {
+      cssColorToRgba('not-a-css-color', 'invalid-self-check');
+      throw new Error(`wechat-bloom-${expectedRole}-invalid-color-accepted`);
+    } catch (error) {
+      if (error?.message === `wechat-bloom-${expectedRole}-invalid-color-accepted`) throw error;
+      if (error?.message !== `wechat-bloom-${expectedRole}-css-color-invalid:invalid-self-check`) {
+        throw error;
+      }
+    }
+    const distance = (red, green, blue) => Math.sqrt(
+      (red - background.r) ** 2
+      + (green - background.g) ** 2
+      + (blue - background.b) ** 2
+    );
+    const bitmapPromise = createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    return bitmapPromise.then((bitmap) => {
+      const imageWidth = bitmap.width;
+      const imageHeight = bitmap.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = imageWidth;
+      canvas.height = imageHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error(`wechat-bloom-${expectedRole}-evidence-canvas-unavailable`);
+      context.drawImage(bitmap, 0, 0);
+      const pixels = context.getImageData(0, 0, imageWidth, imageHeight).data;
+      const dpr = window.devicePixelRatio;
+      const expectedDeviceWidth = Math.ceil(expectedImageWidth * dpr);
+      const expectedDeviceHeight = Math.ceil(expectedImageHeight * dpr);
+      const framePixels = Math.max(1, Math.round(frameCssWidth * dpr));
+      const edgePixels = Math.min(
+        Math.max(1, Math.round(requestedEdgeCssWidth * dpr)),
+        Math.max(1, imageWidth - framePixels * 2)
+      );
+      const pixelAt = (x, y) => {
+        const safeX = Math.max(0, Math.min(imageWidth - 1, Math.round(x)));
+        const safeY = Math.max(0, Math.min(imageHeight - 1, Math.round(y)));
+        const index = (safeY * imageWidth + safeX) * 4;
+        return {
+          alpha: pixels[index + 3],
+          blue: pixels[index + 2],
+          green: pixels[index + 1],
+          red: pixels[index]
+        };
+      };
+      const isForeground = ({ alpha, blue, green, red }) => (
+        alpha > 32 && distance(red, green, blue) > 18
+      );
+      const isOpaqueBackground = ({ alpha, blue, green, red }) => (
+        alpha >= 240 && distance(red, green, blue) <= 18
+      );
+      if (isOpaqueBackground({ alpha: 0, blue: background.b, green: background.g, red: background.r })) {
+      throw new Error(`wechat-bloom-${expectedRole}-transparent-frame-self-check-failed`);
+      }
+      const cornerPixels = [
+        pixelAt(0, 0),
+        pixelAt(imageWidth - 1, 0),
+        pixelAt(0, imageHeight - 1),
+        pixelAt(imageWidth - 1, imageHeight - 1)
+      ];
+      const radiusPixels = Math.max(1, Math.round(12 * dpr));
+      const cornerArcPixels = [
+        pixelAt(radiusPixels, 1),
+        pixelAt(1, radiusPixels),
+        pixelAt(imageWidth - 1 - radiusPixels, 1),
+        pixelAt(imageWidth - 2 - radiusPixels, radiusPixels),
+        pixelAt(radiusPixels, imageHeight - 2),
+        pixelAt(1, imageHeight - 1 - radiusPixels),
+        pixelAt(imageWidth - 1 - radiusPixels, imageHeight - 2),
+        pixelAt(imageWidth - 2 - radiusPixels, imageHeight - 1 - radiusPixels)
+      ];
+      const frameSamples = [
+        pixelAt(imageWidth / 2, framePixels / 2),
+        pixelAt(framePixels / 2, imageHeight / 2),
+        pixelAt(imageWidth - framePixels / 2, imageHeight / 2),
+        pixelAt(imageWidth / 2, imageHeight - framePixels / 2)
+      ];
+      let foregroundPixels = 0;
+      let backgroundPixels = 0;
+      let minForegroundX = imageWidth;
+      let maxForegroundX = -1;
+      let minForegroundY = imageHeight;
+      let maxForegroundY = -1;
+      let leftForegroundPixels = 0;
+      let rightForegroundPixels = 0;
+      for (let y = 0; y < imageHeight; y += 1) {
+        for (let x = 0; x < imageWidth; x += 1) {
+          const pixel = pixelAt(x, y);
+          if (isOpaqueBackground(pixel)) {
+            backgroundPixels += 1;
+          } else if (isForeground(pixel)) {
+            foregroundPixels += 1;
+            minForegroundX = Math.min(minForegroundX, x);
+            maxForegroundX = Math.max(maxForegroundX, x);
+            minForegroundY = Math.min(minForegroundY, y);
+            maxForegroundY = Math.max(maxForegroundY, y);
+            if (x < framePixels + edgePixels) leftForegroundPixels += 1;
+            if (x >= imageWidth - framePixels - edgePixels) rightForegroundPixels += 1;
+          }
+        }
+      }
+      bitmap.close();
+      return {
+        background: {
+          css: backgroundCss,
+          coverage: backgroundPixels / (imageWidth * imageHeight),
+          pixels: backgroundPixels,
+          rgba: background
+        },
+        corners: {
+          arcSamplesAreBackground: cornerArcPixels.every(isOpaqueBackground),
+          outerCornersAreNonOpaque: cornerPixels.every(({ alpha }) => alpha < 240),
+          pixels: cornerPixels
+        },
+        devicePixelRatio: dpr,
+        role: expectedRole,
+        dimensions: {
+          expected: { height: expectedDeviceHeight, width: expectedDeviceWidth },
+          height: imageHeight,
+          width: imageWidth
+        },
+        foreground: {
+          bounds: maxForegroundX < 0
+            ? null
+            : {
+                bottom: maxForegroundY,
+                left: minForegroundX,
+                right: maxForegroundX,
+                top: minForegroundY
+              },
+          edgeBands: {
+            left: { pixels: leftForegroundPixels, width: edgePixels },
+            right: { pixels: rightForegroundPixels, width: edgePixels }
+          },
+          pixels: foregroundPixels
+        },
+        frame: {
+          cssPixels: frameCssWidth,
+          samples: frameSamples,
+          samplesAreBackground: frameSamples.every(isOpaqueBackground)
+        }
+      };
+    });
+  }, {
+    backgroundCss: backgroundColor,
+    encoded: encodedPng,
+    expectedImageHeight: expectedHeight,
+    expectedImageWidth: expectedWidth,
+    frameCssWidth: frameCssPixels,
+    requestedEdgeCssWidth: edgeCssWidth,
+    expectedRole: role
+  });
+}
+
+async function readPayloadPngPlacements(page, html, width = 677, { recordedPngs = null } = {}) {
+  const recordedPngMatcher = recordedPngs
+    ? (url) => /\/e2e\/source-png-\d+\.png$/u.test(new URL(url).pathname)
+    : null;
+  if (recordedPngMatcher) {
+    await page.route(recordedPngMatcher, async (route) => {
+      const match = /\/e2e\/source-png-(\d+)\.png$/u.exec(new URL(route.request().url()).pathname);
+      if (!match) throw new Error('wechat-png-placement-recorded-url-invalid');
+      const index = Number(match[1]);
+      const encoded = recordedPngs[index];
+      if ('string' !== typeof encoded || !encoded) {
+        throw new Error(`wechat-png-placement-recorded-byte-unavailable:${index}`);
+      }
+      await route.fulfill({
+        body: Buffer.from(encoded, 'base64'),
+        contentType: 'image/png',
+        status: 200
+      });
+    });
+  }
+  try {
+    return await page.evaluate(async ({ sourceHtml, hostWidth, waitForRecordedPngs }) => {
+    const parsed = new DOMParser().parseFromString(sourceHtml, 'text/html');
+    const root = parsed.body.firstElementChild;
+    if (!(root instanceof HTMLElement)) throw new Error('wechat-png-placement-root-unavailable');
+    const host = document.createElement('div');
+    host.style.cssText = [
+      'position:fixed',
+      'left:-100000px',
+      'top:0',
+      'display:block',
+      'visibility:hidden',
+      'pointer-events:none',
+      `width:${hostWidth}px`
+    ].join(';');
+    host.append(root);
+    document.body.append(host);
+    try {
+      const images = [...root.querySelectorAll('img')];
+      const pngImages = images.filter((image) => /(?:^|-)png-(\d+)\.png$/u.test(
+        image.getAttribute('src') ?? ''
+      ));
+      if (waitForRecordedPngs) {
+        await Promise.all(pngImages.map(async (image) => {
+          if ('function' !== typeof image.decode) {
+            throw new Error('wechat-png-placement-image-decode-unavailable');
+          }
+          await image.decode();
+          if (!image.complete || image.naturalWidth <= 0 || image.naturalHeight <= 0) {
+            throw new Error('wechat-png-placement-image-decode-invalid');
+          }
+        }));
+      }
+      return images
+        .map((image) => {
+          const source = image.getAttribute('src') ?? '';
+          const match = /(?:^|-)png-(\d+)\.png$/u.exec(source);
+          if (!match) return null;
+          const rect = image.getBoundingClientRect();
+          const owner = image.parentElement?.getBoundingClientRect();
+          const style = getComputedStyle(image);
+          const ownerElement = image.parentElement;
+          const ownerStyle = image.parentElement?.getAttribute('style') ?? '';
+          if (!owner) throw new Error('wechat-png-placement-owner-unavailable');
+          if (!(ownerElement instanceof HTMLElement)) {
+            throw new Error('wechat-png-placement-owner-element-unavailable');
+          }
+          const ownerComputed = getComputedStyle(ownerElement);
+          const typedStyleValue = (element, property) => {
+            if ('function' !== typeof element.computedStyleMap) return null;
+            try {
+              const value = element.computedStyleMap().get(property);
+              return value && 'function' === typeof value.toString
+                ? value.toString().replace(/\s+/gu, ' ').trim().toLowerCase()
+                : null;
+            } catch {
+              return null;
+            }
+          };
+          const imageStyleProperties = [
+            'display',
+            'height',
+            'margin-left',
+            'margin-right',
+            'max-width',
+            'width'
+          ];
+          const imageDeclarations = Object.fromEntries(imageStyleProperties.map((property) => [
+            property,
+            {
+              priority: image.style.getPropertyPriority(property),
+              value: image.style.getPropertyValue(property).trim()
+            }
+          ]));
+          const ownerStyleProperties = [
+            'box-sizing',
+            'display',
+            'height',
+            'margin-bottom',
+            'margin-left',
+            'margin-right',
+            'margin-top',
+            'max-height',
+            'max-width',
+            'min-height',
+            'min-width',
+            'overflow',
+            'overflow-x',
+            'overflow-y',
+            'padding-bottom',
+            'padding-left',
+            'padding-right',
+            'padding-top',
+            'text-align',
+            'width'
+          ];
+          const ownerDeclarations = Object.fromEntries(ownerStyleProperties.map((property) => [
+            property,
+            {
+              priority: ownerElement.style.getPropertyPriority(property),
+              value: ownerElement.style.getPropertyValue(property).trim()
+            }
+          ]));
+          let overflowOwnerCount = 0;
+          for (let ancestor = ownerElement; ancestor instanceof HTMLElement; ancestor = ancestor.parentElement) {
+            const ancestorStyle = getComputedStyle(ancestor);
+            if (['auto', 'scroll'].includes(ancestorStyle.overflowX)) overflowOwnerCount += 1;
+          }
+          const initialScrollLeft = ownerElement.scrollLeft;
+          ownerElement.scrollLeft = 0;
+          const startScrollLeft = ownerElement.scrollLeft;
+          const startRect = image.getBoundingClientRect();
+          ownerElement.scrollLeft = Math.max(
+            0,
+            ownerElement.scrollWidth - ownerElement.clientWidth
+          );
+          const endScrollLeft = ownerElement.scrollLeft;
+          const endRect = image.getBoundingClientRect();
+          ownerElement.scrollLeft = initialScrollLeft;
+          return {
+            height: rect.height,
+            imageStyle: image.getAttribute('style') ?? '',
+            imageEndLeft: endRect.left - owner.left,
+            imageEndRight: endRect.right - owner.left,
+            imageStartLeft: startRect.left - owner.left,
+            imageStartRight: startRect.right - owner.left,
+            left: rect.left - owner.left,
+            ownerBackgroundColor: getComputedStyle(ownerElement).backgroundColor,
+            ownerBackgroundImage: getComputedStyle(ownerElement).backgroundImage,
+            ownerBorderRadius: getComputedStyle(ownerElement).borderRadius,
+            ownerBorderBottomStyle: ownerComputed.borderBottomStyle,
+            ownerBorderBottomWidth: ownerComputed.borderBottomWidth,
+            ownerBorderLeftStyle: ownerComputed.borderLeftStyle,
+            ownerBorderLeftWidth: ownerComputed.borderLeftWidth,
+            ownerBorderRightStyle: ownerComputed.borderRightStyle,
+            ownerBorderRightWidth: ownerComputed.borderRightWidth,
+            ownerBorderTopStyle: ownerComputed.borderTopStyle,
+            ownerBorderTopWidth: ownerComputed.borderTopWidth,
+            ownerBoxSizing: ownerComputed.boxSizing,
+            ownerDataIgnoreWidth: image.parentElement?.getAttribute('data-ignore-width') ?? null,
+            ownerClientWidth: ownerElement.clientWidth,
+            ownerChildCount: ownerElement.children.length,
+            ownerDirectImageCount: [...ownerElement.children]
+              .filter((child) => child instanceof HTMLImageElement).length,
+            ownerNestedMermaidCount: ownerElement.querySelectorAll('.easymde-mermaid').length,
+            ownerDeclarations,
+            ownerDisplay: ownerComputed.display,
+            ownerHeight: ownerComputed.height,
+            ownerMarginBottom: ownerComputed.marginBottom,
+            ownerMarginLeft: ownerComputed.marginLeft,
+            ownerMarginRight: ownerComputed.marginRight,
+            ownerMarginTop: ownerComputed.marginTop,
+            ownerMaxHeight: ownerComputed.maxHeight,
+            ownerMaxWidth: ownerComputed.maxWidth,
+            ownerMinHeight: ownerComputed.minHeight,
+            ownerMinWidth: ownerComputed.minWidth,
+            ownerPaddingBottom: ownerComputed.paddingBottom,
+            ownerPaddingLeft: ownerComputed.paddingLeft,
+            ownerPaddingRight: ownerComputed.paddingRight,
+            ownerPaddingTop: ownerComputed.paddingTop,
+            ownerOverflowX: getComputedStyle(ownerElement).overflowX,
+            ownerOverflowY: getComputedStyle(ownerElement).overflowY,
+            ownerOverflowOwnerCount: overflowOwnerCount,
+            ownerVisibleLeft: ownerElement.clientLeft,
+            ownerVisibleRight: ownerElement.clientLeft + ownerElement.clientWidth,
+            ownerPadding: getComputedStyle(ownerElement).padding,
+            ownerScrollLeftEnd: endScrollLeft,
+            ownerScrollLeftStart: startScrollLeft,
+            ownerScrollRange: Math.max(0, ownerElement.scrollWidth - ownerElement.clientWidth),
+            ownerScrollWidth: ownerElement.scrollWidth,
+            ownerStyle,
+            ownerDirection: ownerComputed.direction,
+            ownerTextAlign: ownerComputed.textAlign,
+            ownerTypedDimensions: Object.fromEntries(
+              ['height', 'max-width', 'width'].map((property) => [
+                property,
+                typedStyleValue(ownerElement, property)
+              ])
+            ),
+            ownerWidth: ownerComputed.width,
+            imageDeclarations,
+            float: style.float,
+            marginBottom: style.marginBottom,
+            marginLeft: style.marginLeft,
+            marginRight: style.marginRight,
+            marginTop: style.marginTop,
+            position: style.position,
+            display: style.display,
+            top: rect.top - owner.top,
+            uploadIndex: Number(match[1]),
+            width: rect.width
+          };
+        })
+        .filter(Boolean);
+    } finally {
+      host.remove();
+    }
+    }, {
+      hostWidth: width,
+      sourceHtml: html,
+      waitForRecordedPngs: Boolean(recordedPngs)
+    });
+  } finally {
+    if (recordedPngMatcher) await page.unroute(recordedPngMatcher);
+  }
+}
+
+async function readMermaidSourceFingerprints(preview) {
+  return preview.evaluate((root) => [...root.querySelectorAll('.easymde-mermaid')]
+    .map((element, index) => {
+      const svg = element.querySelector('svg');
+      if (!(svg instanceof SVGSVGElement)) throw new Error('wechat-source-fingerprint-svg-unavailable');
+      const role = svg.getAttribute('aria-roledescription')?.trim() ?? '';
+      if (!role) throw new Error('wechat-source-fingerprint-role-unavailable');
+      const viewBoxValues = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+      if (4 !== viewBoxValues.length || viewBoxValues.some((value) => !Number.isFinite(value))) {
+        throw new Error('wechat-source-fingerprint-viewbox-unavailable');
+      }
+      const leaves = [...svg.querySelectorAll('text, tspan')]
+        .filter((candidate) => !candidate.querySelector('text, tspan'));
+      const labels = [
+        ...leaves.map((candidate) => candidate.textContent ?? ''),
+        ...[...svg.querySelectorAll('foreignObject')]
+          .map((candidate) => candidate.textContent ?? '')
+      ]
+        .map((value) => value.replace(/\s+/gu, ' ').trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right));
+      const geometryAttributes = (candidate, names) => Object.fromEntries(names.map((name) => [
+        name,
+        candidate.getAttribute(name)
+      ]));
+      const markerNodes = [...svg.querySelectorAll('defs marker')];
+      const markerOrdinals = new Map(markerNodes.map((marker, ordinal) => [marker.id, ordinal]));
+      const markers = markerNodes.map((marker, ordinal) => ({
+        ...geometryAttributes(marker, [
+          'markerHeight', 'markerUnits', 'markerWidth', 'orient',
+          'preserveAspectRatio', 'refX', 'refY', 'viewBox'
+        ]),
+        ordinal,
+        paint: [...marker.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+          .map((candidate) => {
+            const style = getComputedStyle(candidate);
+            return {
+              ...geometryAttributes(candidate, [
+                'cx', 'cy', 'd', 'height', 'points', 'r', 'rx', 'ry',
+                'transform', 'width', 'x', 'x1', 'x2', 'y', 'y1', 'y2'
+              ]),
+              fill: style.fill,
+              opacity: style.opacity,
+              stroke: style.stroke,
+              strokeWidth: style.strokeWidth,
+              tag: candidate.tagName.toLowerCase()
+            };
+          })
+      }));
+      const normalizeMarker = (value) => {
+        const marker = /^url\((?:[^#]*#)?([^)]*)\)$/u.exec(value.trim());
+        if (!marker) return value;
+        const markerId = marker[1] ?? '';
+        const ordinal = markerOrdinals.get(markerId);
+        return undefined === ordinal ? 'marker:unresolved' : `marker:${ordinal}`;
+      };
+      const paint = [...svg.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+        .filter((candidate) => !candidate.closest('defs'))
+        .map((candidate) => {
+          const style = getComputedStyle(candidate);
+          const ancestorTransforms = [];
+          let ancestor = candidate.parentElement;
+          while (ancestor && ancestor !== svg) {
+            ancestorTransforms.push({
+              tag: ancestor.tagName.toLowerCase(),
+              transform: ancestor.getAttribute('transform')
+            });
+            ancestor = ancestor.parentElement;
+          }
+          return {
+            ...geometryAttributes(candidate, [
+              'cx', 'cy', 'd', 'height', 'pathLength', 'points', 'r', 'rx', 'ry',
+              'transform', 'vector-effect', 'width', 'x', 'x1', 'x2', 'y', 'y1', 'y2'
+            ]),
+            ancestorTransforms,
+            fill: style.fill,
+            opacity: style.opacity,
+            stroke: style.stroke,
+            strokeWidth: style.strokeWidth,
+            tag: candidate.tagName.toLowerCase(),
+            vectorEffect: style.vectorEffect,
+            markerEnd: normalizeMarker(candidate.getAttribute('marker-end') ?? ''),
+            markerStart: normalizeMarker(candidate.getAttribute('marker-start') ?? '')
+          };
+        })
+        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+      const font = leaves
+        .map((candidate) => {
+          const style = getComputedStyle(candidate);
+          return {
+            family: style.fontFamily,
+            fill: style.fill,
+            letterSpacing: style.letterSpacing,
+            size: style.fontSize,
+            style: style.fontStyle,
+            textAnchor: style.textAnchor,
+            text: (candidate.textContent ?? '').replace(/\s+/gu, ' ').trim(),
+            variation: style.fontVariationSettings,
+            weight: style.fontWeight
+          };
+        })
+        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+      const viewBox = {
+        height: viewBoxValues[3],
+        width: viewBoxValues[2],
+        x: viewBoxValues[0],
+        y: viewBoxValues[1]
+      };
+      const computed = getComputedStyle(element);
+      return {
+        counts: {
+          clipPaths: svg.querySelectorAll('clipPath').length,
+          foreignObjects: svg.querySelectorAll('foreignObject').length,
+          leaves: leaves.length,
+          markerDefinitions: svg.querySelectorAll('marker').length,
+          paint: paint.length,
+          scripts: svg.querySelectorAll('script').length
+        },
+        font,
+        labels,
+        markers,
+        paint,
+        root: {
+          height: computed.height,
+          overflow: computed.overflow,
+          transform: computed.transform,
+          width: computed.width,
+          zoom: computed.zoom
+        },
+        ordinal: index,
+        role,
+        viewBox
+      };
+    }));
+}
+
+async function assertMermaidFingerprintSensitivity(preview) {
+  const baseline = await readMermaidSourceFingerprints(preview);
+  const pathMutation = await preview.evaluate((root) => {
+    const diagrams = [...root.querySelectorAll('.easymde-mermaid')];
+    for (const [diagramOrdinal, diagram] of diagrams.entries()) {
+      const svg = diagram.querySelector('svg');
+      if (!(svg instanceof SVGSVGElement)) continue;
+      const paint = [...svg.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+        .filter((candidate) => !candidate.closest('defs'));
+      const paintOrdinal = paint.findIndex((candidate) => (
+        candidate instanceof SVGPathElement && Boolean(candidate.getAttribute('d'))
+      ));
+      if (-1 === paintOrdinal) continue;
+      const candidate = paint[paintOrdinal];
+      const original = candidate.getAttribute('d');
+      candidate.setAttribute('d', `${original} M 0 0 L 1 1`);
+      return { diagramOrdinal, original, paintOrdinal };
+    }
+    throw new Error('wechat-source-fingerprint-path-sensitivity-unavailable');
+  });
+  try {
+    expect(await readMermaidSourceFingerprints(preview), 'path geometry mutation must change fingerprint')
+      .not.toEqual(baseline);
+  } finally {
+    await preview.evaluate((root, { diagramOrdinal, original, paintOrdinal }) => {
+      const svg = root.querySelectorAll('.easymde-mermaid')[diagramOrdinal]?.querySelector('svg');
+      const candidate = svg
+        ? [...svg.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+          .filter((element) => !element.closest('defs'))[paintOrdinal]
+        : null;
+      if (!(candidate instanceof SVGElement) || null === original) {
+        throw new Error('wechat-source-fingerprint-path-restore-unavailable');
+      }
+      candidate.setAttribute('d', original);
+    }, pathMutation);
+  }
+  expect(await readMermaidSourceFingerprints(preview), 'path geometry restore must recover fingerprint')
+    .toEqual(baseline);
+
+  const vectorEffectMutation = await preview.evaluate((root) => {
+    const candidate = [...root.querySelectorAll('.easymde-mermaid svg path')]
+      .find((element) => !element.closest('defs'));
+    if (!(candidate instanceof SVGPathElement)) {
+      throw new Error('wechat-source-fingerprint-vector-effect-sensitivity-unavailable');
+    }
+    const original = candidate.style.getPropertyValue('vector-effect');
+    const priority = candidate.style.getPropertyPriority('vector-effect');
+    const replacement = 'non-scaling-stroke' === getComputedStyle(candidate).vectorEffect
+      ? 'none'
+      : 'non-scaling-stroke';
+    candidate.style.setProperty('vector-effect', replacement, 'important');
+    return { original, priority };
+  });
+  try {
+    expect(
+      await readMermaidSourceFingerprints(preview),
+      'vector effect mutation must change fingerprint'
+    ).not.toEqual(baseline);
+  } finally {
+    await preview.evaluate((root, { original, priority }) => {
+      const candidate = [...root.querySelectorAll('.easymde-mermaid svg path')]
+        .find((element) => !element.closest('defs'));
+      if (!(candidate instanceof SVGPathElement)) {
+        throw new Error('wechat-source-fingerprint-vector-effect-restore-unavailable');
+      }
+      if (original) candidate.style.setProperty('vector-effect', original, priority);
+      else candidate.style.removeProperty('vector-effect');
+    }, vectorEffectMutation);
+  }
+  expect(
+    await readMermaidSourceFingerprints(preview),
+    'vector effect restore must recover fingerprint'
+  ).toEqual(baseline);
+
+  const markerMutation = await preview.evaluate((root) => {
+    const diagrams = [...root.querySelectorAll('.easymde-mermaid')];
+    for (const [diagramOrdinal, diagram] of diagrams.entries()) {
+      const svg = diagram.querySelector('svg');
+      if (!(svg instanceof SVGSVGElement)) continue;
+      const markerIds = [...svg.querySelectorAll('defs marker[id]')]
+        .map((marker) => marker.id)
+        .filter(Boolean);
+      if (markerIds.length < 2) continue;
+      const paint = [...svg.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+        .filter((candidate) => !candidate.closest('defs'));
+      const paintOrdinal = paint.findIndex((candidate) => (
+        /^url\((?:[^#]*#)?[^)]*\)$/u.test(candidate.getAttribute('marker-end') ?? '')
+      ));
+      if (-1 === paintOrdinal) continue;
+      const candidate = paint[paintOrdinal];
+      const original = candidate.getAttribute('marker-end');
+      const referencedId = /^url\((?:[^#]*#)?([^)]*)\)$/u.exec(original ?? '')?.[1];
+      const replacementId = markerIds.find((markerId) => markerId !== referencedId);
+      if (!replacementId) continue;
+      candidate.setAttribute('marker-end', `url(#${replacementId})`);
+      return { diagramOrdinal, original, paintOrdinal };
+    }
+    throw new Error('wechat-source-fingerprint-marker-sensitivity-unavailable');
+  });
+  try {
+    expect(await readMermaidSourceFingerprints(preview), 'marker reference mutation must change fingerprint')
+      .not.toEqual(baseline);
+  } finally {
+    await preview.evaluate((root, { diagramOrdinal, original, paintOrdinal }) => {
+      const svg = root.querySelectorAll('.easymde-mermaid')[diagramOrdinal]?.querySelector('svg');
+      const candidate = svg
+        ? [...svg.querySelectorAll('path, rect, circle, ellipse, polygon, polyline, line')]
+          .filter((element) => !element.closest('defs'))[paintOrdinal]
+        : null;
+      if (!(candidate instanceof SVGElement) || null === original) {
+        throw new Error('wechat-source-fingerprint-marker-restore-unavailable');
+      }
+      candidate.setAttribute('marker-end', original);
+    }, markerMutation);
+  }
+  expect(await readMermaidSourceFingerprints(preview), 'marker reference restore must recover fingerprint')
+    .toEqual(baseline);
+}
+
+async function readGanttLayoutProbe(preview) {
+  return preview.evaluate((root) => {
+    const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+    const element = mermaids.find((candidate) => (
+      candidate.querySelector('svg')?.getAttribute('aria-roledescription')
+        ?.trim()
+        === 'gantt'
+    ));
+    const svg = element?.querySelector('svg');
+    if (!(element instanceof HTMLElement) || !(svg instanceof SVGSVGElement)) {
+      throw new Error('wechat-gantt-layout-probe-unavailable');
+    }
+    const viewBoxValues = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+    if (4 !== viewBoxValues.length || viewBoxValues.some((value) => !Number.isFinite(value))) {
+      throw new Error('wechat-gantt-layout-probe-viewbox-invalid');
+    }
+    const authoredGeometry = (candidate) => ({
+      height: candidate.getAttribute('height'),
+      parentTransform: candidate.parentElement?.getAttribute('transform') ?? null,
+      points: candidate.getAttribute('points'),
+      rx: candidate.getAttribute('rx'),
+      ry: candidate.getAttribute('ry'),
+      transform: candidate.getAttribute('transform'),
+      width: candidate.getAttribute('width'),
+      x: candidate.getAttribute('x'),
+      y: candidate.getAttribute('y')
+    });
+    const clientBox = (candidate) => {
+      const value = candidate.getBoundingClientRect();
+      return {
+        bottom: value.bottom,
+        left: value.left,
+        right: value.right,
+        top: value.top
+      };
+    };
+    const dateElements = [...svg.querySelectorAll('.grid .tick text')];
+    const dateClientBoxes = dateElements.map(clientBox);
+    let dateIntersections = 0;
+    for (let leftIndex = 0; leftIndex < dateClientBoxes.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < dateClientBoxes.length; rightIndex += 1) {
+        const left = dateClientBoxes[leftIndex];
+        const right = dateClientBoxes[rightIndex];
+        if (
+          left.right > right.left + 0.01
+          && right.right > left.left + 0.01
+          && left.bottom > right.top + 0.01
+          && right.bottom > left.top + 0.01
+        ) dateIntersections += 1;
+      }
+    }
+    const computed = getComputedStyle(element);
+    const svgRect = svg.getBoundingClientRect();
+    const screenCtm = svg.getScreenCTM?.() ?? null;
+    return {
+      dateClientBoxes,
+      dateIntersections,
+      dates: dateElements.map(authoredGeometry),
+      layout: element.getAttribute('data-easymde-mermaid-layout'),
+      milestones: [...svg.querySelectorAll('rect.milestone')].map(authoredGeometry),
+      owner: {
+        clientWidth: element.clientWidth,
+        overflowX: computed.overflowX,
+        overflowY: computed.overflowY,
+        scrollRange: Math.max(0, element.scrollWidth - element.clientWidth),
+        scrollWidth: element.scrollWidth
+      },
+      svg: {
+        ctm: screenCtm && [
+          screenCtm.a,
+          screenCtm.b,
+          screenCtm.c,
+          screenCtm.d,
+          screenCtm.e,
+          screenCtm.f
+        ].every((value) => Number.isFinite(value))
+          ? {
+              a: screenCtm.a,
+              b: screenCtm.b,
+              c: screenCtm.c,
+              d: screenCtm.d,
+              e: screenCtm.e,
+              f: screenCtm.f
+            }
+          : null,
+        height: svgRect.height,
+        width: svgRect.width
+      },
+      tasks: [...svg.querySelectorAll('rect.task')].map(authoredGeometry),
+      viewBox: {
+        height: viewBoxValues[3],
+        width: viewBoxValues[2],
+        x: viewBoxValues[0],
+        y: viewBoxValues[1]
+      }
+    };
+  });
+}
+
+async function readIntrinsicMermaidSourceOwnerEvidence(preview, role) {
+  return preview.evaluate((root, expectedRole) => {
+    const owner = root.querySelector(
+      '.easymde-mermaid[data-easymde-mermaid-layout="' + expectedRole + '"]'
+    );
+    const svg = owner?.querySelector(':scope > svg');
+    if (!(owner instanceof HTMLElement) || !(svg instanceof SVGSVGElement)) {
+      throw new Error(`wechat-wide-${expectedRole}-source-owner-unavailable`);
+    }
+    const viewBoxValues = svg.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+    if (4 !== viewBoxValues.length || viewBoxValues.some((value) => !Number.isFinite(value))) {
+      throw new Error(`wechat-wide-${expectedRole}-source-viewbox-invalid`);
+    }
+    const finite = (value, name) => {
+      if (!Number.isFinite(value)) throw new Error(`wechat-wide-gantt-source-${name}-invalid`);
+      return value;
+    };
+    const pixel = (value) => {
+      const normalized = value.trim().toLowerCase();
+      if ('auto' === normalized) return { keyword: 'auto', px: null };
+      const parsed = Number.parseFloat(normalized);
+      return { keyword: null, px: Number.isFinite(parsed) ? parsed : null };
+    };
+    const typed = (value) => {
+      if (!value) return null;
+      const primitive = value.value;
+      return {
+        typeName: value.constructor?.name ?? null,
+        value: 'number' === typeof primitive || 'string' === typeof primitive
+          ? primitive
+          : null,
+        toString: 'function' === typeof value.toString ? value.toString() : null
+      };
+    };
+    const rectSnapshot = (rect, label) => ({
+      bottom: finite(rect.bottom, `${label}-bottom`),
+      height: finite(rect.height, `${label}-height`),
+      left: finite(rect.left, `${label}-left`),
+      right: finite(rect.right, `${label}-right`),
+      top: finite(rect.top, `${label}-top`),
+      width: finite(rect.width, `${label}-width`)
+    });
+    const styleSnapshot = (computed) => ({
+      backgroundColor: computed.backgroundColor,
+      backgroundImage: computed.backgroundImage,
+      borderRadius: computed.borderRadius,
+      boxSizing: computed.boxSizing,
+      direction: computed.direction,
+      fill: computed.fill,
+      height: computed.height,
+      overflowX: computed.overflowX,
+      overflowY: computed.overflowY,
+      padding: computed.padding,
+      stroke: computed.stroke,
+      strokeWidth: computed.strokeWidth,
+      width: computed.width
+    });
+    const ownerRect = owner.getBoundingClientRect();
+    const ownerStyle = getComputedStyle(owner);
+    const svgRect = svg.getBoundingClientRect();
+    const svgStyle = getComputedStyle(svg);
+    const contentWidth = ownerRect.width
+      - Number.parseFloat(ownerStyle.borderLeftWidth)
+      - Number.parseFloat(ownerStyle.borderRightWidth)
+      - Number.parseFloat(ownerStyle.paddingLeft)
+      - Number.parseFloat(ownerStyle.paddingRight);
+    const styleMap = 'function' === typeof svg.computedStyleMap
+      ? svg.computedStyleMap()
+      : null;
+    const screenCtm = svg.getScreenCTM?.() ?? null;
+    return {
+      margins: {
+        typed: styleMap ? {
+          left: typed(styleMap.get('margin-left')),
+          right: typed(styleMap.get('margin-right'))
+        } : null,
+        used: {
+          left: pixel(svgStyle.marginLeft),
+          right: pixel(svgStyle.marginRight)
+        }
+      },
+      root: {
+        rect: rectSnapshot(ownerRect, 'owner'),
+        style: styleSnapshot(ownerStyle)
+      },
+      owner: {
+        clientWidth: finite(owner.clientWidth, 'owner-client-width'),
+        contentWidth: finite(contentWidth, 'owner-content-width'),
+        overflowX: ownerStyle.overflowX,
+        scrollRange: Math.max(0, owner.scrollWidth - owner.clientWidth),
+        scrollWidth: finite(owner.scrollWidth, 'owner-scroll-width'),
+        rect: rectSnapshot(ownerRect, 'owner'),
+        style: styleSnapshot(ownerStyle)
+      },
+      svg: {
+        ctm: screenCtm && [
+          screenCtm.a,
+          screenCtm.b,
+          screenCtm.c,
+          screenCtm.d
+        ].every((value) => Number.isFinite(value))
+          ? {
+              a: screenCtm.a,
+              b: screenCtm.b,
+              c: screenCtm.c,
+              d: screenCtm.d
+            }
+          : null,
+        height: finite(svgRect.height, 'svg-height'),
+        left: finite(svgRect.left - ownerRect.left, 'svg-left'),
+        right: finite(svgRect.right - ownerRect.left, 'svg-right'),
+        rect: rectSnapshot(svgRect, 'svg'),
+        style: styleSnapshot(svgStyle),
+        viewBox: {
+          height: viewBoxValues[3],
+          width: viewBoxValues[2],
+          x: viewBoxValues[0],
+          y: viewBoxValues[1]
+        },
+        width: finite(svgRect.width, 'svg-width')
+      }
+    };
+  }, role);
+}
+
+async function readGanttSourceOwnerEvidence(preview) {
+  return readIntrinsicMermaidSourceOwnerEvidence(preview, 'gantt');
+}
+
+function assertIntrinsicMermaidCtm(label, geometry) {
+  const { ctm, height, viewBox, width } = geometry;
+  expect(Number.isFinite(width), `${label} rect width finite`).toBe(true);
+  expect(Number.isFinite(height), `${label} rect height finite`).toBe(true);
+  expect(width, `${label} rect width positive`).toBeGreaterThan(0);
+  expect(height, `${label} rect height positive`).toBeGreaterThan(0);
+  expect(Number.isFinite(viewBox.width), `${label} viewBox width finite`).toBe(true);
+  expect(Number.isFinite(viewBox.height), `${label} viewBox height finite`).toBe(true);
+  expect(viewBox.width, `${label} viewBox width positive`).toBeGreaterThan(0);
+  expect(viewBox.height, `${label} viewBox height positive`).toBeGreaterThan(0);
+  expect(ctm, `${label} CTM available`).not.toBeNull();
+  if (!ctm) throw new Error(`wechat-${label}-ctm-unavailable`);
+  for (const [axis, value] of Object.entries(ctm)) {
+    expect(Number.isFinite(value), `${label} CTM ${axis} finite`).toBe(true);
+  }
+  expect(ctm.a, `${label} CTM a positive`).toBeGreaterThan(0);
+  expect(ctm.d, `${label} CTM d positive`).toBeGreaterThan(0);
+  expect(Math.abs(ctm.b), `${label} CTM b`).toBeLessThanOrEqual(1e-6);
+  expect(Math.abs(ctm.c), `${label} CTM c`).toBeLessThanOrEqual(1e-6);
+  const expectedScale = Math.min(
+    width / viewBox.width,
+    height / viewBox.height
+  );
+  expect(Number.isFinite(expectedScale), `${label} expected scale finite`).toBe(true);
+  expect(expectedScale, `${label} expected scale positive`).toBeGreaterThan(0);
+  const projectedDiagResidual = {
+    a: Math.abs(ctm.a - expectedScale) * viewBox.width,
+    d: Math.abs(ctm.d - expectedScale) * viewBox.height
+  };
+  expect(projectedDiagResidual.a, `${label} projected a residual`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  expect(projectedDiagResidual.d, `${label} projected d residual`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  expect(Math.abs(width - viewBox.width), `${label} width/viewBox residual`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  expect(Math.abs(height - viewBox.height), `${label} height/viewBox residual`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  return { expectedScale, projectedDiagResidual };
+}
+
+function responsiveImageMaxWidth(imageStyle) {
+  const match = /(?:^|;)max-width:([0-9]+(?:\.[0-9]+)?)px!important(?:;|$)/u.exec(imageStyle);
+  return match ? Number(match[1]) : null;
+}
+
+function assertResponsiveMermaidEvidence({ dpr, live, placement, pngEvidence, role }) {
+  const imageStyle = placement.imageStyle ?? '';
+  const imageMaxWidth = responsiveImageMaxWidth(imageStyle);
+  const responsive = Boolean(
+    imageMaxWidth !== null
+    && /(?:^|;)width:100%!important(?:;|$)/u.test(imageStyle)
+    && /(?:^|;)height:auto!important(?:;|$)/u.test(imageStyle)
+  );
+  if (!responsive) return null;
+
+  expect(live.role).toBe(role);
+  expect(Number.isFinite(live.svg.width), `${role} responsive SVG width finite`).toBe(true);
+  expect(Number.isFinite(live.svg.height), `${role} responsive SVG height finite`).toBe(true);
+  expect(live.svg.width, `${role} responsive SVG width positive`).toBeGreaterThan(0);
+  expect(live.svg.height, `${role} responsive SVG height positive`).toBeGreaterThan(0);
+  expect(live.svg.viewBox.width, `${role} responsive viewBox width positive`).toBeGreaterThan(0);
+  expect(live.svg.viewBox.height, `${role} responsive viewBox height positive`).toBeGreaterThan(0);
+  const expectedSvgHeight = live.svg.width
+    * live.svg.viewBox.height
+    / live.svg.viewBox.width;
+  expect(Math.abs(live.svg.height - expectedSvgHeight), `${role} live SVG aspect`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  const sourceMaxWidth = Number.parseFloat(live.svg.semanticStyle.maxWidth ?? '');
+  expect(live.svg.semanticStyle.maxWidth, `${role} responsive source cap CSS unit`)
+    .toMatch(/^\d+(?:\.\d+)?px$/u);
+  expect(Number.isFinite(sourceMaxWidth), `${role} responsive source cap finite`).toBe(true);
+  expect(sourceMaxWidth, `${role} responsive source cap positive`).toBeGreaterThan(0);
+  expect(Math.abs(sourceMaxWidth - live.svg.width), `${role} responsive cap reached`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  expect(Math.abs(imageMaxWidth - sourceMaxWidth), `${role} responsive cap retained`)
+    .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+
+  const expectedPixelWidth = Math.ceil(live.svg.width * dpr);
+  const expectedPixelHeight = Math.round(
+    expectedPixelWidth * live.svg.height / live.svg.width
+  );
+  expect(pngEvidence.width, `${role} responsive PNG width`).toBe(expectedPixelWidth);
+  expect(pngEvidence.height, `${role} responsive PNG height`).toBe(expectedPixelHeight);
+  expect(pngEvidence.inkPixels, `${role} responsive PNG ink`).toBeGreaterThan(0);
+  expect(pngEvidence.inkBounds, `${role} responsive PNG ink bounds`).not.toBeNull();
+  const pixelAspectResidual = Math.abs(
+    pngEvidence.height / pngEvidence.width - live.svg.height / live.svg.width
+  );
+  expect(pixelAspectResidual, `${role} responsive PNG aspect`)
+    .toBeLessThanOrEqual(0.5 / expectedPixelWidth + Number.EPSILON);
+
+  expect(placement.ownerDataIgnoreWidth, `${role} responsive root width owner`).toBeNull();
+  expect(placement.ownerChildCount, `${role} responsive root child count`).toBe(1);
+  expect(placement.ownerDirectImageCount, `${role} responsive direct image count`).toBe(1);
+  expect(placement.display, `${role} responsive image display`).toBe('block');
+  expect(placement.position, `${role} responsive image position`).toBe('static');
+  expect(placement.float, `${role} responsive image float`).toBe('none');
+  expect(placement.imageDeclarations['display']?.value, `${role} responsive image display declaration`)
+    .toBe('block');
+  expect(placement.imageDeclarations['width']?.value, `${role} responsive image width declaration`)
+    .toBe('100%');
+  expect(placement.imageDeclarations['height']?.value, `${role} responsive image height declaration`)
+    .toBe('auto');
+  expect(placement.imageDeclarations['margin-left']?.value, `${role} responsive image left margin declaration`)
+    .toBe('auto');
+  expect(placement.imageDeclarations['margin-right']?.value, `${role} responsive image right margin declaration`)
+    .toBe('auto');
+  for (const property of ['display', 'height', 'margin-left', 'margin-right', 'max-width', 'width']) {
+    expect(placement.imageDeclarations[property]?.priority, `${role} responsive image ${property} priority`)
+      .toBe('important');
+  }
+  expect(placement.ownerDisplay, `${role} responsive root display`)
+    .toBe(live.sourceRootStyles.display);
+  expect(placement.ownerBoxSizing, `${role} responsive root box sizing`)
+    .toBe(live.sourceRootStyles['box-sizing']);
+  expect(placement.ownerMaxWidth, `${role} responsive root max width`)
+    .toBe(live.sourceRootStyles['max-width']);
+  expect(placement.ownerMinWidth, `${role} responsive root min width`)
+    .toBe(live.sourceRootStyles['min-width']);
+  expect(placement.ownerOverflowX, `${role} responsive root effective overflow-x`)
+    .toBe(live.sourceRootStyles['overflow-x']);
+  expect(placement.ownerOverflowY, `${role} responsive root effective overflow-y`)
+    .toBe(live.sourceRootStyles['overflow-y']);
+  expect(placement.ownerTextAlign, `${role} responsive root alignment`)
+    .toBe(live.sourceRootStyles['text-align']);
+  expect(placement.ownerDirection, `${role} responsive root direction`)
+    .toBe(live.sourceRootStyles.direction);
+  expect(placement.ownerMarginTop, `${role} responsive root margin-top`)
+    .toBe(live.sourceRootStyles['margin-top']);
+  expect(placement.ownerMarginRight, `${role} responsive root margin-right`)
+    .toBe(live.sourceRootStyles['margin-right']);
+  expect(placement.ownerMarginBottom, `${role} responsive root margin-bottom`)
+    .toBe(live.sourceRootStyles['margin-bottom']);
+  expect(placement.ownerMarginLeft, `${role} responsive root margin-left`)
+    .toBe(live.sourceRootStyles['margin-left']);
+  expect(placement.ownerPaddingTop, `${role} responsive root padding-top`)
+    .toBe(live.sourceRootStyles['padding-top']);
+  expect(placement.ownerPaddingRight, `${role} responsive root padding-right`)
+    .toBe(live.sourceRootStyles['padding-right']);
+  expect(placement.ownerPaddingBottom, `${role} responsive root padding-bottom`)
+    .toBe(live.sourceRootStyles['padding-bottom']);
+  expect(placement.ownerPaddingLeft, `${role} responsive root padding-left`)
+    .toBe(live.sourceRootStyles['padding-left']);
+  expect(placement.ownerBorderTopWidth, `${role} responsive root top border width`)
+    .toBe(live.sourceRootStyles['border-top-width']);
+  expect(placement.ownerBorderRightWidth, `${role} responsive root right border width`)
+    .toBe(live.sourceRootStyles['border-right-width']);
+  expect(placement.ownerBorderBottomWidth, `${role} responsive root bottom border width`)
+    .toBe(live.sourceRootStyles['border-bottom-width']);
+  expect(placement.ownerBorderLeftWidth, `${role} responsive root left border width`)
+    .toBe(live.sourceRootStyles['border-left-width']);
+  expect(placement.ownerBorderTopStyle, `${role} responsive root top border style`)
+    .toBe(live.sourceRootStyles['border-top-style']);
+  expect(placement.ownerBorderRightStyle, `${role} responsive root right border style`)
+    .toBe(live.sourceRootStyles['border-right-style']);
+  expect(placement.ownerBorderBottomStyle, `${role} responsive root bottom border style`)
+    .toBe(live.sourceRootStyles['border-bottom-style']);
+  expect(placement.ownerBorderLeftStyle, `${role} responsive root left border style`)
+    .toBe(live.sourceRootStyles['border-left-style']);
+  expect(placement.ownerPadding, `${role} responsive root neutral padding`).toBe('0px');
+  expect(placement.ownerBorderRadius, `${role} responsive root neutral radius`).toBe('0px');
+  expect(placement.ownerBackgroundColor, `${role} responsive root neutral background`)
+    .toMatch(/^(?:rgba\(0, ?0, ?0, ?0\)|transparent)$/u);
+  const ownerDeclarations = placement.ownerDeclarations ?? {};
+  const ownerTypedDimensions = placement.ownerTypedDimensions ?? {};
+  const sourceTypedDimensions = live.sourceRootTypedDimensions ?? {};
+  for (const property of ['height', 'max-width', 'width']) {
+    const sourceProperty = property === 'max-width' ? 'maxWidth' : property;
+    expect(ownerTypedDimensions[property], `${role} responsive root ${property} effective TypedOM`)
+      .toBe(sourceTypedDimensions[sourceProperty]);
+    expect(ownerDeclarations[property]?.value, `${role} responsive root ${property} declaration`)
+      .toBe(sourceTypedDimensions[sourceProperty]);
+    expect(ownerDeclarations[property]?.priority, `${role} responsive root ${property} priority`)
+      .toBe('');
+  }
+  const expectedDisplayWidth = Math.min(placement.ownerClientWidth, sourceMaxWidth);
+  expect(Math.abs(placement.width - expectedDisplayWidth), `${role} responsive display width`)
+    .toBeLessThanOrEqual(1.5);
+  expect(Math.abs(placement.height - placement.width * live.svg.height / live.svg.width),
+    `${role} responsive display aspect`).toBeLessThanOrEqual(1.5);
+  expect(Math.abs(
+    placement.left - (placement.ownerClientWidth - placement.width) / 2
+  ), `${role} responsive centering`).toBeLessThanOrEqual(1.5);
+  return {
+    capture: 'responsive-viewport',
+    expectedPixelHeight,
+    expectedPixelWidth,
+    imageMaxWidth,
+    pixelAspectResidual,
+    sourceMaxWidth
+  };
+}
+
+async function readMermaidGeometryDiagnostics(preview) {
+  return preview.evaluate((root) => [...root.querySelectorAll('.easymde-mermaid')]
+    .map((element, ordinal) => {
+      const svg = element.querySelector('svg');
+      const rect = element.getBoundingClientRect();
+      const matrix = svg?.getScreenCTM?.() ?? null;
+      const values = svg?.getAttribute('viewBox')?.trim().split(/[\s,]+/u).map(Number) ?? [];
+      const computed = getComputedStyle(element);
+      const authored = element.style;
+      return {
+        ctm: matrix && [matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f]
+          .every((value) => Number.isFinite(value))
+          ? {
+              a: matrix.a,
+              b: matrix.b,
+              c: matrix.c,
+              d: matrix.d,
+              e: matrix.e,
+              f: matrix.f
+            }
+          : null,
+        kind: 'mermaid',
+        ordinal,
+        overflow: {
+          authored: {
+            all: authored.getPropertyValue('overflow'),
+            x: authored.getPropertyValue('overflow-x'),
+            y: authored.getPropertyValue('overflow-y')
+          },
+          computed: {
+            all: computed.overflow,
+            height: computed.height,
+            x: computed.overflowX,
+            y: computed.overflowY
+          }
+        },
+        sourceConnected: element.isConnected,
+        sourceHeightAttribute: element.getAttribute('height'),
+        sourceInlineStyle: element.getAttribute('style'),
+        sourceRect: {
+          height: rect.height,
+          width: rect.width
+        },
+        viewBox: 4 === values.length && values.every((value) => Number.isFinite(value))
+          ? values
+          : null
+      };
+    }));
+}
+
+async function readSystemClipboardPayload(page) {
+  return page.evaluate(async () => {
+    if (!navigator.clipboard?.read) throw new Error('wechat-system-clipboard-read-unavailable');
+    const items = await navigator.clipboard.read();
+    const item = items[0];
+    if (!item) throw new Error('wechat-system-clipboard-item-unavailable');
+    const html = await (await item.getType('text/html')).text();
+    const text = await (await item.getType('text/plain')).text();
+    return { html, text };
+  });
+}
+
+async function copyExpectPngFailure(page, button, expectedCode) {
+  await setupZeroWriteProbe(page);
+  const baselineWriteCount = await page.evaluate(() => (
+    globalThis.__easymdeWechatCopyTrace.writes.length
+  ));
+  let failure;
+  try {
+    await focusPageForCopy(page);
+    await button.focus();
+    await expect(button).toBeFocused();
+    await beginCopy(page, 'success');
+    await button.click();
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.__easymdeWechatCopyTrace.writes.length
+    ))).toBe(baselineWriteCount + 1);
+    await waitForWechatStatusEvent(page, 'wechat-failed');
+    await expect.poll(() => page.evaluate(() => (
+      globalThis.__easymdeWechatCopyTrace.writes.at(-1)?.htmlBlobFailureCode ?? null
+    ))).toBe(expectedCode);
+    failure = await page.evaluate(() => {
+      const trace = globalThis.__easymdeWechatCopyTrace;
+      const write = trace.writes.at(-1);
+      const host = document.querySelector(
+        '.easymde-editor > .easymde-editor-message-alert-host'
+      );
+      const node = host?.querySelector('[role="status"], [role="alert"]');
+      const text = node?.textContent ?? '';
+      const failed = trace.statusEvents.slice(trace.statusEventCountAtStart);
+      const strings = globalThis.EasyMDEEditorRootBootstrap.wechatExport.strings;
+      return {
+        failureStatus: failed.includes('wechat-failed'),
+        htmlBlobFailureCode: write?.htmlBlobFailureCode ?? null,
+        htmlBlobState: write?.htmlBlobState ?? null,
+        nativeState: write?.nativeState ?? null,
+        successStatus: failed.includes('wechat-success'),
+        sideEffects: text === strings.failedWithUploads
+          ? 'uploads-may-remain'
+          : text === strings.failed
+            ? 'none'
+            : 'unknown',
+        writeIndex: trace.writes.length - 1
+      };
+    });
+  } finally {
+    await stopZeroWriteProbe(page);
+  }
+  await dismissEditorStatus(page);
+  return failure;
+}
+
 async function readPayloadBoundary(page, html, destinationWidth = null) {
   return page.evaluate(({ sourceHtml, width }) => {
     const parsed = new DOMParser().parseFromString(sourceHtml, 'text/html');
@@ -4075,6 +7647,9 @@ async function readPayloadBoundary(page, html, destinationWidth = null) {
           computed.paddingLeft
         ],
         materializedImageCount: root.querySelectorAll('img').length,
+        clientWidth: root.clientWidth,
+        overflowDelta: Math.max(0, root.scrollWidth - root.clientWidth),
+        scrollWidth: root.scrollWidth,
         width: finite(rect.width, 'width')
       };
     } finally {
@@ -4596,6 +8171,7 @@ async function exerciseThemeCancellation(
 
 test.describe('WeChat copy browser regressions', () => {
   test.beforeEach(async ({ page: _page }, testInfo) => {
+    visibleSelectorDiagnosticsByPage.set(_page, testInfo);
     testInfo.wechatUser = createUser(testSlug(testInfo));
   });
 
@@ -4606,8 +8182,10 @@ test.describe('WeChat copy browser regressions', () => {
         diagnosticsPath,
         JSON.stringify({
           ...(await collectFailureDiagnostics(_page)),
+          bloomGantt: testInfo.wechatBloomGanttEvidence ?? null,
           finiteTransitionProbe: testInfo.wechatFiniteTransitionProbeCases ?? [],
-          heartbeatRequests: testInfo.wechatHeartbeatRequests ?? []
+          heartbeatRequests: testInfo.wechatHeartbeatRequests ?? [],
+          visibleSelector: testInfo.wechatVisibleSelectorDiagnostics ?? []
         }, null, 2),
         'utf8'
       );
@@ -4617,6 +8195,7 @@ test.describe('WeChat copy browser regressions', () => {
       });
     }
     if (testInfo.wechatUser) deleteUserContent(testInfo.wechatUser.id);
+    visibleSelectorDiagnosticsByPage.delete(_page);
   });
 
   test('keeps split math roots read-only across ordinary and nonwindowed immersive Preview', async ({
@@ -7023,6 +10602,1559 @@ test.describe('WeChat copy browser regressions', () => {
     await page.unroute(imageUploadMatcher);
   });
 
+  test('keeps canonical Mermaid Gantt width and layout independent of preview width', async ({
+    page
+  }, testInfo) => {
+    test.setTimeout(8 * 60_000);
+    await login(page, testInfo.wechatUser);
+    await installEditorBootstrapOverride(page, true);
+    const imageRoute = fullCapabilityImageSource;
+    let imageRouteHits = 0;
+    await page.route(imageRoute, async (route) => {
+      imageRouteHits += 1;
+      await route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 });
+    });
+    const fullMarkdown = fullCapabilityMarkdown;
+    const otherMermaidSemanticBaseline = [];
+    let layoutBaseline = null;
+    let sequenceGeometryBaseline = null;
+    const probes = [];
+    try {
+      for (const [index, width] of [255, 335, 677].entries()) {
+        await page.setViewportSize({ height: 900, width });
+        await openEasyMdeNewPost(page);
+        await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
+        let preview = page.locator(
+          '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+        );
+        if (2 === index) {
+          const immersiveLabels = await page.evaluate(
+            () => window.EasyMDEEditorRootBootstrap.strings.immersive
+          );
+          await page.locator('.easymde-toolbar-immersive-toggle').click();
+          await expect(page.getByRole('region', {
+            name: immersiveLabels.immersive
+          })).toBeVisible();
+          await page.getByRole('button', {
+            name: immersiveLabels.splitMode,
+            exact: true
+          }).click();
+          preview = page.locator(
+            '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+          );
+          await expect(preview).toBeVisible();
+          await waitForPreviewVisualReadiness(page);
+        }
+        const fingerprints = await readMermaidSourceFingerprints(preview);
+        expect(fingerprints).toHaveLength(10);
+        expect(fingerprints.map(({ role }) => role)).toEqual(canonicalMermaidRoles);
+        for (const role of ['gantt', 'sequence', 'timeline']) {
+          expect(fingerprints.filter((entry) => entry.role === role), `${role} role uniqueness`)
+            .toHaveLength(1);
+        }
+        const gantt = fingerprints.find(({ role }) => role === 'gantt');
+        if (!gantt) throw new Error('wechat-gantt-fingerprint-unavailable');
+        expect(gantt.viewBox.width).toBe(1200);
+        const sequence = fingerprints.find(({ role }) => role === 'sequence');
+        if (!sequence) throw new Error('wechat-sequence-fingerprint-unavailable');
+        const sequenceGeometry = (({ counts, font, labels, markers, paint, viewBox }) => ({
+          counts,
+          font,
+          labels,
+          markers,
+          paint,
+          viewBox
+        }))(sequence);
+        const otherMermaidSemantics = fingerprints
+          .filter(({ role }) => !['sequence', 'gantt', 'timeline'].includes(role))
+          .map(({ counts, font, labels, markers, ordinal, paint, role }) => {
+            const paintStyle = paint
+              .map(({
+                fill,
+                markerEnd,
+                markerStart,
+                opacity,
+                stroke,
+                strokeWidth,
+                tag,
+                vectorEffect
+              }) => ({
+                fill,
+                markerEnd,
+                markerStart,
+                opacity,
+                stroke,
+                strokeWidth,
+                tag,
+                vectorEffect
+              }))
+              .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+            return {
+              counts,
+              font,
+              labels,
+              markers,
+              ordinal,
+              paintStyle,
+              role
+            };
+          });
+        if (0 === index) {
+          sequenceGeometryBaseline = sequenceGeometry;
+          otherMermaidSemanticBaseline.push(...otherMermaidSemantics);
+          await assertMermaidFingerprintSensitivity(preview);
+        } else {
+          expect(sequenceGeometry).toEqual(sequenceGeometryBaseline);
+          expect(otherMermaidSemantics).toEqual(otherMermaidSemanticBaseline);
+        }
+        const probe = await readGanttLayoutProbe(preview);
+        expect(probe.layout).toBe('gantt');
+        expect(probe.viewBox.width).toBe(1200);
+        expect(probe.viewBox.height).toBeGreaterThan(0);
+        expect(probe.svg.width).toBeCloseTo(probe.viewBox.width, 0);
+        expect(probe.svg.height).toBeCloseTo(probe.viewBox.height, 0);
+        expect(probe.svg.ctm).toEqual(expect.objectContaining({
+          a: 1,
+          b: 0,
+          c: 0,
+          d: 1
+        }));
+        expect(probe.dates.length).toBeGreaterThan(0);
+        expect(probe.tasks.length).toBeGreaterThan(0);
+        expect(probe.milestones.length).toBeGreaterThan(0);
+        expect(probe.dateIntersections).toBe(0);
+        expect(probe.owner.scrollRange).toBeGreaterThan(0);
+        if (!layoutBaseline) {
+          layoutBaseline = {
+            dates: probe.dates,
+            milestones: probe.milestones,
+            tasks: probe.tasks
+          };
+        } else {
+          expect(probe.dates).toEqual(layoutBaseline.dates);
+          expect(probe.milestones).toEqual(layoutBaseline.milestones);
+          expect(probe.tasks).toEqual(layoutBaseline.tasks);
+        }
+        probes.push({
+          dateIntersections: probe.dateIntersections,
+          ganttViewBox: probe.viewBox,
+          mode: 2 === index ? 'immersive' : 'ordinary',
+          owner: probe.owner,
+          viewportWidth: width
+        });
+      }
+    } finally {
+      await page.unroute(imageRoute);
+    }
+    expect(probes).toHaveLength(3);
+    expect(imageRouteHits).toBeGreaterThan(0);
+  });
+
+  test('keeps full example Mermaid PNGs bounded in ordinary and immersive Copy', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(12 * 60_000);
+    testInfo.wechatHeartbeatRequests = [];
+    await installPngWorkerLifecycleProbe(page);
+    await login(page, testInfo.wechatUser);
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
+    await installEditorBootstrapOverride(page, true);
+    await page.setViewportSize({ width: 335, height: 900 });
+    const workerRequests = [];
+    const workerEvents = [];
+    page.on('worker', (worker) => {
+      const url = new URL(worker.url(), origin);
+      if (url.origin === origin && pngWorkerResourcePattern.test(url.pathname)) {
+        workerEvents.push({ url: worker.url() });
+      }
+    });
+    context.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin && pngWorkerResourcePattern.test(url.pathname)) {
+        workerRequests.push({ method: request.method(), url: request.url() });
+      }
+    });
+    await page.route(fullCapabilityImageSource, (route) =>
+      route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 }));
+
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+    const imageUploadBootstrap = await page.evaluate(() => ({
+      endpoint: window.EasyMDEEditorRootBootstrap.imageUpload.endpoint,
+      owner: window.EasyMDEEditorRootBootstrap.imageUpload.uploadOwner
+    }));
+    if (!imageUploadBootstrap.endpoint || !imageUploadBootstrap.owner) {
+      throw new Error('wechat-full-example-png-upload-bootstrap-unavailable');
+    }
+    const imageUploadPath = new URL(imageUploadBootstrap.endpoint, page.url()).pathname;
+    const uploadedPngs = [];
+    const uploadedDigests = [];
+    let uploadResponseIndex = 0;
+    const imageUploadMatcher = (url) => new URL(url).pathname === imageUploadPath;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname !== imageUploadPath) return;
+      const bytes = multipartFileBytes(request);
+      uploadedPngs.push(bytes.toString('base64'));
+      uploadedDigests.push(createHash('sha256').update(bytes).digest('hex'));
+    });
+    await page.route(imageUploadMatcher, async (route) => {
+      const index = uploadResponseIndex++;
+      const url = `https://images.example.test/e2e/full-example-png-${index}.png`;
+      const response = 'image-hosting' === imageUploadBootstrap.owner
+        ? { alt: '', backup: { status: 'disabled' }, title: '', url }
+        : { alt: '', filename: `full-example-png-${index}.png`, id: 15_000 + index, title: '', url };
+      await route.fulfill({
+        body: JSON.stringify(response),
+        contentType: 'application/json',
+        status: 200
+      });
+    });
+
+    const fullMarkdown = fullCapabilityMarkdown;
+    await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
+    const preview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    const mermaidCount = await preview.locator('.easymde-mermaid').count();
+    expect(mermaidCount).toBe(10);
+    const mermaidGeometryDiagnostics = await readMermaidGeometryDiagnostics(preview);
+    const mermaidSourceFingerprints = await readMermaidSourceFingerprints(preview);
+    expect(mermaidSourceFingerprints).toHaveLength(10);
+    expect(mermaidSourceFingerprints.map(({ role }) => role)).toEqual(canonicalMermaidRoles);
+    expect(mermaidSourceFingerprints.map(({ ordinal }) => ordinal)).toEqual(
+      [...Array(10).keys()]
+    );
+    expect(mermaidSourceFingerprints.filter(({ role }) => role === 'sequence')).toHaveLength(1);
+    expect(mermaidSourceFingerprints.filter(({ role }) => role === 'gantt')).toHaveLength(1);
+    expect(mermaidSourceFingerprints.filter(({ role }) => role === 'timeline')).toHaveLength(1);
+    const canonicalGanttSource = mermaidSourceFingerprints.find(({ role }) => role === 'gantt');
+    if (!canonicalGanttSource) throw new Error('wechat-canonical-gantt-source-unavailable');
+    expect(canonicalGanttSource.viewBox.width).toBe(1200);
+    const candidateOrder = await preview.evaluate((root) => [...root.querySelectorAll(
+      '.easymde-math, .easymde-math-block, .easymde-math-inline, .easymde-mermaid'
+    )].map((element) => ({
+      kind: element.classList.contains('easymde-mermaid') ? 'mermaid' : 'math'
+    })));
+    expect(candidateOrder).toHaveLength(24);
+    expect(candidateOrder.filter(({ kind }) => kind === 'math')).toHaveLength(14);
+    expect(candidateOrder.filter(({ kind }) => kind === 'mermaid')).toHaveLength(10);
+    const mermaidUploadIndexes = candidateOrder.reduce((indexes, candidate, index) => {
+      if ('mermaid' === candidate.kind) indexes.push(index);
+      return indexes;
+    }, []);
+    expect(mermaidUploadIndexes.length).toBeGreaterThanOrEqual(4);
+    const firstMermaidUploadIndex = mermaidUploadIndexes[0];
+    const sequenceUploadIndex = mermaidUploadIndexes[1];
+    const ganttUploadIndex = mermaidUploadIndexes[3];
+    if (
+      firstMermaidUploadIndex === undefined
+      || sequenceUploadIndex === undefined
+      || ganttUploadIndex === undefined
+    ) {
+      throw new Error('wechat-full-example-mermaid-order-unavailable');
+    }
+
+    const intrinsicSourceOwnerRoles = ['gantt', 'sequence', 'timeline'];
+    const intrinsicSourceOwnerEvidence = [];
+    for (const role of intrinsicSourceOwnerRoles) {
+      try {
+        const evidence = await readIntrinsicMermaidSourceOwnerEvidence(preview, role);
+        intrinsicSourceOwnerEvidence.push({
+          geometry: {
+            margins: evidence.margins,
+            owner: {
+              clientWidth: evidence.owner.clientWidth,
+              contentWidth: evidence.owner.contentWidth,
+              overflowX: evidence.owner.overflowX,
+              rect: evidence.owner.rect,
+              scrollRange: evidence.owner.scrollRange,
+              scrollWidth: evidence.owner.scrollWidth
+            },
+            svg: {
+              ctm: evidence.svg.ctm,
+              height: evidence.svg.height,
+              left: evidence.svg.left,
+              rect: evidence.svg.rect,
+              right: evidence.svg.right,
+              viewBox: evidence.svg.viewBox,
+              width: evidence.svg.width
+            }
+          },
+          role
+        });
+      } catch (error) {
+        const errorCode = error instanceof Error && /^wechat-[a-z0-9-]+$/u.test(error.message)
+          ? error.message
+          : 'wechat-intrinsic-source-owner-read-failed';
+        intrinsicSourceOwnerEvidence.push({ errorCode, role });
+      }
+    }
+    const intrinsicSourceOwnerEvidencePath = testInfo.outputPath(
+      'wechat-full-example-intrinsic-source-owner.json'
+    );
+    writeFileSync(intrinsicSourceOwnerEvidencePath, `${JSON.stringify({
+      fixtureSha256: createHash('sha256').update(fullMarkdown, 'utf8').digest('hex'),
+      mode: 'ordinary',
+      roles: intrinsicSourceOwnerEvidence,
+      viewport: {
+        devicePixelRatio: await page.evaluate(() => window.devicePixelRatio),
+        height: 900,
+        width: 335
+      }
+    }, null, 2)}\n`, 'utf8');
+    await testInfo.attach('wechat-full-example-intrinsic-source-owner.json', {
+      path: intrinsicSourceOwnerEvidencePath,
+      contentType: 'application/json'
+    });
+
+    const ordinaryButton = page.locator('.easymde-toolbar-copy-action');
+    const ordinaryPayload = await copyNativePayload(page, ordinaryButton);
+    expect(await page.locator('#easymde-source').inputValue()).toBe(fullMarkdown);
+    expect(uploadedPngs.length).toBe(candidateOrder.length);
+    const ordinaryWorkerLifecycle = await page.evaluate(
+      () => globalThis.__easymdePngWorkerLifecycle.read()
+    );
+    expect(ordinaryWorkerLifecycle.created).toHaveLength(candidateOrder.length);
+    expect(ordinaryWorkerLifecycle.terminateCount).toBe(candidateOrder.length);
+    expect(ordinaryWorkerLifecycle.created.every(({ sameOrigin, type }) => (
+      sameOrigin && type === 'module'
+    ))).toBe(true);
+    expect(workerEvents.length).toBeGreaterThan(0);
+    expect(workerEvents.every(({ url }) => (
+      new URL(url, origin).origin === origin
+      && pngWorkerResourcePattern.test(new URL(url, origin).pathname)
+    ))).toBe(true);
+    expect(workerRequests.length).toBeGreaterThan(0);
+    expect(workerRequests.every(({ method, url }) => (
+      method === 'GET'
+      && new URL(url).origin === origin
+      && pngWorkerResourcePattern.test(new URL(url).pathname)
+    ))).toBe(true);
+    const ordinaryPngEvidence = await readDecodedPngEvidence(page, uploadedPngs);
+    expect(ordinaryPngEvidence.length).toBe(uploadedPngs.length);
+    for (const evidence of ordinaryPngEvidence) {
+      expect(evidence.width).toBeGreaterThan(0);
+      expect(evidence.height).toBeGreaterThan(0);
+      expect(evidence.width).toBeLessThanOrEqual(4096);
+      expect(evidence.height).toBeLessThanOrEqual(4096);
+      expect(evidence.inkPixels).toBeGreaterThan(0);
+    }
+    const ordinaryPlacements = await readPayloadPngPlacements(page, ordinaryPayload.html, 335);
+    const candidateDpr = await page.evaluate(() => window.devicePixelRatio);
+    const placementByUpload = new Map(
+      ordinaryPlacements.map((placement) => [placement.uploadIndex, placement])
+    );
+    for (const [label, uploadIndex] of [
+      ['Sequence', sequenceUploadIndex],
+      ['Gantt', ganttUploadIndex]
+    ]) {
+      const placement = placementByUpload.get(uploadIndex);
+      const mermaidOrdinal = mermaidUploadIndexes.indexOf(uploadIndex);
+      const geometry = mermaidGeometryDiagnostics[mermaidOrdinal] ?? null;
+      if (!placement || placement.ownerDataIgnoreWidth !== '') {
+        throw new Error(JSON.stringify({
+          candidateCount: candidateOrder.length,
+          geometry,
+          label: label.toLowerCase(),
+          mermaidUploadIndexes,
+          ownerFlags: placement
+            ? {
+                dataIgnoreWidth: placement.ownerDataIgnoreWidth === '',
+                heightAuto: placement.ownerStyle.includes('height:auto!important'),
+                overflowXAuto: placement.ownerStyle.includes('overflow-x:auto!important')
+              }
+            : null,
+          placementUploadIndexes: ordinaryPlacements.map(({ uploadIndex: index }) => index),
+          requestedUploadIndex: uploadIndex,
+          resultDimensions: ordinaryPngEvidence.map(({ height, inkPixels, width }, index) => ({
+            height,
+            index,
+            inkPixels,
+            width
+          })),
+          urlIndex: placement?.uploadIndex ?? null
+        }));
+      }
+      expect(Math.abs(placement.left), `${label} PNG left offset`).toBeLessThanOrEqual(1);
+      expect(Math.abs(placement.top), `${label} PNG top offset`).toBeLessThanOrEqual(1);
+      expect(placement.position, `${label} PNG position`).not.toBe('fixed');
+      expect(placement.ownerDataIgnoreWidth, `${label} local scroll owner`).toBe('');
+      expect(placement.ownerStyle, `${label} autoheight owner`).toContain('height:auto!important');
+      expect(placement.ownerStyle, `${label} horizontal scroll owner`)
+        .toContain('overflow-x:auto!important');
+      expect(['auto', 'scroll'], `${label} computed horizontal overflow`)
+        .toContain(placement.ownerOverflowX);
+      expect(placement.ownerScrollLeftStart, `${label} scroll start`).toBe(0);
+      expect(placement.ownerScrollLeftEnd, `${label} scroll end`)
+        .toBe(placement.ownerScrollRange);
+      if ('Gantt' === label) {
+        expect(ordinaryPngEvidence[uploadIndex]?.width)
+          .toBe(Math.round(1200 * candidateDpr));
+        expect(placement.ownerScrollRange, `${label} local scroll range`)
+          .toBeGreaterThan(0);
+      }
+    }
+    expect(await page.evaluate(() => ({ pageXOffset, scrollX }))).toEqual({
+      pageXOffset: 0,
+      scrollX: 0
+    });
+
+    const wideOrdinaryUploadStart = uploadedPngs.length;
+    await page.evaluate(() => window.sessionStorage.setItem(
+      'easymde-e2e-editing-mode',
+      'preview'
+    ));
+    const wideViewportWidth = 1920;
+    await page.setViewportSize({ width: wideViewportWidth, height: 900 });
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+    const wideImmersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    const wideOrdinaryButton = page.locator('.easymde-toolbar-copy-action');
+    await expect(page.locator('.easymde-workspace')).toHaveClass(/is-mode-preview/, {
+      timeout: 30_000
+    });
+    await expect(page.locator('.easymde-pane-source')).toBeHidden({ timeout: 30_000 });
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    await expect(page.getByRole('region', {
+      name: wideImmersiveLabels.immersive
+    })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', {
+      name: wideImmersiveLabels.editMode,
+      exact: true
+    }).click();
+    const wideSourceEditor = page.locator('.easymde-source-react .cm-content');
+    await expect(wideSourceEditor).toBeVisible({ timeout: 30_000 });
+    await wideSourceEditor.fill(fullMarkdown);
+    await expect(page.locator('#easymde-source')).toHaveValue(fullMarkdown, {
+      timeout: 30_000
+    });
+    await page.getByRole('button', {
+      name: wideImmersiveLabels.previewMode,
+      exact: true
+    }).click();
+    await expect(page.getByText(wideImmersiveLabels.previewContentLoaded))
+      .toBeVisible({ timeout: 30_000 });
+    await page.getByRole('button', {
+      name: wideImmersiveLabels.exit,
+      exact: true
+    }).click();
+    const widePreview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(page.locator('.easymde-workspace')).toHaveClass(/is-mode-preview/, {
+      timeout: 30_000
+    });
+    await expect(page.locator('.easymde-pane-source')).toBeHidden({ timeout: 30_000 });
+    await expect(widePreview).toBeVisible({ timeout: 30_000 });
+    await assertFullCapabilityPreview(widePreview);
+    const wideSourceValue = await page.locator('#easymde-source').inputValue();
+    expect(wideSourceValue).toBe(fullMarkdown);
+    const wideCanonicalSha256 = createHash('sha256')
+      .update(wideSourceValue, 'utf8')
+      .digest('hex');
+    expect(wideCanonicalSha256).toBe(
+      'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb'
+    );
+    const wideGanttSource = await readGanttSourceOwnerEvidence(widePreview);
+    expect(wideGanttSource.owner.contentWidth).toBeGreaterThan(1200);
+    expect(wideGanttSource.owner.overflowX).toMatch(/^(auto|scroll)$/u);
+    expect(wideGanttSource.svg.viewBox).toMatchObject({ height: 268, width: 1200 });
+    expect(wideGanttSource.svg.width).toBeCloseTo(1200, 0);
+    expect(wideGanttSource.svg.height).toBeCloseTo(268, 0);
+    expect(wideGanttSource.svg.ctm).toEqual({ a: 1, b: 0, c: 0, d: 1 });
+    expect(wideGanttSource.margins.typed).toEqual({
+      left: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' },
+      right: { typeName: 'CSSKeywordValue', value: 'auto', toString: 'auto' }
+    });
+    expect(wideGanttSource.margins.used.left.keyword).toBeNull();
+    expect(wideGanttSource.margins.used.right.keyword).toBeNull();
+    expect(wideGanttSource.margins.used.left.px).not.toBeNull();
+    expect(wideGanttSource.margins.used.right.px).not.toBeNull();
+    expect(Math.abs(
+      wideGanttSource.margins.used.left.px - wideGanttSource.margins.used.right.px
+    )).toBeLessThanOrEqual(1);
+    const wideMermaidSourceFingerprints = await readMermaidSourceFingerprints(widePreview);
+    expect(wideMermaidSourceFingerprints).toHaveLength(10);
+    const wideGanttFingerprint = wideMermaidSourceFingerprints.find(({ role }) => role === 'gantt');
+    if (!wideGanttFingerprint) throw new Error('wechat-wide-gantt-fingerprint-unavailable');
+    const semanticFingerprint = (fingerprint) => {
+      const semantic = { ...fingerprint };
+      delete semantic.root;
+      return semantic;
+    };
+    expect(semanticFingerprint(wideGanttFingerprint))
+      .toEqual(semanticFingerprint(canonicalGanttSource));
+    expect(wideGanttFingerprint.root.width).toBe(
+      `${Math.round(wideGanttSource.owner.contentWidth)}px`
+    );
+    expect(wideGanttFingerprint.root.transform).toBe('none');
+    expect(Number.parseFloat(wideGanttFingerprint.root.height))
+      .toBeCloseTo(wideGanttSource.svg.height, 0);
+    const wideCandidateOrder = await widePreview.evaluate((root) => [...root.querySelectorAll(
+      '.easymde-math, .easymde-math-block, .easymde-math-inline, .easymde-mermaid'
+    )].map((element) => ({
+      kind: element.classList.contains('easymde-mermaid') ? 'mermaid' : 'math'
+    })));
+    expect(wideCandidateOrder).toEqual(candidateOrder);
+    const widePreviewSignature = await widePreview.evaluate(
+      (root) => root.easymdePreviewSignature ?? ''
+    );
+    if (!widePreviewSignature) throw new Error('wechat-wide-preview-signature-unavailable');
+    const wideSourceScrollBeforeCopy = await widePreview.evaluate((root) => {
+      const owner = root.querySelector(
+        '.easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      );
+      if (!(owner instanceof HTMLElement)) throw new Error('wechat-wide-gantt-scroll-owner-unavailable');
+      return {
+        ownerScrollLeft: owner.scrollLeft,
+        ownerScrollTop: owner.scrollTop,
+        previewScrollLeft: root.scrollLeft,
+        previewScrollTop: root.scrollTop
+      };
+    });
+    const wideDpr = await page.evaluate(() => window.devicePixelRatio);
+    expect(wideDpr).toBeGreaterThanOrEqual(1);
+    expect(wideDpr).toBeLessThanOrEqual(2);
+    const wideExpectedGanttWidth = Math.round(1200 * wideDpr);
+    const wideExpectedGanttHeight = Math.round(268 * wideDpr);
+    const wideEdgePixelLimit = Math.round(200 * wideDpr);
+    const wideOrdinaryPayload = await copyNativePayload(page, wideOrdinaryButton);
+    const wideOrdinaryPngs = uploadedPngs.slice(wideOrdinaryUploadStart);
+    expect(wideOrdinaryPngs.length).toBe(candidateOrder.length);
+    const wideOrdinaryPngEvidence = await readDecodedPngEvidence(page, wideOrdinaryPngs);
+    const wideOrdinaryPlacements = await readPayloadPngPlacements(
+      page,
+      wideOrdinaryPayload.html,
+      wideViewportWidth
+    );
+    const wideGanttEvidence = wideOrdinaryPngEvidence[ganttUploadIndex];
+    const wideGanttPlacement = wideOrdinaryPlacements.find(
+      ({ uploadIndex }) => uploadIndex === wideOrdinaryUploadStart + ganttUploadIndex
+    );
+    if (!wideGanttEvidence) throw new Error('wechat-wide-gantt-png-evidence-unavailable');
+    if (!wideGanttEvidence.inkBounds) {
+      throw new Error('wechat-wide-gantt-png-ink-bounds-unavailable');
+    }
+    if (!wideGanttPlacement) throw new Error('wechat-wide-gantt-png-placement-unavailable');
+    expect(wideGanttEvidence.width).toBe(wideExpectedGanttWidth);
+    expect(wideGanttEvidence.height).toBe(wideExpectedGanttHeight);
+    expect(wideGanttEvidence.inkPixels).toBeGreaterThan(0);
+    expect(wideGanttEvidence.edgeBands.left.inkPixels).toBeGreaterThan(0);
+    expect(wideGanttEvidence.edgeBands.right.inkPixels).toBeGreaterThan(0);
+    expect(wideGanttEvidence.inkBounds.left).toBeLessThanOrEqual(wideEdgePixelLimit);
+    expect(wideExpectedGanttWidth - 1 - wideGanttEvidence.inkBounds.right)
+      .toBeLessThanOrEqual(wideEdgePixelLimit);
+    expect(wideGanttPlacement).toMatchObject({
+      ownerDataIgnoreWidth: '',
+      ownerOverflowX: expect.stringMatching(/^(auto|scroll)$/u),
+      position: expect.not.stringMatching(/^fixed$/u)
+    });
+    expect(wideGanttPlacement.width).toBeCloseTo(1200, 0);
+    expect(wideGanttPlacement.height).toBeCloseTo(268, 0);
+    expect(wideGanttPlacement.ownerScrollWidth).toBeGreaterThanOrEqual(
+      wideGanttPlacement.ownerClientWidth
+    );
+    expect(Math.abs(wideGanttPlacement.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(wideGanttPlacement.top)).toBeLessThanOrEqual(1);
+    expect(await page.locator('#easymde-source').inputValue()).toBe(fullMarkdown);
+    expect(await widePreview.evaluate((root) => root.easymdePreviewSignature ?? ''))
+      .toBe(widePreviewSignature);
+    expect(await widePreview.evaluate((root) => {
+      const owner = root.querySelector(
+        '.easymde-mermaid[data-easymde-mermaid-layout="gantt"]'
+      );
+      if (!(owner instanceof HTMLElement)) throw new Error('wechat-wide-gantt-scroll-owner-unavailable');
+      return {
+        ownerScrollLeft: owner.scrollLeft,
+        ownerScrollTop: owner.scrollTop,
+        previewScrollLeft: root.scrollLeft,
+        previewScrollTop: root.scrollTop
+      };
+    })).toEqual(wideSourceScrollBeforeCopy);
+    await page.evaluate(() => window.sessionStorage.removeItem('easymde-e2e-editing-mode'));
+
+    const ordinaryUploadCount = uploadedPngs.length;
+    await page.setViewportSize({ width: 677, height: 900 });
+    const immersiveLabels = await page.evaluate(
+      () => window.EasyMDEEditorRootBootstrap.strings.immersive
+    );
+    await page.locator('.easymde-toolbar-immersive-toggle').click();
+    const immersiveRegion = page.getByRole('region', { name: immersiveLabels.immersive });
+    await expect(immersiveRegion).toBeVisible();
+    await page.getByRole('button', { name: immersiveLabels.splitMode, exact: true }).click();
+    const immersivePreview = page.locator(
+      '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+    );
+    await expect(immersivePreview).toBeVisible();
+    await waitForPreviewVisualReadiness(page);
+    const immersiveGanttSource = (await readMermaidSourceFingerprints(immersivePreview))
+      .find(({ role }) => role === 'gantt');
+    if (!immersiveGanttSource) throw new Error('wechat-immersive-gantt-source-unavailable');
+    expect(immersiveGanttSource.viewBox.width).toBe(1200);
+    const identityMermaidCount = await immersivePreview.evaluate((root) => (
+      [...root.querySelectorAll('.easymde-mermaid svg')].filter((svg) => {
+        const matrix = svg.getScreenCTM?.();
+        return matrix
+          && Math.abs(matrix.a - 1) <= 1e-6
+          && Math.abs(matrix.d - 1) <= 1e-6
+          && Math.abs(matrix.b) <= 1e-6
+          && Math.abs(matrix.c) <= 1e-6;
+      }).length
+    ));
+    expect(identityMermaidCount).toBeGreaterThan(0);
+
+    const immersiveButton = page.getByRole('button', {
+      name: immersiveLabels.wechat,
+      exact: true
+    });
+    const firstImmersivePayload = await copyNativePayload(page, immersiveButton);
+    const firstImmersivePngs = uploadedPngs.slice(ordinaryUploadCount);
+    const firstImmersiveDigests = uploadedDigests.slice(ordinaryUploadCount);
+    expect(firstImmersivePngs.length).toBe(candidateOrder.length);
+    const firstImmersivePlacements = await readPayloadPngPlacements(
+      page,
+      firstImmersivePayload.html,
+      677
+    );
+    const secondImmersivePayload = await copyNativePayload(page, immersiveButton);
+    const secondImmersivePngs = uploadedPngs.slice(ordinaryUploadCount + firstImmersivePngs.length);
+    const secondImmersiveDigests = uploadedDigests.slice(
+      ordinaryUploadCount + firstImmersivePngs.length
+    );
+    expect(secondImmersivePngs.length).toBe(firstImmersivePngs.length);
+    expect(secondImmersiveDigests).toEqual(firstImmersiveDigests);
+    const secondImmersivePlacements = await readPayloadPngPlacements(
+      page,
+      secondImmersivePayload.html,
+      677
+    );
+    expect(secondImmersivePlacements.map(({ height, left, top, width }) => ({
+      height,
+      left,
+      top,
+      width
+    }))).toEqual(firstImmersivePlacements.map(({ height, left, top, width }) => ({
+      height,
+      left,
+      top,
+      width
+    })));
+    expect(await page.evaluate(() => ({ pageXOffset, scrollX }))).toEqual({
+      pageXOffset: 0,
+      scrollX: 0
+    });
+
+    const ordinaryPayloadBoundary = await readPayloadBoundary(page, ordinaryPayload.html, 335);
+    const articleOverflowMetrics = {
+      clientWidth: ordinaryPayloadBoundary.clientWidth,
+      overflowDelta: ordinaryPayloadBoundary.overflowDelta,
+      scrollWidth: ordinaryPayloadBoundary.scrollWidth
+    };
+    expect(articleOverflowMetrics.overflowDelta).toBe(0);
+    const captureDpr = candidateDpr;
+    const fixtureSha256 = createHash('sha256')
+      .update(fullCapabilityMarkdown, 'utf8')
+      .digest('hex');
+    const carrierHtmlSha256 = createHash('sha256')
+      .update(ordinaryPayload.html, 'utf8')
+      .digest('hex');
+    for (const [role, uploadIndex] of [
+      ['sequence', sequenceUploadIndex],
+      ['gantt', ganttUploadIndex]
+    ]) {
+      const encodedPng = uploadedPngs[uploadIndex];
+      const pngEvidence = ordinaryPngEvidence[uploadIndex];
+      const source = mermaidSourceFingerprints.find((entry) => entry.role === role);
+      const carrier = ordinaryPlacements.find((entry) => entry.uploadIndex === uploadIndex);
+      if (!encodedPng || !pngEvidence || !source || !carrier) {
+        throw new Error(`wechat-${role}-evidence-attachment-input-unavailable`);
+      }
+      const pngBytes = Buffer.from(encodedPng, 'base64');
+      const sourceFingerprint = createHash('sha256')
+        .update(JSON.stringify(source), 'utf8')
+        .digest('hex');
+      const geometry = mermaidGeometryDiagnostics.find((entry) => (
+        entry.viewBox
+        && entry.viewBox.length === 4
+        && entry.viewBox.every((value, index) => value === [
+          source.viewBox.x,
+          source.viewBox.y,
+          source.viewBox.width,
+          source.viewBox.height
+        ][index])
+      )) ?? null;
+      const pngSha256 = createHash('sha256').update(pngBytes).digest('hex');
+      await writePrivatePixelEvidence(testInfo, role, pngBytes, {
+        carrier: {
+          htmlSha256: carrierHtmlSha256,
+          ownerClientWidth: carrier.ownerClientWidth,
+          ownerOverflowX: carrier.ownerOverflowX,
+          ownerOverflowY: carrier.ownerOverflowY,
+          ownerScrollLeftEnd: carrier.ownerScrollLeftEnd,
+          ownerScrollLeftStart: carrier.ownerScrollLeftStart,
+          ownerScrollRange: carrier.ownerScrollRange,
+          ownerScrollWidth: carrier.ownerScrollWidth,
+          ownerStyleSha256: createHash('sha256')
+            .update(carrier.ownerStyle, 'utf8')
+            .digest('hex')
+        },
+        capture: {
+          devicePixelRatio: captureDpr,
+          sourceRect: geometry?.sourceRect ?? null
+        },
+        candidatePng: {
+          edgeBands: pngEvidence.edgeBands,
+          height: pngEvidence.height,
+          inkBounds: pngEvidence.inkBounds,
+          sha256: pngSha256,
+          width: pngEvidence.width
+        },
+        fixture: {
+          bytes: Buffer.byteLength(fullCapabilityMarkdown, 'utf8'),
+          sha256: fixtureSha256
+        },
+        schemaVersion: 1,
+        source: {
+          fingerprint: sourceFingerprint,
+          summary: source,
+          viewBox: source.viewBox
+        },
+        articleRoot: articleOverflowMetrics,
+        uploadIndex,
+        role
+      });
+    }
+
+    const digestClipboard = (payload) => ({
+      html: createHash('sha256').update(payload.html, 'utf8').digest('hex'),
+      text: createHash('sha256').update(payload.text, 'utf8').digest('hex')
+    });
+    const successfulClipboard = digestClipboard(await readSystemClipboardPayload(page));
+    const firstMermaidRoot = immersivePreview.locator('.easymde-mermaid').first();
+    const originalFirstMermaidMarkup = await firstMermaidRoot.evaluate((root) => root.innerHTML);
+    expect(firstMermaidUploadIndex).toBe(12);
+    expect(candidateOrder.slice(0, firstMermaidUploadIndex).every(({ kind }) => kind === 'math')).toBe(true);
+    await firstMermaidRoot.evaluate((root) => {
+      const svg = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 20 20');
+      const rect = root.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('width', '20');
+      rect.setAttribute('height', '20');
+      svg.append(rect);
+      root.append(svg);
+    });
+    const fullInvalidUploadStart = uploadedPngs.length;
+    const fullInvalidFailure = await copyExpectPngFailure(
+      page,
+      immersiveButton,
+      'wechat-png-rasterization-failed'
+    );
+    expect(uploadedPngs.length - fullInvalidUploadStart).toBe(firstMermaidUploadIndex);
+    expect(fullInvalidFailure).toMatchObject({
+      failureStatus: true,
+      htmlBlobFailureCode: 'wechat-png-rasterization-failed',
+      htmlBlobState: 'rejected',
+      sideEffects: 'uploads-may-remain',
+      successStatus: false
+    });
+    expect(digestClipboard(await readSystemClipboardPayload(page))).toEqual(successfulClipboard);
+    await firstMermaidRoot.evaluate((root, markup) => { root.innerHTML = markup; }, originalFirstMermaidMarkup);
+
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+    await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
+    const isolatedPreview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    const isolatedBaselineClipboard = digestClipboard(await readSystemClipboardPayload(page));
+    await isolatedPreview.evaluate((root) => {
+      const mermaids = [...root.querySelectorAll('.easymde-mermaid')];
+      const target = mermaids[1];
+      if (!target) throw new Error('wechat-isolated-invalid-mermaid-unavailable');
+      root.querySelectorAll(
+        '.easymde-math, .easymde-math-block, .easymde-math-inline'
+      ).forEach((element) => {
+        element.classList.remove('easymde-math', 'easymde-math-block', 'easymde-math-inline');
+      });
+      mermaids.forEach((element, index) => {
+        if (index !== 1) element.classList.remove('easymde-mermaid');
+      });
+      target.innerHTML = '<svg viewBox="0 0 20 20"><rect width="20" height="20"></rect></svg>'
+        + '<svg viewBox="0 0 20 20"><rect width="20" height="20"></rect></svg>';
+    });
+    const isolatedButton = page.locator('.easymde-toolbar-copy-action');
+    const isolatedInvalidUploadStart = uploadedPngs.length;
+    const isolatedInvalidFailure = await copyExpectPngFailure(
+      page,
+      isolatedButton,
+      'wechat-png-rasterization-failed'
+    );
+    expect(uploadedPngs.length).toBe(isolatedInvalidUploadStart);
+    expect(isolatedInvalidFailure).toMatchObject({
+      failureStatus: true,
+      htmlBlobFailureCode: 'wechat-png-rasterization-failed',
+      htmlBlobState: 'rejected',
+      sideEffects: 'none',
+      successStatus: false
+    });
+    expect(digestClipboard(await readSystemClipboardPayload(page))).toEqual(isolatedBaselineClipboard);
+
+    await isolatedPreview.evaluate((root) => {
+      const targets = root.querySelectorAll('.easymde-mermaid');
+      if (targets.length !== 1) throw new Error('wechat-isolated-zero-ink-mermaid-count-invalid');
+      const target = targets[0];
+      if (!target) throw new Error('wechat-isolated-zero-ink-mermaid-unavailable');
+      target.innerHTML = '<svg viewBox="0 0 20 20"></svg>';
+    });
+    const isolatedZeroInkUploadStart = uploadedPngs.length;
+    const isolatedZeroInkFailure = await copyExpectPngFailure(
+      page,
+      isolatedButton,
+      'wechat-png-rasterization-failed'
+    );
+    expect(uploadedPngs.length).toBe(isolatedZeroInkUploadStart);
+    expect(isolatedZeroInkFailure).toMatchObject({
+      failureStatus: true,
+      htmlBlobFailureCode: 'wechat-png-rasterization-failed',
+      htmlBlobState: 'rejected',
+      sideEffects: 'none',
+      successStatus: false
+    });
+    expect(digestClipboard(await readSystemClipboardPayload(page))).toEqual(isolatedBaselineClipboard);
+    await page.unroute(imageUploadMatcher);
+  });
+
+  test('copies Bloom decorated intrinsic Mermaid roles through real Copy at narrow, immersive, and wide widths', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(45 * 60_000);
+    expect(fullCapabilityMarkdown.length).toBe(9254);
+    expect(new TextEncoder().encode(fullCapabilityMarkdown).byteLength).toBe(11959);
+    expect(createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex')).toBe(
+      'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb'
+    );
+    const themesToRun = bloomThemesForE2E();
+    const dprsToRun = bloomDprsForE2E();
+    await login(page, testInfo.wechatUser);
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
+    await installEditorBootstrapOverride(page, true);
+    await page.route(fullCapabilityImageSource, (route) => (
+      route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 })
+    ));
+    const cdp = await context.newCDPSession(page);
+    const oracleEvidence = [];
+    const intrinsicMermaidRoles = ['gantt', 'sequence', 'timeline'];
+    const intrinsicViewBoxBaseline = new Map();
+    let uploadRoute = null;
+    const copyBloomIntrinsicMermaid = async ({ mode, preview, width, themeId, dpr }) => {
+      const candidateOrder = await preview.evaluate((root) => [...root.querySelectorAll(
+        '.easymde-math, .easymde-math-block, .easymde-math-inline, .easymde-mermaid'
+      )].map((element) => ({
+        kind: element.classList.contains('easymde-mermaid') ? 'mermaid' : 'math',
+        role: element.classList.contains('easymde-mermaid')
+          ? element.querySelector('svg')?.getAttribute('aria-roledescription')?.trim() ?? null
+          : null
+      })));
+      expect(candidateOrder).toHaveLength(24);
+      expect(candidateOrder.filter(({ kind }) => kind === 'math')).toHaveLength(14);
+      expect(candidateOrder.filter(({ kind }) => kind === 'mermaid')).toHaveLength(10);
+      expect(candidateOrder.filter(({ role }) => role === 'gantt')).toHaveLength(1);
+      expect(candidateOrder.filter(({ role }) => role === 'sequence')).toHaveLength(1);
+      expect(candidateOrder.filter(({ role }) => role === 'timeline')).toHaveLength(1);
+      const uploadIndexes = new Map(intrinsicMermaidRoles.map((role) => [
+        role,
+        candidateOrder.findIndex((candidate) => candidate.role === role)
+      ]));
+      for (const [role, uploadIndex] of uploadIndexes) {
+        if (uploadIndex < 0) throw new Error(`wechat-bloom-${role}-candidate-unavailable`);
+      }
+      const sourceBefore = await page.locator('#easymde-source').inputValue();
+      const previewSignatureBefore = await preview.evaluate(
+        (root) => root.easymdePreviewSignature ?? ''
+      );
+      if (!previewSignatureBefore) throw new Error('wechat-bloom-preview-signature-unavailable');
+      const stateBefore = await preview.evaluate((root) => ({
+        accepted: root.getAttribute('data-easymde-preview-accepted'),
+        busy: root.getAttribute('aria-busy'),
+        error: root.getAttribute('data-easymde-preview-error'),
+        refreshing: root.getAttribute('data-easymde-preview-refreshing'),
+        signature: root.easymdePreviewSignature ?? ''
+      }));
+      const uploadStart = uploadRoute.pngs.length;
+      const button = mode.startsWith('ordinary')
+        ? page.locator('.easymde-toolbar-copy-action')
+        : page.getByRole('button', {
+          exact: true,
+          name: (await page.evaluate(
+            () => window.EasyMDEEditorRootBootstrap.strings.immersive.wechat
+          ))
+        });
+      const payload = await copyNativePayload(page, button);
+      const uploadedPngs = uploadRoute.pngs.slice(uploadStart);
+      expect(uploadedPngs.length).toBe(candidateOrder.length);
+      const placements = await readPayloadPngPlacements(page, payload.html, width);
+      const roleEvidence = [];
+      for (const role of intrinsicMermaidRoles) {
+        const live = await readBloomIntrinsicMermaidLiveEvidence(preview, role);
+        const sourceOwner = await readIntrinsicMermaidSourceOwnerEvidence(preview, role);
+        const sourceWidth = live.svg.viewBox.width;
+        const sourceHeight = live.svg.viewBox.height;
+        const expectedWidth = sourceWidth + 20;
+        const expectedHeight = sourceHeight + 20;
+        const previousViewBox = intrinsicViewBoxBaseline.get(role);
+        if (previousViewBox) expect(live.svg.viewBox, `${role} viewBox stability`).toEqual(previousViewBox);
+        else intrinsicViewBoxBaseline.set(role, live.svg.viewBox);
+        expect(live.role).toBe(role);
+        const liveCtm = assertIntrinsicMermaidCtm(`${role} live`, live.svg);
+        expect(sourceOwner.svg.viewBox).toEqual(live.svg.viewBox);
+        const sourceOwnerCtm = assertIntrinsicMermaidCtm(`${role} source`, {
+          ctm: sourceOwner.svg.ctm,
+          height: sourceOwner.svg.rect.height,
+          viewBox: sourceOwner.svg.viewBox,
+          width: sourceOwner.svg.rect.width
+        });
+        if (role === 'gantt') {
+          expect(live.svg.ctm).toEqual(expect.objectContaining({
+            a: 1,
+            b: 0,
+            c: 0,
+            d: 1
+          }));
+          expect(sourceOwner.svg.ctm).toEqual({ a: 1, b: 0, c: 0, d: 1 });
+        }
+        expect(live.padding).toBe('10px');
+        expect(live.borderRadius).toBe('12px');
+        expect(live.backgroundColor).not.toMatch(/transparent|rgba\(0, 0, 0, 0\)/u);
+        expect(live.overflowX).toMatch(/^(auto|scroll)$/u);
+        expect(live.height).toBeCloseTo(expectedHeight, 0);
+        const uploadIndex = uploadIndexes.get(role);
+        const png = uploadedPngs[uploadIndex];
+        if (!png) throw new Error(`wechat-bloom-${role}-png-unavailable`);
+        const placement = placements.find(
+          ({ uploadIndex: index }) => index === uploadStart + uploadIndex
+        );
+        if (!placement) throw new Error(`wechat-bloom-${role}-placement-unavailable`);
+        const pngEvidence = await readBloomDecoratedMermaidPngEvidence(page, png, {
+          backgroundColor: live.backgroundColor,
+          expectedHeight,
+          expectedWidth,
+          role
+        });
+        await writePrivatePixelEvidence(
+          testInfo,
+          `${themeId}-${mode}-${role}-dpr${dpr}`,
+          Buffer.from(png, 'base64'),
+          {
+            corners: {
+              samples: pngEvidence.corners.pixels,
+              arcSamplesAreBackground: pngEvidence.corners.arcSamplesAreBackground,
+              outerCornersAreNonOpaque: pngEvidence.corners.outerCornersAreNonOpaque
+            },
+            dimensions: pngEvidence.dimensions,
+            expectedBackground: {
+              css: pngEvidence.background.css,
+              rgba: pngEvidence.background.rgba
+            },
+            foreground: pngEvidence.foreground,
+            frame: {
+              cssPixels: pngEvidence.frame.cssPixels,
+              samples: pngEvidence.frame.samples
+            },
+            mode,
+            role,
+            schemaVersion: 1,
+            themeId,
+            width
+          }
+        );
+        expect(placement.width, `${role} placement width`).toBeCloseTo(expectedWidth, 0);
+        expect(placement.height, `${role} placement height`).toBeCloseTo(expectedHeight, 0);
+        expect(placement.ownerDataIgnoreWidth).toBe('');
+        expect(placement.ownerOverflowX).toMatch(/^(auto|scroll)$/u);
+        expect(placement.ownerOverflowOwnerCount).toBe(1);
+        expect(placement.ownerDirectImageCount).toBe(1);
+        expect(placement.ownerNestedMermaidCount).toBe(0);
+        expect(placement.ownerStyle).not.toMatch(
+          /(?:^|;)(?:background(?:-color|-image)?|padding|border(?:-[^:;]+)?|border-radius):/iu
+        );
+        expect(placement.ownerScrollLeftStart).toBe(0);
+        expect(placement.ownerScrollLeftEnd).toBe(placement.ownerScrollRange);
+        if (placement.ownerScrollRange > 0) {
+          expect(placement.imageStartLeft).toBeGreaterThanOrEqual(placement.ownerVisibleLeft - 1.5);
+          expect(placement.imageStartRight).toBeGreaterThanOrEqual(placement.ownerVisibleRight - 1.5);
+          expect(placement.imageEndLeft).toBeLessThanOrEqual(placement.ownerVisibleLeft + 1.5);
+          expect(placement.imageEndRight).toBeLessThanOrEqual(placement.ownerVisibleRight + 1.5);
+        } else {
+          expect(placement.imageStartLeft).toBeGreaterThanOrEqual(placement.ownerVisibleLeft - 1.5);
+          expect(placement.imageStartRight).toBeLessThanOrEqual(placement.ownerVisibleRight + 1.5);
+        }
+        expect(pngEvidence.devicePixelRatio).toBe(dpr);
+        expect(pngEvidence.dimensions).toMatchObject({
+          expected: { height: Math.ceil(expectedHeight * dpr), width: Math.ceil(expectedWidth * dpr) },
+          height: Math.ceil(expectedHeight * dpr),
+          width: Math.ceil(expectedWidth * dpr)
+        });
+        expect(pngEvidence.frame).toMatchObject({
+          cssPixels: 10,
+          samplesAreBackground: true
+        });
+        expect(pngEvidence.corners).toMatchObject({
+          arcSamplesAreBackground: true,
+          outerCornersAreNonOpaque: true
+        });
+        expect(pngEvidence.background.coverage).toBeGreaterThan(0.2);
+        expect(pngEvidence.foreground.pixels).toBeGreaterThan(20);
+        expect(pngEvidence.foreground.edgeBands.left.pixels).toBeGreaterThan(5);
+        expect(pngEvidence.foreground.edgeBands.right.pixels).toBeGreaterThan(5);
+        roleEvidence.push({
+          ctm: { live: liveCtm, source: sourceOwnerCtm },
+          live,
+          pngEvidence,
+          placement,
+          role,
+          sourceOwner
+        });
+      }
+      expect(await page.locator('#easymde-source').inputValue()).toBe(sourceBefore);
+      expect(await preview.evaluate((root) => root.easymdePreviewSignature ?? ''))
+        .toBe(previewSignatureBefore);
+      expect(await preview.evaluate((root) => ({
+        accepted: root.getAttribute('data-easymde-preview-accepted'),
+        busy: root.getAttribute('aria-busy'),
+        error: root.getAttribute('data-easymde-preview-error'),
+        refreshing: root.getAttribute('data-easymde-preview-refreshing'),
+        signature: root.easymdePreviewSignature ?? ''
+      }))).toEqual(stateBefore);
+      return {
+        dpr,
+        mode,
+        roles: roleEvidence,
+        themeId,
+        width
+      };
+    };
+    try {
+      for (const dpr of dprsToRun) {
+        for (const themeId of themesToRun) {
+          await setBloomViewport(page, cdp, 335, dpr);
+          await openEasyMdeNewPost(page);
+          await assertPngConversionEnabled(page);
+          if (!uploadRoute) uploadRoute = await installControlledPngUploadRoute(page);
+          const catalog = await readAppearanceCatalog(page);
+          const theme = catalog.articleThemes.find(({ id }) => id === themeId);
+          if (!theme) throw new Error(`wechat-bloom-theme-unavailable:${themeId}`);
+          const dialog = await openOrdinaryAppearanceDialog(page, catalog.labels.editorSettings);
+          await selectOrdinaryAppearanceTheme(page, dialog, catalog.labels.articleTheme, theme.label);
+          await page.keyboard.press('Escape');
+          await expect(dialog).toHaveCount(0);
+          await fillMarkdownAndWaitForPreview(page, fullCapabilityMarkdown, 'Markdown 全量能力测试文档');
+          await expect(page.locator(
+            '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+          )).toHaveAttribute('data-easymde-preview-accepted', '1');
+          await waitForArticleThemeStylesheet(page, theme);
+          await installPngMeasurementProbe(page);
+          let preview = page.locator(
+            '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+          );
+          oracleEvidence.push(await copyBloomIntrinsicMermaid({
+            dpr,
+            mode: 'ordinary-narrow',
+            preview,
+            themeId,
+            width: 335
+          }));
+
+          await setBloomViewport(page, cdp, 677, dpr);
+          const immersiveLabels = await page.evaluate(
+            () => window.EasyMDEEditorRootBootstrap.strings.immersive
+          );
+          await page.locator('.easymde-toolbar-immersive-toggle').click();
+          await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
+          await page.getByRole('button', { name: immersiveLabels.splitMode, exact: true }).click();
+          preview = page.locator(
+            '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+          );
+          await expect(preview).toBeVisible();
+          await waitForPreviewVisualReadiness(page);
+          oracleEvidence.push(await copyBloomIntrinsicMermaid({
+            dpr,
+            mode: 'immersive-split',
+            preview,
+            themeId,
+            width: 677
+          }));
+          await page.getByRole('button', { name: immersiveLabels.exit, exact: true }).click();
+          await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toHaveCount(0);
+
+          await setBloomViewport(page, cdp, 1920, dpr);
+          preview = page.locator(
+            '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+          );
+          await expect(preview).toBeVisible();
+          await waitForPreviewVisualReadiness(page);
+          oracleEvidence.push(await copyBloomIntrinsicMermaid({
+            dpr,
+            mode: 'ordinary-wide',
+            preview,
+            themeId,
+            width: 1920
+          }));
+        }
+      }
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      if (uploadRoute) await page.unroute(uploadRoute.matcher);
+      await page.unroute(fullCapabilityImageSource);
+    }
+    await testInfo.attach('wechat-bloom-intrinsic-mermaid-oracle.json', {
+      body: JSON.stringify({ dprs: dprsToRun, themes: themesToRun, evidence: oracleEvidence }, null, 2),
+      contentType: 'application/json'
+    });
+  });
+
+  test('copies neutral phycat-sky full-fixture responsive Mermaid roles at DPR1/2', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(35 * 60_000);
+    expect(fullCapabilityMarkdown.length).toBe(9254);
+    expect(new TextEncoder().encode(fullCapabilityMarkdown).byteLength).toBe(11959);
+    expect(createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex')).toBe(
+      'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb'
+    );
+    const dprsToRun = bloomDprsForE2E();
+    const modes = [
+      { mode: 'ordinary-narrow', width: 335 },
+      { mode: 'immersive-split', width: 677 },
+      { mode: 'ordinary-wide', width: 1920 }
+    ];
+    const requiredResponsiveRoles = [
+      'flowchart-v2',
+      'classDiagram',
+      'stateDiagram',
+      'er'
+    ];
+    const responsiveRoles = canonicalMermaidRoles.filter(
+      (role) => !['gantt', 'sequence', 'timeline'].includes(role)
+    );
+    expect(responsiveRoles).toHaveLength(7);
+    const wideResponsiveRolesByDpr = new Map();
+    const oracleEvidence = [];
+    await login(page, testInfo.wechatUser);
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await installClipboardInstrumentation(page);
+    await installWechatConsoleDiagnostics(page);
+    await installEditorBootstrapOverride(page, true);
+    await page.route(fullCapabilityImageSource, (route) => (
+      route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 })
+    ));
+    const cdp = await context.newCDPSession(page);
+    let uploadRoute = null;
+    try {
+      for (const dpr of dprsToRun) {
+        for (const { mode, width } of modes) {
+          await setBloomViewport(page, cdp, width, dpr);
+          await openEasyMdeNewPost(page);
+          await assertPngConversionEnabled(page);
+          if (!uploadRoute) uploadRoute = await installControlledPngUploadRoute(page);
+          await fillMarkdownAndWaitForPreview(page, fullCapabilityMarkdown, 'Markdown 全量能力测试文档');
+          let preview = page.locator(
+            '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+          );
+          await expect(preview).toHaveAttribute('data-easymde-preview-accepted', '1');
+          const catalog = await readAppearanceCatalog(page);
+          const sky = catalog.articleThemes.find(({ id }) => id === 'phycat-sky');
+          if (!sky) throw new Error('wechat-phycat-sky-theme-unavailable');
+          const dialog = await openOrdinaryAppearanceDialog(page, catalog.labels.editorSettings);
+          await selectOrdinaryAppearanceTheme(
+            page,
+            dialog,
+            catalog.labels.articleTheme,
+            sky.label
+          );
+          await page.keyboard.press('Escape');
+          await expect(dialog).toHaveCount(0);
+          await waitForArticleThemeStylesheet(page, sky);
+          if (mode === 'immersive-split') {
+            const immersiveLabels = await page.evaluate(
+              () => window.EasyMDEEditorRootBootstrap.strings.immersive
+            );
+            await page.locator('.easymde-toolbar-immersive-toggle').click();
+            await expect(page.getByRole('region', {
+              name: immersiveLabels.immersive
+            })).toBeVisible();
+            await page.getByRole('button', {
+              name: immersiveLabels.splitMode,
+              exact: true
+            }).click();
+            preview = page.locator(
+              '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]'
+            );
+            await expect(preview).toBeVisible();
+            await waitForPreviewVisualReadiness(page);
+          }
+          await assertFullCapabilityPreview(preview);
+          const fingerprints = await readMermaidSourceFingerprints(preview);
+          expect(fingerprints).toHaveLength(10);
+          expect(fingerprints.map(({ role }) => role)).toEqual(canonicalMermaidRoles);
+          const candidateOrder = await preview.evaluate((root) => [...root.querySelectorAll(
+            '.easymde-math, .easymde-math-block, .easymde-math-inline, .easymde-mermaid'
+          )].map((element) => ({
+            kind: element.classList.contains('easymde-mermaid') ? 'mermaid' : 'math',
+            role: element.classList.contains('easymde-mermaid')
+              ? element.querySelector('svg')?.getAttribute('aria-roledescription')?.trim() ?? null
+              : null
+          })));
+          expect(candidateOrder).toHaveLength(24);
+          expect(candidateOrder.filter(({ kind }) => kind === 'math')).toHaveLength(14);
+          expect(candidateOrder.filter(({ kind }) => kind === 'mermaid')).toHaveLength(10);
+          const roleUploadIndexes = new Map(canonicalMermaidRoles.map((role) => [
+            role,
+            candidateOrder.findIndex((candidate) => candidate.role === role)
+          ]));
+          for (const [role, uploadIndex] of roleUploadIndexes) {
+            if (uploadIndex < 0) throw new Error(`wechat-phycat-sky-${role}-candidate-unavailable`);
+          }
+          const liveResponsiveEvidence = new Map();
+          const expectedResponsiveRoles = [];
+          for (const role of requiredResponsiveRoles) {
+            const live = await readBloomIntrinsicMermaidLiveEvidence(
+              preview,
+              role,
+              { allowMissingCtm: true }
+            );
+            liveResponsiveEvidence.set(role, live);
+            expect(live.layout, `${role} controlled layout marker`).toBeNull();
+            expect(live.svg.semanticStyle.width, `${role} controlled SVG width semantics`)
+              .toBe('100%');
+            expect(live.svg.semanticStyle.height, `${role} controlled SVG height semantics`)
+              .toBe('auto');
+            expect(live.svg.semanticStyle.marginLeft, `${role} controlled left centering`)
+              .toBe('auto');
+            expect(live.svg.semanticStyle.marginRight, `${role} controlled right centering`)
+              .toBe('auto');
+            const sourceMaxWidth = Number.parseFloat(live.svg.semanticStyle.maxWidth ?? '');
+            expect(live.svg.semanticStyle.maxWidth, `${role} controlled SVG cap CSS unit`)
+              .toMatch(/^\d+(?:\.\d+)?px$/u);
+            expect(Number.isFinite(sourceMaxWidth), `${role} controlled SVG cap finite`).toBe(true);
+            expect(sourceMaxWidth, `${role} controlled SVG cap positive`).toBeGreaterThan(0);
+            expect(live.svg.semanticStyle.maxHeight, `${role} controlled SVG max height semantics`)
+              .toMatch(/^(?:auto|none)$/u);
+            expect(live.ownerLayout.display, `${role} controlled owner display`)
+              .toBe('block');
+            expect(live.ownerLayout.position, `${role} controlled owner position`)
+              .toBe('static');
+            expect(live.ownerLayout.float, `${role} controlled owner float`)
+              .toMatch(/^(?:none|)$/u);
+            expect(live.ownerLayout.opacity, `${role} controlled owner opacity`).toBe('1');
+            expect(live.ownerLayout.transform, `${role} controlled owner transform`).toBe('none');
+            expect(live.formattingOwnerDisplay, `${role} controlled formatting owner`)
+              .toMatch(/^(?:block|flow-root|list-item)$/u);
+            expect(live.backgroundColor, `${role} controlled transparent root`)
+              .toMatch(/^(?:transparent|rgba\(0, ?0, ?0, ?0\))$/u);
+            expect(live.borderRadius, `${role} controlled neutral radius`).toBe('0px');
+            expect(live.padding, `${role} controlled neutral padding`).toBe('0px');
+            expect(live.svg.transform, `${role} controlled SVG transform`).toBeNull();
+            expect([null, 'xMidYMid meet'], `${role} controlled SVG preserveAspectRatio`)
+              .toContain(live.svg.preserveAspectRatio);
+            expect(Math.abs(live.height - live.svg.height), `${role} controlled automatic height`)
+              .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+            const capReached = Math.abs(live.svg.width - sourceMaxWidth)
+              <= intrinsicGeometryTolerance;
+            const extraOuterSpace = live.width > live.svg.width + intrinsicGeometryTolerance;
+            if (capReached && extraOuterSpace) expectedResponsiveRoles.push(role);
+          }
+          for (const role of responsiveRoles.filter((candidate) => !requiredResponsiveRoles.includes(candidate))) {
+            liveResponsiveEvidence.set(role, await readBloomIntrinsicMermaidLiveEvidence(
+              preview,
+              role,
+              { allowMissingCtm: true }
+            ));
+          }
+          const sourceBefore = await page.locator('#easymde-source').inputValue();
+          const previewSignatureBefore = await preview.evaluate(
+            (root) => root.easymdePreviewSignature ?? ''
+          );
+          if (!previewSignatureBefore) throw new Error('wechat-phycat-sky-preview-signature-unavailable');
+          const uploadStart = uploadRoute.pngs.length;
+          const button = mode === 'immersive-split'
+            ? page.getByRole('button', {
+              exact: true,
+              name: (await page.evaluate(
+                () => window.EasyMDEEditorRootBootstrap.strings.immersive.wechat
+              ))
+            })
+            : page.locator('.easymde-toolbar-copy-action');
+          const payload = await copyNativePayload(page, button);
+          const uploadedPngs = uploadRoute.pngs.slice(uploadStart);
+          expect(uploadedPngs.length).toBe(candidateOrder.length);
+          const placements = await readPayloadPngPlacements(page, payload.html, width, {
+            recordedPngs: uploadRoute.pngs
+          });
+          expect(placements).toHaveLength(candidateOrder.length);
+          expect(placements.map(({ uploadIndex }) => uploadIndex)).toEqual(
+            candidateOrder.map((_, index) => uploadStart + index)
+          );
+          const responsivePngEvidence = await readDecodedPngEvidence(
+            page,
+            responsiveRoles.map((role) => uploadedPngs[roleUploadIndexes.get(role)])
+          );
+          expect(responsivePngEvidence).toHaveLength(responsiveRoles.length);
+          const selectedRoles = [];
+          const selectedControlledRoles = [];
+          const roleEvidence = [];
+          for (const [responsiveOrdinal, role] of responsiveRoles.entries()) {
+            const live = liveResponsiveEvidence.get(role);
+            const uploadIndex = roleUploadIndexes.get(role);
+            const placement = placements.find(
+              ({ uploadIndex: index }) => index === uploadStart + uploadIndex
+            );
+            if (!placement) throw new Error(`wechat-phycat-sky-${role}-placement-unavailable`);
+            const pngEvidence = responsivePngEvidence[responsiveOrdinal];
+            if (!pngEvidence) throw new Error(`wechat-phycat-sky-${role}-png-unavailable`);
+            const capture = assertResponsiveMermaidEvidence({
+              dpr,
+              live,
+              placement,
+              pngEvidence,
+              role
+            });
+            if (capture) {
+              selectedRoles.push(role);
+              if (requiredResponsiveRoles.includes(role)) selectedControlledRoles.push(role);
+            }
+            roleEvidence.push({
+              capture: capture?.capture ?? 'existing-responsive-path',
+              dpr,
+              live,
+              oracle: capture,
+              placement,
+              pngEvidence,
+              role
+            });
+          }
+          expect(new Set(selectedRoles).size).toBe(selectedRoles.length);
+          expect(selectedControlledRoles, 'controlled responsive capture roles must match cap/space')
+            .toEqual(expectedResponsiveRoles);
+          if ('ordinary-wide' === mode) {
+            wideResponsiveRolesByDpr.set(dpr, [...selectedControlledRoles]);
+            expect(selectedControlledRoles, `ordinary-wide responsive roles at DPR${dpr}`)
+              .toEqual(requiredResponsiveRoles);
+          }
+          expect(await page.locator('#easymde-source').inputValue()).toBe(sourceBefore);
+          expect(await preview.evaluate((root) => root.easymdePreviewSignature ?? ''))
+            .toBe(previewSignatureBefore);
+          oracleEvidence.push({
+            dpr,
+            expectedResponsiveRoles,
+            mode,
+            roleEvidence,
+            selectedRoles,
+            selectedControlledRoles,
+            themeId: sky.id,
+            width
+          });
+        }
+      }
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride');
+      if (uploadRoute) await page.unroute(uploadRoute.matcher);
+      await page.unroute(fullCapabilityImageSource);
+    }
+    expect([...wideResponsiveRolesByDpr.keys()].sort()).toEqual(dprsToRun.slice().sort());
+    for (const dpr of dprsToRun) {
+      expect(wideResponsiveRolesByDpr.get(dpr), `ordinary-wide DPR${dpr} coverage`)
+        .toEqual(requiredResponsiveRoles);
+    }
+    await testInfo.attach('wechat-phycat-sky-responsive-mermaid-oracle.json', {
+      body: JSON.stringify({ dprs: dprsToRun, evidence: oracleEvidence }, null, 2),
+      contentType: 'application/json'
+    });
+  });
+
+  test('times out a loaded no-reply PNG worker without partial Clipboard or measurement owners', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(3 * 60_000);
+    testInfo.wechatHeartbeatRequests = [];
+    await installPngWorkerLifecycleProbe(page);
+    await login(page, testInfo.wechatUser);
+    const origin = new URL(page.url()).origin;
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    await installClipboardInstrumentation(page);
+    await installEditorBootstrapOverride(page, true);
+    await page.route('**/easymde-e2e-fixtures/markdown-full-capability-image.png', (route) =>
+      route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 }));
+
+    const workerRequests = [];
+    const workerEvents = [];
+    page.on('worker', (worker) => {
+      const url = new URL(worker.url(), origin);
+      if (url.origin === origin && pngWorkerResourcePattern.test(url.pathname)) {
+        workerEvents.push({ url: worker.url() });
+      }
+    });
+    context.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.origin === origin && pngWorkerResourcePattern.test(url.pathname)) {
+        workerRequests.push({ method: request.method(), url: request.url() });
+      }
+    });
+
+    await openEasyMdeNewPost(page);
+    await assertPngConversionEnabled(page);
+    const fullMarkdown = fullCapabilityMarkdown.replace(
+      new RegExp(fullCapabilityImageSource.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'gu'),
+      '/easymde-e2e-fixtures/markdown-full-capability-image.png'
+    );
+    await fillMarkdownAndWaitForPreview(page, fullMarkdown, 'Markdown 全量能力测试文档');
+    const preview = page.locator(
+      '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
+    );
+    await assertFullCapabilityPreview(preview);
+    const ordinaryButton = page.locator('.easymde-toolbar-copy-action');
+    const uploadRoute = await installControlledPngUploadRoute(page);
+
+    let noReplyWorkerRoute = null;
+    try {
+      const baselinePayload = await copyNativePayload(page, ordinaryButton);
+      expect(baselinePayload.html.length).toBeGreaterThan(0);
+      const baselineSystemClipboard = await readSystemClipboardPayload(page);
+      const baselineClipboard = {
+        html: createHash('sha256')
+          .update(baselineSystemClipboard.html, 'utf8')
+          .digest('hex'),
+        text: createHash('sha256')
+          .update(baselineSystemClipboard.text, 'utf8')
+          .digest('hex')
+      };
+      const baselineUploadCount = uploadRoute.uploads.length;
+      await page.evaluate(() => globalThis.__easymdePngWorkerLifecycle.reset());
+      workerRequests.length = 0;
+      workerEvents.length = 0;
+      noReplyWorkerRoute = await installNoReplyPngWorkerRoute(page);
+
+      await setupZeroWriteProbe(page);
+      await focusPageForCopy(page);
+      await ordinaryButton.focus();
+      await expect(ordinaryButton).toBeFocused();
+      const baselineWriteCount = await page.evaluate(() => (
+        globalThis.__easymdeWechatCopyTrace.writes.length
+      ));
+      await beginCopy(page, 'success');
+      await ordinaryButton.click();
+      await expect.poll(() => page.evaluate(() => (
+        globalThis.__easymdeWechatCopyTrace.writes.length
+      ))).toBe(baselineWriteCount + 1);
+      await waitForWechatStatusEvent(page, 'wechat-failed');
+      await expect.poll(() => page.evaluate(() => (
+        globalThis.__easymdeWechatCopyTrace.writes.at(-1)?.htmlBlobFailureCode ?? null
+      ))).toBe('wechat-png-rasterization-timeout');
+
+      const failedCopy = await page.evaluate(() => {
+        const trace = globalThis.__easymdeWechatCopyTrace;
+        const write = trace.writes.at(-1);
+        return {
+          htmlBlobFailureCode: write?.htmlBlobFailureCode ?? null,
+          htmlBlobState: write?.htmlBlobState ?? null,
+          nativeState: write?.nativeState ?? null,
+          statuses: trace.statusEvents.slice(trace.statusEventCountAtStart)
+        };
+      });
+      expect(failedCopy).toMatchObject({
+        htmlBlobFailureCode: 'wechat-png-rasterization-timeout',
+        htmlBlobState: 'rejected'
+      });
+      expect(failedCopy.statuses).toContain('wechat-failed');
+      expect(failedCopy.statuses).not.toContain('wechat-success');
+      expect(failedCopy.nativeState).not.toBe('pending');
+
+      const timeoutDiagnostics = await page.evaluate(() => (
+        globalThis.__easymdeWechatConsoleDiagnostics.read()
+          .filter(({ code }) => code === 'wechat-png-rasterization-timeout')
+      ));
+      expect(timeoutDiagnostics).toHaveLength(1);
+      expect(timeoutDiagnostics[0].durationMs).toBeGreaterThanOrEqual(9_000);
+      expect(timeoutDiagnostics[0].durationMs).toBeLessThanOrEqual(15_000);
+
+      expect(noReplyWorkerRoute.requests).toHaveLength(1);
+      expect(noReplyWorkerRoute.requests[0]).toMatchObject({ method: 'GET' });
+      expect(noReplyWorkerRoute.requests[0].resourceType).toBe('script');
+      expect(new URL(noReplyWorkerRoute.requests[0].url).origin).toBe(origin);
+      expect(pngWorkerResourcePattern.test(new URL(
+        noReplyWorkerRoute.requests[0].url
+      ).pathname)).toBe(true);
+      expect(workerEvents).toHaveLength(1);
+      expect(workerEvents[0].url).toBe(noReplyWorkerRoute.requests[0].url);
+      expect(workerRequests).toEqual(noReplyWorkerRoute.requests.map(({ method, url }) => ({
+        method,
+        url
+      })));
+
+      const workerLifecycle = await page.evaluate(
+        () => globalThis.__easymdePngWorkerLifecycle.read()
+      );
+      expect(workerLifecycle.created).toHaveLength(1);
+      expect(workerLifecycle.terminateCount).toBe(1);
+      expect(workerLifecycle.created[0]).toMatchObject({
+        sameOrigin: true,
+        type: 'module'
+      });
+      expect(uploadRoute.uploads).toHaveLength(baselineUploadCount);
+
+      const zeroWrite = await readZeroWriteProbe(page);
+      expect(zeroWrite).toMatchObject({
+        compatibilityUnchanged: true,
+        previewMutations: 0,
+        previewUnchanged: true,
+        sourceMutations: 0,
+        sourceUnchanged: true
+      });
+      expect(await page.locator('#easymde-source').inputValue()).toBe(fullMarkdown);
+      await expect(page.locator(
+        '.easymde-wechat-preview-measurement, .easymde-wechat-raw-dimension-context'
+      )).toHaveCount(0);
+      const failedSystemClipboard = await readSystemClipboardPayload(page);
+      expect({
+        html: createHash('sha256')
+          .update(failedSystemClipboard.html, 'utf8')
+          .digest('hex'),
+        text: createHash('sha256')
+          .update(failedSystemClipboard.text, 'utf8')
+          .digest('hex')
+      }).toEqual(baselineClipboard);
+
+      await page.waitForTimeout(1_000);
+      const lateStatuses = await page.evaluate(() => {
+        const trace = globalThis.__easymdeWechatCopyTrace;
+        return trace.statusEvents.slice(trace.statusEventCountAtStart);
+      });
+      expect(lateStatuses).toEqual(['wechat-failed']);
+      expect(lateStatuses).not.toContain('wechat-success');
+      expect(uploadRoute.uploads).toHaveLength(baselineUploadCount);
+      await expect(page.locator(
+        '.easymde-wechat-preview-measurement, .easymde-wechat-raw-dimension-context'
+      )).toHaveCount(0);
+    } finally {
+      await stopZeroWriteProbe(page);
+      if (noReplyWorkerRoute) await page.unroute(noReplyWorkerRoute.matcher);
+      await page.unroute(uploadRoute.matcher);
+    }
+    await dismissEditorStatus(page);
+  });
+
   test('cold medium copy shows pending feedback, coalesces clicks, and preserves the source and Preview', async ({
     context,
     page
@@ -7333,5 +12465,93 @@ test.describe('WeChat copy browser regressions', () => {
       contentType: 'application/json'
     });
     await page.getByRole('button', { name: immersiveLabels.exit, exact: true }).click();
+  });
+
+  test('preserves full-capability task marker geometry through Default ordinary Copy', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(5 * 60_000);
+    await runTaskMarkerGeometryOracle(page, context, testInfo, {
+      mode: 'ordinary',
+      themeId: 'default'
+    });
+  });
+
+  test('runs task marker geometry negative oracle without Copy or upload', async ({
+    page
+  }, testInfo) => {
+    test.setTimeout(5 * 60_000);
+    await login(page, testInfo.wechatUser);
+    await installEditorBootstrapOverride(page, false);
+    await page.route(fullCapabilityImageSource, async (route) => {
+      await route.fulfill({ body: fullCapabilityImage, contentType: 'image/png', status: 200 });
+    });
+    await page.setViewportSize({ width: 760, height: 1000 });
+    await openEasyMdeNewPost(page);
+    await assertPngConversionDisabled(page);
+    await fillMarkdownAndWaitForPreview(page, fullCapabilityMarkdown, 'Markdown 全量能力测试文档');
+    expect(await page.locator('#easymde-source').inputValue()).toBe(fullCapabilityMarkdown);
+    expect(createHash('sha256').update(fullCapabilityMarkdown, 'utf8').digest('hex'))
+      .toBe('ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb');
+    const catalog = await readAppearanceCatalog(page);
+    const articleTheme = catalog.articleThemes.find(({ id }) => id === 'phycat-sky');
+    if (!articleTheme) throw new Error('wechat-task-marker-self-check-theme-unavailable');
+    const dialog = await openOrdinaryAppearanceDialog(page, catalog.labels.editorSettings);
+    await selectOrdinaryAppearanceTheme(
+      page,
+      dialog,
+      catalog.labels.articleTheme,
+      articleTheme.label
+    );
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await waitForArticleThemeStylesheet(page, articleTheme);
+    const sourceSelector = '.easymde-pane-preview [data-easymde-preview-html-sink="1"]';
+    const sourceEvidenceByWidth = new Map();
+    for (const requestedContent of [335, 677]) {
+      const calibration = await calibrateTaskMarkerSourceViewport(
+        page,
+        sourceSelector,
+        requestedContent
+      );
+      await waitForPreviewVisualReadiness(page);
+      expect(
+        await settleFinitePreviewAnimations(page, sourceSelector),
+        `task marker self-check ${requestedContent}px animations`
+      ).toBe(0);
+      const evidence = await readNativeCodeSurfaceEvidence(page, null, { sourceSelector });
+      const rootContentWidth = evidence.source.taskLists.rootContentBox.width;
+      expect(
+        Math.abs(rootContentWidth - requestedContent),
+        `task marker self-check ${requestedContent}px root content width`
+      ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+      expect(
+        Math.abs(rootContentWidth - calibration.sourceContent),
+        `task marker self-check ${requestedContent}px calibration evidence`
+      ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
+      sourceEvidenceByWidth.set(requestedContent, { calibration, evidence });
+    }
+    const sourceEvidence = sourceEvidenceByWidth.get(677)?.evidence;
+    if (!sourceEvidence) throw new Error('wechat-task-marker-source-calibration-evidence-unavailable');
+    expect(sourceEvidence.source.taskLists.inputCount).toBe(19);
+    expect(sourceEvidence.source.taskLists.checkedStates).toEqual(fullCapabilityTaskStates);
+    assertTaskMarkerOracleNegativeCases(
+      sourceEvidence.source.taskLists,
+      createTaskMarkerLegalProjection(sourceEvidence.source.taskLists),
+      'task-marker-self-check/phycat-sky',
+      'phycat-sky'
+    );
+  });
+
+  test('preserves full-capability task marker geometry through PHYcat Sky immersive Source Copy', async ({
+    context,
+    page
+  }, testInfo) => {
+    test.setTimeout(5 * 60_000);
+    await runTaskMarkerGeometryOracle(page, context, testInfo, {
+      mode: 'immersive-source',
+      themeId: 'phycat-sky'
+    });
   });
 });

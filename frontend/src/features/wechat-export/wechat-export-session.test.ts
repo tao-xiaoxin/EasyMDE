@@ -71,6 +71,125 @@ describe('createWechatExportSession', () => {
     expect(onStatus).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
   });
 
+  it('maps a synchronous adapter throw to a stable unexpected-error result', async () => {
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: {
+        copy: vi.fn(() => {
+          throw new Error('image-hosting-response-private-details');
+        })
+      },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-copy-unexpected-error',
+      status: 'failed'
+    });
+    expect(onDiagnostic).toHaveBeenCalledWith('wechat-copy-unexpected-error');
+    expect(onStatus).toHaveBeenCalledWith({ message: strings.failed, type: 'error' });
+  });
+
+  it('maps an asynchronous adapter rejection to a stable unexpected-error result', async () => {
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: {
+        copy: vi.fn().mockRejectedValue(new Error('private adapter response'))
+      },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    await expect(session.copy()).resolves.toEqual({
+      code: 'wechat-copy-unexpected-error',
+      status: 'failed'
+    });
+    expect(onDiagnostic).toHaveBeenCalledWith('wechat-copy-unexpected-error');
+    expect(onStatus).toHaveBeenCalledWith({ message: strings.failed, type: 'error' });
+  });
+
+  it('does not publish late status after cancellation or teardown rejects', async () => {
+    let rejectCopy!: (error: Error) => void;
+    const operation = new Promise<WechatClipboardResult>((_resolve, reject) => {
+      rejectCopy = reject;
+    });
+    const onStatus = vi.fn();
+    const onDiagnostic = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: { copy: vi.fn(() => operation) },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    const copy = session.copy();
+    session.cancelPending('theme-change');
+    rejectCopy(new Error('late private failure'));
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-cancelled', status: 'cancelled' });
+    expect(onStatus).not.toHaveBeenCalled();
+
+    let rejectAfterTeardown!: (error: Error) => void;
+    const lateOperation = new Promise<WechatClipboardResult>((_resolve, reject) => {
+      rejectAfterTeardown = reject;
+    });
+    const replacement = createWechatExportSession({
+      clipboard: { copy: vi.fn(() => lateOperation) },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+    const lateCopy = replacement.copy();
+    replacement.dispose();
+    rejectAfterTeardown(new Error('late teardown failure'));
+    await lateCopy;
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an unknown rejection value', { data: { secret: 'private' }, message: 'private message', stack: 'private stack' }],
+    ['an Error rejection', new Error('private error message')]
+  ])('reports a safe diagnostic sequence after dispose receives %s', async (_label, rejection) => {
+    let rejectCopy!: (reason: unknown) => void;
+    const operation = new Promise<WechatClipboardResult>((_resolve, reject) => {
+      rejectCopy = reject;
+    });
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard: { copy: vi.fn(() => operation) },
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    const copy = session.copy();
+    session.dispose();
+    rejectCopy(rejection);
+
+    await copy;
+    expect(onDiagnostic.mock.calls).toEqual([
+      ['wechat-copy-unexpected-error'],
+      ['wechat-export-completed-after-teardown']
+    ]);
+    expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('private');
+    expect(onStatus).not.toHaveBeenCalled();
+  });
+
   it('reports a disabled export as an explicit terminal failure', async () => {
     const onStatus = vi.fn();
     const session = createWechatExportSession({
@@ -194,8 +313,54 @@ describe('createWechatExportSession', () => {
     await pending;
 
     expect(onStatus).not.toHaveBeenCalled();
-    expect(onDiagnostic).toHaveBeenCalledWith('wechat-export-completed-after-teardown');
+    expect(onDiagnostic.mock.calls).toEqual([
+      ['wechat-export-completed-after-teardown']
+    ]);
     await expect(session.copy()).resolves.toEqual({ code: 'wechat-export-inactive', status: 'failed' });
+  });
+
+  it('reports a real upload failure after Preview replacement', async () => {
+    const initialPreview = {} as HTMLElement;
+    let currentPreview = initialPreview;
+    const operation = deferred<WechatClipboardResult>();
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const clipboard: WechatClipboardPort = {
+      copy: vi.fn((_preview, options) => {
+        expect(options?.isCurrent?.()).toBe(true);
+        return operation.promise;
+      })
+    };
+    const session = createWechatExportSession({
+      clipboard,
+      enabled: true,
+      getPreview: () => currentPreview,
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    const copy = session.copy();
+    expect(vi.mocked(clipboard.copy).mock.calls[0]?.[0]).toBe(initialPreview);
+    const options = vi.mocked(clipboard.copy).mock.calls[0]?.[1];
+    currentPreview = {} as HTMLElement;
+    expect(options?.isCurrent?.()).toBe(false);
+
+    operation.resolve({
+      code: 'wechat-png-upload-failed',
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    await expect(copy).resolves.toEqual({
+      code: 'wechat-png-upload-failed',
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    expect(onDiagnostic).toHaveBeenCalledWith('wechat-png-upload-failed');
+    expect(onStatus).toHaveBeenCalledWith({
+      message: strings.failedWithUploads,
+      type: 'error'
+    });
   });
 
   it('cancels an intentional theme invalidation without clearing a newer copy', async () => {
@@ -247,6 +412,49 @@ describe('createWechatExportSession', () => {
       'wechat-export-cancelled-theme-change',
       'info'
     );
+    expect(onStatus).toHaveBeenCalledWith({ message: strings.success, type: 'success' });
+  });
+
+  it('keeps a late copied result from a cancelled theme operation away from a newer copy', async () => {
+    const first = deferred<WechatClipboardResult>();
+    const second = deferred<WechatClipboardResult>();
+    const clipboard: WechatClipboardPort = {
+      copy: vi.fn()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+    };
+    const onDiagnostic = vi.fn();
+    const onStatus = vi.fn();
+    const session = createWechatExportSession({
+      clipboard,
+      enabled: true,
+      getPreview: () => ({} as HTMLElement),
+      onDiagnostic,
+      onStatus,
+      strings
+    });
+
+    const firstCopy = session.copy();
+    session.cancelPending('theme-change');
+    expect(clipboard.copy).toHaveBeenCalledOnce();
+
+    const secondCopy = session.copy();
+    expect(clipboard.copy).toHaveBeenCalledTimes(2);
+
+    first.resolve({ method: 'clipboard', status: 'copied' });
+    await expect(firstCopy).resolves.toEqual({
+      code: 'wechat-copy-cancelled',
+      status: 'cancelled'
+    });
+    expect(onDiagnostic.mock.calls).toEqual([
+      ['wechat-export-cancelled-theme-change', 'info']
+    ]);
+    expect(onStatus).not.toHaveBeenCalled();
+    expect(session.copy()).toBe(secondCopy);
+
+    second.resolve({ method: 'clipboard', status: 'copied' });
+    await expect(secondCopy).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(onStatus).toHaveBeenCalledTimes(1);
     expect(onStatus).toHaveBeenCalledWith({ message: strings.success, type: 'success' });
   });
 

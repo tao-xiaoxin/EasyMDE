@@ -178,8 +178,11 @@ and existing limits; ordinary-node, source, and geometry handling is unchanged.
 The PNG conversion path uses that same source key across asynchronous checks.
 Each transaction-local freshness guard installs its `MutationObserver` before
 the initial snapshot and drains `takeRecords()` at the initial, current, and
-final checkpoints. A clean guard is an O(1) reuse decision; a dirty guard
-recomputes the current complete canonical source key and compares it with the
+final checkpoints. Each checkpoint also scans recognized task inputs' current
+`checked` properties, because a property change need not emit a DOM mutation.
+An otherwise clean guard reuses its source key only when that state matches;
+it avoids full markup, style and geometry recomputation but is not an O(1)
+decision. A dirty guard or changed task state recomputes the current complete canonical source key and compares it with the
 immutable initial key, so a mutation that returns to the same value remains
 reusable while an observed real source change becomes permanently stale. Final
 checks still compare the complete source and layout keys and keep
@@ -208,6 +211,27 @@ containing KaTeX. Nested candidate descendants are part of their outer root and
 are not converted or uploaded separately. Ordinary tables, existing `<img>`,
 ordinary SVG, code, other media, and unknown content remain on the existing
 portable-HTML path.
+Rasterization must share the existing 8ms serialization task budget through
+its optional typed Port callback, not create another scheduler. Checkpoints
+follow complete geometry-host cleanup, SVG serialization, and image-URI
+generation. Abort checks apply even when no yield is due; an actual yield
+retains the Clipboard owner's currentness checks before and after waiting.
+Rejection stops subsequent decode, encoding, and upload without changing the
+10-second rasterization or 60-second transaction limits.
+PNG encoding consumes only the existing, fully drawn capture Canvas through
+the injected encoding Port. It does not render Markdown, SVG, fonts, or article
+styles in the worker. A detached 1x1 OffscreenCanvas probe must confirm its
+converter and 2D context before selecting the worker capability path; absent
+Worker, ImageBitmap, or Offscreen capability selects the existing native
+Canvas encoder before the operation starts. Actual worker failures never retry
+or switch encoders. Each serial encoding job transfers one ImageBitmap to one
+temporary local module worker and accepts only the matching strict protocol
+operation ID with a nonempty PNG Blob. Success, error, messageerror, invalid
+reply, postMessage failure, abort, and late bitmap creation all release owned
+bitmaps and terminate the worker. The existing 10-second rasterization timeout
+rejects conversion and aborts the encoding signal; the 60-second transaction
+clock is not restarted. Geometry, DPR, PNG limits, digest naming, candidate
+order, and the three-upload cap remain with their existing owners.
 For a PNG candidate, the outer clone still receives its computed root metadata,
 class/transient-attribute sanitization, and visual-root registration before the
 conversion short-circuit. Because the native PNG replaces that whole root,
@@ -221,6 +245,13 @@ native-visual-only path.
 The original Safe Preview remains the source, prepared-cache key, and freshness
 owner. The Root keeps `preview`/`split` presentation separate from source mode;
 ordinary entry is `split`, and source-mode entry records the last visible width.
+If pending portable background preparation started against a visible live
+Preview that is now hidden, foreground Copy cancels that exact old producer
+and acquires the current measurement lease without waiting for obsolete shared
+resource or transition promises. The old signal still prevents late geometry
+reads and cache publication. Pending preparation that already owns a hidden
+measurement lease remains reusable; Copy must not create a second lease.
+Geometry failures are not cancellation or retry substitutes.
 The lease retains the Preview presentation marker and class context, paper
 geometry, canvas media-query presentation, and full Preview wrapping. Temporary
 geometry and raw semantic trees exclude runtime sink, acceptance, refresh,
@@ -340,10 +371,58 @@ cancellation, stale Preview, invalid dimension or MIME, limit exhaustion,
 timeout, rasterization failure, selected-owner upload failure, or Clipboard
 failure aborts remaining in-flight uploads and rejects the whole deferred
 payload. The result remains explicit about uploads that may already remain.
-The PNG's natural pixel dimensions are the captured CSS dimensions multiplied
-by the clamped device pixel ratio; its pasted display width and height remain
-the captured CSS dimensions, so responsive destination rules do not replace the
-generated image's measured geometry.
+Default PNG pixel dimensions round each captured CSS dimension upward after
+multiplication by the clamped device pixel ratio. Default pasted display
+dimensions preserve the captured geometry.
+
+The explicit `responsive-viewport` Mermaid mode is a narrow exception. A
+proven neutral, auto-height root with one direct, untransformed SVG may capture
+that SVG rather than the editor row's transparent layout space. Require
+effective percentage width, automatic height, a finite renderer cap already
+reached, default meet behavior, and proven horizontal auto margins. Reject
+outer-root paint, decoration, pseudo content, padding, borders, radius, extra
+children, animations, effects and ambiguous layout from this regime. Reject
+unsafe external SVG decoration, while preserving the SVG scene and all SVG
+viewBox padding; never crop by painted pixels. Clear only the private capture
+clone's external margins. This mode uses `ceil(svgWidth * DPR)` pixel width and
+`round(pixelWidth * svgHeight / svgWidth)` pixel height; validate the actual
+integer dimensions and all existing limits. Its retained-root IMG uses
+percentage width, the source SVG cap, automatic height and the existing
+centering semantics. Preserve the serialized outer-root layout declarations;
+this mode does not add an intentional-scroll width-check exemption. Record
+the capture choice, selected SVG identity, root-relative bounds, dimension
+semantics and centering before asynchronous cloning; keep that initial state
+immutable and revalidate it at final freshness. Native aspect and pixel evidence
+at DPR1/2 are required; geometry thresholds do not change. Math, intrinsic,
+decorated and compensated paths retain their established behavior.
+
+Responsive Mermaid roots may scale a larger SVG viewport into the Preview.
+Compensate that downscale only for a connected, paint-bearing, auto-height
+Mermaid owner with no active animation or fixed physical/logical height. The
+direct child SVG must fill the owner's content box, use default
+`xMidYMid meet` aspect behavior, have no transform, padding, or border, and
+differ from its intrinsic aspect ratio by no more than the browser's `1/64px`
+layout quantum. Derive the uniform compensation from the smaller of the two
+SVG-viewport-to-viewBox ratios; ambiguous geometry keeps its captured size. A
+compensated PNG uses an auto-height, full-width local horizontal scroll owner.
+Mermaid Gantt layout uses `useWidth:1200` with `useMaxWidth:true`, so narrow
+Preview width cannot become the time-axis layout width. Rendered Gantt,
+Sequence and Timeline roots use their single direct SVG's validated role and
+final viewBox to retain intrinsic dimensions inside the responsive horizontal
+scroll owner. Sequence and Timeline widths are renderer output, not fixed
+plugin constants. The marker and SVG role must agree; sanitized capture clones
+restore only that verified role. Other diagram roles retain their existing
+responsive path.
+
+Intrinsic capture validates the default `xMidYMid meet` CTM against the smaller
+rect/viewBox axis ratio, with projected diagonal residual and independent
+rect/viewBox differences bounded by the existing `1/64px` layout quantum.
+Finite positive scale, shear, explicit/ancestor transform, positioning,
+internal clipping and authored-height gates remain independent. Capture uses
+the intrinsic viewBox plus validated padding and solid-border edges, preserving
+finite non-overlapping rounded solid root paint once. The generated local-scroll
+wrapper does not duplicate that decoration or include editor viewport space.
+Invalid marked intrinsic geometry fails explicitly without a narrow fallback.
 
 Math capture uses a separately styled clone of the same Safe Preview source.
 The adapter copies all safe computed dimensions and normal defaults into that
@@ -480,6 +559,11 @@ materializing breaks: the source preformatted terminator does not paint an
 extra row, while a terminal `br` plus empty `nobr` would. Preserve additional
 intentional blank rows, nested token styles, indentation, and trailing spaces;
 never change the source Preview, Markdown, or plain-text Clipboard output.
+Group the existing copied code-line nodes in one block, intrinsic-width span
+inside `code`, with a full content-width minimum and preformatted whitespace.
+This preserves logical line breaks when WeChat rewrites the outer code's
+whitespace, without adding a second scroll owner or changing token nodes.
+Width checks use the code content box, excluding its border and padding.
 Within copied `pre > code` only, protect eligible hash-token boundaries with
 U+FEFF using WeChat's observed topic stop-character rule. Resolve the next code
 point across syntax spans within the same normalized code line, never across
@@ -531,6 +615,29 @@ the existing path. Replace only the generated clone's sole ASCII-space Text,
 and register its exact space/U+2060 values with the same root Text owner. The
 heading-after visibility input participates in freshness without widening
 unrelated pseudo signatures.
+Eligible empty H1-H4 `::before` decorations whose solid paint extends left of
+the heading use a heading-local normal-flow carrier in the copied tree.
+Qualification requires joint evidence: explicitly visible Source and pseudo,
+finite opacity in `(0,1]`, a relative untransformed Source containing block
+with zero borders and nonnegative top/left padding, a finite pure two-dimensional
+pseudo translation, finite composed negative left extent, positive finite
+paint width and height, zero pseudo padding and borders, and no image, shadow
+or filter. Required offsets and margins must also resolve without fabricated
+values. Zero-area, hidden, unsupported, invalid or unresolved candidates keep
+their existing serialization path; they do not create a conversion expectation.
+Derive the copied heading reserve and zero-outer-width float margins from the
+Source extent, width and padding. Preserve paint, radius, opacity and used
+vertical placement without adding article-wide padding or a fixed width.
+Capture the exact cloned heading, carrier and expected geometry during the
+paired walk; finalization checks their containment, parent and paint rather
+than matching heading ordinals or arbitrary descendants. An established
+conversion whose carrier or required paint is lost fails explicitly.
+The generated paint-only carrier uses the existing root-scoped Text owner
+with an empty original value and U+2060 transport. HTML capture precedes
+plaintext normalization, which restores and then reinstates only that owned
+Text record. Source remains unchanged. This transport requires independent
+native Paste/Save retention verification; PRE or heading-after evidence does
+not prove this before-carrier's native behavior or cross-width fidelity.
 The exporter-owned portable root projection adds only `max-width:100%` and
 `margin:0 auto` after computed Preview styles. This root-level declaration step
 is separate from hidden-surface measurement, whose lease retains the original paper
@@ -551,9 +658,15 @@ may impose whole-article height or vertical scrolling. Tables keep intrinsic
 centered and wide rows scroll. Geometry-derived full-width classification is
 cached per source table while immersive source mode hides Preview and replaced
 on a later visible refresh. Preserve theme table shims (`display:contents`,
-`container-type`, and `100cqi` pseudo-element geometry). Task-list checkboxes
-retain checked state as disabled attribute-minimized controls; arbitrary form
-controls are removed. Retain each source table's authored/computed
+`container-type`, and `100cqi` pseudo-element geometry). Task-list state must
+survive the native importer's removal of form controls. Materialize recognized
+task markers from the current settled Preview paint into safe static Clipboard
+output; preserve checked state, effective opacity, geometry and text alignment.
+Never change source controls, invent platform colors or emoji, duplicate native
+list bullets, or keep an INPUT as proof of a destination-visible state. Remove
+arbitrary form controls. A marker that cannot be faithfully represented fails
+explicitly rather than silently losing state; native-appearance themes require
+their own verified normal path before all-theme acceptance. Retain each source table's authored/computed
 `min-width`; only the generated scroll wrapper owns `min-width:0`, so the
 table's intrinsic width is not compressed. Preserve source and table RGBA
 colors from computed source styles without platform or theme color hardcoding.
@@ -573,12 +686,36 @@ advice is not exempted by this width-only declaration.
 
 ## Failure and evidence
 
+Private performance diagnosis uses fixed `easymde.wechat.copy.*` and
+`easymde.wechat.rasterizer.*` User Timing names, numeric start/end times and
+primitive kind, sync/async and terminal metadata. Clipboard candidate spans may
+include their actual bounded ordinal; rasterizer spans correlate through the
+enclosing serial candidate interval and do not invent an ordinal. Clear each
+named measure immediately after emission. Unsupported timing must not change
+the operation result, reads, scheduling, upload or Clipboard calls. Collect
+measures and Long Tasks on the same document timeline with bounded observers;
+record visibility transitions and report truncation. Async spans are elapsed
+waits, not CPU measurements. Never include source, URLs, DOM, credentials or
+content-derived identifiers in these measurements.
+
 Copy success is reported only from the real browser result. On every legacy-path
 exit restore temporary DOM, Selection, Focus, and Scroll. Do not mutate article
 state. Adapter or preparation rejection remains explicit failure; no partial
-payload is published. Tests must cover modern/legacy HTML parity, activation
+payload is published. A WordPress Image Hosting action-Nonce rejection is a
+whitelisted pre-write failure and reports `sideEffects: none`; arbitrary 403s,
+unknown service codes, provider failures, network loss, Abort, invalid responses,
+completed uploads, and mixed concurrent outcomes remain possible residual writes.
+Never expose raw rejection messages, response bodies, credentials, or stacks.
+Unexpected synchronous or asynchronous Clipboard adapter exceptions use the
+fixed privacy-safe `wechat-copy-unexpected-error` diagnostic. If that result
+arrives after session disposal, the session records that cause first and then
+the fixed `wechat-export-completed-after-teardown` lifecycle diagnostic while
+still suppressing every late UI status; an ordinary typed late result records
+only the lifecycle diagnostic. Tests must cover
+modern/legacy HTML parity, activation
 timing, deferred failure, unsafe URL/style removal, theme-image timeout and
-retry, Mermaid non-ASCII labels, KaTeX/SVG preservation, table/formula overflow,
+retry, hidden textual pseudo suppression across both Clipboard paths, Mermaid
+non-ASCII labels, KaTeX/SVG preservation, table/formula overflow,
 hidden-surface behavior, concurrent requests, active-surface changes, and
 teardown. PNG-conversion tests additionally cover strict configuration and
 transfer migration, exact candidate classification, no-upload background and
@@ -590,6 +727,28 @@ paint offsets, and paint-grid quantization, inline baseline variants and
 explicit baseline failure, generated-image sizing inside the HTML overflow
 owner, and single-owner block spacing. Use semantic readiness, not fixed
 sleeps, and record unverified browsers or destination behavior honestly.
+Native outside list markers with zero logical-start padding receive only a
+browser-measured logical-start gutter in copied output so a destination root
+with clipped overflow cannot hide them. Preserve native list tags, marker type,
+`start`, `reversed`, item `value`, nesting, and hanging indentation. Existing
+positive padding, task lists, custom counters/images/pseudos, mixed directions,
+and non-horizontal writing remain unchanged. Measurement uses a temporary
+native marker probe, participates in freshness, cleans up on every exit, and
+fails explicitly when geometry is unavailable.
+An exporter-generated direct text leaf immediately following a proven visible,
+static inline `LI::before` text marker omits the internal `leaf` attribute and
+keeps ordinary inline display. This prevents WeChat from upgrading that one
+text run to a block `SECTION`; every other generated or authored leaf retains
+the existing path. Eligibility is generation-owned and excludes tasks,
+positioned/image/mask/counter decorations, special formatting owners,
+intervening nodes, and ambiguous text runs.
+For an ordinary zero-spacing table, an opaque solid `THEAD` paint may be copied
+onto otherwise transparent `TH` cells because WeChat removes group background
+paint. Cell/row paint, images, gradients, alpha, row spans, contents layout, and
+math/SVG tables remain unchanged. A separate ordinary table whose Source owns
+`separate` borders, a positive radius, and two-axis `hidden`/`clip` retains that
+collapse and clip metadata while the outer generated section remains the sole
+horizontal scroll owner.
 The ordinary dimension matrix must also cover modern/legacy parity for eligible
 raw tuples, the seven-field grammar and positive percentage-edge requirement,
 invalid `calc()`/negative/unit/zero-edge cases, and the excluded root, pseudo,
@@ -599,3 +758,12 @@ equal used geometry and observe explicit freshness rejection or regeneration.
 The native CSS allocation matrix remains required evidence for fractional and
 superscript formulas; focused unit coverage does not prove final source-to-PNG
 baseline fidelity.
+
+The production admin entry statically imports the encoder worker with Vite's
+`?worker&url` contract. The worker is compiled as an ES module into exactly one
+local `assets/wechat-png-encoder-[hash].js` resource. Because Vite 8.1.5 does
+not add this worker to the admin entry's native `assets` list, the WordPress
+metadata owner explicitly records one non-entry worker manifest record and one
+admin `resources` path. Production validation and the installable ZIP require
+that exact resource and reject missing, altered, duplicate, or unowned worker
+outputs.

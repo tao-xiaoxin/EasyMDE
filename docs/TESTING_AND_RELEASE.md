@@ -189,7 +189,7 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all eight manifest-backed Vite entries. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all eight manifest-backed Vite entries. The Editor entry additionally requires exactly one explicit manifest-owned PNG encoder worker resource. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
 The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the eight Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
@@ -244,6 +244,20 @@ The focused Chromium copy regression spec is:
 npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
 ```
 
+The neutral `phycat-sky` full-example DPR1/2 case verifies responsive SVG
+capture separately from decorated Bloom coverage. It derives eligible roles
+from each live layout, decodes the actual uploaded PNG bytes, checks integer
+dimensions and aspect, and inspects preserved root layout and capped image
+placement across narrow, immersive and wide destinations. Run it with the
+configured isolated WordPress E2E environment:
+
+```bash
+npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs --project=chromium --grep "copies neutral phycat-sky full-fixture responsive Mermaid roles at DPR1/2"
+```
+
+This controlled regression does not establish genuine WeChat image loading,
+QR Reader paint, individual theme visual acceptance or real-provider latency.
+
 The WeChat export implementation contract is owned by the [EasyMDE WeChat export reference](../.agents/skills/easymde/references/wechat-export.md); this section records verification steps only.
 
 Code-topic verification includes hash tokens split across syntax spans, authored
@@ -280,6 +294,34 @@ returns `status: cancelled` without a success or failure toast, preserves a real
 Adapter failure as an error diagnostic and residual-upload detail, refreshes
 Preview without starting Copy, and leaves both controls focusable with
 `aria-disabled="true"` and no `aria-busy` while the new style loads.
+The upload-failure matrix must distinguish the whitelisted Image Hosting
+action-Nonce pre-write rejection (`sideEffects: none`) from unknown 403s,
+network/provider/Abort/response failures, completed uploads, and mixed pending
+outcomes (`uploads-may-remain`). It must also verify the fixed
+`wechat-copy-unexpected-error` diagnostic without exposing raw exception data,
+including its ordered pairing with `wechat-export-completed-after-teardown`
+for a late unknown rejection and the absence of any late UI status.
+The modern/legacy parity matrix must also prove that textual pseudos with
+`display:none`, hidden/collapsed visibility, hidden content visibility, or
+numeric non-positive opacity are not materialized, while visible decorations
+and CSS-only carriers retain their existing output.
+The list-marker matrix must cover measured zero-gutter native decimal,
+disc/circle/square, alpha, and Roman markers; multi-digit numbering;
+`start`/`reversed`/item `value`; nested mixed `OL`/`UL`; multiline hanging
+indentation; LTR/RTL; desktop/mobile widths; source/plaintext immutability; and
+probe cleanup. Positive source padding, `none`, task, custom counter/image/
+pseudo, mixed-direction, and non-horizontal lists must remain unchanged. Real
+WeChat evidence must show visible first/last markers without whole-page overflow.
+The generated-leaf matrix must prove modern/legacy parity for the strict
+static-inline `LI::before` adjacency case, preserve one marker and plaintext,
+and exclude authored, ambiguous, task, positioned, image/mask/counter,
+flex/grid/table, code, math, and SVG owners. Real WeChat Save/reload/Reader
+evidence verifies the marker and multiline text remain in one list-item block.
+The table-paint matrix covers opaque THEAD-to-transparent-TH projection and
+rounded separate/zero-spacing/two-axis-clipped TABLE ownership, plus row/cell
+paint, alpha, gradient, spacing, rowspan, layout, math/SVG, collapsed, square,
+and overflow negatives. Verify narrow, full-width, and horizontally scrollable
+tables without moving frame paint to the viewport-width scroll section.
 Code-frame verification must compare source Preview geometry, normalized portable
 HTML, and native pasted output. The source-to-portable-to-native check must
 keep the frame circles visible and aligned across every registered code theme
@@ -402,6 +444,25 @@ must remain temporary and absent from the payload.
 PNG scale coverage must compare natural pixel dimensions with displayed CSS
 dimensions at DPR 1 and 2 across ordinary and immersive Copy; responsive rules
 must not overwrite the captured display geometry.
+The canonical Mermaid matrix renders the full-capability fixture at 255, 335,
+and 677 CSS-pixel viewports. It requires a 1200px Gantt logical viewBox, zero
+intersecting date labels, stable authored task/date/milestone geometry,
+strict Sequence geometry, and stable labels, structure, marker definitions,
+and coordinate-independent paint styles for the other eight responsive
+diagrams. It also requires exact DPR-scaled PNG dimensions,
+reachable local scroll endpoints, and no article-root horizontal overflow.
+Focused geometry cases cover Gantt and Sequence viewport quantization plus
+non-filling SVG, wrapper padding, SVG border, transform, fixed height,
+animation, alternate aspect behavior, and invalid Typed OM negatives.
+
+Raw candidate PNGs for local pixel review are opt-in only. Set
+`EASYMDE_E2E_PRIVATE_PIXEL_EVIDENCE_DIR` to an absolute, real temporary
+subdirectory to write mode-`0600` Sequence/Gantt PNGs and privacy-safe JSON;
+the directory is mode `0700`. The test rejects the temporary root itself,
+relative/outside paths, and symlink escapes. CI and public artifacts leave this
+variable unset. Private DPR1/2 review binds fixture, source, carrier, and PNG
+hashes before inspecting glyphs, arrows, labels, scroll endpoints, and negative
+controls; it remains separate from real WeChat Reader acceptance.
 Freshness tests verify that the transaction-local `MutationObserver` is
 installed before the initial snapshot, that `takeRecords()` checkpoints cover
 initial, current, and final comparisons, and that the clean path makes an O(1)
@@ -455,6 +516,13 @@ payload captures private and outside the repository and public artifacts.
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.
 Verify Preview readiness, task-list state, removal of editor-only or unsafe content, and absence of exporter-created article-wide vertical scrolling.
+For task lists, compare every checked and unchecked marker with the settled
+visible Preview after native paste, Save and QR-opened Reader. Disabled inputs
+remaining in Clipboard HTML are not destination evidence: the native importer
+may remove them. Check marker paint, geometry, text alignment, effective opacity,
+RTL and nested-list indentation at each tested width; reject missing states or
+duplicate ordinary bullets. Exercise the same state through ordinary and
+immersive Source Copy without changing the canonical example.
 Keep the article synthetic and do not publish or send it.
 
 When a required browser, destination, or failure branch is unavailable, record it as unverified rather than treating the focused tests or Chromium stub as proof of real WeChat paste behavior.
@@ -552,8 +620,9 @@ must be present non-empty strings; invalid JSON, missing fields, empty strings,
 and non-string values fail with the field named in the error. It also fails if
 required runtime dependencies, local runtime assets, registered theme assets,
 any of the eight production Frontend manifest pairs, any manifest-referenced
-production entry script or matching `.asset.php` artifact, translation files,
-or third-party notices are missing, or if the generated third-party notice
+production entry script, its matching `.asset.php` artifact, or the Editor's
+manifest-owned PNG worker resource, translation files, or third-party notices
+are missing, or if the generated third-party notice
 content is stale. CodeMirror and its compiled runtime dependencies are listed
 with their full license notices in `THIRD-PARTY-NOTICES.md`.
 
@@ -570,7 +639,7 @@ cannot change the source archive identity:
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes all eight committed production entries under their manifest-backed `assets/build/` roots, including the Editor, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, and feature-gated Mermaid artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes all eight committed production entries under their manifest-backed `assets/build/` roots, including the Editor, its exactly one manifest-owned `assets/wechat-png-encoder-[hash].js` worker resource, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, and feature-gated Mermaid artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 

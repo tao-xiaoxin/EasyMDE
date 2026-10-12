@@ -17,7 +17,9 @@ import {
   createBrowserWechatClipboard,
   type ClipboardItemConstructor
 } from '../integrations/browser/wechat/create-browser-wechat-clipboard';
+import { createBrowserWechatPngEncoder } from '../integrations/browser/wechat/create-browser-wechat-png-encoder';
 import { createBrowserWechatVisualRasterizer } from '../integrations/browser/wechat/create-browser-wechat-visual-rasterizer';
+import wechatPngEncoderWorkerUrl from '../integrations/browser/wechat/wechat-png-encoder.worker.ts?worker&url';
 import {
   createBrowserPreviewEnhancementPort,
   createWindowPreviewEnhancementRuntime
@@ -272,6 +274,23 @@ export function mountAdminEditor(
         window: windowRef
       })
     : null;
+  const browserCapabilities = windowRef as unknown as {
+    createImageBitmap?: typeof globalThis.createImageBitmap;
+    OffscreenCanvas?: typeof globalThis.OffscreenCanvas;
+    Worker?: typeof globalThis.Worker;
+  };
+  const pngEncoderRuntime = {
+    ...(browserCapabilities.createImageBitmap
+      ? { createImageBitmap: browserCapabilities.createImageBitmap }
+      : {}),
+    ...(browserCapabilities.OffscreenCanvas
+      ? { offscreenCanvas: browserCapabilities.OffscreenCanvas }
+      : {}),
+    ...(browserCapabilities.Worker
+      ? { worker: browserCapabilities.Worker }
+      : {}),
+    workerUrl: wechatPngEncoderWorkerUrl
+  };
   const props: EditorRootProps = {
     appearance: bootstrap.appearance,
     appearancePort: createWordPressAppearancePort({
@@ -429,6 +448,7 @@ export function mountAdminEditor(
       document: documentRef,
       file: File,
       image: Image,
+      pngEncodingPort: createBrowserWechatPngEncoder(pngEncoderRuntime),
       xmlSerializer: XMLSerializer
     })
   };

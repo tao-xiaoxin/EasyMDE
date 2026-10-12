@@ -274,6 +274,8 @@ function createCompleteFixture(root) {
   const frontendEntry = 'frontend/src/entrypoints/admin-editor.tsx';
   const frontendScript = 'assets/admin-editor-fixture.js';
   const frontendMetadata = 'assets/admin-editor-fixture.asset.php';
+  const wechatPngEncoderWorkerSource = 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts';
+  const wechatPngEncoderWorkerScript = 'assets/wechat-png-encoder-fixture.js';
   const adminEditorLoaderEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
   const adminEditorLoaderScript = 'assets/admin-editor-loader-fixture.js';
   const adminEditorLoaderMetadata = 'assets/admin-editor-loader-fixture.asset.php';
@@ -304,6 +306,11 @@ function createCompleteFixture(root) {
         file: frontendScript,
         isEntry: true,
         src: frontendEntry
+      },
+      [wechatPngEncoderWorkerSource]: {
+        file: wechatPngEncoderWorkerScript,
+        isEntry: false,
+        src: wechatPngEncoderWorkerSource
       }
     })
   );
@@ -318,12 +325,13 @@ function createCompleteFixture(root) {
           file: frontendScript,
           asset: frontendMetadata,
           dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
-          resources: []
+          resources: [wechatPngEncoderWorkerScript]
         }
       }
     })
   );
   writeText(root, `assets/build/${frontendScript}`, 'window.EasyMDEEditorRootBootstrap = {};\n');
+  writeText(root, `assets/build/${wechatPngEncoderWorkerScript}`, 'self.onmessage = () => {};\n');
   writeText(
     root,
     `assets/build/${frontendMetadata}`,
@@ -696,6 +704,7 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/admin-editor-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/manifest.json'));
     assert.ok(entries.includes('easymde/assets/build/admin-editor-loader/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/admin-editor-loader\/assets\/admin-editor-loader-[A-Za-z0-9_-]+\.js$/.test(entry)));
@@ -792,6 +801,51 @@ test('release build rejects frontend artifacts outside the production manifests'
     assert.throws(
       () => buildRelease({ root }),
       /unexpected production frontend artifacts:[\s\S]*admin-editor-stale\.js/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build requires the declared PNG worker runtime file', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    rmSync(join(root, 'assets/build/assets/wechat-png-encoder-fixture.js'), { force: true });
+
+    const missing = findMissingReleaseRequirements(root).map((requirement) => requirement.path);
+    assert.ok(missing.includes('assets/build/assets/wechat-png-encoder-fixture.js'));
+    assert.throws(
+      () => buildRelease({ root }),
+      /assets\/build\/assets\/wechat-png-encoder-fixture\.js/
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('release build rejects altered or unowned PNG worker manifest artifacts', () => {
+  const root = makeTempRoot();
+
+  try {
+    createCompleteFixture(root);
+    const manifestPath = join(root, 'assets/build/manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    manifest['frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts'].isEntry = true;
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    assert.throws(
+      () => buildRelease({ root }),
+      /matching production frontend manifest contracts/
+    );
+
+    rmSync(root, { recursive: true, force: true });
+    createCompleteFixture(root);
+    writeText(root, 'assets/build/assets/wechat-png-encoder-unowned.js', 'self.onmessage = () => {};\n');
+    assert.throws(
+      () => buildRelease({ root }),
+      /unexpected production frontend artifacts:[\s\S]*wechat-png-encoder-unowned\.js/
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

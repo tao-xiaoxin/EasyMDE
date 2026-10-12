@@ -21,6 +21,8 @@ export type ImageUploadRequest = Readonly<{
   signal: AbortSignal;
 }>;
 
+export type ImageUploadFailureSideEffects = 'none' | 'uploads-may-remain';
+
 export type ImageUploadResult =
   | Readonly<{
       alt: string;
@@ -28,7 +30,11 @@ export type ImageUploadResult =
       title: string;
       url: string;
     }>
-  | Readonly<{ code: string; status: 'failed' }>;
+  | Readonly<{
+      code: string;
+      sideEffects?: ImageUploadFailureSideEffects;
+      status: 'failed';
+    }>;
 
 export type ImageUploadPort = Readonly<{
   upload: (request: ImageUploadRequest) => Promise<ImageUploadResult>;

@@ -4,6 +4,7 @@ import type { WechatVisualRasterizationPort } from './wechat-visual-rasterizatio
 export type WechatClipboardFailureCode =
   | 'wechat-clipboard-unsupported'
   | 'wechat-copy-failed'
+  | 'wechat-copy-unexpected-error'
   | 'wechat-preview-unavailable'
   | 'wechat-png-clipboard-failed'
   | 'wechat-png-limit-exceeded'
@@ -11,7 +12,8 @@ export type WechatClipboardFailureCode =
   | 'wechat-png-rasterization-failed'
   | 'wechat-png-rasterization-timeout'
   | 'wechat-png-transaction-timeout'
-  | 'wechat-png-upload-failed';
+  | 'wechat-png-upload-failed'
+  | 'wechat-png-upload-nonce-invalid';
 
 export type WechatClipboardCancellationCode = 'wechat-copy-cancelled';
 

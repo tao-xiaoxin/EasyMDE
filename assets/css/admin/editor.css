@@ -84,12 +84,19 @@ body:has(.easymde-editor.is-immersive) .wrap {
 }
 
 .easymde-editor.is-immersive {
+    --easymde-immersive-header-height: 60px;
+    --easymde-immersive-toolbar-height: 52.5px;
+    --easymde-immersive-outline-inset-block-start: calc(
+        var(--easymde-immersive-header-height)
+        + var(--easymde-immersive-toolbar-height)
+        + 11.25px
+    );
     position: fixed;
     z-index: 100100;
     inset: 0;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: 60px 52.5px minmax(0, 1fr);
+    grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
     margin: 0;
     border: 0;
     border-radius: 0;
@@ -145,34 +152,39 @@ body:has(.easymde-editor.is-immersive) .wrap {
 .easymde-immersive-header-spacer.is-title-gap { width: 11.25px; flex: 0 0 auto; }
 .easymde-immersive-title-field { display: flex; min-width: 72px; max-width: 320px; align-items: center; gap: 5.625px; }
 .easymde-immersive-title-field > svg { flex: 0 0 auto; color: #94a3b8; }
-.easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; overflow: hidden; }
+.easymde-immersive-title-measure { display: grid; min-width: 72px; max-width: 296px; height: 19.5px; max-height: 19.5px; overflow: hidden; }
 .easymde-immersive-title-measure > span,
 .easymde-immersive-title-measure > textarea {
     grid-column: 1;
     grid-row: 1;
     min-width: 0;
     max-width: 296px;
+    height: 19.5px;
     color: #1e293b;
     font-size: 13.125px;
     font-weight: 500;
     line-height: 18.75px;
-    max-height: 60px;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
+    max-height: 19.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.easymde-immersive-title-measure > span { visibility: hidden; overflow: hidden; }
+.easymde-immersive-title-measure > span { visibility: hidden; }
 .easymde-immersive-title-measure > textarea {
     box-sizing: border-box;
     width: 100%;
-    height: 100%;
     min-width: 0;
     padding: 0;
     border: 0;
     outline: 0;
     resize: none;
-    overflow-y: auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
     background: transparent;
+    scrollbar-width: none;
 }
+.easymde-immersive-title-measure > textarea::-webkit-scrollbar { display: none; }
 .easymde-immersive-save-state { display: flex; height: 26.25px; flex: 0 0 auto; align-items: center; gap: 5.625px; padding: 0 3.75px; color: #64748b; font-size: 11.25px; white-space: nowrap; }
 .easymde-immersive-save-state svg { color: #10b981; }
 .easymde-immersive-save-state.is-dirty svg { color: #f59e0b; }
@@ -1875,17 +1887,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-immersive-brand { width: 71.875px; height: 15px; flex-basis: 71.875px; }
     .easymde-immersive-brand-mark { width: 15px; flex-basis: 15px; }
     .easymde-immersive-title-wrap { flex: 0 1 auto; }
-    .easymde-immersive-title-field { min-width: 72px; }
-    .easymde-immersive-title-measure { width: 72px; min-width: 72px; flex: 0 0 72px; }
-    .easymde-immersive-title-measure > span,
-    .easymde-immersive-title-measure > textarea {
-        min-width: 0;
-        max-height: 60px;
-        white-space: pre-wrap;
-        overflow-wrap: break-word;
-    }
-    .easymde-immersive-title-measure > span { max-height: 60px; }
-    .easymde-immersive-title-measure > textarea { height: 100%; overflow-y: auto; }
     .easymde-immersive-header-divider { display: none; }
     .easymde-immersive-brand-name,
     .easymde-immersive-brand-divider { display: none; }
@@ -2593,6 +2594,80 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 }
 
+@media (max-width: 1232px) {
+    .easymde-editor.is-immersive {
+        --easymde-immersive-header-height: 76px;
+        grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
+    }
+
+    .easymde-immersive-header {
+        display: grid;
+        box-sizing: border-box;
+        grid-template-columns: auto minmax(0, 1fr) auto auto;
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 0 12px;
+        padding: 6px 12px;
+    }
+
+    .easymde-immersive-brand {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-title-wrap {
+        grid-column: 2;
+        grid-row: 1;
+        min-width: 0;
+    }
+
+    .easymde-immersive-title-field,
+    .easymde-immersive-title-measure {
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+    }
+
+    .easymde-immersive-title-measure {
+        flex: 1 1 auto;
+    }
+
+    .easymde-immersive-save-state {
+        grid-column: 3;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-stats {
+        grid-column: 4;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-header-spacer {
+        display: none;
+    }
+
+    .easymde-immersive-view-switch {
+        grid-column: 2 / -1;
+        grid-row: 2;
+        min-width: 0;
+        max-width: 100%;
+        overflow-x: auto;
+        justify-self: stretch;
+        scrollbar-width: none;
+    }
+
+    .easymde-immersive-view-switch::-webkit-scrollbar {
+        display: none;
+    }
+
+    .easymde-immersive-header-actions {
+        grid-column: 1;
+        grid-row: 2;
+        width: auto;
+        min-width: 0;
+        justify-content: flex-start;
+    }
+}
+
 @media (max-width: 1080px) {
     .easymde-editor.is-immersive:not(.is-immersive-source):not(.is-immersive-preview) .easymde-workspace {
         grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -2602,7 +2677,58 @@ body:has(.easymde-editor.is-immersive) .wrap {
     }
 
     .easymde-editor.is-immersive {
-        grid-template-rows: 76px 52.5px minmax(0, 1fr);
+        --easymde-immersive-toolbar-height: 72px;
+        grid-template-rows: var(--easymde-immersive-header-height) var(--easymde-immersive-toolbar-height) minmax(0, 1fr);
+    }
+
+    .easymde-immersive-toolbar-row {
+        display: grid;
+        box-sizing: border-box;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+        justify-content: initial;
+        gap: 0;
+        padding-inline: 12px;
+        overflow: hidden;
+    }
+
+    .easymde-immersive-formatting,
+    .easymde-immersive-secondary-actions {
+        width: 100%;
+        min-width: 0;
+        flex: 0 1 auto;
+        overflow-x: auto;
+        overflow-y: visible;
+        scrollbar-width: none;
+    }
+
+    .easymde-immersive-formatting::-webkit-scrollbar,
+    .easymde-immersive-secondary-actions::-webkit-scrollbar {
+        display: none;
+    }
+
+    .easymde-immersive-formatting {
+        grid-column: 1;
+        grid-row: 1;
+    }
+
+    .easymde-immersive-formatting > .easymde-toolbar {
+        width: max-content;
+        min-width: max-content;
+        flex: 0 0 auto;
+    }
+
+    .easymde-immersive-secondary-actions {
+        grid-column: 1;
+        grid-row: 2;
+        margin-inline-start: 0;
+        justify-content: flex-start;
+        gap: 9.375px;
+    }
+
+    .easymde-immersive-secondary-actions > * {
+        flex: 0 0 auto;
     }
 
     .easymde-editor.is-immersive .easymde-source,
@@ -2611,6 +2737,22 @@ body:has(.easymde-editor.is-immersive) .wrap {
         height: auto;
         min-height: 0;
         max-height: none;
+    }
+
+    .easymde-editor.is-immersive.is-immersive-split:has(.easymde-immersive-outline)
+        > .easymde-workspace.is-split-resizable {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-areas:
+            "source"
+            "preview";
+    }
+
+    .easymde-editor.is-immersive.is-immersive-split:has(.easymde-immersive-outline)
+        > .easymde-workspace.is-split-resizable
+        > .easymde-immersive-pane-divider {
+        display: none;
     }
 }
 
@@ -2632,6 +2774,21 @@ body:has(.easymde-editor.is-immersive) .wrap {
 @media (max-width: 640px) {
     .easymde-editor.is-immersive {
         grid-template-columns: minmax(0, 1fr);
+    }
+
+    .easymde-immersive-header {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        padding-inline: 12px;
+    }
+
+    .easymde-immersive-header-divider {
+        display: none;
+    }
+
+    .easymde-immersive-publish {
+        min-width: 0;
+        gap: 5px;
+        padding-inline: 8px;
     }
 
     .easymde-editor[data-easymde-preview-presentation="preview"] .easymde-pane-preview > .easymde-immersive-preview-canvas {
@@ -2656,7 +2813,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive .easymde-immersive-outline {
         position: absolute;
         z-index: 5;
-        inset-block: calc(76px + 52.5px + 11.25px) 11.25px;
+        inset-block: var(--easymde-immersive-outline-inset-block-start) 11.25px;
         inset-inline-start: 11.25px;
         min-width: 0;
         max-width: min(240px, calc(100% - 22.5px));
@@ -2666,7 +2823,7 @@ body:has(.easymde-editor.is-immersive) .wrap {
     .easymde-editor.is-immersive .easymde-immersive-outline-show {
         position: absolute;
         z-index: 6;
-        inset-block-start: calc(76px + 52.5px + 11.25px);
+        inset-block-start: var(--easymde-immersive-outline-inset-block-start);
         inset-inline-start: 11.25px;
         width: 33.75px;
         height: 33.75px;

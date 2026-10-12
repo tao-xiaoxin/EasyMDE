@@ -25,6 +25,8 @@ type CreateWordPressImageUploadPortOptions = Readonly<{
   uploadOwner: ImageUploadOwner;
 }>;
 
+const IMAGE_HOSTING_NONCE_ERROR_CODE = 'easymde_rest_invalid_image_hosting_nonce';
+
 function uploadFileName(file: File): string {
   if (/\.(?:gif|jpe?g|png|webp)$/i.test(file.name)) {
     return file.name;
@@ -183,6 +185,14 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+function isImageHostingNonceError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      'object' === typeof error &&
+      IMAGE_HOSTING_NONCE_ERROR_CODE === (error as { code?: unknown }).code
+  );
+}
+
 export function createWordPressImageUploadPort({
   actionNonce,
   apiFetch,
@@ -252,9 +262,16 @@ export function createWordPressImageUploadPort({
           throw error;
         }
         return {
-          code: isAbortError(error)
-            ? 'image-upload-cancelled'
-            : 'image-upload-request-failed',
+          ...('image-hosting' === uploadOwner && isImageHostingNonceError(error)
+            ? {
+                code: IMAGE_HOSTING_NONCE_ERROR_CODE,
+                sideEffects: 'none' as const
+              }
+            : {
+                code: isAbortError(error)
+                  ? 'image-upload-cancelled'
+                  : 'image-upload-request-failed'
+              }),
           status: 'failed'
         };
       }

@@ -39,6 +39,7 @@ export const bundledFrontendPackages = {
   'lucide-react': 'Locked build-time icon nodes used by the ordinary and immersive editor interfaces.',
   mermaid: 'Mermaid diagram rendering runtime compiled into the on-demand frontend bundle.',
   'style-mod': 'Scoped runtime style modules used by CodeMirror view.',
+  'svg-pathdata': 'Complete SVG path syntax validation for source-painted WeChat task markers.',
   turndown: 'Converts the editable Preview DOM into a visual Markdown change model.',
   'turndown-plugin-gfm': 'GFM table and task-list conversion for visual Markdown editing.',
   'w3c-keyname': 'Cross-browser keyboard key normalization used by CodeMirror view.'

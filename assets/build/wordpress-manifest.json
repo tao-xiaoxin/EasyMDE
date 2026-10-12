@@ -3,15 +3,17 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-MrKsUooy.js",
-      "asset": "assets/admin-editor-MrKsUooy.asset.php",
+      "file": "assets/admin-editor-BHBAVYXo.js",
+      "asset": "assets/admin-editor-BHBAVYXo.asset.php",
       "dependencies": [
         "wp-api-fetch",
         "wp-element",
         "wp-hooks",
         "wp-i18n"
       ],
-      "resources": []
+      "resources": [
+        "assets/wechat-png-encoder-VLhJRlsW.js"
+      ]
     }
   }
 }

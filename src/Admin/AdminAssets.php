@@ -646,7 +646,8 @@ final class AdminAssets {
 			array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
 			'admin-editor',
 			true,
-			'react-editor-'
+			'react-editor-',
+			'#^assets/wechat-png-encoder-[A-Za-z0-9_-]+\.js$#'
 		);
 	}
 

@@ -53,6 +53,7 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | lucide-react | 0.487.0 | https://registry.npmjs.org/lucide-react/-/lucide-react-0.487.0.tgz | ISC | Locked build-time icon nodes used by the ordinary and immersive editor interfaces. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | mermaid | 10.9.6 | https://registry.npmjs.org/mermaid/-/mermaid-10.9.6.tgz | MIT | Mermaid diagram rendering runtime compiled into the on-demand frontend bundle. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | style-mod | 4.1.3 | https://registry.npmjs.org/style-mod/-/style-mod-4.1.3.tgz | MIT | Scoped runtime style modules used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| svg-pathdata | 7.2.0 | https://registry.npmjs.org/svg-pathdata/-/svg-pathdata-7.2.0.tgz | MIT | Complete SVG path syntax validation for source-painted WeChat task markers. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | turndown | 7.2.4 | https://registry.npmjs.org/turndown/-/turndown-7.2.4.tgz | MIT | Converts the editable Preview DOM into a visual Markdown change model. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | turndown-plugin-gfm | 1.0.2 | https://registry.npmjs.org/turndown-plugin-gfm/-/turndown-plugin-gfm-1.0.2.tgz | MIT | GFM table and task-list conversion for visual Markdown editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
@@ -455,6 +456,31 @@ The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### svg-pathdata
+
+```text
+The MIT License (MIT)
+Copyright © 2017 Nicolas Froidure
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER

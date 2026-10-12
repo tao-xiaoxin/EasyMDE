@@ -86,7 +86,8 @@ export function createWechatExportSession({
       const operationToken = {};
       const operationState = {
         cancellation: null as WechatExportCancellationReason | null,
-        disposed: false
+        disposed: false,
+        unexpectedError: false
       };
       const controller = new AbortController();
       operationController = controller;
@@ -99,22 +100,31 @@ export function createWechatExportSession({
       try {
         operation = clipboard.copy(preview, operationOptions);
       } catch {
+        operationState.unexpectedError = true;
+        onDiagnostic('wechat-copy-unexpected-error');
         operation = Promise.resolve({
-          code: 'wechat-copy-failed',
+          code: 'wechat-copy-unexpected-error',
           status: 'failed'
         });
       }
-      operation = operation.catch((): WechatClipboardResult => ({
-        code: 'wechat-copy-failed',
-        status: 'failed'
-      }));
+      operation = operation.catch((): WechatClipboardResult => {
+        operationState.unexpectedError = true;
+        onDiagnostic('wechat-copy-unexpected-error');
+        return {
+          code: 'wechat-copy-unexpected-error',
+          status: 'failed'
+        };
+      });
       const tracked = operation.then((result) => {
         if (operationState.disposed || !active) {
           onDiagnostic('wechat-export-completed-after-teardown');
           return result;
         }
         if (operationState.cancellation) {
-          if ('failed' === result.status || 'cancelled' === result.status) {
+          if (
+            !operationState.unexpectedError
+            && ('failed' === result.status || 'cancelled' === result.status)
+          ) {
             onDiagnostic(result.code, cancellationDiagnosticLevel(result.code));
           }
           const sideEffects = 'failed' === result.status || 'cancelled' === result.status
@@ -140,7 +150,7 @@ export function createWechatExportSession({
           return result;
         }
         if ('failed' === result.status) {
-          onDiagnostic(result.code);
+          if (!operationState.unexpectedError) onDiagnostic(result.code);
           onStatus({
             message: 'uploads-may-remain' === result.sideEffects
               ? strings.failedWithUploads

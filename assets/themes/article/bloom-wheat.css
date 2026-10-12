@@ -355,7 +355,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid text {
     fill: var(--text) !important;
-    font-family: var(--font-sans) !important;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-wheat .easymde-mermaid .node rect,

@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test, { before } from 'node:test';
@@ -41,6 +41,8 @@ const committedSettingsOutputRoot = join(repoRoot, 'assets/build/settings-center
 const settingsSourceEntry = 'frontend/src/entrypoints/settings-center.tsx';
 const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
+const wechatPngEncoderWorkerSource = 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts';
+const wechatPngEncoderWorkerPattern = /^assets\/wechat-png-encoder-[a-zA-Z0-9_-]+\.js$/;
 const adminEditorLoaderOutputRoot = join(repoRoot, '.cache/easymde-admin-editor-loader-production-check');
 const committedAdminEditorLoaderOutputRoot = join(repoRoot, 'assets/build/admin-editor-loader');
 const adminEditorLoaderSourceEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
@@ -188,7 +190,13 @@ test('production build emits one self-contained WordPress editor React entry', (
     'wp-hooks',
     'wp-i18n'
   ]);
-  assert.deepEqual(wordpressEntry.resources, []);
+  assert.equal(Object.keys(viteManifest).length, 2);
+  const workerManifest = viteManifest[wechatPngEncoderWorkerSource];
+  assert.equal(workerManifest.isEntry, false);
+  assert.equal(workerManifest.src, wechatPngEncoderWorkerSource);
+  assert.match(workerManifest.file, wechatPngEncoderWorkerPattern);
+  assert.deepEqual(wordpressEntry.resources, [workerManifest.file]);
+  assert.equal(existsSync(join(outputRoot, workerManifest.file)), true);
   assert.equal(viteEntry.css, undefined);
 
   const script = readFileSync(join(outputRoot, viteEntry.file), 'utf8');
@@ -199,6 +207,7 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.match(script, /wp\.i18n/);
   assert.doesNotMatch(script, /tannin|pluralForms|setLocaleData/);
   assert.match(script, /EasyMDEAdminEditorStart/);
+  assert.match(script, new RegExp(basename(workerManifest.file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
   assert.match(script, /cm-editor/);
   assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
@@ -352,6 +361,44 @@ test('production comparison rejects stale or omitted committed runtime artifacts
   }
 });
 
+test('production comparison rejects stale, missing, or unowned PNG worker artifacts', () => {
+  assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
+
+  const generatedRoot = mkdtempSync(join(tmpdir(), 'easymde-worker-generated-'));
+  const committedRoot = mkdtempSync(join(tmpdir(), 'easymde-worker-committed-'));
+  cpSync(outputRoot, generatedRoot, { recursive: true });
+  cpSync(outputRoot, committedRoot, { recursive: true });
+
+  try {
+    const generatedManifest = readJson(join(generatedRoot, 'manifest.json'));
+    const worker = generatedManifest[wechatPngEncoderWorkerSource];
+    appendFileSync(join(committedRoot, worker.file), '\nstale worker runtime\n');
+    assert.throws(
+      () => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+      /Committed production frontend artifact is stale/
+    );
+
+    rmSync(committedRoot, { recursive: true, force: true });
+    cpSync(outputRoot, committedRoot, { recursive: true });
+    rmSync(join(committedRoot, worker.file), { force: true });
+    assert.throws(
+      () => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+      /Built resource is missing|missing, stale, or unexpected/
+    );
+
+    rmSync(committedRoot, { recursive: true, force: true });
+    cpSync(outputRoot, committedRoot, { recursive: true });
+    writeFileSync(join(committedRoot, 'assets/unowned-worker.js'), 'self.onmessage = () => {};\n');
+    assert.throws(
+      () => compareFrontendProductionBuilds(generatedRoot, committedRoot),
+      /missing, stale, or unexpected/
+    );
+  } finally {
+    rmSync(generatedRoot, { recursive: true, force: true });
+    rmSync(committedRoot, { recursive: true, force: true });
+  }
+});
+
 test('enhancement and bootstrap comparisons reject stale committed artifacts', () => {
   assert.equal(buildResult.status, 0, buildResult.stderr || buildResult.stdout);
   compareAdminEditorLoaderProductionBuilds(
@@ -450,6 +497,7 @@ test('production frontend artifacts are eligible for version control', () => {
     'assets/build/wordpress-manifest.json',
     `assets/build/${wordpressEntry.file}`,
     `assets/build/${wordpressEntry.asset}`,
+    `assets/build/${readJson(join(committedOutputRoot, 'manifest.json'))[wechatPngEncoderWorkerSource].file}`,
     'assets/build/admin-editor-loader/manifest.json',
     'assets/build/admin-editor-loader/wordpress-manifest.json',
     `assets/build/admin-editor-loader/${readJson(join(committedAdminEditorLoaderOutputRoot, 'manifest.json'))[adminEditorLoaderSourceEntry].file}`,

@@ -354,7 +354,6 @@
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-ripple .easymde-mermaid text {
     fill: var(--text) !important;
-    font-family: var(--font-sans) !important;
 }
 
 .easymde-rendered-content.easymde-markdown-theme-bloom-ripple .easymde-mermaid .node rect,

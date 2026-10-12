@@ -69,22 +69,20 @@
     min-height: 1.4em;
     color: #222;
     position: relative;
-    padding-bottom: 12px;
+    padding-bottom: 0;
     transition: color .3s ease, transform .3s ease;
     border-bottom: none
 }
 
 .easymde-rendered-content.easymde-markdown-theme-phycat-mint h1::after{
     content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
+    display: block;
     width: 40px;
     height: 4px;
+    margin: 8px auto 0;
     border-radius: 4px;
     background: var(--head-title-h2-background);
     background-size: 100% auto;
-    transform: translateX(-50%);
     transition: width .4s cubic-bezier(.25, .8, .25, 1)
 }
 

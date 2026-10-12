@@ -163,7 +163,7 @@ The root npm project owns Vite, TypeScript, Biome linting, React 18 development 
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
-`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, and serializes the versioned loader Bootstrap with `mainScriptUrl`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed `frontend/src/entrypoints/admin-editor.tsx` main entry, and starts the same React Editor Root after its DOM gate is ready. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
+`frontend/src/entrypoints/admin-editor-loader.ts` is the PHP-enqueued production loader for the ordinary Editor. `AdminAssets` validates `assets/build/admin-editor-loader/wordpress-manifest.json` and `assets/build/wordpress-manifest.json`, enqueues the stable `easymde-admin-editor-toolbar` loader handle, and serializes the versioned loader Bootstrap with `mainScriptUrl`. The loader reads and same-origin-validates `mainScriptUrl`, dynamically loads the hashed `frontend/src/entrypoints/admin-editor.tsx` main entry, and starts the same React Editor Root after its DOM gate is ready. The Editor manifest also owns exactly one local `assets/wechat-png-encoder-[hash].js` resource for explicit PNG conversion; release validation requires that worker resource alongside the entry and `.asset.php` metadata. `templates/admin/editor-shell.php` provides one empty `#easymde-editor-root` mount and native WordPress submission fields. The Markdown field remains visible until CodeMirror owns a working document session; React then hides both that bridge field and `#postdivrich`, restoring them on teardown or failure; there is no parallel Legacy editor container.
 
 `frontend/src/entrypoints/frontend-code-copy.ts` is a separate, non-React
 production entry for published EasyMDE content. `FrontendAssets` conditionally
@@ -617,6 +617,42 @@ Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or
 WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
 While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
 An article-theme, code-theme, or Custom CSS change owns cancellation of an active Copy. The session returns `status: cancelled` with `wechat-copy-cancelled`, emits an info diagnostic for the intentional cancellation, and emits no success or failure status. A real Adapter failure or residual upload remains an explicit diagnostic and side-effect result. The appearance change refreshes Preview only; it never starts Copy automatically, so a new theme requires a new explicit Copy. During style loading, both controls remain focusable with `aria-disabled="true"` and without `aria-busy`.
+Unexpected synchronous throws and asynchronous rejections from the Clipboard
+adapter become the fixed privacy-safe `wechat-copy-unexpected-error` diagnostic;
+raw errors never cross the session boundary. A late unexpected result after
+session disposal records that cause before
+`wechat-export-completed-after-teardown`, but publishes no late UI status. A
+typed late result keeps only the teardown diagnostic.
+Generated textual pseudos are materialized only while their computed paint is
+visible. A hidden text pseudo does not become Clipboard content merely because
+its `content` value remains non-empty; modern and legacy Clipboard paths share
+this rule. Visible theme decoration and CSS-only carriers retain their existing
+serialization behavior.
+For an ordinary native `outside` list whose Source has zero logical-start
+padding, the Clipboard adapter measures the browser's native marker advance in
+a temporary shallow probe and writes that measured gutter on the copied list.
+This keeps markers inside destination clipping boundaries without replacing
+`OL`/`UL`/`LI`, changing numbering attributes, or converting to `inside`.
+Lists with an existing gutter and task/custom/mixed-direction owners remain
+unchanged; unavailable geometry fails explicitly and every probe is removed.
+The serializer marks generated pseudo and text owners rather than inferring
+them from sanitized attributes. When a proven visible static inline textual
+`LI::before` directly precedes one generated raw-text leaf, that leaf omits the
+internal `leaf` marker and remains inline so WeChat cannot promote the text to
+a block independently from its marker. Ambiguous and special owners retain the
+ordinary leaf path.
+Task-marker SVG path syntax is parsed by the exact locked `svg-pathdata`
+dependency in the Clipboard adapter. This parser does not render Markdown,
+authorize SVG markup, or prove visible paint; namespace/element/attribute
+validation, finite resource bounds and native pixel validation are separate.
+Version7.2.0 retains the Node20 toolchain baseline as a local build-time source
+for the admin adapter, with its MIT notice. The Clipboard owner updates this pin when
+the Node baseline changes and removes it if task SVG path parsing is removed.
+For ordinary tables, Source paint metadata may project an opaque solid THEAD
+background onto transparent TH cells. Source-owned rounded tables with
+separate zero-spacing borders and two-axis clipping retain those table values;
+the generated outer section continues to own horizontal scrolling and width.
+These rules never hard-code a theme color or radius.
 
 The strict-boolean `images.wechatPngExportEnabled` setting defaults to `false`,
 and Editor bootstrap projects it as `wechatExport.pngConversionEnabled`. When
@@ -626,6 +662,13 @@ KaTeX math roots in stable source order, then uploads each PNG through the
 Editor's selected `ImageUploadPort` with backpressure and at most three
 in-flight uploads. Completion is retained by candidate order and visual clones
 are replaced only after all selected-owner uploads succeed, in that order.
+Each upload invocation tracks whether it was rejected before write, remains
+unknown, or completed. Only the exact whitelisted
+`easymde_rest_invalid_image_hosting_nonce` permission rejection proves no write
+for that invocation. Unknown service codes, arbitrary 403s, network/provider/
+Abort/response failures, completed writes, and mixed concurrent states preserve
+the `uploads-may-remain` side effect; one proven pre-write rejection never clears
+another invocation's possible residual write.
 Image Hosting enabled selects the existing Image Hosting owner; disabled selects
 the existing WordPress Media Library owner. Ordinary tables, existing images,
 ordinary SVG, code, other media, and unknown content retain portable HTML.
@@ -635,17 +678,46 @@ surface on demand. With PNG conversion enabled, EditorRoot skips unused
 portable background preparation, resize/layout subscriptions, and its queued
 timer; explicit Copy still serializes a fresh payload for the current source;
 disabled/default behavior remains unchanged.
+The shared Mermaid runtime gives Gantt diagrams a deterministic 1200px logical
+layout width while retaining responsive `useMaxWidth` display. This prevents a
+narrow Preview host from changing task and date geometry. PNG Copy may recover
+a downscaled Mermaid SVG's intrinsic viewport scale only from a connected
+auto-height owner whose direct SVG fills the owner's content box and uses
+untransformed default `xMidYMid meet` geometry. That compensation path leaves fixed height, animation,
+clipping, transforms, non-filling SVGs, borders, padding, and other aspect modes
+retain captured geometry. Compensated output keeps overflow local and height
+automatic.
+For a neutral normal-flow Mermaid root with one capped, responsive direct SVG,
+the separate `responsive-viewport` capture mode omits the editor row's external
+transparent space. It captures the styled SVG clone while retaining the SVG
+scene and viewBox padding. The output retains the serialized outer-root layout;
+only its generated image receives percentage width, the original SVG cap,
+automatic height and verified centering. It adds no width-check exemption.
+Capture choice and effective dimension/centering semantics are frozen before
+asynchronous cloning, checked after cloning and at final freshness using
+root-relative geometry. Unknown effective dimension semantics decline this
+mode. Its PNG width rounds upward at the selected DPR; height rounds from that
+integer width and the captured SVG aspect. Actual output edges and pixel limits
+remain validated. The full eligibility and lifecycle contract belongs to the
+WeChat export reference.
 Legacy Clipboard and synchronous modern setup failure upload nothing. A failed
 selected owner never switches; stale or aborted conversion aborts remaining
 uploads and rejects the deferred payload. Copy publishes no
 partial Clipboard payload, though an upload completed before a later
 transaction failure can remain. The live Preview and document remain unchanged.
 The PNG conversion branch still prepares computed root metadata, removes class
-and transient attributes, and registers the outer visual root before replacing
-that whole root with the native image. It therefore skips descendant,
+and transient attributes, and registers the outer visual root before inserting
+the native image into the converted output. It therefore skips descendant,
 pseudo-element, and theme-background portable serialization for the converted
 candidate while native capture reads the current source tree; portable,
 background, legacy, table, and ordinary-SVG serialization remains unchanged.
+After drawing that capture, an injected PNG encoding Port transfers its
+ImageBitmap to a temporary local worker for OffscreenCanvas PNG encoding.
+Capability selection occurs before encoding; runtime worker failure is
+terminal. Encoding remains serial and preserves the existing rasterization
+geometry, digest and limits. The executable capability, strict-message,
+bitmap-ownership, abort and timeout contract is owned by
+`.agents/skills/easymde/references/wechat-export.md`.
 When the resolved Safe Preview is hidden or source mode is active, the
 Clipboard adapter obtains one ephemeral measurement lease for the current
 enhanced Preview and reuses it for portable HTML/plain-text serialization and

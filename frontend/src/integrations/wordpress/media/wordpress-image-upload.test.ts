@@ -477,6 +477,67 @@ describe('createWordPressImageUploadPort', () => {
     ).rejects.toThrow('image-upload-response-invalid');
   });
 
+  it('preserves the allowlisted image-hosting nonce failure without exposing response data', async () => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockRejectedValue({
+        code: 'easymde_rest_invalid_image_hosting_nonce',
+        data: { secret: 'must-not-leak' },
+        message: 'The image-hosting request could not be verified.',
+        status: 403
+      }),
+      endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).resolves.toEqual({
+      code: 'easymde_rest_invalid_image_hosting_nonce',
+      sideEffects: 'none',
+      status: 'failed'
+    });
+  });
+
+  it.each([
+    ['unknown error code', { code: 'easymde_unknown_failure', status: 403 }],
+    ['other forbidden response', { code: 'rest_forbidden', status: 403 }]
+  ])('does not expose %s response details', async (_label, error) => {
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockRejectedValue({
+        ...error,
+        data: { private: 'must-not-leak' },
+        message: 'private response details'
+      }),
+      endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
+    });
+
+    await expect(
+      port.upload({
+        altText: 'image',
+        file: new File(['image'], 'image.png', { type: 'image/png' }),
+        postId: 17,
+        signal: new AbortController().signal
+      })
+    ).resolves.toEqual({
+      code: 'image-upload-request-failed',
+      status: 'failed'
+    });
+  });
+
   it('maps an aborted protected upload to a stable cancellation code', async () => {
     const aborted = new DOMException('Aborted', 'AbortError');
     const port = createWordPressImageUploadPort({

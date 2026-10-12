@@ -863,8 +863,10 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$build_dir = trailingslashit( get_temp_dir() ) . 'easymde-react-editor-integrity-' . wp_generate_uuid4();
 		$file      = 'assets/admin-editor-synthetic.js';
 		$asset     = 'assets/admin-editor-synthetic.asset.php';
+		$worker    = 'assets/wechat-png-encoder-synthetic.js';
 		wp_mkdir_p( $build_dir . '/assets' );
 		file_put_contents( $build_dir . '/' . $file, 'console.log("corrupted");' );
+		file_put_contents( $build_dir . '/' . $worker, 'self.onmessage = function () {};' );
 		file_put_contents(
 			$build_dir . '/' . $asset,
 			"<?php\nreturn array(\n\t'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),\n\t'version' => '0000000000000000',\n);\n"
@@ -880,7 +882,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 							'file'         => $file,
 							'asset'        => $asset,
 							'dependencies' => array( 'wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n' ),
-							'resources'    => array(),
+							'resources'    => array( $worker ),
 						),
 					)
 				)
@@ -894,6 +896,7 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		} finally {
 			wp_delete_file( $build_dir . '/' . $file );
 			wp_delete_file( $build_dir . '/' . $asset );
+			wp_delete_file( $build_dir . '/' . $worker );
 			wp_delete_file( $build_dir . '/wordpress-manifest.json' );
 			rmdir( $build_dir . '/assets' );
 			rmdir( $build_dir );

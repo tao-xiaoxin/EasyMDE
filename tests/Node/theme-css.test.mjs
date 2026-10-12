@@ -856,6 +856,58 @@ test('shared code typography prefers the neutral Mac terminal font stack', () =>
   assert.doesNotMatch(css, /--easymde-code-font-family:[^;]*Operator Mono/);
 });
 
+test('Mermaid root tracking isolation is direct-root scoped and preserves descendant spacing', () => {
+  const baseCss = readFileSync(join(repoRoot, 'assets/css/frontend/base.css'), 'utf8');
+  const rootSelector = '.easymde-mermaid > svg';
+  const rootBody = cssRuleBodyMatching(baseCss, rootSelector);
+
+  assert.ok(rootBody, `${rootSelector} should own Mermaid typography isolation`);
+  assert.match(rootBody, /letter-spacing:\s*normal;/);
+  assert.match(rootBody, /word-spacing:\s*normal;/);
+  const genericBody = cssRuleBodyMatching(baseCss, '.easymde-mermaid svg');
+  assert.ok(genericBody, 'the shared Mermaid SVG layout rule should remain available');
+  assert.doesNotMatch(genericBody, /(?:letter|word)-spacing:/);
+  for (const role of ['gantt', 'sequence', 'timeline']) {
+    const intrinsicBody = cssRuleBodyMatching(
+      baseCss,
+      `.easymde-mermaid[data-easymde-mermaid-layout="${role}"] > svg`
+    );
+    assert.ok(intrinsicBody, `${role} should retain its intrinsic Mermaid width`);
+    assert.match(intrinsicBody, /max-width:\s*none;/);
+  }
+
+  const greenCss = readFileSync(join(repoRoot, 'assets/themes/article/green-vitality.css'), 'utf8');
+  const dom = new JSDOM(`
+    <style>${baseCss}\n${greenCss}
+      .easymde-rendered-content.easymde-markdown-theme-green-vitality
+      .easymde-mermaid .entityLabel {
+        letter-spacing: 2px;
+        word-spacing: 3px;
+      }
+    </style>
+    <article class="easymde-rendered-content easymde-markdown-theme-green-vitality">
+      <svg id="ordinary-svg"><text>ordinary</text></svg>
+      <div class="easymde-mermaid">
+        <svg id="mermaid-svg">
+          <text class="entityLabel">created_at</text>
+        </svg>
+      </div>
+    </article>
+  `);
+  const ordinarySvg = dom.window.document.querySelector('#ordinary-svg');
+  const mermaidSvg = dom.window.document.querySelector('#mermaid-svg');
+  const entityLabel = dom.window.document.querySelector('.entityLabel');
+
+  assert.ok(ordinarySvg);
+  assert.ok(mermaidSvg);
+  assert.ok(entityLabel);
+  assert.equal(dom.window.getComputedStyle(ordinarySvg).letterSpacing, '0.05em');
+  assert.equal(dom.window.getComputedStyle(mermaidSvg).letterSpacing, 'normal');
+  assert.equal(dom.window.getComputedStyle(mermaidSvg).wordSpacing, 'normal');
+  assert.equal(dom.window.getComputedStyle(entityLabel).letterSpacing, '2px');
+  assert.equal(dom.window.getComputedStyle(entityLabel).wordSpacing, '3px');
+});
+
 test('Inkwell light keeps its scoped palette', () => {
   const light = readFileSync(join(repoRoot, 'assets/themes/article/inkwell.css'), 'utf8');
   const root = scopedArticleRoot('inkwell');
@@ -1476,6 +1528,24 @@ test('Bloom adapters target live Mermaid roots and contain no unreachable focus 
       new RegExp(`${literalRoot}\\s+\\.easymde-mermaid(?:\\b|\\s)`),
       `${file} must style the live EasyMDE Mermaid root`
     );
+    const articleRootBodies = cssRuleBodies(css, root);
+    assert.ok(articleRootBodies.length, `${file} should preserve its scoped article root`);
+    assert.ok(
+      articleRootBodies.some((body) => /font-family:\s*var\(--font-sans\);/.test(body)),
+      `${file} should keep the Bloom font for ordinary article text`
+    );
+    const mermaidTextBody = cssRuleBodyMatching(css, `${root} .easymde-mermaid text`);
+    assert.ok(mermaidTextBody, `${file} should define its Mermaid text palette rule`);
+    assert.match(
+      mermaidTextBody,
+      /fill:\s*var\(--text\)\s*!important;/,
+      `${file} should preserve Mermaid text color`
+    );
+    assert.doesNotMatch(
+      mermaidTextBody,
+      /font-family\s*:/,
+      `${file} must not override the Mermaid text font used during layout measurement`
+    );
     assert.doesNotMatch(css, /(^|[\s,>+~])\.mermaid(?:\b|[\s>.:#[])/m, `${file} has a dead Mermaid class`);
     assert.doesNotMatch(css, /\.on-focus-mode\b|\.md-focus-element\b/, `${file} has dead Typora focus hooks`);
   }
@@ -1531,6 +1601,165 @@ test('all Phycat list items anchor their task and connector decorations', () => 
     );
 
     assert.ok(body, `${theme} list items must establish the containing block for absolute decorations`);
+  }
+});
+
+test('all Phycat H1 decorations use normal flow and preserve neighboring declarations', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+  const expectedDeclarations = {
+    h3: [
+      ['position', 'relative'],
+      ['width', 'fit-content'],
+      ['margin', '20px 0'],
+      ['text-align', 'left'],
+      ['font-size', '1.3rem'],
+      ['padding-left', '10px'],
+      ['transition', 'all .3s cubic-bezier(.25, .8, .25, 1)']
+    ],
+    blockquote: [
+      ['position', 'relative'],
+      ['margin', '20px 0'],
+      ['padding', '18px 20px 18px 48px'],
+      ['background-color', 'var(--element-color-soo-shallow)'],
+      ['border', 'none'],
+      ['border-radius', '16px'],
+      ['color', '#555'],
+      ['line-height', '1.6'],
+      ['transition', 'transform .3s cubic-bezier(.34, 1.56, .64, 1), background-color .3s ease']
+    ],
+    link: [
+      ['color', '#333'],
+      ['text-decoration', 'none'],
+      ['font-weight', '500'],
+      ['padding', '2px 4px'],
+      ['margin', '0 -2px'],
+      ['border-radius', '4px'],
+      ['background', '0 0'],
+      ['border-bottom', 'none'],
+      ['transition', 'all .2s ease']
+    ]
+  };
+
+  const normalizeDeclarations = (body, label) => {
+    assert.ok(body, `${label} should be declared`);
+    return splitCssDeclarations(body).map(({ property, value }) => [
+      property,
+      value.replace(/\s+/g, ' ').trim()
+    ]);
+  };
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const h1 = cssRuleBodyMatching(css, `${root} h1`);
+    const after = cssRuleBodyMatching(css, `${root} h1::after`);
+    const hoverAfter = cssRuleBodyMatching(css, `${root} h1:hover::after`);
+
+    assert.ok(h1, `${theme} should define an H1 rule`);
+    assert.ok(after, `${theme} should define an H1 after rule`);
+    assert.ok(hoverAfter, `${theme} should define an H1 hover after rule`);
+
+    const h1Declarations = Object.fromEntries(normalizeDeclarations(h1, `${theme} H1`));
+    const afterDeclarations = Object.fromEntries(normalizeDeclarations(after, `${theme} H1 after`));
+    const hoverAfterDeclarations = Object.fromEntries(
+      normalizeDeclarations(hoverAfter, `${theme} H1 hover after`)
+    );
+
+    assert.equal(h1Declarations['padding-bottom'], '0', `${theme} H1 should reserve no bottom padding`);
+    assert.equal(afterDeclarations.display, 'block', `${theme} H1 after should stay in normal flow`);
+    assert.equal(afterDeclarations.width, '40px', `${theme} H1 after width`);
+    assert.equal(afterDeclarations.height, '4px', `${theme} H1 after height`);
+    assert.equal(afterDeclarations.margin, '8px auto 0', `${theme} H1 after spacing and centering`);
+    assert.equal(
+      Number.parseFloat(afterDeclarations.margin) + Number.parseFloat(afterDeclarations.height),
+      12,
+      `${theme} H1 after should retain the 12px total decoration space`
+    );
+    assert.equal(afterDeclarations.position, undefined, `${theme} H1 after must not be positioned`);
+    assert.equal(afterDeclarations.left, undefined, `${theme} H1 after must not use left positioning`);
+    assert.equal(afterDeclarations.bottom, undefined, `${theme} H1 after must not use bottom positioning`);
+    assert.equal(afterDeclarations.transform, undefined, `${theme} H1 after must not translate for centering`);
+    assert.equal(hoverAfterDeclarations.width, '100%', `${theme} H1 hover width`);
+
+    const h3BeforeDeclarations = Object.fromEntries(
+      normalizeDeclarations(
+        cssRuleBodyMatching(css, `${root} h3::before`),
+        `${theme} H3 before`
+      )
+    );
+    assert.equal(h3BeforeDeclarations.position, 'absolute', `${theme} H3 marker positioning`);
+    assert.equal(h3BeforeDeclarations.left, '-6px', `${theme} H3 marker horizontal offset`);
+    assert.equal(h3BeforeDeclarations.top, '50%', `${theme} H3 marker vertical anchor`);
+    assert.equal(h3BeforeDeclarations.transform, 'translateY(-50%)', `${theme} H3 marker centering`);
+    assert.equal(h3BeforeDeclarations.width, '5px', `${theme} H3 marker width`);
+    assert.equal(h3BeforeDeclarations.height, '61%', `${theme} H3 marker height`);
+
+    const blockquoteBeforeDeclarations = Object.fromEntries(
+      normalizeDeclarations(
+        cssRuleBodyMatching(css, `${root} blockquote::before`),
+        `${theme} blockquote before`
+      )
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.position,
+      'absolute',
+      `${theme} blockquote marker positioning`
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.left,
+      '16px',
+      `${theme} blockquote marker horizontal offset`
+    );
+    assert.equal(
+      blockquoteBeforeDeclarations.top,
+      '18px',
+      `${theme} blockquote marker vertical offset`
+    );
+
+    const linkBefore = cssRuleBodyMatching(
+      css,
+      `${root} p a:not(.md-toc-inner)::before`
+    );
+    assert.ok(linkBefore, `${theme} link marker should be declared`);
+    assert.match(linkBefore, /display:\s*inline-block/);
+    assert.match(linkBefore, /width:\s*1em/);
+    assert.match(linkBefore, /height:\s*1em/);
+    assert.match(linkBefore, /background-color:\s*var\(--element-color\)/);
+    assert.match(
+      linkBefore,
+      /(?:^|;)\s*-webkit-mask:\s*url\(["']?data:image\/svg\+xml/i,
+      `${theme} link marker should retain its WebKit SVG mask`
+    );
+    assert.match(
+      linkBefore,
+      /(?:^|;)\s*mask:\s*url\(["']?data:image\/svg\+xml/i,
+      `${theme} link marker should retain its standard SVG mask`
+    );
+
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} h3`), `${theme} H3`),
+      expectedDeclarations.h3,
+      `${theme} H3 declarations should remain unchanged`
+    );
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} blockquote`), `${theme} blockquote`),
+      expectedDeclarations.blockquote,
+      `${theme} blockquote declarations should remain unchanged`
+    );
+    assert.deepEqual(
+      normalizeDeclarations(cssRuleBodyMatching(css, `${root} a`), `${theme} link`),
+      expectedDeclarations.link,
+      `${theme} link declarations should remain unchanged`
+    );
   }
 });
 

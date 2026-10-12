@@ -90,7 +90,13 @@ const productionFrontendBuilds = [
     dependencies: ['wp-api-fetch', 'wp-element', 'wp-hooks', 'wp-i18n'],
     entry: productionFrontendEntry,
     filePattern: /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/,
-    handle: 'easymde-admin-editor-toolbar'
+    handle: 'easymde-admin-editor-toolbar',
+    manifestResources: [
+      {
+        sourceEntry: 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts',
+        filePattern: /^assets\/wechat-png-encoder-[A-Za-z0-9_-]+\.js$/
+      }
+    ]
   },
   {
     buildRoot: 'assets/build/admin-editor-loader',
@@ -582,8 +588,17 @@ function productionFrontendRequirements(root) {
     const viteEntry = manifest && manifest[build.entry];
     const entries = wordpressManifest && wordpressManifest.entries;
     const wordpressEntry = entries && entries[build.entry];
+    const manifestResources = build.manifestResources || [];
+    const expectedManifestKeys = new Set([
+      build.entry,
+      ...manifestResources.map((resource) => resource.sourceEntry)
+    ]);
+    const actualManifestKeys = Object.keys(manifest || {});
+    const hasExpectedManifestKeys =
+      actualManifestKeys.length === expectedManifestKeys.size
+      && actualManifestKeys.every((key) => expectedManifestKeys.has(key));
     if (
-      1 !== Object.keys(manifest || {}).length
+      !hasExpectedManifestKeys
       || 1 !== wordpressManifest.schemaVersion
       || !entries
       || 1 !== Object.keys(entries).length
@@ -595,7 +610,7 @@ function productionFrontendRequirements(root) {
       || !Array.isArray(wordpressEntry.dependencies)
       || JSON.stringify(build.dependencies) !== JSON.stringify(wordpressEntry.dependencies)
       || !Array.isArray(wordpressEntry.resources)
-      || 0 !== wordpressEntry.resources.length
+      || manifestResources.length !== wordpressEntry.resources.length
       || 'string' !== typeof wordpressEntry.file
       || !build.filePattern.test(wordpressEntry.file)
       || wordpressEntry.file.replace(/\.js$/, '.asset.php') !== wordpressEntry.asset
@@ -603,9 +618,36 @@ function productionFrontendRequirements(root) {
       throw new Error('Release build requires matching production frontend manifest contracts.');
     }
 
+    const resourceFiles = manifestResources.map((resource) => {
+      const manifestResource = manifest[resource.sourceEntry];
+      if (
+        !manifestResource
+        || false !== manifestResource.isEntry
+        || resource.sourceEntry !== manifestResource.src
+        || 'string' !== typeof manifestResource.file
+      ) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      resource.filePattern.lastIndex = 0;
+      if (!resource.filePattern.test(manifestResource.file)) {
+        throw new Error('Release build requires matching production frontend manifest contracts.');
+      }
+      return manifestResource.file;
+    });
+    if (
+      JSON.stringify([...resourceFiles].sort())
+      !== JSON.stringify([...wordpressEntry.resources].sort())
+    ) {
+      throw new Error('Release build requires matching production frontend manifest contracts.');
+    }
+
     managedRequirements.push(
       { path: `${build.buildRoot}/${wordpressEntry.file}`, type: 'file' },
-      { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' }
+      { path: `${build.buildRoot}/${wordpressEntry.asset}`, type: 'file' },
+      ...resourceFiles.map((file) => ({
+        path: `${build.buildRoot}/${file}`,
+        type: 'file'
+      }))
     );
   }
 

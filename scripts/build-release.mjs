@@ -464,6 +464,16 @@ export function shouldCopyReleaseFile(root, file) {
     return false;
   }
 
+  const relativePath = relative(root, file).replace(/\\/g, '/');
+
+  if (
+    relativePath === 'vendor/qiniu/php-sdk/test-env.sh' ||
+    relativePath.startsWith('vendor/qiniu/php-sdk/examples/') ||
+    relativePath === 'vendor/qiniu/php-sdk/examples'
+  ) {
+    return false;
+  }
+
   if (isComposerDevPackageFile(root, file)) {
     return false;
   }

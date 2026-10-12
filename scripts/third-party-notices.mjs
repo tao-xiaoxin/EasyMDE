@@ -14,9 +14,11 @@ const composerPurposes = {
   'dflydev/dot-access-data': 'Nested configuration data access used by league/config.',
   'league/commonmark': 'Production Markdown and GFM rendering.',
   'league/config': 'Configuration support used by league/commonmark.',
+  'myclabs/php-enum': 'Enum compatibility dependency required by the Qiniu PHP SDK.',
   'nette/schema': 'Schema validation support used by league/config.',
   'nette/utils': 'Utility support used by nette/schema.',
   'psr/event-dispatcher': 'Event dispatcher interfaces used by league/commonmark.',
+  'qiniu/php-sdk': 'Official Qiniu Kodo authentication, region model, CRC32, and response protocol support.',
   'sabberworm/php-css-parser': 'Custom CSS parsing, validation, and selector scoping.',
   'symfony/deprecation-contracts': 'Deprecation helper contracts used by runtime dependencies.',
   'symfony/polyfill-php80': 'PHP 8.0 compatibility polyfills required by runtime dependencies on PHP 7.4.'

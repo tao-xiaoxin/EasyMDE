@@ -1154,6 +1154,9 @@ test('release copy filter excludes development directories by path segment', () 
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/phpcs.xml.dist')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/debug.log')), false);
     assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/league/commonmark/runtime/Parser.php')), true);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/src/Qiniu/Auth.php')), true);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/examples/upload_simple_file.php')), false);
+    assert.equal(shouldCopyReleaseFile(root, join(root, 'vendor/qiniu/php-sdk/test-env.sh')), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

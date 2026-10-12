@@ -33,7 +33,7 @@ Install PHP dependencies:
 composer install
 ```
 
-The production Markdown renderer is `league/commonmark`. Custom CSS parsing uses `sabberworm/php-css-parser`. If Composer dependencies are unavailable in a development checkout, EasyMDE shows an administrator notice and avoids producing inconsistent rendered output.
+The production Markdown renderer is `league/commonmark`. Custom CSS parsing uses `sabberworm/php-css-parser`. Qiniu Kodo support additionally requires the Composer-locked `qiniu/php-sdk`, `ext-curl`, and `ext-xml`; EasyMDE reports an explicit provider failure when these runtime requirements are unavailable. If Composer dependencies are unavailable in a development checkout, EasyMDE shows an administrator notice and avoids producing inconsistent rendered output.
 
 Useful PHP checks:
 

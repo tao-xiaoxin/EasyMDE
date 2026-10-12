@@ -993,8 +993,19 @@ Cloudflare R2, Qiniu Kodo, Alibaba Cloud OSS, and Tencent Cloud COS are supporte
 symmetrically: any one may be the primary or the optional backup. Primary and
 backup writes use one generated object key as a fixed runtime invariant, not a
 configurable setting. R2 uses the administrator-saved, validated HTTPS S3 API
-endpoint; Kodo uses
-its fixed official upload and management API origins; OSS and COS derive their
+endpoint; Kodo resolves the bucket's official upload domains through one bounded
+HTTPS region query over the WordPress HTTP transport, validates every returned
+`up*`/`upload*`.qiniup.com host, and bounds the ordered host list to four entries.
+Source `up*` hosts are ordered before `upload*` hosts because they are the official
+SDK source-upload origins. The runtime supplies the current bounded destination
+attempt index to the provider; each attempt selects one validated host and performs
+exactly one SDK-compatible form write. It supplies that host to an explicit SDK
+`Region`/`Config` with HTTPS enabled and CDN domains disabled. The pinned Qiniu
+SDK form uploader bypasses its middleware option, so EasyMDE builds only the
+SDK-compatible form request and routes it through a narrow middleware bridge;
+the SDK cURL handler and its region/back-up retries are never used. Host selection
+across explicit destination retry attempts is internal to the selected Qiniu
+destination, not a new setting or provider switch. OSS and COS derive their
 official API hosts from the validated provider endpoint and bucket. OSS and COS
 derive the signing region from that endpoint rather than persisting a separate
 region setting. These HTTPS provider API origins are separate from the

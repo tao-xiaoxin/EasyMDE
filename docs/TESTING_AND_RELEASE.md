@@ -101,6 +101,20 @@ under the primary Viewing Image Domain. Secret-reveal coverage must prove
 `Cache-Control: no-store`, one-field response projection, and continued
 redaction from bootstrap, ordinary settings, exports, and diagnostics.
 
+Qiniu-focused tests must use the locked `qiniu/php-sdk` Auth, CRC32 helper,
+Region/Config host selection, Request/Response parser, and the EasyMDE transport
+bridge with deterministic fake WordPress transports. They must cover one bounded
+region query before one validated official-host form write per destination
+attempt, official HTTPS host validation, source-host ordering, attempt-index host
+selection, actual response Content-Type handling, exact returned-key matching,
+malformed/201/204/unsafe-host/transport failures, and no SDK cURL or hidden region
+retries. A failed first host must not cause a second POST within one provider call;
+only the explicit administrator `uploadRetryCount` may start another destination
+attempt, and that attempt may select the next validated host without switching
+providers. The pinned SDK's `UploadManager::put` path bypasses its middleware in
+v7.14.0; the adapter must document and test this public-interface limitation
+instead of shadowing vendor classes or reintroducing a handwritten token parser.
+
 Split-rule tests must prove the defaults `{year}/{month}` and suffix-free
 `{md5}`; the fixed registry order is `webp`, `png`, `jpg`, `jpeg`, `jfif`,
 `gif`, all six default to enabled, canonical payloads contain exactly those
@@ -999,6 +1013,7 @@ The package must not ship local-only or development artifacts such as:
 - `.git/`, `.github/`, IDE settings, or OS metadata;
 - `node_modules/`;
 - PHPUnit, Playwright, Node test files, or test result directories;
-- Composer development packages.
+- Composer development packages;
+- Composer runtime packages' development examples and environment fixtures, including the Qiniu SDK `examples/` tree and `test-env.sh`;
 
 Repository-only docs such as `docs/`, `CONTRIBUTING.md`, and `README.en.md` are not part of the current release package unless the release packaging script is changed deliberately.

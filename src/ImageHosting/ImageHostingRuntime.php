@@ -66,6 +66,7 @@ final class ImageHostingRuntime {
 		if ( $this->has_duplicate_destinations( $settings ) ) {
 			return $this->duplicate_destination_error();
 		}
+		$operation_id = $this->new_operation_id();
 
 		try {
 			$bytes = call_user_func( $this->validation_image_loader );
@@ -90,7 +91,18 @@ final class ImageHostingRuntime {
 				return $path;
 			}
 			$provider = $this->create_provider( $settings[ $target ] );
-			$result   = $provider->upload( $bytes, 'image/png', $path );
+			$result   = $this->upload_provider(
+				$provider,
+				$bytes,
+				'image/png',
+				$path,
+				array(
+					'operation_id'  => $operation_id,
+					'role'          => 'verify-' . $target,
+					'attempt'       => 1,
+					'attempt_limit' => 1,
+				)
+			);
 		} catch ( Throwable $throwable ) {
 			return $this->operation_error( 'easymde_image_hosting_validation_upload_failed' );
 		}
@@ -113,6 +125,8 @@ final class ImageHostingRuntime {
 		if ( $this->has_duplicate_destinations( $settings ) ) {
 			return $this->duplicate_destination_error();
 		}
+		$operation_id = $this->new_operation_id();
+
 		try {
 			$primary_provider = $this->create_provider( $settings['primary'] );
 		} catch ( Throwable $throwable ) {
@@ -146,7 +160,9 @@ final class ImageHostingRuntime {
 				$primary_provider,
 				$prepared,
 				$key,
-				$settings['primary']['retryCount']
+				$settings['primary']['retryCount'],
+				'primary',
+				$operation_id
 			);
 			if ( null === $primary_result || ! $primary_result->is_success() || $key !== $primary_result->get_key() ) {
 				return $this->operation_error( 'easymde_image_hosting_primary_upload_failed' );
@@ -160,7 +176,8 @@ final class ImageHostingRuntime {
 						$backup_provider,
 						$prepared,
 						$key,
-						$settings['backup']['retryCount']
+						$settings['backup']['retryCount'],
+						$operation_id
 					);
 				} catch ( Throwable $throwable ) {
 					$backup = $this->operation_error( self::BACKUP_FAILURE_CODE );
@@ -186,8 +203,8 @@ final class ImageHostingRuntime {
 		}
 	}
 
-	private function upload_backup( $provider, array $prepared, $key, $retry_count ) {
-		$result = $this->upload_with_retries( $provider, $prepared, $key, $retry_count );
+	private function upload_backup( $provider, array $prepared, $key, $retry_count, $operation_id = '' ) {
+		$result = $this->upload_with_retries( $provider, $prepared, $key, $retry_count, 'backup', $operation_id );
 		if ( null !== $result && $result->is_success() && $key === $result->get_key() ) {
 			return array( 'status' => 'uploaded' );
 		}
@@ -195,10 +212,21 @@ final class ImageHostingRuntime {
 		return $this->operation_error( self::BACKUP_FAILURE_CODE );
 	}
 
-	private function upload_with_retries( $provider, array $prepared, $key, $retry_count ) {
+	private function upload_with_retries( $provider, array $prepared, $key, $retry_count, $role = 'unknown', $operation_id = '' ) {
 		for ( $attempt = 0; $attempt <= $retry_count; $attempt++ ) {
 			try {
-				$result = $provider->upload( $prepared['bytes'], $prepared['mime_type'], $key );
+				$result = $this->upload_provider(
+					$provider,
+					$prepared['bytes'],
+					$prepared['mime_type'],
+					$key,
+					array(
+						'operation_id'  => $operation_id,
+						'role'          => $role,
+						'attempt'       => $attempt + 1,
+						'attempt_limit' => $retry_count + 1,
+					)
+				);
 			} catch ( Throwable $throwable ) {
 				$result = null;
 			}
@@ -209,6 +237,18 @@ final class ImageHostingRuntime {
 		}
 
 		return null;
+	}
+
+	private function upload_provider( $provider, $bytes, $mime_type, $key, array $context ) {
+		if ( $provider instanceof QiniuKodoProvider ) {
+			return $provider->upload( $bytes, $mime_type, $key, $context );
+		}
+
+		return $provider->upload( $bytes, $mime_type, $key );
+	}
+
+	private function new_operation_id() {
+		return function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : substr( hash( 'sha256', uniqid( '', true ) ), 0, 16 );
 	}
 
 	private function build_object_key( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id, $enabled_extensions = null ) {
@@ -245,18 +285,12 @@ final class ImageHostingRuntime {
 		}
 
 		if ( 'qiniu-kodo' === $service ) {
-			$clock = $this->clock;
 			return new QiniuKodoProvider(
 				$this->transport,
 				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
 				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
 				isset( $config['bucket'] ) ? $config['bucket'] : '',
-				isset( $config['domain'] ) ? $config['domain'] : '',
-				static function () use ( $clock ) {
-					$now = call_user_func( $clock );
-
-					return $now instanceof DateTimeImmutable ? $now->getTimestamp() : 0;
-				}
+				isset( $config['domain'] ) ? $config['domain'] : ''
 			);
 		}
 

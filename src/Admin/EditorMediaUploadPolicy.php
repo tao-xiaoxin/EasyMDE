@@ -3,6 +3,8 @@
 namespace EasyMDE\Admin;
 
 use EasyMDE\Content\PostDocument;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
+use EasyMDE\ImageHosting\JfifMimeScope;
 use EasyMDE\Support\SettingsCenterRepository;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -36,19 +38,40 @@ final class EditorMediaUploadPolicy {
 			return $file;
 		}
 
-		$checked = wp_check_filetype_and_ext( $tmp_name, $name );
+		$checked = JfifMimeScope::run(
+			$tmp_name,
+			$name,
+			static function () use ( $tmp_name, $name ) {
+				return wp_check_filetype_and_ext( $tmp_name, $name );
+			}
+		);
 		$type    = isset( $checked['type'] ) && is_string( $checked['type'] ) ? $checked['type'] : '';
 		if ( 0 !== strpos( $type, 'image/' ) ) {
 			return $file;
 		}
-		if ( ! in_array( $type, $this->settings_repository->get_allowed_image_mime_types(), true ) ) {
+
+		try {
+			$media_settings = $this->settings_repository->get_media_upload_settings();
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			$file['error'] = __( 'The image-hosting configuration is unavailable.', 'easymde' );
+
+			return $file;
+		}
+		if (
+			! in_array( $type, $media_settings['mime_types'], true ) ||
+			false === ImageUploadExtensionPolicy::verify( $name, $type, $media_settings['allowed_extensions'] )
+		) {
 			$file['error'] = __( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' );
 
 			return $file;
 		}
 
 		$size = filesize( $tmp_name );
-		if ( false !== $size && $size > $this->settings_repository->get_effective_image_upload_max_bytes() ) {
+		if ( false !== $size && $size > $media_settings['max_bytes'] ) {
 			$file['error'] = __( 'The image is larger than the allowed upload size.', 'easymde' );
 		}
 

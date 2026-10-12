@@ -30,6 +30,20 @@ final class ImageHostFakeTransport implements HttpTransport {
 	}
 }
 
+final class ImageHostThrowingTransport implements HttpTransport {
+
+	public $requests = array();
+
+	public function request( $method, $url, array $arguments ) {
+		$this->requests[] = array(
+			'method'     => $method,
+			'url'       => $url,
+			'arguments' => $arguments,
+		);
+		throw new RuntimeException( 'Synthetic transport exception must not escape.' );
+	}
+}
+
 final class ImageHostProvidersTest extends WP_UnitTestCase {
 
 	public function test_public_viewing_urls_support_http_and_preserve_encoded_object_paths() {
@@ -76,7 +90,7 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 			$captured = array( $arguments, $url );
 
 			return array(
-				'headers'  => array(),
+				'headers'  => array( 'content-type' => array( 'text/plain', 'application/json; charset=utf-8' ) ),
 				'body'     => 'synthetic-response',
 				'response' => array(
 					'code'    => 204,
@@ -104,6 +118,7 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 
 		$this->assertTrue( $response->is_success() );
 		$this->assertSame( 204, $response->get_status_code() );
+		$this->assertSame( 'application/json; charset=utf-8', $response->get_header( 'content-type' ) );
 		$this->assertSame( 'HEAD', $captured[0]['method'] );
 		$this->assertSame( 10, $captured[0]['timeout'] );
 		$this->assertSame( 0, $captured[0]['redirection'] );
@@ -224,40 +239,297 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $transport->requests );
 	}
 
-	public function test_qiniu_upload_uses_one_multipart_request_and_the_same_object_key() {
+	public function test_qiniu_upload_uses_sdk_crc_and_one_transport_write_with_the_same_object_key() {
 		$transport = new ImageHostFakeTransport(
-			array( HttpResponse::success( 200, '{"key":"20260713/example.png","hash":"synthetic"}' ) )
+			array(
+				$this->qiniu_region_response(),
+				HttpResponse::success( 200, '{"key":"20260713/example.png","hash":"synthetic"}', array( 'Content-Type' => 'application/json' ) ),
+			)
 		);
 		$provider  = new QiniuKodoProvider(
 			$transport,
 			'SYNTHETIC_ACCESS',
 			'SYNTHETIC_SECRET',
 			'synthetic-bucket',
-			'https://backup.example.test',
-			static function () {
-				return 1783956645;
-			}
+			'https://backup.example.test'
 		);
 
+		$before = time();
 		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+		$after  = time();
 
 		$this->assertTrue( $result->is_success() );
 		$this->assertSame( 'https://backup.example.test/20260713/example.png', $result->get_url() );
-		$this->assertCount( 1, $transport->requests );
-		$request = $transport->requests[0];
+		$this->assertCount( 2, $transport->requests );
+		$this->assertSame( 'GET', $transport->requests[0]['method'] );
+		$this->assertStringStartsWith( 'https://uc.qiniuapi.com/v4/query?ak=', $transport->requests[0]['url'] );
+		$request = $transport->requests[1];
+		$body    = $request['arguments']['body'];
 		$this->assertSame( 'POST', $request['method'] );
-		$this->assertSame( 'https://upload.qiniup.com', $request['url'] );
-		$this->assertStringContainsString( 'name="key"', $request['arguments']['body'] );
-		$this->assertStringContainsString( '20260713/example.png', $request['arguments']['body'] );
-		$this->assertStringContainsString( 'name="token"', $request['arguments']['body'] );
-		$this->assertStringContainsString(
-			'SYNTHETIC_ACCESS:-H9il2VoWkY7TC1Jibxg3jhg0jY=:' .
-			'eyJzY29wZSI6InN5bnRoZXRpYy1idWNrZXQ6MjAyNjA3MTMvZXhhbXBsZS5wbmciLCJkZWFkbGluZSI6MTc4Mzk2MDI0NX0=',
-			$request['arguments']['body']
+		$this->assertSame( 'https://up-z0.qiniup.com', $request['url'] );
+		$this->assertStringContainsString( "name=\"key\"\r\n\r\n20260713/example.png\r\n", $body );
+		$this->assertStringContainsString( "name=\"crc32\"\r\n\r\n" . \Qiniu\crc32_data( 'synthetic-image-bytes' ) . "\r\n", $body );
+		$this->assertStringContainsString( "name=\"file\"; filename=\"easymde-upload.png\"\r\nContent-Type: image/png\r\n\r\nsynthetic-image-bytes\r\n", $body );
+		$this->assertStringNotContainsString( 'SYNTHETIC_SECRET', $body );
+		$this->assertSame( 1, preg_match( '/name=\"token\"\r\n\r\n([^\r\n]+)/', $body, $token_matches ) );
+		$token_parts = explode( ':', $token_matches[1], 3 );
+		$this->assertCount( 3, $token_parts );
+		$this->assertSame( 'SYNTHETIC_ACCESS', $token_parts[0] );
+		$policy = json_decode( \Qiniu\base64_urlSafeDecode( $token_parts[2] ), true );
+		$this->assertIsArray( $policy );
+		$this->assertSame( 'synthetic-bucket:20260713/example.png', $policy['scope'] );
+		$this->assertGreaterThanOrEqual( $before + 3600, (int) $policy['deadline'] );
+		$this->assertLessThanOrEqual( $after + 3600, (int) $policy['deadline'] );
+		$this->assertSame(
+			\Qiniu\base64_urlSafeEncode( hash_hmac( 'sha1', $token_parts[2], 'SYNTHETIC_SECRET', true ) ),
+			$token_parts[1]
 		);
-		$this->assertStringNotContainsString( 'SYNTHETIC_SECRET', $request['arguments']['body'] );
 		$this->assertSame( 10, $request['arguments']['timeout'] );
 		$this->assertSame( 0, $request['arguments']['redirection'] );
+		$this->assertTrue( $request['arguments']['sslverify'] );
+
+	}
+
+	public function test_qiniu_upload_selects_one_official_host_for_each_runtime_attempt() {
+		$transport = new ImageHostFakeTransport(
+			array(
+				$this->qiniu_region_response( array( 'upload-z0.qiniup.com', 'up-z0.qiniup.com' ) ),
+				HttpResponse::success( 200, '{"key":"20260713/example.png"}', array( 'Content-Type' => 'application/json' ) ),
+			)
+		);
+		$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload(
+			'synthetic-image-bytes',
+			'image/png',
+			'20260713/example.png',
+			array(
+				'attempt'       => 2,
+				'attempt_limit' => 2,
+			)
+		);
+
+		$this->assertTrue( $result->is_success() );
+		$this->assertCount( 2, $transport->requests );
+		$this->assertSame( 'https://upload-z0.qiniup.com', $transport->requests[1]['url'] );
+	}
+
+	public function test_qiniu_upload_does_not_retry_one_attempt_across_hosts() {
+		$transport = new ImageHostFakeTransport(
+			array(
+				$this->qiniu_region_response( array( 'upload-z0.qiniup.com', 'up-z0.qiniup.com' ) ),
+				HttpResponse::failure( 'transport_failure' ),
+				HttpResponse::success( 200, '{"key":"20260713/example.png"}', array( 'Content-Type' => 'application/json' ) ),
+			)
+		);
+		$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'qiniu_transport_failure', $result->get_error_code() );
+		$this->assertCount( 2, $transport->requests );
+		$this->assertSame( 'https://up-z0.qiniup.com', $transport->requests[1]['url'] );
+	}
+
+	public function test_qiniu_diagnostic_contains_only_stable_privacy_safe_fields() {
+		$diagnostics = array();
+		$listener    = static function ( $diagnostic ) use ( &$diagnostics ) {
+			$diagnostics[] = $diagnostic;
+		};
+		add_action( 'easymde_image_hosting_diagnostic', $listener );
+
+		try {
+			$transport = new ImageHostFakeTransport(
+				array(
+					$this->qiniu_region_response(),
+					HttpResponse::success( 200, '{"key":"20260713/example.png"}', array( 'Content-Type' => 'application/json' ) ),
+				)
+			);
+			$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+			$provider->upload(
+				'synthetic-image-bytes',
+				'image/png',
+				'20260713/example.png',
+				array(
+					'operation_id'  => 'synthetic-operation',
+					'role'          => 'backup',
+					'attempt'       => 2,
+					'attempt_limit' => 3,
+				)
+			);
+		} finally {
+			remove_action( 'easymde_image_hosting_diagnostic', $listener );
+		}
+
+		$this->assertCount( 1, $diagnostics );
+		$this->assertSame(
+			array( 'operation_id', 'provider', 'role', 'stage', 'attempt', 'attempt_limit', 'category', 'status', 'duration_ms', 'result' ),
+			array_keys( $diagnostics[0] )
+		);
+		$this->assertSame( 'qiniu-kodo', $diagnostics[0]['provider'] );
+		$this->assertSame( 'success', $diagnostics[0]['result'] );
+		$this->assertSame( 'synthetic-operation', $diagnostics[0]['operation_id'] );
+		$this->assertSame( 'backup', $diagnostics[0]['role'] );
+		$this->assertSame( 2, $diagnostics[0]['attempt'] );
+		$this->assertSame( 3, $diagnostics[0]['attempt_limit'] );
+		$this->assertIsInt( $diagnostics[0]['duration_ms'] );
+		$this->assertStringNotContainsString( 'SYNTHETIC_SECRET', wp_json_encode( $diagnostics ) );
+		$this->assertStringNotContainsString( '20260713/example.png', wp_json_encode( $diagnostics ) );
+	}
+
+	public function test_qiniu_upload_rejects_region_hosts_that_are_not_official() {
+		foreach ( array( 'up.qiniup.com.attacker.example', 'up.attacker.qiniup.com' ) as $host ) {
+			$transport = new ImageHostFakeTransport( array( $this->qiniu_region_response( $host ) ) );
+			$provider  = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+			$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+			$this->assertFalse( $result->is_success(), $host );
+			$this->assertSame( 'qiniu_region_discovery_failed', $result->get_error_code(), $host );
+			$this->assertCount( 1, $transport->requests, $host );
+		}
+	}
+
+	public function test_qiniu_upload_rejects_malformed_region_response() {
+		$transport = new ImageHostFakeTransport(
+			array(
+				HttpResponse::success( 200, '{"hosts":', array( 'Content-Type' => 'application/json' ) ),
+			)
+		);
+		$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'qiniu_region_discovery_failed', $result->get_error_code() );
+		$this->assertCount( 1, $transport->requests );
+	}
+
+	public function test_qiniu_upload_rejects_missing_content_type_and_wrong_key() {
+		$cases = array(
+			HttpResponse::success( 200, '{"key":"20260713/example.png"}' ),
+			HttpResponse::success( 200, '{"key":"different.png"}', array( 'Content-Type' => 'application/json' ) ),
+		);
+
+		foreach ( $cases as $upload_response ) {
+			$transport = new ImageHostFakeTransport( array( $this->qiniu_region_response(), $upload_response ) );
+			$provider  = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+			$result    = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+			$this->assertFalse( $result->is_success() );
+			$this->assertSame( 'qiniu_invalid_response', $result->get_error_code() );
+			$this->assertCount( 2, $transport->requests );
+		}
+	}
+
+	public function test_qiniu_upload_rejects_non_200_without_an_extra_write() {
+		foreach ( array( 201, 204 ) as $status_code ) {
+			$transport = new ImageHostFakeTransport(
+				array(
+					$this->qiniu_region_response(),
+					HttpResponse::success( $status_code, '{"key":"20260713/example.png"}', array( 'Content-Type' => 'application/json' ) ),
+				)
+			);
+			$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+			$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+			$this->assertFalse( $result->is_success(), (string) $status_code );
+			$this->assertSame( 'qiniu_upload_rejected', $result->get_error_code(), (string) $status_code );
+			$this->assertCount( 2, $transport->requests, (string) $status_code );
+		}
+	}
+
+	public function test_qiniu_upload_preserves_json_error_status_without_sdk_parser_warnings() {
+		foreach ( array( 400 => 'qiniu_upload_rejected', 401 => 'image_host_unauthorized' ) as $status_code => $error_code ) {
+			$transport = new ImageHostFakeTransport(
+				array(
+					$this->qiniu_region_response(),
+					HttpResponse::success( $status_code, '{}', array( 'Content-Type' => 'application/json' ) ),
+				)
+			);
+			$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+			$warnings = 0;
+			set_error_handler(
+				static function ( $level ) use ( &$warnings ) {
+					if ( in_array( $level, array( E_WARNING, E_NOTICE ), true ) ) {
+						++$warnings;
+						return true;
+					}
+					return false;
+				}
+			);
+
+			try {
+				$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+			} finally {
+				restore_error_handler();
+			}
+
+			$this->assertFalse( $result->is_success(), (string) $status_code );
+			$this->assertSame( $error_code, $result->get_error_code(), (string) $status_code );
+			$this->assertSame( 0, $warnings, (string) $status_code );
+			$this->assertCount( 2, $transport->requests, (string) $status_code );
+		}
+	}
+
+	public function test_qiniu_region_transport_exception_is_a_stable_failure() {
+		$transport = new ImageHostThrowingTransport();
+		$provider  = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'qiniu_region_discovery_failed', $result->get_error_code() );
+		$this->assertStringNotContainsString( 'Synthetic transport exception', $result->get_error_code() );
+		$this->assertCount( 1, $transport->requests );
+	}
+
+	public function test_qiniu_upload_preserves_a_timeout_as_a_stable_transport_failure() {
+		$transport = new ImageHostFakeTransport(
+			array(
+				$this->qiniu_region_response(),
+				HttpResponse::failure( 'timeout' ),
+			)
+		);
+		$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'image_host_timeout', $result->get_error_code() );
+		$this->assertCount( 2, $transport->requests );
+	}
+
+	public function test_qiniu_upload_rejects_an_oversized_sdk_response() {
+		$transport = new ImageHostFakeTransport(
+			array(
+				$this->qiniu_region_response(),
+				HttpResponse::success(
+					200,
+					str_repeat( 'x', ImageHostProviderSupport::MAX_RESPONSE_BYTES + 1 ),
+					array( 'Content-Type' => 'application/json' )
+				),
+			)
+		);
+		$provider = new QiniuKodoProvider( $transport, 'SYNTHETIC_ACCESS', 'SYNTHETIC_SECRET', 'synthetic-bucket', 'https://backup.example.test' );
+
+		$result = $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'qiniu_response_too_large', $result->get_error_code() );
+		$this->assertCount( 2, $transport->requests );
+	}
+
+	private function qiniu_region_response( $hosts = 'up-z0.qiniup.com' ) {
+		$hosts = is_array( $hosts ) ? $hosts : array( $hosts );
+
+		return HttpResponse::success(
+			200,
+			wp_json_encode( array( 'hosts' => array( array( 'up' => array( 'domains' => $hosts ) ) ) ) ),
+			array( 'Content-Type' => 'application/json' )
+		);
 	}
 
 	public function test_alibaba_oss_upload_uses_the_v4_virtual_host_request() {

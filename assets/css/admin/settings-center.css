@@ -2048,8 +2048,28 @@
 	content: none;
 }
 
-.easymde-settings-center__upload-formats span {
+.easymde-settings-center__upload-formats > label span {
 	white-space: nowrap;
+}
+
+.easymde-settings-center__upload-format-error {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 7px;
+	color: #b4233b;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.easymde-settings-center__upload-format-error svg {
+	flex: none;
+}
+
+.easymde-settings-center__upload-format-error span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	white-space: normal;
 }
 
 .easymde-settings-center__upload-summary {
@@ -3439,6 +3459,11 @@
 }
 
 @media (max-width: 840px) {
+	[data-settings-overlay-root] .easymde-editor-message-alert-host {
+		top: auto;
+		bottom: max(110px, calc(env(safe-area-inset-bottom) + 110px));
+	}
+
 	.easymde-settings-center__frame {
 		--easymde-mobile-save-bar-height: 98px;
 

@@ -36,6 +36,45 @@ function settings(overrides: Partial<ImageSettings> = {}): ImageSettings {
 	};
 }
 
+const COMBINED_FILE_NAME_PRESETS = [
+	{
+		label: "fileNamePresetDate",
+		storagePath: "{date}",
+		fileNameRule: "{uuid}",
+		preview: "20260713/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetMd5",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{md5}",
+		preview: "2026/07/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetYearMonth",
+		storagePath: "{year}/{month}",
+		fileNameRule: "{uuid}",
+		preview: "2026/07/a8f4c2d1.webp",
+	},
+	{
+		label: "fileNamePresetOriginal",
+		storagePath: "{date}",
+		fileNameRule: "{name}",
+		preview: "20260713/easymde-image.webp",
+	},
+	{
+		label: "fileNamePresetArticle",
+		storagePath: "{post_id}",
+		fileNameRule: "{name}",
+		preview: "128/easymde-image.webp",
+	},
+	{
+		label: "fileNamePresetTime",
+		storagePath: "{date}",
+		fileNameRule: "{time}",
+		preview: "20260713/153042.webp",
+	},
+] as const;
+
 function deferred<T>() {
 	let resolve!: (value: T) => void;
 	let reject!: (reason?: unknown) => void;
@@ -251,19 +290,27 @@ describe("ImagesSettingsPage", () => {
 		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
 			name: "fileNameRule",
 		});
+		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
+		});
 		expect(fileNameRule.value).toBe(draft.fileNameRule);
+		expect(storagePath.value).toBe(draft.storagePath);
 		expect(screen.getByText("fileNameRuleDescription")).not.toBeNull();
 		expect(
 			screen.getAllByRole("button", { name: /^fileNamePreset/u }),
 		).toHaveLength(6);
 		expect(
 			screen.getAllByRole("button", { name: /^insertFileNameVariable/u }),
-		).toHaveLength(10);
+		).toHaveLength(9);
 		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
-		fireEvent.change(fileNameRule, {
-			target: { value: "disabled/{date}/{uuid}.{ext}" },
+		fireEvent.change(storagePath, {
+			target: { value: "disabled/{date}" },
 		});
-		expect(fileNameRule.value).toBe("disabled/{date}/{uuid}.{ext}");
+		fireEvent.change(fileNameRule, {
+			target: { value: "{uuid}" },
+		});
+		expect(storagePath.value).toBe("disabled/{date}");
+		expect(fileNameRule.value).toBe("{uuid}");
 
 		const toggle = screen.getByRole("switch", { name: "enableImageHosting" });
 		await user.click(toggle);
@@ -286,7 +333,11 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "storagePath" })
+				.value,
+		).toBe("disabled/{date}");
 		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
@@ -304,7 +355,7 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}");
 		await user.click(toggle);
 		expect(
 			screen.getByRole("combobox", { name: "selectImageHostService" })
@@ -318,7 +369,11 @@ describe("ImagesSettingsPage", () => {
 		expect(
 			screen.getByRole<HTMLInputElement>("textbox", { name: "fileNameRule" })
 				.value,
-		).toBe("disabled/{date}/{uuid}.{ext}");
+		).toBe("{uuid}");
+		expect(
+			screen.getByRole<HTMLInputElement>("textbox", { name: "storagePath" })
+				.value,
+		).toBe("disabled/{date}");
 		expect(
 			screen.getByRole("combobox", { name: "remoteImageUploadMode" })
 				.textContent,
@@ -352,6 +407,7 @@ describe("ImagesSettingsPage", () => {
 			"imageFallbackDomain",
 			"accessKey",
 			"secretKey",
+			"storagePath",
 			"fileNameRule",
 			"uploadRetryCount",
 			"uploadVerificationStatus",
@@ -823,17 +879,117 @@ describe("ImagesSettingsPage", () => {
 
 		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
 		await user.clear(input);
-		await user.type(input, "folder/.webp");
-		input.setSelectionRange(7, 7);
+		await user.type(input, "folder");
+		input.setSelectionRange(3, 3);
 		await user.click(
 			screen.getByRole("button", {
 				name: "insertFileNameVariable {uuid}",
 			}),
 		);
 
-		expect(input.value).toBe("folder/{uuid}.webp");
-		expect(input.selectionStart).toBe(13);
-		expect(input.selectionEnd).toBe(13);
+		expect(input.value).toBe("fol{uuid}der");
+		expect(input.selectionStart).toBe(9);
+		expect(input.selectionEnd).toBe(9);
+	});
+
+	it("inserts variables into both fields with target focus and keeps the suffix-free preview", async () => {
+		const user = userEvent.setup();
+		render(<Harness />);
+		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
+		});
+		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+
+		expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
+		expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
+		expect(screen.getByText("2026/07/a8f4c2d1.webp")).not.toBeNull();
+
+		storagePath.focus();
+		storagePath.setSelectionRange(0, 0);
+		await user.click(
+			screen.getByRole("button", {
+				name: "insertFileNameVariable {year}",
+			}),
+		);
+		expect(storagePath.value).toBe("{year}{year}/{month}");
+		expect(document.activeElement).toBe(storagePath);
+		expect(storagePath.selectionStart).toBe(6);
+		expect(storagePath.selectionEnd).toBe(6);
+
+		await user.clear(fileNameRule);
+		await user.type(fileNameRule, "stem");
+		fileNameRule.focus();
+		fileNameRule.setSelectionRange(2, 2);
+		await user.click(
+			screen.getByRole("button", {
+				name: "insertFileNameVariable {uuid}",
+			}),
+		);
+		expect(fileNameRule.value).toBe("st{uuid}em");
+		expect(document.activeElement).toBe(fileNameRule);
+		expect(fileNameRule.selectionStart).toBe(8);
+		expect(fileNameRule.selectionEnd).toBe(8);
+		expect(screen.getByText("20262026/07/sta8f4c2d1em.webp")).not.toBeNull();
+	});
+
+	it("applies each common filename template to both fields and derives active state from the pair", async () => {
+		const user = userEvent.setup();
+		const onSettingsChange = vi.fn();
+		render(
+			<Harness
+				initialSettings={settings({
+					storagePath: "{date}",
+					fileNameRule: "{name}",
+				})}
+				onSettingsChange={onSettingsChange}
+			/>,
+		);
+
+		const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
+		});
+		const fileNameRule = screen.getByRole<HTMLInputElement>("textbox", {
+			name: "fileNameRule",
+		});
+		const presetButtons = new Map(
+			COMBINED_FILE_NAME_PRESETS.map(({ label }) => [
+				label,
+				screen.getByRole<HTMLButtonElement>("button", { name: label }),
+			]),
+		);
+
+		for (const { label } of COMBINED_FILE_NAME_PRESETS) {
+			expect(presetButtons.get(label)?.getAttribute("aria-pressed")).toBe(
+				label === "fileNamePresetOriginal" ? "true" : "false",
+			);
+		}
+		expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
+		expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
+
+		for (const [index, preset] of COMBINED_FILE_NAME_PRESETS.entries()) {
+			await user.click(presetButtons.get(preset.label) as HTMLButtonElement);
+
+			expect(onSettingsChange).toHaveBeenCalledTimes(index + 1);
+			expect(onSettingsChange).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					storagePath: preset.storagePath,
+					fileNameRule: preset.fileNameRule,
+				}),
+			);
+			expect(storagePath.value).toBe(preset.storagePath);
+			expect(fileNameRule.value).toBe(preset.fileNameRule);
+			expect(screen.getByText(preset.preview, { exact: true })).not.toBeNull();
+
+			for (const { label } of COMBINED_FILE_NAME_PRESETS) {
+				expect(presetButtons.get(label)?.getAttribute("aria-pressed")).toBe(
+					label === preset.label ? "true" : "false",
+				);
+			}
+			expect(screen.queryByText("{ext}", { exact: true })).toBeNull();
+			expect(screen.queryByRole("button", { name: /\{ext\}/u })).toBeNull();
+		}
 	});
 
 	it("conditionally removes backup fields when backup upload is disabled", async () => {
@@ -858,7 +1014,14 @@ describe("ImagesSettingsPage", () => {
 			<Harness
 				overlayRoot={overlayRoot}
 				initialSettings={settings({
-					uploadFormats: { jpg: true, png: false, webp: false, gif: false },
+					uploadFormats: {
+						webp: false,
+						png: false,
+						jpg: true,
+						jpeg: false,
+						jfif: false,
+						gif: false,
+					},
 				})}
 			/>,
 		);
@@ -963,7 +1126,7 @@ describe("ImagesSettingsPage", () => {
 		await user.clear(screen.getByRole("textbox", { name: "fileNameRule" }));
 		await user.type(
 			screen.getByRole("textbox", { name: "fileNameRule" }),
-			"changed/{md5}.{ext}",
+			"changed/{md5}",
 		);
 		expect(screen.getAllByRole("status")[0]?.textContent).toBe(
 			"uploadVerificationStale",
@@ -1001,6 +1164,42 @@ describe("ImagesSettingsPage", () => {
 		expect(backdrop).not.toBeNull();
 		await user.click(backdrop as HTMLButtonElement);
 		await waitFor(() => expect(document.activeElement).toBe(trigger));
+		overlayRoot.remove();
+	});
+
+	it("invalidates completed verification when an exact upload extension changes", async () => {
+		const overlayRoot = document.createElement("div");
+		document.body.append(overlayRoot);
+		const user = userEvent.setup();
+		render(
+			<Harness
+				overlayRoot={overlayRoot}
+				uploadVerificationPort={{
+					verifyUpload: async () => ({
+						path: "verification/easymde.ico",
+						url: "https://images.example.test/verification/easymde.ico",
+					}),
+				}}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("button", { name: "verifyPrimaryUpload" }),
+		);
+		await within(overlayRoot).findByRole("dialog", {
+			name: "uploadVerificationSucceeded",
+		});
+		await user.keyboard("{Escape}");
+		await waitFor(() =>
+			expect(screen.getAllByRole("status")[0]?.textContent).toBe(
+				"uploadVerified",
+			),
+		);
+
+		await user.click(screen.getByRole("checkbox", { name: "allowUploadWebp" }));
+		expect(screen.getAllByRole("status")[0]?.textContent).toBe(
+			"uploadVerificationStale",
+		);
 		overlayRoot.remove();
 	});
 
@@ -1048,7 +1247,7 @@ describe("ImagesSettingsPage", () => {
 		await user.clear(screen.getByRole("textbox", { name: "fileNameRule" }));
 		await user.type(
 			screen.getByRole("textbox", { name: "fileNameRule" }),
-			"changed/{uuid}.{ext}",
+			"changed/{uuid}",
 		);
 		await act(async () => {
 			request.resolve({

@@ -11,9 +11,11 @@ Development-only tools such as PHPUnit, PHPCS, WPCS, Playwright, and Node packag
 | dflydev/dot-access-data | v3.0.3 | https://github.com/dflydev/dflydev-dot-access-data.git | MIT | Nested configuration data access used by league/config. | Yes, under vendor/ | vendor/dflydev/dot-access-data |
 | league/commonmark | 2.8.2 | https://github.com/thephpleague/commonmark.git | BSD-3-Clause | Production Markdown and GFM rendering. | Yes, under vendor/ | vendor/league/commonmark |
 | league/config | v1.2.0 | https://github.com/thephpleague/config.git | BSD-3-Clause | Configuration support used by league/commonmark. | Yes, under vendor/ | vendor/league/config |
+| myclabs/php-enum | 1.8.5 | https://github.com/myclabs/php-enum.git | MIT | Enum compatibility dependency required by the Qiniu PHP SDK. | Yes, under vendor/ | vendor/myclabs/php-enum |
 | nette/schema | v1.2.5 | https://github.com/nette/schema.git | BSD-3-Clause, GPL-2.0-only, GPL-3.0-only | Schema validation support used by league/config. | Yes, under vendor/ | vendor/nette/schema |
 | nette/utils | v3.2.10 | https://github.com/nette/utils.git | BSD-3-Clause, GPL-2.0-only, GPL-3.0-only | Utility support used by nette/schema. | Yes, under vendor/ | vendor/nette/utils |
 | psr/event-dispatcher | 1.0.0 | https://github.com/php-fig/event-dispatcher.git | MIT | Event dispatcher interfaces used by league/commonmark. | Yes, under vendor/ | vendor/psr/event-dispatcher |
+| qiniu/php-sdk | v7.14.0 | https://github.com/qiniu/php-sdk.git | MIT | Official Qiniu Kodo authentication, region model, CRC32, and response protocol support. | Yes, under vendor/ | vendor/qiniu/php-sdk |
 | sabberworm/php-css-parser | v8.9.0 | https://github.com/MyIntervals/PHP-CSS-Parser.git | MIT | Custom CSS parsing, validation, and selector scoping. | Yes, under vendor/ | vendor/sabberworm/php-css-parser |
 | symfony/deprecation-contracts | v2.5.4 | https://github.com/symfony/deprecation-contracts.git | MIT | Deprecation helper contracts used by runtime dependencies. | Yes, under vendor/ | vendor/symfony/deprecation-contracts |
 | symfony/polyfill-php80 | v1.37.0 | https://github.com/symfony/polyfill-php80.git | MIT | PHP 8.0 compatibility polyfills required by runtime dependencies on PHP 7.4. | Yes, under vendor/ | vendor/symfony/polyfill-php80 |

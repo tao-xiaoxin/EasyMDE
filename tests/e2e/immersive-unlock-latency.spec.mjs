@@ -96,6 +96,25 @@ function createPostRequestMonitor(page) {
   };
 }
 
+function isPreviewPostRequest(request) {
+  if ('POST' !== request.method()) return false;
+  const url = new URL(request.url());
+  return /\/wp-json\/easymde\/v1\/preview\/?$/u.test(url.pathname);
+}
+
+test('preview request matcher only accepts the preview POST endpoint', () => {
+  const request = (method, url) => ({ method: () => method, url: () => url });
+  expect(isPreviewPostRequest(
+    request('POST', 'https://example.test/wp-json/easymde/v1/preview')
+  )).toBe(true);
+  expect(isPreviewPostRequest(
+    request('GET', 'https://example.test/wp-json/easymde/v1/preview')
+  )).toBe(false);
+  expect(isPreviewPostRequest(
+    request('POST', 'https://example.test/wp-json/wp/v2/posts')
+  )).toBe(false);
+});
+
 async function waitForLoginFocusQuiescence(page) {
   const focusSettled = await page.evaluate(() => new Promise((resolve) => {
     const quietPeriodMs = 250;
@@ -520,7 +539,12 @@ async function activateUnlock(page, labels, requestMonitor, { doubleClick = fals
 }
 
 async function lockPreview(page, labels) {
+  const refreshResponse = page.waitForResponse((response) => (
+    isPreviewPostRequest(response.request())
+  ));
   await page.getByRole('button', { name: labels.previewLockReadOnly }).click();
+  const response = await refreshResponse;
+  if (!response.ok()) throw new Error('immersive-preview-refresh-failed');
   await expect(page.getByRole('textbox', {
     name: labels.previewEditorLabel
   })).toHaveCount(0);
@@ -529,6 +553,11 @@ async function lockPreview(page, labels) {
   await expect(page.locator(previewSinkSelector)).toHaveAttribute('aria-busy', 'false', {
     timeout: 60_000
   });
+  return {
+    phase: 'lock-preview',
+    responseOk: response.ok(),
+    responseStatus: response.status()
+  };
 }
 
 function expectNoDocumentWrites(samples) {
@@ -633,11 +662,11 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  await lockPreview(page, labels);
+  const lockPhases = [await lockPreview(page, labels)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     samples.push(await activateUnlock(page, labels, requestMonitor));
-    if (index < 4) await lockPreview(page, labels);
+    if (index < 4) lockPhases.push(await lockPreview(page, labels));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
@@ -650,6 +679,7 @@ test('warm short unlock 5-sample maximum stays within budget and does not write 
     pendingFrameSamples: samples.filter(({ clickToPendingFrameMs }) => clickToPendingFrameMs !== null).length,
     sampleMaximumMs,
     samples,
+    lockPhases,
     warmup
   });
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);
@@ -672,7 +702,7 @@ test('warm windowed long unlock 5-sample maximum stays within budget and mounted
   const requestMonitor = createPostRequestMonitor(page);
 
   const warmup = await activateUnlock(page, labels, requestMonitor);
-  await lockPreview(page, labels);
+  const lockPhases = [await lockPreview(page, labels)];
   const samples = [];
   for (let index = 0; index < 5; index += 1) {
     const sample = await activateUnlock(page, labels, requestMonitor);
@@ -680,7 +710,7 @@ test('warm windowed long unlock 5-sample maximum stays within budget and mounted
     const editor = page.getByRole('textbox', { name: labels.previewEditorLabel });
     await expect(editor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(1);
     expect(await editor.locator('[data-easymde-visual-block-id]').count()).toBeLessThanOrEqual(160);
-    if (index < 4) await lockPreview(page, labels);
+    if (index < 4) lockPhases.push(await lockPreview(page, labels));
   }
 
   const sampleMaximumMs = Math.max(...samples.map(({ clickToEditableMs }) => clickToEditableMs));
@@ -695,6 +725,7 @@ test('warm windowed long unlock 5-sample maximum stays within budget and mounted
     paragraphCount,
     warmup,
     samples,
+    lockPhases,
     sampleMaximumMs
   });
   expect(samples.every(({ clickToPendingMutationMs }) => clickToPendingMutationMs <= 100)).toBe(true);

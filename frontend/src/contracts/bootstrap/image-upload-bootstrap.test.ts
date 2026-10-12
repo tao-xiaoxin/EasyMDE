@@ -4,6 +4,7 @@ import { parseImageUploadBootstrap } from './image-upload-bootstrap';
 
 const validBootstrap = {
   actionNonce: 'synthetic-action-nonce',
+  allowedExtensions: ['webp', 'png', 'jpg', 'jpeg', 'jfif', 'gif'],
   allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
   autoUploadPastedImages: true,
   enabled: true,
@@ -121,5 +122,19 @@ describe('parseImageUploadBootstrap', () => {
       ...validBootstrap,
       uploadOwner: undefined
     })).toThrow('image-upload-owner-invalid');
+  });
+
+  it('requires the exact ordered subset of the six extension registry', () => {
+    for (const allowedExtensions of [
+      [],
+      ['png', 'webp'],
+      ['webp', 'png', 'png'],
+      ['webp', 'png', 'jpg', 'jpeg', 'jfif', 'svg'],
+    ]) {
+      expect(() => parseImageUploadBootstrap({
+        ...validBootstrap,
+        allowedExtensions,
+      })).toThrow('image-upload-extensions-invalid');
+    }
   });
 });

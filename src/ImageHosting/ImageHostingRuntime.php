@@ -49,6 +49,9 @@ final class ImageHostingRuntime {
 		if (
 			! in_array( $target, array( 'primary', 'backup' ), true ) ||
 			( 'backup' === $target && empty( $settings['backup']['enabled'] ) ) ||
+			! isset( $settings['storagePath'], $settings['fileNameRule'] ) ||
+			! is_string( $settings['storagePath'] ) ||
+			! is_string( $settings['fileNameRule'] ) ||
 			! isset( $settings['primary'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! isset( $settings['primary']['domain'] ) ||
@@ -63,6 +66,7 @@ final class ImageHostingRuntime {
 		if ( $this->has_duplicate_destinations( $settings ) ) {
 			return $this->duplicate_destination_error();
 		}
+		$operation_id = $this->new_operation_id();
 
 		try {
 			$bytes = call_user_func( $this->validation_image_loader );
@@ -76,6 +80,7 @@ final class ImageHostingRuntime {
 			}
 
 			$path = $this->build_object_key(
+				$settings['storagePath'],
 				$settings['fileNameRule'],
 				$bytes,
 				'easymde-editor-icon.png',
@@ -86,7 +91,18 @@ final class ImageHostingRuntime {
 				return $path;
 			}
 			$provider = $this->create_provider( $settings[ $target ] );
-			$result   = $provider->upload( $bytes, 'image/png', $path );
+			$result   = $this->upload_provider(
+				$provider,
+				$bytes,
+				'image/png',
+				$path,
+				array(
+					'operation_id'  => $operation_id,
+					'role'          => 'verify-' . $target,
+					'attempt'       => 1,
+					'attempt_limit' => 1,
+				)
+			);
 		} catch ( Throwable $throwable ) {
 			return $this->operation_error( 'easymde_image_hosting_validation_upload_failed' );
 		}
@@ -103,12 +119,14 @@ final class ImageHostingRuntime {
 	}
 
 	public function upload( array $settings, array $file ) {
-		if ( ! $this->is_valid_upload_configuration( $settings ) || ! $this->is_valid_file( $file ) ) {
+		if ( ! $this->is_valid_upload_configuration( $settings ) || ! $this->is_valid_file( $file, $settings['behaviors']['uploadFormats'] ) ) {
 			return $this->configuration_error();
 		}
 		if ( $this->has_duplicate_destinations( $settings ) ) {
 			return $this->duplicate_destination_error();
 		}
+		$operation_id = $this->new_operation_id();
+
 		try {
 			$primary_provider = $this->create_provider( $settings['primary'] );
 		} catch ( Throwable $throwable ) {
@@ -125,13 +143,14 @@ final class ImageHostingRuntime {
 		}
 
 		try {
-			$rule = $settings['fileNameRule'];
-			$key  = $this->build_object_key(
-				$rule,
+			$key = $this->build_object_key(
+				$settings['storagePath'],
+				$settings['fileNameRule'],
 				$prepared['bytes'],
 				$file['name'],
 				$prepared['mime_type'],
-				isset( $file['post_id'] ) ? (int) $file['post_id'] : 0
+				isset( $file['post_id'] ) ? (int) $file['post_id'] : 0,
+				$settings['behaviors']['uploadFormats']
 			);
 			if ( is_wp_error( $key ) ) {
 				return $key;
@@ -141,7 +160,9 @@ final class ImageHostingRuntime {
 				$primary_provider,
 				$prepared,
 				$key,
-				$settings['primary']['retryCount']
+				$settings['primary']['retryCount'],
+				'primary',
+				$operation_id
 			);
 			if ( null === $primary_result || ! $primary_result->is_success() || $key !== $primary_result->get_key() ) {
 				return $this->operation_error( 'easymde_image_hosting_primary_upload_failed' );
@@ -155,7 +176,8 @@ final class ImageHostingRuntime {
 						$backup_provider,
 						$prepared,
 						$key,
-						$settings['backup']['retryCount']
+						$settings['backup']['retryCount'],
+						$operation_id
 					);
 				} catch ( Throwable $throwable ) {
 					$backup = $this->operation_error( self::BACKUP_FAILURE_CODE );
@@ -181,8 +203,8 @@ final class ImageHostingRuntime {
 		}
 	}
 
-	private function upload_backup( $provider, array $prepared, $key, $retry_count ) {
-		$result = $this->upload_with_retries( $provider, $prepared, $key, $retry_count );
+	private function upload_backup( $provider, array $prepared, $key, $retry_count, $operation_id = '' ) {
+		$result = $this->upload_with_retries( $provider, $prepared, $key, $retry_count, 'backup', $operation_id );
 		if ( null !== $result && $result->is_success() && $key === $result->get_key() ) {
 			return array( 'status' => 'uploaded' );
 		}
@@ -190,10 +212,21 @@ final class ImageHostingRuntime {
 		return $this->operation_error( self::BACKUP_FAILURE_CODE );
 	}
 
-	private function upload_with_retries( $provider, array $prepared, $key, $retry_count ) {
+	private function upload_with_retries( $provider, array $prepared, $key, $retry_count, $role = 'unknown', $operation_id = '' ) {
 		for ( $attempt = 0; $attempt <= $retry_count; $attempt++ ) {
 			try {
-				$result = $provider->upload( $prepared['bytes'], $prepared['mime_type'], $key );
+				$result = $this->upload_provider(
+					$provider,
+					$prepared['bytes'],
+					$prepared['mime_type'],
+					$key,
+					array(
+						'operation_id'  => $operation_id,
+						'role'          => $role,
+						'attempt'       => $attempt + 1,
+						'attempt_limit' => $retry_count + 1,
+					)
+				);
 			} catch ( Throwable $throwable ) {
 				$result = null;
 			}
@@ -206,20 +239,34 @@ final class ImageHostingRuntime {
 		return null;
 	}
 
-	private function build_object_key( $rule, $bytes, $original_filename, $mime_type, $post_id ) {
+	private function upload_provider( $provider, $bytes, $mime_type, $key, array $context ) {
+		if ( $provider instanceof QiniuKodoProvider ) {
+			return $provider->upload( $bytes, $mime_type, $key, $context );
+		}
+
+		return $provider->upload( $bytes, $mime_type, $key );
+	}
+
+	private function new_operation_id() {
+		return function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : substr( hash( 'sha256', uniqid( '', true ) ), 0, 16 );
+	}
+
+	private function build_object_key( $storage_path, $file_name_rule, $bytes, $original_filename, $mime_type, $post_id, $enabled_extensions = null ) {
 		$now = call_user_func( $this->clock );
 		if ( ! $now instanceof DateTimeImmutable ) {
 			return $this->operation_error( 'easymde_image_hosting_clock_failed' );
 		}
 
 		return $this->key_builder->build(
-			$rule,
+			$storage_path,
+			$file_name_rule,
 			$bytes,
 			$original_filename,
 			$mime_type,
 			$post_id,
 			$now->setTimezone( new DateTimeZone( 'UTC' ) ),
-			call_user_func( $this->uuid_factory )
+			call_user_func( $this->uuid_factory ),
+			$enabled_extensions
 		);
 	}
 
@@ -238,18 +285,12 @@ final class ImageHostingRuntime {
 		}
 
 		if ( 'qiniu-kodo' === $service ) {
-			$clock = $this->clock;
 			return new QiniuKodoProvider(
 				$this->transport,
 				isset( $config['accessKey'] ) ? $config['accessKey'] : '',
 				isset( $config['secretKey'] ) ? $config['secretKey'] : '',
 				isset( $config['bucket'] ) ? $config['bucket'] : '',
-				isset( $config['domain'] ) ? $config['domain'] : '',
-				static function () use ( $clock ) {
-					$now = call_user_func( $clock );
-
-					return $now instanceof DateTimeImmutable ? $now->getTimestamp() : 0;
-				}
+				isset( $config['domain'] ) ? $config['domain'] : ''
 			);
 		}
 
@@ -416,7 +457,7 @@ final class ImageHostingRuntime {
 
 	private function is_valid_upload_configuration( array $settings ) {
 		if (
-			! isset( $settings['primary'], $settings['backup'], $settings['fileNameRule'], $settings['behaviors'] ) ||
+			! isset( $settings['primary'], $settings['backup'], $settings['storagePath'], $settings['fileNameRule'], $settings['behaviors'] ) ||
 			! is_array( $settings['primary'] ) ||
 			! is_array( $settings['backup'] ) ||
 			! is_array( $settings['behaviors'] ) ||
@@ -439,7 +480,9 @@ final class ImageHostingRuntime {
 			is_int( $settings['behaviors']['maxBytes'] ) &&
 			$settings['behaviors']['maxBytes'] > 0 &&
 			$settings['behaviors']['maxBytes'] <= ImageHostProviderSupport::MAX_IMAGE_BYTES &&
-			in_array( $settings['behaviors']['titleDisplay'], array( 'filename', 'none' ), true );
+			in_array( $settings['behaviors']['titleDisplay'], array( 'filename', 'none' ), true ) &&
+			is_array( $settings['behaviors']['uploadFormats'] ?? null ) &&
+			array() !== $settings['behaviors']['uploadFormats'];
 	}
 
 	private function is_valid_public_domain( $value ) {
@@ -459,14 +502,15 @@ final class ImageHostingRuntime {
 			( ! isset( $parts['path'] ) || '' === $parts['path'] || '/' === $parts['path'] );
 	}
 
-	private function is_valid_file( array $file ) {
+	private function is_valid_file( array $file, array $enabled_extensions = array() ) {
 		return isset( $file['name'], $file['type'], $file['tmp_name'] ) &&
 			is_string( $file['name'] ) &&
 			is_string( $file['type'] ) &&
 			is_string( $file['tmp_name'] ) &&
 			is_file( $file['tmp_name'] ) &&
 			is_readable( $file['tmp_name'] ) &&
-			in_array( $file['type'], ImageHostProviderSupport::ALLOWED_MIME_TYPES, true );
+			in_array( $file['type'], ImageHostProviderSupport::ALLOWED_MIME_TYPES, true ) &&
+			false !== ImageUploadExtensionPolicy::verify( $file['name'], $file['type'], $enabled_extensions );
 	}
 
 	private function configuration_error() {

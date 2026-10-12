@@ -69,6 +69,50 @@ final class RemoteImageDownloaderTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_download_preserves_a_verified_jpeg_alias_and_derives_jpg_only_when_url_is_extensionless() {
+		$jpeg = base64_decode( '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9oADAMBAAIAAwAAABAf/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPxB//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPxB//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxB//9k=', true );
+
+		foreach ( array( 'https://8.8.8.8/path/photo.jpeg' => 'photo.jpeg', 'https://8.8.8.8/path/photo' => 'photo.jpg' ) as $url => $expected_name ) {
+			$client   = new RemoteImageDownloaderFakePinnedClient( $jpeg );
+			$download = new RemoteImageDownloader(
+				$client,
+				static function () {
+					return array( '8.8.8.8' );
+				}
+			);
+			$file = $download->download( $url, 1024 );
+
+			try {
+				$this->assertNotWPError( $file, $url );
+				$this->assertSame( $expected_name, $file['name'], $url );
+			} finally {
+				if ( is_array( $file ) && is_file( $file['tmp_name'] ) ) {
+					wp_delete_file( $file['tmp_name'] );
+				}
+			}
+		}
+	}
+
+	public function test_download_rejects_a_supplied_mismatched_or_unknown_extension_instead_of_relabeling_it() {
+		$png = base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', true );
+
+		foreach ( array( 'https://8.8.8.8/path/photo.jpeg', 'https://8.8.8.8/path/photo.svg' ) as $url ) {
+			$client   = new RemoteImageDownloaderFakePinnedClient( $png );
+			$download = new RemoteImageDownloader(
+				$client,
+				static function () {
+					return array( '8.8.8.8' );
+				}
+			);
+			$result = $download->download( $url, 1024 );
+			$path   = $client->requests[0][1]['filename'];
+
+			$this->assertWPError( $result, $url );
+			$this->assertSame( 'easymde_image_hosting_import_unsupported_media_type', $result->get_error_code(), $url );
+			$this->assertFalse( is_file( $path ), $url );
+		}
+	}
+
 	public function test_download_rejects_a_private_aaaa_when_an_a_record_is_public_before_requesting() {
 		$client   = new RemoteImageDownloaderFakePinnedClient();
 		$download = new RemoteImageDownloader(

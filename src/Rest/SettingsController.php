@@ -2,7 +2,10 @@
 
 namespace EasyMDE\Rest;
 
+use EasyMDE\ImageHosting\ImageHostException;
 use EasyMDE\ImageHosting\ImageHostProviderSupport;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
+use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\SettingsCenterRepository;
 use WP_Error;
@@ -57,11 +60,20 @@ final class SettingsController {
 	public function handle_get_request( WP_REST_Request $request ) {
 		unset( $request );
 
-		return rest_ensure_response( $this->settings_repository->get_settings_response() );
+		try {
+			return rest_ensure_response( $this->settings_repository->get_settings_response() );
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			return $this->settings_configuration_error();
+		}
 	}
 
 	public function handle_update_request( WP_REST_Request $request ) {
 		$settings = $request->get_param( 'settings' );
+		$legacy   = $this->legacy_settings_payload_kind( $settings );
 		$valid    = $this->validate_settings_payload( $settings );
 		if ( true !== $valid ) {
 			return $valid;
@@ -76,9 +88,20 @@ final class SettingsController {
 			return $valid_reset;
 		}
 
-		$result = $this->settings_repository->update_settings_response( $settings, $reset );
+		try {
+			$result = $this->settings_repository->update_settings_response( $settings, $reset );
+		} catch ( \RuntimeException $exception ) {
+			if ( SettingsCenterRepository::CONFIGURATION_ERROR_CODE !== $exception->getMessage() ) {
+				throw $exception;
+			}
+
+			return $this->settings_configuration_error();
+		}
 		if ( is_wp_error( $result ) ) {
 			return $result;
+		}
+		if ( false !== $legacy ) {
+			$result = $this->project_legacy_settings_response( $result, 'split' === $legacy );
 		}
 
 		return rest_ensure_response( $result );
@@ -123,11 +146,12 @@ final class SettingsController {
 		if ( ! is_array( $value ) ) {
 			return $this->invalid_payload_error();
 		}
+		$value = $this->normalize_legacy_image_payload( $value );
 
 		$shapes = array(
 			'settings'  => array( 'revision', 'general', 'images', 'markdown', 'shortcuts' ),
 			'general'   => array( 'interfaceLanguage', 'editingMode', 'showLineNumbers', 'statusBarMode', 'autoSave', 'autoSaveInterval', 'syncScroll', 'publishVisibility', 'openPreviewAfterPublish', 'applyEditorThemeToFrontend', 'showPublishedCodeCopyButton', 'summaryMode' ),
-			'images'    => array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
+			'images'    => array( 'imageHostingEnabled', 'wechatPngExportEnabled', 'service', 'endpoint', 'bucket', 'domain', 'accessKey', 'secretKey', 'storagePath', 'fileNameRule', 'uploadRetryCount', 'backupEnabled', 'backupService', 'backupEndpoint', 'backupBucket', 'backupDomain', 'backupAccessKey', 'backupSecretKey', 'compressImages', 'autoUploadPastedImages', 'remoteImageUploadMode', 'maxImageSizeMb', 'uploadFormats', 'titleDisplay' ),
 			'markdown'  => array( 'wordWrap', 'githubFlavor', 'smartPunctuation', 'tableAlignment', 'codeLineNumbers', 'pasteAsMarkdown' ),
 			'shortcuts' => array( 'values' ),
 		);
@@ -158,6 +182,7 @@ final class SettingsController {
 				'domain'                => 255,
 				'accessKey'             => 255,
 				'secretKey'             => 255,
+				'storagePath'           => 160,
 				'fileNameRule'          => 160,
 				'backupService'         => 32,
 				'backupEndpoint'        => 255,
@@ -206,7 +231,7 @@ final class SettingsController {
 			return $this->invalid_payload_error();
 		}
 
-		if ( ! is_array( $value['images']['uploadFormats'] ) || ! $this->has_exact_keys( $value['images']['uploadFormats'], array( 'jpg', 'png', 'webp', 'gif' ) ) ) {
+		if ( ! is_array( $value['images']['uploadFormats'] ) || ! $this->has_exact_keys( $value['images']['uploadFormats'], ImageUploadExtensionPolicy::extensions() ) ) {
 			return $this->invalid_payload_error();
 		}
 		foreach ( $value['images']['uploadFormats'] as $enabled ) {
@@ -272,7 +297,7 @@ final class SettingsController {
 		) {
 			return $this->invalid_payload_error();
 		}
-		if ( ! $this->is_valid_file_name_rule( $value['images']['fileNameRule'] ) ) {
+		if ( ! $this->is_valid_file_name_rule( $value['images']['storagePath'], $value['images']['fileNameRule'] ) ) {
 			return $this->invalid_payload_error();
 		}
 
@@ -328,25 +353,108 @@ final class SettingsController {
 		return false;
 	}
 
-	private function is_valid_file_name_rule( $rule ) {
-		if ( ! is_string( $rule ) || '' === $rule || strlen( $rule ) > 160 || '/' === $rule[0] || '/' === substr( $rule, -1 ) || false !== strpos( $rule, '\\' ) || false !== strpos( $rule, '..' ) || false !== strpos( $rule, '//' ) || preg_match( '/[\x00-\x1F\x7F?#]/', $rule ) ) {
+	private function is_valid_file_name_rule( $storage_path, $file_name_rule ) {
+		try {
+			( new ObjectKeyBuilder() )->validate( $storage_path, $file_name_rule );
+
+			return true;
+		} catch ( ImageHostException $exception ) {
 			return false;
 		}
+	}
 
-		if ( ! preg_match_all( '/\{([A-Za-z0-9_]+)\}/', $rule, $matches ) || ! in_array( 'ext', $matches[1], true ) ) {
-			return false;
+	private function normalize_legacy_image_payload( array $value ) {
+		if ( ! isset( $value['images'] ) || ! is_array( $value['images'] ) ) {
+			return $value;
+		}
+		$has_storage_path = array_key_exists( 'storagePath', $value['images'] );
+		$legacy_formats   = isset( $value['images']['uploadFormats'] ) && $this->is_legacy_upload_formats( $value['images']['uploadFormats'] );
+		if ( $has_storage_path && ! $legacy_formats ) {
+			return $value;
 		}
 
-		$allowed = array( 'year', 'month', 'day', 'date', 'time', 'post_id', 'md5', 'uuid', 'name', 'ext' );
-		foreach ( $matches[1] as $variable ) {
-			if ( ! in_array( $variable, $allowed, true ) ) {
+		if ( $legacy_formats ) {
+			$formats = ImageUploadExtensionPolicy::normalize( $value['images']['uploadFormats'] );
+			if ( is_array( $formats ) ) {
+				$value['images']['uploadFormats'] = $formats;
+			}
+		}
+		if ( $has_storage_path ) {
+			if ( ! array_key_exists( 'fileNameRule', $value['images'] ) || ! is_string( $value['images']['storagePath'] ) || ! is_string( $value['images']['fileNameRule'] ) || false === strpos( $value['images']['fileNameRule'], '{ext}' ) ) {
+				return $value;
+			}
+			$legacy_template = ( new ObjectKeyBuilder() )->combine( $value['images']['storagePath'], $value['images']['fileNameRule'] );
+			$split           = ObjectKeyBuilder::split_legacy_template( $legacy_template );
+			if ( is_array( $split ) && $split[0] === $value['images']['storagePath'] ) {
+				$value['images']['fileNameRule'] = $split[1];
+			}
+
+			return $value;
+		}
+		if ( ! array_key_exists( 'fileNameRule', $value['images'] ) ) {
+			return $value;
+		}
+
+		try {
+			( new ObjectKeyBuilder() )->validate_legacy_template( $value['images']['fileNameRule'] );
+		} catch ( ImageHostException $exception ) {
+			return $value;
+		}
+
+		$split = ObjectKeyBuilder::split_legacy_template( $value['images']['fileNameRule'] );
+		if ( is_array( $split ) ) {
+			$value['images']['storagePath']  = $split[0];
+			$value['images']['fileNameRule'] = $split[1];
+		}
+
+		return $value;
+	}
+
+	private function legacy_settings_payload_kind( $value ) {
+		if ( ! is_array( $value ) || ! isset( $value['images'] ) || ! is_array( $value['images'] ) ) {
+			return false;
+		}
+		if ( ! array_key_exists( 'storagePath', $value['images'] ) ) {
+			return 'combined';
+		}
+
+		return isset( $value['images']['uploadFormats'] ) && $this->is_legacy_upload_formats( $value['images']['uploadFormats'] )
+			? 'split'
+			: false;
+	}
+
+	private function project_legacy_settings_response( array $response, $preserve_storage_path = false ) {
+		$settings                = $response['settings'];
+		$images                  = $settings['images'];
+		$images['fileNameRule']  = $preserve_storage_path
+			? $images['fileNameRule'] . '.{ext}'
+			: ( new ObjectKeyBuilder() )->combine( $images['storagePath'], $images['fileNameRule'] ) . '.{ext}';
+		$images['uploadFormats'] = array(
+			'jpg'  => ! empty( $images['uploadFormats']['jpg'] ),
+			'png'  => ! empty( $images['uploadFormats']['png'] ),
+			'webp' => ! empty( $images['uploadFormats']['webp'] ),
+			'gif'  => ! empty( $images['uploadFormats']['gif'] ),
+		);
+		if ( ! $preserve_storage_path ) {
+			unset( $images['storagePath'] );
+		}
+		$settings['images']   = $images;
+		$response['settings'] = $settings;
+
+		return $response;
+	}
+
+	private function is_legacy_upload_formats( $formats ) {
+		if ( ! is_array( $formats ) || ! $this->has_exact_keys( $formats, array( 'jpg', 'png', 'webp', 'gif' ) ) ) {
+			return false;
+		}
+		foreach ( $formats as $enabled ) {
+			if ( ! is_bool( $enabled ) ) {
 				return false;
 			}
 		}
 
-		$literal = preg_replace( '/\{[A-Za-z0-9_]+\}/', '', $rule );
-
-		return is_string( $literal ) && 1 === preg_match( '/^[A-Za-z0-9._\/-]*$/D', $literal ) && false === strpos( $literal, '{' ) && false === strpos( $literal, '}' );
+		return true;
 	}
 
 	private function has_exact_keys( array $value, array $expected ) {
@@ -368,6 +476,14 @@ final class SettingsController {
 			'easymde_settings_invalid_payload',
 			__( 'The settings payload is invalid.', 'easymde' ),
 			array( 'status' => 400 )
+		);
+	}
+
+	private function settings_configuration_error() {
+		return new WP_Error(
+			SettingsCenterRepository::CONFIGURATION_ERROR_CODE,
+			__( 'The settings configuration is unavailable.', 'easymde' ),
+			array( 'status' => 500 )
 		);
 	}
 }

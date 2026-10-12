@@ -7,7 +7,8 @@
     "php": ">=7.4",
     "ext-dom": "*",
     "league/commonmark": "^2.6",
-    "sabberworm/php-css-parser": "^8.9"
+    "sabberworm/php-css-parser": "^8.9",
+    "qiniu/php-sdk": "^7.14"
   },
   "config": {
     "platform": {

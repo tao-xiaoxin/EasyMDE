@@ -5,6 +5,8 @@ namespace EasyMDE\Rest;
 use DateTimeImmutable;
 use DateTimeZone;
 use EasyMDE\ImageHosting\ImageHostException;
+use EasyMDE\ImageHosting\ImageUploadExtensionPolicy;
+use EasyMDE\ImageHosting\JfifMimeScope;
 use EasyMDE\ImageHosting\ObjectKeyBuilder;
 use EasyMDE\Support\Capabilities;
 use EasyMDE\Support\SettingsCenterRepository;
@@ -114,18 +116,23 @@ final class MediaController {
 		}
 		if (
 			! is_array( $media_settings ) ||
-			! isset( $media_settings['file_name_rule'], $media_settings['max_bytes'], $media_settings['mime_types'], $media_settings['title_display'] ) ||
+			! isset( $media_settings['storage_path'], $media_settings['file_name_rule'], $media_settings['max_bytes'], $media_settings['mime_types'], $media_settings['allowed_extensions'], $media_settings['title_display'] ) ||
+			! is_string( $media_settings['storage_path'] ) ||
 			! is_string( $media_settings['file_name_rule'] ) ||
 			! is_int( $media_settings['max_bytes'] ) ||
 			$media_settings['max_bytes'] <= 0 ||
 			! is_array( $media_settings['mime_types'] ) ||
+			! is_array( $media_settings['allowed_extensions'] ) ||
 			! is_string( $media_settings['title_display'] )
 		) {
 			return $this->filename_rule_error();
 		}
 
 		$mime_type = $this->verified_mime_type( $file );
-		if ( ! in_array( $mime_type, $media_settings['mime_types'], true ) ) {
+		if (
+			! in_array( $mime_type, $media_settings['mime_types'], true ) ||
+			false === ImageUploadExtensionPolicy::verify( $original_filename, $mime_type, $media_settings['allowed_extensions'] )
+		) {
 			return new WP_Error(
 				'easymde_unsupported_media_type',
 				__( 'This image format is not allowed by the current EasyMDE settings.', 'easymde' ),
@@ -163,23 +170,32 @@ final class MediaController {
 			if ( ! $now instanceof DateTimeImmutable ) {
 				throw new ImageHostException( 'easymde_media_clock_invalid' );
 			}
-			$key           = $this->key_builder->build(
+			$key                = $this->key_builder->build(
+				$media_settings['storage_path'],
 				$media_settings['file_name_rule'],
 				$bytes,
 				$original_filename,
 				$mime_type,
 				absint( $request->get_param( 'post_id' ) ),
 				$now->setTimezone( new DateTimeZone( 'UTC' ) ),
-				call_user_func( $this->uuid_factory )
+				call_user_func( $this->uuid_factory ),
+				$media_settings['allowed_extensions']
 			);
-			$scope         = new MediaUploadPathScope( $file['tmp_name'], $key );
-			$file          = $scope->tag_file( $file );
-			$description   = $this->attachment_description( $original_filename );
-			$attachment_id = $scope->run(
-				function () use ( $file, $description, $request ) {
-					return $this->sideload_image( $file, absint( $request->get_param( 'post_id' ) ), $description );
-				}
-			);
+				$scope          = new MediaUploadPathScope( $file['tmp_name'], $key );
+				$file           = $scope->tag_file( $file );
+				$description    = $this->attachment_description( $original_filename );
+				$generated_name = basename( str_replace( '\\', '/', $key ) );
+				$attachment_id  = $scope->run(
+					function () use ( $file, $generated_name, $description, $request ) {
+						return JfifMimeScope::run(
+							$file['tmp_name'],
+							$generated_name,
+							function () use ( $file, $description, $request ) {
+								return $this->sideload_image( $file, absint( $request->get_param( 'post_id' ) ), $description );
+							}
+						);
+					}
+				);
 		} catch ( ImageHostException $exception ) {
 			return $this->filename_rule_error();
 		} catch ( Throwable $throwable ) {
@@ -226,9 +242,14 @@ final class MediaController {
 	}
 
 	private function is_allowed_image_file( array $file ) {
-		$type = $this->verified_mime_type( $file );
+		$type     = $this->verified_mime_type( $file );
+		$settings = $this->settings_repository->get_media_upload_settings();
 
-		return in_array( $type, $this->settings_repository->get_allowed_image_mime_types(), true );
+		return in_array( $type, $settings['mime_types'], true ) && false !== ImageUploadExtensionPolicy::verify(
+			isset( $file['name'] ) ? $file['name'] : '',
+			$type,
+			$settings['allowed_extensions']
+		);
 	}
 
 	private function is_too_large( array $file, $max_size = null ) {
@@ -285,7 +306,13 @@ final class MediaController {
 	}
 
 	private function verified_mime_type( array $file ) {
-		$checked = wp_check_filetype_and_ext( $file['tmp_name'], $file['name'] );
+		$checked = JfifMimeScope::run(
+			$file['tmp_name'],
+			$file['name'],
+			static function () use ( $file ) {
+				return wp_check_filetype_and_ext( $file['tmp_name'], $file['name'] );
+			}
+		);
 
 		return isset( $checked['type'] ) && is_string( $checked['type'] ) ? $checked['type'] : '';
 	}

@@ -232,7 +232,7 @@ final class SettingsPageTest extends WP_UnitTestCase
 
         $bootstrap = $method->invoke($settings_page);
 
-        $this->assertSame(2, $bootstrap['schemaVersion']);
+        $this->assertSame(4, $bootstrap['schemaVersion']);
         $this->assertSame(
             admin_url('options-general.php'),
             $bootstrap['closeUrl']

@@ -53,7 +53,7 @@ function bootstrap({
 		},
 	};
 	return {
-		schemaVersion: 2,
+		schemaVersion: 4,
 		closeUrl: "/wp-admin/options-general.php",
 		uploadLimits: { systemMaxBytes: 5 * 1024 * 1024 },
 		api: {
@@ -630,22 +630,26 @@ describe("SettingsCenterRoot global search", () => {
 		const user = userEvent.setup();
 		render(<SettingsCenterRoot bootstrap={bootstrap()} />);
 		const formats = [
-			"allowUploadJpg",
-			"allowUploadPng",
 			"allowUploadWebp",
+			"allowUploadPng",
+			"allowUploadJpg",
+			"allowUploadJpeg",
+			"allowUploadJfif",
 			"allowUploadGif",
 		];
 		const controls = formats.map((name) =>
 			screen.getByRole<HTMLInputElement>("checkbox", { name }),
 		);
-		const [jpg, png, webp, gif] = controls;
-		if (!jpg || !png || !webp || !gif)
+		const [webp, png, jpg, jpeg, jfif, gif] = controls;
+		if (!jpg || !png || !webp || !jpeg || !jfif || !gif)
 			throw new Error("settings-upload-format-controls-missing");
 
 		expect(controls.every((control) => !control.disabled)).toBe(true);
-		await user.click(jpg);
-		await user.click(png);
 		await user.click(webp);
+		await user.click(png);
+		await user.click(jpg);
+		await user.click(jpeg);
+		await user.click(jfif);
 
 		expect(gif.checked).toBe(true);
 		expect(gif.disabled).toBe(false);
@@ -654,9 +658,8 @@ describe("SettingsCenterRoot global search", () => {
 		expect(screen.getByRole("alert").textContent).toContain(
 			"uploadFormatRequired",
 		);
-		await user.click(
-			screen.getByRole("button", { name: "closeImageFeedback" }),
-		);
+		await user.click(webp);
+		expect(webp.checked).toBe(true);
 		expect(screen.queryByRole("alert")).toBeNull();
 		expect(
 			screen
@@ -1050,8 +1053,7 @@ describe("SettingsCenterRoot images section", () => {
 		await waitFor(() =>
 			expect(screen.getByText("settingsSaved")).not.toBeNull(),
 		);
-		if (!savedPayload.current)
-			throw new Error("settings-save-payload-missing");
+		if (!savedPayload.current) throw new Error("settings-save-payload-missing");
 		expect(
 			(savedPayload.current.settings as SettingsCenterSettings).images
 				.imageHostingEnabled,
@@ -1062,7 +1064,8 @@ describe("SettingsCenterRoot images section", () => {
 	it("edits the disabled filename rule without requests and saves false with the rule", async () => {
 		const user = userEvent.setup();
 		const initialBootstrap = bootstrap({ imageHostingEnabled: false });
-		const editedFileNameRule = "disabled/{date}/{uuid}.{ext}";
+		const editedStoragePath = "disabled/{date}";
+		const editedFileNameRule = "{uuid}";
 		const savedPayload = { current: null as Record<string, unknown> | null };
 		const savedSettings = {
 			...initialBootstrap.settings,
@@ -1070,6 +1073,7 @@ describe("SettingsCenterRoot images section", () => {
 			images: {
 				...initialBootstrap.settings.images,
 				imageHostingEnabled: false,
+				storagePath: editedStoragePath,
 				fileNameRule: editedFileNameRule,
 			},
 		};
@@ -1094,9 +1098,13 @@ describe("SettingsCenterRoot images section", () => {
 
 		try {
 			render(<SettingsCenterRoot bootstrap={initialBootstrap} />);
+			const storagePath = screen.getByRole<HTMLInputElement>("textbox", {
+				name: "storagePath",
+			});
 			const rule = screen.getByRole<HTMLInputElement>("textbox", {
 				name: "fileNameRule",
 			});
+			fireEvent.change(storagePath, { target: { value: editedStoragePath } });
 			fireEvent.change(rule, { target: { value: editedFileNameRule } });
 			expect(fetch).not.toHaveBeenCalled();
 
@@ -1107,6 +1115,7 @@ describe("SettingsCenterRoot images section", () => {
 			await user.click(toggle);
 			expect(toggle.getAttribute("aria-checked")).toBe("false");
 			expect(rule.value).toBe(editedFileNameRule);
+			expect(storagePath.value).toBe(editedStoragePath);
 			expect(fetch).not.toHaveBeenCalled();
 
 			const save = screen.getByRole<HTMLButtonElement>("button", {
@@ -1735,7 +1744,7 @@ describe("SettingsCenterRoot Transfer section", () => {
 				schemaVersion: number;
 				settings: SettingsCenterSettings;
 			};
-			expect(exported.schemaVersion).toBe(10);
+		expect(exported.schemaVersion).toBe(12);
 			expect(exported.settings.images.wechatPngExportEnabled).toBe(false);
 			expect(exported.settings.general).not.toHaveProperty("autoFocusEditor");
 			expect(exported.settings.images.accessKey).toBe("");
@@ -2239,7 +2248,9 @@ describe("SettingsCenterRoot persistence", () => {
 					responseControl.resolve = resolve;
 				}),
 		);
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");
@@ -2283,7 +2294,9 @@ describe("SettingsCenterRoot persistence", () => {
 				},
 			}),
 		} as Response);
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");
@@ -2535,7 +2548,7 @@ describe("SettingsCenterRoot persistence", () => {
 		fetch.mockRestore();
 	});
 
-	it("does not revive a pre-save verification after the file-name rule is saved and then restored in the draft", async () => {
+	it("does not revive a pre-save verification after the storage path is saved and then restored in the draft", async () => {
 		const user = userEvent.setup();
 		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
 		const fetch = vi
@@ -2563,7 +2576,8 @@ describe("SettingsCenterRoot persistence", () => {
 							revision: configuredBootstrap.settings.revision + 1,
 							images: {
 								...configuredBootstrap.settings.images,
-								fileNameRule: "changed/{md5}.{ext}",
+								storagePath: "changed",
+							fileNameRule: "{md5}",
 							},
 						},
 						credentialStatus: {
@@ -2595,11 +2609,12 @@ describe("SettingsCenterRoot persistence", () => {
 			).toEqual(["uploadVerified", "uploadVerified"]),
 		);
 
-		const rule = images.getByRole<HTMLInputElement>("textbox", {
-			name: "fileNameRule",
+		const storagePath = images.getByRole<HTMLInputElement>("textbox", {
+			name: "storagePath",
 		});
-		await user.clear(rule);
-		await user.type(rule, "changed/{md5}.{ext}");
+		await user.clear(storagePath);
+		await user.type(storagePath, "changed");
+
 		await user.click(screen.getByRole("button", { name: "saveSettings" }));
 		await waitFor(() =>
 			expect(
@@ -2608,13 +2623,181 @@ describe("SettingsCenterRoot persistence", () => {
 					?.getAttribute("data-save-status"),
 			).toBe("saved"),
 		);
-		await user.clear(rule);
-		await user.type(rule, SETTINGS_CENTER_TEST_SETTINGS.images.fileNameRule);
+		await user.clear(storagePath);
+		await user.type(
+			storagePath,
+			SETTINGS_CENTER_TEST_SETTINGS.images.storagePath,
+		);
 
 		expect(
 			images.getAllByRole("status").map((status) => status.textContent),
 		).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
 		fetch.mockRestore();
+	});
+
+	it("does not revive either verification after upload formats are saved and then restored", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const savedUploadFormats = {
+			...configuredBootstrap.settings.images.uploadFormats,
+			webp: false,
+		};
+		const savedSettings = {
+			...configuredBootstrap.settings,
+			revision: configuredBootstrap.settings.revision + 1,
+			images: {
+				...configuredBootstrap.settings.images,
+				uploadFormats: savedUploadFormats,
+			},
+		};
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: savedSettings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		try {
+			const { container } = render(
+				<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+			);
+			const imagesSection = container.querySelector(
+				'[data-settings-section="images"]',
+			);
+			if (!(imagesSection instanceof HTMLElement))
+				throw new Error("settings-center-images-section-missing");
+			const images = within(imagesSection);
+
+			await user.click(
+				images.getByRole("button", { name: "verifyPrimaryUpload" }),
+			);
+			await user.click(
+				images.getByRole("button", { name: "verifyBackupUpload" }),
+			);
+			await waitFor(() =>
+				expect(
+					images.getAllByRole("status").map((status) => status.textContent),
+				).toEqual(["uploadVerified", "uploadVerified"]),
+			);
+
+			const webp = images.getByRole<HTMLInputElement>("checkbox", {
+				name: "allowUploadWebp",
+			});
+			await user.click(webp);
+			await user.click(screen.getByRole("button", { name: "saveSettings" }));
+			await waitFor(() =>
+				expect(
+					container
+						.querySelector("[data-save-status]")
+						?.getAttribute("data-save-status"),
+				).toBe("saved"),
+			);
+
+			await user.click(webp);
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerificationStale", "uploadVerificationStale"]);
+		} finally {
+			fetch.mockRestore();
+		}
+	});
+
+	it("does not invalidate verified uploads for an equal-value new upload format map", async () => {
+		const user = userEvent.setup();
+		const configuredBootstrap = bootstrap({ configuredImageDomains: true });
+		const fetch = vi
+			.spyOn(window, "fetch")
+			.mockImplementation(async (input, init) => {
+				if (String(input).endsWith("/image-hosting/verification")) {
+					const request = JSON.parse(String(init?.body)) as {
+						target: "primary" | "backup";
+					};
+					return {
+						ok: true,
+						json: async () => ({
+							path: "20260824/00000000-0000-4000-8000-000000000000.png",
+							status: "uploaded",
+							target: request.target,
+							url: "https://img.example.test/20260824/00000000-0000-4000-8000-000000000000.png",
+						}),
+					} as Response;
+				}
+				return {
+					ok: true,
+					json: async () => ({
+						settings: configuredBootstrap.settings,
+						credentialStatus: {
+							primaryConfigured: false,
+							backupConfigured: false,
+						},
+					}),
+				} as Response;
+			});
+		try {
+			const { container } = render(
+				<SettingsCenterRoot bootstrap={configuredBootstrap} />,
+			);
+			const imagesSection = container.querySelector(
+				'[data-settings-section="images"]',
+			);
+			if (!(imagesSection instanceof HTMLElement))
+				throw new Error("settings-center-images-section-missing");
+			const images = within(imagesSection);
+
+			await user.click(
+				images.getByRole("button", { name: "verifyPrimaryUpload" }),
+			);
+			await user.click(
+				images.getByRole("button", { name: "verifyBackupUpload" }),
+			);
+			await waitFor(() =>
+				expect(
+					images.getAllByRole("status").map((status) => status.textContent),
+				).toEqual(["uploadVerified", "uploadVerified"]),
+			);
+
+			const webp = images.getByRole<HTMLInputElement>("checkbox", {
+				name: "allowUploadWebp",
+			});
+			await user.click(webp);
+			await user.click(webp);
+			await user.click(screen.getByRole("switch", { name: "showLineNumbers" }));
+			await user.click(screen.getByRole("button", { name: "saveSettings" }));
+			await waitFor(() =>
+				expect(
+					container
+						.querySelector("[data-save-status]")
+						?.getAttribute("data-save-status"),
+				).toBe("saved"),
+			);
+
+			expect(
+				images.getAllByRole("status").map((status) => status.textContent),
+			).toEqual(["uploadVerified", "uploadVerified"]);
+		} finally {
+			fetch.mockRestore();
+		}
 	});
 
 	it("clears configured credential presentation after a reset is saved", async () => {
@@ -2800,8 +2983,8 @@ describe("SettingsCenterRoot persistence", () => {
 		await user.click(reload);
 		await waitFor(() =>
 			expect(
-					screen
-						.getByRole("switch", { name: "showLineNumbers" })
+				screen
+					.getByRole("switch", { name: "showLineNumbers" })
 					.getAttribute("aria-checked"),
 			).toBe("true"),
 		);
@@ -2889,7 +3072,9 @@ describe("SettingsCenterRoot persistence", () => {
 		const fetch = vi
 			.spyOn(window, "fetch")
 			.mockRejectedValue(new Error("settings-save-failed"));
-		const { container } = render(<SettingsCenterRoot bootstrap={bootstrap()} />);
+		const { container } = render(
+			<SettingsCenterRoot bootstrap={bootstrap()} />,
+		);
 		const overlayRoot = container.querySelector("[data-settings-overlay-root]");
 		if (!(overlayRoot instanceof HTMLElement))
 			throw new Error("settings-center-overlay-missing");

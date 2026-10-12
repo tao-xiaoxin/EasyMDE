@@ -2919,14 +2919,14 @@ msgstr ""
 msgid "Unable to copy code. Try again."
 msgstr ""
 
-#: src/ImageHosting/ImageHostingRuntime.php:489
+#: src/ImageHosting/ImageHostingRuntime.php:523
 #: src/Rest/ImageHostingController.php:911
 #: src/Support/SettingsCenterRepository.php:761
 msgid ""
 "The primary and backup image hosts must use different storage destinations."
 msgstr ""
 
-#: src/ImageHosting/ImageHostingRuntime.php:505
+#: src/ImageHosting/ImageHostingRuntime.php:539
 msgid "The image-hosting operation could not be completed."
 msgstr ""
 

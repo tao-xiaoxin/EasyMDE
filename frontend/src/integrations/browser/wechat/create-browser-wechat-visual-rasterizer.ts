@@ -1,6 +1,5 @@
 import type { WechatPngEncodingPort } from '../../../contracts/ports/wechat-png-encoding-port';
 import {
-  type WechatVisualRasterizationKind,
   type WechatVisualInlineLayout,
   type WechatVisualRasterizationMermaidLayoutRole,
   type WechatVisualRasterizationRequest,
@@ -8,6 +7,13 @@ import {
   type WechatVisualRasterizationYield,
   WechatVisualRasterizationError,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import { splitCssList } from './wechat-css-list';
+import {
+  beginWechatTiming,
+  runWechatSyncTiming,
+  type WechatTimingMetadata,
+  type WechatTimingMode,
+} from './wechat-timing';
 
 function w3cNamespace(path: string): string {
   return ['http:', '', 'www.w3.org', path].join('/');
@@ -130,16 +136,6 @@ type CaptureGeometry = Readonly<{
   width: number;
 }>;
 
-type WechatTimingMode = 'async' | 'sync';
-type WechatTimingTerminal = 'error' | 'success';
-type WechatTimingMetadata = Readonly<{
-  kind?: WechatVisualRasterizationKind;
-  mode: WechatTimingMode;
-}>;
-type WechatTimingHandle = Readonly<{
-  finish: (terminal: WechatTimingTerminal) => void;
-}>;
-
 const WECHAT_RASTERIZER_TIMING_NAMES = {
   canvasDrawEncode: 'easymde.wechat.rasterizer.canvas-draw-encode',
   decodeWait: 'easymde.wechat.rasterizer.decode-wait',
@@ -149,70 +145,6 @@ const WECHAT_RASTERIZER_TIMING_NAMES = {
   serializeSvg: 'easymde.wechat.rasterizer.serialize-svg',
   uriGeneration: 'easymde.wechat.rasterizer.uri-generation'
 } as const;
-
-function beginWechatTiming(
-  performance: Performance | undefined,
-  name: string,
-  metadata: WechatTimingMetadata
-): WechatTimingHandle {
-  let startedAt: number | null = null;
-  let finished = false;
-  if (
-    performance
-    && 'function' === typeof performance.now
-    && 'function' === typeof performance.measure
-    && 'function' === typeof performance.clearMeasures
-  ) {
-    try {
-      const value = performance.now();
-      if (Number.isFinite(value)) startedAt = value;
-    } catch {
-      startedAt = null;
-    }
-  }
-  return {
-    finish: (terminal): void => {
-      if (finished) return;
-      finished = true;
-      if (null === startedAt || !performance) return;
-      try {
-        const endedAt = performance.now();
-        if (!Number.isFinite(endedAt)) return;
-        performance.measure(name, {
-          detail: { ...metadata, terminal },
-          end: endedAt,
-          start: startedAt
-        } as PerformanceMeasureOptions);
-      } catch {
-        // Timing is diagnostic-only; an unsupported UserTiming implementation
-        // must not change rasterization behavior.
-      } finally {
-        try {
-          performance.clearMeasures(name);
-        } catch {
-          // A missing or partial UserTiming implementation is non-fatal.
-        }
-      }
-    }
-  };
-}
-
-function runWechatSyncTiming<T>(
-  performance: Performance | undefined,
-  name: string,
-  metadata: WechatTimingMetadata,
-  operation: () => T
-): T {
-  const timing = beginWechatTiming(performance, name, metadata);
-  try {
-    const result = operation();
-    timing.finish('success');
-    return result;
-  } catch (error: unknown) {
-    timing.finish('error');
-    throw error;
-  }
-}
 
 type MermaidViewBox = Readonly<{
   height: number;
@@ -648,47 +580,6 @@ async function yieldRasterizationBoundary(
   if (signal.aborted) {
     throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
   }
-}
-
-function splitCssList(value: string): string[] {
-  const entries: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let quote: '"' | '\'' | null = null;
-  let escaped = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if ('\\' === character) {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (character === quote) quote = null;
-      continue;
-    }
-    if ('"' === character || '\'' === character) {
-      quote = character;
-      continue;
-    }
-    if ('(' === character) {
-      depth += 1;
-      continue;
-    }
-    if (')' === character) {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (',' === character && 0 === depth) {
-      entries.push(value.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  entries.push(value.slice(start).trim());
-  return entries.filter(Boolean);
 }
 
 function cssUrlToken(value: string): Readonly<{ end: number; value: string }> | null {
@@ -2646,14 +2537,6 @@ export function createBrowserWechatVisualRasterizer(
       const layoutMagnification = request.layoutMagnification
         ?? inspectedMermaid?.magnification
         ?? 1;
-      if (
-        inspectedMermaid
-        && request.layoutMagnification !== undefined
-        && inspectedMermaid.magnification !== 1
-        && Math.abs(inspectedMermaid.magnification - request.layoutMagnification) > 1e-6
-      ) {
-        throw new WechatVisualRasterizationError('wechat-png-image-failed');
-      }
       const normalizedRequest = 'mermaid' === request.kind
         ? { ...request, layoutMagnification }
         : request;

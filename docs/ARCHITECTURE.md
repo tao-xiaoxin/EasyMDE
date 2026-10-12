@@ -872,8 +872,12 @@ syntax colors; the shared HTML/plaintext rules are owned by the
 Each transaction-local source
 guard observes the sink before taking
 its immutable initial canonical key and drains `MutationObserver.takeRecords()`
-at initial, current, and final checkpoints. The clean path makes an O(1) reuse
-decision; the dirty path recomputes the complete key, allowing same-value mutations to
+at initial, current, and final checkpoints. Each currentness check scans
+recognized task inputs' current `checked` properties, since a property
+change need not emit a DOM mutation. The clean path reuses the initial
+source key without rebuilding full markup only when that state is
+unchanged and no meaningful mutation is pending; otherwise the guard
+recomputes and compares the complete key, allowing same-value mutations to
 reuse while making real source changes stale. Final source and layout keys and
 the existing owner/layout guards remain authoritative. Only the three
 refresh-bookkeeping attributes on the sink root are ignored; matching

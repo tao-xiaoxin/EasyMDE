@@ -14,6 +14,14 @@ import type {
   WechatVisualRasterizationResult,
   WechatVisualRasterizationYield
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
+import { splitCssList } from './wechat-css-list';
+import {
+  type WechatTimingHandle,
+  type WechatTimingMetadata,
+  type WechatTimingMode,
+  beginWechatTiming,
+  runWechatSyncTiming
+} from './wechat-timing';
 
 const COPY_STYLE_PROPERTIES = [
   'display',
@@ -691,15 +699,6 @@ type BackgroundPreparationState = {
 type BackgroundPreparationCache = WeakMap<HTMLElement, BackgroundPreparationState>;
 type SerializationYield = (() => Promise<void>) & { shouldYield: () => boolean };
 
-type WechatTimingMode = 'async' | 'sync';
-type WechatTimingTerminal = 'error' | 'success';
-type WechatTimingMetadata = Readonly<{
-  candidate?: number;
-  kind?: WechatVisualRasterizationKind;
-  mode: WechatTimingMode;
-}>;
-type WechatTimingHandle = Readonly<{ finish: (terminal: WechatTimingTerminal) => void }>;
-
 const WECHAT_COPY_TIMING_NAMES = {
   candidateCapture: 'easymde.wechat.copy.candidate.capture',
   candidateGeometry: 'easymde.wechat.copy.candidate.geometry',
@@ -712,70 +711,6 @@ const WECHAT_COPY_TIMING_NAMES = {
   outerHtml: 'easymde.wechat.copy.outer-html',
   replacement: 'easymde.wechat.copy.replacement'
 } as const;
-
-function beginWechatTiming(
-  performance: Performance | undefined,
-  name: string,
-  metadata: WechatTimingMetadata
-): WechatTimingHandle {
-  let startedAt: number | null = null;
-  let finished = false;
-  if (
-    performance &&
-    'function' === typeof performance.now &&
-    'function' === typeof performance.measure &&
-    'function' === typeof performance.clearMeasures
-  ) {
-    try {
-      const value = performance.now();
-      if (Number.isFinite(value)) startedAt = value;
-    } catch {
-      startedAt = null;
-    }
-  }
-  return {
-    finish: (terminal): void => {
-      if (finished) return;
-      finished = true;
-      if (null === startedAt || !performance) return;
-      try {
-        const endedAt = performance.now();
-        if (!Number.isFinite(endedAt)) return;
-        performance.measure(name, {
-          detail: { ...metadata, terminal },
-          end: endedAt,
-          start: startedAt
-        } as PerformanceMeasureOptions);
-      } catch {
-        // Timing is diagnostic-only; an unsupported UserTiming implementation
-        // must not change the Clipboard operation's result.
-      } finally {
-        try {
-          performance.clearMeasures(name);
-        } catch {
-          // A missing or partial UserTiming implementation is non-fatal.
-        }
-      }
-    }
-  };
-}
-
-function runWechatSyncTiming<T>(
-  performance: Performance | undefined,
-  name: string,
-  metadata: WechatTimingMetadata,
-  operation: () => T
-): T {
-  const timing = beginWechatTiming(performance, name, metadata);
-  try {
-    const result = operation();
-    timing.finish('success');
-    return result;
-  } catch (error: unknown) {
-    timing.finish('error');
-    throw error;
-  }
-}
 
 function backgroundPreparationAbortError(): Error {
   const error = new Error('wechat-background-preparation-cancelled');
@@ -976,7 +911,7 @@ async function materializeBackgroundValue(
     return value;
   }
 
-  const layers = splitBackgroundLayers(value);
+  const layers = splitCssList(value);
   const materializedLayers: string[] = [];
   for (const layer of layers) {
     const matches = [...layer.matchAll(CSS_URL)];
@@ -1015,7 +950,7 @@ function materializeBackgroundValueSynchronously(
     return value;
   }
 
-  const layers = splitBackgroundLayers(value);
+  const layers = splitCssList(value);
   const materializedLayers: string[] = [];
   for (const layer of layers) {
     const matches = [...layer.matchAll(CSS_URL)];
@@ -1046,47 +981,6 @@ function hasOnlySafeDataImageUrls(value: string): boolean {
   );
 }
 
-function splitBackgroundLayers(value: string): string[] {
-  const layers: string[] = [];
-  let start = 0;
-  let depth = 0;
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if ('\\' === character) {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (character === quote) quote = null;
-      continue;
-    }
-    if ('"' === character || "'" === character) {
-      quote = character;
-      continue;
-    }
-    if ('(' === character) {
-      depth += 1;
-      continue;
-    }
-    if (')' === character) {
-      depth = Math.max(0, depth - 1);
-      continue;
-    }
-    if (',' === character && 0 === depth) {
-      layers.push(value.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  layers.push(value.slice(start).trim());
-  return layers.filter(Boolean);
-}
-
 function dataImageUrls(value: string): string[] {
   return [...value.matchAll(CSS_URL)]
     .map((match) => (match[1] ?? match[2] ?? match[3] ?? '').trim())
@@ -1094,7 +988,7 @@ function dataImageUrls(value: string): string[] {
 }
 
 function dataImageLayers(value: string): ThemeImageLayer[] {
-  return splitBackgroundLayers(value).flatMap((layer, layerIndex) =>
+  return splitCssList(value).flatMap((layer, layerIndex) =>
     dataImageUrls(layer).map((src) => ({ src, layerIndex }))
   );
 }
@@ -1123,12 +1017,12 @@ function dataImageLayersFromDeclarations(declarations: string[]): ThemeImageLaye
 }
 
 function nonImageBackgroundLayers(value: string): string[] {
-  return splitBackgroundLayers(value).filter((layer) => !HAS_CSS_URL.test(layer));
+  return splitCssList(value).filter((layer) => !HAS_CSS_URL.test(layer));
 }
 
 function dataImageLayerIndexes(value: string): ReadonlySet<number> {
   return new Set(
-    splitBackgroundLayers(value).flatMap((layer, layerIndex) => (dataImageUrls(layer).length > 0 ? [layerIndex] : []))
+    splitCssList(value).flatMap((layer, layerIndex) => (dataImageUrls(layer).length > 0 ? [layerIndex] : []))
   );
 }
 
@@ -1147,7 +1041,7 @@ function backgroundImageLayerInfo(
   }
   const source =
     backgroundImageValue && dataImageUrls(backgroundImageValue).length > 0 ? backgroundImageValue : backgroundValue;
-  const layers = source ? splitBackgroundLayers(source) : [];
+  const layers = source ? splitCssList(source) : [];
   return { layerCount: layers.length, removedLayerIndexes: source ? dataImageLayerIndexes(source) : new Set<number>() };
 }
 
@@ -1162,7 +1056,7 @@ function compactBackgroundLonghandDeclarations(
     const separator = declaration.indexOf(':');
     if (separator < 0 || !longhands.has(declaration.slice(0, separator))) return [declaration];
     const property = declaration.slice(0, separator);
-    const layers = splitBackgroundLayers(declaration.slice(separator + 1));
+    const layers = splitCssList(declaration.slice(separator + 1));
     if (!layers.length) return [declaration];
     // CSS repeats the last longhand layer when fewer values are supplied than
     // background-image layers. Expand before removing materialized layers so
@@ -1220,7 +1114,7 @@ function backgroundLength(value: string): string | null {
 type BackgroundImageSize = Readonly<{ fit: 'contain' | 'cover' | null; height: string | null; width: string | null }>;
 
 function backgroundImageSize(computed: CSSStyleDeclaration, index: number): BackgroundImageSize {
-  const layers = splitBackgroundLayers(computed.getPropertyValue('background-size'));
+  const layers = splitCssList(computed.getPropertyValue('background-size'));
   const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '').split(/\s+/).filter(Boolean);
   const mode = values[0]?.toLowerCase();
   if ('cover' === mode || 'contain' === mode) {
@@ -1245,7 +1139,7 @@ function isBackgroundPositionOffset(value: string): boolean {
 }
 
 function backgroundImagePosition(computed: CSSStyleDeclaration, index: number): BackgroundImagePosition {
-  const layers = splitBackgroundLayers(computed.getPropertyValue('background-position'));
+  const layers = splitCssList(computed.getPropertyValue('background-position'));
   const values = (layers[Math.min(index, Math.max(0, layers.length - 1))] ?? '').split(/\s+/).filter(Boolean);
   const fallback: BackgroundImagePosition = {
     x: values[0] ?? '0%',

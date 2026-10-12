@@ -18,8 +18,6 @@ const repositoryRoot = resolve(new URL("../..", import.meta.url).pathname);
 const expectedOrigin = "http://localhost:8093";
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
 const wpCli = process.env.EASYMDE_E2E_WP_CLI || "wp";
-const adminUser = requiredEnvironment("WORDPRESS_ADMIN_USER");
-const adminPassword = requiredEnvironment("WORDPRESS_ADMIN_PASSWORD");
 const canonicalMarkdown = readFileSync(
 	join(repositoryRoot, "docs/examples/markdown-full-capability-test.md"),
 	"utf8",
@@ -41,11 +39,23 @@ const sourceSelector = "#easymde-source";
 const expectedArticleTheme = "phycat-cherry";
 const expectedCodeTheme = "phycat-code";
 const evidenceDirectoryEnvironment = "EASYMDE_E2E_PERFORMANCE_EVIDENCE_DIR";
-const expectedServerManifestSha256 =
-	"22aecc55ac42dd38c59c2cd2e2d780c63c2d388b46601d6d108e2feaadb6e35f";
-const expectedDtdEditorFile = "assets/admin-editor-DtdAzZEp.js";
-const expectedDtdEditorSha256 =
-	"ea27ce3d296b044dd23a3c5846dfeadeeba09e8171bc2bcf83d565d03fcc5fd0";
+const localDiagnosticsEnvironment = "EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS";
+function localDiagnosticsEnabledFromSetting(value) {
+	const setting = value?.trim() ?? "";
+	if (!["", "0", "1"].includes(setting)) {
+		throw new Error("wechat-copy-performance-local-diagnostics-flag-invalid");
+	}
+	return setting === "1";
+}
+const localDiagnosticsEnabled = localDiagnosticsEnabledFromSetting(
+	process.env[localDiagnosticsEnvironment],
+);
+const adminUser = localDiagnosticsEnabled
+	? requiredEnvironment("WORDPRESS_ADMIN_USER")
+	: null;
+const adminPassword = localDiagnosticsEnabled
+	? requiredEnvironment("WORDPRESS_ADMIN_PASSWORD")
+	: null;
 const candidateFrontendBuildRoot = join(
 	repositoryRoot,
 	".cache/easymde-frontend-production-check",
@@ -199,6 +209,40 @@ function selectedPerformanceMode() {
 }
 
 const configuredPerformanceMode = selectedPerformanceMode();
+
+function readCurrentServerBundleIdentity() {
+	const manifestPath = join(repositoryRoot, "assets/build/manifest.json");
+	let manifestBytes;
+	let manifest;
+	try {
+		manifestBytes = readFileSync(manifestPath);
+		manifest = JSON.parse(manifestBytes.toString("utf8"));
+	} catch {
+		throw new Error(
+			"wechat-copy-performance-current-artifact-manifest-unavailable",
+		);
+	}
+	const entry = manifest?.["frontend/src/entrypoints/admin-editor.tsx"];
+	if (
+		!entry?.isEntry ||
+		!/^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/u.test(entry.file ?? "")
+	) {
+		throw new Error("wechat-copy-performance-current-artifact-entry-invalid");
+	}
+	let scriptBytes;
+	try {
+		scriptBytes = readFileSync(
+			join(repositoryRoot, "assets/build", entry.file),
+		);
+	} catch {
+		throw new Error("wechat-copy-performance-current-artifact-unavailable");
+	}
+	return {
+		file: entry.file,
+		manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
+		scriptSha256: createHash("sha256").update(scriptBytes).digest("hex"),
+	};
+}
 
 function runWp(args) {
 	if (!wpPath) throw new Error("wechat-copy-performance-wp-path-missing");
@@ -672,10 +716,11 @@ async function readBrowserConfiguration(page) {
 }
 
 async function readServerBundleIdentity(page) {
+	const currentArtifact = readCurrentServerBundleIdentity();
 	try {
 		return await page.evaluate(
 			async ({
-				expectedDtdEditorFile: expectedFile,
+				expectedFile,
 				expectedManifestSha256,
 				expectedScriptSha256,
 			}) => {
@@ -751,19 +796,24 @@ async function readServerBundleIdentity(page) {
 				const manifestSha256 = await digest(manifestBytes);
 				const scriptSha256 = await digest(scriptBytes);
 				return {
+					artifactFile: expectedFile,
+					artifactManifestSha256: expectedManifestSha256,
+					artifactScriptSha256: expectedScriptSha256,
 					documentScriptMatchesBootstrap: true,
-					loadedScriptPathMatchesDtd:
+					loadedScriptPathMatchesCurrentArtifact:
 						mainScriptPath === expectedFile.split("/").pop(),
-					loadedScriptShaMatchesDtd: scriptSha256 === expectedScriptSha256,
-					manifestEntryMatchesDtd: manifestEntryMatches,
-					manifestShaMatchesExpected: manifestSha256 === expectedManifestSha256,
+					loadedScriptShaMatchesCurrentArtifact:
+						scriptSha256 === expectedScriptSha256,
+					manifestEntryMatchesCurrentArtifact: manifestEntryMatches,
+					manifestShaMatchesCurrentArtifact:
+						manifestSha256 === expectedManifestSha256,
 					serverManifestFetched: true,
 				};
 			},
 			{
-				expectedDtdEditorFile,
-				expectedManifestSha256: expectedServerManifestSha256,
-				expectedScriptSha256: expectedDtdEditorSha256,
+				expectedFile: currentArtifact.file,
+				expectedManifestSha256: currentArtifact.manifestSha256,
+				expectedScriptSha256: currentArtifact.scriptSha256,
 			},
 		);
 	} catch {
@@ -1039,6 +1089,18 @@ function installPerformanceProbe(page) {
 			const timingDetailModes = new Set(timingDetailModeValues);
 			const timingDetailTerminals = new Set(timingDetailTerminalValues);
 			const timingDetailKinds = new Set(timingDetailKindValues);
+			const copyOwner = (target) => {
+				if (!(target instanceof Element)) return null;
+				const ordinary = target.closest(".easymde-toolbar-copy-action");
+				if (ordinary instanceof HTMLElement) {
+					return { element: ordinary, surface: "ordinary" };
+				}
+				const immersive = target.closest(".easymde-immersive-wechat");
+				if (immersive instanceof HTMLElement) {
+					return { element: immersive, surface: "immersive" };
+				}
+				return null;
+			};
 			const state = {
 				active: false,
 				clickAt: null,
@@ -1287,10 +1349,12 @@ function installPerformanceProbe(page) {
 						value: (items) => {
 							const at = performance.now();
 							const target = state.clicks.at(-1)?.target ?? null;
+							const surface = state.clicks.at(-1)?.surface ?? null;
 							const record = {
 								activation: navigator.userActivation?.isActive === true,
 								at,
 								owner: captureOwner(target),
+								surface,
 								itemCount: Array.isArray(items) ? items.length : null,
 								nativeState: "pending",
 								settledAt: null,
@@ -1313,11 +1377,8 @@ function installPerformanceProbe(page) {
 				}
 				handleClick = (event) => {
 					if (!state.active) return;
-					const target =
-						event.target instanceof Element
-							? event.target.closest(".easymde-toolbar-copy-action")
-							: null;
-					if (!(target instanceof HTMLElement)) return;
+					const target = copyOwner(event.target);
+					if (!target) return;
 					const at = performance.now();
 					if (!finite(at)) {
 						state.observerError ??=
@@ -1329,7 +1390,12 @@ function installPerformanceProbe(page) {
 						performance.mark(clickMarker);
 						scheduleEarlyPhases();
 					}
-					state.clicks.push({ at, owner: captureOwner(target), target });
+					state.clicks.push({
+						at,
+						owner: captureOwner(target.element),
+						surface: target.surface,
+						target: target.element,
+					});
 				};
 				handleVisibilityChange = () => emitOwnerChange("visibilitychange");
 				handleFocus = () => emitOwnerChange("focus");
@@ -1407,7 +1473,11 @@ function installPerformanceProbe(page) {
 					state.active = false;
 					return {
 						clickAt: state.clickAt,
-						clicks: state.clicks.map(({ at, owner }) => ({ at, owner })),
+						clicks: state.clicks.map(({ at, owner, surface }) => ({
+							at,
+							owner,
+							surface,
+						})),
 						endAt: state.endAt,
 						longTasks: state.longTasks.slice(),
 						measures: state.measures.slice(),
@@ -3946,6 +4016,10 @@ async function captureCandidateSerializedTaskScreenshots(
 }
 
 test.beforeEach(async ({ page: _page }, testInfo) => {
+	test.skip(
+		!localDiagnosticsEnabled,
+		`${localDiagnosticsEnvironment}=1 is required for private local diagnostics`,
+	);
 	testInfo.wechatPerformanceUser = createOwnedUser(testSlug(testInfo));
 	testInfo.wechatPerformanceUserId = testInfo.wechatPerformanceUser.id;
 });

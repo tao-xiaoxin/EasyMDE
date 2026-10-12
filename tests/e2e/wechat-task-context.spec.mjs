@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import vm from 'node:vm';
 import { expect, test } from '@playwright/test';
 import { build as viteBuild } from 'vite';
 
@@ -55,8 +56,12 @@ if (
 }
 
 const wpPath = process.env.EASYMDE_E2E_WP_PATH;
-const wpCli = process.env.EASYMDE_E2E_WP_CLI || 'wp';
-const expectedLiveOrigin = 'http://localhost:8093';
+const wpCli = process.env.EASYMDE_E2E_WP_CLI;
+const localDiagnosticsSetting = process.env.EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS?.trim() ?? '';
+if (!['', '0', '1'].includes(localDiagnosticsSetting)) {
+  throw new Error('wechat-task-context-local-diagnostics-flag-invalid');
+}
+const localDiagnosticsEnabled = localDiagnosticsSetting === '1';
 const immersivePreviewSelector =
   '.easymde-immersive-preview-canvas [data-easymde-preview-html-sink="1"]';
 
@@ -68,10 +73,64 @@ function requiredEnvironment(name) {
   return value;
 }
 
-// The configured credentials are loaded by Playwright's config and remain in
-// the process environment. They are deliberately never copied to diagnostics.
-requiredEnvironment('WORDPRESS_ADMIN_USER');
-requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
+function expectedOriginFromBaseURL(baseURL) {
+  if (typeof baseURL !== 'string' || !baseURL.trim()) {
+    throw new Error('wechat-task-context-base-url-missing');
+  }
+  let parsed;
+  try {
+    parsed = new URL(baseURL);
+  } catch {
+    throw new Error('wechat-task-context-base-url-invalid');
+  }
+  if (
+    !['http:', 'https:'].includes(parsed.protocol)
+    || !parsed.hostname
+    || parsed.username
+    || parsed.password
+  ) {
+    throw new Error('wechat-task-context-base-url-invalid');
+  }
+  return parsed.origin;
+}
+
+function validateLocalDiagnosticPrerequisites(
+  baseURL,
+  {
+    wpPathValue = wpPath,
+    wpCliValue = wpCli,
+    spawnSyncRef = spawnSync
+  } = {}
+) {
+  expectedOriginFromBaseURL(baseURL);
+  if (!wpPathValue || !wpPathValue.trim()) {
+    throw new Error('wechat-task-context-wp-path-missing');
+  }
+  if (!wpCliValue || !wpCliValue.trim()) {
+    throw new Error('wechat-task-context-wp-cli-missing');
+  }
+  const result = spawnSyncRef(
+    wpCliValue,
+    ['core', 'is-installed', `--path=${wpPathValue}`, '--allow-root'],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WP_CLI_CACHE_DIR: process.env.WP_CLI_CACHE_DIR || '/tmp/easymde-wp-cli-cache'
+      }
+    }
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error('wechat-task-context-wp-install-unavailable');
+  }
+}
+
+if (localDiagnosticsEnabled) {
+  // The configured credentials are loaded by Playwright's config and remain
+  // in the process environment. They are deliberately never copied to diagnostics.
+  requiredEnvironment('WORDPRESS_ADMIN_USER');
+  requiredEnvironment('WORDPRESS_ADMIN_PASSWORD');
+}
 
 const INPUT_STYLE_PROPERTIES = [
   'display', 'width', 'height', 'position', 'box-sizing', 'appearance',
@@ -147,9 +206,264 @@ const HIDDEN_SEMANTIC_STYLE_PROPERTIES = [
   'display', 'visibility', 'content-visibility', 'position', 'width', 'height',
   'opacity', 'font-family', 'font-size', 'line-height'
 ];
+// Hidden measurement signatures omit the layout fields that production validates
+// through used geometry and stale/currentness guards, scoped to each owner role.
+const HIDDEN_INPUT_LAYOUT_STYLE_PROPERTIES = [
+  'width', 'height', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+  'transform', 'transform-origin'
+];
+const HIDDEN_LIST_ITEM_LAYOUT_STYLE_PROPERTIES = [
+  'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left'
+];
+const HIDDEN_PSEUDO_LAYOUT_STYLE_PROPERTIES = [
+  'width', 'height', 'top', 'right', 'bottom', 'left',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'transform', 'transform-origin'
+];
+const HIDDEN_CURRENT_SIGNATURE_LAYOUT_PROPERTIES = Object.freeze({
+  input: HIDDEN_INPUT_LAYOUT_STYLE_PROPERTIES,
+  li: HIDDEN_LIST_ITEM_LAYOUT_STYLE_PROPERTIES,
+  'pseudo-before': HIDDEN_PSEUDO_LAYOUT_STYLE_PROPERTIES,
+  'pseudo-after': HIDDEN_PSEUDO_LAYOUT_STYLE_PROPERTIES
+});
+
+function createHiddenContextComparator(geometryQuantum, hiddenCurrentSignatureLayoutProperties) {
+  const vectorEqual = (left, right) => (
+    Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => (
+      value?.unit === right[index]?.unit
+      && Math.abs(value?.value - right[index]?.value) <= geometryQuantum
+    ))
+  );
+  const matrixEqual = (left, right) => (
+    Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === 16
+    && right.length === 16
+    && left.every((value, index) => Math.abs(value - right[index]) <= geometryQuantum)
+  );
+  const valuesEqual = (sourceEntry, measurementEntry) => (
+    sourceEntry.raw === measurementEntry.raw
+  );
+  const compareEntry = (sourceEntry, measurementEntry, ownerKind, index) => {
+    if (!measurementEntry) {
+      return {
+        enumEqual: null,
+        measurementCategory: 'missing',
+        measurementFiniteNumeric: false,
+        numericDelta: null,
+        ownerKind,
+        index,
+        propertyName: sourceEntry.propertyName,
+        sourceCategory: sourceEntry.category,
+        sourceFiniteNumeric: Number.isFinite(sourceEntry.numeric),
+        transformMatrixEqual: null,
+        transformOriginEqual: null,
+        valuesEqual: false
+      };
+    }
+    return {
+      enumEqual: sourceEntry.category === 'enum' && measurementEntry.category === 'enum'
+        ? sourceEntry.enumValue === measurementEntry.enumValue
+        : null,
+      measurementCategory: measurementEntry.category,
+      measurementFiniteNumeric: Number.isFinite(measurementEntry.numeric),
+      numericDelta: Number.isFinite(sourceEntry.numeric)
+        && Number.isFinite(measurementEntry.numeric)
+        ? Math.abs(sourceEntry.numeric - measurementEntry.numeric)
+        : null,
+      ownerKind,
+      index,
+      propertyName: sourceEntry.propertyName,
+      sourceCategory: sourceEntry.category,
+      sourceFiniteNumeric: Number.isFinite(sourceEntry.numeric),
+      transformMatrixEqual: sourceEntry.category === 'transform'
+        && measurementEntry.category === 'transform'
+        ? matrixEqual(sourceEntry.transformMatrix, measurementEntry.transformMatrix)
+        : null,
+      transformOriginEqual: sourceEntry.category === 'transform-origin'
+        && measurementEntry.category === 'transform-origin'
+        ? vectorEqual(sourceEntry.transformOrigin, measurementEntry.transformOrigin)
+        : null,
+      valuesEqual: valuesEqual(sourceEntry, measurementEntry),
+      ...(sourceEntry.transformMatrix && measurementEntry.transformMatrix
+        ? {
+            transformMatrix: measurementEntry.transformMatrix.filter(Number.isFinite)
+          }
+        : {}),
+      ...(sourceEntry.transformOrigin && measurementEntry.transformOrigin
+        ? {
+            transformOrigin: measurementEntry.transformOrigin.map(({ unit, value }) => ({
+              unit,
+              value
+            }))
+          }
+        : {})
+    };
+  };
+  const styleEntryEqual = (sourceEntry, measurementEntry) => (
+    Boolean(measurementEntry) && valuesEqual(sourceEntry, measurementEntry)
+  );
+  const currentSignatureLayoutProperties = new Map(
+    Object.entries(hiddenCurrentSignatureLayoutProperties).map(([ownerKind, properties]) => (
+      [ownerKind, new Set(properties)]
+    ))
+  );
+  const currentGuardStyleEntryEqual = (sourceEntry, measurementEntry, ownerKind) => (
+    currentSignatureLayoutProperties.get(ownerKind)?.has(sourceEntry.propertyName)
+      ? Boolean(measurementEntry)
+      : styleEntryEqual(sourceEntry, measurementEntry)
+  );
+  const firstStyleDifference = (
+    sourceShape,
+    measurementShape,
+    ownerKind,
+    index,
+    currentGuard = false
+  ) => {
+    const measurementByProperty = new Map(
+      (measurementShape || []).map((entry) => [entry.propertyName, entry])
+    );
+    for (const sourceEntry of sourceShape || []) {
+      const measurementEntry = measurementByProperty.get(sourceEntry.propertyName);
+      const equal = currentGuard
+        ? currentGuardStyleEntryEqual(sourceEntry, measurementEntry, ownerKind)
+        : styleEntryEqual(sourceEntry, measurementEntry);
+      if (!equal) return compareEntry(sourceEntry, measurementEntry, ownerKind, index);
+    }
+    return null;
+  };
+  const firstGeometryDifference = (sourceValue, measurementValue, ownerKind, index, propertyName) => {
+    if (!sourceValue || !measurementValue) {
+      return {
+        measurementCategory: measurementValue ? 'number' : 'missing',
+        ownerKind,
+        index,
+        propertyName,
+        sourceCategory: sourceValue ? 'number' : 'missing',
+        valuesEqual: false
+      };
+    }
+    for (const property of ['bottom', 'height', 'left', 'right', 'top', 'width']) {
+      const delta = Math.abs(sourceValue[property] - measurementValue[property]);
+      if (!Number.isFinite(delta) || delta > geometryQuantum) {
+        return {
+          measurementCategory: 'number',
+          numericDelta: Number.isFinite(delta) ? delta : null,
+          ownerKind,
+          index,
+          propertyName: `${propertyName}.${property}`,
+          sourceCategory: 'number',
+          valuesEqual: false
+        };
+      }
+    }
+    return null;
+  };
+  const firstStyleDifferenceForSurfaces = (
+    sourceSurface,
+    measurementSurface,
+    currentGuard = false
+  ) => {
+    const root = firstStyleDifference(
+      sourceSurface?.root.style,
+      measurementSurface?.root.style,
+      'root',
+      -1,
+      currentGuard
+    );
+    if (root) return root;
+    for (const sourceInput of sourceSurface?.inputs || []) {
+      const measurementInput = measurementSurface?.inputs?.[sourceInput.index];
+      const input = firstStyleDifference(
+        sourceInput.style,
+        measurementInput?.style,
+        'input',
+        sourceInput.index,
+        currentGuard
+      );
+      if (input) return input;
+      const li = firstStyleDifference(
+        sourceInput.liStyle,
+        measurementInput?.liStyle,
+        'li',
+        sourceInput.index,
+        currentGuard
+      );
+      if (li) return li;
+      const before = firstStyleDifference(
+        sourceInput.pseudo.before,
+        measurementInput?.pseudo.before,
+        'pseudo-before',
+        sourceInput.index,
+        currentGuard
+      );
+      if (before) return before;
+      const after = firstStyleDifference(
+        sourceInput.pseudo.after,
+        measurementInput?.pseudo.after,
+        'pseudo-after',
+        sourceInput.index,
+        currentGuard
+      );
+      if (after) return after;
+    }
+    return null;
+  };
+  const firstGeometryDifferenceForSurfaces = (sourceSurface, measurementSurface) => {
+    const root = firstGeometryDifference(
+      { width: sourceSurface?.root.contentWidth, height: 0, left: 0, right: 0, top: 0, bottom: 0 },
+      { width: measurementSurface?.root.contentWidth, height: 0, left: 0, right: 0, top: 0, bottom: 0 },
+      'root',
+      -1,
+      'contentWidth'
+    );
+    if (root) return root;
+    for (const sourceInput of sourceSurface?.inputs || []) {
+      const measurementInput = measurementSurface?.inputs?.[sourceInput.index];
+      const input = firstGeometryDifference(
+        sourceInput.rect,
+        measurementInput?.rect,
+        'input',
+        sourceInput.index,
+        'rect'
+      );
+      if (input) return input;
+      const li = firstGeometryDifference(
+        sourceInput.li,
+        measurementInput?.li,
+        'li',
+        sourceInput.index,
+        'rect'
+      );
+      if (li) return li;
+      if (sourceInput.textAnchor || measurementInput?.textAnchor) {
+        const text = firstGeometryDifference(
+          sourceInput.textAnchor,
+          measurementInput?.textAnchor,
+          'text-anchor',
+          sourceInput.index,
+          'rect'
+        );
+        if (text) return text;
+      }
+    }
+    return null;
+  };
+  return { firstGeometryDifferenceForSurfaces, firstStyleDifferenceForSurfaces };
+}
 
 function runWp(args) {
-  if (!wpPath) throw new Error('wechat-task-context-wp-path-missing');
+  if (!wpPath || !wpPath.trim()) throw new Error('wechat-task-context-wp-path-missing');
+  if (!wpCli || !wpCli.trim()) throw new Error('wechat-task-context-wp-cli-missing');
   const result = spawnSync(
     wpCli,
     [...args, `--path=${wpPath}`, '--allow-root'],
@@ -243,7 +557,8 @@ async function waitForVisibleSelector(page, selector, failureCode) {
   }
 }
 
-async function login(page, user) {
+async function login(page, user, baseURL) {
+  const expectedLiveOrigin = expectedOriginFromBaseURL(baseURL);
   try {
     await page.goto('/wp-login.php', { waitUntil: 'domcontentloaded' });
     await waitForVisibleSelector(page, '#loginform', 'wechat-task-context-login-form-unavailable');
@@ -1375,7 +1690,9 @@ async function installContextEvidence(page) {
 
 async function installHiddenContextEvidence(page, selector) {
   await page.evaluate(({
+    comparatorSource,
     geometryQuantum,
+    hiddenCurrentSignatureLayoutProperties,
     inputProperties,
     liProperties,
     pseudoProperties,
@@ -1388,6 +1705,11 @@ async function installHiddenContextEvidence(page, selector) {
       throw new Error('wechat-task-context-hidden-preview-missing');
     }
     const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+    const comparatorFactory = (new Function(`return (${comparatorSource})`))();
+    const comparator = comparatorFactory(
+      geometryQuantum,
+      hiddenCurrentSignatureLayoutProperties
+    );
     const rect = (element) => {
       const value = element.getBoundingClientRect();
       const result = {
@@ -1650,138 +1972,6 @@ async function installHiddenContextEvidence(page, selector) {
         : {})
     });
     const publicStyle = (shape) => shape.map(publicToken);
-    const vectorEqual = (left, right) => (
-      Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((value, index) => (
-        value?.unit === right[index]?.unit
-        && Math.abs(value?.value - right[index]?.value) <= geometryQuantum
-      ))
-    );
-    const matrixEqual = (left, right) => (
-      Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === 16
-      && right.length === 16
-      && left.every((value, index) => Math.abs(value - right[index]) <= geometryQuantum)
-    );
-    const valuesEqual = (sourceEntry, measurementEntry) => (
-      sourceEntry.raw === measurementEntry.raw
-    );
-    const compareEntry = (sourceEntry, measurementEntry, ownerKind, index) => {
-      if (!measurementEntry) {
-        return {
-          enumEqual: null,
-          measurementCategory: 'missing',
-          measurementFiniteNumeric: false,
-          numericDelta: null,
-          ownerKind,
-          index,
-          propertyName: sourceEntry.propertyName,
-          sourceCategory: sourceEntry.category,
-          sourceFiniteNumeric: Number.isFinite(sourceEntry.numeric),
-          transformMatrixEqual: null,
-          transformOriginEqual: null,
-          valuesEqual: false
-        };
-      }
-      return {
-        enumEqual: sourceEntry.category === 'enum' && measurementEntry.category === 'enum'
-          ? sourceEntry.enumValue === measurementEntry.enumValue
-          : null,
-        measurementCategory: measurementEntry.category,
-        measurementFiniteNumeric: Number.isFinite(measurementEntry.numeric),
-        numericDelta: Number.isFinite(sourceEntry.numeric)
-          && Number.isFinite(measurementEntry.numeric)
-          ? Math.abs(sourceEntry.numeric - measurementEntry.numeric)
-          : null,
-        ownerKind,
-        index,
-        propertyName: sourceEntry.propertyName,
-        sourceCategory: sourceEntry.category,
-        sourceFiniteNumeric: Number.isFinite(sourceEntry.numeric),
-        transformMatrixEqual: sourceEntry.category === 'transform'
-          && measurementEntry.category === 'transform'
-          ? matrixEqual(sourceEntry.transformMatrix, measurementEntry.transformMatrix)
-          : null,
-        transformOriginEqual: sourceEntry.category === 'transform-origin'
-          && measurementEntry.category === 'transform-origin'
-          ? vectorEqual(sourceEntry.transformOrigin, measurementEntry.transformOrigin)
-          : null,
-        valuesEqual: valuesEqual(sourceEntry, measurementEntry),
-        ...(sourceEntry.transformMatrix && measurementEntry.transformMatrix
-          ? {
-              transformMatrix: measurementEntry.transformMatrix.filter(Number.isFinite)
-            }
-          : {}),
-        ...(sourceEntry.transformOrigin && measurementEntry.transformOrigin
-          ? {
-              transformOrigin: measurementEntry.transformOrigin.map(({ unit, value }) => ({
-                unit,
-                value
-              }))
-            }
-          : {})
-      };
-    };
-    const styleEntryEqual = (sourceEntry, measurementEntry) => (
-      Boolean(measurementEntry) && valuesEqual(sourceEntry, measurementEntry)
-    );
-    const currentGuardStyleEntryEqual = (sourceEntry, measurementEntry, ownerKind) => (
-      ownerKind === 'input'
-      && ['width', 'height'].includes(sourceEntry.propertyName)
-        ? Boolean(measurementEntry)
-        : styleEntryEqual(sourceEntry, measurementEntry)
-    );
-    const firstStyleDifference = (
-      sourceShape,
-      measurementShape,
-      ownerKind,
-      index,
-      currentGuard = false
-    ) => {
-      const measurementByProperty = new Map(
-        (measurementShape || []).map((entry) => [entry.propertyName, entry])
-      );
-      for (const sourceEntry of sourceShape || []) {
-        const measurementEntry = measurementByProperty.get(sourceEntry.propertyName);
-        const equal = currentGuard
-          ? currentGuardStyleEntryEqual(sourceEntry, measurementEntry, ownerKind)
-          : styleEntryEqual(sourceEntry, measurementEntry);
-        if (!equal) {
-          return compareEntry(sourceEntry, measurementEntry, ownerKind, index);
-        }
-      }
-      return null;
-    };
-    const firstGeometryDifference = (sourceValue, measurementValue, ownerKind, index, propertyName) => {
-      if (!sourceValue || !measurementValue) {
-        return {
-          measurementCategory: measurementValue ? 'number' : 'missing',
-          ownerKind,
-          index,
-          propertyName,
-          sourceCategory: sourceValue ? 'number' : 'missing',
-          valuesEqual: false
-        };
-      }
-      for (const property of ['bottom', 'height', 'left', 'right', 'top', 'width']) {
-        const delta = Math.abs(sourceValue[property] - measurementValue[property]);
-        if (!Number.isFinite(delta) || delta > geometryQuantum) {
-          return {
-            measurementCategory: 'number',
-            numericDelta: Number.isFinite(delta) ? delta : null,
-            ownerKind,
-            index,
-            propertyName: `${propertyName}.${property}`,
-            sourceCategory: 'number',
-            valuesEqual: false
-          };
-        }
-      }
-      return null;
-    };
     const sourceRootIdentity = identity(preview);
     const isSourceRootClone = (element) => (
       element !== preview
@@ -2161,96 +2351,6 @@ async function installHiddenContextEvidence(page, selector) {
         ? { transformOrigin: value.transformOrigin.map(({ unit, value: number }) => ({ unit, value: number })) }
         : {})
     } : null;
-    const firstStyleDifferenceForSurfaces = (
-      sourceSurface,
-      measurementSurface,
-      currentGuard = false
-    ) => {
-      const root = firstStyleDifference(
-        sourceSurface?.root.style,
-        measurementSurface?.root.style,
-        'root',
-        -1,
-        currentGuard
-      );
-      if (root) return root;
-      for (const sourceInput of sourceSurface?.inputs || []) {
-        const measurementInput = measurementSurface?.inputs?.[sourceInput.index];
-        const input = firstStyleDifference(
-          sourceInput.style,
-          measurementInput?.style,
-          'input',
-          sourceInput.index,
-          currentGuard
-        );
-        if (input) return input;
-        const li = firstStyleDifference(
-          sourceInput.liStyle,
-          measurementInput?.liStyle,
-          'li',
-          sourceInput.index,
-          currentGuard
-        );
-        if (li) return li;
-        const before = firstStyleDifference(
-          sourceInput.pseudo.before,
-          measurementInput?.pseudo.before,
-          'pseudo-before',
-          sourceInput.index,
-          currentGuard
-        );
-        if (before) return before;
-        const after = firstStyleDifference(
-          sourceInput.pseudo.after,
-          measurementInput?.pseudo.after,
-          'pseudo-after',
-          sourceInput.index,
-          currentGuard
-        );
-        if (after) return after;
-      }
-      return null;
-    };
-    const firstGeometryDifferenceForSurfaces = (sourceSurface, measurementSurface) => {
-      const root = firstGeometryDifference(
-        { width: sourceSurface?.root.contentWidth, height: 0, left: 0, right: 0, top: 0, bottom: 0 },
-        { width: measurementSurface?.root.contentWidth, height: 0, left: 0, right: 0, top: 0, bottom: 0 },
-        'root',
-        -1,
-        'contentWidth'
-      );
-      if (root) return root;
-      for (const sourceInput of sourceSurface?.inputs || []) {
-        const measurementInput = measurementSurface?.inputs?.[sourceInput.index];
-        const input = firstGeometryDifference(
-          sourceInput.rect,
-          measurementInput?.rect,
-          'input',
-          sourceInput.index,
-          'rect'
-        );
-        if (input) return input;
-        const li = firstGeometryDifference(
-          sourceInput.li,
-          measurementInput?.li,
-          'li',
-          sourceInput.index,
-          'rect'
-        );
-        if (li) return li;
-        if (sourceInput.textAnchor || measurementInput?.textAnchor) {
-          const text = firstGeometryDifference(
-            sourceInput.textAnchor,
-            measurementInput?.textAnchor,
-            'text-anchor',
-            sourceInput.index,
-            'rect'
-          );
-          if (text) return text;
-        }
-      }
-      return null;
-    };
     const publicSample = (sample) => ({
       hostClassTokens: sample.hostClassTokens,
       hostConnected: sample.hostConnected,
@@ -2307,20 +2407,20 @@ async function installHiddenContextEvidence(page, selector) {
         state.sourceFinal = captureSurface(preview);
         state.sourceFinalAncestors = captureAncestors(preview);
         const measurement = state.firstMeasurement;
-        const rawStyleFirstDiff = firstStyleDifferenceForSurfaces(
+        const rawStyleFirstDiff = comparator.firstStyleDifferenceForSurfaces(
           state.sourceAfterHide,
           measurement
         );
-        const currentGuardStyleFirstDiff = firstStyleDifferenceForSurfaces(
+        const currentGuardStyleFirstDiff = comparator.firstStyleDifferenceForSurfaces(
           state.sourceAfterHide,
           measurement,
           true
         );
-        const visiblePaintFirstDiff = firstStyleDifferenceForSurfaces(
+        const visiblePaintFirstDiff = comparator.firstStyleDifferenceForSurfaces(
           state.sourceVisibleReference,
           measurement
         );
-        const geometryFirstDiff = firstGeometryDifferenceForSurfaces(
+        const geometryFirstDiff = comparator.firstGeometryDifferenceForSurfaces(
           state.sourceVisibleReference,
           measurement
         );
@@ -2407,7 +2507,9 @@ async function installHiddenContextEvidence(page, selector) {
       }
     };
   }, {
+    comparatorSource: createHiddenContextComparator.toString(),
     geometryQuantum,
+    hiddenCurrentSignatureLayoutProperties: HIDDEN_CURRENT_SIGNATURE_LAYOUT_PROPERTIES,
     inputProperties: HIDDEN_INPUT_STYLE_PROPERTIES,
     liProperties: HIDDEN_LI_STYLE_PROPERTIES,
     pseudoProperties: HIDDEN_PSEUDO_STYLE_PROPERTIES,
@@ -2452,8 +2554,13 @@ function assertStyleClose(style, label) {
 }
 
 function assertContextEvidence(evidence, calibratedContentWidth) {
-  expect(evidence.source.inputs).toHaveLength(19);
-  expect(evidence.source.inputs.map(({ checked }) => checked)).toEqual(taskStates);
+  const sourceInputs = evidence.source.inputs;
+  expect(sourceInputs).toHaveLength(19);
+  expect(sourceInputs.map(({ checked }) => checked)).toEqual(taskStates);
+  expect(sourceInputs.filter(({ checked }) => checked)).toHaveLength(16);
+  expect(sourceInputs.filter(({ checked }) => !checked)).toHaveLength(3);
+  expect(sourceInputs.every(({ geometryCandidate }) => geometryCandidate === true)).toBe(true);
+  expect(sourceInputs.every(({ identity }) => identity.localName === 'input')).toBe(true);
   expect(evidence.sourceFinalMatches).toBe(true);
   expect(evidence.serializerCloneMapping).toBe('unobservable-detached');
   expect(evidence.sourceMutations.attributes).toBe(0);
@@ -2464,9 +2571,8 @@ function assertContextEvidence(evidence, calibratedContentWidth) {
   expect(evidence.hosts.length).toBeGreaterThan(0);
   expect(evidence.hosts.every(({ hostConnected }) => hostConnected === false)).toBe(true);
   expect(evidence.styleReadCount).toBeGreaterThan(0);
-  expect(evidence.factoryVisitedInputCount).toBeGreaterThan(0);
-  expect(evidence.factoryVisitedInputCount).toBeLessThan(19);
-  expect(evidence.factoryVisitedInputIndexes).toHaveLength(evidence.factoryVisitedInputCount);
+  expect(evidence.factoryVisitedInputCount).toBe(19);
+  expect(evidence.factoryVisitedInputIndexes).toEqual([...Array(19).keys()]);
   expect(evidence.observerBatchSamples.length).toBeGreaterThan(0);
   const observerSample = evidence.observerBatchSamples.at(-1);
   expect(observerSample).toBeDefined();
@@ -2528,6 +2634,9 @@ function assertHiddenContextEvidence(evidence, calibratedContentWidth) {
   expect(evidence.sourceVisibleReference.inputs.map(({ checked }) => checked)).toEqual(taskStates);
   expect(evidence.sourceAfterHide.inputs.map(({ checked }) => checked)).toEqual(taskStates);
   expect(evidence.sourceFinal.inputs.map(({ checked }) => checked)).toEqual(taskStates);
+  expect(evidence.sourceVisibleReference.inputs.filter(({ checked }) => checked)).toHaveLength(16);
+  expect(evidence.sourceVisibleReference.inputs.filter(({ checked }) => !checked)).toHaveLength(3);
+  expect(evidence.sourceVisibleReference.inputs.every(({ identity }) => identity.localName === 'input')).toBe(true);
   expect(evidence.sourceAfterHide.root.rect.width).toBeLessThanOrEqual(geometryQuantum);
   expect(evidence.sourceAfterHide.root.rect.height).toBeLessThanOrEqual(geometryQuantum);
   expect(evidence.sourceFinalZeroRect).toBe(true);
@@ -2591,7 +2700,27 @@ function assertHiddenContextEvidence(evidence, calibratedContentWidth) {
   }
 }
 
+function assertSuccessfulClipboardWrite(result, state) {
+  expect(result).toEqual({ method: 'clipboard', status: 'copied' });
+  expect(state.writeCount).toBe(1);
+  expect(state.writeStarted).toBe(true);
+  expect(state.htmlConsumed).toBe(true);
+  expect(state.writeError).toBeNull();
+  expect(state.writeHTMLSummary).toEqual(expect.objectContaining({
+    inputCount: 0,
+    ownerCheckedCount: 16,
+    ownerCheckedVector: taskStates,
+    ownerCount: 19,
+    ownerInputDescendantCount: 0,
+    ownerPaintCount: 19,
+    ownerStyleCount: 19,
+    ownerUncheckedCount: 3,
+    ownerTagSpanCount: 19
+  }));
+}
+
 function stableCopyCode(value) {
+  if (value === null) return null;
   return typeof value === 'string' && /^wechat-[a-z0-9-]+$/u.test(value)
     ? value
     : value === 'copied'
@@ -2602,7 +2731,7 @@ function stableCopyCode(value) {
 async function writePrivateEvidence(testInfo, result, state, evidence) {
   const outputPath = testInfo.outputPath('wechat-task-context-evidence.json');
   const payload = {
-    copyCode: stableCopyCode(result?.code),
+    copyCode: result?.status === 'copied' ? 'copied' : stableCopyCode(result?.code),
     copyStatus: result?.status === 'failed' || result?.status === 'copied'
       ? result.status
       : 'unknown',
@@ -2617,6 +2746,7 @@ async function writePrivateEvidence(testInfo, result, state, evidence) {
     sourceFinalMatches: evidence.sourceFinalMatches,
     sourceMutations: evidence.sourceMutations,
     styleReadCount: evidence.styleReadCount,
+    writeHTMLSummary: state.writeHTMLSummary,
     writeError: stableCopyCode(state.writeError)
   };
   await chmod(dirname(outputPath), 0o700);
@@ -2630,12 +2760,13 @@ async function writePrivateEvidence(testInfo, result, state, evidence) {
 async function writePrivateHiddenEvidence(testInfo, result, state, evidence) {
   const outputPath = testInfo.outputPath('wechat-task-context-hidden-evidence.json');
   const payload = {
-    copyCode: stableCopyCode(result?.code),
+    copyCode: result?.status === 'copied' ? 'copied' : stableCopyCode(result?.code),
     copyStatus: result?.status === 'failed' || result?.status === 'copied'
       ? result.status
       : 'unknown',
     evidence,
     serializerCloneMapping: evidence.serializerCloneMapping,
+    writeHTMLSummary: state.writeHTMLSummary,
     writeError: stableCopyCode(state.writeError)
   };
   await chmod(dirname(outputPath), 0o700);
@@ -5378,14 +5509,14 @@ async function writeSourceOnlyEvidence(testInfo, evidence) {
   await chmod(outputPath, 0o600);
 }
 
-async function runSourceOnlyCase(page, testInfo, scenario) {
+async function runSourceOnlyCase(page, baseURL, testInfo, scenario) {
   const postId = createOwnedPost(
     testInfo.wechatTaskContextUser,
     testSlug(testInfo),
     testInfo,
     scenario.themeId
   );
-  await login(page, testInfo.wechatTaskContextUser);
+  await login(page, testInfo.wechatTaskContextUser, baseURL);
   await page.setViewportSize({ width: 1200, height: 1000 });
   await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, { waitUntil: 'domcontentloaded' });
   await waitForVisibleSelector(page, '#easymde-editor', 'wechat-task-context-source-only-editor-unavailable');
@@ -5557,6 +5688,7 @@ class ClipboardItemStub {
 const state = {
   copyResult: null,
   htmlConsumed: false,
+  writeHTMLSummary: null,
   prepareController: null,
   prepareSettled: true,
   writeCount: 0,
@@ -5599,7 +5731,27 @@ const clipboard = createBrowserWechatClipboard({
     }
     await new Promise((resolve) => { state.writeGateRelease = resolve; });
     try {
-      await htmlValue;
+      const htmlBlob = await htmlValue;
+      if (!(htmlBlob instanceof Blob) || typeof htmlBlob.text !== 'function') {
+        state.writeError = 'wechat-task-context-html-payload-invalid';
+        throw new Error(state.writeError);
+      }
+      const htmlDocument = new DOMParser().parseFromString(await htmlBlob.text(), 'text/html');
+      const owners = [...htmlDocument.querySelectorAll('[role="checkbox"][aria-disabled="true"]')];
+      state.writeHTMLSummary = {
+        inputCount: htmlDocument.querySelectorAll('input').length,
+        ownerCheckedCount: owners.filter((owner) => owner.getAttribute('aria-checked') === 'true').length,
+        ownerCheckedVector: owners.map((owner) => owner.getAttribute('aria-checked') === 'true'),
+        ownerCount: owners.length,
+        ownerInputDescendantCount: owners.filter((owner) => owner.querySelector('input')).length,
+        ownerPaintCount: owners.filter((owner) => (
+          Boolean(owner.getAttribute('style')?.trim())
+          && Boolean(owner.querySelector('[aria-hidden="true"], svg'))
+        )).length,
+        ownerStyleCount: owners.filter((owner) => Boolean(owner.getAttribute('style')?.trim())).length,
+        ownerTagSpanCount: owners.filter((owner) => owner.tagName === 'SPAN').length,
+        ownerUncheckedCount: owners.filter((owner) => owner.getAttribute('aria-checked') === 'false').length
+      };
       state.htmlConsumed = true;
     } catch (error) {
       state.writeError = stableErrorCode(error);
@@ -5656,6 +5808,7 @@ globalThis.__wechatTaskContext = {
   getState: () => ({
     copyResult: state.copyResult,
     htmlConsumed: state.htmlConsumed,
+    writeHTMLSummary: state.writeHTMLSummary,
     writeCount: state.writeCount,
     writeError: state.writeError,
     writeStarted: state.writeStarted
@@ -6002,7 +6155,7 @@ async function writePrivateStageBGeometryEvidence(testInfo, evidence) {
   await chmod(outputPath, 0o600);
 }
 
-async function runStageBReadyGeometryCase(page, testInfo, scenario) {
+async function runStageBReadyGeometryCase(page, baseURL, testInfo, scenario) {
   const postId = createOwnedPost(
     testInfo.wechatTaskContextUser,
     testSlug(testInfo),
@@ -6053,7 +6206,7 @@ async function runStageBReadyGeometryCase(page, testInfo, scenario) {
     }
   };
   try {
-    await login(page, testInfo.wechatTaskContextUser);
+    await login(page, testInfo.wechatTaskContextUser, baseURL);
     await page.setViewportSize({ width: 1200, height: 1000 });
     await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, {
       waitUntil: 'domcontentloaded'
@@ -6190,8 +6343,6 @@ async function runStageBReadyGeometryCase(page, testInfo, scenario) {
           prepareOutcome = prepareWait.outcome;
           prepareSettled = prepareWait.settled;
           if (!prepareSettled) await cancelAndSettlePrepare();
-          const prepareKnownStopper = prepareOutcome?.status === 'failed'
-            && prepareOutcome.code === 'wechat-task-checkbox-bad-projection';
           if (observation.result.status === 'failed') {
             primary = freezeSourceOnlyPrimary('failed', stableStageBCode(
               observation.result.code,
@@ -6202,10 +6353,7 @@ async function runStageBReadyGeometryCase(page, testInfo, scenario) {
               observation.result.code,
               'wechat-task-context-stage-b-geometry-unavailable'
             ));
-          } else if (
-            prepareOutcome?.status === 'failed'
-            && !prepareKnownStopper
-          ) {
+          } else if (prepareOutcome?.status === 'failed') {
             primary = freezeSourceOnlyPrimary(
               'failed',
               stableStageBCode(prepareOutcome.code, 'wechat-task-context-stage-b-prepare-failed')
@@ -6396,7 +6544,7 @@ async function runStageBReadyGeometryCase(page, testInfo, scenario) {
   return { unavailableCode: outcome.status === 'unavailable' ? outcome.code : null };
 }
 
-async function runCdpGeometryCase(page, testInfo, scenario) {
+async function runCdpGeometryCase(page, baseURL, testInfo, scenario) {
   const slug = testSlug(testInfo);
   const postId = createOwnedPost(
     testInfo.wechatTaskContextUser,
@@ -6419,7 +6567,7 @@ async function runCdpGeometryCase(page, testInfo, scenario) {
     cleanupFailureCode ??= code;
   };
   try {
-    await login(page, testInfo.wechatTaskContextUser);
+    await login(page, testInfo.wechatTaskContextUser, baseURL);
     await page.setViewportSize({ width: 1200, height: 1000 });
     try {
       await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, {
@@ -6603,11 +6751,7 @@ async function runCdpGeometryCase(page, testInfo, scenario) {
           sourceReferenceRestored: true,
           sourceUnchanged: true
         }));
-        expect(result).toEqual({ code: 'wechat-copy-failed', status: 'failed' });
-        expect(state.writeCount).toBe(1);
-        expect(state.writeStarted).toBe(true);
-        expect(state.htmlConsumed).toBe(false);
-        expect(state.writeError).toBe('wechat-task-checkbox-bad-projection');
+        assertSuccessfulClipboardWrite(result, state);
       }
     }
   } catch (error) {
@@ -6674,7 +6818,10 @@ let privateRoot;
 let privateAdapterCode;
 
 test.describe('WeChat task context on the live WordPress editor', () => {
-  test.beforeAll(async () => {
+  test.skip(!localDiagnosticsEnabled, 'wechat-task-context-local-diagnostics-disabled');
+
+  test.beforeAll(async ({ baseURL }) => {
+    validateLocalDiagnosticPrerequisites(baseURL);
     privateRoot = await mkdtemp(join(tmpdir(), 'easymde-wechat-task-context-'));
     privateAdapterCode = await buildPrivateAdapter(privateRoot);
   });
@@ -6692,12 +6839,12 @@ test.describe('WeChat task context on the live WordPress editor', () => {
     cleanupOwnedRecords(testInfo);
   });
 
-  test('phycat-sky visible 335 reaches the real task projection stopper', async ({ page }, testInfo) => {
+  test('phycat-sky visible 335 completes the real static task-owner Clipboard write', async ({ page, baseURL }, testInfo) => {
     test.setTimeout(120_000);
     const slug = testSlug(testInfo);
     const postId = createOwnedPost(testInfo.wechatTaskContextUser, slug, testInfo);
 
-    await login(page, testInfo.wechatTaskContextUser);
+    await login(page, testInfo.wechatTaskContextUser, baseURL);
     await page.setViewportSize({ width: 1200, height: 1000 });
     try {
       await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, {
@@ -6762,11 +6909,7 @@ test.describe('WeChat task context on the live WordPress editor', () => {
       const evidence = await page.evaluate(() => globalThis.__wechatTaskContextEvidence.readState());
       await writePrivateEvidence(testInfo, result, state, evidence);
 
-      expect(result).toEqual({ code: 'wechat-copy-failed', status: 'failed' });
-      expect(state.writeCount).toBe(1);
-      expect(state.writeStarted).toBe(true);
-      expect(state.htmlConsumed).toBe(false);
-      expect(state.writeError).toBe('wechat-task-checkbox-bad-projection');
+      assertSuccessfulClipboardWrite(result, state);
       assertContextEvidence(evidence, calibrated.contentWidth);
     } catch (error) {
       primaryError = error;
@@ -6797,7 +6940,7 @@ test.describe('WeChat task context on the live WordPress editor', () => {
     }
   });
 
-  test('phycat-sky immersive hidden nominal335 actual335.5 records the real hidden task context', async ({ page }, testInfo) => {
+  test('phycat-sky immersive hidden nominal335 actual335.5 completes the hidden static task-owner write', async ({ page, baseURL }, testInfo) => {
     test.setTimeout(120_000);
     const slug = testSlug(testInfo);
     const postId = createOwnedPost(testInfo.wechatTaskContextUser, slug, testInfo);
@@ -6807,7 +6950,7 @@ test.describe('WeChat task context on the live WordPress editor', () => {
     let evidenceInstalled = false;
 
     try {
-      await login(page, testInfo.wechatTaskContextUser);
+      await login(page, testInfo.wechatTaskContextUser, baseURL);
       await page.setViewportSize({ width: 1200, height: 1000 });
       try {
         await page.goto(`/wp-admin/post.php?post=${postId}&action=edit`, {
@@ -6937,11 +7080,7 @@ test.describe('WeChat task context on the live WordPress editor', () => {
       const evidence = await page.evaluate(() => globalThis.__wechatTaskContextHiddenEvidence.readState());
       await writePrivateHiddenEvidence(testInfo, result, state, evidence);
 
-      expect(result).toEqual({ code: 'wechat-copy-failed', status: 'failed' });
-      expect(state.writeCount).toBe(1);
-      expect(state.writeStarted).toBe(true);
-      expect(state.htmlConsumed).toBe(false);
-      expect(state.writeError).toBe('wechat-task-checkbox-bad-projection');
+      assertSuccessfulClipboardWrite(result, state);
       assertHiddenContextEvidence(evidence, actualWidthSample.contentWidth);
     } catch (error) {
       primaryError = error;
@@ -6986,9 +7125,9 @@ test.describe('WeChat task context on the live WordPress editor', () => {
       themeId: 'bloom-petal'
     }
   ]) {
-    test(scenario.name, async ({ page }, testInfo) => {
+    test(scenario.name, async ({ page, baseURL }, testInfo) => {
       test.setTimeout(120_000);
-      const outcome = await runCdpGeometryCase(page, testInfo, scenario);
+      const outcome = await runCdpGeometryCase(page, baseURL, testInfo, scenario);
       if (outcome.unavailableCode) {
         testInfo.annotations.push({
           description: outcome.unavailableCode,
@@ -7014,9 +7153,9 @@ test.describe('WeChat task context on the live WordPress editor', () => {
         themeId: 'bloom-petal'
       }
     ]) {
-      test(scenario.name, async ({ page }, testInfo) => {
+      test(scenario.name, async ({ page, baseURL }, testInfo) => {
         test.setTimeout(120_000);
-        const outcome = await runStageBReadyGeometryCase(page, testInfo, scenario);
+        const outcome = await runStageBReadyGeometryCase(page, baseURL, testInfo, scenario);
         if (outcome.unavailableCode) {
           testInfo.annotations.push({
             description: outcome.unavailableCode,
@@ -7030,6 +7169,12 @@ test.describe('WeChat task context on the live WordPress editor', () => {
 });
 
 test.describe('Source-only CDP capability', () => {
+  test.skip(!localDiagnosticsEnabled, 'wechat-task-context-local-diagnostics-disabled');
+
+  test.beforeAll(async ({ baseURL }) => {
+    validateLocalDiagnosticPrerequisites(baseURL);
+  });
+
   test.beforeEach(async ({ page: _page }, testInfo) => {
     testInfo.wechatTaskContextUser = createOwnedUser(testSlug(testInfo));
     testInfo.wechatTaskContextUserId = testInfo.wechatTaskContextUser.id;
@@ -7043,9 +7188,9 @@ test.describe('Source-only CDP capability', () => {
     { name: 'Source-only CDP capability Core default canonical', themeId: 'default' },
     { name: 'Source-only CDP capability Bloom bloom-petal canonical', themeId: 'bloom-petal' }
   ]) {
-    test(scenario.name, async ({ page }, testInfo) => {
+    test(scenario.name, async ({ page, baseURL }, testInfo) => {
       test.setTimeout(120_000);
-      const unavailableCode = await runSourceOnlyCase(page, testInfo, scenario);
+      const unavailableCode = await runSourceOnlyCase(page, baseURL, testInfo, scenario);
       if (unavailableCode) {
         testInfo.annotations.push({ description: unavailableCode, type: 'unverified' });
         test.skip(true, unavailableCode);
@@ -7055,6 +7200,171 @@ test.describe('Source-only CDP capability', () => {
 });
 
 test.describe('Source-only CDP CPU contracts', () => {
+  test('accepts a container WordPress path through the configured CLI wrapper', () => {
+    const calls = [];
+    validateLocalDiagnosticPrerequisites('http://127.0.0.1:8089', {
+      wpPathValue: '/var/www/html',
+      wpCliValue: 'easymde-wpcli-wrapper',
+      spawnSyncRef: (command, args) => {
+        calls.push({ args, command });
+        return { error: null, status: 0 };
+      }
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe('easymde-wpcli-wrapper');
+    expect(calls[0].args).toEqual([
+      'core',
+      'is-installed',
+      '--path=/var/www/html',
+      '--allow-root'
+    ]);
+  });
+
+  test('rejects a missing WordPress path before invoking the configured CLI', () => {
+    let invocationCount = 0;
+    expect(() => validateLocalDiagnosticPrerequisites('http://127.0.0.1:8089', {
+      wpPathValue: '',
+      wpCliValue: 'easymde-wpcli-wrapper',
+      spawnSyncRef: () => {
+        invocationCount += 1;
+        return { error: null, status: 0 };
+      }
+    })).toThrow('wechat-task-context-wp-path-missing');
+    expect(invocationCount).toBe(0);
+  });
+
+  test('rejects a missing WordPress CLI before invoking the configured owner', () => {
+    let invocationCount = 0;
+    expect(() => validateLocalDiagnosticPrerequisites('http://127.0.0.1:8089', {
+      wpPathValue: '/var/www/html',
+      wpCliValue: ' ',
+      spawnSyncRef: () => {
+        invocationCount += 1;
+        return { error: null, status: 0 };
+      }
+    })).toThrow('wechat-task-context-wp-cli-missing');
+    expect(invocationCount).toBe(0);
+  });
+
+  test('scopes hidden layout representations while retaining visible style and geometry negatives', () => {
+    const entry = (propertyName, raw, category = 'other') => ({
+      category,
+      enumValue: null,
+      numeric: null,
+      propertyName,
+      raw
+    });
+    const surface = ({
+      contentWidth = 335.5,
+      inputStyle = [],
+      liStyle = [],
+      beforeStyle = [],
+      afterStyle = []
+    } = {}) => ({
+      inputs: [{
+        index: 0,
+        li: { bottom: 36, height: 36, left: 0, right: 306.5, top: 0, width: 306.5 },
+        liStyle,
+        pseudo: { after: afterStyle, before: beforeStyle },
+        rect: { bottom: 20.8, height: 20.8, left: 0, right: 20.8, top: 0, width: 20.8 },
+        style: inputStyle,
+        textAnchor: null
+      }],
+      root: { contentWidth, style: [] }
+    });
+    const originEntry = (raw) => entry('transform-origin', raw, 'transform-origin');
+    const transformEntry = (raw) => entry('transform', raw, 'transform');
+    const comparatorSource = createHiddenContextComparator.toString();
+    const comparatorFactory = vm.runInNewContext(`(${comparatorSource})`);
+    const comparator = comparatorFactory(
+      geometryQuantum,
+      HIDDEN_CURRENT_SIGNATURE_LAYOUT_PROPERTIES
+    );
+    const hiddenPercent = {
+      measurement: surface({
+        inputStyle: [originEntry('10.3984px 10.3984px')],
+        liStyle: [entry('width', '306.5px', 'px')],
+        beforeStyle: [originEntry('10.3984px 10.3984px')]
+      }),
+      source: surface({
+        inputStyle: [originEntry('50% 50%')],
+        liStyle: [entry('width', '100%', '%')],
+        beforeStyle: [originEntry('50% 50%')]
+      })
+    };
+    const hiddenUsedPixels = {
+      measurement: surface({ inputStyle: [originEntry('10.3984px 10.3984px')] }),
+      source: surface({ inputStyle: [originEntry('10.3984px 10.3984px')] })
+    };
+    const visibleOriginChange = {
+      measurement: surface({ inputStyle: [originEntry('10.5px 10.5px')] }),
+      source: surface({ inputStyle: [originEntry('10.3984px 10.3984px')] })
+    };
+    const visibleTransformChange = {
+      measurement: surface({ inputStyle: [transformEntry('matrix(1, 0, 0, 1, 1, 0)')] }),
+      source: surface({ inputStyle: [transformEntry('none')] })
+    };
+    const visibleGeometryChange = {
+      measurement: surface({ contentWidth: 335.5 + (geometryQuantum * 2) }),
+      source: surface()
+    };
+    const assertComparatorContract = (candidate) => {
+      expect(candidate.firstStyleDifferenceForSurfaces(
+        hiddenPercent.source,
+        hiddenPercent.measurement,
+        true
+      )).toBeNull();
+      expect(candidate.firstStyleDifferenceForSurfaces(
+        hiddenUsedPixels.source,
+        hiddenUsedPixels.measurement,
+        true
+      )).toBeNull();
+      expect(candidate.firstStyleDifferenceForSurfaces(
+        visibleOriginChange.source,
+        visibleOriginChange.measurement
+      )).toMatchObject({ ownerKind: 'input', propertyName: 'transform-origin' });
+      expect(candidate.firstStyleDifferenceForSurfaces(
+        visibleTransformChange.source,
+        visibleTransformChange.measurement
+      )).toMatchObject({ ownerKind: 'input', propertyName: 'transform' });
+      expect(candidate.firstGeometryDifferenceForSurfaces(
+        visibleGeometryChange.source,
+        visibleGeometryChange.measurement
+      )).toMatchObject({ ownerKind: 'root', propertyName: 'contentWidth.width' });
+    };
+    assertComparatorContract(comparator);
+
+    const styleMutationSource = comparatorSource.replace(
+      /const styleEntryEqual = \(sourceEntry, measurementEntry\) => \(?\s*Boolean\(measurementEntry\) && valuesEqual\(sourceEntry, measurementEntry\)\s*\)?;/u,
+      'const styleEntryEqual = () => true;'
+    );
+    expect(styleMutationSource).not.toBe(comparatorSource);
+    const styleMutation = vm.runInNewContext(`(${styleMutationSource})`)(
+      geometryQuantum,
+      HIDDEN_CURRENT_SIGNATURE_LAYOUT_PROPERTIES
+    );
+    expect(styleMutation.firstStyleDifferenceForSurfaces(
+      visibleOriginChange.source,
+      visibleOriginChange.measurement
+    )).toBeNull();
+    expect(() => assertComparatorContract(styleMutation)).toThrow();
+
+    const geometryMutationSource = comparatorSource.replace(
+      'if (!Number.isFinite(delta) || delta > geometryQuantum) {',
+      'if (false) {'
+    );
+    expect(geometryMutationSource).not.toBe(comparatorSource);
+    const geometryMutation = vm.runInNewContext(`(${geometryMutationSource})`)(
+      geometryQuantum,
+      HIDDEN_CURRENT_SIGNATURE_LAYOUT_PROPERTIES
+    );
+    expect(geometryMutation.firstGeometryDifferenceForSurfaces(
+      visibleGeometryChange.source,
+      visibleGeometryChange.measurement
+    )).toBeNull();
+    expect(() => assertComparatorContract(geometryMutation)).toThrow();
+  });
+
   const image = (options = {}) => {
     const listeners = new Map([['error', new Set()], ['load', new Set()]]);
     const value = {

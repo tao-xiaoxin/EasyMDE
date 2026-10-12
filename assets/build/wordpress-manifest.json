@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/admin-editor.tsx": {
       "handle": "easymde-admin-editor-toolbar",
-      "file": "assets/admin-editor-BHBAVYXo.js",
-      "asset": "assets/admin-editor-BHBAVYXo.asset.php",
+      "file": "assets/admin-editor-C93M7lBI.js",
+      "asset": "assets/admin-editor-C93M7lBI.asset.php",
       "dependencies": [
         "wp-api-fetch",
         "wp-element",
@@ -12,7 +12,7 @@
         "wp-i18n"
       ],
       "resources": [
-        "assets/wechat-png-encoder-VLhJRlsW.js"
+        "assets/wechat-png-encoder-D32FIHI0.js"
       ]
     }
   }

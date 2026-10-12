@@ -1,5 +1,6 @@
 import {
   type WechatPngEncoderWorkerRequest,
+  isWechatPngEncoderCanvasSize,
   isWechatPngEncoderWorkerResponse,
   WECHAT_PNG_ENCODER_PROTOCOL,
 } from './wechat-png-encoder-protocol';
@@ -28,8 +29,6 @@ export type BrowserWechatPngEncoderRuntime = Readonly<{
   workerUrl?: string;
 }>;
 
-const MAX_DIMENSION = 4096;
-
 function failed(): WechatPngEncodingError {
   return new WechatPngEncodingError('wechat-png-encode-failed');
 }
@@ -41,12 +40,7 @@ function cancelled(): WechatPngEncodingError {
 function validCanvas(canvas: HTMLCanvasElement): boolean {
   return (
     canvas instanceof HTMLCanvasElement
-    && Number.isSafeInteger(canvas.width)
-    && Number.isSafeInteger(canvas.height)
-    && canvas.width >= 1
-    && canvas.width <= MAX_DIMENSION
-    && canvas.height >= 1
-    && canvas.height <= MAX_DIMENSION
+    && isWechatPngEncoderCanvasSize(canvas.width, canvas.height)
   );
 }
 

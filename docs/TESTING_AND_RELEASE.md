@@ -244,6 +244,16 @@ The focused Chromium copy regression spec is:
 npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
 ```
 
+The live cases in `wechat-copy-performance.spec.mjs` and
+`wechat-task-context.spec.mjs` are local diagnostics. They run only with
+`EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS=1`; regular CI retains the synthetic
+task-context cases and the normal WeChat regression spec. Opt-in runs require
+the configured WordPress and upload owners, credentials supplied through the
+existing private E2E environment, and a private performance evidence directory.
+Missing prerequisites fail explicitly. Performance evidence binds to the
+current manifest and artifact hashes rather than a historical bundle name.
+These diagnostics do not establish native WeChat or per-theme visual acceptance.
+
 The neutral `phycat-sky` full-example DPR1/2 case verifies responsive SVG
 capture separately from decorated Bloom coverage. It derives eligible roles
 from each live layout, decodes the actual uploaded PNG bytes, checks integer

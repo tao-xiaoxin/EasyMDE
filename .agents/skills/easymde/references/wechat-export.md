@@ -362,8 +362,10 @@ limits, enqueue its selected-owner upload with backpressure and at most three
 in-flight PNG uploads. Keep completed uploads keyed by candidate order and
 replace visual clones only after every selected-owner upload succeeds, in that
 same order. Use the current device pixel ratio clamped to `1..2`; each source
-edge is `1..4096` CSS pixels, each PNG is at most 16,777,216 output pixels, and
-the transaction is at most 33,554,432 output pixels. Each PNG must be non-empty
+edge is `1..4096` CSS pixels. The encoding host and worker accept output edges
+up to 8192 pixels after DPR scaling, with the same 16,777,216-pixel per-PNG
+ceiling; increasing an edge must not increase this pixel budget. The transaction
+is at most 33,554,432 output pixels. Each PNG must be non-empty
 verified `image/png`, no larger than the authoritative image-upload `maxBytes`;
 all PNGs together are at most 33,554,432 bytes. Each rasterization has a 10,000
 ms bound and the conversion transaction has a 60,000 ms bound. Any

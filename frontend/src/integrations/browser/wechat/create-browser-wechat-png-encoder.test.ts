@@ -62,10 +62,10 @@ class OffscreenCanvasStub {
   getContext = vi.fn(() => ({}));
 }
 
-function canvas(): HTMLCanvasElement {
+function canvas(width = 20, height = 10): HTMLCanvasElement {
   const value = document.createElement('canvas');
-  value.width = 20;
-  value.height = 10;
+  value.width = width;
+  value.height = height;
   return value;
 }
 
@@ -155,12 +155,16 @@ describe('createBrowserWechatPngEncoder', () => {
     expect(WorkerStub.instances).toHaveLength(0);
   });
 
-  it('transfers the existing canvas bitmap and validates a successful PNG response', async () => {
+  it.each([
+    [20, 10],
+    [6000, 200],
+    [8192, 2],
+  ])('transfers a %sx%s canvas bitmap and validates a successful PNG response', async (width, height) => {
     const sourceBitmap = bitmap();
     const createImageBitmap = vi.fn(async () => sourceBitmap);
     const port = createBrowserWechatPngEncoder(runtime({ createImageBitmap })) as WechatPngEncodingPort;
     const operation = port.encode({
-      canvas: canvas(),
+      canvas: canvas(width, height),
       signal: new AbortController().signal,
     });
 
@@ -170,10 +174,10 @@ describe('createBrowserWechatPngEncoder', () => {
     expect(worker).toBeDefined();
     const request = postedRequest(worker as WorkerStub);
     expect(request).toEqual(expect.objectContaining({
-      height: 10,
+      height,
       operation: 'encode',
       protocol: WECHAT_PNG_ENCODER_PROTOCOL,
-      width: 20,
+      width,
     }));
     expect((worker as WorkerStub).posted[0]?.transfer).toEqual([sourceBitmap]);
     expect(isWechatPngEncoderWorkerResponse(encodedResponse(request.id), request.id)).toBe(true);
@@ -188,6 +192,38 @@ describe('createBrowserWechatPngEncoder', () => {
     expect((worker as WorkerStub).onmessage).toBeNull();
     expect((worker as WorkerStub).onerror).toBeNull();
     expect((worker as WorkerStub).onmessageerror).toBeNull();
+  });
+
+  it.each([
+    ['edge above the shared maximum', 8193, 1],
+    ['pixel count above the shared maximum', 4097, 4097],
+    ['zero width', 0, 10],
+  ])('rejects a canvas with %s before creating a bitmap or worker', async (_label, width, height) => {
+    const createImageBitmap = vi.fn(async () => bitmap());
+    const port = createBrowserWechatPngEncoder(runtime({ createImageBitmap })) as WechatPngEncodingPort;
+
+    await expect(port.encode({
+      canvas: canvas(width, height),
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'wechat-png-encode-failed' });
+    expect(createImageBitmap).not.toHaveBeenCalled();
+    expect(WorkerStub.instances).toHaveLength(0);
+  });
+
+  it.each([
+    ['fractional width', 20.5, 10],
+    ['NaN width', Number.NaN, 10],
+    ['infinite height', 20, Number.POSITIVE_INFINITY],
+    ['negative height', 20, -1],
+  ])('rejects a protocol request with %s', (_label, width, height) => {
+    expect(isWechatPngEncoderWorkerRequest({
+      bitmap: bitmap(),
+      height,
+      id: 'easymde-png-protocol-test',
+      operation: 'encode',
+      protocol: WECHAT_PNG_ENCODER_PROTOCOL,
+      width,
+    })).toBe(false);
   });
 
   it.each([

@@ -1,0 +1,226 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import vm from "node:vm";
+import { JSDOM } from "jsdom";
+
+const performanceSpecSource = readFileSync(
+	new URL("../e2e/wechat-copy-performance.spec.mjs", import.meta.url),
+	"utf8",
+);
+const probeArguments = {
+	beginMarker: "test.begin",
+	clickMarker: "test.click",
+	copyTimingStageEntries: [],
+	endMarker: "test.end",
+	timingDetailKindValues: ["math", "mermaid"],
+	timingDetailModeValues: ["async", "sync"],
+	timingDetailTerminalValues: ["error", "success"],
+};
+
+function loadProbeInitializer(context) {
+	const installStart = performanceSpecSource.indexOf(
+		"function installPerformanceProbe(page)",
+	);
+	const callbackStart = performanceSpecSource.indexOf(
+		"({\n\t\t\tbeginMarker",
+		installStart,
+	);
+	const callbackEndMarker =
+		"\n\t\t},\n\t\t{\n\t\t\tbeginMarker: traceBeginMarker";
+	const callbackEnd = performanceSpecSource.indexOf(
+		callbackEndMarker,
+		callbackStart,
+	);
+	assert.ok(installStart >= 0);
+	assert.ok(callbackStart > installStart);
+	assert.ok(callbackEnd > callbackStart);
+	const callbackSource = performanceSpecSource.slice(
+		callbackStart,
+		callbackEnd + "\n\t\t}".length,
+	);
+	return vm.runInContext(`(${callbackSource})`, context);
+}
+
+function loadDiagnosticsFlagValidator() {
+	const start = performanceSpecSource.indexOf(
+		"function localDiagnosticsEnabledFromSetting(value)",
+	);
+	const end = performanceSpecSource.indexOf(
+		"\nconst localDiagnosticsEnabled =",
+		start,
+	);
+	assert.ok(start >= 0);
+	assert.ok(end > start);
+	return vm.runInNewContext(
+		`(${performanceSpecSource.slice(start, end).trim()})`,
+	);
+}
+
+function bindDomContext(context, PerformanceObserver) {
+	context.PerformanceObserver = PerformanceObserver;
+}
+
+function createProbeHarness(markup) {
+	const dom = new JSDOM(markup, {
+		pretendToBeVisual: true,
+		url: "http://localhost:8093/wp-admin/post.php",
+	});
+	const { window } = dom;
+	const nativeWrites = [];
+	const clipboard = {
+		write(items) {
+			nativeWrites.push(items);
+			return Promise.resolve();
+		},
+	};
+	Object.defineProperty(window.navigator, "clipboard", {
+		configurable: true,
+		value: clipboard,
+	});
+	Object.defineProperty(window.navigator, "userActivation", {
+		configurable: true,
+		value: { isActive: true },
+	});
+	Object.defineProperty(window.document, "hasFocus", {
+		configurable: true,
+		value: () => true,
+	});
+	class StubPerformanceObserver {
+		static supportedEntryTypes = ["measure", "longtask"];
+
+		constructor(callback) {
+			this.callback = callback;
+		}
+
+		observe() {}
+
+		takeRecords() {
+			return [];
+		}
+
+		disconnect() {}
+	}
+	window.PerformanceObserver = StubPerformanceObserver;
+	Object.defineProperty(window.performance, "mark", {
+		configurable: true,
+		value: () => {},
+	});
+	Object.defineProperty(window.performance, "clearMarks", {
+		configurable: true,
+		value: () => {},
+	});
+	const context = vm.createContext(window);
+	bindDomContext(context, StubPerformanceObserver);
+	return { context, dom, nativeWrites, window };
+}
+
+function initializeProbe(context) {
+	const initializer = loadProbeInitializer(context);
+	initializer(probeArguments);
+	return vm.runInContext("globalThis.__easymdeWechatCopyPerformance", context);
+}
+
+async function runProbeScenario(markup, targetSelector) {
+	const { context, dom, nativeWrites, window } = createProbeHarness(markup);
+	try {
+		const probe = initializeProbe(context);
+		assert.ok(probe);
+		probe.begin();
+		const target = window.document.querySelector(targetSelector);
+		assert.ok(target);
+		target.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+		await window.navigator.clipboard.write(["clipboard-item"]);
+		await probe.awaitEarlyPhases();
+		const sample = probe.end();
+		assert.equal(nativeWrites.length, 1);
+		assert.equal(sample.writes.length, 1);
+		assert.equal(sample.writes[0].nativeState, "fulfilled");
+		assert.equal(sample.clicks.length, 1);
+		assert.ok(Number.isFinite(sample.clickAt));
+		assert.ok(Number.isFinite(sample.endAt));
+		assert.ok(sample.endAt >= sample.clickAt);
+		assert.equal(sample.rafs.filter(({ index }) => index > 0).length, 3);
+		assert.equal(sample.rafs.filter(({ index }) => index === 0).length, 1);
+		return sample;
+	} finally {
+		vm.runInContext(
+			"globalThis.__easymdeWechatCopyPerformance?.stop()",
+			context,
+		);
+		dom.window.close();
+	}
+}
+
+test("performance probe executes ordinary and immersive owner paths", async () => {
+	const ordinary = await runProbeScenario(
+		'<button class="easymde-toolbar-copy-action"><span data-target="copy"></span></button>',
+		"[data-target=copy]",
+	);
+	assert.equal(ordinary.clicks[0].surface, "ordinary");
+	assert.equal(ordinary.writes[0].surface, "ordinary");
+	assert.equal(ordinary.clicks[0].owner.ownerDocumentMatches, true);
+
+	const immersive = await runProbeScenario(
+		'<button class="easymde-immersive-wechat"><span data-target="copy"></span></button>',
+		"[data-target=copy]",
+	);
+	assert.equal(immersive.clicks[0].surface, "immersive");
+	assert.equal(immersive.writes[0].surface, "immersive");
+	assert.equal(immersive.clicks[0].owner.ownerDocumentMatches, true);
+});
+
+test("performance probe leaves unrelated clicks out of timing state", () => {
+	const { context, dom, window } = createProbeHarness(
+		'<button class="easymde-toolbar-theme" data-target="theme"></button>',
+	);
+	try {
+		const probe = initializeProbe(context);
+		probe.begin();
+		window.document.querySelector("[data-target=theme]").click();
+		const state = probe.getState();
+		assert.equal(state.clickAt, null);
+		assert.equal(state.clickCount, 0);
+		assert.equal(state.writeCount, 0);
+		assert.equal(state.rafs.length, 0);
+	} finally {
+		vm.runInContext(
+			"globalThis.__easymdeWechatCopyPerformance?.stop()",
+			context,
+		);
+		dom.window.close();
+	}
+});
+
+test("local diagnostics flag rejects values outside the shared contract", () => {
+	const validate = loadDiagnosticsFlagValidator();
+	assert.equal(validate(undefined), false);
+	assert.equal(validate(""), false);
+	assert.equal(validate(" 0 "), false);
+	assert.equal(validate(" 1 "), true);
+	for (const value of ["2", "true", "enabled"]) {
+		assert.throws(() => validate(value), /local-diagnostics-flag-invalid/u);
+	}
+});
+
+test("performance profile identity follows the current checked-in artifact", () => {
+	const manifest = JSON.parse(
+		readFileSync(
+			new URL("../../assets/build/manifest.json", import.meta.url),
+			"utf8",
+		),
+	);
+	const entry = manifest["frontend/src/entrypoints/admin-editor.tsx"];
+	assert.equal(entry?.isEntry, true);
+	assert.match(entry?.file ?? "", /^assets\/admin-editor-[A-Za-z0-9_-]+\.js$/u);
+	assert.ok(
+		readFileSync(new URL(`../../assets/build/${entry.file}`, import.meta.url))
+			.length > 0,
+	);
+	assert.match(
+		performanceSpecSource,
+		/function readCurrentServerBundleIdentity\(\)/u,
+	);
+	assert.match(performanceSpecSource, /assets\/build\/manifest\.json/u);
+	assert.doesNotMatch(performanceSpecSource, /expectedDtdEditor|MatchesDtd/u);
+});

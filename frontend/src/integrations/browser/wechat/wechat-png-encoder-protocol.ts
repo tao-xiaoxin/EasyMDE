@@ -23,7 +23,8 @@ export type WechatPngEncoderWorkerResponse =
       protocol: typeof WECHAT_PNG_ENCODER_PROTOCOL;
     }>;
 
-const MAX_DIMENSION = 4096;
+export const WECHAT_PNG_ENCODER_MAX_DIMENSION = 8192;
+export const WECHAT_PNG_ENCODER_MAX_PIXELS = 16_777_216;
 const OPERATION_ID = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 
 export function isWechatPngEncoderOperationId(value: unknown): value is string {
@@ -47,8 +48,14 @@ function isDimension(value: unknown): value is number {
     'number' === typeof value
     && Number.isSafeInteger(value)
     && value >= 1
-    && value <= MAX_DIMENSION
+    && value <= WECHAT_PNG_ENCODER_MAX_DIMENSION
   );
+}
+
+export function isWechatPngEncoderCanvasSize(width: unknown, height: unknown): boolean {
+  if (!isDimension(width) || !isDimension(height)) return false;
+  const pixelCount = width * height;
+  return Number.isSafeInteger(pixelCount) && pixelCount <= WECHAT_PNG_ENCODER_MAX_PIXELS;
 }
 
 function isImageBitmapLike(value: unknown): value is ImageBitmap {
@@ -79,8 +86,7 @@ export function isWechatPngEncoderWorkerRequest(
     WECHAT_PNG_ENCODER_PROTOCOL === value.protocol
     && 'encode' === value.operation
     && isWechatPngEncoderOperationId(value.id)
-    && isDimension(value.width)
-    && isDimension(value.height)
+    && isWechatPngEncoderCanvasSize(value.width, value.height)
     && isImageBitmapLike(value.bitmap)
   );
 }

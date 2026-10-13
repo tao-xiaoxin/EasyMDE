@@ -473,17 +473,25 @@ describe('createWordPressImageUploadPort', () => {
       siteUrl: 'https://example.test/wp-admin/post.php',
       uploadOwner: 'image-hosting'
     });
-    await expect(
-      rejected.upload({
-        altText: 'image',
-        file: new File(['image'], 'image.png', { type: 'image/png' }),
-        postId: 0,
-        signal: new AbortController().signal
-      })
-    ).resolves.toEqual({
-      code: 'image-upload-request-failed',
-      status: 'failed'
+    const rejectedResult = await rejected.upload({
+      altText: 'image',
+      file: new File(['image'], 'image.png', { type: 'image/png' }),
+      postId: 0,
+      signal: new AbortController().signal
     });
+    if ('failed' !== rejectedResult.status) throw new Error('image-upload-result-not-failed');
+    expect(rejectedResult).toMatchObject({
+      code: 'image-upload-request-failed',
+      status: 'failed',
+      diagnostic: {
+        cancelled: false,
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: null,
+        transportCategory: 'network'
+      }
+    });
+    expect(rejectedResult.diagnostic?.durationMs).toBeGreaterThanOrEqual(0);
 
     const invalid = createWordPressImageUploadPort({
       actionNonce: 'synthetic-image-hosting-nonce',
@@ -509,9 +517,8 @@ describe('createWordPressImageUploadPort', () => {
       actionNonce: 'synthetic-image-hosting-nonce',
       apiFetch: vi.fn().mockRejectedValue({
         code: 'easymde_rest_invalid_image_hosting_nonce',
-        data: { secret: 'must-not-leak' },
-        message: 'The image-hosting request could not be verified.',
-        status: 403
+        data: { secret: 'must-not-leak', status: 403 },
+        message: 'The image-hosting request could not be verified.'
       }),
       endpoint: '/wp-json/easymde/v1/image-hosting/upload',
       formData: FormData,
@@ -520,18 +527,74 @@ describe('createWordPressImageUploadPort', () => {
       uploadOwner: 'image-hosting'
     });
 
-    await expect(
-      port.upload({
-        altText: 'image',
-        file: new File(['image'], 'image.png', { type: 'image/png' }),
-        postId: 17,
-        signal: new AbortController().signal
-      })
-    ).resolves.toEqual({
+    const result = await port.upload({
+      altText: 'image',
+      file: new File(['image'], 'image.png', { type: 'image/png' }),
+      postId: 17,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({
       code: 'easymde_rest_invalid_image_hosting_nonce',
+      diagnostic: {
+        cancelled: false,
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: 403,
+        transportCategory: 'http'
+      },
       sideEffects: 'none',
       status: 'failed'
     });
+  });
+
+  it('preserves the allowlisted image-hosting provider failure code without exposing response data', async () => {
+    const failureLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const port = createWordPressImageUploadPort({
+      actionNonce: 'synthetic-image-hosting-nonce',
+      apiFetch: vi.fn().mockRejectedValue({
+        code: 'easymde_image_hosting_upload_failed',
+        data: { provider: 'must-not-leak', secret: 'must-not-leak', status: 502 },
+        message: 'The image could not be uploaded to the configured image host.'
+      }),
+      endpoint: '/wp-json/easymde/v1/image-hosting/upload',
+      formData: FormData,
+      nonce: 'synthetic-nonce',
+      siteUrl: 'https://example.test/wp-admin/post.php',
+      uploadOwner: 'image-hosting'
+    });
+
+    const result = await port.upload({
+      altText: 'image',
+      file: new File(['image'], 'image.png', { type: 'image/png' }),
+      postId: 17,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({
+      code: 'easymde_image_hosting_upload_failed',
+      diagnostic: {
+        cancelled: false,
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: 502,
+        transportCategory: 'http'
+      },
+      sideEffects: 'uploads-may-remain',
+      status: 'failed'
+    });
+    expect(failureLog).toHaveBeenCalledWith(
+      '[EasyMDE] image-upload-failed',
+      expect.objectContaining({
+        cancelled: false,
+        code: 'easymde_image_hosting_upload_failed',
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: 502,
+        transportCategory: 'http'
+      })
+    );
+    const loggedDiagnostic = failureLog.mock.calls[0]?.[1];
+    expect(loggedDiagnostic).not.toHaveProperty('data');
+    expect(loggedDiagnostic).not.toHaveProperty('message');
   });
 
   it.each([
@@ -552,15 +615,21 @@ describe('createWordPressImageUploadPort', () => {
       uploadOwner: 'image-hosting'
     });
 
-    await expect(
-      port.upload({
-        altText: 'image',
-        file: new File(['image'], 'image.png', { type: 'image/png' }),
-        postId: 17,
-        signal: new AbortController().signal
-      })
-    ).resolves.toEqual({
+    const result = await port.upload({
+      altText: 'image',
+      file: new File(['image'], 'image.png', { type: 'image/png' }),
+      postId: 17,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({
       code: 'image-upload-request-failed',
+      diagnostic: {
+        cancelled: false,
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: 403,
+        transportCategory: 'http'
+      },
       status: 'failed'
     });
   });
@@ -577,14 +646,23 @@ describe('createWordPressImageUploadPort', () => {
       uploadOwner: 'image-hosting'
     });
 
-    await expect(
-      port.upload({
-        altText: 'image',
-        file: new File(['image'], 'image.png', { type: 'image/png' }),
-        postId: 0,
-        signal: new AbortController().signal
-      })
-    ).resolves.toEqual({ code: 'image-upload-cancelled', status: 'failed' });
+    const result = await port.upload({
+      altText: 'image',
+      file: new File(['image'], 'image.png', { type: 'image/png' }),
+      postId: 0,
+      signal: new AbortController().signal
+    });
+    expect(result).toMatchObject({
+      code: 'image-upload-cancelled',
+      diagnostic: {
+        cancelled: true,
+        durationMs: expect.any(Number),
+        operationId: expect.any(Number),
+        status: null,
+        transportCategory: 'abort'
+      },
+      status: 'failed'
+    });
   });
 
   it('rejects a cross-origin upload endpoint before a request', () => {

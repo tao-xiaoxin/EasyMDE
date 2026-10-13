@@ -437,7 +437,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_qiniu_retry_diagnostics_share_operation_and_attempt_bound() {
+	public function test_retry_diagnostics_share_operation_and_attempt_bound_across_providers() {
 		$path = '20260713/00000000-0000-4000-8000-000000000000.png';
 		$transport = new ImageHostingRuntimeFakeTransport(
 			array(
@@ -449,7 +449,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		);
 		$settings = $this->settings();
 		$settings['backup']['retryCount'] = 2;
-		$file       = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
+		$file        = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
 		$diagnostics = array();
 		$listener    = static function ( $diagnostic ) use ( &$diagnostics ) {
 			$diagnostics[] = $diagnostic;
@@ -463,18 +463,84 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		}
 
 		$this->assertSame( array( 'status' => 'uploaded' ), $result['backup'] );
-		$this->assertCount( 3, $diagnostics );
+		$this->assertCount( 4, $diagnostics );
 		$operation_id = $diagnostics[0]['operation_id'];
 		$this->assertNotSame( '', $operation_id );
-		foreach ( $diagnostics as $index => $diagnostic ) {
+
+		$primary = array();
+		$backup  = array();
+		foreach ( $diagnostics as $diagnostic ) {
+			$this->assertSame( $operation_id, $diagnostic['operation_id'] );
+
+			if ( 'cloudflare-r2' === $diagnostic['provider'] ) {
+				$primary[] = $diagnostic;
+				continue;
+			}
+
+			$backup[] = $diagnostic;
+		}
+
+		$this->assertCount( 1, $primary );
+		$this->assertSame( 'primary', $primary[0]['role'] );
+		$this->assertSame( 'complete', $primary[0]['stage'] );
+		$this->assertSame( 200, $primary[0]['status'] );
+		$this->assertSame( 'success', $primary[0]['result'] );
+
+		$this->assertCount( 3, $backup );
+		foreach ( $backup as $index => $diagnostic ) {
 			$this->assertSame( 'qiniu-kodo', $diagnostic['provider'] );
 			$this->assertSame( 'backup', $diagnostic['role'] );
-			$this->assertSame( $operation_id, $diagnostic['operation_id'] );
 			$this->assertSame( $index + 1, $diagnostic['attempt'] );
 			$this->assertSame( 3, $diagnostic['attempt_limit'] );
 		}
 	}
 
+	public function test_r2_retry_diagnostics_share_operation_category_and_attempt_bound() {
+		$transport = new ImageHostingRuntimeFakeTransport(
+			array(
+				HttpResponse::failure( 'timeout', 28 ),
+				HttpResponse::failure( 'timeout', 28 ),
+				HttpResponse::success( 200, '' ),
+			)
+		);
+		$settings = $this->settings();
+		$settings['primary']['retryCount'] = 2;
+		$settings['backup']['enabled']     = false;
+		$file        = $this->file( 'image.png', 'image/png', 'source-image-bytes' );
+		$diagnostics = array();
+		$listener    = static function ( $diagnostic ) use ( &$diagnostics ) {
+			$diagnostics[] = $diagnostic;
+		};
+		add_action( 'easymde_image_hosting_diagnostic', $listener );
+
+		try {
+			$result = $this->runtime( $transport )->upload( $settings, $file );
+		} finally {
+			remove_action( 'easymde_image_hosting_diagnostic', $listener );
+		}
+
+		$this->assertIsArray( $result );
+		$this->assertSame( 'disabled', $result['backup']['status'] );
+		$this->assertCount( 3, $diagnostics );
+		$operation_id = $diagnostics[0]['operation_id'];
+		$this->assertNotSame( '', $operation_id );
+		foreach ( $diagnostics as $index => $diagnostic ) {
+			$this->assertSame( 'cloudflare-r2', $diagnostic['provider'] );
+			$this->assertSame( 'primary', $diagnostic['role'] );
+			$this->assertSame( $operation_id, $diagnostic['operation_id'] );
+			$this->assertSame( $index + 1, $diagnostic['attempt'] );
+			$this->assertSame( 3, $diagnostic['attempt_limit'] );
+			$this->assertIsInt( $diagnostic['duration_ms'] );
+		}
+		$this->assertSame( 'timeout', $diagnostics[0]['category'] );
+		$this->assertSame( 28, $diagnostics[0]['errno'] );
+		$this->assertSame( 'failure', $diagnostics[0]['result'] );
+		$this->assertNull( $diagnostics[0]['status'] );
+		$this->assertSame( 'timeout', $diagnostics[1]['category'] );
+		$this->assertSame( 'failure', $diagnostics[1]['result'] );
+		$this->assertSame( 'success', $diagnostics[2]['result'] );
+		$this->assertSame( 200, $diagnostics[2]['status'] );
+	}
 	public function test_upload_rejects_invalid_retry_counts_before_network_requests() {
 		foreach ( array( 'primary', 'backup' ) as $target ) {
 			foreach ( array( -1, 6, '2' ) as $invalid ) {

@@ -199,16 +199,30 @@ describe('createBrowserWechatClipboard', () => {
         if ('INPUT' === element.tagName && pseudoElement) {
           return declaration(
             '::before' === pseudoElement
-              ? { content: '""', display: 'block', height: '16px', position: 'absolute', width: '16px' }
+              ? {
+                  bottom: 'auto',
+                  content: '""',
+                  display: 'block',
+                  height: '16px',
+                  left: '0px',
+                  position: 'absolute',
+                  right: 'auto',
+                  top: '0px',
+                  width: '16px'
+                }
               : { content: 'none' }
           );
         }
         if ('INPUT' === element.tagName) {
           return declaration({
             appearance: 'none',
+            bottom: 'auto',
             display: 'inline-block',
             height: '16px',
+            left: '0px',
             position: 'absolute',
+            right: 'auto',
+            top: '0px',
             width: '16px'
           });
         }
@@ -786,7 +800,7 @@ describe('createBrowserWechatClipboard', () => {
                   content: '""',
                   display: 'block',
                   height: '16px',
-                  left: 'auto',
+                  left: '0px',
                   'margin-bottom': '0px',
                   'margin-left': '0px',
                   'margin-right': '0px',
@@ -798,7 +812,7 @@ describe('createBrowserWechatClipboard', () => {
                   position: 'absolute',
                   bottom: 'auto',
                   right: 'auto',
-                  top: 'auto',
+                  top: '0px',
                   transform: pseudoTransformValue,
                   'transform-box': pseudoTransformBox,
                   'transform-origin': pseudoTransformOrigin,
@@ -820,8 +834,10 @@ describe('createBrowserWechatClipboard', () => {
             'border-left-width': borderEdge,
             'border-right-width': borderEdge,
             'border-top-width': borderEdge,
+            bottom: 'auto',
             display: inputDisplay,
             height: '16px',
+            left: '0px',
             'max-height': maxHeight,
             'max-width': maxWidth,
             'min-height': minHeight,
@@ -832,6 +848,8 @@ describe('createBrowserWechatClipboard', () => {
             'padding-right': horizontalEdge,
             'padding-top': verticalEdge,
             position: 'absolute',
+            right: 'auto',
+            top: '0px',
             transform: element.closest('.easymde-wechat-preview-measurement') ? measurementTransform : transform,
             width: sourceWidth
           });

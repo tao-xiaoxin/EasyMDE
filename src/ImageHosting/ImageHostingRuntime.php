@@ -240,7 +240,7 @@ final class ImageHostingRuntime {
 	}
 
 	private function upload_provider( $provider, $bytes, $mime_type, $key, array $context ) {
-		if ( $provider instanceof QiniuKodoProvider ) {
+		if ( $provider instanceof QiniuKodoProvider || $provider instanceof CloudflareR2Provider ) {
 			return $provider->upload( $bytes, $mime_type, $key, $context );
 		}
 

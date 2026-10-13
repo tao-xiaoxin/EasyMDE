@@ -61,18 +61,39 @@ describe('createBrowserWechatClipboard', () => {
         .at(-1)
         ?.getAttribute('style') ?? '';
     const formulaLayoutStyle = holder.querySelector('section > span')?.getAttribute('style') ?? '';
+    const formulaWrapperStyle = holder.querySelector('section > span > nobr')?.getAttribute('style') ?? '';
     const formulaVisualStyle = holder.querySelector('section > span > nobr > span')?.getAttribute('style') ?? '';
-    expect(holder.querySelector('nobr')?.getAttribute('style')).toContain('display:block!important');
+    expect(formulaWrapperStyle).toContain('display:block!important');
+    // The KaTeX display layer spans the destination container so a short
+    // formula keeps centering on the destination card.
     expect(formulaLayoutStyle).toContain('inline-size:100%!important');
     expect(formulaLayoutStyle).toContain('max-inline-size:100%!important');
     expect(formulaLayoutStyle).toContain('width:auto!important');
     expect(formulaLayoutStyle).toContain('box-sizing:border-box!important');
     expect(formulaLayoutStyle).toContain('text-align:center!important');
-    expect(formulaVisualStyle).toContain('inline-size:100%!important');
-    expect(formulaVisualStyle).toContain('max-inline-size:100%!important');
-    expect(formulaVisualStyle).toContain('width:auto!important');
+    expect(formulaLayoutStyle).not.toContain('width:max-content!important');
+    expect(formulaLayoutStyle).not.toContain('min-width:max-content!important');
+    // Every intrinsic layer below the display keeps `max-content` and is
+    // centered with auto margins, so an over-wide formula stays reachable
+    // through the outer scroll owner instead of inflating the display box.
+    expect(formulaWrapperStyle).toContain('inline-size:max-content!important');
+    expect(formulaWrapperStyle).toContain('max-inline-size:none!important');
+    expect(formulaWrapperStyle).toContain('width:max-content!important');
+    expect(formulaWrapperStyle).toContain('min-width:max-content!important');
+    expect(formulaWrapperStyle).toContain('max-width:none!important');
+    expect(formulaWrapperStyle).toContain('box-sizing:border-box!important');
+    expect(formulaWrapperStyle).toContain('margin-left:auto!important');
+    expect(formulaWrapperStyle).toContain('margin-right:auto!important');
+    expect(formulaWrapperStyle).toContain('text-align:center!important');
+    expect(formulaWrapperStyle).not.toContain('overflow-x:auto');
+    expect(formulaVisualStyle).toContain('inline-size:max-content!important');
+    expect(formulaVisualStyle).toContain('max-inline-size:none!important');
+    expect(formulaVisualStyle).toContain('width:max-content!important');
+    expect(formulaVisualStyle).toContain('min-width:max-content!important');
+    expect(formulaVisualStyle).toContain('max-width:none!important');
     expect(formulaVisualStyle).toContain('box-sizing:border-box!important');
     expect(formulaVisualStyle).toContain('text-align:center!important');
+    expect(formulaVisualStyle).not.toContain('overflow-x:auto');
     expect(formulaStyle).toContain('overflow-x:auto!important');
     expect(formulaStyle).toContain('overflow-y:hidden!important');
     expect(formulaStyle).toContain('height:auto!important');
@@ -82,6 +103,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(formulaStyle).toContain('margin-left:auto!important');
     expect(formulaStyle).toContain('margin-right:auto!important');
     expect(formulaStyle).toContain('text-align:center!important');
+    expect(holder.querySelectorAll('[style*="overflow-x:auto!important"]').length).toBe(1);
   });
 
   it('preserves KaTeX SVG geometry while normalizing non-math SVG media', async () => {
@@ -90,7 +112,7 @@ describe('createBrowserWechatClipboard', () => {
     const preview = document.createElement('article');
     preview.setAttribute('data-easymde-preview-html-sink', '1');
     preview.innerHTML = [
-      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord"><span class="sqrt"><svg width="400em" height="2.48em"></svg><span class="sqrt-line"></span></span></span></span></span></span></span></div>',
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord"><span class="sqrt"><svg width="2400px" height="48px"></svg><span class="sqrt-line"></span></span></span></span></span></span></span></div>',
       '<svg id="diagram" width="100" height="40"></svg>'
     ].join('');
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'sqrt formula' });
@@ -107,8 +129,8 @@ describe('createBrowserWechatClipboard', () => {
             ? declaration({
                 display: 'block',
                 position: 'absolute',
-                width: '175px',
-                height: '45px',
+                width: '2400px',
+                height: '48px',
                 overflow: 'hidden'
               })
             : declaration({ display: 'inline-block', width: '100px', height: '40px' });
@@ -134,7 +156,8 @@ describe('createBrowserWechatClipboard', () => {
     holder.innerHTML = await blobText(htmlBlob);
     const katexSvgStyle = holder.querySelector('nobr svg')?.getAttribute('style') ?? '';
     const diagramStyle = holder.querySelector('svg#diagram')?.getAttribute('style') ?? '';
-    expect(katexSvgStyle).toContain('height:45px');
+    expect(katexSvgStyle).toContain('width:2400px');
+    expect(katexSvgStyle).toContain('height:48px');
     expect(katexSvgStyle).not.toContain('height:auto');
     expect(diagramStyle).toContain('height:auto');
     expect(diagramStyle).toContain('max-width:100%');

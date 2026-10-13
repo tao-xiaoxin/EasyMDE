@@ -99,6 +99,11 @@ import {
   taskCheckboxStaticPaintExpectationFor,
   taskCheckboxStaticPaintProperties,
 } from './wechat-task-paint';
+import {
+  assertTaskCheckboxStaticFlowAllocationsForRoot,
+  normalizeTaskCheckboxStaticFlow,
+  normalizeTaskCheckboxStaticFlowSynchronously
+} from './wechat-task-static-flow';
 import { isVisiblePaintedThemeHeadingSuffix } from './wechat-pseudo-elements';
 import {
   type TaskCheckboxGeometryLease,
@@ -768,6 +773,7 @@ export async function createMarkup(
       await replaceVisualObjects(clone, conversion, runtime, cache, yieldToBrowser);
       assertPngConversionCurrent(conversion);
     }
+    await normalizeTaskCheckboxStaticFlow(clone, runtime, yieldToBrowser, conversion, signal, taskGeometryLease);
     throwIfBackgroundPreparationAborted(signal);
     const finalized = runWechatSyncTiming(
       clone.ownerDocument.defaultView?.performance,
@@ -776,6 +782,7 @@ export async function createMarkup(
       () => finalizeMarkup(clone, fragmentIds, mathMlNodes)
     );
     assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
+    assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
     assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
     throwIfBackgroundPreparationAborted(signal);
     return finalized;
@@ -816,6 +823,7 @@ export function createMarkupSynchronously(
       )
     )
       return null;
+    normalizeTaskCheckboxStaticFlowSynchronously(clone, runtime, taskGeometryLease);
     const finalized = runWechatSyncTiming(
       clone.ownerDocument.defaultView?.performance,
       WECHAT_COPY_TIMING_NAMES.finalizeMarkup,
@@ -823,6 +831,7 @@ export function createMarkupSynchronously(
       () => finalizeMarkup(clone, fragmentIds, mathMlNodes)
     );
     assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
+    assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
     assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
     return finalized;
   } finally {

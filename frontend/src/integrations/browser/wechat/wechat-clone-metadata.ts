@@ -44,6 +44,13 @@ export type TaskCheckboxStaticPaintExpectation = {
 };
 export const TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS = new WeakMap<Element, TaskCheckboxStaticPaintExpectation>();
 export const TASK_LIST_CHECKBOX_SVG_PAINT = new WeakMap<Element, string>();
+
+export function taskCheckboxOutputMarkers(owner: Element, pseudo: '::before' | '::after'): Element[] {
+  return Array.from(owner.querySelectorAll('*')).filter(
+    (element) => TASK_LIST_CHECKBOX_PSEUDO_CLONES.get(element) === pseudo
+  );
+}
+
 export const FULL_WIDTH_TABLE_CLONES = new WeakSet<Element>();
 export type TableScrollOwnerMetadata = Readonly<{
   borderCollapse: 'separate';

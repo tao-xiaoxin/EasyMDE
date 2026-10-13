@@ -145,6 +145,46 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'upstream', $response->get_error_code() );
 	}
 
+	public function test_wordpress_transport_classifies_failures_without_exposing_upstream_details() {
+		$cases = array(
+			array( 'http_request_failed', 'cURL error 28: Connection timed out after 10003 milliseconds', 'timeout', 28, false ),
+			array( 'http_request_failed', 'cURL error 6: Could not resolve host: synthetic.internal', 'dns_failure', 6, false ),
+			array( 'http_request_failed', 'cURL error 7: Failed to connect to synthetic.internal port 443 after 1000 milliseconds', 'connect_failure', 7, false ),
+			array( 'http_request_failed', 'cURL error 35: OpenSSL SSL_connect: synthetic handshake detail', 'tls_failure', 35, false ),
+			array( 'http_request_failed', 'cURL error 56: Recv failure: synthetic reset detail', 'transfer_failure', 56, false ),
+			array( 'http_request_failed', 'cURL error 42: Callback aborted synthetic request', 'cancelled', 42, true ),
+			array( 'http_request_failed', 'Connection timed out after 10000 milliseconds with 0 bytes received', 'timeout', null, false ),
+			array( 'http_request_failed', 'Synthetic upstream details must not escape.', 'transport_failure', null, false ),
+		);
+
+		foreach ( $cases as $case ) {
+			$filter = static function () use ( $case ) {
+				return new WP_Error( $case[0], $case[1] );
+			};
+			add_filter( 'pre_http_request', $filter );
+
+			try {
+				$response = ( new WordPressHttpTransport() )->request( 'PUT', 'https://example.com/status', array() );
+			} finally {
+				remove_filter( 'pre_http_request', $filter );
+			}
+
+			$label = $case[1] . ' => ' . $case[2];
+			$this->assertFalse( $response->is_success(), $label );
+			$this->assertSame( 'timeout' === $case[2] ? 'timeout' : 'transport_failure', $response->get_error_code(), $label );
+			$this->assertSame( $case[2], $response->get_transport_category(), $label );
+			$this->assertSame( $case[3], $response->get_transport_errno(), $label );
+			$this->assertSame( $case[4], $response->is_cancelled(), $label );
+			$this->assertSame( 0, $response->get_status_code(), $label );
+			$this->assertSame( '', $response->get_body(), $label );
+			$this->assertStringNotContainsString(
+				'synthetic',
+				strtolower( (string) wp_json_encode( array( $response->get_error_code(), $response->get_transport_category(), $response->get_transport_errno(), $response->get_headers(), $response->get_body() ) ) ),
+				$label
+			);
+		}
+	}
+
 	public function test_r2_upload_uses_one_signed_put_and_returns_the_https_public_url() {
 		$transport = new ImageHostFakeTransport( array( HttpResponse::success( 200, '' ) ) );
 		$provider  = new CloudflareR2Provider(
@@ -183,6 +223,160 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 			$request['arguments']['headers']['Authorization']
 		);
 		$this->assertStringNotContainsString( 'SYNTHETIC_SECRET', $request['arguments']['headers']['Authorization'] );
+	}
+
+	public function test_r2_upload_records_privacy_safe_transport_failure_diagnostics() {
+		$provider = $this->create_r2_provider( new ImageHostFakeTransport( array( HttpResponse::failure( 'timeout', 28 ) ) ) );
+
+		list( $result, $diagnostics ) = $this->capture_diagnostics(
+			static function () use ( $provider ) {
+				return $provider->upload(
+					'synthetic-image-bytes',
+					'image/png',
+					'20260713/example.png',
+					array(
+						'operation_id'  => 'synthetic-operation',
+						'role'          => 'primary',
+						'attempt'       => 2,
+						'attempt_limit' => 3,
+					)
+				);
+			}
+		);
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'image_host_timeout', $result->get_error_code() );
+		$this->assertCount( 1, $diagnostics );
+		$diagnostic = $diagnostics[0];
+		$this->assertSame(
+			array( 'operation_id', 'provider', 'role', 'stage', 'attempt', 'attempt_limit', 'category', 'status', 'errno', 'duration_ms', 'cancelled', 'result' ),
+			array_keys( $diagnostic )
+		);
+		$this->assertSame( 'synthetic-operation', $diagnostic['operation_id'] );
+		$this->assertSame( 'cloudflare-r2', $diagnostic['provider'] );
+		$this->assertSame( 'primary', $diagnostic['role'] );
+		$this->assertSame( 'transport', $diagnostic['stage'] );
+		$this->assertSame( 2, $diagnostic['attempt'] );
+		$this->assertSame( 3, $diagnostic['attempt_limit'] );
+		$this->assertSame( 'timeout', $diagnostic['category'] );
+		$this->assertNull( $diagnostic['status'] );
+		$this->assertSame( 28, $diagnostic['errno'] );
+		$this->assertIsInt( $diagnostic['duration_ms'] );
+		$this->assertFalse( $diagnostic['cancelled'] );
+		$this->assertSame( 'failure', $diagnostic['result'] );
+		$this->assert_diagnostics_are_privacy_safe( $diagnostics );
+	}
+
+	public function test_r2_upload_records_numeric_status_for_remote_rejections() {
+		$cases = array(
+			403 => 'image_host_unauthorized',
+			404 => 'image_host_bucket_not_found',
+			500 => 'r2_upload_rejected',
+		);
+
+		foreach ( $cases as $status_code => $error_code ) {
+			$provider = $this->create_r2_provider( new ImageHostFakeTransport( array( HttpResponse::success( $status_code, '' ) ) ) );
+
+			list( $result, $diagnostics ) = $this->capture_diagnostics(
+				static function () use ( $provider ) {
+					return $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+				}
+			);
+
+			$this->assertFalse( $result->is_success(), (string) $status_code );
+			$this->assertSame( $error_code, $result->get_error_code(), (string) $status_code );
+			$this->assertCount( 1, $diagnostics, (string) $status_code );
+			$this->assertSame( 'response', $diagnostics[0]['stage'], (string) $status_code );
+			$this->assertSame( 'status', $diagnostics[0]['category'], (string) $status_code );
+			$this->assertSame( $status_code, $diagnostics[0]['status'], (string) $status_code );
+			$this->assertNull( $diagnostics[0]['errno'], (string) $status_code );
+			$this->assertSame( 'failure', $diagnostics[0]['result'], (string) $status_code );
+		}
+	}
+
+	public function test_r2_upload_records_success_status_and_role() {
+		$provider = $this->create_r2_provider( new ImageHostFakeTransport( array( HttpResponse::success( 200, '' ) ) ) );
+
+		list( $result, $diagnostics ) = $this->capture_diagnostics(
+			static function () use ( $provider ) {
+				return $provider->upload(
+					'synthetic-image-bytes',
+					'image/png',
+					'20260713/example.png',
+					array(
+						'operation_id'  => 'synthetic-operation',
+						'role'          => 'verify-primary',
+						'attempt'       => 1,
+						'attempt_limit' => 1,
+					)
+				);
+			}
+		);
+
+		$this->assertTrue( $result->is_success() );
+		$this->assertCount( 1, $diagnostics );
+		$this->assertSame( 'verify-primary', $diagnostics[0]['role'] );
+		$this->assertSame( 'complete', $diagnostics[0]['stage'] );
+		$this->assertSame( 'success', $diagnostics[0]['category'] );
+		$this->assertSame( 200, $diagnostics[0]['status'] );
+		$this->assertSame( 'success', $diagnostics[0]['result'] );
+	}
+
+	public function test_r2_upload_records_cancelled_transport_state() {
+		$provider = $this->create_r2_provider( new ImageHostFakeTransport( array( HttpResponse::failure( 'transport_failure', 42, true ) ) ) );
+
+		list( $result, $diagnostics ) = $this->capture_diagnostics(
+			static function () use ( $provider ) {
+				return $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+			}
+		);
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'image_host_transport_failure', $result->get_error_code() );
+		$this->assertSame( 'cancelled', $diagnostics[0]['category'] );
+		$this->assertSame( 42, $diagnostics[0]['errno'] );
+		$this->assertTrue( $diagnostics[0]['cancelled'] );
+		$this->assertSame( 'failure', $diagnostics[0]['result'] );
+	}
+
+	public function test_r2_upload_records_transport_exceptions_instead_of_escaping() {
+		$provider = $this->create_r2_provider( new ImageHostThrowingTransport() );
+
+		list( $result, $diagnostics ) = $this->capture_diagnostics(
+			static function () use ( $provider ) {
+				return $provider->upload( 'synthetic-image-bytes', 'image/png', '20260713/example.png' );
+			}
+		);
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'image_host_transport_failure', $result->get_error_code() );
+		$this->assertCount( 1, $diagnostics );
+		$this->assertSame( 'transport', $diagnostics[0]['stage'] );
+		$this->assertSame( 'exception', $diagnostics[0]['category'] );
+		$this->assertNull( $diagnostics[0]['status'] );
+		$this->assertNull( $diagnostics[0]['errno'] );
+		$this->assertSame( 'failure', $diagnostics[0]['result'] );
+		$this->assert_diagnostics_are_privacy_safe( $diagnostics );
+	}
+
+	public function test_r2_upload_records_local_validation_failures_without_network_requests() {
+		$transport = new ImageHostFakeTransport( array() );
+		$provider  = $this->create_r2_provider( $transport );
+
+		list( $result, $diagnostics ) = $this->capture_diagnostics(
+			static function () use ( $provider ) {
+				return $provider->upload( 'synthetic-image-bytes', 'image/tiff', '20260713/example.png' );
+			}
+		);
+
+		$this->assertFalse( $result->is_success() );
+		$this->assertSame( 'image_host_unsupported_mime', $result->get_error_code() );
+		$this->assertCount( 0, $transport->requests );
+		$this->assertCount( 1, $diagnostics );
+		$this->assertSame( 'validation', $diagnostics[0]['stage'] );
+		$this->assertSame( 'input', $diagnostics[0]['category'] );
+		$this->assertNull( $diagnostics[0]['status'] );
+		$this->assertSame( 'failure', $diagnostics[0]['result'] );
 	}
 
 	public function test_r2_accepts_only_official_jurisdiction_endpoints() {
@@ -640,6 +834,29 @@ final class ImageHostProvidersTest extends WP_UnitTestCase {
 			} catch ( ImageHostException $exception ) {
 				$this->assertSame( 'image_host_invalid_configuration', $exception->get_error_code() );
 			}
+		}
+	}
+
+	private function capture_diagnostics( callable $operation ) {
+		$diagnostics = array();
+		$listener    = static function ( $diagnostic ) use ( &$diagnostics ) {
+			$diagnostics[] = $diagnostic;
+		};
+		add_action( 'easymde_image_hosting_diagnostic', $listener );
+
+		try {
+			$result = $operation();
+		} finally {
+			remove_action( 'easymde_image_hosting_diagnostic', $listener );
+		}
+
+		return array( $result, $diagnostics );
+	}
+
+	private function assert_diagnostics_are_privacy_safe( array $diagnostics ) {
+		$encoded = strtolower( (string) wp_json_encode( $diagnostics ) );
+		foreach ( array( 'synthetic_secret', 'synthetic_access', 'cloudflarestorage', 'example.png', 'images.example.test', 'authorization', 'x-amz', 'synthetic transport exception' ) as $fragment ) {
+			$this->assertStringNotContainsString( $fragment, $encoded );
 		}
 	}
 

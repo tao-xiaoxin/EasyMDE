@@ -1,7 +1,9 @@
 import type { ImageUploadOwner } from '../../../contracts/bootstrap/image-upload-bootstrap';
 import type {
+  ImageUploadFailureDiagnostic,
   ImageUploadPort,
-  ImageUploadResult
+  ImageUploadResult,
+  ImageUploadTransportCategory
 } from '../../../contracts/ports/image-upload-port';
 import {
   IMAGE_UPLOAD_EXTENSIONS,
@@ -30,6 +32,8 @@ type CreateWordPressImageUploadPortOptions = Readonly<{
 }>;
 
 const IMAGE_HOSTING_NONCE_ERROR_CODE = 'easymde_rest_invalid_image_hosting_nonce';
+const IMAGE_HOSTING_UPLOAD_ERROR_CODE = 'easymde_image_hosting_upload_failed';
+let nextImageUploadOperationId = 0;
 
 function uploadFileName(file: File): string {
   const match = file.name.match(/^(.*)\.([^.]+)$/);
@@ -199,6 +203,77 @@ function isImageHostingNonceError(error: unknown): boolean {
   );
 }
 
+function isImageHostingUploadError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      'object' === typeof error &&
+      IMAGE_HOSTING_UPLOAD_ERROR_CODE === (error as { code?: unknown }).code
+  );
+}
+
+function imageUploadNow(): number {
+  const value = globalThis.performance?.now?.();
+  return 'number' === typeof value && Number.isFinite(value) ? value : Date.now();
+}
+
+function nextImageUploadId(): number {
+  nextImageUploadOperationId =
+    nextImageUploadOperationId >= Number.MAX_SAFE_INTEGER ? 1 : nextImageUploadOperationId + 1;
+  return nextImageUploadOperationId;
+}
+
+function responseStatus(error: unknown): number | null {
+  if (!error || 'object' !== typeof error || Array.isArray(error)) return null;
+  const response = error as { data?: unknown; status?: unknown };
+  const candidates = [
+    response.status,
+    response.data && 'object' === typeof response.data && !Array.isArray(response.data)
+      ? (response.data as { status?: unknown }).status
+      : undefined
+  ];
+  for (const value of candidates) {
+    if ('number' === typeof value && Number.isInteger(value) && value >= 100 && value <= 599) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function imageUploadTransportCategory(
+  error: unknown,
+  cancelled: boolean,
+  status: number | null
+): ImageUploadTransportCategory {
+  if (cancelled) return 'abort';
+  if (null !== status) return 'http';
+  if (error instanceof Error) return 'network';
+  return 'unknown';
+}
+
+function imageUploadDiagnostic(
+  operationId: number,
+  startedAt: number,
+  error: unknown,
+  signal: AbortSignal
+): ImageUploadFailureDiagnostic {
+  const cancelled = signal.aborted || isAbortError(error);
+  const status = responseStatus(error);
+  return {
+    cancelled,
+    durationMs: Math.max(0, Math.round(imageUploadNow() - startedAt)),
+    operationId,
+    status,
+    transportCategory: imageUploadTransportCategory(error, cancelled, status)
+  };
+}
+
+function logImageHostingFailure(
+  code: string,
+  diagnostic: ImageUploadFailureDiagnostic
+): void {
+  console.error('[EasyMDE] image-upload-failed', { code, ...diagnostic });
+}
+
 export function createWordPressImageUploadPort({
   actionNonce,
   apiFetch,
@@ -235,6 +310,8 @@ export function createWordPressImageUploadPort({
       postId,
       signal
     }): Promise<ImageUploadResult> {
+      const operationId = nextImageUploadId();
+      const startedAt = imageUploadNow();
       const body = new FormDataConstructor();
       body.append('file', file, uploadFileName(file));
       body.append('post_id', String(postId));
@@ -267,17 +344,36 @@ export function createWordPressImageUploadPort({
         ) {
           throw error;
         }
+        const diagnostic = imageUploadDiagnostic(operationId, startedAt, error, signal);
+        const code =
+          'image-hosting' === uploadOwner && isImageHostingNonceError(error)
+            ? IMAGE_HOSTING_NONCE_ERROR_CODE
+            : 'image-hosting' === uploadOwner && isImageHostingUploadError(error)
+              ? IMAGE_HOSTING_UPLOAD_ERROR_CODE
+              : isAbortError(error)
+                ? 'image-upload-cancelled'
+                : 'image-upload-request-failed';
+        if ('image-hosting' === uploadOwner) logImageHostingFailure(code, diagnostic);
         return {
+          diagnostic,
           ...('image-hosting' === uploadOwner && isImageHostingNonceError(error)
             ? {
                 code: IMAGE_HOSTING_NONCE_ERROR_CODE,
                 sideEffects: 'none' as const
               }
-            : {
-                code: isAbortError(error)
-                  ? 'image-upload-cancelled'
-                  : 'image-upload-request-failed'
-              }),
+            : 'image-hosting' === uploadOwner && isImageHostingUploadError(error)
+              ? {
+                  // The REST controller intentionally exposes this stable code
+                  // for provider/runtime failures while redacting message/data.
+                  // A failure may follow a partial primary or backup write.
+                  code: IMAGE_HOSTING_UPLOAD_ERROR_CODE,
+                  sideEffects: 'uploads-may-remain' as const
+                }
+              : {
+                  code: isAbortError(error)
+                    ? 'image-upload-cancelled'
+                    : 'image-upload-request-failed'
+                }),
           status: 'failed'
         };
       }

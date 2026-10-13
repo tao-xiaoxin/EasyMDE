@@ -4,6 +4,7 @@ namespace EasyMDE\ImageHosting;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use Throwable;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -21,6 +22,7 @@ final class CloudflareR2Provider {
 	private $bucket_name;
 	private $public_base_url;
 	private $clock;
+	private $diagnostic_context = array();
 
 	public function __construct(
 		HttpTransport $transport,
@@ -55,23 +57,52 @@ final class CloudflareR2Provider {
 		}
 	}
 
-	public function upload( $bytes, $mime_type, $object_key ) {
+	public function upload( $bytes, $mime_type, $object_key, $context = array() ) {
+		$started_at               = microtime( true );
+		$this->diagnostic_context = $this->normalize_diagnostic_context( $context );
+		$operation_id             = $this->diagnostic_context['operation_id'];
+
 		if ( '' === $this->public_base_url ) {
-			return ImageHostResult::failed( self::PROVIDER_ID, 'image_host_invalid_public_url' );
+			return $this->failure( 'image_host_invalid_public_url', 'validation', 'configuration', null, $operation_id, $started_at );
 		}
 		$input_error = ImageHostProviderSupport::validate_upload( $bytes, $mime_type, $object_key );
 		if ( '' !== $input_error ) {
-			return ImageHostResult::failed( self::PROVIDER_ID, $input_error );
+			return $this->failure( $input_error, 'validation', 'input', null, $operation_id, $started_at );
 		}
 
-		$path     = '/' . rawurlencode( $this->bucket_name ) . '/' . ImageHostProviderSupport::encode_object_key( $object_key );
-		$response = $this->send_signed_request( 'PUT', $path, $bytes, $mime_type );
-		if ( ! $this->is_success_status( $response->get_status_code() ) || ! $response->is_success() ) {
-			return ImageHostResult::failed(
-				self::PROVIDER_ID,
-				ImageHostProviderSupport::response_error_code( $response, 'r2_upload_rejected' )
+		$path = '/' . rawurlencode( $this->bucket_name ) . '/' . ImageHostProviderSupport::encode_object_key( $object_key );
+		try {
+			$response = $this->send_signed_request( 'PUT', $path, $bytes, $mime_type );
+		} catch ( Throwable $throwable ) {
+			return $this->failure( 'image_host_transport_failure', 'transport', 'exception', null, $operation_id, $started_at );
+		}
+
+		if ( ! $response->is_success() ) {
+			return $this->failure(
+				ImageHostProviderSupport::response_error_code( $response, 'r2_upload_rejected' ),
+				'transport',
+				$response->get_transport_category(),
+				null,
+				$operation_id,
+				$started_at,
+				$response->get_transport_errno(),
+				$response->is_cancelled()
 			);
 		}
+
+		$status_code = (int) $response->get_status_code();
+		if ( ! $this->is_success_status( $status_code ) ) {
+			return $this->failure(
+				ImageHostProviderSupport::response_error_code( $response, 'r2_upload_rejected' ),
+				'response',
+				'status',
+				$status_code,
+				$operation_id,
+				$started_at
+			);
+		}
+
+		$this->diagnostic( $operation_id, 'complete', 'success', $status_code, $started_at, 'success' );
 
 		return ImageHostResult::uploaded(
 			self::PROVIDER_ID,
@@ -148,5 +179,90 @@ final class CloudflareR2Provider {
 
 	private function is_success_status( $status_code ) {
 		return $status_code >= 200 && $status_code < 300;
+	}
+
+	/**
+	 * Record one privacy-safe operation outcome.
+	 *
+	 * The payload mirrors the shared image-hosting diagnostic contract and adds
+	 * the R2 transport numbers: status (HTTP status or null), errno (numeric
+	 * cURL errno or null), and cancelled. It never contains URLs, credentials,
+	 * signatures, headers, object keys, or response bodies.
+	 *
+	 * @param string   $operation_id   Stable per-operation identifier.
+	 * @param string   $stage          Stable stage name.
+	 * @param string   $category       Stable category from a closed vocabulary.
+	 * @param int|null $status         Numeric HTTP status when the remote server answered.
+	 * @param float    $started_at     Operation start timestamp.
+	 * @param string   $result         'success' or 'failure'.
+	 * @param int|null $transport_errno Numeric cURL errno when the transport exposed one.
+	 * @param bool     $cancelled      Whether the transport observed an aborted request.
+	 */
+	private function diagnostic( $operation_id, $stage, $category, $status, $started_at, $result, $transport_errno = null, $cancelled = false ) {
+		if ( ! function_exists( 'do_action' ) ) {
+			return;
+		}
+
+		do_action(
+			'easymde_image_hosting_diagnostic',
+			array(
+				'operation_id'  => (string) $operation_id,
+				'provider'      => self::PROVIDER_ID,
+				'role'          => $this->diagnostic_context['role'],
+				'stage'         => (string) $stage,
+				'attempt'       => $this->diagnostic_context['attempt'],
+				'attempt_limit' => $this->diagnostic_context['attempt_limit'],
+				'category'      => (string) $category,
+				'status'        => is_int( $status ) ? $status : null,
+				'errno'         => is_int( $transport_errno ) ? $transport_errno : null,
+				'duration_ms'   => max( 0, (int) round( ( microtime( true ) - $started_at ) * 1000 ) ),
+				'cancelled'     => (bool) $cancelled || $this->client_aborted(),
+				'result'        => (string) $result,
+			)
+		);
+	}
+
+	private function failure( $error_code, $stage, $category, $status, $operation_id, $started_at, $transport_errno = null, $cancelled = false ) {
+		$this->diagnostic( $operation_id, $stage, $category, $status, $started_at, 'failure', $transport_errno, $cancelled );
+
+		return ImageHostResult::failed( self::PROVIDER_ID, $error_code );
+	}
+
+	/**
+	 * Whether the REST client had already given up when this record was written.
+	 *
+	 * PHP only observes a disconnect after an I/O attempt, so this is a
+	 * best-effort cancellation signal for diagnostics and never control flow.
+	 */
+	private function client_aborted() {
+		return function_exists( 'connection_aborted' ) && connection_aborted();
+	}
+
+	private function normalize_diagnostic_context( $context ) {
+		$operation_id = is_array( $context ) && isset( $context['operation_id'] ) && is_string( $context['operation_id'] )
+			? $context['operation_id']
+			: '';
+		if ( 1 !== preg_match( '/^[A-Za-z0-9_-]{1,64}$/D', $operation_id ) ) {
+			$operation_id = function_exists( 'wp_generate_uuid4' ) ? wp_generate_uuid4() : substr( hash( 'sha256', uniqid( '', true ) ), 0, 16 );
+		}
+
+		$role = is_array( $context ) && isset( $context['role'] ) && is_string( $context['role'] )
+			? strtolower( $context['role'] )
+			: 'unknown';
+		if ( 1 !== preg_match( '/^[a-z0-9_-]{1,32}$/D', $role ) ) {
+			$role = 'unknown';
+		}
+
+		$attempt_limit = is_array( $context ) && isset( $context['attempt_limit'] ) ? (int) $context['attempt_limit'] : 1;
+		$attempt_limit = max( 1, min( 6, $attempt_limit ) );
+		$attempt       = is_array( $context ) && isset( $context['attempt'] ) ? (int) $context['attempt'] : 1;
+		$attempt       = max( 1, min( $attempt_limit, $attempt ) );
+
+		return array(
+			'operation_id'  => $operation_id,
+			'role'          => $role,
+			'attempt'       => $attempt,
+			'attempt_limit' => $attempt_limit,
+		);
 	}
 }

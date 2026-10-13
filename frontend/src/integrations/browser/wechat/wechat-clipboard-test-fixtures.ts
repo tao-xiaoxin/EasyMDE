@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, expect, vi } from 'vitest';
 
 import type {
   WechatClipboardCopyOptions,
   WechatClipboardPreparationOptions
 } from '../../../contracts/ports/wechat-clipboard-port';
 import type { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import { splitCssDeclarations } from './wechat-css-list';
 
 
 export function readyPreview(): HTMLElement {
@@ -24,6 +25,30 @@ export function computedStyle(element: Element, pseudoElement?: string): CSSStyl
 
 export function declaration(values: Record<string, string>): CSSStyleDeclaration {
   return { getPropertyValue: (property: string) => values[property] ?? '' } as unknown as CSSStyleDeclaration;
+}
+
+/**
+ * Reads one projected declaration from a style attribute, so an assertion sees
+ * the payload a paste target applies instead of a host CSSOM view.
+ */
+export function declaredStyleValue(element: Element, property: string): string {
+  const wanted = property.trim().toLowerCase();
+  let declared = '';
+  let declaredImportant = false;
+  splitCssDeclarations(element.getAttribute('style') ?? '').forEach((candidate) => {
+    if (candidate.property !== wanted) return;
+    // A declaration block cascades by importance first and order second.
+    if (declaredImportant && !candidate.important) return;
+    declared = candidate.value;
+    declaredImportant = candidate.important;
+  });
+  return declared;
+}
+
+export function declaredStylePixels(element: Element, property: string): number {
+  const value = declaredStyleValue(element, property);
+  expect(value.endsWith('px')).toBe(true);
+  return Number.parseFloat(value);
 }
 
 

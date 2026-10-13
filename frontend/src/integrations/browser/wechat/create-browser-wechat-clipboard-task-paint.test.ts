@@ -5,6 +5,8 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 import {
   blobText,
   declaration,
+  declaredStylePixels,
+  declaredStyleValue,
   deferred,
   installClipboardTestEnvironment,
   prepareClipboard
@@ -20,6 +22,7 @@ describe('createBrowserWechatClipboard', () => {
     preview.setAttribute('data-easymde-preview-html-sink', '1');
     const initialTaskStates = Array.from({ length: 19 }, (_, index) => ![2, 15].includes(index));
     const taskStates = initialTaskStates.map((checked, index) => (1 === index ? false : checked));
+    const relativeOwnerIndex = 17;
     const taskText = taskStates.map((_, index) => `Task ${index + 1}`).join('\n');
     const workspace = document.createElement('div');
     workspace.className = 'task-owner-workspace';
@@ -27,7 +30,7 @@ describe('createBrowserWechatClipboard', () => {
       '<ul class="task-list">',
       ...initialTaskStates.map(
         (checked, index) =>
-          `<li class="task-list-item"><input class="easymde-task-checkbox${18 === index ? ' native' : ''}" type="checkbox"${checked ? ' checked' : ''}>Task ${index + 1}</li>`
+          `<li class="task-list-item"><section><input class="easymde-task-checkbox${18 === index ? ' native' : ''}${relativeOwnerIndex === index ? ' relative-owner' : ''}" type="checkbox"${checked ? ' checked' : ''}>Task ${index + 1}</section></li>`
       ),
       '</ul>',
       '<form><input type="text" name="secret" value="private"></form>'
@@ -43,18 +46,31 @@ describe('createBrowserWechatClipboard', () => {
       if ('INPUT' === element.tagName) {
         const input = element as HTMLInputElement;
         const native = input.classList.contains('native');
+        const relativeOwner = input.classList.contains('relative-owner');
         if (pseudoElement && native) return declaration({ content: 'none' });
         if ('::before' === pseudoElement) {
           return declaration({
             'background-color': 'rgb(255, 255, 255)',
-            'border-color': 'rgb(255, 165, 49)',
+            'border-bottom-width': '1px',
+            'border-left-width': '1px',
             'border-radius': '50%',
-            'border-style': 'solid',
-            'border-width': '1px',
+            'border-right-width': '1px',
+            'border-top-width': '1px',
+            'box-sizing': 'border-box',
             content: '""',
             display: 'block',
             height: '16px',
-            position: 'absolute',
+            left: relativeOwner ? '0px' : '18px',
+            'margin-bottom': '0px',
+            'margin-left': '0px',
+            'margin-right': '0px',
+            'margin-top': '0px',
+            'padding-bottom': '0px',
+            'padding-left': '0px',
+            'padding-right': '0px',
+            'padding-top': '0px',
+            position: relativeOwner ? 'relative' : 'absolute',
+            top: relativeOwner ? '0px' : '-2px',
             width: '16px'
           });
         }
@@ -66,11 +82,22 @@ describe('createBrowserWechatClipboard', () => {
             'border-right-color': 'rgb(255, 255, 255)',
             'border-right-style': 'solid',
             'border-right-width': '2px',
+            'box-sizing': 'content-box',
             content: '""',
             display: 'block',
             height: '10px',
+            left: '27.6px',
+            'margin-bottom': '0px',
+            'margin-left': '0px',
+            'margin-right': '0px',
+            'margin-top': '0px',
             opacity: input.checked ? '1' : '0',
+            'padding-bottom': '0px',
+            'padding-left': '0px',
+            'padding-right': '0px',
+            'padding-top': '0px',
             position: 'absolute',
+            top: '8px',
             width: '6px'
           });
         }
@@ -86,11 +113,61 @@ describe('createBrowserWechatClipboard', () => {
                 'border-width': '1px'
               }
             : {}),
+          'border-bottom-width': '0px',
+          'border-left-width': '0px',
+          'border-right-width': '0px',
+          'border-top-width': '0px',
+          'box-sizing': 'border-box',
           display: 'inline-block',
-          height: '16px',
-          'margin-right': '4px',
-          position: 'relative',
-          width: '16px'
+          height: '20px',
+          left: relativeOwner ? '0px' : '-22px',
+          'margin-bottom': '0px',
+          'margin-left': '0px',
+          'margin-right': '0px',
+          'margin-top': '0px',
+          'padding-bottom': '0px',
+          'padding-left': '0px',
+          'padding-right': '0px',
+          'padding-top': '0px',
+          position: relativeOwner ? 'relative' : 'absolute',
+          top: relativeOwner ? '0px' : '3px',
+          width: '20px'
+        });
+      }
+      if ('LI' === element.tagName) {
+        return declaration({
+          'border-bottom-width': '0px',
+          'border-left-width': '0px',
+          'border-right-width': '0px',
+          'border-top-width': '0px',
+          display: 'block',
+          'margin-bottom': '0px',
+          'margin-left': '0px',
+          'margin-right': '0px',
+          'margin-top': '0px',
+          'padding-bottom': '0px',
+          'padding-left': '0px',
+          'padding-right': '0px',
+          'padding-top': '0px',
+          position: 'relative'
+        });
+      }
+      if ('SECTION' === element.tagName) {
+        return declaration({
+          'border-bottom-width': '0px',
+          'border-left-width': '0px',
+          'border-right-width': '0px',
+          'border-top-width': '0px',
+          display: 'block',
+          'margin-bottom': '0px',
+          'margin-left': '0px',
+          'margin-right': '0px',
+          'margin-top': '0px',
+          'padding-bottom': '0px',
+          'padding-left': '0px',
+          'padding-right': '0px',
+          'padding-top': '0px',
+          position: 'static'
         });
       }
       if ('ARTICLE' === element.tagName) {
@@ -126,8 +203,11 @@ describe('createBrowserWechatClipboard', () => {
         if ('ARTICLE' === this.tagName || ('UL' === this.tagName && this.classList.contains('task-list'))) {
           return { bottom: 120, height: 120, left: 0, right: 300, top: 0, width: 300, x: 0, y: 0 } as DOMRect;
         }
+        if ('SECTION' === this.tagName) {
+          return { bottom: 130, height: 40, left: 80, right: 380, top: 80, width: 300, x: 80, y: 80 } as DOMRect;
+        }
         if (this.matches('input.easymde-task-checkbox')) {
-          return { bottom: 116, height: 16, left: 100, right: 116, top: 100, width: 16, x: 100, y: 100 } as DOMRect;
+          return { bottom: 103, height: 20, left: 58, right: 78, top: 83, width: 20, x: 58, y: 83 } as DOMRect;
         }
         if (this.matches('li.task-list-item')) {
           return { bottom: 130, height: 40, left: 100, right: 400, top: 90, width: 300, x: 100, y: 90 } as DOMRect;
@@ -175,7 +255,7 @@ describe('createBrowserWechatClipboard', () => {
       const modernHtml = await blobText(htmlBlob);
       const holder = document.createElement('div');
       holder.innerHTML = modernHtml;
-      const owners = [...holder.querySelectorAll('[role="checkbox"]')];
+      const owners = [...holder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
       expect(holder.querySelectorAll('input')).toHaveLength(0);
       expect(holder.querySelector('input[type="text"]')).toBeNull();
       expect(owners).toHaveLength(taskStates.length);
@@ -184,6 +264,51 @@ describe('createBrowserWechatClipboard', () => {
       );
       expect(owners.every((owner) => owner.getAttribute('aria-disabled') === 'true')).toBe(true);
       expect(owners.every((owner) => Boolean(owner.getAttribute('style')))).toBe(true);
+      expect(owners.every((owner) => owner.parentElement?.tagName === 'SECTION')).toBe(true);
+      // Captured allocation of the settled Preview: owner at (-22, 3) with a
+      // 20x20 border box, circle at (18, -2) with a 16x16 border box and the
+      // tick at (27.6, 8) with a promoted 8x12 border box.
+      const capturedOwner = { height: 20, left: -22, top: 3, width: 20 };
+      const capturedCircle = { height: 16, left: 18, top: -2, width: 16 };
+      const capturedTick = { height: 12, left: 27.6, top: 8, width: 8 };
+      const expectStaticAllocation = (
+        element: HTMLElement,
+        captured: Readonly<{ height: number; left: number; top: number; width: number }>
+      ): void => {
+        expect(declaredStyleValue(element, 'position')).toBe('static');
+        expect(declaredStyleValue(element, 'float')).toBe('left');
+        ['top', 'right', 'bottom', 'left'].forEach((side) => {
+          expect(declaredStyleValue(element, side)).toBe('auto');
+        });
+        expect(declaredStylePixels(element, 'width')).toBeCloseTo(captured.width, 6);
+        expect(declaredStylePixels(element, 'height')).toBeCloseTo(captured.height, 6);
+        // The float must land on the captured allocation and keep a zero net
+        // advance, so neither the caption nor the row height can move.
+        expect(declaredStylePixels(element, 'margin-left')).toBeCloseTo(captured.left, 6);
+        expect(declaredStylePixels(element, 'margin-top')).toBeCloseTo(captured.top, 6);
+        expect(declaredStylePixels(element, 'margin-right')).toBeCloseTo(-(captured.left + captured.width), 6);
+        expect(declaredStylePixels(element, 'margin-bottom')).toBeCloseTo(-(captured.top + captured.height), 6);
+      };
+      owners.forEach((owner, index) => {
+        const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+        if (relativeOwnerIndex === index) {
+          // A relative owner stays in flow and only its absolute pseudo layers
+          // are converted.
+          expect(declaredStyleValue(owner, 'position')).toBe('relative');
+          expect(markers).toHaveLength(2);
+          expect(declaredStyleValue(markers[0] as HTMLElement, 'position')).toBe('relative');
+          expectStaticAllocation(markers[1] as HTMLElement, capturedTick);
+          return;
+        }
+        expectStaticAllocation(owner, capturedOwner);
+        if (18 === index) {
+          expect(markers).toHaveLength(0);
+          return;
+        }
+        expect(markers).toHaveLength(2);
+        expectStaticAllocation(markers[0] as HTMLElement, capturedCircle);
+        expectStaticAllocation(markers[1] as HTMLElement, capturedTick);
+      });
       expect(
         owners.filter((owner) => owner.querySelectorAll(':scope > span[aria-hidden="true"]').length > 0)
       ).toHaveLength(18);
@@ -320,6 +445,12 @@ describe('createBrowserWechatClipboard', () => {
       const legacyHolder = document.createElement('div');
       legacyHolder.innerHTML = legacyHtml;
       expect(legacyHtml).toBe(modernHtml);
+      const legacyOwners = [...legacyHolder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+      expect(legacyOwners).toHaveLength(owners.length);
+      // Legacy shares the validated static allocation byte for byte.
+      expect(legacyOwners.map((owner) => owner.getAttribute('style'))).toEqual(
+        owners.map((owner) => owner.getAttribute('style'))
+      );
       expect(preview.innerHTML).toBe(sourceMarkup);
     } finally {
       workspace.remove();
@@ -495,9 +626,13 @@ describe('createBrowserWechatClipboard', () => {
       if ('INPUT' === element.tagName) {
         return declaration({
           appearance: 'none',
+          bottom: 'auto',
           display: 'inline-block',
           height: '16px',
+          left: '0px',
           position: 'absolute',
+          right: 'auto',
+          top: '0px',
           width: '16px'
         });
       }

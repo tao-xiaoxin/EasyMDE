@@ -3,9 +3,9 @@ import {
   isTaskListCheckbox,
   TASK_LIST_CHECKBOX_CLONES,
   TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS,
-  TASK_LIST_CHECKBOX_PSEUDO_CLONES,
   TASK_LIST_CHECKBOX_STATES,
   TASK_LIST_CHECKBOX_SVG_PAINT,
+  taskCheckboxOutputMarkers,
   type TaskCheckboxStaticPaintExpectation } from './wechat-clone-metadata';
 import { type BrowserWechatClipboardRuntime, throwIfBackgroundPreparationAborted } from './wechat-clipboard-runtime';
 import {
@@ -118,12 +118,6 @@ export function taskCheckboxOutputPropertyIsVisible(owner: Element, property: st
   const value = style?.getPropertyValue(property) ?? '';
   if (property.endsWith('-width')) return taskCheckboxBorderWidthIsVisible(value);
   return taskCheckboxPaintValueIsVisible(property, value);
-}
-
-export function taskCheckboxOutputMarkers(owner: Element, pseudo: '::before' | '::after'): Element[] {
-  return Array.from(owner.querySelectorAll('*')).filter(
-    (element) => TASK_LIST_CHECKBOX_PSEUDO_CLONES.get(element) === pseudo
-  );
 }
 
 export function taskCheckboxSvgPaintSignature(svg: Element): string | null {

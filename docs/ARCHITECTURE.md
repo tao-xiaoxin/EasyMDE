@@ -622,12 +622,13 @@ surface, the activation-sensitive legacy driver, and browser commit, while
 encode, and its factory. The browser-facing responsibilities live in private
 modules beside them: clone metadata and source freshness; style policy and
 portable declaration emission; background theme images; pseudo elements;
-portable content and serialization; task caption, layout policy, geometry, and
-paint; list and table layout; preview measurement; dimension semantics;
-fidelity signatures; prepared-payload lifecycle; Mermaid geometry, capture
-plans, and the PNG conversion policy, transaction, and replacement; managed
-font discovery and font assets; Mermaid capture validation and math capture
-geometry; and the shared CSS-list scanner and UserTiming helpers. Their
+portable content and serialization; task caption, layout policy, geometry,
+paint, and static flow; list and table layout; preview measurement; dimension
+semantics; fidelity signatures; prepared-payload lifecycle; Mermaid geometry,
+capture plans, and the PNG conversion policy, transaction, and replacement;
+managed font discovery and font assets; Mermaid capture validation and math
+capture geometry; and the shared CSS-list and CSS-declaration scanner with the
+UserTiming helpers. Their
 focused suites are partitioned the same way.
 
 While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
@@ -663,6 +664,44 @@ validation, finite resource bounds and native pixel validation are separate.
 Version7.2.0 retains the Node20 toolchain baseline as a local build-time source
 for the admin adapter, with its MIT notice. The Clipboard owner updates this pin when
 the Node baseline changes and removes it if task SVG path parsing is removed.
+Task checkbox owners and their emitted pseudo layers keep the settled Preview
+allocation after WeChat strips inline positioning. The private
+`wechat-task-static-flow.ts` owner holds that normalization, its per-layer
+allocation records, and the terminal validation. Portable serialization imports
+the normalizers and invokes the root-level allocation assertion after the paint
+assertion, so the paint module does not depend back on the static-flow owner. The
+serializer replaces the projected position, inset, margin, and float
+declarations of every emitted layer with a static float allocation whose
+margins reproduce the captured layer box and leave a zero net advance, so list
+rows and captions keep their Preview spacing.
+The allocation reads measured layout values only, namely the untransformed border
+box projected into the declarations plus the layer offsets and containing block
+plane, so a retained paint transform applies exactly once and no transformed
+viewport rectangle is used. Anchoring is physical left, so the emitted allocation
+never embeds the captured source container width or direction; how a destination
+reflows the emitted float allocation is not measured by the Clipboard capture.
+Owners and their layout inputs come from the registered clone owners of the
+emitted caption owner inventory rather than a root-wide discovery query, so a
+recorded owner the serializer never projected stays with the terminal owner
+validation, an emitted absolute layer is converted regardless of current
+opacity, a projected layer whose marker is missing fails explicitly, a recorded
+owner outside the serialized root fails instead of writing elsewhere, and
+predecessor boxes without a derivable prospective float origin fail instead of
+guessing a line position. That origin, and every consumed chain box offset, is
+anchored at the container content edge, so a prior float that still participates
+in float placement fails explicitly at either slot, including logical float
+values, while the normalized zero-net layers this owner already emitted stay
+ignorable. Static insets
+stay inert while fixed, sticky, and active relative positioning fail explicitly.
+Containers where float is inert, such as flex and grid items, and active effects
+the portable emission cannot preserve are rejected. The asynchronous entry
+checks abort and conversion currentness around every owner and suspends only
+between owners on the caller's existing serialization budget, while the legacy
+synchronous entry shares the same per-owner core without suspension. The terminal
+owner assertion re-derives every recorded allocation from the final declarations
+so a later overwrite cannot silently deform the row. Native WeChat Paste, Save,
+and Reader acceptance remains required destination evidence and is not
+established by this capture-side contract.
 For ordinary tables, Source paint metadata may project an opaque solid THEAD
 background onto transparent TH cells. Source-owned rounded tables with
 separate zero-spacing borders and two-axis clipping retain those table values;

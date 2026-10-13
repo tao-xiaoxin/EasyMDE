@@ -22,6 +22,14 @@ export type ImageUploadRequest = Readonly<{
 }>;
 
 export type ImageUploadFailureSideEffects = 'none' | 'uploads-may-remain';
+export type ImageUploadTransportCategory = 'abort' | 'http' | 'network' | 'unknown';
+export type ImageUploadFailureDiagnostic = Readonly<{
+  cancelled: boolean;
+  durationMs: number;
+  operationId: number;
+  status: number | null;
+  transportCategory: ImageUploadTransportCategory;
+}>;
 
 export type ImageUploadResult =
   | Readonly<{
@@ -32,6 +40,7 @@ export type ImageUploadResult =
     }>
   | Readonly<{
       code: string;
+      diagnostic?: ImageUploadFailureDiagnostic;
       sideEffects?: ImageUploadFailureSideEffects;
       status: 'failed';
     }>;

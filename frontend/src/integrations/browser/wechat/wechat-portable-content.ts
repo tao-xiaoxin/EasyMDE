@@ -249,32 +249,49 @@ export function normalizeMathBlocks(root: HTMLElement): void {
       // The preview's computed width belongs to its original card. Copying it
       // onto the block wrapper and KaTeX visual root makes a wider WeChat card
       // center the formula against that stale width, visibly shifting it left.
-      // Rebase both layout layers to the destination card without changing the
-      // intrinsic, non-wrapping content that the outer card scrolls.
+      // Keep the outer block as the only scroll owner: the KaTeX display layer
+      // spans the destination container so short formulas keep centering on the
+      // destination card, while every intrinsic layer below it keeps
+      // `max-content` so nothing clips an over-wide formula out of the scroll
+      // range.
       const layoutRoot = element.firstElementChild;
       if (!layoutRoot) return;
       if (WECHAT_PNG_GENERATED_IMAGES.has(layoutRoot)) {
         generatedBlockImageAlignment(layoutRoot, element);
         return;
       }
-      const layoutDeclarations = [
-        'inline-size:100%',
-        'max-inline-size:100%',
-        'width:auto',
-        'box-sizing:border-box',
-        'text-align:center'
-      ];
-      appendDeclarations(layoutRoot, layoutDeclarations, true);
+      appendDeclarations(
+        layoutRoot,
+        ['inline-size:100%', 'max-inline-size:100%', 'width:auto', 'box-sizing:border-box', 'text-align:center'],
+        true
+      );
 
+      const intrinsicDeclarations = [
+        'inline-size:max-content',
+        'max-inline-size:none',
+        'width:max-content',
+        'min-width:max-content',
+        'max-width:none',
+        'box-sizing:border-box'
+      ];
       const visualWrapper = layoutRoot.firstElementChild;
       if (visualWrapper?.matches('nobr')) {
         appendDeclarations(
           visualWrapper,
-          ['inline-size:100%', 'max-inline-size:100%', 'width:auto', 'box-sizing:border-box'],
+          [
+            ...intrinsicDeclarations,
+            // Auto margins center the intrinsic visual box while it fits and
+            // resolve to zero once it overflows, so a long formula stays
+            // reachable from either end of the outer scroll owner instead of
+            // centering into unreachable inline-start overflow.
+            'margin-left:auto',
+            'margin-right:auto',
+            'text-align:center'
+          ],
           true
         );
         const visualRoot = visualWrapper.firstElementChild;
-        if (visualRoot) appendDeclarations(visualRoot, layoutDeclarations, true);
+        if (visualRoot) appendDeclarations(visualRoot, [...intrinsicDeclarations, 'text-align:center'], true);
       }
     });
 }

@@ -615,6 +615,21 @@ current exception; Verify Upload remains single-attempt.
 Local Draft recovery uses the versioned `easymde:draft:v1:<site>:<user>:<post-or-new>` identity, a 1 MiB limit, a 500-millisecond latest-write scheduler, explicit read/write/discard failures, and cross-tab conflict handling. New-post identity comes from the stable PHP Bootstrap contract rather than WordPress's temporary auto-draft ID.
 
 WeChat export is user-initiated compatibility output from the current stable, sanitized, locally enhanced Preview. `createWechatExportSession` owns the ordinary and immersive surfaces, and `createBrowserWechatClipboard` owns the browser Clipboard adapter and its single clone-and-serialize pipeline; the data flow is Preview sink -> session -> adapter -> browser Clipboard path. Copy never writes Markdown, `post_content`, metadata, revisions, or publication state. The session coalesces one active operation, signals cancellation and sequence-invalidates it during disposal or replacement, and suppresses late status. `EditorRoot` projects that operation to both ordinary and immersive controls, which share one pending state and clear it only after the session returns the browser owner's result.
+Under `frontend/src/integrations/browser/wechat/`, both adapters stay
+composition owners: `create-browser-wechat-clipboard.ts` keeps the public
+surface, the activation-sensitive legacy driver, and browser commit, while
+`create-browser-wechat-visual-rasterizer.ts` keeps SVG assembly, decode,
+encode, and its factory. The browser-facing responsibilities live in private
+modules beside them: clone metadata and source freshness; style policy and
+portable declaration emission; background theme images; pseudo elements;
+portable content and serialization; task caption, layout policy, geometry, and
+paint; list and table layout; preview measurement; dimension semantics;
+fidelity signatures; prepared-payload lifecycle; Mermaid geometry, capture
+plans, and the PNG conversion policy, transaction, and replacement; managed
+font discovery and font assets; Mermaid capture validation and math capture
+geometry; and the shared CSS-list scanner and UserTiming helpers. Their
+focused suites are partitioned the same way.
+
 While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
 An article-theme, code-theme, or Custom CSS change owns cancellation of an active Copy. The session returns `status: cancelled` with `wechat-copy-cancelled`, emits an info diagnostic for the intentional cancellation, and emits no success or failure status. A real Adapter failure or residual upload remains an explicit diagnostic and side-effect result. The appearance change refreshes Preview only; it never starts Copy automatically, so a new theme requires a new explicit Copy. During style loading, both controls remain focusable with `aria-disabled="true"` and without `aria-busy`.
 Unexpected synchronous throws and asynchronous rejections from the Clipboard

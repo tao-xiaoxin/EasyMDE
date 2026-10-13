@@ -107,7 +107,7 @@ fetch, response-body reads, and Data URL conversion. A timeout or conversion
 failure evicts the cache entry and fails preparation so a later copy may retry.
 Theme-image fetches retain their own timeout/abort lifecycle; a background
 demand signal does not abort an in-flight shared asset fetch. Read
-`frontend/src/integrations/browser/wechat/create-browser-wechat-clipboard.ts`
+`frontend/src/integrations/browser/wechat/wechat-background-images.ts`
 and `docs/ARCHITECTURE.md` for the current cache, payload, and timeout limits;
 do not copy their numeric constants into this reference.
 

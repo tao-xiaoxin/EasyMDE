@@ -4,10 +4,22 @@ import test from "node:test";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
 
-const performanceSpecSource = readFileSync(
-	new URL("../e2e/wechat-copy-performance.spec.mjs", import.meta.url),
+// The performance spec keeps registration and fixture binding; the probe,
+// diagnostics environment, and server bundle identity owners are dedicated
+// modules loaded here for focused verification.
+const probeSource = readFileSync(
+	new URL("../e2e/wechat-copy-performance/performance-probe.mjs", import.meta.url),
 	"utf8",
 );
+const diagnosticsSource = readFileSync(
+	new URL("../e2e/wechat-copy-performance/environment.mjs", import.meta.url),
+	"utf8",
+);
+const serverBundleSource = readFileSync(
+	new URL("../e2e/wechat-copy-performance/server-bundle.mjs", import.meta.url),
+	"utf8",
+);
+const performanceSources = [probeSource, diagnosticsSource, serverBundleSource].join("\n");
 const probeArguments = {
 	beginMarker: "test.begin",
 	clickMarker: "test.click",
@@ -19,41 +31,25 @@ const probeArguments = {
 };
 
 function loadProbeInitializer(context) {
-	const installStart = performanceSpecSource.indexOf(
-		"function installPerformanceProbe(page)",
-	);
-	const callbackStart = performanceSpecSource.indexOf(
-		"({\n\t\t\tbeginMarker",
-		installStart,
-	);
+	const installStart = probeSource.indexOf("function installPerformanceProbe(page)");
+	const callbackStart = probeSource.indexOf("({\n\t\t\tbeginMarker", installStart);
 	const callbackEndMarker =
 		"\n\t\t},\n\t\t{\n\t\t\tbeginMarker: traceBeginMarker";
-	const callbackEnd = performanceSpecSource.indexOf(
-		callbackEndMarker,
-		callbackStart,
-	);
+	const callbackEnd = probeSource.indexOf(callbackEndMarker, callbackStart);
 	assert.ok(installStart >= 0);
 	assert.ok(callbackStart > installStart);
 	assert.ok(callbackEnd > callbackStart);
-	const callbackSource = performanceSpecSource.slice(
-		callbackStart,
-		callbackEnd + "\n\t\t}".length,
-	);
+	const callbackSource = probeSource.slice(callbackStart, callbackEnd + "\n\t\t}".length);
 	return vm.runInContext(`(${callbackSource})`, context);
 }
 
 function loadDiagnosticsFlagValidator() {
-	const start = performanceSpecSource.indexOf(
-		"function localDiagnosticsEnabledFromSetting(value)",
-	);
-	const end = performanceSpecSource.indexOf(
-		"\nconst localDiagnosticsEnabled =",
-		start,
-	);
+	const start = diagnosticsSource.indexOf("function localDiagnosticsEnabledFromSetting(value)");
+	const end = diagnosticsSource.indexOf("\nexport const localDiagnosticsEnabled =", start);
 	assert.ok(start >= 0);
 	assert.ok(end > start);
 	return vm.runInNewContext(
-		`(${performanceSpecSource.slice(start, end).trim()})`,
+		`(${diagnosticsSource.slice(start, end).trim()})`,
 	);
 }
 
@@ -218,9 +214,9 @@ test("performance profile identity follows the current checked-in artifact", () 
 			.length > 0,
 	);
 	assert.match(
-		performanceSpecSource,
+		serverBundleSource,
 		/function readCurrentServerBundleIdentity\(\)/u,
 	);
-	assert.match(performanceSpecSource, /assets\/build\/manifest\.json/u);
-	assert.doesNotMatch(performanceSpecSource, /expectedDtdEditor|MatchesDtd/u);
+	assert.match(serverBundleSource, /assets\/build\/manifest\.json/u);
+	assert.doesNotMatch(performanceSources, /expectedDtdEditor|MatchesDtd/u);
 });

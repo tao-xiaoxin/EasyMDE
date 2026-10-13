@@ -287,10 +287,12 @@ The session boundary has a separate focused command:
 npm run test:frontend -- frontend/src/features/wechat-export/wechat-export-session.test.ts
 ```
 
-The browser rasterizer has a separate focused command:
+The browser rasterizer and Clipboard owners are partitioned into focused
+suites under `frontend/src/integrations/browser/wechat/`; one command runs
+every owner suite together:
 
 ```bash
-npm run test:frontend -- frontend/src/integrations/browser/wechat/create-browser-wechat-visual-rasterizer.test.ts
+npm run test:frontend -- frontend/src/integrations/browser/wechat
 ```
 
 The focused Chromium copy regression spec is:
@@ -428,8 +430,9 @@ hashes before inspecting glyphs, arrows, labels, scroll endpoints, and negative
 controls; it remains separate from real WeChat Reader acceptance.
 Freshness tests verify that the transaction-local `MutationObserver` is
 installed before the initial snapshot, that `takeRecords()` checkpoints cover
-initial, current, and final comparisons, and that the clean path makes an O(1)
-reuse decision while a dirty path recomputes the current complete key and
+initial, current, and final comparisons, and that the clean path avoids a
+complete markup/style/geometry recomputation while still checking the current
+task-input checked state. A dirty path recomputes the current complete key and
 compares it with the immutable initial key. Same-value mutations remain
 reusable; an observed real source change remains permanently stale. They also verify
 root-only refresh-bookkeeping exclusions, descendant mutations, complete final

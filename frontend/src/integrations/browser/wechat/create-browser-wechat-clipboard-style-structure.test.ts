@@ -6,6 +6,7 @@ import {
   blobText,
   codeRows,
   computedStyle,
+  declaredStyleDeclarations,
   declaration,
   installClipboardTestEnvironment,
   prepareClipboard,
@@ -49,6 +50,53 @@ describe('createBrowserWechatClipboard', () => {
     expect(html).not.toContain('theme-class');
     expect(html).not.toContain('data-easymde-');
     expect(text).toBe('Rendered');
+  });
+
+  it('replaces stale important image bounds so pasted media stays inside the destination width', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Before</p><img src="https://example.test/chart.png" style="width:1200px!important;height:268px!important;max-width:none!important">';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Before\n' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('IMG' === element.tagName) {
+          return declaration({
+            display: 'block',
+            width: '1200px',
+            height: '268px',
+            'max-width': 'none',
+            'box-sizing': 'border-box'
+          });
+        }
+        if ('P' === element.tagName) return declaration({ display: 'block' });
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const image = holder.querySelector('img');
+    if (!image) throw new Error('clipboard image missing');
+    const maxWidth = declaredStyleDeclarations(image, 'max-width');
+    const height = declaredStyleDeclarations(image, 'height');
+    expect(maxWidth).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(height).toEqual([{ property: 'height', value: 'auto', important: true }]);
   });
 
   it('marks only owned table, math, and code scroll containers across modern and legacy payloads', async () => {
@@ -405,7 +453,9 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('table td')?.textContent).toBe('Cell');
     expect(holder.querySelector('figure')?.getAttribute('style')).toContain('display:flex');
     expect(holder.querySelector('img')?.getAttribute('alt')).toBe('Synthetic image');
-    expect(holder.querySelector('img')?.getAttribute('style')).toContain('max-width:100%');
+    expect(declaredStyleDeclarations(holder.querySelector('img') as Element, 'max-width')).toEqual([
+      { property: 'max-width', value: '100%', important: true }
+    ]);
     expect(holder.querySelector('pre code')?.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toContain(
       'const value = 1;'
     );

@@ -144,12 +144,18 @@ describe('createBrowserWechatClipboard', () => {
             const text = leaf?.firstChild;
             faultHit = true;
             if ('swap-owners' === fault) {
-              const firstItem = this.querySelector('li');
-              const list = firstItem?.parentElement;
-              const items = list
-                ? Array.from(list.children).filter((child) => 'LI' === child.tagName)
-                : [];
-              if (list && items.length === 2 && items[0] && items[1]) list.insertBefore(items[1], items[0]);
+              // The destination-safe projection replaces the task list and its
+              // task items with sections, so swapping list children would no
+              // longer describe the recorded owner order. Swap the serialized
+              // owner elements themselves: the owner-order guard reads the
+              // document order of the registered owners, and a real reorder
+              // must still fail the export.
+              const owners = [...this.querySelectorAll('span[role="checkbox"]')];
+              const first = owners[0];
+              const second = owners[1];
+              if (first && second && first.parentElement) {
+                first.parentElement.insertBefore(second, first);
+              }
             } else if ('late-block-wrapper' === fault) {
               (leaf as HTMLElement | null)?.style.setProperty('display', 'block');
             } else if ('late-owner-removal' === fault) {

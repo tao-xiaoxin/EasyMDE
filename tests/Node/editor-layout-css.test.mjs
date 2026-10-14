@@ -309,6 +309,31 @@ test('ordinary React editor CSS owns the historical fixed 50/50 workspace', () =
   );
 });
 
+test('shared Preview task markers override WordPress checkbox geometry', () => {
+  const inputRule = cssRule(
+    css,
+    `.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+)`
+  );
+  assertDeclaration(inputRule, 'width', '1rem');
+  assertDeclaration(inputRule, 'min-width', '1rem');
+  assertDeclaration(inputRule, 'height', '1rem');
+
+  const pseudoRule = cssRule(
+    css,
+    `.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+):is(:checked, :not(:checked))::before`
+  );
+  assertDeclaration(pseudoRule, 'width', '1rem');
+  assertDeclaration(pseudoRule, 'height', '1rem');
+  assertDeclaration(pseudoRule, 'margin', '0');
+  assertDeclaration(pseudoRule, 'float', 'none');
+});
+
 test('ordinary CodeMirror shows a stable scroll-synchronized line-number gutter', () => {
   assert.match(
     css,

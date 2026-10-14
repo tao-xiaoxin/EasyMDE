@@ -5,6 +5,8 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 import {
   blobText,
   declaration,
+  declaredStyleDeclarations,
+  declaredStyleValue,
   installClipboardTestEnvironment,
   prepareClipboard
 } from './wechat-clipboard-test-fixtures';
@@ -593,6 +595,78 @@ describe('createBrowserWechatClipboard', () => {
         Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
       }
     }
+  });
+
+  it('keeps loose checked and unchecked task captions intact through the section projection', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = [
+      '<ul class="task-list">',
+      '<li class="task-list-item"><p><input class="easymde-task-checkbox" type="checkbox" checked>Loose checked</p></li>',
+      '<li class="task-list-item"><p><input class="easymde-task-checkbox" type="checkbox">Loose unchecked</p></li>',
+      '</ul>'
+    ].join('');
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Loose checked\nLoose unchecked'
+    });
+    const sourceBeforeCopy = preview.innerHTML;
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) =>
+        'INPUT' === element.tagName
+          ? declaration({ display: 'inline-block', height: '12px', width: '12px' })
+          : declaration({ display: 'block' }),
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('loose caption projection payload missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const owners = [...holder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+    expect(owners).toHaveLength(2);
+    expect(owners.map((owner) => owner.getAttribute('aria-checked'))).toEqual(['true', 'false']);
+    expect(holder.querySelector('ul, li')).toBeNull();
+    const taskList = owners[0]?.closest('li, section')?.parentElement;
+    if (!taskList) throw new Error('loose caption task list missing');
+    // Every converted structure is a block without native list semantics, so
+    // the destination cannot compute a list marker on the row or the item.
+    expect(taskList.tagName).toBe('SECTION');
+    expect(declaredStyleValue(taskList, 'display')).toBe('block');
+    expect(declaredStyleDeclarations(taskList, 'list-style-type')).toEqual([
+      { important: true, property: 'list-style-type', value: 'none' }
+    ]);
+    expect(declaredStyleDeclarations(taskList, 'list-style-image')).toEqual([
+      { important: true, property: 'list-style-image', value: 'none' }
+    ]);
+    for (const owner of owners) {
+      const itemSection = owner.closest('li, section');
+      if (!itemSection) throw new Error('loose caption task item missing');
+      expect(itemSection.tagName).toBe('SECTION');
+      expect(declaredStyleValue(itemSection, 'display')).toBe('block');
+      expect(declaredStyleDeclarations(itemSection, 'list-style-type')).toEqual([
+        { important: true, property: 'list-style-type', value: 'none' }
+      ]);
+      expect(itemSection.querySelectorAll('span[leaf]')).toHaveLength(0);
+      expect(owner.parentElement?.tagName).toBe('P');
+      expect(owner.nextSibling?.nodeType).toBe(Node.TEXT_NODE);
+      expect(owner.nextElementSibling).toBeNull();
+    }
+    expect(await blobText(textBlob)).toContain('Loose checked');
+    expect(preview.innerHTML).toBe(sourceBeforeCopy);
   });
 
 });

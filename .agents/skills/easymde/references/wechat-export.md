@@ -664,8 +664,23 @@ on a later visible refresh. Preserve theme table shims (`display:contents`,
 survive the native importer's removal of form controls. Materialize recognized
 task markers from the current settled Preview paint into safe static Clipboard
 output; preserve checked state, effective opacity, geometry and text alignment.
-Never change source controls, invent platform colors or emoji, duplicate native
-list bullets, or keep an INPUT as proof of a destination-visible state. Remove
+Task marker properties are normalized to one
+`list-style-type:none!important` and one `list-style-image:none!important`
+declaration before structural projection. A complete task list, meaning every
+direct child item is a registered task item, is additionally projected to
+destination-safe block structure before HTML capture: the `ul`/`ol` wrapper and each of its task items
+become `section` elements that adopt the original attributes and children, so
+every registered clone, static allocation, caption run, and caption structure
+resolution keeps its identity. Each converted section replaces `display` and
+`list-style-type`/`list-style-image` with `block`/`none!important` while keeping
+the copied size and spacing declarations, and `start`, `reversed`, and item
+`value` attributes survive on the converted structure. Ordinary lists and lists
+that mix task and ordinary items keep native list markup; the exporter never
+emits `ul > section` or `ol > section`. Projecting a mixed list into task
+sections plus rebuilt ordinary list runs inside a legal block container remains
+UNVERIFIED. Never change source controls, invent platform colors or
+emoji, duplicate native list bullets, or keep an INPUT as proof of a
+destination-visible state. Remove
 arbitrary form controls. A marker that cannot be faithfully represented fails
 explicitly rather than silently losing state; native-appearance themes require
 their own verified normal path before all-theme acceptance. Retain each source table's authored/computed

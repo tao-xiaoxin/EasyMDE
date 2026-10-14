@@ -5,6 +5,7 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 import {
   blobText,
   declaration,
+  declaredStyleDeclarations,
   declaredStylePixels,
   declaredStyleValue,
   deferred,
@@ -33,6 +34,7 @@ describe('createBrowserWechatClipboard', () => {
           `<li class="task-list-item"><section><input class="easymde-task-checkbox${18 === index ? ' native' : ''}${relativeOwnerIndex === index ? ' relative-owner' : ''}" type="checkbox"${checked ? ' checked' : ''}>Task ${index + 1}</section></li>`
       ),
       '</ul>',
+      '<ul class="ordinary-list"><li class="ordinary-list-item"></li></ul>',
       '<form><input type="text" name="secret" value="private"></form>'
     ].join('');
     const propertyDivergenceInput = preview.querySelectorAll<HTMLInputElement>('input.easymde-task-checkbox')[1];
@@ -134,22 +136,52 @@ describe('createBrowserWechatClipboard', () => {
           width: '20px'
         });
       }
+      if ('UL' === element.tagName && element.classList.contains('ordinary-list')) {
+        return declaration({
+          'counter-increment': 'none',
+          'counter-reset': 'none',
+          'counter-set': 'none',
+          direction: 'ltr',
+          display: 'block',
+          'list-style-image': 'none',
+          'list-style-position': 'outside',
+          'list-style-type': 'disc',
+          'padding-left': '1px',
+          'padding-right': '0px',
+          'writing-mode': 'horizontal-tb'
+        });
+      }
+      if ('UL' === element.tagName) {
+        // A real Preview computes the authored `disc` marker on the task list
+        // (for example the phycat theme's `ul` rule), so the copied
+        // declaration must be replaced, not appended.
+        return declaration({ display: 'block', 'list-style-type': 'disc' });
+      }
       if ('LI' === element.tagName) {
+        const ordinary = element.classList.contains('ordinary-list-item');
         return declaration({
           'border-bottom-width': '0px',
           'border-left-width': '0px',
           'border-right-width': '0px',
           'border-top-width': '0px',
-          display: 'block',
+          'counter-increment': ordinary ? 'none' : '',
+          'counter-reset': ordinary ? 'none' : '',
+          'counter-set': ordinary ? 'none' : '',
+          direction: ordinary ? 'ltr' : '',
+          display: ordinary ? 'list-item' : 'block',
+          'list-style-image': ordinary ? 'none' : '',
+          'list-style-position': ordinary ? 'outside' : '',
+          'list-style-type': 'disc',
           'margin-bottom': '0px',
           'margin-left': '0px',
           'margin-right': '0px',
           'margin-top': '0px',
           'padding-bottom': '0px',
-          'padding-left': '0px',
+          'padding-left': ordinary ? '1px' : '0px',
           'padding-right': '0px',
           'padding-top': '0px',
-          position: 'relative'
+          position: 'relative',
+          'writing-mode': ordinary ? 'horizontal-tb' : ''
         });
       }
       if ('SECTION' === element.tagName) {
@@ -265,6 +297,45 @@ describe('createBrowserWechatClipboard', () => {
       expect(owners.every((owner) => owner.getAttribute('aria-disabled') === 'true')).toBe(true);
       expect(owners.every((owner) => Boolean(owner.getAttribute('style')))).toBe(true);
       expect(owners.every((owner) => owner.parentElement?.tagName === 'SECTION')).toBe(true);
+      // Destination-safe projection replaces the complete task list and every
+      // task item with sections. The task structure is therefore the lowest
+      // common section ancestor of all owners, and its section children are the
+      // projected task items.
+      const commonAncestor = (elements: readonly Element[]): HTMLElement | null => {
+        let current: HTMLElement | null = elements[0]?.parentElement ?? null;
+        while (current && !elements.every((element) => current?.contains(element))) {
+          current = current.parentElement;
+        }
+        return current;
+      };
+      const taskList = commonAncestor(owners);
+      if (!taskList) throw new Error('task list missing');
+      expect(taskList.getAttribute('class')).toBeNull();
+      const taskItemSections = [...taskList.children].filter(
+        (element): element is HTMLElement => element instanceof HTMLElement && 'SECTION' === element.tagName
+      );
+      expect(taskItemSections).toHaveLength(taskStates.length);
+      expect(holder.querySelector('ul section, ol section')).toBeNull();
+      const expectTaskMarkerSuppression = (element: Element): void => {
+        // Native WeChat Save strips declaration priority, so a copied `disc`
+        // left before an appended `none!important` re-appears as a second
+        // marker. The task structure must carry the replaced value only.
+        expect(declaredStyleDeclarations(element, 'list-style-type')).toEqual([
+          { important: true, property: 'list-style-type', value: 'none' }
+        ]);
+        expect(declaredStyleDeclarations(element, 'list-style-image')).toEqual([
+          { important: true, property: 'list-style-image', value: 'none' }
+        ]);
+      };
+      expectTaskMarkerSuppression(taskList);
+      taskItemSections.forEach(expectTaskMarkerSuppression);
+      const ordinaryList = [...holder.querySelectorAll('ul')].find((list) => !list.querySelector('[role="checkbox"]'));
+      if (!ordinaryList) throw new Error('ordinary list missing');
+      expect(declaredStyleDeclarations(ordinaryList, 'list-style-type')).toEqual([
+        { important: false, property: 'list-style-type', value: 'disc' }
+      ]);
+      expect(declaredStyleDeclarations(ordinaryList, 'list-style-image')).toEqual([]);
+      expect(owners.filter((owner) => owner.querySelector('span[aria-hidden="true"]'))).toHaveLength(18);
       // Captured allocation of the settled Preview: owner at (-22, 3) with a
       // 20x20 border box, circle at (18, -2) with a 16x16 border box and the
       // tick at (27.6, 8) with a promoted 8x12 border box.
@@ -447,6 +518,21 @@ describe('createBrowserWechatClipboard', () => {
       expect(legacyHtml).toBe(modernHtml);
       const legacyOwners = [...legacyHolder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
       expect(legacyOwners).toHaveLength(owners.length);
+      const legacyTaskList = commonAncestor(legacyOwners);
+      if (!legacyTaskList) throw new Error('legacy task list missing');
+      expectTaskMarkerSuppression(legacyTaskList);
+      expect(
+        [...legacyTaskList.children].filter(
+          (element): element is HTMLElement => element instanceof HTMLElement && 'SECTION' === element.tagName
+        )
+      ).toHaveLength(taskStates.length);
+      const legacyOrdinaryList = [...legacyHolder.querySelectorAll('ul')].find(
+        (list) => !list.querySelector('[role="checkbox"]')
+      );
+      if (!legacyOrdinaryList) throw new Error('legacy ordinary list missing');
+      expect(declaredStyleDeclarations(legacyOrdinaryList, 'list-style-type')).toEqual([
+        { important: false, property: 'list-style-type', value: 'disc' }
+      ]);
       // Legacy shares the validated static allocation byte for byte.
       expect(legacyOwners.map((owner) => owner.getAttribute('style'))).toEqual(
         owners.map((owner) => owner.getAttribute('style'))

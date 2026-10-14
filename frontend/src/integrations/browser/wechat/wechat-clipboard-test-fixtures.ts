@@ -7,7 +7,7 @@ import type {
   WechatClipboardPreparationOptions
 } from '../../../contracts/ports/wechat-clipboard-port';
 import type { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
-import { splitCssDeclarations } from './wechat-css-list';
+import { splitCssDeclarations, type CssDeclaration } from './wechat-css-list';
 
 
 export function readyPreview(): HTMLElement {
@@ -43,6 +43,17 @@ export function declaredStyleValue(element: Element, property: string): string {
     declaredImportant = candidate.important;
   });
   return declared;
+}
+
+/**
+ * Lists every declaration for one property in source order, so a test can prove
+ * the payload carries the replaced value only.
+ */
+export function declaredStyleDeclarations(element: Element, property: string): CssDeclaration[] {
+  const wanted = property.trim().toLowerCase();
+  return splitCssDeclarations(element.getAttribute('style') ?? '').filter(
+    (candidate) => candidate.property === wanted
+  );
 }
 
 export function declaredStylePixels(element: Element, property: string): number {

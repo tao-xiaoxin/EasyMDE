@@ -8,6 +8,12 @@ import {
   installClipboardTestEnvironment,
   prepareClipboard
 } from './wechat-clipboard-test-fixtures';
+import { TASK_LIST_CHECKBOX_CLONES } from './wechat-clone-metadata';
+import {
+  TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES,
+  TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS
+} from './wechat-task-caption';
+import { projectCompleteTaskListStructures } from './wechat-task-list-projection';
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
@@ -828,5 +834,155 @@ describe('createBrowserWechatClipboard', () => {
       expect(preview.innerHTML).toBe('<ul><li class="eligible">Eligible marker</li></ul>');
     }
   );
+
+  it('projects complete task lists into destination-safe sections before Clipboard capture', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const markup = [
+      '<ul class="task-list tight"><li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox">Tight unchecked</li>',
+      '<li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox" checked>Tight checked</li></ul>',
+      '<ul class="task-list loose"><li class="task-list-item"><p><input class="easymde-task-checkbox" type="checkbox" checked>Loose checked</p></li></ul>',
+      '<ul class="plain-list"><li>Ordinary item</li></ul>',
+      '<ul class="nested-list"><li class="task-list-item"><input class="easymde-task-checkbox" type="checkbox">Outer task<ul class="nested-ordinary"><li>Nested ordinary</li></ul></li></ul>'
+    ].join('');
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = markup;
+    Object.defineProperty(preview, 'innerText', {
+      configurable: true,
+      value: 'Tight unchecked\nTight checked\nLoose checked\nOrdinary item\nOuter task\nNested ordinary'
+    });
+    const sourceBeforeCopy = preview.innerHTML;
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('INPUT' === element.tagName) {
+          return declaration({ appearance: 'none', display: 'inline-block', height: '12px', width: '12px' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      }
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    const textBlob = item?.payload['text/plain'];
+    if (!htmlBlob || !textBlob) throw new Error('task list structure payload missing');
+    const html = await blobText(htmlBlob);
+    const text = await blobText(textBlob);
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+
+    // WeChat Save rebuilds `ul/ol` list markup with destination list semantics
+    // (disc markers). A complete task list must therefore leave the clipboard
+    // as block sections, so no task list or task item reaches the destination
+    // as a list. Complete task items keep their materialized owners.
+    const taskOwners = [...holder.querySelectorAll('[role="checkbox"]')];
+    expect(taskOwners).toHaveLength(4);
+    for (const owner of taskOwners) {
+      expect(owner.closest('ul, ol'), `complete task owner ${owner.textContent}`).toBeNull();
+      expect(owner.closest('li'), `complete task item ${owner.textContent}`).toBeNull();
+      expect(owner.closest('section')).not.toBeNull();
+    }
+    // Complete task lists leave no list structure at all: no task list and no
+    // task item can be rebuilt by the destination list importer.
+    expect(holder.querySelector('[role="checkbox"]')?.closest('ul, ol')).toBeNull();
+    expect([...holder.querySelectorAll('li')].filter((li) => li.classList.contains('task-list-item')))
+      .toHaveLength(0);
+    expect(holder.querySelector('ul.task-list, ol.task-list, ul > section, ol > section')).toBeNull();
+    // Ordinary lists stay ordinary lists, including a nested list inside a
+    // projected task section, because the move keeps valid block structure.
+    const remainingLists = [...holder.querySelectorAll('ul, ol')];
+    expect(remainingLists).toHaveLength(2);
+    expect(remainingLists[0]?.querySelector('li')?.textContent).toBe('Ordinary item');
+    expect(remainingLists[1]?.closest('section')).not.toBeNull();
+    expect(remainingLists[1]?.querySelector('li')?.textContent).toBe('Nested ordinary');
+    expect(text).toContain('Tight unchecked');
+    expect(text).toContain('Tight checked');
+    expect(text).toContain('Loose checked');
+    expect(text).toContain('Ordinary item');
+    expect(text).toContain('Outer task');
+    expect(text).toContain('Nested ordinary');
+    // The live Preview source stays untouched by serialization.
+    expect(preview.innerHTML).toBe(sourceBeforeCopy);
+  });
+
+  it('keeps clone identity and caption structure resolution when a task list projects to sections', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<ul class="task-list"><li class="task-list-item"><input type="checkbox" checked>Item</li></ul>';
+    const list = root.querySelector('ul');
+    const item = root.querySelector('li');
+    const input = root.querySelector('input');
+    if (!list || !item || !input) throw new Error('projection fixture unavailable');
+    TASK_LIST_CHECKBOX_CLONES.add(input);
+    TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES.add(item);
+    TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES.add(list);
+
+    projectCompleteTaskListStructures(root);
+
+    expect(root.querySelector('ul')).toBeNull();
+    expect(root.querySelector('li')).toBeNull();
+    expect([...root.querySelectorAll('section')]).toHaveLength(2);
+    // The cloned checkbox owner keeps its identity; only the list containers
+    // are projected, so every WeakSet/WeakMap registration stays valid.
+    expect(root.querySelector('input')).toBe(input);
+    expect(root.contains(input)).toBe(true);
+    const listSection = TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS.get(list);
+    const itemSection = TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS.get(item);
+    expect(listSection?.tagName).toBe('SECTION');
+    expect(itemSection?.tagName).toBe('SECTION');
+    expect(listSection?.contains(input)).toBe(true);
+    expect(itemSection?.contains(input)).toBe(true);
+    expect(listSection?.getAttribute('class')).toBe('task-list');
+    expect(itemSection?.getAttribute('class')).toBe('task-list-item');
+  });
+
+  it('keeps a mixed task and ordinary list unprojected instead of emitting invalid structure', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<ul class="task-list"><li class="task-list-item"><input type="checkbox">Task</li><li>Ordinary</li></ul>';
+    const input = root.querySelector('input');
+    if (!input) throw new Error('mixed projection fixture unavailable');
+    TASK_LIST_CHECKBOX_CLONES.add(input);
+
+    // Mixed lists have no single lossless destination structure yet, so the
+    // projection leaves them untouched: the copy stays legal and no
+    // `ul > section` shape can reach the Clipboard payload.
+    projectCompleteTaskListStructures(root);
+    expect(root.querySelector('ul')?.children).toHaveLength(2);
+    expect(root.querySelector('ul > section, ol > section')).toBeNull();
+    expect(root.querySelectorAll('section')).toHaveLength(0);
+    expect(root.querySelector('li.task-list-item')?.parentElement?.tagName).toBe('UL');
+    expect(root.querySelector('input')).toBe(input);
+  });
+
+  it('keeps an ordered task list start, reversed, and value attributes through projection', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<ol class="task-list" start="4" reversed><li class="task-list-item" value="7"><input type="checkbox">Ordered task</li></ol>';
+    const input = root.querySelector('input');
+    if (!input) throw new Error('ordered projection fixture unavailable');
+    TASK_LIST_CHECKBOX_CLONES.add(input);
+
+    projectCompleteTaskListStructures(root);
+
+    const listSection = root.firstElementChild;
+    const itemSection = listSection?.firstElementChild;
+    expect(listSection?.tagName).toBe('SECTION');
+    expect(itemSection?.tagName).toBe('SECTION');
+    expect(listSection?.getAttribute('start')).toBe('4');
+    expect(listSection?.hasAttribute('reversed')).toBe(true);
+    expect(itemSection?.getAttribute('value')).toBe('7');
+  });
 
 });

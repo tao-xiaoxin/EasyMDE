@@ -2060,6 +2060,31 @@ body:has(.easymde-editor.is-immersive) .wrap {
     padding-inline: calc(max(clamp(14px, 4.5%, 22px), calc((100% - 680px) / 4)) - 5px);
 }
 
+/*
+ * WordPress admin form CSS gives checked checkboxes a 25px used box and a
+ * 30px static ::before checkmark. Preview task markers are article content,
+ * so their compact dimensions must be owned here rather than by a selected
+ * article theme. Theme rules loaded after this shared rule may still provide
+ * their own marker geometry and paint.
+ */
+.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+) {
+  width: 1rem;
+  min-width: 1rem;
+  height: 1rem;
+}
+.easymde-editor .easymde-rendered-content :where(
+  .task-list-item > input[type="checkbox"],
+  .task-list-item > p > input[type="checkbox"]
+):is(:checked, :not(:checked))::before {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  float: none;
+}
+
 .easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container) {
     display: block;
     box-sizing: border-box;

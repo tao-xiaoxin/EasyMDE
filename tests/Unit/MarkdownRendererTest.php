@@ -633,6 +633,38 @@ MD;
         $this->assertStringContainsString('<input checked disabled type="checkbox">', $all_tasks);
     }
 
+    public function test_task_list_marker_spacing_is_removed_from_tight_and_loose_lists()
+    {
+        $tight = MarkdownRenderer::render( "- [ ] Todo\n- [x] Done", 'default' );
+        $loose = MarkdownRenderer::render( "- [ ] Todo\n\n- [x] Done", 'default' );
+
+        // Real line breaks are required here: the two items must be separate
+        // list entries so both checkbox states run through the spacing
+        // normalization. An escaped '\n' would collapse them into one item.
+        $this->assertSame( 2, substr_count( $tight, 'class="task-list-item"' ) );
+        $this->assertStringContainsString( '<input disabled type="checkbox">Todo', $tight );
+        $this->assertStringContainsString( '<input checked disabled type="checkbox">Done', $tight );
+        $this->assertStringNotContainsString( '<input disabled type="checkbox"> Todo', $tight );
+        $this->assertStringNotContainsString( '<input checked disabled type="checkbox"> Done', $tight );
+        $this->assertSame( 2, substr_count( $loose, 'class="task-list-item"' ) );
+        $this->assertStringContainsString( '<p><input disabled type="checkbox">Todo</p>', $loose );
+        $this->assertStringContainsString( '<p><input checked disabled type="checkbox">Done</p>', $loose );
+        $this->assertStringNotContainsString( '<input disabled type="checkbox"> Todo', $loose );
+        $this->assertStringNotContainsString( '<input checked disabled type="checkbox"> Done', $loose );
+    }
+
+    public function test_task_marker_spacing_does_not_change_regular_lists_or_non_task_inputs()
+    {
+        $regular = MarkdownRenderer::render( "- Todo\n- Done", 'default' );
+        $input   = MarkdownRenderer::render( 'Label <input type="checkbox" disabled> text', 'default' );
+
+        $this->assertStringContainsString( '<li>Todo</li>', $regular );
+        $this->assertStringContainsString( '<li>Done</li>', $regular );
+        $this->assertStringNotContainsString( '<input', $input );
+        $this->assertStringContainsString( 'Label', $input );
+        $this->assertStringContainsString( 'text', $input );
+    }
+
     public function test_task_list_markup_is_preserved_for_the_default_article_theme()
     {
         $html = MarkdownRenderer::render(

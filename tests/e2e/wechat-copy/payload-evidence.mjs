@@ -4,6 +4,40 @@ import { intrinsicGeometryTolerance } from "./environment.mjs";
 import { nativeClipboardSurfaceWidths } from "./environment.mjs";
 import { taskMarkerSourceViewportBounds } from "./environment.mjs";
 
+
+
+/**
+ * Identifies the task block row that owns a task checkbox input or a
+ * materialized static task owner.
+ *
+ * A serialized complete task list is projected into block structure, so its
+ * rows are `section` elements whose replaced marker declarations
+ * (`list-style-type:none` and `list-style-image:none`) travel with them. The
+ * live Preview keeps native `li.task-list-item` rows. Authored caption
+ * sections, nested ordinary list items, and the surrounding task list
+ * container are not rows, so the walk returns the closest matching ancestor
+ * instead of any `li` or any `section`.
+ *
+ * The reader executes inside `page.evaluate`, which cannot close over this
+ * module scope, so the same rules are mirrored by the local `taskBlockRow`
+ * inside the reader callback. Keep both in sync.
+ */
+export function taskBlockRow(element) {
+  if (!element || typeof element.getAttribute !== 'function') return null;
+  for (let current = element.parentElement; current; current = current.parentElement) {
+    if ('LI' === current.tagName) return current;
+    if ('SECTION' !== current.tagName) continue;
+    const declarations = current.getAttribute('style') ?? '';
+    if (
+      /(?:^|;)\s*list-style-type\s*:\s*none(?:\s*!important)?\s*(?:;|$)/iu.test(declarations)
+      && /(?:^|;)\s*list-style-image\s*:\s*none(?:\s*!important)?\s*(?:;|$)/iu.test(declarations)
+    ) {
+      return current;
+    }
+  }
+  return null;
+}
+
 export async function readNativeCodeSurfaceEvidence(
   page,
   html = null,
@@ -362,15 +396,33 @@ export async function readNativeCodeSurfaceEvidence(
       top: finite(rect.top, `${label}-top`),
       width: finite(rect.width, `${label}-width`)
     });
+    // Mirrors the exported taskBlockRow: rows are native `li` elements or the
+    // projected task sections that carry the replaced marker declarations.
+    // Authored caption sections, nested ordinary list items, and the task list
+    // container itself are not rows.
+    const taskBlockRow = (element) => {
+      for (let current = element.parentElement; current; current = current.parentElement) {
+        if ('LI' === current.tagName) return current;
+        if ('SECTION' !== current.tagName) continue;
+        const declarations = current.getAttribute('style') ?? '';
+        if (
+          /(?:^|;)\s*list-style-type\s*:\s*none(?:\s*!important)?\s*(?:;|$)/iu.test(declarations)
+          && /(?:^|;)\s*list-style-image\s*:\s*none(?:\s*!important)?\s*(?:;|$)/iu.test(declarations)
+        ) {
+          return current;
+        }
+      }
+      return null;
+    };
     const taskEvidence = (root, rootBox, label, view, documentRef) => {
       const sourceInputs = [...root.querySelectorAll('input[type="checkbox"]')]
         .filter((element) => element.closest('.task-list-item, .task-list'));
       const staticOwners = [...root.querySelectorAll('[role="checkbox"]')]
-        .filter((element) => Boolean(element.closest('li')));
+        .filter((element) => Boolean(taskBlockRow(element)));
       const markerElements = sourceInputs.length ? sourceInputs : staticOwners;
       const markerType = sourceInputs.length ? 'source-input' : 'static-owner';
       const items = markerElements.map((marker, index) => {
-        const li = marker.closest('li.task-list-item, li');
+        const li = taskBlockRow(marker);
         if (!li) throw new Error(`wechat-native-${label}-task-li-unavailable`);
         const markerRect = marker.getBoundingClientRect();
         const markerComputed = view.getComputedStyle(marker);
@@ -826,80 +878,130 @@ export async function readNativeCodeSurfaceEvidence(
   });
 }
 
-export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRects, cssWidth) {
+export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRects, cssWidth, backgroundScreenshot = null) {
   if (!Number.isFinite(cssWidth) || cssWidth <= 0) {
     throw new Error('wechat-task-marker-pixel-css-width-invalid');
   }
-  return page.evaluate(async ({ encodedPng, markerRegions, sourceCssWidth }) => {
-    const binary = atob(encodedPng);
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('wechat-task-marker-pixel-canvas-unavailable');
-    context.drawImage(bitmap, 0, 0);
-    const values = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-    const scale = bitmap.width / sourceCssWidth;
-    const sample = (x, y) => {
-      const index = (y * bitmap.width + x) * 4;
-      return [values[index], values[index + 1], values[index + 2], values[index + 3]];
+  return page.evaluate(async ({ encodedPng, encodedBackgroundPng, markerRegions, sourceCssWidth }) => {
+    const decode = async (encoded) => {
+      const binary = atob(encoded);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      return createImageBitmap(new Blob([bytes], { type: 'image/png' }));
     };
-    const background = sample(0, 0);
-    const results = markerRegions.map((region, markerIndex) => {
-      const left = Math.max(0, Math.floor(region.left * scale));
-      const right = Math.min(bitmap.width, Math.ceil(region.right * scale));
-      const top = Math.max(0, Math.floor(region.top * scale));
-      const bottom = Math.min(bitmap.height, Math.ceil(region.bottom * scale));
-      let hash = 2166136261;
-      let inkPixels = 0;
-      let minInkX = right;
-      let minInkY = bottom;
-      let maxInkX = -1;
-      let maxInkY = -1;
-      for (let y = top; y < bottom; y += 1) {
-        for (let x = left; x < right; x += 1) {
-          const pixel = sample(x, y);
-          for (const channel of pixel) {
-            hash ^= channel;
-            hash = Math.imul(hash, 16777619);
-          }
-          if (
-            pixel[3] > 0
-            && pixel.slice(0, 3).some((channel, channelIndex) => (
-              channel !== background[channelIndex]
-            ))
-          ) {
-            inkPixels += 1;
-            minInkX = Math.min(minInkX, x - left);
-            minInkY = Math.min(minInkY, y - top);
-            maxInkX = Math.max(maxInkX, x - left);
-            maxInkY = Math.max(maxInkY, y - top);
+    const bitmap = await decode(encodedPng);
+    let backgroundBitmap = null;
+    // Both decoded bitmaps own real image memory. Keep every exit path,
+    // including a thrown size mismatch or canvas failure, inside one
+    // try/finally so neither bitmap can leak when sampling fails.
+    try {
+      backgroundBitmap = encodedBackgroundPng ? await decode(encodedBackgroundPng) : null;
+      if (backgroundBitmap && (
+        backgroundBitmap.width !== bitmap.width
+        || backgroundBitmap.height !== bitmap.height
+      )) {
+        throw new Error('wechat-task-marker-pixel-background-size-mismatch');
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('wechat-task-marker-pixel-canvas-unavailable');
+      context.drawImage(bitmap, 0, 0);
+      const values = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      let backgroundValues = null;
+      if (backgroundBitmap) {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(backgroundBitmap, 0, 0);
+        backgroundValues = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+      }
+      const scale = bitmap.width / sourceCssWidth;
+      const sample = (pixels, x, y) => {
+        const index = (y * bitmap.width + x) * 4;
+        return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
+      };
+      const background = backgroundValues ? null : sample(values, 0, 0);
+      const isInk = (x, y) => {
+        const pixel = sample(values, x, y);
+        const baseline = backgroundValues ? sample(backgroundValues, x, y) : background;
+        return pixel[3] > 0
+          && (
+            pixel[0] !== baseline[0]
+            || pixel[1] !== baseline[1]
+            || pixel[2] !== baseline[2]
+          );
+      };
+      const results = markerRegions.map((region, markerIndex) => {
+        const left = Math.max(0, Math.floor(region.left * scale));
+        const right = Math.min(bitmap.width, Math.ceil(region.right * scale));
+        const top = Math.max(0, Math.floor(region.top * scale));
+        const bottom = Math.min(bitmap.height, Math.ceil(region.bottom * scale));
+        let hash = 2166136261;
+        let inkPixels = 0;
+        let minInkX = right;
+        let minInkY = bottom;
+        let maxInkX = -1;
+        let maxInkY = -1;
+        for (let y = top; y < bottom; y += 1) {
+          for (let x = left; x < right; x += 1) {
+            const pixel = sample(values, x, y);
+            for (const channel of pixel) {
+              hash ^= channel;
+              hash = Math.imul(hash, 16777619);
+            }
+            if (isInk(x, y)) {
+              inkPixels += 1;
+              minInkX = Math.min(minInkX, x - left);
+              minInkY = Math.min(minInkY, y - top);
+              maxInkX = Math.max(maxInkX, x - left);
+              maxInkY = Math.max(maxInkY, y - top);
+            }
           }
         }
-      }
-      return {
-        inkBounds: maxInkX < 0
-          ? null
-          : {
-              bottom: maxInkY + 1,
-              height: maxInkY - minInkY + 1,
-              left: minInkX,
-              right: maxInkX + 1,
-              top: minInkY,
-              width: maxInkX - minInkX + 1
-            },
-        inkPixels,
-        markerIndex,
-        pixelHash: (hash >>> 0).toString(16).padStart(8, '0')
-      };
-    });
-    const bitmapSize = { height: bitmap.height, width: bitmap.width };
-    bitmap.close();
-    return { bitmap: bitmapSize, results };
+        // Interior paint evidence: ink inside the central half of the marker's
+        // paint region. The window is anchored to the region geometry instead
+        // of the anti-aliased ink bounds so a half-pixel phase change cannot
+        // move the window itself, and the still-measured edge pixels around it
+        // are not part of the comparison. A marker that keeps its outer shape
+        // but loses its inner fill or glyph changes this count even when the
+        // outer ink count stays inside its own tolerance.
+        let interiorInkPixels = 0;
+        {
+          const regionWidth = right - left;
+          const regionHeight = bottom - top;
+          const insetX = Math.max(1, Math.floor(regionWidth / 4));
+          const insetY = Math.max(1, Math.floor(regionHeight / 4));
+          for (let y = top + insetY; y < bottom - insetY; y += 1) {
+            for (let x = left + insetX; x < right - insetX; x += 1) {
+              if (isInk(x, y)) interiorInkPixels += 1;
+            }
+          }
+        }
+        return {
+          inkBounds: maxInkX < 0
+            ? null
+            : {
+                bottom: maxInkY + 1,
+                height: maxInkY - minInkY + 1,
+                left: minInkX,
+                right: maxInkX + 1,
+                top: minInkY,
+                width: maxInkX - minInkX + 1
+              },
+          inkPixels,
+          interiorInkPixels,
+          markerIndex,
+          pixelHash: (hash >>> 0).toString(16).padStart(8, '0')
+        };
+      });
+      const bitmapSize = { height: bitmap.height, width: bitmap.width };
+      return { bitmap: bitmapSize, results };
+    } finally {
+      bitmap.close();
+      backgroundBitmap?.close();
+    }
   }, {
     encodedPng: screenshot.toString('base64'),
+    encodedBackgroundPng: backgroundScreenshot?.toString('base64') ?? null,
     markerRegions: markerRects,
     sourceCssWidth: cssWidth
   });
@@ -966,6 +1068,15 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
       if ('function' === typeof image.decode) await image.decode();
     }));
     await new Promise((resolve) => view.requestAnimationFrame(() => resolve()));
+    // The full fixture places task lists well below the first viewport. Keep the
+    // isolated payload frame tall enough for every marker so pixel evidence covers
+    // the complete rendered document instead of silently sampling only its top.
+    const documentHeight = Math.ceil(Math.max(
+      documentRef.documentElement.scrollHeight,
+      documentRef.body.scrollHeight,
+      1000
+    ));
+    iframe.style.height = `${documentHeight}px`;
   }, { destinationWidth: width, removePosition: stripPosition, sourceHtml: html }).catch(async (error) => {
     await page.evaluate(() => {
       document.querySelector('[data-easymde-task-marker-pixel-probe="1"]')?.remove();
@@ -1014,6 +1125,24 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
       };
     });
     const screenshot = await iframe.screenshot({ animations: 'disabled' });
+    await page.evaluate(() => {
+      const iframe = document.querySelector('[data-easymde-task-marker-pixel-probe="1"]');
+      const documentRef = iframe?.contentDocument;
+      if (!documentRef) throw new Error('wechat-task-marker-pixel-frame-unavailable');
+      documentRef.querySelectorAll('[role="checkbox"], [role="checkbox"] *').forEach((element) => {
+        if (element.nodeType === 1) element.style.setProperty('opacity', '0', 'important');
+      });
+    });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+    const backgroundScreenshot = await iframe.screenshot({ animations: 'disabled' });
+    await page.evaluate(() => {
+      const iframe = document.querySelector('[data-easymde-task-marker-pixel-probe="1"]');
+      const documentRef = iframe?.contentDocument;
+      if (!documentRef) throw new Error('wechat-task-marker-pixel-frame-unavailable');
+      documentRef.querySelectorAll('[role="checkbox"], [role="checkbox"] *').forEach((element) => {
+        if (element.nodeType === 1) element.style.removeProperty('opacity');
+      });
+    });
     const frameWidth = await page.evaluate(() => {
       const frame = document.querySelector('[data-easymde-task-marker-pixel-probe="1"]');
       const width = frame?.getBoundingClientRect().width;
@@ -1026,7 +1155,8 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
       page,
       screenshot,
       geometry.markerRects.map(({ paint }) => paint),
-      frameWidth
+      frameWidth,
+      backgroundScreenshot
     );
     return { geometry, pixels, screenshot };
   } finally {
@@ -1037,7 +1167,7 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
 }
 
 export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
-  const geometry = await page.evaluate((selector) => {
+  const readGeometry = async () => page.evaluate((selector) => {
     const root = document.querySelector(selector);
     if (!root || root.nodeType !== 1 || typeof root.getBoundingClientRect !== 'function') {
       throw new Error('wechat-task-marker-source-pixel-root-unavailable');
@@ -1116,15 +1246,209 @@ export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
       }
     };
   }, sourceSelector);
-  const root = page.locator(sourceSelector);
-  const screenshot = await root.screenshot({ animations: 'disabled' });
-  const pixels = await decodeTaskMarkerPixelEvidence(
-    page,
-    screenshot,
-    geometry.markerRects.map(({ paint }) => paint),
-    geometry.root.width
-  );
-  return { geometry, pixels, screenshot };
+  const geometry = await readGeometry();
+  const scrollState = await page.evaluate((selector) => {
+    const root = document.querySelector(selector);
+    if (!(root instanceof HTMLElement)) {
+      throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+    }
+    let owner = root.parentElement;
+    while (owner) {
+      const style = getComputedStyle(owner);
+      if (owner.scrollHeight > owner.clientHeight && ['auto', 'scroll'].includes(style.overflowY)) break;
+      owner = owner.parentElement;
+    }
+    if (!(owner instanceof HTMLElement)) {
+      throw new Error('wechat-task-marker-source-pixel-scroll-owner-unavailable');
+    }
+    return {
+      initialScrollTop: owner.scrollTop,
+      ownerClientHeight: owner.clientHeight,
+      ownerSelector: owner.className,
+      windowScrollX: window.scrollX,
+      windowScrollY: window.scrollY
+    };
+  }, sourceSelector);
+  const sourcePixels = [];
+  let representativeScreenshot = null;
+  const outlineStyles = await page.evaluate(() => [...document.querySelectorAll('.easymde-immersive-outline')].map((element) => {
+    const style = element.getAttribute('style');
+    element.style.setProperty('visibility', 'hidden', 'important');
+    return style;
+  }));
+  try {
+    await page.evaluate((selector) => {
+      const root = document.querySelector(selector);
+      if (!(root instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+      let owner = root.parentElement;
+      while (owner) {
+        const style = getComputedStyle(owner);
+        if (owner.scrollHeight > owner.clientHeight && ['auto', 'scroll'].includes(style.overflowY)) break;
+        owner = owner.parentElement;
+      }
+      if (!(owner instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-scroll-owner-unavailable');
+      owner.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }, sourceSelector);
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+    for (let markerIndex = 0; markerIndex < geometry.markerRects.length; markerIndex += 1) {
+      await page.evaluate(({ selector, markerIndex }) => {
+        const root = document.querySelector(selector);
+        if (!(root instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+        let owner = root.parentElement;
+        while (owner) {
+          const style = getComputedStyle(owner);
+          if (owner.scrollHeight > owner.clientHeight && ['auto', 'scroll'].includes(style.overflowY)) break;
+          owner = owner.parentElement;
+        }
+        if (!(owner instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-scroll-owner-unavailable');
+        const markers = [...root.querySelectorAll('input[type="checkbox"]')]
+          .filter((element) => element.closest('.task-list-item, .task-list'));
+        const marker = markers[markerIndex];
+        if (!(marker instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-marker-unavailable');
+        const ownerRect = owner.getBoundingClientRect();
+        const markerRect = marker.getBoundingClientRect();
+        const documentTop = markerRect.top - ownerRect.top + owner.scrollTop;
+        owner.scrollTop = Math.max(0, documentTop - Math.min(80, owner.clientHeight / 2));
+      }, { selector: sourceSelector, markerIndex });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+      const sample = await page.evaluate(({ selector, markerIndex }) => {
+        const root = document.querySelector(selector);
+        if (!(root instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+        const markers = [...root.querySelectorAll('input[type="checkbox"]')]
+          .filter((element) => element.closest('.task-list-item, .task-list'));
+        const marker = markers[markerIndex];
+        if (!(marker instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-marker-unavailable');
+        const markerRect = marker.getBoundingClientRect();
+        const rects = [markerRect];
+        const transformBounds = (width, height, transform) => {
+          if (!transform || transform === 'none') return { height, width };
+          const match = transform.match(/^matrix\(([^)]+)\)$/u);
+          const values = match?.[1]?.split(',').map((value) => Number.parseFloat(value.trim()));
+          if (!values || values.length < 6 || !values.slice(0, 6).every(Number.isFinite)) {
+            return { height, width };
+          }
+          const [a, b, c, d] = values;
+          return {
+            height: Math.abs(b) * width + Math.abs(d) * height,
+            width: Math.abs(a) * width + Math.abs(c) * height
+          };
+        };
+        for (const pseudo of ['::before', '::after']) {
+          const style = getComputedStyle(marker, pseudo);
+          if (
+            style.content === 'none'
+            || style.content === 'normal'
+            || style.display === 'none'
+            || style.visibility === 'hidden'
+          ) continue;
+          const width = Number.parseFloat(style.width);
+          const height = Number.parseFloat(style.height);
+          const left = Number.parseFloat(style.left);
+          const top = Number.parseFloat(style.top);
+          if (![width, height, left, top].every(Number.isFinite)) continue;
+          const paint = transformBounds(width, height, style.transform);
+          rects.push({
+            bottom: markerRect.top + top + paint.height,
+            left: markerRect.left + left,
+            right: markerRect.left + left + paint.width,
+            top: markerRect.top + top
+          });
+        }
+        const paint = {
+          bottom: Math.max(...rects.map((rect) => rect.bottom)),
+          left: Math.min(...rects.map((rect) => rect.left)),
+          right: Math.max(...rects.map((rect) => rect.right)),
+          top: Math.min(...rects.map((rect) => rect.top))
+        };
+        const padding = 4;
+        const clip = {
+          height: Math.ceil(paint.bottom - paint.top + padding * 2),
+          left: Math.floor(paint.left - padding),
+          top: Math.floor(paint.top - padding),
+          width: Math.ceil(paint.right - paint.left + padding * 2)
+        };
+        return {
+          clip,
+          paint: { bottom: paint.bottom - clip.top, left: paint.left - clip.left, right: paint.right - clip.left, top: paint.top - clip.top }
+        };
+      }, { selector: sourceSelector, markerIndex });
+      const clip = {
+        height: Math.max(1, sample.clip.height),
+        width: Math.max(1, sample.clip.width),
+        x: Math.max(0, sample.clip.left),
+        y: Math.max(0, sample.clip.top)
+      };
+      const screenshot = await page.screenshot({ animations: 'disabled', clip });
+      // The baseline capture hides exactly one live Preview marker. Save and
+      // restore its complete style attribute so a pre-existing inline opacity
+      // value and priority survive the sampling, an originally absent style
+      // attribute stays absent instead of degrading to `style=""`, and a
+      // failed background capture cannot leave the live marker hidden.
+      const markerStyle = await page.evaluate(({ selector, markerIndex }) => {
+        const root = document.querySelector(selector);
+        if (!(root instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-root-unavailable');
+        const markers = [...root.querySelectorAll('input[type="checkbox"]')]
+          .filter((element) => element.closest('.task-list-item, .task-list'));
+        const marker = markers[markerIndex];
+        if (!(marker instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-marker-unavailable');
+        const style = marker.getAttribute('style');
+        marker.style.setProperty('opacity', '0', 'important');
+        return style;
+      }, { selector: sourceSelector, markerIndex });
+      let backgroundScreenshot;
+      try {
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+        backgroundScreenshot = await page.screenshot({ animations: 'disabled', clip });
+      } finally {
+        await page.evaluate(({ selector, markerIndex, style }) => {
+          const root = document.querySelector(selector);
+          const markers = root instanceof HTMLElement
+            ? [...root.querySelectorAll('input[type="checkbox"]')]
+              .filter((element) => element.closest('.task-list-item, .task-list'))
+            : [];
+          const marker = markers[markerIndex];
+          if (!(marker instanceof HTMLElement)) return;
+          if (style === null) marker.removeAttribute('style');
+          else marker.setAttribute('style', style);
+        }, { selector: sourceSelector, markerIndex, style: markerStyle });
+      }
+      const offset = { left: clip.x - sample.clip.left, top: clip.y - sample.clip.top };
+      const paint = {
+        bottom: sample.paint.bottom - offset.top,
+        left: sample.paint.left - offset.left,
+        right: sample.paint.right - offset.left,
+        top: sample.paint.top - offset.top
+      };
+      const pixels = await decodeTaskMarkerPixelEvidence(page, screenshot, [paint], clip.width, backgroundScreenshot);
+      const result = pixels.results[0];
+      if (!result) throw new Error('wechat-task-marker-source-pixel-result-unavailable');
+      sourcePixels.push({ ...result, markerIndex });
+      representativeScreenshot ??= screenshot;
+    }
+  } finally {
+    await page.evaluate(({ selector, scrollTop, windowScrollX, windowScrollY, outlineStyles }) => {
+      const root = document.querySelector(selector);
+      if (!(root instanceof HTMLElement)) return;
+      let owner = root.parentElement;
+      while (owner) {
+        const style = getComputedStyle(owner);
+        if (owner.scrollHeight > owner.clientHeight && ['auto', 'scroll'].includes(style.overflowY)) break;
+        owner = owner.parentElement;
+      }
+      if (owner instanceof HTMLElement) owner.scrollTop = scrollTop;
+      window.scrollTo(windowScrollX, windowScrollY);
+      [...document.querySelectorAll('.easymde-immersive-outline')].forEach((element, index) => {
+        const style = outlineStyles[index];
+        if (style === null || typeof style === 'undefined') element.removeAttribute('style');
+        else element.setAttribute('style', style);
+      });
+    }, { selector: sourceSelector, scrollTop: scrollState.initialScrollTop, windowScrollX: scrollState.windowScrollX, windowScrollY: scrollState.windowScrollY, outlineStyles });
+  }
+  return {
+    geometry,
+    pixels: { bitmap: null, results: sourcePixels },
+    screenshot: representativeScreenshot
+  };
 }
 
 export async function readTaskMarkerSourceContentWidth(page, sourceSelector) {
@@ -1180,6 +1504,9 @@ export async function calibrateTaskMarkerSourceViewport(page, sourceSelector, re
     Math.max(firstViewport + 1, Math.round(requestedContent + probeDelta))
   );
   const samples = [];
+  // Immersive Preview content can be half a CSS pixel wide after subtracting
+  // its border and padding; preserve that measured width for geometry evidence.
+  const calibrationTolerance = Math.max(intrinsicGeometryTolerance, 0.5);
   const read = async (viewportWidth) => {
     validViewport(viewportWidth);
     await page.setViewportSize({ width: viewportWidth, height: 1000 });
@@ -1200,7 +1527,16 @@ export async function calibrateTaskMarkerSourceViewport(page, sourceSelector, re
   };
   await read(firstViewport);
   const secondContentWidth = await read(secondViewport);
-  if (Math.abs(secondContentWidth - requestedContent) <= intrinsicGeometryTolerance) {
+  const initialSlope = (secondContentWidth - (samples[0]?.contentWidth ?? secondContentWidth))
+    / (secondViewport - firstViewport);
+  if (secondContentWidth < requestedContent && initialSlope <= 0) {
+    for (const fallbackViewport of [1024, 1280, 1536, 1920]) {
+      if (samples.some(({ viewportWidth }) => viewportWidth === fallbackViewport)) continue;
+      if (samples.at(-1)?.contentWidth >= requestedContent) break;
+      await read(fallbackViewport);
+    }
+  }
+  if (Math.abs(secondContentWidth - requestedContent) <= calibrationTolerance) {
     return {
       requestedContent,
       samples,
@@ -1230,7 +1566,7 @@ export async function calibrateTaskMarkerSourceViewport(page, sourceSelector, re
       calibrationUnavailable();
     }
     const contentWidth = await read(predictedViewport);
-    if (Math.abs(contentWidth - requestedContent) <= intrinsicGeometryTolerance) {
+    if (Math.abs(contentWidth - requestedContent) <= calibrationTolerance) {
       return {
         requestedContent,
         samples,

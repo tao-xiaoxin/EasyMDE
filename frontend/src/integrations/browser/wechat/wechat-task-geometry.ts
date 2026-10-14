@@ -4,6 +4,7 @@ import {
   createPreviewMeasurementReadiness,
   finiteCssPixelValue,
   PREVIEW_MEASUREMENT_INHERITED_PROPERTIES,
+  previewMeasurementWidth,
   previewWorkspaceMeasurementWidth
 } from './wechat-preview-measurement';
 import { isTaskListCheckbox, TASK_LIST_CHECKBOX_STATES } from './wechat-clone-metadata';
@@ -593,7 +594,7 @@ export function taskCheckboxMeasurementHost(sourceRoot: HTMLElement, runtime: Br
     'contain:layout style',
     'overflow:visible'
   ].join(';');
-  const width = previewWorkspaceMeasurementWidth(sourceRoot, runtime);
+  const width = previewMeasurementWidth(sourceRoot) ?? previewWorkspaceMeasurementWidth(sourceRoot, runtime);
   if (width) {
     host.style.width = `${width}px`;
     host.style.maxWidth = `${width}px`;
@@ -767,7 +768,7 @@ export function createVisibleTaskCheckboxGeometryLease(
     sourceMarkup: clipboardSourceMarkup(sourceRoot),
     sourceFor: (measurement) => sourceByMeasurement.get(measurement) ?? null,
     sourceRoot,
-    sourceWidthKey: previewWorkspaceMeasurementWidth(sourceRoot, runtime),
+    sourceWidthKey: previewMeasurementWidth(sourceRoot),
     wait: readiness.wait
   };
 }

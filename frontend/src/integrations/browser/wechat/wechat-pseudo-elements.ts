@@ -733,6 +733,11 @@ export function createPseudoMarker(
     headingFlowCollector?.expectations.push(expectation);
   }
   if (svgContent) {
+    // CSS `content:url(...)` paints at the top of the source pseudo box. The
+    // portable SVG is nested inside an inline marker span; pin that span to
+    // the same line-box edge so the check mark does not drift onto the
+    // baseline when WeChat lays out the copied tree.
+    if (isTaskListCheckbox(source)) appendDeclarations(marker, ['vertical-align:top'], true);
     appendDeclarations(svgContent, ['display:block', 'width:100%', 'height:100%'], true);
     marker.appendChild(svgContent);
   }

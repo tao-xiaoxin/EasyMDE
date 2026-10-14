@@ -153,6 +153,11 @@ export async function runTaskMarkerGeometryOracle(page, context, testInfo, { mod
 
   if (mode === 'immersive-source') {
     if (!immersiveLabels) throw new Error('wechat-task-marker-immersive-labels-unavailable');
+    // Calibration may use a wider viewport to reach a requested content width;
+    // return to the stable editor viewport before exercising the Source/Edit
+    // transition so the mode control is tested in its normal responsive layout.
+    await page.setViewportSize({ width: 760, height: 1000 });
+    await waitForPreviewVisualReadiness(page, sourceSelector);
     await page.getByRole('button', {
       name: immersiveLabels.editMode,
       exact: true
@@ -162,8 +167,9 @@ export async function runTaskMarkerGeometryOracle(page, context, testInfo, { mod
     await expect.poll(() => page.evaluate((selector) => {
       const preview = document.querySelector(selector);
       if (!(preview instanceof HTMLElement)) return null;
+      const pane = preview.closest('.easymde-pane-preview');
       const rect = preview.getBoundingClientRect();
-      const style = getComputedStyle(preview);
+      const style = getComputedStyle(pane instanceof HTMLElement ? pane : preview);
       return {
         display: style.display,
         height: rect.height,
@@ -193,7 +199,9 @@ export async function runTaskMarkerGeometryOracle(page, context, testInfo, { mod
     if (!sourceSample) throw new Error(`wechat-native-${label}-source-evidence-unavailable`);
     const sourceContentWidth = sourceSample.taskLists.rootContentBox.width;
     const targetContentWidth = destination.surface.taskLists.rootContentBox.width;
-    if (Math.abs(sourceContentWidth - targetContentWidth) > intrinsicGeometryTolerance) {
+    // Immersive panes can land on a half CSS pixel after their border/padding
+    // is subtracted; the payload uses the integer destination width.
+    if (Math.abs(sourceContentWidth - targetContentWidth) > 0.5) {
       throw new Error(`wechat-native-${label}-source-content-width-unavailable`);
     }
     const calibration = testInfo.wechatTaskMarkerOracle.calibration.find(
@@ -260,7 +268,13 @@ export async function runTaskMarkerGeometryOracle(page, context, testInfo, { mod
       viewport: window.innerWidth
     };
   }, sourceSelector);
-  expect(afterSnapshot, `${themeId}/${mode} source and Preview mutation`).toEqual(sourceSnapshot);
+  // Immersive Source restores the stable 760px editor viewport after width
+  // calibration. Compare document and Preview state here; the harness viewport
+  // is intentionally different from the pre-calibration capture.
+  expect(
+    { ...afterSnapshot, viewport: sourceSnapshot.viewport },
+    `${themeId}/${mode} source and Preview mutation`
+  ).toEqual(sourceSnapshot);
   await testInfo.attach(`wechat-task-marker-${themeId}-${mode}-geometry.json`, {
     body: JSON.stringify({
       fixtureSha256: 'ee40a02e3bc8d10f1ad0f6452ad1f97a2eedb0fc7c3ca507e9334bab44ec7dfb',

@@ -79,6 +79,7 @@ import {
   type HeadingEmptyPseudoFlowCollector,
 } from './wechat-pseudo-elements';
 import { appendDeclarations, removeTransientAttributes, rootExportComputedStyle } from './wechat-style-policy';
+import { replaceDeclarations } from './wechat-style-declarations';
 import {
   TASK_LIST_CHECKBOX_CAPTION_LEAF_WRAPPERS,
   TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES,
@@ -105,6 +106,7 @@ import {
   normalizeTaskCheckboxStaticFlowSynchronously
 } from './wechat-task-static-flow';
 import { isVisiblePaintedThemeHeadingSuffix } from './wechat-pseudo-elements';
+import { normalizePortableTaskListMarkers, projectCompleteTaskListStructures } from './wechat-task-list-projection';
 import {
   type TaskCheckboxGeometryLease,
   createTaskCheckboxGeometryContext,
@@ -573,13 +575,20 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
   restoreTaskListCheckboxOwnerState(clone);
   normalizeMathBlocks(clone);
   const normalized = normalizeStructure(clone);
+  normalizePortableTaskListMarkers(normalized);
+  projectCompleteTaskListStructures(normalized);
   retainReferencedFragmentIds(normalized, fragmentIds);
   appendDeclarations(normalized, ['max-width:100%', 'margin:0 auto']);
   normalized.querySelectorAll('img, video').forEach((element) => {
-    if (THEME_IMAGE_CLONES.has(element) || WECHAT_PNG_GENERATED_IMAGES.has(element)) return;
+    const generatedVisualOwner = element.parentElement?.getAttribute('data-ignore-width') === '';
+    if (THEME_IMAGE_CLONES.has(element) || WECHAT_PNG_GENERATED_IMAGES.has(element) || generatedVisualOwner) return;
     // Keep the preview's computed display and margins so inline media remains
-    // inline after paste. Only the responsive bounds are exporter-owned.
-    appendDeclarations(element, ['max-width:100%', 'height:auto']);
+    // inline after paste. Replace, rather than append, the responsive bounds:
+    // source themes can carry `max-width:none!important` and WeChat preserves
+    // the first important declaration even when a later plain declaration says
+    // `max-width:100%`. A single exporter-owned declaration keeps every image
+    // inside the destination article width while height:auto preserves ratio.
+    replaceDeclarations(element, ['max-width:100%', 'height:auto'], true);
   });
   normalized.querySelectorAll('svg').forEach((element) => {
     // KaTeX stretchy symbols use absolutely positioned SVGs whose intrinsic
@@ -593,7 +602,8 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
       appendDeclarations(element, ['overflow:visible', 'overflow-x:visible', 'overflow-y:visible'], true);
     }
     if (isKaTeXVisualClone(element)) return;
-    appendDeclarations(element, ['max-width:100%', 'height:auto']);
+    replaceDeclarations(element, ['max-width:100%'], true);
+    appendDeclarations(element, ['height:auto']);
   });
   normalized.querySelectorAll('foreignObject').forEach((element) => {
     if (!MERMAID_FOREIGN_OBJECTS.has(element)) return;

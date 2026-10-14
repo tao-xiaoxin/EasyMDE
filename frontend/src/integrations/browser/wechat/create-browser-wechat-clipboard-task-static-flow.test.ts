@@ -29,6 +29,7 @@ import {
   TASK_LIST_CHECKBOX_CAPTION_OWNER_SEQUENCES,
   type TaskCheckboxCaptionOwnerIdentity
 } from './wechat-task-caption';
+import { keepStyle, portableStyleValue } from './wechat-style-policy';
 import {
   assertTaskCheckboxStaticFlowAllocations,
   normalizeTaskCheckboxStaticFlow,
@@ -36,6 +37,15 @@ import {
 } from './wechat-task-static-flow';
 
 type TaskStaticAllocationReference = Readonly<{ height: number; left: number; top: number; width: number }>;
+
+describe('task checkbox style policy', () => {
+  it('leaves an ordinary zero line-height font shorthand unchanged', () => {
+    const ordinary = document.createElement('span');
+    const font = '16px / 0px Arial';
+    expect(portableStyleValue('font', font, ordinary, declaration({}))).toBe(font);
+    expect(keepStyle('font', font, ordinary)).toBe(true);
+  });
+});
 
 type TaskStaticAllocationOptions = Readonly<{
   afterContent?: string;
@@ -63,6 +73,11 @@ type TaskStaticAllocationOptions = Readonly<{
   sectionPaddingTop?: string;
   sourceClear?: string;
   secondOwnerStatic?: boolean;
+  taskFont?: string;
+  taskLineHeight?: string;
+  assertInlineCaption?: boolean;
+  expectedBeforeText?: string;
+  synchronousCopy?: boolean;
   width: number;
   expectedOwnerOriginTop?: number;
 }>;
@@ -101,12 +116,32 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
     sectionPaddingTop = '0px',
     sourceClear,
     secondOwnerStatic = false,
+    taskFont,
+    taskLineHeight,
+    assertInlineCaption = false,
+    expectedBeforeText,
+    synchronousCopy = false,
     width,
     expectedOwnerOriginTop
   } = options;
   let layoutWidth = width;
   const writes: unknown[] = [];
-  class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+  let legacyHtml = '';
+  const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+  class ClipboardItemStub {
+    constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {
+      if (synchronousCopy) throw new Error('synchronous-clipboard-item-failure');
+    }
+  }
+  if (synchronousCopy) {
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: vi.fn(() => {
+        legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        return true;
+      })
+    });
+  }
   const preview = document.createElement('article');
   preview.setAttribute('data-easymde-preview-html-sink', '1');
   const leadMarkup = precedingSibling ? '<span class="task-lead"></span>' : '';
@@ -220,6 +255,8 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
             content: beforeContent,
             display: 'block',
             height: '16px',
+            ...(undefined !== taskFont ? { font: taskFont } : {}),
+            ...(undefined !== taskLineHeight ? { 'line-height': taskLineHeight } : {}),
             left: '18px',
             'margin-bottom': '0px',
             'margin-left': '0px',
@@ -246,6 +283,8 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
           content: afterContent,
           display: 'block',
           height: '10px',
+          ...(undefined !== taskFont ? { font: taskFont } : {}),
+          ...(undefined !== taskLineHeight ? { 'line-height': taskLineHeight } : {}),
           left: '27.6px',
           'margin-bottom': '0px',
           'margin-left': '0px',
@@ -274,6 +313,8 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
         direction: ownerDirection,
         display: ordinaryStaticOwner ? 'inline' : ownerDisplay,
         height: '20px',
+        ...(undefined !== taskFont ? { font: taskFont } : {}),
+        ...(undefined !== taskLineHeight ? { 'line-height': taskLineHeight } : {}),
         left: ordinaryStaticOwner ? 'auto' : '-22px',
         'margin-bottom': '0px',
         'margin-left': '0px',
@@ -393,14 +434,15 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
       await expect(blobText(failureBlob)).rejects.toThrow(expectedError);
       return;
     }
-    expect(result).toEqual({ method: 'clipboard', status: 'copied' });
-    const item = (writes[0] as ClipboardItemStub[])[0];
+    expect(result).toEqual({ method: synchronousCopy ? 'legacy' : 'clipboard', status: 'copied' });
+    const item = synchronousCopy ? undefined : (writes[0] as ClipboardItemStub[])[0];
     const htmlBlob = item?.payload['text/html'];
-    if (!htmlBlob) throw new Error('task flow payload missing');
+    if (!synchronousCopy && !htmlBlob) throw new Error('task flow payload missing');
     const holder = document.createElement('div');
-    holder.innerHTML = await blobText(htmlBlob);
+    holder.innerHTML = synchronousCopy ? legacyHtml : await blobText(htmlBlob as Blob | PromiseLike<Blob>);
     expect(holder.textContent).toContain('Ticked');
     expect(holder.textContent).toContain('Open');
+    if (expectedBeforeText) expect(holder.textContent).toContain(expectedBeforeText);
     const allocate = (
       element: HTMLElement,
       reference: TaskStaticAllocationReference,
@@ -427,6 +469,16 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
     const transformOf = (element: HTMLElement): string =>
       declaredStyleValue(element, 'transform').replaceAll(' ', '');
     const expectedMarkers = 'none' === afterContent ? 1 : 2;
+    const textPseudoContent = (content: string): boolean =>
+      content.length > 2 && ((content.startsWith('"') && content.endsWith('"')) || (content.startsWith("'") && content.endsWith("'")));
+    const expectedTaskFont = (isTextPseudo: boolean): string | undefined => {
+      if (undefined === taskFont) return undefined;
+      return '16px / 0px Arial' === taskFont && !isTextPseudo ? '16px Arial' : taskFont;
+    };
+    const expectedTaskLineHeight = (isTextPseudo: boolean): string => {
+      if (undefined === taskLineHeight) return '';
+      return '0px' === taskLineHeight && !isTextPseudo ? '' : taskLineHeight;
+    };
     owners.forEach((owner, index) => {
       if (secondOwnerStatic && 1 === index) {
         expect(declaredStyleValue(owner, 'position')).toBe('static');
@@ -436,6 +488,12 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
       // The paint transform survives once, outside the allocation.
       expect(transformOf(owner)).toBe(ownerTransform.replaceAll(' ', ''));
       allocate(owner, TASK_OWNER_REFERENCE, expectedOwnerOriginTop ?? 0);
+      if (undefined !== taskLineHeight) {
+        expect(declaredStyleValue(owner, 'line-height')).toBe(expectedTaskLineHeight(false));
+      }
+      if (undefined !== taskFont) {
+        expect(declaredStyleValue(owner, 'font')).toBe(expectedTaskFont(false));
+      }
       const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
       expect(markers).toHaveLength(expectedMarkers);
       const circle = markers[0] as HTMLElement;
@@ -450,7 +508,38 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
         return;
       }
       allocate(circle, TASK_CIRCLE_REFERENCE, 0);
-      if (tick) allocate(tick, TASK_TICK_REFERENCE, 0);
+      const circleHasText = textPseudoContent(beforeContent);
+      if (undefined !== taskLineHeight) {
+        expect(declaredStyleValue(circle, 'line-height')).toBe(expectedTaskLineHeight(circleHasText));
+      }
+      if (undefined !== taskFont) {
+        expect(declaredStyleValue(circle, 'font')).toBe(expectedTaskFont(circleHasText));
+      }
+      if (circleHasText && '16px / 0px Arial' === taskFont) {
+        // This fixed 16px paint box is the executable glyph-baseline contract:
+        // preserving the zero line-height keeps Chromium's text glyph at its
+        // authored top edge instead of shifting it by the inherited line box.
+        expect(circle.textContent).toBe(expectedBeforeText);
+        expect(declaredStyleValue(circle, 'font')).toBe('16px / 0px Arial');
+        expect(declaredStyleValue(circle, 'line-height')).toBe('0px');
+        expect(declaredStylePixels(circle, 'width')).toBeCloseTo(16, 6);
+        expect(declaredStylePixels(circle, 'height')).toBeCloseTo(16, 6);
+      }
+      if (tick) {
+        allocate(tick, TASK_TICK_REFERENCE, 0);
+        const tickHasText = textPseudoContent(afterContent);
+        if (undefined !== taskLineHeight) {
+          expect(declaredStyleValue(tick, 'line-height')).toBe(expectedTaskLineHeight(tickHasText));
+        }
+        if (undefined !== taskFont) {
+          expect(declaredStyleValue(tick, 'font')).toBe(expectedTaskFont(tickHasText));
+        }
+      }
+      if (assertInlineCaption) {
+        const caption = owner.nextElementSibling;
+        expect(caption?.textContent).toBe(0 === index ? 'Ticked' : 'Open');
+        expect((caption as HTMLElement | null)?.style.display).toBe('inline');
+      }
     });
     if (assertSourceUnaffected) {
       await Promise.resolve();
@@ -484,6 +573,8 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
     else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
     if (originalRangeClientRects) Object.defineProperty(Range.prototype, 'getClientRects', originalRangeClientRects);
     else delete (Range.prototype as unknown as { getClientRects?: unknown }).getClientRects;
+    if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+    else delete (document as unknown as { execCommand?: unknown }).execCommand;
   }
 }
 
@@ -1212,6 +1303,30 @@ describe('createBrowserWechatClipboard', () => {
 
   it('derives an absolute pseudo allocation from the origin at its sibling slot', async () => {
     await expectTaskStaticAllocation({ beforePosition: 'static', width: 335 });
+  });
+
+  it.each([false, true] as const)('omits task zero line-height from static paint and keeps text/caption flow intact (%s path)', async (synchronousCopy) => {
+    await expectTaskStaticAllocation({
+      assertInlineCaption: true,
+      assertSourceUnaffected: true,
+      beforeContent: '"✓"',
+      expectedBeforeText: '✓',
+      synchronousCopy,
+      taskFont: '16px / 0px Arial',
+      taskLineHeight: '0px',
+      width: 335
+    });
+  });
+
+  it.each([false, true] as const)('preserves non-zero task line-height for text pseudo paint (%s path)', async (synchronousCopy) => {
+    await expectTaskStaticAllocation({
+      beforeContent: '"✓"',
+      expectedBeforeText: '✓',
+      synchronousCopy,
+      taskFont: '16px / 18px Arial',
+      taskLineHeight: '18px',
+      width: 335
+    });
   });
 
   it('derives the task owner allocation from its containing block padding box', async () => {

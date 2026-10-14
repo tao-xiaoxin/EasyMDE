@@ -12,6 +12,7 @@ import {
   WECHAT_PNG_VISUAL_CLONES
 } from './wechat-clone-metadata';
 import type { WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
+import { taskCheckboxFontWithoutZeroLineHeight, taskCheckboxLineHeightIsZero } from './wechat-task-checkbox-style';
 
 export const COPY_STYLE_PROPERTIES = [
   'display',
@@ -477,7 +478,26 @@ export function contentBoxDimensionValue(
   return `${dimension + extra}px`;
 }
 
-export function portableStyleValue(property: string, value: string, source: Element, computed: CSSStyleDeclaration): string {
+function taskCheckboxPseudoHasTextContent(pseudoElement: boolean, computedContent: string): boolean {
+  if (!pseudoElement) return false;
+  const content = pseudoContent(computedContent);
+  return null !== content && '' !== content;
+}
+
+export function portableStyleValue(
+  property: string,
+  value: string,
+  source: Element,
+  computed: CSSStyleDeclaration,
+  pseudoElement = false,
+  computedContent = ''
+): string {
+  if ('font' === property)
+    return taskCheckboxFontWithoutZeroLineHeight(
+      source,
+      value,
+      taskCheckboxPseudoHasTextContent(pseudoElement, computedContent)
+    );
   if ('box-sizing' === property && !supportsSpecialLayout(source) && 'content-box' === value.trim().toLowerCase())
     return 'border-box';
   if (['width', 'min-width', 'max-width', 'height', 'min-height', 'max-height'].includes(property)) {
@@ -497,8 +517,18 @@ export function keepStyle(
   pseudoElement = false,
   root = false,
   sourceValue = value,
-  omitDefaultValues = true
+  omitDefaultValues = true,
+  pseudoElementContent = ''
 ): boolean {
+  if (
+    taskCheckboxLineHeightIsZero(
+      source,
+      property,
+      value,
+      taskCheckboxPseudoHasTextContent(pseudoElement, pseudoElementContent)
+    )
+  )
+    return false;
   const isTransparentBorderColor =
     property.endsWith('-color') &&
     property.startsWith('border-') &&
@@ -827,10 +857,29 @@ export function appendPortableStyleDeclaration(
       ? semanticCandidate
       : (semanticMarginCandidate ??
         (isOrdinaryDimension && semanticCandidate ? semanticCandidate : materializedValue));
+  const pseudoElementContent = context.pseudoElement ? context.computed.getPropertyValue('content') : '';
   const normalizedValue = preserveRawContentBoxTuple
     ? sourceValue
-    : portableStyleValue(property, sourceValue, context.source, context.style);
-  if (keepStyle(property, normalizedValue, context.source, context.pseudoElement, context.root, value)) {
+    : portableStyleValue(
+        property,
+        sourceValue,
+        context.source,
+        context.style,
+        context.pseudoElement,
+        pseudoElementContent
+      );
+  if (
+    keepStyle(
+      property,
+      normalizedValue,
+      context.source,
+      context.pseudoElement,
+      context.root,
+      value,
+      true,
+      pseudoElementContent
+    )
+  ) {
     declarations.push(
       portableStyleDeclaration(
         property,

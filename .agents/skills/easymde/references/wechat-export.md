@@ -744,6 +744,13 @@ text run to a block `SECTION`; every other generated or authored leaf retains
 the existing path. Eligibility is generation-owned and excludes tasks,
 positioned/image/mask/counter decorations, special formatting owners,
 intervening nodes, and ambiguous text runs.
+For a generated task checkbox owner, a registered caption Text node may remain a
+literal direct sibling only when it immediately follows that owner in the same
+parent. This task-specific path omits both `leaf` and an inline wrapper so native
+Save keeps the caption in the task item's inline formatting context. Nested
+formatting, atomic elements, authored or unregistered text, intervening nodes,
+and ambiguous ownership retain the existing text-leaf path; no other text leaf
+may use this exception.
 For an ordinary zero-spacing table, an opaque solid `THEAD` paint may be copied
 onto otherwise transparent `TH` cells because WeChat removes group background
 paint. Cell/row paint, images, gradients, alpha, row spans, contents layout, and

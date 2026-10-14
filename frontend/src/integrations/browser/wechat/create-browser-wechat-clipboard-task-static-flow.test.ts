@@ -536,9 +536,10 @@ async function expectTaskStaticAllocation(options: TaskStaticAllocationOptions):
         }
       }
       if (assertInlineCaption) {
-        const caption = owner.nextElementSibling;
+        const caption = owner.nextSibling;
+        expect(caption?.nodeType).toBe(Node.TEXT_NODE);
         expect(caption?.textContent).toBe(0 === index ? 'Ticked' : 'Open');
-        expect((caption as HTMLElement | null)?.style.display).toBe('inline');
+        expect(owner.nextElementSibling).toBeNull();
       }
     });
     if (assertSourceUnaffected) {
@@ -1305,7 +1306,7 @@ describe('createBrowserWechatClipboard', () => {
     await expectTaskStaticAllocation({ beforePosition: 'static', width: 335 });
   });
 
-  it.each([false, true] as const)('omits task zero line-height from static paint and keeps text/caption flow intact (%s path)', async (synchronousCopy) => {
+  it.each([false, true] as const)('omits task zero line-height from static paint and keeps direct caption text in flow (%s path)', async (synchronousCopy) => {
     await expectTaskStaticAllocation({
       assertInlineCaption: true,
       assertSourceUnaffected: true,

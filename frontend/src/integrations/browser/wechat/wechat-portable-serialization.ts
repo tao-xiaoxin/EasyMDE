@@ -495,6 +495,17 @@ export function wrapTextLeaves(root: HTMLElement): void {
     const previousSibling = textNode.previousSibling;
     const directTextNodes = Array.from(parent.childNodes).filter((child): child is Text => child.nodeType === 3);
     const taskCheckboxCaptionBinding = TASK_LIST_CHECKBOX_CAPTION_RUN_BY_TEXT.get(textNode);
+    // Native WeChat Save blockifies an inline wrapper placed directly after a
+    // materialized task owner. Keep this one generation-owned caption run as a
+    // direct text node so it remains in the LI's inline formatting context.
+    // Nested formatting, authored text, and ambiguous siblings retain leaves.
+    const directTaskCaptionText = Boolean(
+      TASK_LIST_CHECKBOX_CAPTION_TEXT_OWNERS.has(textNode) &&
+        previousSibling instanceof Element &&
+        TASK_LIST_CHECKBOX_CLONES.has(previousSibling) &&
+        previousSibling.parentElement === parent
+    );
+    if (directTaskCaptionText) return;
     const inlineMarkerLeaf = Boolean(
       'LI' === parent.tagName &&
         parent.childNodes.length === 2 &&

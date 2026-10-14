@@ -12,7 +12,7 @@ import {
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
 
-  it('keeps a loose task paragraph owner and its following text inline', async () => {
+  it('keeps a loose task paragraph caption as direct text after its generated owner', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = document.createElement('article');
@@ -45,9 +45,9 @@ describe('createBrowserWechatClipboard', () => {
     const owner = holder.querySelector('[role="checkbox"]');
     expect(owner?.parentElement?.tagName).toBe('P');
     expect(owner?.parentElement?.querySelectorAll('span[leaf]')).toHaveLength(0);
-    expect(owner?.nextSibling).toBeInstanceOf(HTMLSpanElement);
-    expect((owner?.nextSibling as Element | null)?.hasAttribute('leaf')).toBe(false);
-    expect((owner?.nextSibling as Element | null)?.getAttribute('style')).toContain('display: inline');
+    expect(owner?.nextSibling?.nodeType).toBe(Node.TEXT_NODE);
+    expect(owner?.nextSibling?.textContent).toBe('Loose');
+    expect(owner?.nextElementSibling).toBeNull();
   });
 
   it('removes a measured zero-advance task caption prefix in both Clipboard paths', async () => {
@@ -149,7 +149,12 @@ describe('createBrowserWechatClipboard', () => {
       const modernHtml = await blobText(htmlBlob);
       const modernHolder = document.createElement('div');
       modernHolder.innerHTML = modernHtml;
-      expect(modernHolder.querySelector('a')?.textContent).toBe('Caption');
+      const modernAnchor = modernHolder.querySelector('a');
+      expect(modernAnchor?.textContent).toBe('Caption');
+      const modernNestedLeaf = modernAnchor?.firstElementChild;
+      expect(modernNestedLeaf?.tagName).toBe('SPAN');
+      expect(modernNestedLeaf?.hasAttribute('leaf')).toBe(false);
+      expect((modernNestedLeaf as HTMLElement | null)?.style.display).toBe('inline');
       expect(modernHtml).not.toContain('></span> <strong>');
       await expect(blobText(textBlob)).resolves.toBe('  Caption');
 

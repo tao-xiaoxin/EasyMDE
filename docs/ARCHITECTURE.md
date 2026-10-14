@@ -666,12 +666,15 @@ for the admin adapter, with its MIT notice. The Clipboard owner updates this pin
 the Node baseline changes and removes it if task SVG path parsing is removed.
 Task checkbox owners and their emitted pseudo layers keep the settled Preview
 allocation after WeChat strips inline positioning. The private
-`wechat-task-static-flow.ts` owner holds that normalization, its per-layer
-allocation records, and the terminal validation. Portable serialization imports
-the normalizers and invokes the root-level allocation assertion after the paint
-assertion, so the paint module does not depend back on the static-flow owner. The
-serializer replaces the projected position, inset, margin, and float
-declarations of every emitted layer with a static float allocation whose
+`wechat-task-static-flow.ts` owner holds the normalization sequence and the
+terminal validation, `wechat-task-static-flow-projection.ts` holds the
+containing-block traversal, measurement and per-layer allocation records, and
+`wechat-task-static-flow-policy.ts` holds the pure CSS and geometry policy.
+Portable serialization imports the normalizers and invokes the root-level
+allocation assertion after the paint assertion, so the paint module does not
+depend back on the static-flow owner. The serializer replaces the projected
+position, inset, margin, and float declarations of every emitted layer with a
+static float allocation whose
 margins reproduce the captured layer box and leave a zero net advance, so list
 rows and captions keep their Preview spacing.
 The allocation reads measured layout values only, namely the untransformed border

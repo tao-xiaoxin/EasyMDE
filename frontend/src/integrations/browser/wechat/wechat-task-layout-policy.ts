@@ -1,5 +1,6 @@
 import { isTaskListCheckbox } from './wechat-clone-metadata';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
+import type { CssPropertyReader } from './wechat-css-property-reader';
 import type { WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
 import { CSS_PERCENTAGE_TOKEN } from './wechat-style-policy';
@@ -361,7 +362,7 @@ export function taskCheckboxDimensionStamp(computed: CSSStyleDeclaration): strin
     .join(';');
 }
 
-export function taskCheckboxDimensionEdge(computed: CSSStyleDeclaration, property: string): number {
+export function taskCheckboxDimensionEdge(computed: CssPropertyReader, property: string): number {
   const value = finiteCssPixelValue(computed.getPropertyValue(property));
   if (null === value || value < 0) {
     throw new Error('wechat-task-checkbox-geometry-input-dimensions-unavailable');
@@ -370,7 +371,7 @@ export function taskCheckboxDimensionEdge(computed: CSSStyleDeclaration, propert
 }
 
 export function taskCheckboxDimensionConstraint(
-  computed: CSSStyleDeclaration,
+  computed: CssPropertyReader,
   property: 'min-width' | 'max-width' | 'min-height' | 'max-height'
 ): number | null {
   const value = computed.getPropertyValue(property).trim().toLowerCase();
@@ -506,7 +507,7 @@ export function taskCheckboxValidateUsedLayoutValues(
 }
 
 export function taskCheckboxUntransformedBorderBoxDimension(
-  computed: CSSStyleDeclaration,
+  computed: CssPropertyReader,
   property: 'width' | 'height'
 ): number {
   const value = finiteCssPixelValue(computed.getPropertyValue(property));

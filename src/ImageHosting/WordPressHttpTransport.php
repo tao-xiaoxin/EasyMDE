@@ -29,8 +29,7 @@ final class WordPressHttpTransport implements HttpTransport {
 
 		return HttpResponse::success(
 			wp_remote_retrieve_response_code( $response ),
-			wp_remote_retrieve_body( $response ),
-			$this->response_headers( $response )
+			wp_remote_retrieve_body( $response )
 		);
 	}
 
@@ -64,16 +63,5 @@ final class WordPressHttpTransport implements HttpTransport {
 
 	private static function is_cancelled( WP_Error $error ) {
 		return 42 === self::curl_errno( $error );
-	}
-
-	private function response_headers( $response ) {
-		$content_type = wp_remote_retrieve_header( $response, 'content-type' );
-		if ( is_array( $content_type ) ) {
-			$values       = array_values( array_filter( $content_type, 'is_string' ) );
-			$content_type = empty( $values ) ? '' : end( $values );
-		}
-		return is_string( $content_type ) && '' !== $content_type
-			? array( 'Content-Type' => $content_type )
-			: array();
 	}
 }

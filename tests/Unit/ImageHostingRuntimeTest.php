@@ -8,22 +8,13 @@ final class ImageHostingRuntimeFakeTransport implements HttpTransport {
 
 	public $requests = array();
 	private $responses;
-	private $qiniu_hosts;
 
-	public function __construct( array $responses, array $qiniu_hosts = array( 'up-z0.qiniup.com' ) ) {
-		$this->responses   = $responses;
-		$this->qiniu_hosts = $qiniu_hosts;
+	public function __construct( array $responses ) {
+		$this->responses = $responses;
 	}
 
 	public function request( $method, $url, array $arguments ) {
 		$this->requests[] = array( $method, $url, $arguments );
-		if ( 'GET' === strtoupper( $method ) && 0 === strpos( $url, 'https://uc.qiniuapi.com/v4/query' ) ) {
-			return HttpResponse::success(
-				200,
-				wp_json_encode( array( 'hosts' => array( array( 'up' => array( 'domains' => $this->qiniu_hosts ) ) ) ) ),
-				array( 'Content-Type' => 'application/json' )
-			);
-		}
 
 		return array_shift( $this->responses );
 	}
@@ -164,42 +155,15 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'easymde_image_hosting_validation_upload_failed', $result->get_error_code() );
-		$this->assertCount( 2, $transport->requests );
-		$this->assertSame( 'GET', $transport->requests[0][0] );
-		$this->assertSame( 'POST', $transport->requests[1][0] );
-	}
-
-	public function test_qiniu_verification_does_not_cross_hosts_after_one_failed_write() {
-		foreach ( array( 'primary', 'backup' ) as $target ) {
-			$transport = new ImageHostingRuntimeFakeTransport(
-				array(
-					HttpResponse::failure( 'transport_failure' ),
-					HttpResponse::success( 200, '{"key":"unused.png"}', array( 'Content-Type' => 'application/json' ) ),
-				),
-				array( 'up-z0.qiniup.com', 'upload-z0.qiniup.com' )
-			);
-			$settings = $this->settings();
-			if ( 'primary' === $target ) {
-				$settings['backup']['enabled']  = false;
-				$settings['primary']['service']  = 'qiniu-kodo';
-				$settings['primary']['endpoint'] = '';
-			}
-
-			$result = $this->runtime( $transport )->validate_upload( $settings, $target );
-
-			$this->assertWPError( $result, $target );
-			$this->assertSame( 'easymde_image_hosting_validation_upload_failed', $result->get_error_code(), $target );
-			$this->assertCount( 2, $transport->requests, $target );
-			$this->assertSame( 'GET', $transport->requests[0][0], $target );
-			$this->assertSame( 'POST', $transport->requests[1][0], $target );
-		}
+		$this->assertCount( 1, $transport->requests );
+		$this->assertSame( 'POST', $transport->requests[0][0] );
 	}
 
 	public function test_backup_validation_upload_returns_the_primary_viewing_domain() {
 		$bytes     = "\x89PNG\r\n\x1a\nsynthetic-icon";
 		$path      = '20260713/00000000-0000-4000-8000-000000000000.png';
 		$transport = new ImageHostingRuntimeFakeTransport(
-			array( HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ), array( 'Content-Type' => 'application/json' ) ) )
+			array( HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ) ) )
 		);
 		$runtime   = new ImageHostingRuntime(
 			$transport,
@@ -226,9 +190,8 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 			),
 			$result
 		);
-		$this->assertCount( 2, $transport->requests );
-		$this->assertSame( 'GET', $transport->requests[0][0] );
-		$this->assertSame( 'POST', $transport->requests[1][0] );
+		$this->assertCount( 1, $transport->requests );
+		$this->assertSame( 'POST', $transport->requests[0][0] );
 	}
 
 	public function test_validation_upload_supports_an_http_primary_viewing_domain() {
@@ -249,13 +212,13 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$path  = '20260713/00000000-0000-4000-8000-000000000000.png';
 		$cases = array(
 			array('cloudflare-r2', 'https://synthetic-account.r2.cloudflarestorage.com', 'synthetic-primary', HttpResponse::success(200, ''), 'PUT'),
-			array('qiniu-kodo', '', 'synthetic-primary', HttpResponse::success(200, wp_json_encode(array('key' => $path)), array('Content-Type' => 'application/json')), 'POST'),
+			array('qiniu-kodo', '', 'synthetic-primary', HttpResponse::success(200, wp_json_encode(array('key' => $path))), 'POST'),
 			array('aliyun-oss', 'https://oss-cn-hangzhou.aliyuncs.com', 'synthetic-primary', HttpResponse::success(200, ''), 'PUT'),
 			array('tencent-cos', 'https://cos.ap-shanghai.myqcloud.com', 'synthetic-primary-1250000000', HttpResponse::success(200, ''), 'PUT'),
 		);
 
 		foreach ($cases as $case) {
-			$transport = new ImageHostingRuntimeFakeTransport( array( $case[3] ) );
+			$transport = new ImageHostingRuntimeFakeTransport(array($case[3]));
 			$settings = $this->settings();
 			$settings['backup']['enabled'] = false;
 			$settings['primary']['service'] = $case[0];
@@ -279,14 +242,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 			$result = $runtime->validate_upload($settings, 'primary');
 			$this->assertIsArray($result, $case[0]);
 			$this->assertSame('uploaded', $result['status'], $case[0]);
-			if ( 'qiniu-kodo' === $case[0] ) {
-				$this->assertCount( 2, $transport->requests, $case[0] );
-				$this->assertSame( 'GET', $transport->requests[0][0], $case[0] );
-				$this->assertSame( $case[4], $transport->requests[1][0], $case[0] );
-			} else {
-				$this->assertCount( 1, $transport->requests, $case[0] );
-				$this->assertSame( $case[4], $transport->requests[0][0], $case[0] );
-			}
+			$this->assertSame($case[4], $transport->requests[0][0], $case[0]);
 		}
 	}
 
@@ -329,7 +285,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$transport = new ImageHostingRuntimeFakeTransport(
 			array(
 				HttpResponse::success( 200, '' ),
-				HttpResponse::success( 200, '{"key":"20260713/00000000-0000-4000-8000-000000000000.png"}', array( 'Content-Type' => 'application/json' ) ),
+				HttpResponse::success( 200, '{"key":"20260713/00000000-0000-4000-8000-000000000000.png"}' ),
 			)
 		);
 		$runtime   = $this->runtime( $transport );
@@ -343,10 +299,9 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$this->assertSame( 'Example Image', $result['alt'] );
 		$this->assertSame( '', $result['title'] );
 		$this->assertSame( array( 'status' => 'uploaded' ), $result['backup'] );
-		$this->assertCount( 3, $transport->requests );
+		$this->assertCount( 2, $transport->requests );
 		$this->assertStringContainsString( '/20260713/00000000-0000-4000-8000-000000000000.png', $transport->requests[0][1] );
-		$this->assertSame( 'GET', $transport->requests[1][0] );
-		$this->assertStringContainsString( '20260713/00000000-0000-4000-8000-000000000000.png', $transport->requests[2][2]['body'] );
+		$this->assertStringContainsString( '20260713/00000000-0000-4000-8000-000000000000.png', $transport->requests[1][2]['body'] );
 		$this->assertArrayNotHasKey( 'key', $result );
 	}
 
@@ -401,7 +356,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'easymde_image_hosting_backup_upload_failed', $result->get_error_code() );
-		$this->assertCount( 3, $continue_transport->requests );
+		$this->assertCount( 2, $continue_transport->requests );
 	}
 
 	public function test_backup_retries_serially_with_the_same_key_until_it_succeeds() {
@@ -411,7 +366,7 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 				HttpResponse::success( 200, '' ),
 				HttpResponse::success( 500, 'synthetic failure one' ),
 				HttpResponse::success( 500, 'synthetic failure two' ),
-				HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ), array( 'Content-Type' => 'application/json' ) ),
+				HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ) ),
 				HttpResponse::success( 500, 'must not be requested after success' ),
 			)
 		);
@@ -422,29 +377,22 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		$result = $this->runtime( $transport )->upload( $settings, $file );
 
 		$this->assertSame( array( 'status' => 'uploaded' ), $result['backup'] );
-		$this->assertCount( 7, $transport->requests );
-		$post_requests = array();
+		$this->assertCount( 4, $transport->requests );
+		$this->assertSame( $transport->requests[1][2]['body'], $transport->requests[2][2]['body'] );
+		$this->assertSame( $transport->requests[2][2]['body'], $transport->requests[3][2]['body'] );
 		foreach ( array_slice( $transport->requests, 1 ) as $request ) {
-			if ( 'POST' === $request[0] ) {
-				$post_requests[] = $request;
-			}
-		}
-		$this->assertCount( 3, $post_requests );
-		$this->assertSame( $this->normalize_multipart_body( $post_requests[0][2]['body'] ), $this->normalize_multipart_body( $post_requests[1][2]['body'] ) );
-		$this->assertSame( $this->normalize_multipart_body( $post_requests[1][2]['body'] ), $this->normalize_multipart_body( $post_requests[2][2]['body'] ) );
-		foreach ( $post_requests as $request ) {
 			$this->assertStringContainsString( $path, $request[2]['body'] );
 		}
 	}
 
-	public function test_retry_diagnostics_share_operation_and_attempt_bound_across_providers() {
+	public function test_primary_diagnostics_share_the_operation_id_across_a_two_destination_upload() {
 		$path = '20260713/00000000-0000-4000-8000-000000000000.png';
 		$transport = new ImageHostingRuntimeFakeTransport(
 			array(
 				HttpResponse::success( 200, '' ),
 				HttpResponse::success( 500, 'synthetic failure one' ),
 				HttpResponse::success( 500, 'synthetic failure two' ),
-				HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ), array( 'Content-Type' => 'application/json' ) ),
+				HttpResponse::success( 200, wp_json_encode( array( 'key' => $path ) ) ),
 			)
 		);
 		$settings = $this->settings();
@@ -463,36 +411,14 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 		}
 
 		$this->assertSame( array( 'status' => 'uploaded' ), $result['backup'] );
-		$this->assertCount( 4, $diagnostics );
-		$operation_id = $diagnostics[0]['operation_id'];
-		$this->assertNotSame( '', $operation_id );
-
-		$primary = array();
-		$backup  = array();
-		foreach ( $diagnostics as $diagnostic ) {
-			$this->assertSame( $operation_id, $diagnostic['operation_id'] );
-
-			if ( 'cloudflare-r2' === $diagnostic['provider'] ) {
-				$primary[] = $diagnostic;
-				continue;
-			}
-
-			$backup[] = $diagnostic;
-		}
-
-		$this->assertCount( 1, $primary );
-		$this->assertSame( 'primary', $primary[0]['role'] );
-		$this->assertSame( 'complete', $primary[0]['stage'] );
-		$this->assertSame( 200, $primary[0]['status'] );
-		$this->assertSame( 'success', $primary[0]['result'] );
-
-		$this->assertCount( 3, $backup );
-		foreach ( $backup as $index => $diagnostic ) {
-			$this->assertSame( 'qiniu-kodo', $diagnostic['provider'] );
-			$this->assertSame( 'backup', $diagnostic['role'] );
-			$this->assertSame( $index + 1, $diagnostic['attempt'] );
-			$this->assertSame( 3, $diagnostic['attempt_limit'] );
-		}
+		$this->assertCount( 4, $transport->requests );
+		$this->assertCount( 1, $diagnostics );
+		$this->assertSame( 'cloudflare-r2', $diagnostics[0]['provider'] );
+		$this->assertNotSame( '', $diagnostics[0]['operation_id'] );
+		$this->assertSame( 'primary', $diagnostics[0]['role'] );
+		$this->assertSame( 'complete', $diagnostics[0]['stage'] );
+		$this->assertSame( 200, $diagnostics[0]['status'] );
+		$this->assertSame( 'success', $diagnostics[0]['result'] );
 	}
 
 	public function test_r2_retry_diagnostics_share_operation_category_and_attempt_bound() {
@@ -576,7 +502,12 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 
 		$this->assertWPError( $result );
 		$this->assertSame( 'easymde_image_hosting_backup_upload_failed', $result->get_error_code() );
-		$this->assertCount( 9, $transport->requests );
+		$this->assertCount( 5, $transport->requests );
+		foreach ( array_slice( $transport->requests, 1 ) as $request ) {
+			$this->assertSame( 'POST', $request[0] );
+			$this->assertSame( 'https://upload.qiniup.com', $request[1] );
+			$this->assertStringStartsWith( 'multipart/form-data; boundary=', $request[2]['headers']['Content-Type'] );
+		}
 		$this->assertStringNotContainsString( 'synthetic provider detail', wp_json_encode( $result ) );
 	}
 
@@ -805,11 +736,5 @@ final class ImageHostingRuntimeTest extends WP_UnitTestCase {
 			'error'    => UPLOAD_ERR_OK,
 			'size'     => strlen( $bytes ),
 		);
-	}
-
-	private function normalize_multipart_body( $body ) {
-		$body = preg_replace( '/^------EasyMDE[^\r\n]*/m', '------EasyMDEBOUNDARY', $body );
-
-		return preg_replace( '/(name="token"\r\n\r\n)[^\r\n]*/', '$1TOKEN', $body );
 	}
 }

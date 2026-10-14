@@ -11,23 +11,21 @@ final class HttpResponse {
 	private $status_code;
 	private $body;
 	private $error_code;
-	private $headers;
 	private $transport_category;
 	private $transport_errno;
 	private $cancelled;
 
-	private function __construct( $status_code, $body, $error_code, array $headers, $transport_category, $transport_errno, $cancelled ) {
+	private function __construct( $status_code, $body, $error_code, $transport_category, $transport_errno, $cancelled ) {
 		$this->status_code        = (int) $status_code;
 		$this->body               = (string) $body;
 		$this->error_code         = (string) $error_code;
-		$this->headers            = $headers;
 		$this->transport_category = (string) $transport_category;
 		$this->transport_errno    = $transport_errno;
 		$this->cancelled          = (bool) $cancelled;
 	}
 
-	public static function success( $status_code, $body, array $headers = array() ) {
-		return new self( $status_code, $body, '', self::normalize_headers( $headers ), '', null, false );
+	public static function success( $status_code, $body ) {
+		return new self( $status_code, $body, '', '', null, false );
 	}
 
 	/**
@@ -56,7 +54,6 @@ final class HttpResponse {
 			0,
 			'',
 			$stable_error_code,
-			array(),
 			self::transport_category( $stable_error_code, $transport_errno, $cancelled ),
 			$transport_errno,
 			$cancelled
@@ -77,21 +74,6 @@ final class HttpResponse {
 
 	public function get_error_code() {
 		return $this->error_code;
-	}
-
-	public function get_headers() {
-		return $this->headers;
-	}
-
-	public function get_header( $name ) {
-		$name = strtolower( (string) $name );
-		foreach ( $this->headers as $header_name => $value ) {
-			if ( strtolower( (string) $header_name ) === $name ) {
-				return $value;
-			}
-		}
-
-		return null;
 	}
 
 	public function get_transport_category() {
@@ -138,24 +120,5 @@ final class HttpResponse {
 		}
 
 		return 'transport_failure';
-	}
-
-	private static function normalize_headers( array $headers ) {
-		$normalized = array();
-		foreach ( $headers as $name => $raw_value ) {
-			$values = is_array( $raw_value ) ? array_values( array_filter( $raw_value, 'is_string' ) ) : array( $raw_value );
-			if ( ! is_string( $name ) || empty( $values ) ) {
-				continue;
-			}
-			if ( 'content-type' !== strtolower( $name ) ) {
-				continue;
-			}
-			$value = end( $values );
-			if ( is_string( $value ) && '' !== $value && strlen( $value ) <= 256 && false === strpos( $value, "\0" ) ) {
-				$normalized['Content-Type'] = $value;
-			}
-		}
-
-		return $normalized;
 	}
 }

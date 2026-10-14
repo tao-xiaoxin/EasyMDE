@@ -9,6 +9,7 @@ import {
   blobText,
   computedStyle,
   declaration,
+  declaredStyleDeclarations,
   deferred,
   installClipboardTestEnvironment,
   pngOptions,
@@ -257,9 +258,17 @@ describe('createBrowserWechatClipboard', () => {
       expect(retainedRoot?.getAttribute('style')).toContain('overflow:auto');
       expect(retainedRoot?.getAttribute('style')).not.toContain('max-width:350.316px');
       expect(retainedRoot?.hasAttribute('data-ignore-width')).toBe(false);
-      expect(image?.getAttribute('style')).toContain('width:100%!important');
-      expect(image?.getAttribute('style')).toContain('max-width:350.316px!important');
-      expect(image?.getAttribute('style')).toContain('height:auto!important');
+      // A responsive frame replaces the fixed intrinsic dimensions instead of
+      // appending a competing declaration a destination could keep.
+      expect(declaredStyleDeclarations(image as Element, 'width')).toEqual([
+        { important: true, property: 'width', value: '100%' }
+      ]);
+      expect(declaredStyleDeclarations(image as Element, 'max-width')).toEqual([
+        { important: true, property: 'max-width', value: '350.316px' }
+      ]);
+      expect(declaredStyleDeclarations(image as Element, 'height')).toEqual([
+        { important: true, property: 'height', value: 'auto' }
+      ]);
       expect(image?.getAttribute('style')).toContain('margin-left:auto!important');
       expect(image?.getAttribute('style')).toContain('margin-right:auto!important');
       expect(svg.style.marginLeft).toBe('auto');

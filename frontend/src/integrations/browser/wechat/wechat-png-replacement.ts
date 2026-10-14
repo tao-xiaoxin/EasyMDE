@@ -8,6 +8,7 @@ import {
   assertPngConversionCurrent,
   isValidInlineOverflow,
 } from './wechat-png-conversion-policy';
+import { replaceDeclarations } from './wechat-style-declarations';
 import { appendDeclarations } from './wechat-style-policy';
 import { WECHAT_PNG_GENERATED_IMAGES } from './wechat-clone-metadata';
 import { markWechatOwnedScrollOwner } from './wechat-list-table-layout';
@@ -101,7 +102,11 @@ export function replaceCompletedVisuals(
           if (!Number.isFinite(maxWidth) || maxWidth <= 0) {
             throw new WechatPngConversionError('wechat-png-rasterization-failed');
           }
-          appendDeclarations(image, ['display:block', 'width:100%', `max-width:${maxWidth}px`, 'height:auto'], true);
+          appendDeclarations(image, ['display:block'], true);
+          // The responsive frame replaces the fixed intrinsic dimensions written
+          // above: a destination that strips declaration priority must never see
+          // the stale `max-width:none`/fixed `width` competing with the cap.
+          replaceDeclarations(image, ['width:100%', `max-width:${maxWidth}px`, 'height:auto'], true);
           WECHAT_PNG_GENERATED_IMAGES.add(image);
           centerMermaidGeneratedBlock(image, completed.autoMargins);
           runWechatSyncTiming(

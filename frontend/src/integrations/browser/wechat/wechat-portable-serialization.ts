@@ -626,8 +626,8 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
     const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
     if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
     const textNode = textNodes[0];
-    textNode.nodeValue = '\u2060';
-    taskPaintNormalizations.set(textNode, { original: '', encoded: '\u2060' });
+    textNode.nodeValue = '\u200b';
+    taskPaintNormalizations.set(textNode, { original: '', encoded: '\u200b' });
   });
   taskPaintNormalizations.forEach((value, textNode) => {
     exportTextNormalizations.set(textNode, value);

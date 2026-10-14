@@ -24,14 +24,15 @@ describe('createBrowserWechatClipboard', () => {
     const initialTaskStates = Array.from({ length: 19 }, (_, index) => ![2, 15].includes(index));
     const taskStates = initialTaskStates.map((checked, index) => (1 === index ? false : checked));
     const relativeOwnerIndex = 17;
-    const taskText = taskStates.map((_, index) => `Task ${index + 1}`).join('\n');
+    const taskCaption = (index: number): string => `Task ${index + 1}${0 === index ? '\u200b' : ''}`;
+    const taskText = taskStates.map((_, index) => taskCaption(index)).join('\n');
     const workspace = document.createElement('div');
     workspace.className = 'task-owner-workspace';
     preview.innerHTML = [
       '<ul class="task-list">',
       ...initialTaskStates.map(
         (checked, index) =>
-          `<li class="task-list-item"><section><input class="easymde-task-checkbox${18 === index ? ' native' : ''}${relativeOwnerIndex === index ? ' relative-owner' : ''}" type="checkbox"${checked ? ' checked' : ''}>Task ${index + 1}</section></li>`
+          `<li class="task-list-item"><section><input class="easymde-task-checkbox${18 === index ? ' native' : ''}${relativeOwnerIndex === index ? ' relative-owner' : ''}" type="checkbox"${checked ? ' checked' : ''}>${taskCaption(index)}</section></li>`
       ),
       '</ul>',
       '<ul class="ordinary-list"><li class="ordinary-list-item"></li></ul>',
@@ -284,6 +285,7 @@ describe('createBrowserWechatClipboard', () => {
       const textBlob = item?.payload['text/plain'];
       if (!textBlob) throw new Error('task checkbox plain payload missing');
       await expect(blobText(textBlob)).resolves.toBe(taskText);
+      expect(taskText.match(/\u200b/gu)).toHaveLength(1);
       const modernHtml = await blobText(htmlBlob);
       const holder = document.createElement('div');
       holder.innerHTML = modernHtml;
@@ -297,6 +299,8 @@ describe('createBrowserWechatClipboard', () => {
       expect(owners.every((owner) => owner.getAttribute('aria-disabled') === 'true')).toBe(true);
       expect(owners.every((owner) => Boolean(owner.getAttribute('style')))).toBe(true);
       expect(owners.every((owner) => owner.parentElement?.tagName === 'SECTION')).toBe(true);
+      const uncheckedOwner = owners.find((owner) => owner.getAttribute('aria-checked') === 'false');
+      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('\u200b');
       // Destination-safe projection replaces the complete task list and every
       // task item with sections. The task structure is therefore the lowest
       // common section ancestor of all owners, and its section children are the
@@ -385,7 +389,7 @@ describe('createBrowserWechatClipboard', () => {
       ).toHaveLength(18);
       expect(owners[18]?.querySelectorAll(':scope > span[aria-hidden="true"]')).toHaveLength(0);
       expect(holder.querySelectorAll('li span[leaf]')).toHaveLength(0);
-      expect(modernHtml).toContain('\u2060');
+      expect(modernHtml).toContain('\u200b');
       expect(modernHtml).not.toContain('✓');
       expect(preview.innerHTML).toBe(sourceMarkup);
 

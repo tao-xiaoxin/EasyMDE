@@ -51,6 +51,256 @@ describe("createBrowserToolbarShortcuts", () => {
 		expect(event.defaultPrevented).toBe(true);
 	});
 
+	it("accepts the explicitly registered context-menu portal as the same owner", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		const portalOwner = document.createElement("div");
+		const menuButton = document.createElement("button");
+		portalOwner.append(menuButton);
+		document.body.append(editorRoot, portalOwner);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{ id: "bold" }],
+			editorRoot,
+			eventTarget: document,
+			isOwnedTarget: (target) => portalOwner.contains(target),
+			platform: "win",
+			shortcuts,
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		menuButton.dispatchEvent(event);
+
+		expect(execute).toHaveBeenCalledWith("bold");
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("uses a settings-customized shortcut while the owned context menu is focused", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		const portalOwner = document.createElement("div");
+		const menuButton = document.createElement("button");
+		portalOwner.append(menuButton);
+		document.body.append(editorRoot, portalOwner);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{ id: "bold" }],
+			editorRoot,
+			eventTarget: document,
+			isOwnedTarget: (target) => portalOwner.contains(target),
+			platform: "win",
+			shortcuts: { bold: { mac: "Cmd+B", win: "Ctrl+Shift+B" } },
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		menuButton.dispatchEvent(new KeyboardEvent("keydown", {
+			bubbles: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+			shiftKey: true,
+		}));
+
+		expect(execute).toHaveBeenCalledWith("bold");
+	});
+
+	it("suppresses a changed registry default without dispatching it", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		editorRoot.append(source);
+		document.body.append(editorRoot);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{
+				defaultShortcutMac: "Cmd+B",
+				defaultShortcutWin: "Ctrl+B",
+				id: "bold",
+			}],
+			editorRoot,
+			eventTarget: document,
+			platform: "win",
+			shortcuts: { bold: { mac: "Cmd+B", win: "Ctrl+Shift+B" } },
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const oldDefault = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		const stopPropagation = vi.spyOn(oldDefault, "stopPropagation");
+		source.dispatchEvent(oldDefault);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(oldDefault.defaultPrevented).toBe(true);
+		expect(stopPropagation).toHaveBeenCalledOnce();
+
+		const repeatedOldDefault = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+			repeat: true,
+		});
+		const repeatedStopPropagation = vi.spyOn(repeatedOldDefault, "stopPropagation");
+		source.dispatchEvent(repeatedOldDefault);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(repeatedOldDefault.defaultPrevented).toBe(true);
+		expect(repeatedStopPropagation).toHaveBeenCalledOnce();
+
+		const configured = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+			shiftKey: true,
+		});
+		source.dispatchEvent(configured);
+
+		expect(execute).toHaveBeenCalledWith("bold");
+	});
+
+	it("suppresses a cleared registry default without dispatching it", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		editorRoot.append(source);
+		document.body.append(editorRoot);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{
+				defaultShortcutMac: "Cmd+B",
+				defaultShortcutWin: "Ctrl+B",
+				id: "bold",
+			}],
+			editorRoot,
+			eventTarget: document,
+			platform: "win",
+			shortcuts: { bold: { mac: "Cmd+B", win: "" } },
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		const stopPropagation = vi.spyOn(event, "stopPropagation");
+		source.dispatchEvent(event);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+		expect(stopPropagation).toHaveBeenCalledOnce();
+
+		const repeated = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+			repeat: true,
+		});
+		const repeatedStopPropagation = vi.spyOn(repeated, "stopPropagation");
+		source.dispatchEvent(repeated);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(repeated.defaultPrevented).toBe(true);
+		expect(repeatedStopPropagation).toHaveBeenCalledOnce();
+	});
+
+	it("lets the configured command win when another command owns the old default", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		editorRoot.append(source);
+		document.body.append(editorRoot);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [
+				{
+					defaultShortcutMac: "Cmd+B",
+					defaultShortcutWin: "Ctrl+B",
+					id: "bold",
+				},
+				{
+					defaultShortcutMac: "Cmd+I",
+					defaultShortcutWin: "Ctrl+I",
+					id: "italic",
+				},
+			],
+			editorRoot,
+			eventTarget: document,
+			platform: "win",
+			shortcuts: {
+				bold: { mac: "Cmd+B", win: "Ctrl+Shift+B" },
+				italic: { mac: "Cmd+I", win: "Ctrl+B" },
+			},
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		source.dispatchEvent(event);
+
+		expect(execute).toHaveBeenCalledWith("italic");
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("keeps an unchanged registry default active", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		editorRoot.append(source);
+		document.body.append(editorRoot);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{
+				defaultShortcutMac: "Cmd+B",
+				defaultShortcutWin: "Ctrl+B",
+				id: "bold",
+			}],
+			editorRoot,
+			eventTarget: document,
+			platform: "win",
+			shortcuts: { bold: { mac: "Cmd+B", win: "Ctrl+B" } },
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		source.dispatchEvent(event);
+
+		expect(execute).toHaveBeenCalledWith("bold");
+		expect(event.defaultPrevented).toBe(true);
+	});
+
 	it("matches shifted symbol bindings from event.code", () => {
 		const editorRoot = document.createElement("div");
 		const source = document.createElement("textarea");
@@ -262,7 +512,7 @@ describe("createBrowserToolbarShortcuts", () => {
 		);
 	});
 
-	it("ignores composition, unrelated fields, outside targets, and unmatched shortcuts", () => {
+	it("leaves outside, composition, keyCode 229, dead-key, and process events untouched", () => {
 		const editorRoot = document.createElement("div");
 		const source = document.createElement("textarea");
 		const title = document.createElement("input");
@@ -273,32 +523,40 @@ describe("createBrowserToolbarShortcuts", () => {
 		document.body.append(editorRoot, outside);
 		const execute = vi.fn();
 		const binding = createBrowserToolbarShortcuts({
-			commands: [{ id: "bold" }],
+			commands: [{
+				defaultShortcutMac: "Cmd+B",
+				defaultShortcutWin: "Ctrl+B",
+				id: "bold",
+			}],
 			editorRoot,
 			eventTarget: document,
 			platform: "win",
-			shortcuts,
+			shortcuts: { bold: { mac: "Cmd+B", win: "Ctrl+Shift+B" } },
 			source,
 		}).prepareBinding(execute);
 		binding.activate();
 
-		title.dispatchEvent(
-			new KeyboardEvent("keydown", { bubbles: true, ctrlKey: true, key: "b" }),
-		);
-		outside.dispatchEvent(
-			new KeyboardEvent("keydown", { bubbles: true, ctrlKey: true, key: "b" }),
-		);
-		content.dispatchEvent(
-			new KeyboardEvent("keydown", {
-				bubbles: true,
-				ctrlKey: true,
-				isComposing: true,
-				key: "b",
-			}),
-		);
-		content.dispatchEvent(
-			new KeyboardEvent("keydown", { bubbles: true, ctrlKey: true, key: "u" }),
-		);
+		const keyCode229 = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+		});
+		Object.defineProperty(keyCode229, "keyCode", { value: 229 });
+		const events = [
+			{ target: title, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyB", ctrlKey: true, key: "b" }) },
+			{ target: outside, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyB", ctrlKey: true, key: "b" }) },
+			{ target: content, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyB", ctrlKey: true, isComposing: true, key: "b" }) },
+			{ target: content, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyB", ctrlKey: true, key: "Dead" }) },
+			{ target: content, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyB", ctrlKey: true, key: "Process" }) },
+			{ target: content, event: keyCode229 },
+			{ target: content, event: new KeyboardEvent("keydown", { bubbles: true, cancelable: true, code: "KeyU", ctrlKey: true, key: "u" }) },
+		] as const;
+		for (const { target, event } of events) {
+			target.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(false);
+		}
 
 		expect(execute).not.toHaveBeenCalled();
 	});
@@ -360,14 +618,18 @@ describe("createBrowserToolbarShortcuts", () => {
 		expect(execute).not.toHaveBeenCalled();
 	});
 
-	it("ignores repeated matching shortcuts", () => {
+	it("consumes repeated configured shortcuts without dispatching them", () => {
 		const editorRoot = document.createElement("div");
 		const source = document.createElement("textarea");
 		editorRoot.append(source);
 		document.body.append(editorRoot);
 		const execute = vi.fn();
 		const binding = createBrowserToolbarShortcuts({
-			commands: [{ id: "save" }],
+			commands: [{
+				defaultShortcutMac: "Cmd+S",
+				defaultShortcutWin: "Ctrl+S",
+				id: "save",
+			}],
 			editorRoot,
 			eventTarget: document,
 			platform: "win",
@@ -376,17 +638,55 @@ describe("createBrowserToolbarShortcuts", () => {
 		}).prepareBinding(execute);
 		binding.activate();
 
-		source.dispatchEvent(
-			new KeyboardEvent("keydown", {
-				bubbles: true,
-				code: "KeyS",
-				ctrlKey: true,
-				key: "s",
-				repeat: true,
-			}),
-		);
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyS",
+			ctrlKey: true,
+			key: "s",
+			repeat: true,
+		});
+		source.dispatchEvent(event);
 
 		expect(execute).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("consumes a repeated customized shortcut instead of exposing it to native handling", () => {
+		const editorRoot = document.createElement("div");
+		const source = document.createElement("textarea");
+		editorRoot.append(source);
+		document.body.append(editorRoot);
+		const execute = vi.fn();
+		const binding = createBrowserToolbarShortcuts({
+			commands: [{
+				defaultShortcutMac: "Cmd+B",
+				defaultShortcutWin: "Ctrl+B",
+				id: "bold",
+			}],
+			editorRoot,
+			eventTarget: document,
+			platform: "win",
+			shortcuts: { bold: { mac: "Cmd+B", win: "Ctrl+Shift+B" } },
+			source,
+		}).prepareBinding(execute);
+		binding.activate();
+
+		const event = new KeyboardEvent("keydown", {
+			bubbles: true,
+			cancelable: true,
+			code: "KeyB",
+			ctrlKey: true,
+			key: "b",
+			repeat: true,
+			shiftKey: true,
+		});
+		const stopPropagation = vi.spyOn(event, "stopPropagation");
+		source.dispatchEvent(event);
+
+		expect(execute).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(true);
+		expect(stopPropagation).toHaveBeenCalledOnce();
 	});
 
 	it("skips empty disabled bindings and rejects invalid or duplicate active bindings", () => {

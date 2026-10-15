@@ -39,6 +39,17 @@ describe('createToolbarCommandSession', () => {
       linkText: 'link text'
     });
 
+    expect(session.plan('fixture')).toEqual({
+      change: {
+        changes: { from: 7, insert: '**text**', to: 11 },
+        selection: { direction: 'backward', end: 13, start: 9 },
+        value: 'before **text** after'
+      },
+      expected: {
+        selection: { direction: 'backward', end: 11, start: 7 },
+        value: 'before text after'
+      }
+    });
     expect(session.execute('fixture')).toBe(true);
     expect(document.snapshot()).toEqual({
       value: 'before **text** after',

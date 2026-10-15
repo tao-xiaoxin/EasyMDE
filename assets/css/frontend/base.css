@@ -80,6 +80,49 @@
   overflow-wrap: break-word;
 }
 
+/* Only formally validated image-scale markers may override theme image rules. */
+.easymde-rendered-content img[data-easymde-image-scale="25"],
+.easymde-preview img[data-easymde-image-scale="25"] {
+  width: 25% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="33"],
+.easymde-preview img[data-easymde-image-scale="33"] {
+  width: 33% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="50"],
+.easymde-preview img[data-easymde-image-scale="50"] {
+  width: 50% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="67"],
+.easymde-preview img[data-easymde-image-scale="67"] {
+  width: 67% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="100"],
+.easymde-preview img[data-easymde-image-scale="100"] {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="150"],
+.easymde-preview img[data-easymde-image-scale="150"] {
+  width: 150% !important;
+  max-width: none !important;
+}
+
+.easymde-rendered-content img[data-easymde-image-scale="200"],
+.easymde-preview img[data-easymde-image-scale="200"] {
+  width: 200% !important;
+  max-width: none !important;
+}
+
 /* EasyMDE owns this scroll surface for outline/preview synchronization. */
 .easymde-rendered-content.easymde-markdown-theme-mdmdt {
   scroll-behavior: auto !important;

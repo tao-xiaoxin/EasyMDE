@@ -7,6 +7,9 @@ type WordPressMediaFrame = Readonly<{
 
 type WordPressMediaFactory = (
 	options: Readonly<{
+		button: Readonly<{
+			close: false;
+		}>;
 		multiple: false;
 		title: string;
 	}>,
@@ -152,7 +155,9 @@ export function startMediaPickerBridge(windowRef: BridgeWindow): () => void {
 		const finish = () => {
 			if (closed) return;
 			closed = true;
-			port.postMessage({ operationId, type: "cancelled" });
+			if (!selected) {
+				port.postMessage({ operationId, type: "cancelled" });
+			}
 			port.close();
 		};
 
@@ -178,6 +183,7 @@ export function startMediaPickerBridge(windowRef: BridgeWindow): () => void {
 				throw new Error("media-picker-runtime-unavailable");
 			frame = frameValue(
 				(media as WordPressMediaFactory)({
+					button: { close: false },
 					multiple: false,
 					title: message.title,
 				}),
@@ -198,6 +204,8 @@ export function startMediaPickerBridge(windowRef: BridgeWindow): () => void {
 						operationId,
 						type: "failed",
 					});
+				} finally {
+					frame.close();
 				}
 			});
 			frame.on("close", finish);

@@ -379,6 +379,20 @@ final class FrontendAssets {
 		);
 	}
 
+	public function get_editor_block_index_worker_url() {
+		$worker = ManifestAssetResolver::resolve(
+			'frontend/src/entrypoints/editor-block-index-worker.ts',
+			'assets/build/editor-block-index-worker/',
+			'easymde-editor-block-index-worker',
+			array(),
+			'editor-block-index-worker',
+			true,
+			'editor-block-index-worker-'
+		);
+
+		return $this->versioned_asset_url( $worker['path'], $worker['version'] );
+	}
+
 	public function get_feature_config( $markdown = '' ) {
 		if ( null === $this->settings_center_repository ) {
 			throw new \LogicException( 'frontend-code-copy-settings-unavailable' );

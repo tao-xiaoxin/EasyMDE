@@ -14,6 +14,7 @@ import {
   applyVisualInlineShortcut,
   applyVisualToolbarCommand,
   applyVisualMarkdownEditIntent,
+  captureVisualThematicBreakSelection,
   captureVisualCodeInputSnapshot,
   createVisualMarkdownSourceIntervalMap,
   expandVisualCodeFenceForBody,
@@ -31,16 +32,20 @@ import {
   placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretFromSourceOffset,
   visualCaretBoundaryFromSourceOffset,
+  visualBoundarySourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   projectVisualCodeBodySelection,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
+  selectVisualImageForContextMenu,
+  shouldNormalizeVisualImageContextMenuSelection,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
   visualSelectionSourceRangeForBlocks,
   visualSelectionSourceRange,
   visualEmptyStructuralBodySelection,
+  visualThematicBreakSourceSelection,
   visualCodeBodyOrdinalForSourceRange,
   createVisualCodeBodyOrdinalsForPreviewBlocks,
   visualCodeBlockStructureSignature
@@ -1301,6 +1306,127 @@ A--&gt;B</code></pre>
     );
   });
 
+  it('maps interior boundaries across adjacent headings', () => {
+    const source = '# 一级标题 Heading 1\n\n## 二级标题 Heading 2';
+    const surface = editor(
+      '<h1>一级标题 Heading 1</h1><h2>二级标题 Heading 2</h2>'
+    );
+    const baseline = serializeVisualMarkdown(surface);
+    const firstOffset = source.indexOf('一级标题') + 1;
+    const secondOffset = source.indexOf('二级标题') + '二级标题'.length - 1;
+
+    expect(serializeVisualMarkdownBlockFragment([surface.firstElementChild as HTMLElement])).toBe(
+      '# 一级标题 Heading 1'
+    );
+    expect(serializeVisualMarkdownBlockFragment([surface.lastElementChild as HTMLElement])).toBe(
+      '## 二级标题 Heading 2'
+    );
+
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        firstOffset
+      )
+    ).not.toThrow();
+    const firstBoundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      source.indexOf('一级标题')
+    );
+    expect(firstBoundary.node.textContent).toBe('一级标题 Heading 1');
+    expect(firstBoundary.offset).toBe(0);
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        source.indexOf('二级标题') + '二级标题 Heading 2'.length
+      )
+    ).not.toThrow();
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        secondOffset
+      )
+    ).not.toThrow();
+    surface.remove();
+  });
+
+  it('maps heading boundaries when each window block includes its source newline', () => {
+    const blocks = [
+      { source: '# 一级标题 Heading 1\n', html: '<h1>一级标题 Heading 1</h1>' },
+      { source: '## 二级标题 Heading 2\n', html: '<h2>二级标题 Heading 2</h2>' }
+    ];
+    for (const block of blocks) {
+      const surface = editor(block.html);
+      const baseline = serializeVisualMarkdownBlockFragment([
+        surface.firstElementChild as HTMLElement
+      ]);
+      const body = block.html.replace(/<[^>]+>/gu, '');
+      const contentOffset = block.source.indexOf(body) + 1;
+      expect(() =>
+        visualCaretBoundaryFromSourceOffset(
+          surface,
+          block.source,
+          baseline,
+          contentOffset
+        )
+      ).not.toThrow();
+      const startBoundary = visualCaretBoundaryFromSourceOffset(
+        surface,
+        block.source,
+        baseline,
+        block.source.indexOf(body)
+      );
+      const endBoundary = visualCaretBoundaryFromSourceOffset(
+        surface,
+        block.source,
+        baseline,
+        block.source.length - 1
+      );
+      expect(startBoundary.offset).toBe(0);
+      expect(endBoundary.node.textContent).toBe(block.html.replace(/<[^>]+>/gu, ''));
+      expect(() =>
+        visualCaretBoundaryFromSourceOffset(
+          surface,
+          block.source,
+          baseline,
+          block.source.length - 1
+        )
+      ).not.toThrow();
+      surface.remove();
+    }
+    const attributed = editor(
+      '<h1 data-easymde-visual-block-id="b4">一级标题 Heading 1</h1>'
+    );
+    const attributedBoundary = visualCaretBoundaryFromSourceOffset(
+      attributed,
+      '# 一级标题 Heading 1\n',
+      '# 一级标题 Heading 1',
+      2
+    );
+    expect(attributedBoundary.offset).toBe(0);
+    attributed.remove();
+  });
+
+  it('keeps formatted heading prefix boundaries source-aware', () => {
+    const surface = editor('<h1><strong>一级标题</strong> Heading 1</h1>');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        '# **一级标题** Heading 1\n',
+        '# **一级标题** Heading 1',
+        2
+      )
+    ).not.toThrow();
+    surface.remove();
+  });
+
   it('preserves literal code-body whitespace and zero-width characters', () => {
     const surface = editor('');
     const pre = document.createElement('pre');
@@ -1331,6 +1457,153 @@ A--&gt;B</code></pre>
 
     expect(serializeVisualMarkdown(surface)).toBe(
       'Text![](https://example.test/x)  \nNext'
+    );
+  });
+
+  it('normalizes an image context-menu caret to the complete image node', () => {
+    const surface = editor('<p>Before <img src="https://example.test/x.png"> after</p>');
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-image-context-target-missing');
+    }
+    placeCaret(image, 0);
+
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBe(surface.querySelector('p'));
+    expect(selection?.focusNode).toBe(surface.querySelector('p'));
+    expect(selection?.isCollapsed).toBe(false);
+  });
+
+  it.each([
+    {
+      isCollapsed: true,
+      rangeCount: 0,
+      expected: true,
+      name: 'an empty selection'
+    },
+    {
+      isCollapsed: true,
+      rangeCount: 1,
+      expected: true,
+      name: 'a collapsed selection'
+    },
+    {
+      isCollapsed: false,
+      rangeCount: 1,
+      expected: false,
+      name: 'a non-empty selection'
+    },
+    {
+      isCollapsed: true,
+      rangeCount: 2,
+      expected: false,
+      name: 'multiple ranges'
+    }
+  ])('classifies $name for image context-menu normalization', ({
+    expected,
+    isCollapsed,
+    rangeCount
+  }) => {
+    expect(
+      shouldNormalizeVisualImageContextMenuSelection({
+        isCollapsed,
+        rangeCount
+      })
+    ).toBe(expected);
+  });
+
+  it('normalizes an image target when the collapsed caret remains in text', () => {
+    const surface = editor('<p>Before <img src="https://example.test/x.png"> after</p>');
+    const paragraph = surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    const image = surface.querySelector('img');
+    if (
+      !(paragraph instanceof HTMLElement)
+      || !(text instanceof Text)
+      || !(image instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-collapsed-image-context-fixture-missing');
+    }
+    placeCaret(text, 0);
+
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    const selection = window.getSelection();
+    expect(selection?.anchorNode).toBe(paragraph);
+    expect(selection?.focusNode).toBe(paragraph);
+    expect(selection?.isCollapsed).toBe(false);
+  });
+
+  it('normalizes an image target when no native range is present', () => {
+    const surface = editor('<p>Before <img src="https://example.test/x.png"> after</p>');
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-empty-image-context-fixture-missing');
+    }
+    window.getSelection()?.removeAllRanges();
+
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+  });
+
+  it('preserves a non-empty mixed selection when the image is the context target', () => {
+    const surface = editor(
+      '<p>Before <img src="https://example.test/x.png"> after</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    const before = paragraph?.firstChild;
+    const after = paragraph?.lastChild;
+    const image = surface.querySelector('img');
+    if (
+      !(paragraph instanceof HTMLElement)
+      || !(before instanceof Text)
+      || !(after instanceof Text)
+      || !(image instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-mixed-image-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(before, 0);
+    range.setEnd(after, after.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selection?.anchorNode).toBe(before);
+    expect(selection?.anchorOffset).toBe(0);
+    expect(selection?.focusNode).toBe(after);
+    expect(selection?.focusOffset).toBe(after.length);
+    expect(selection?.isCollapsed).toBe(false);
+  });
+
+  it('serializes selected image scale while preserving alt, title, and URL', () => {
+    const surface = editor(
+      '<p><img src="https://example.test/a.png" alt="Alt text" title="Image title" width="67%"></p>'
+    );
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '![Alt text](https://example.test/a.png "Image title {width=67%}")'
+    );
+  });
+
+  it('preserves a historical visual image width outside the new scale contract', () => {
+    const surface = editor(
+      '<p><img src="https://example.test/a.png" alt="Alt text" width="68%"></p>'
+    );
+
+    expect(serializeVisualMarkdown(surface)).toBe(
+      '![Alt text](https://example.test/a.png =68%x)'
+    );
+  });
+
+  it('still rejects a malformed visual width attribute', () => {
+    const surface = editor(
+      '<p><img src="https://example.test/a.png" alt="Alt text" width="68.0%"></p>'
+    );
+
+    expect(() => serializeVisualMarkdown(surface)).toThrow(
+      'image-scale-invalid-width'
     );
   });
 
@@ -2623,6 +2896,121 @@ A--&gt;B</code></pre>
     );
   });
 
+  it.each(['\n', '\r\n', '\r'])(
+    'preserves table alignment markers and duplicate table identity across a cell edit (%s)',
+    (newline) => {
+      const markerOne = '<!-- easymde-table-align:v1 [[1,"center"]] -->';
+      const markerTwo = '<!-- easymde-table-align:v1 [[1,"right"]] -->';
+      const table = [
+        '| A | B |',
+        '| --- | ---: |',
+        '| 1 | escaped \\| pipe |',
+        '| 3 | 4 |'
+      ].join(newline);
+      const source = [
+        markerOne,
+        table,
+        '',
+        markerTwo,
+        table,
+        '',
+        'Neighbor'
+      ].join(newline);
+      const baseline = [table, '', table, '', 'Neighbor'].join('\n');
+      const editedSecondTable = table.replace('escaped \\| pipe', 'edited \\| pipe');
+      const edited = [table, '', editedSecondTable, '', 'Neighbor'].join('\n');
+
+      expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+        [
+          markerOne,
+          table,
+          '',
+          markerTwo,
+          editedSecondTable,
+          '',
+          'Neighbor'
+        ].join(newline)
+      );
+    }
+  );
+
+  it('keeps the raw GFM base delimiter when rendered row overrides change effective alignment', () => {
+    const marker = '<!-- easymde-table-align:v1 [[0,"center"],[1,"center"],[1,0,"right"]] -->';
+    const sourceTable = [
+      '| A | B |',
+      '| --- | ---: |',
+      '| 1 | 2 |',
+      '| 3 | 4 |'
+    ].join('\n');
+    const source = `${marker}\n${sourceTable}`;
+    const surface = editor(`
+      <section class="table-container easymde-table-container">
+        <table>
+          <thead><tr><th align="center">A</th><th align="center">B</th></tr></thead>
+          <tbody>
+            <tr><td align="right">1</td><td align="center">2</td></tr>
+            <tr><td>3</td><td align="right">4</td></tr>
+          </tbody>
+        </table>
+      </section>
+    `);
+    const baseline = serializeVisualMarkdown(surface);
+    const editedCell = surface.querySelector('tbody tr td');
+    if (!(editedCell instanceof HTMLElement)) throw new Error('visual-table-cell-missing');
+    editedCell.textContent = '1 edited';
+    const edited = serializeVisualMarkdown(surface);
+
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      `${marker}\n${sourceTable.replace('| 1 |', '| 1 edited |')}`
+    );
+  });
+
+  it('keeps duplicate rendered tables attached to their own annotation marker', () => {
+    const markerOne = '<!-- easymde-table-align:v1 [[0,"center"]] -->';
+    const markerTwo = '<!-- easymde-table-align:v1 [[0,"right"]] -->';
+    const sourceTable = [
+      '| A | B |',
+      '| --- | ---: |',
+      '| 1 | 2 |'
+    ].join('\n');
+    const source = [
+      markerOne,
+      sourceTable,
+      '',
+      markerTwo,
+      sourceTable
+    ].join('\n');
+    const surface = editor(`
+      <section class="table-container easymde-table-container">
+        <table>
+          <thead><tr><th align="center">A</th><th align="center">B</th></tr></thead>
+          <tbody><tr><td>1</td><td>2</td></tr></tbody>
+        </table>
+      </section>
+      <section class="table-container easymde-table-container">
+        <table>
+          <thead><tr><th align="right">A</th><th align="right">B</th></tr></thead>
+          <tbody><tr><td>1</td><td>2</td></tr></tbody>
+        </table>
+      </section>
+    `);
+    const baseline = serializeVisualMarkdown(surface);
+    const secondCell = surface.querySelectorAll('tbody tr td')[3];
+    if (!(secondCell instanceof HTMLElement)) throw new Error('duplicate-table-cell-missing');
+    secondCell.textContent = 'second edited';
+    const edited = serializeVisualMarkdown(surface);
+
+    expect(mergeVisualMarkdownChange(source, baseline, edited)).toBe(
+      [
+        markerOne,
+        sourceTable,
+        '',
+        markerTwo,
+        sourceTable.replace('| 1 | 2 |', '| 1 | second edited |')
+      ].join('\n')
+    );
+  });
+
   it('turns a heading prefix into a heading block and keeps the caret editable', () => {
     const surface = editor('<p>#</p>');
     const paragraph = surface.firstElementChild as HTMLParagraphElement;
@@ -3303,6 +3691,162 @@ A--&gt;B</code></pre>
       )
     ).toEqual({ direction: 'forward', end: 13, start: 9 });
   });
+
+  it.each([
+    {
+      expected: { direction: 'forward', end: 9, start: 6 },
+      markdown: 'Lead\n\n---\n\nTail',
+      range: { end: 10, start: 6 },
+      newline: 'LF'
+    },
+    {
+      expected: { direction: 'forward', end: 11, start: 8 },
+      markdown: 'Lead\r\n\r\n---\r\n\r\nTail',
+      range: { end: 13, start: 8 },
+      newline: 'CRLF'
+    },
+    {
+      expected: { direction: 'forward', end: 3, start: 0 },
+      markdown: '---\r',
+      range: { end: 4, start: 0 },
+      newline: 'CR'
+    },
+    {
+      expected: { direction: 'forward', end: 3, start: 0 },
+      markdown: '---',
+      range: { end: 3, start: 0 },
+      newline: 'EOF'
+    }
+  ])('maps a native thematic-break selection for $newline', ({
+    expected,
+    markdown,
+    range
+  }) => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const thematicBreak = surface.querySelector('hr');
+    if (!(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-test-node-missing');
+    }
+    const nativeRange = document.createRange();
+    nativeRange.selectNode(thematicBreak);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(nativeRange);
+
+    expect(captureVisualThematicBreakSelection(surface)).toMatchObject({
+      block: thematicBreak,
+      direction: 'forward'
+    });
+    expect(
+      visualThematicBreakSourceSelection(
+        markdown,
+        range,
+        'forward'
+      )
+    ).toEqual(expected);
+    surface.remove();
+  });
+
+  it('preserves a backward native thematic-break direction', () => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const thematicBreak = surface.querySelector('hr');
+    if (!(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-backward-node-missing');
+    }
+    const nativeRange = document.createRange();
+    nativeRange.selectNode(thematicBreak);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(nativeRange);
+    selection?.setBaseAndExtent(
+      surface,
+      nativeRange.endOffset,
+      surface,
+      nativeRange.startOffset
+    );
+
+    expect(captureVisualThematicBreakSelection(surface)).toMatchObject({
+      block: thematicBreak,
+      direction: 'backward'
+    });
+    expect(
+      visualThematicBreakSourceSelection(
+        'Lead\n\n---\n\nTail',
+        { end: 10, start: 6 },
+        'backward'
+      )
+    ).toEqual({ direction: 'backward', end: 9, start: 6 });
+    surface.remove();
+  });
+
+  it.each([
+    'mixed range',
+    'spacer',
+    'read-only'
+  ])('rejects a nonmatching thematic-break shape: %s', (kind) => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const thematicBreak = surface.querySelector('hr');
+    if (!(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-rejection-node-missing');
+    }
+    const selection = window.getSelection();
+    if ('mixed range' === kind) {
+      const range = document.createRange();
+      range.setStart(surface, 1);
+      range.setEnd(surface, 3);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    } else {
+      if ('spacer' === kind) {
+        thematicBreak.setAttribute('data-easymde-preview-window-spacer', '1');
+      } else {
+        thematicBreak.setAttribute('contenteditable', 'false');
+      }
+      const range = document.createRange();
+      range.selectNode(thematicBreak);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    }
+
+    expect(captureVisualThematicBreakSelection(surface)).toBeNull();
+    surface.remove();
+  });
+
+  it.each([
+    { end: 0, start: 0 },
+    { end: 11, start: 6 }
+  ])('rejects a missing or stale thematic-break source line', (range) => {
+    expect(() =>
+      visualThematicBreakSourceSelection(
+        'Lead\n\n---\n\nTail',
+        range,
+        'forward'
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+  });
+
+  it('maps an empty list body boundary without reading the document Selection', () => {
+    const surface = editor(
+      '<p>before</p><ul><li><br></li></ul><p>after</p>'
+    );
+    const source = 'before\n\n- \n\nafter';
+    const baseline = serializeVisualMarkdown(surface);
+    const body = surface.querySelector('li');
+    if (!(body instanceof HTMLElement)) {
+      throw new Error('visual-empty-list-boundary-body-missing');
+    }
+
+    expect(
+      visualBoundarySourceOffset(surface, source, baseline, body, 0)
+    ).toBe(10);
+  });
+
 
   it('maps a native empty nested quote caret to its unique canonical body boundary', () => {
     const surface = editor([

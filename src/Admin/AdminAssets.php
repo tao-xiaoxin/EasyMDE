@@ -279,13 +279,14 @@ final class AdminAssets {
 			}
 		}
 
-		$preview_assets           = $this->frontend_assets->get_editor_preview_assets();
-		$settings                 = $this->settings_center_repository->get_settings();
-		$image_upload_config      = $this->get_image_upload_config( $settings );
-		$image_hosting_enabled    = isset( $settings['images']['imageHostingEnabled'] ) && true === $settings['images']['imageHostingEnabled'];
-		$allowed_image_extensions = ImageUploadExtensionPolicy::enabled( $settings['images']['uploadFormats'] );
-		$allowed_image_mime_types = $this->get_allowed_editor_image_mime_types( $settings['images']['uploadFormats'] );
-		$code_themes              = array_map(
+		$preview_assets                = $this->frontend_assets->get_editor_preview_assets();
+		$editor_block_index_worker_url = $this->frontend_assets->get_editor_block_index_worker_url();
+		$settings                      = $this->settings_center_repository->get_settings();
+		$image_upload_config           = $this->get_image_upload_config( $settings );
+		$image_hosting_enabled         = isset( $settings['images']['imageHostingEnabled'] ) && true === $settings['images']['imageHostingEnabled'];
+		$allowed_image_extensions      = ImageUploadExtensionPolicy::enabled( $settings['images']['uploadFormats'] );
+		$allowed_image_mime_types      = $this->get_allowed_editor_image_mime_types( $settings['images']['uploadFormats'] );
+		$code_themes                   = array_map(
 			static function ( $theme ) {
 				return array(
 					'id'     => $theme['id'],
@@ -295,12 +296,13 @@ final class AdminAssets {
 			$theme_options['codeThemes']
 		);
 		return array(
-			'schemaVersion'      => 2,
-			'shortcodeHelpers'   => $this->toolbar_registry->get_shortcode_helpers_for_script(),
-			'document'           => array(
+			'schemaVersion'             => 3,
+			'editorBlockIndexWorkerUrl' => $editor_block_index_worker_url,
+			'shortcodeHelpers'          => $this->toolbar_registry->get_shortcode_helpers_for_script(),
+			'document'                  => array(
 				'strings' => array( 'editorLabel' => $strings['editorLabel'] ),
 			),
-			'appearance'         => array(
+			'appearance'                => array(
 				'articleThemes'       => $theme_options['markdownThemes'],
 				'canManageCustomCss'  => current_user_can( 'unfiltered_html' ),
 				'codeThemeExplicit'   => $theme_options['codeThemeExplicit'],
@@ -329,7 +331,7 @@ final class AdminAssets {
 					'customCssDialog'  => $this->get_custom_css_dialog_strings(),
 				),
 			),
-			'fonts'              => array(
+			'fonts'                     => array(
 				'options' => $theme_options['fontOptions'],
 				'state'   => array(
 					'customFont'  => $theme_state['customFont'],
@@ -346,7 +348,7 @@ final class AdminAssets {
 					'fontStackHelp' => $strings['fontStackHelp'],
 				),
 			),
-			'imageUpload'        => array(
+			'imageUpload'               => array(
 				'allowedMimeTypes'       => $allowed_image_mime_types,
 				'allowedExtensions'      => $allowed_image_extensions,
 				'autoUploadPastedImages' => $settings['images']['autoUploadPastedImages'],
@@ -377,20 +379,20 @@ final class AdminAssets {
 					'pasteUploading'      => $strings['imagePasteUploading'],
 				),
 			),
-			'settings'           => array(
+			'settings'                  => array(
 				'general'  => $settings['general'],
 				'markdown' => array(
 					'wordWrap' => $settings['markdown']['wordWrap'],
 				),
 			),
-			'layout'             => array(
+			'layout'                    => array(
 				'direction' => is_rtl() ? 'rtl' : 'ltr',
 				'status'    => array(
 					'lastEdited' => $this->get_last_edited_label( $post_id ),
 					'wordCount'  => $strings['wordCount'],
 				),
 			),
-			'localDrafts'        => array(
+			'localDrafts'               => array(
 				'enabled'          => true,
 				'locale'           => $storage['locale'],
 				'maxBytes'         => $storage['draftMaxBytes'],
@@ -413,7 +415,7 @@ final class AdminAssets {
 					'saved'         => $strings['draftSaved'],
 				),
 			),
-			'mediaPicker'        => array(
+			'mediaPicker'               => array(
 				'canUseMedia'    => $can_use_media,
 				'defaultAlt'     => $strings['mediaDefaultAlt'],
 				'frameUrl'       => $can_use_media ? MediaPickerPage::get_url( $post_id, $post_type ) : '',
@@ -423,7 +425,7 @@ final class AdminAssets {
 				),
 				'placeholderAlt' => $strings['mediaAltText'],
 			),
-			'preview'            => array(
+			'preview'                   => array(
 				'features'  => (object) array(),
 				'html'      => '',
 				'messages'  => array(
@@ -434,13 +436,13 @@ final class AdminAssets {
 				'postId'    => absint( $post_id ),
 				'signature' => '',
 			),
-			'previewEnhancement' => array(
+			'previewEnhancement'        => array(
 				'assetBaseUrl' => Asset::url( '' ),
 				'assets'       => $preview_assets,
 				'codeThemes'   => $code_themes,
 				'strings'      => array( 'renderingFailed' => $strings['renderingFailed'] ),
 			),
-			'toolbar'            => array(
+			'toolbar'                   => array(
 				'commands'  => $this->toolbar_registry->get_commands_for_script(),
 				'shortcuts' => $this->settings_center_repository->get_shortcut_config_for_script(),
 				'strings'   => array(
@@ -451,7 +453,7 @@ final class AdminAssets {
 					'undo'               => $strings['undo'],
 				),
 			),
-			'wechatExport'       => array(
+			'wechatExport'              => array(
 				'enabled'              => true,
 				'pngConversionEnabled' => $settings['images']['wechatPngExportEnabled'],
 				'strings'              => array(
@@ -460,7 +462,8 @@ final class AdminAssets {
 					'unsupported' => $strings['copyWechatUnsupported'],
 				),
 			),
-			'strings'            => array(
+			'strings'                   => array(
+				'contextMenu'        => $this->get_context_menu_strings( $strings ),
 				'immersive'          => array(
 					'autoSave'                    => __( 'Auto save', 'easymde' ),
 					'autoSaveEnabled'             => __( 'Auto save is enabled', 'easymde' ),
@@ -573,7 +576,7 @@ final class AdminAssets {
 				'source'             => __( 'Markdown', 'easymde' ),
 				'toolbar'            => $strings['markdownToolbar'],
 			),
-			'wordpress'          => array(
+			'wordpress'                 => array(
 				'customCssUrl'      => esc_url_raw( rest_url( 'easymde/v1/custom-css' ) ),
 				'isNewPost'         => (bool) $is_new_post || 0 === absint( $post_id ) || 'auto-draft' === get_post_status( $post_id ),
 				'nonce'             => $nonce,
@@ -1032,63 +1035,186 @@ final class AdminAssets {
 
 	private function get_strings() {
 		return array(
-			'editorLabel'           => __( 'Markdown source', 'easymde' ),
-			'previewEmpty'          => __( 'Start writing Markdown to preview the article.', 'easymde' ),
-			'previewError'          => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
-			'previewLoading'        => __( 'Loading preview...', 'easymde' ),
-			'insertMedia'           => __( 'Insert Media', 'easymde' ),
-			'markdownToolbar'       => __( 'Markdown toolbar', 'easymde' ),
-			'undo'                  => __( 'Undo', 'easymde' ),
-			'appearance'            => __( 'Appearance', 'easymde' ),
-			'font'                  => __( 'Font', 'easymde' ),
-			'headings'              => __( 'Headings', 'easymde' ),
+			'editorLabel'                              => __( 'Markdown source', 'easymde' ),
+			'previewEmpty'                             => __( 'Start writing Markdown to preview the article.', 'easymde' ),
+			'previewError'                             => __( 'Preview failed. Please keep writing; saving is not affected.', 'easymde' ),
+			'previewLoading'                           => __( 'Loading preview...', 'easymde' ),
+			'insertMedia'                              => __( 'Insert Media', 'easymde' ),
+			'markdownToolbar'                          => __( 'Markdown toolbar', 'easymde' ),
+			'undo'                                     => __( 'Undo', 'easymde' ),
+			'appearance'                               => __( 'Appearance', 'easymde' ),
+			'font'                                     => __( 'Font', 'easymde' ),
+			'headings'                                 => __( 'Headings', 'easymde' ),
 			/* translators: %s: Heading level from 1 through 6. */
-			'headingLabelFormat'    => __( 'Heading %s', 'easymde' ),
-			'headingLevel'          => __( 'Heading level', 'easymde' ),
-			'articleTheme'          => __( 'Article theme', 'easymde' ),
-			'codeTheme'             => __( 'Code theme', 'easymde' ),
-			'customCss'             => __( 'Custom CSS', 'easymde' ),
-			'customCssTheme'        => __( 'Custom CSS theme', 'easymde' ),
-			'namedCustomCss'        => __( 'Named custom CSS', 'easymde' ),
-			'cssName'               => __( 'CSS name', 'easymde' ),
-			'saveCss'               => __( 'Save CSS', 'easymde' ),
-			'cssSaved'              => __( 'Saved CSS.', 'easymde' ),
-			'cssSaveFailed'         => __( 'CSS save failed.', 'easymde' ),
-			'themeApplyFailed'      => __( 'Theme could not be applied. The saved theme is still available.', 'easymde' ),
-			'customFont'            => __( 'Custom font', 'easymde' ),
-			'windowsFont'           => __( 'Windows font', 'easymde' ),
-			'appleFont'             => __( 'Apple font', 'easymde' ),
-			'serifFont'             => __( 'Serif font', 'easymde' ),
-			'fontStackHelp'         => __( 'Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.', 'easymde' ),
-			'draftSaved'            => __( 'Local draft saved', 'easymde' ),
-			'draftAvailable'        => __( 'A newer local draft is available.', 'easymde' ),
-			'restoreDraft'          => __( 'Restore draft', 'easymde' ),
-			'discardDraft'          => __( 'Discard draft', 'easymde' ),
-			'draftRestored'         => __( 'Draft restored.', 'easymde' ),
-			'draftDiscarded'        => __( 'Draft discarded.', 'easymde' ),
-			'draftReadFailed'       => __( 'Local draft could not be read.', 'easymde' ),
-			'draftSaveFailed'       => __( 'Local draft could not be saved.', 'easymde' ),
-			'draftDiscardFailed'    => __( 'Local draft could not be discarded.', 'easymde' ),
-			'draftConflict'         => __( 'A different local draft was saved in another tab.', 'easymde' ),
-			'renderingFailed'       => __( 'Rendering failed.', 'easymde' ),
-			'copyWechatSuccess'     => __( 'Copied preview for WeChat.', 'easymde' ),
-			'copyWechatFailed'      => __( 'Copy for WeChat failed. Please try again in this browser.', 'easymde' ),
-			'copyWechatUnsupported' => __( 'Clipboard access is not available in this browser.', 'easymde' ),
-			'imagePasteUploading'   => __( 'Uploading pasted image...', 'easymde' ),
-			'imagePasteUploaded'    => __( 'Pasted image uploaded.', 'easymde' ),
-			'imagePasteFailed'      => __( 'Pasted image upload failed after the configured attempts were exhausted. Please try uploading the image again.', 'easymde' ),
-			'imagePasteTooLarge'    => __( 'Pasted image is too large for this site.', 'easymde' ),
-			'imageDropUploading'    => __( 'Uploading dropped image...', 'easymde' ),
-			'imageDropUploaded'     => __( 'Dropped image uploaded.', 'easymde' ),
-			'imageDropFailed'       => __( 'Dropped image upload failed after the configured attempts were exhausted. Please try uploading the image again.', 'easymde' ),
-			'imageDropTooLarge'     => __( 'Dropped image is too large for this site.', 'easymde' ),
-			'mediaAltText'          => __( 'alt text', 'easymde' ),
-			'mediaDefaultAlt'       => __( 'image', 'easymde' ),
-			'mediaPickerFailed'     => __( 'The WordPress media library could not be opened.', 'easymde' ),
-			'linkText'              => __( 'link text', 'easymde' ),
+			'headingLabelFormat'                       => __( 'Heading %s', 'easymde' ),
+			'headingLevel'                             => __( 'Heading level', 'easymde' ),
+			'articleTheme'                             => __( 'Article theme', 'easymde' ),
+			'codeTheme'                                => __( 'Code theme', 'easymde' ),
+			'customCss'                                => __( 'Custom CSS', 'easymde' ),
+			'customCssTheme'                           => __( 'Custom CSS theme', 'easymde' ),
+			'namedCustomCss'                           => __( 'Named custom CSS', 'easymde' ),
+			'cssName'                                  => __( 'CSS name', 'easymde' ),
+			'saveCss'                                  => __( 'Save CSS', 'easymde' ),
+			'cssSaved'                                 => __( 'Saved CSS.', 'easymde' ),
+			'cssSaveFailed'                            => __( 'CSS save failed.', 'easymde' ),
+			'themeApplyFailed'                         => __( 'Theme could not be applied. The saved theme is still available.', 'easymde' ),
+			'customFont'                               => __( 'Custom font', 'easymde' ),
+			'windowsFont'                              => __( 'Windows font', 'easymde' ),
+			'appleFont'                                => __( 'Apple font', 'easymde' ),
+			'serifFont'                                => __( 'Serif font', 'easymde' ),
+			'fontStackHelp'                            => __( 'Fonts are applied in custom, Windows, Apple, and serif fallback order when supported by the current system.', 'easymde' ),
+			'draftSaved'                               => __( 'Local draft saved', 'easymde' ),
+			'draftAvailable'                           => __( 'A newer local draft is available.', 'easymde' ),
+			'restoreDraft'                             => __( 'Restore draft', 'easymde' ),
+			'discardDraft'                             => __( 'Discard draft', 'easymde' ),
+			'draftRestored'                            => __( 'Draft restored.', 'easymde' ),
+			'draftDiscarded'                           => __( 'Draft discarded.', 'easymde' ),
+			'draftReadFailed'                          => __( 'Local draft could not be read.', 'easymde' ),
+			'draftSaveFailed'                          => __( 'Local draft could not be saved.', 'easymde' ),
+			'draftDiscardFailed'                       => __( 'Local draft could not be discarded.', 'easymde' ),
+			'draftConflict'                            => __( 'A different local draft was saved in another tab.', 'easymde' ),
+			'renderingFailed'                          => __( 'Rendering failed.', 'easymde' ),
+			'copyWechatSuccess'                        => __( 'Copied preview for WeChat.', 'easymde' ),
+			'copyWechatFailed'                         => __( 'Copy for WeChat failed. Please try again in this browser.', 'easymde' ),
+			'copyWechatUnsupported'                    => __( 'Clipboard access is not available in this browser.', 'easymde' ),
+			'imagePasteUploading'                      => __( 'Uploading pasted image...', 'easymde' ),
+			'imagePasteUploaded'                       => __( 'Pasted image uploaded.', 'easymde' ),
+			'imagePasteFailed'                         => __( 'Pasted image upload failed after the configured attempts were exhausted. Please try uploading the image again.', 'easymde' ),
+			'imagePasteTooLarge'                       => __( 'Pasted image is too large for this site.', 'easymde' ),
+			'imageDropUploading'                       => __( 'Uploading dropped image...', 'easymde' ),
+			'imageDropUploaded'                        => __( 'Dropped image uploaded.', 'easymde' ),
+			'imageDropFailed'                          => __( 'Dropped image upload failed after the configured attempts were exhausted. Please try uploading the image again.', 'easymde' ),
+			'imageDropTooLarge'                        => __( 'Dropped image is too large for this site.', 'easymde' ),
+			'mediaAltText'                             => __( 'alt text', 'easymde' ),
+			'mediaDefaultAlt'                          => __( 'image', 'easymde' ),
+			'mediaPickerFailed'                        => __( 'The WordPress media library could not be opened.', 'easymde' ),
+			'linkText'                                 => __( 'link text', 'easymde' ),
 			/* translators: %s: Locale-formatted Markdown character count. */
-			'wordCount'             => __( 'Character count: %s', 'easymde' ),
-			'cssNameDuplicate'      => __( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
+			'wordCount'                                => __( 'Character count: %s', 'easymde' ),
+			'cssNameDuplicate'                         => __( 'A theme with this name already exists. Please choose another name and try again.', 'easymde' ),
+			'contextMenuAlignCenter'                   => __( 'Align center', 'easymde' ),
+			'contextMenuAlignLeft'                     => __( 'Align left', 'easymde' ),
+			'contextMenuAlignRight'                    => __( 'Align right', 'easymde' ),
+			'contextMenuAlignment'                     => __( 'Alignment', 'easymde' ),
+			'contextMenuAriaLabel'                     => __( 'Editor context menu', 'easymde' ),
+			'contextMenuBold'                          => __( 'Bold', 'easymde' ),
+			'contextMenuCodeBlock'                     => __( 'Code block', 'easymde' ),
+			'contextMenuCopy'                          => __( 'Copy', 'easymde' ),
+			'contextMenuCopyAsHtml'                    => __( 'Copy as HTML code', 'easymde' ),
+			'contextMenuCopyAsMarkdown'                => __( 'Copy as Markdown', 'easymde' ),
+			'contextMenuCopyCodeBlock'                 => __( 'Copy code block', 'easymde' ),
+			'contextMenuCopyCodeContent'               => __( 'Copy Code Block Content', 'easymde' ),
+			'contextMenuCopyDiagramSource'             => __( 'Copy code', 'easymde' ),
+			'contextMenuCopyGeneratedImage'            => __( 'Copy as image', 'easymde' ),
+			'contextMenuCopyGeneratedMathMl'           => __( 'Copy MathML', 'easymde' ),
+			'contextMenuCopyImage'                     => __( 'Copy image', 'easymde' ),
+			'contextMenuCopyLinkAddress'               => __( 'Copy link address', 'easymde' ),
+			'contextMenuCopyPasteAs'                   => __( 'Copy / Paste as', 'easymde' ),
+			'contextMenuCopyMathSource'                => __( 'Copy TeX', 'easymde' ),
+			'contextMenuCopySimplifiedFormatting'      => __( 'Copy with simplified formatting', 'easymde' ),
+			'contextMenuCopyTable'                     => __( 'Copy table', 'easymde' ),
+			'contextMenuCut'                           => __( 'Cut', 'easymde' ),
+			'contextMenuDeleteCodeBlock'               => __( 'Delete code block', 'easymde' ),
+			'contextMenuDeleteColumn'                  => __( 'Delete column', 'easymde' ),
+			'contextMenuDeleteGeneratedContent'        => __( 'Delete', 'easymde' ),
+			'contextMenuDeleteImage'                   => __( 'Delete image', 'easymde' ),
+			'contextMenuDeleteRow'                     => __( 'Delete row', 'easymde' ),
+			'contextMenuDeleteTable'                   => __( 'Delete table', 'easymde' ),
+			'contextMenuDeleteThematicBreak'            => __( 'Delete horizontal rule', 'easymde' ),
+			'contextMenuDiagramBlock'                  => __( 'Diagram', 'easymde' ),
+			'contextMenuEditGeneratedContent'          => __( 'Edit', 'easymde' ),
+			'contextMenuFormatTableSource'             => __( 'Format Table Source', 'easymde' ),
+			'contextMenuImage'                         => __( 'Image', 'easymde' ),
+			'contextMenuImageScale'                    => __( 'Image scale', 'easymde' ),
+			'contextMenuIndentCodeBlock'               => __( 'Adjust Code Block Indentation', 'easymde' ),
+			'contextMenuIndentSelectedCode'            => __( 'Adjust Selected Code Indentation', 'easymde' ),
+			'contextMenuInsert'                        => __( 'Insert', 'easymde' ),
+			'contextMenuInsertAbove'                   => __( 'Insert paragraph above', 'easymde' ),
+			'contextMenuInsertBelow'                   => __( 'Insert paragraph below', 'easymde' ),
+			'contextMenuInsertCodeAbove'               => __( 'Insert paragraph above code block', 'easymde' ),
+			'contextMenuInsertCodeBelow'               => __( 'Insert paragraph below code block', 'easymde' ),
+			'contextMenuInsertColumnLeft'              => __( 'Insert column left', 'easymde' ),
+			'contextMenuInsertColumnRight'             => __( 'Insert column right', 'easymde' ),
+			'contextMenuInsertParagraphAboveGenerated' => __( 'Insert paragraph above', 'easymde' ),
+			'contextMenuInsertParagraphAboveTable'     => __( 'Insert paragraph above table', 'easymde' ),
+			'contextMenuInsertParagraphBelowGenerated' => __( 'Insert paragraph below', 'easymde' ),
+			'contextMenuInsertParagraphBelowTable'     => __( 'Insert paragraph below table', 'easymde' ),
+			'contextMenuInsertRowAbove'                => __( 'Insert row above', 'easymde' ),
+			'contextMenuInsertRowBelow'                => __( 'Insert row below', 'easymde' ),
+			'contextMenuMathBlock'                     => __( 'Formula', 'easymde' ),
+			'contextMenuOpenLink'                      => __( 'Open link', 'easymde' ),
+			'contextMenuPaste'                         => __( 'Paste', 'easymde' ),
+			'contextMenuPastePlainText'                => __( 'Paste as plain text', 'easymde' ),
+			'contextMenuSaveGeneratedImage'            => __( 'Save as image', 'easymde' ),
+			'contextMenuStatusActionFailed'            => __( 'The editor action could not be completed.', 'easymde' ),
+			'contextMenuStatusClipboardUnavailable'    => __( 'Clipboard text is unavailable in this browser.', 'easymde' ),
+			'contextMenuTable'                         => __( 'Table', 'easymde' ),
+			'contextMenuUnsupported'                   => __( 'Unsupported for this selection.', 'easymde' ),
+			'contextMenuUploadImage'                   => __( 'Upload image', 'easymde' ),
+		);
+	}
+
+	private function get_context_menu_strings( $strings ) {
+		return array(
+			'alignCenter'                   => $strings['contextMenuAlignCenter'],
+			'alignLeft'                     => $strings['contextMenuAlignLeft'],
+			'alignRight'                    => $strings['contextMenuAlignRight'],
+			'alignment'                     => $strings['contextMenuAlignment'],
+			'ariaLabel'                     => $strings['contextMenuAriaLabel'],
+			'bold'                          => $strings['contextMenuBold'],
+			'codeBlock'                     => $strings['contextMenuCodeBlock'],
+			'copy'                          => $strings['contextMenuCopy'],
+			'copyAsHtml'                    => $strings['contextMenuCopyAsHtml'],
+			'copyAsMarkdown'                => $strings['contextMenuCopyAsMarkdown'],
+			'copyCodeBlock'                 => $strings['contextMenuCopyCodeBlock'],
+			'copyCodeContent'               => $strings['contextMenuCopyCodeContent'],
+			'copyDiagramSource'             => $strings['contextMenuCopyDiagramSource'],
+			'copyGeneratedImage'            => $strings['contextMenuCopyGeneratedImage'],
+			'copyGeneratedMathMl'           => $strings['contextMenuCopyGeneratedMathMl'],
+			'copyImage'                     => $strings['contextMenuCopyImage'],
+			'copyLinkAddress'               => $strings['contextMenuCopyLinkAddress'],
+			'copyPasteAs'                   => $strings['contextMenuCopyPasteAs'],
+			'copyMathSource'                => $strings['contextMenuCopyMathSource'],
+			'copySimplifiedFormatting'      => $strings['contextMenuCopySimplifiedFormatting'],
+			'copyTable'                     => $strings['contextMenuCopyTable'],
+			'cut'                           => $strings['contextMenuCut'],
+			'deleteCodeBlock'               => $strings['contextMenuDeleteCodeBlock'],
+			'deleteColumn'                  => $strings['contextMenuDeleteColumn'],
+			'deleteGeneratedContent'        => $strings['contextMenuDeleteGeneratedContent'],
+			'deleteImage'                   => $strings['contextMenuDeleteImage'],
+			'deleteRow'                     => $strings['contextMenuDeleteRow'],
+			'deleteTable'                   => $strings['contextMenuDeleteTable'],
+			'deleteThematicBreak'           => $strings['contextMenuDeleteThematicBreak'],
+			'diagramBlock'                  => $strings['contextMenuDiagramBlock'],
+			'editGeneratedContent'          => $strings['contextMenuEditGeneratedContent'],
+			'formatTableSource'             => $strings['contextMenuFormatTableSource'],
+			'image'                         => $strings['contextMenuImage'],
+			'imageScale'                    => $strings['contextMenuImageScale'],
+			'indentCodeBlock'               => $strings['contextMenuIndentCodeBlock'],
+			'indentSelectedCode'            => $strings['contextMenuIndentSelectedCode'],
+			'insert'                        => $strings['contextMenuInsert'],
+			'insertAbove'                   => $strings['contextMenuInsertAbove'],
+			'insertBelow'                   => $strings['contextMenuInsertBelow'],
+			'insertCodeAbove'               => $strings['contextMenuInsertCodeAbove'],
+			'insertCodeBelow'               => $strings['contextMenuInsertCodeBelow'],
+			'insertColumnLeft'              => $strings['contextMenuInsertColumnLeft'],
+			'insertColumnRight'             => $strings['contextMenuInsertColumnRight'],
+			'insertParagraphAboveGenerated' => $strings['contextMenuInsertParagraphAboveGenerated'],
+			'insertParagraphAboveTable'     => $strings['contextMenuInsertParagraphAboveTable'],
+			'insertParagraphBelowGenerated' => $strings['contextMenuInsertParagraphBelowGenerated'],
+			'insertParagraphBelowTable'     => $strings['contextMenuInsertParagraphBelowTable'],
+			'insertRowAbove'                => $strings['contextMenuInsertRowAbove'],
+			'insertRowBelow'                => $strings['contextMenuInsertRowBelow'],
+			'mathBlock'                     => $strings['contextMenuMathBlock'],
+			'openLink'                      => $strings['contextMenuOpenLink'],
+			'paste'                         => $strings['contextMenuPaste'],
+			'pastePlainText'                => $strings['contextMenuPastePlainText'],
+			'saveGeneratedImage'            => $strings['contextMenuSaveGeneratedImage'],
+			'statusActionFailed'            => $strings['contextMenuStatusActionFailed'],
+			'statusClipboardUnavailable'    => $strings['contextMenuStatusClipboardUnavailable'],
+			'table'                         => $strings['contextMenuTable'],
+			'unsupported'                   => $strings['contextMenuUnsupported'],
+			'uploadImage'                   => $strings['contextMenuUploadImage'],
 		);
 	}
 

@@ -68,7 +68,57 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 
 		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, $post_id );
 
-		$this->assertSame( 2, $bootstrap['schemaVersion'] );
+		$this->assertSame( 3, $bootstrap['schemaVersion'] );
+		$this->assertSame(
+			array(
+				'Copy code',
+				'Copy code block',
+				'Copy Code Block Content',
+				'Copy as image',
+				'Copy MathML',
+				'Copy image',
+				'Copy link address',
+				'Copy TeX',
+				'Copy with simplified formatting',
+				'Delete',
+				'Delete horizontal rule',
+				'Delete image',
+				'Diagram',
+				'Edit',
+				'Format Table Source',
+				'Formula',
+				'Insert paragraph above',
+				'Insert paragraph below',
+				'Open link',
+				'Save as image',
+			),
+			array(
+				$bootstrap['strings']['contextMenu']['copyDiagramSource'],
+				$bootstrap['strings']['contextMenu']['copyCodeBlock'],
+				$bootstrap['strings']['contextMenu']['copyCodeContent'],
+				$bootstrap['strings']['contextMenu']['copyGeneratedImage'],
+				$bootstrap['strings']['contextMenu']['copyGeneratedMathMl'],
+				$bootstrap['strings']['contextMenu']['copyImage'],
+				$bootstrap['strings']['contextMenu']['copyLinkAddress'],
+				$bootstrap['strings']['contextMenu']['copyMathSource'],
+				$bootstrap['strings']['contextMenu']['copySimplifiedFormatting'],
+				$bootstrap['strings']['contextMenu']['deleteGeneratedContent'],
+				$bootstrap['strings']['contextMenu']['deleteThematicBreak'],
+				$bootstrap['strings']['contextMenu']['deleteImage'],
+				$bootstrap['strings']['contextMenu']['diagramBlock'],
+				$bootstrap['strings']['contextMenu']['editGeneratedContent'],
+				$bootstrap['strings']['contextMenu']['formatTableSource'],
+				$bootstrap['strings']['contextMenu']['mathBlock'],
+				$bootstrap['strings']['contextMenu']['insertParagraphAboveGenerated'],
+				$bootstrap['strings']['contextMenu']['insertParagraphBelowGenerated'],
+				$bootstrap['strings']['contextMenu']['openLink'],
+				$bootstrap['strings']['contextMenu']['saveGeneratedImage'],
+			)
+		);
+		$this->assertMatchesRegularExpression(
+			'#^' . preg_quote( Asset::url( 'assets/build/editor-block-index-worker/assets/editor-block-index-worker-' ), '#' ) . '[A-Za-z0-9_-]+\.js\?ver=[a-f0-9]{16}$#',
+			$bootstrap['editorBlockIndexWorkerUrl']
+		);
 		$this->assertArrayHasKey( 'shortcodeHelpers', $bootstrap );
 		$this->assertSame( $post_id, $bootstrap['preview']['postId'] );
 		$this->assertIsObject( $bootstrap['preview']['features'] );
@@ -536,6 +586,16 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 		$this->assertSame( 'Local draft could not be saved.', $strings['draftSaveFailed'] );
 		$this->assertSame( 'Local draft could not be discarded.', $strings['draftDiscardFailed'] );
 		$this->assertSame( 'A different local draft was saved in another tab.', $strings['draftConflict'] );
+	}
+
+	public function test_context_menu_code_indentation_labels_are_gettext_backed_and_nested() {
+		$strings  = $this->get_strings->invoke( $this->admin_assets );
+		$bootstrap = $this->get_editor_root_bootstrap->invoke( $this->admin_assets, 0 );
+
+		$this->assertSame( 'Adjust Code Block Indentation', $strings['contextMenuIndentCodeBlock'] );
+		$this->assertSame( 'Adjust Selected Code Indentation', $strings['contextMenuIndentSelectedCode'] );
+		$this->assertSame( 'Adjust Code Block Indentation', $bootstrap['strings']['contextMenu']['indentCodeBlock'] );
+		$this->assertSame( 'Adjust Selected Code Indentation', $bootstrap['strings']['contextMenu']['indentSelectedCode'] );
 	}
 
 	public function test_custom_css_variable_categories_match_the_reference_tab_panels() {

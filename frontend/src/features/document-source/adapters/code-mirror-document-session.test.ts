@@ -21,6 +21,31 @@ function createFixture(value = 'alpha beta') {
 }
 
 describe('createCodeMirrorDocumentSession', () => {
+  it('publishes a canonical document revision only when the document value changes', () => {
+    const { container, submissionField } = createFixture('source');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+
+    expect(session.getRevision?.()).toBe(0);
+    session.applyTextChange({
+      changes: { from: 6, insert: ' edit', to: 6 },
+      selection: { direction: 'none', end: 11, start: 11 },
+      value: 'source edit'
+    });
+    expect(session.getRevision?.()).toBe(1);
+    session.applyTextChange({
+      recordHistorySelection: true,
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: 'source edit'
+    });
+    expect(session.getRevision?.()).toBe(1);
+
+    session.destroy();
+  });
+
   it('reports CodeMirror source-event grouping and a newly separated event', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
@@ -183,6 +208,127 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 2 });
     expect(session.redo()).toBe(false);
     expect(session.getValue()).toBe('ac');
+
+    session.destroy();
+  });
+
+  it('does not reuse a tracked selection after an untracked edit creates a new branch', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    session.setVisualEditingActive(true);
+
+    session.applyTextChange({
+      changes: { from: 6, insert: 'BETA', to: 10 },
+      recordHistorySelection: true,
+      selection: { direction: 'forward', end: 10, start: 6 },
+      value: 'alpha BETA'
+    });
+    expect(session.undo()).toBe(true);
+    expect(session.getSelection()).toEqual({
+      direction: 'backward',
+      end: 10,
+      start: 6
+    });
+
+    session.applyTextChange({
+      selection: { direction: 'none', end: 0, start: 0 },
+      value: 'alpha beta'
+    });
+    session.applyTextChange({
+      changes: { from: 0, insert: 'X', to: 0 },
+      selection: { direction: 'none', end: 1, start: 1 },
+      value: 'Xalpha beta'
+    });
+
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('alpha beta');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 0,
+      start: 0
+    });
+
+    session.destroy();
+  });
+
+  it('clears visual history selection metadata after native Source input', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+
+    session.setVisualEditingActive(true);
+    session.applyTextChange({
+      changes: { from: 6, insert: 'BETA', to: 10 },
+      recordHistorySelection: true,
+      selection: { direction: 'forward', end: 10, start: 6 },
+      value: 'alpha BETA'
+    });
+    session.setVisualEditingActive(false);
+    vi.advanceTimersByTime(501);
+
+    view.dispatch({
+      annotations: Transaction.userEvent.of('select.pointer'),
+      selection: EditorSelection.cursor(0)
+    });
+    view.dispatch({
+      annotations: Transaction.userEvent.of('input.type'),
+      changes: { from: 0, insert: 'X', to: 0 },
+      selection: EditorSelection.cursor(1)
+    });
+    expect(session.getValue()).toBe('Xalpha BETA');
+
+    session.setVisualEditingActive(true);
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('alpha BETA');
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: 0,
+      start: 0
+    });
+
+    session.destroy();
+    vi.useRealTimers();
+  });
+
+  it('keeps tracked selections aligned with retained history after CodeMirror pruning', () => {
+    const { container, submissionField } = createFixture('');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    session.setVisualEditingActive(true);
+    let value = '';
+    const eventCount = 121;
+
+    for (let index = 0; index < eventCount; index += 1) {
+      const nextValue = `${value}x`;
+      session.applyTextChange({
+        changes: { from: value.length, insert: 'x', to: value.length },
+        isolateHistoryBefore: true,
+        recordHistorySelection: true,
+        selection: { direction: 'none', end: nextValue.length, start: nextValue.length },
+        value: nextValue
+      });
+      value = nextValue;
+    }
+
+    expect(session.getHistoryState().undoDepth).toBeLessThan(eventCount);
+    expect(session.undo()).toBe(true);
+    expect(session.getSelection().start).toBe(eventCount - 1);
+    expect(session.undo()).toBe(true);
+    expect(session.getSelection().start).toBe(eventCount - 2);
 
     session.destroy();
   });
@@ -951,6 +1097,53 @@ describe('createCodeMirrorDocumentSession', () => {
     session.setVisualEditingActive(false);
     expectDocumentAndSelection('~~~\nx\n~~~', 5);
     expect(handleInput).toHaveBeenCalledTimes(6);
+    session.destroy();
+  });
+
+  it('preserves the precise visual selection across a repeated undo and redo', () => {
+    const { container, submissionField } = createFixture('普通文本、**粗体文本**');
+    submissionField.setSelectionRange(0, 4, 'forward');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    session.setVisualEditingActive(true);
+
+    session.applyTextChange({
+      selection: { direction: 'forward', end: 4, start: 0 },
+      value: '普通文本、**粗体文本**'
+    });
+    session.applyTextChange({
+      changes: { from: 0, insert: '**普通文本**', to: 4 },
+      recordHistorySelection: true,
+      selection: { direction: 'forward', end: 12, start: 2 },
+      value: '**普通文本**、**粗体文本**'
+    });
+
+
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('普通文本、**粗体文本**');
+    expect(session.getSelection()).toEqual({
+      direction: 'forward',
+      end: 4,
+      start: 0
+    });
+    expect(session.redo()).toBe(true);
+    expect(session.getValue()).toBe('**普通文本**、**粗体文本**');
+    expect(session.getSelection()).toEqual({
+      direction: 'forward',
+      end: 12,
+      start: 2
+    });
+    expect(session.undo()).toBe(true);
+    expect(session.getValue()).toBe('普通文本、**粗体文本**');
+    expect(session.getSelection()).toEqual({
+      direction: 'forward',
+      end: 4,
+      start: 0
+    });
+
     session.destroy();
   });
 

@@ -2,6 +2,8 @@
 
 namespace EasyMDE\Content;
 
+use League\CommonMark\Extension\CommonMark\Parser\Block\FencedCodeStartParser;
+use League\CommonMark\Extension\CommonMark\Parser\Block\IndentedCodeStartParser;
 use League\CommonMark\GithubFlavoredMarkdownConverter;
 use League\CommonMark\Parser\MarkdownParser;
 use League\CommonMark\Renderer\HtmlRenderer;
@@ -33,7 +35,12 @@ final class MarkdownRenderer {
 
 		$converter = self::create_converter();
 
-		$html = self::restore_math( self::sanitize_rendered_html( (string) $converter->convert( $markdown ), $theme, true, false ), $math );
+		$html = self::restore_math(
+			self::restore_image_scale_markers(
+				self::sanitize_rendered_html( (string) $converter->convert( $markdown ), $theme, true, false )
+			),
+			$math
+		);
 
 		return self::post_process_html( $html, $theme );
 	}
@@ -45,7 +52,7 @@ final class MarkdownRenderer {
 	 * post-processing/sanitization pipeline as render(). The source markers are
 	 * temporary and are removed before the response is returned.
 	 *
-	 * @return array{html:string,editMap:array{version:int,coordinate:string,blocks:array<int,array{id:string,startLine:int,endLine:int,editable:bool}>}}
+	 * @return array{html:string,editMap:array{version:int,coordinate:string,blocks:array<int,array{id:string,startLine:int,endLine:int,editable:bool}>},codeMap?:array,codeProjection?:array}
 	 */
 	public static function render_preview( $markdown, $theme = '' ) {
 		if ( ! self::is_available() ) {
@@ -65,30 +72,178 @@ final class MarkdownRenderer {
 			$extracted_with_map['line_map']
 		);
 
-		$converter     = self::create_converter();
-		$document      = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $normalized['markdown'] );
-		$source_blocks = VisualPreviewBlockAnnotator::describe_source_blocks( $document, $normalized['line_map'] );
+		$projection_budget = new CodeProjectionBudget();
+		$converter         = self::create_converter( true, $projection_budget );
+		$document          = ( new MarkdownParser( $converter->getEnvironment() ) )->parse( $normalized['markdown'] );
+		$source_blocks     = VisualPreviewBlockAnnotator::describe_source_blocks( $document, $normalized['line_map'] );
+		$code_map          = VisualPreviewBlockAnnotator::describe_source_code_bodies( $document, $normalized['markdown'], $normalized['line_map'], $markdown );
+		$code_projection   = VisualPreviewBlockAnnotator::describe_source_code_projections( $document, $normalized['markdown'], $normalized['line_map'], $markdown, $projection_budget );
 		VisualPreviewBlockAnnotator::mark_document( $document, $source_blocks );
 
 		$html = (string) ( new HtmlRenderer( $converter->getEnvironment() ) )->renderDocument( $document );
 		$html = self::restore_math(
-			self::sanitize_rendered_html( $html, $theme, true, false, true ),
+			self::restore_image_scale_markers(
+				self::sanitize_rendered_html( $html, $theme, true, false, true )
+			),
 			$math,
 			true
 		);
 		$html = self::post_process_html( $html, $theme, true );
 
-		return VisualPreviewBlockAnnotator::finalize( $html, $source_blocks );
+		$preview = VisualPreviewBlockAnnotator::finalize( $html, $source_blocks );
+		if ( null !== $code_map ) {
+			$preview['codeMap'] = $code_map;
+		}
+		if ( null !== $code_projection ) {
+			$preview['codeProjection'] = $code_projection;
+		}
+
+		return $preview;
 	}
 
-	private static function create_converter() {
-		return new GithubFlavoredMarkdownConverter(
+	private static function create_converter( $with_projection = false, $projection_budget = null ) {
+		$converter = new GithubFlavoredMarkdownConverter(
 			array(
 				'html_input'              => 'strip',
 				'allow_unsafe_links'      => false,
 				'max_nesting_level'       => self::MAX_NESTING_LEVEL,
 				'max_delimiters_per_line' => self::MAX_DELIMITERS_PER_LINE,
+				'table'                   => array(
+					'alignment_attributes' => array(
+						'left'   => array(
+							'align' => 'left',
+							'style' => 'text-align:left',
+						),
+						'center' => array(
+							'align' => 'center',
+							'style' => 'text-align:center',
+						),
+						'right'  => array(
+							'align' => 'right',
+							'style' => 'text-align:right',
+						),
+					),
+				),
 			)
+		);
+		TableAlignmentAnnotation::register( $converter->getEnvironment() );
+		if ( $with_projection ) {
+			if ( ! $projection_budget instanceof CodeProjectionBudget ) {
+				$projection_budget = new CodeProjectionBudget();
+			}
+			$converter->getEnvironment()->addBlockStartParser(
+				new CodeProjectionStartParser( new FencedCodeStartParser(), 'fenced', $projection_budget ),
+				51
+			);
+			$converter->getEnvironment()->addBlockStartParser(
+				new CodeProjectionStartParser( new IndentedCodeStartParser(), 'indented', $projection_budget ),
+				-99
+			);
+		}
+
+		return $converter;
+	}
+
+	/**
+	 * Apply the image-scale title extension after the formal Markdown render.
+	 *
+	 * A width marker is a reserved suffix in a standard Markdown image title:
+	 * `"title {width=50%}"`, or `"{width=50%}"` when no title exists.
+	 * CommonMark therefore remains the only Markdown parser and the original
+	 * alt text and destination never pass through a secondary syntax path.
+	 */
+	private static function restore_image_scale_markers( $html ) {
+		$html = (string) $html;
+		if ( false === strpos( $html, '{width=' ) || false === stripos( $html, '<img' ) ) {
+			return $html;
+		}
+		if ( ! class_exists( 'DOMDocument' ) ) {
+			throw new RuntimeException( 'easymde_image_scale_renderer_unavailable' );
+		}
+
+		$document              = new \DOMDocument( '1.0', 'UTF-8' );
+		$previous_libxml_state = libxml_use_internal_errors( true );
+		try {
+			$loaded = $document->loadHTML(
+				'<?xml encoding="UTF-8"><div id="easymde-image-scale-root">' . $html . '</div>',
+				LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+			);
+		} finally {
+			libxml_clear_errors();
+			libxml_use_internal_errors( $previous_libxml_state );
+		}
+		if ( ! $loaded ) {
+			throw new RuntimeException( 'easymde_image_scale_render_mismatch' );
+		}
+		$root = $document->getElementById( 'easymde-image-scale-root' );
+		if ( ! $root instanceof \DOMElement ) {
+			throw new RuntimeException( 'easymde_image_scale_render_mismatch' );
+		}
+
+		$changed = false;
+		foreach ( iterator_to_array( $root->getElementsByTagName( 'img' ) ) as $image ) {
+			if ( ! $image instanceof \DOMElement ) {
+				continue;
+			}
+			$parsed = self::parse_image_scale_title( $image->getAttribute( 'title' ) );
+			if ( null === $parsed ) {
+				continue;
+			}
+			$changed = true;
+			$image->setAttribute( 'width', $parsed['width'] . '%' );
+			$image->setAttribute( 'data-easymde-image-scale', (string) $parsed['width'] );
+			if ( null === $parsed['title'] ) {
+				$image->removeAttribute( 'title' );
+			} else {
+				$image->setAttribute( 'title', $parsed['title'] );
+			}
+		}
+		if ( ! $changed ) {
+			return $html;
+		}
+
+		$restored = '';
+		// phpcs:ignore WordPress.NamingConventions.ValidVariableName.UsedPropertyNotSnakeCase -- DOMNode exposes the external camelCase childNodes property.
+		foreach ( $root->childNodes as $child ) {
+			$child_html = $document->saveHTML( $child );
+			if ( false === $child_html ) {
+				throw new RuntimeException( 'easymde_image_scale_render_mismatch' );
+			}
+			$restored .= $child_html;
+		}
+		return $restored;
+	}
+
+	/**
+	 * @return array{title:?string,width:int}|null
+	 */
+	private static function parse_image_scale_title( $title ) {
+		$title = (string) $title;
+		if ( false === strpos( $title, '{width=' ) ) {
+			return null;
+		}
+		if ( 1 !== substr_count( $title, '{width=' ) ) {
+			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
+		}
+
+		$marker_start = strrpos( $title, '{width=' );
+		$marker       = substr( $title, $marker_start );
+		if ( ! preg_match( '/^\{width=(25|33|50|67|100|150|200)%\}$/', $marker, $matches ) ) {
+			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
+		}
+		if ( 0 === $marker_start ) {
+			return array(
+				'title' => null,
+				'width' => (int) $matches[1],
+			);
+		}
+		if ( ' ' !== $title[ $marker_start - 1 ] ) {
+			throw new RuntimeException( 'easymde_image_scale_syntax_invalid' );
+		}
+
+		return array(
+			'title' => substr( $title, 0, $marker_start - 1 ),
+			'width' => (int) $matches[1],
 		);
 	}
 
@@ -504,6 +659,14 @@ final class MarkdownRenderer {
 
 		foreach ( $disallowed_form_elements as $element ) {
 			unset( $allowed_html[ $element ] );
+		}
+		if ( isset( $allowed_html['img'] ) && is_array( $allowed_html['img'] ) ) {
+			$allowed_html['img']['data-easymde-image-scale'] = true;
+		}
+		foreach ( array( 'th', 'td' ) as $table_cell_tag ) {
+			if ( isset( $allowed_html[ $table_cell_tag ] ) && is_array( $allowed_html[ $table_cell_tag ] ) ) {
+				$allowed_html[ $table_cell_tag ]['style'] = true;
+			}
 		}
 
 		if ( $allow_task_inputs ) {

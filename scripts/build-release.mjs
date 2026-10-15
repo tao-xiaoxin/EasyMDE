@@ -84,6 +84,7 @@ const frontendEnhancementsEntry = 'frontend/src/entrypoints/frontend-enhancement
 const frontendBootstrapEntry = 'frontend/src/entrypoints/frontend-bootstrap.ts';
 const frontendMermaidEntry = 'frontend/src/entrypoints/frontend-mermaid-runtime.ts';
 const mediaPickerFrontendEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
+const editorBlockIndexWorkerEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
 const productionFrontendBuilds = [
   {
     buildRoot: 'assets/build',
@@ -140,6 +141,13 @@ const productionFrontendBuilds = [
     entry: mediaPickerFrontendEntry,
     filePattern: /^assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/,
     handle: 'easymde-media-picker-bridge'
+  },
+  {
+    buildRoot: 'assets/build/editor-block-index-worker',
+    dependencies: [],
+    entry: editorBlockIndexWorkerEntry,
+    filePattern: /^assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.js$/,
+    handle: 'easymde-editor-block-index-worker'
   },
 ];
 

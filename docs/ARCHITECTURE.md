@@ -37,6 +37,20 @@ delegation is not a second persistence, authorization, or document authority:
 PHP and WordPress retain their existing data, authorization, rendering, native
 form, Save, Publish, Revision, Media, and security authority. `_easymde_markdown`
 remains canonical Markdown and `post_content` remains compatibility HTML.
+
+The shared `EditorContextMenuFeature` is mounted by this Root and binds only to
+the editable CodeMirror source surface and the active immersive visual surface.
+It is reused by ordinary Source, immersive Source, non-windowed Visual, and
+Windowed Visual presentations; title fields, Settings, native WordPress
+controls, and read-only Preview are outside its event boundary. The menu model
+delegates Bold to the active toolbar command executor, Clipboard operations to
+the browser Clipboard Port, HTML copy to the formal PHP Preview Port, table and
+paragraph edits to the Markdown context rules, image scale to the seven-value
+image contract, and image upload/media insertion to their existing protected
+WordPress owners. The menu captures the canonical selection, blocks IME
+shortcuts, rejects stale async completions, and restores focus on dismissal.
+Its PHP-owned labels are part of the strict Editor Root bootstrap schema and
+the static menu CSS is included by `assets/css/admin/editor.css`.
 Focus Mode is not part of the default ordinary-editor surface, and the ordinary
 toolbar provides the entry into the same-root immersive presentation. That
 presentation reuses the ordinary CodeMirror, Preview, native form, and
@@ -159,7 +173,16 @@ Ignored dependency, cache, distribution, coverage, report, task, and machine-loc
 
 ## Frontend Build Foundation
 
-The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. Exact `lucide-react@0.487.0` source is a development-only input to `scripts/generate-lucide-icons.mjs`; generated local icon nodes are compiled into the ordinary and immersive Editor interfaces without adding a browser runtime dependency. This version remains intentionally locked because the audited ordinary-toolbar contract uses its icon paths: `lucide-react@1.27.0` changes the visible Code, List, List Ordered, and Palette nodes. A future upgrade is therefore a visual-contract change and must repeat the controlled toolbar comparison. `npm run frontend:check` verifies the locked generated nodes, runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production comparisons for all eight manifest-backed Vite entries that must match their committed runtimes byte for byte.
+The root npm project owns Vite, TypeScript, Biome linting, React 18 development declarations, Vitest, CodeMirror 6, and the WordPress Element package used by browser builds. Exact `lucide-react@0.487.0` source is a development-only input to `scripts/generate-lucide-icons.mjs`; generated local icon nodes are compiled into the ordinary and immersive Editor interfaces without adding a browser runtime dependency. This version remains intentionally locked because the audited ordinary-toolbar contract uses its icon paths: `lucide-react@1.27.0` changes the visible Code, List, List Ordered, and Palette nodes. A future upgrade is therefore a visual-contract change and must repeat the controlled toolbar comparison. `npm run frontend:check` verifies the locked generated nodes, runs frontend linting, strict `tsc --noEmit`, component and contract tests, the test-only build contract, and temporary production comparisons for all nine manifest-backed Vite entries that must match their committed runtimes byte for byte.
+
+`frontend/src/entrypoints/editor-block-index-worker.ts` is the dedicated local
+structural Worker, built under `assets/build/editor-block-index-worker`. Its
+manifest identity is not a WordPress enqueue or a second React root. The Editor
+Bootstrap supplies its exact validated same-origin plugin URL. The browser
+Adapter bounds input and returned source-free ranges, rejects stale results,
+and terminates on cancellation, completion, failure or disposal. A debounced
+document cache binds the result to the canonical source, revision and owner;
+menu capture reads prepared structure without synchronously reparsing a document.
 
 The Vite entry under `frontend/test/build-contract/` remains test-only. It proves that React, ReactDOM, and `@wordpress/element` resolve to the WordPress-provided `wp-element` runtime, while the configured classic JSX transform emits calls to its public `createElement` API instead of assuming an unavailable automatic JSX-runtime global. It also proves that Vite and WordPress manifests agree on the generated script, dependency metadata, and plugin-relative resource paths. Its output is written to `.cache/easymde-frontend-contract/`, is not enqueued by WordPress, and is excluded from the installable plugin ZIP.
 
@@ -247,6 +270,125 @@ submission, mode exit, and teardown synchronously flush that projection before
 WordPress or an extension may serialize the form.
 React neither submits a closed field allowlist nor treats synchronization as a
 successful Save, so unknown WordPress and extension fields remain intact.
+
+### Editor Context Menu And Table Alignment
+
+The shared context-menu Feature captures the active Source or visual selection
+and delegates mutations to the canonical document and existing command/media
+owners. Its formal HTML Clipboard output uses the PHP Preview owner, not a
+browser Markdown renderer. The block-index cache uses the local dedicated
+Worker; unavailable parser blocks retain complete provenance and never become
+editable math merely because their text contains delimiters.
+
+Nonempty selections must fit wholly inside an authenticated object's source
+range before object-specific commands become available or execute. Mixed
+selections retain generic text commands, not one object's deletion, alignment
+or adjacent insertion. Visual preparation maps native selections inside its
+owner before capturing context; foreign selections do not override clicked
+object activation, while straddling or enclosing ranges reject explicitly.
+These checks reuse the existing visual mapper and canonical selection owner.
+
+Thematic breaks are parser-owned editable blocks with a packed `thematic-break`
+kind appended to the block-index registry so existing numeric kinds remain
+stable. Source insertion above a rule uses two detected document line endings
+to prevent a following paragraph from becoming a Setext heading. Full and
+Windowed Visual accept an exact direct-child `hr` `Range.selectNode` only after
+matching accepted edit-map or mounted-ledger provenance; the mapper trims one
+terminal line ending and never falls back to whole-surface serialization for a
+stale, noneditable, mixed or spacer selection. Windowed native Delete/Backspace
+uses the same authenticated source range, synchronizes the original canonical
+selection before one history-isolated marker-only change, preserves line endings,
+and restores the blank-gap caret through the accepted Preview. Non-cancelable,
+stale, read-only, mixed and spacer paths fail without a source write. The local
+browser acceptance covers the native Windowed source deletion and accepted
+Undo/Redo Preview flow; exact DOM selection restoration remains covered by the
+focused Windowed and CodeMirror tests.
+
+Formal Preview may also return a versioned, line-coordinate `codeMap` from the
+same CommonMark Document. It describes fenced and indented code leaves, not a
+second renderer or canonical document. Code characters come only from the
+parser's literal; validated original-source provenance restores CRLF, CR, LF
+and unterminated final lines without reconstructing container indentation in
+the browser. Changed or ambiguous source provenance makes that entry explicitly
+unavailable. More than 50,000 entries or 4 MiB of body content makes the map
+unavailable without discarding rendered HTML. The browser adapter validates the
+map and binds it to the actual request signature; missing metadata is not
+permission to infer code content from HTML or a client parser.
+
+The independent optional `codeProjection` v1 sidecar captures reversible
+physical-row provenance from that same CommonMark parse. UTF-16 offsets separate
+container prefixes, parser-consumed whitespace and partial-tab virtual spaces;
+each available leaf must match its `codeMap` kind and line range. Ambiguous or
+non-whitespace parser consumption disables projection only, preserving HTML
+and code-copy output. The contract bounds entries and rows to 50,000, fenced
+info to 1,024 UTF-8 bytes, and compact serialized metadata to 4 MiB. The adapter
+validates these limits before allocation and binds metadata to the request.
+
+Smart indentation uses locked official CodeMirror language packages in a
+detached EditorState, not a second EditorView or article store. Capability and
+execution share the same language resolver; unavailable language services retain
+disabled actions. Full parse readiness must belong to that state before the
+indentation service runs. Literal payloads, blank rows and original line endings
+remain protected; approved error-recovery indentation may repair invalid code.
+The encoder changes only proven leading whitespace, preserves untouched raw
+rows, and maps selection through individual row edits before compacting them.
+Before a non-noop canonical mutation, the Root submits one detached candidate
+Preview for the complete containing owner using the registered neutral profile.
+The new request signature, exact semantic body, leaf/owner ranges, kind, info
+and fence offset must certify the candidate before one document edit. The query
+never replaces live Preview; failure, cancellation or stale selection writes
+nothing. A semantic no-op makes no candidate request and adds no history event.
+
+Source link addresses are resolved from a unique prepared link candidate through
+the same protected PHP Preview Port. The query prefixes the complete candidate
+to the unchanged source so reference definitions remain authoritative, uses the
+registered neutral default profile, and is capped at 1 MiB UTF-8. Its output is
+detached from live Preview and bound to the canonical source, revision and
+selection; closing the menu cancels preparation, while a captured ready href
+remains valid only for the unchanged action snapshot. Production supplies the
+block-index and inert DOM-parser Ports required by this feature. An optional
+Root without either does not guess link addresses or reject ordinary text
+commands; a configured owner's failure follows the existing visible error path.
+Visual link actions continue to use the accepted sanitized anchor owner.
+
+Clipboard demand starts in the original menu activation. Initial placement
+waits for the captured target's final structural inventory through the existing
+index/Preview readiness owners; pending, ready and unavailable are explicit.
+The full model mounts and clamps once, while later image loading only updates
+capabilities. Source/revision/selection/surface changes or cancellation discard
+pending demand rather than mounting a stale menu. This does not add a parser,
+document store, reserved blank panel or post-mount repositioning.
+
+Column and whole-table alignment minimally edit GFM separator cells. A bare
+`---` is a null alignment, not explicit left. Independent row alignment uses
+one adjacent single-line reserved comment, for example
+`<!-- easymde-table-align:v1 [[1,"left"],[1,0,"center"]] -->`.
+Rows include the header but exclude the separator; indices are zero-based.
+Pairs set row alignment; triples set cell exceptions to that row. Sorted unique
+tuples allow only left/center/right, at most 1000 entries and 4096 marker characters.
+An exception requires its row anchor and a different value; a base-equal anchor
+remains meaningful when it owns an exception. Row actions clear that row's
+exceptions, column actions preserve non-target exceptions, and whole-table
+actions remove the marker. Insert/delete shifts affected indices.
+
+`TableAlignmentAnnotation` and the TypeScript annotation rules share fixtures.
+The existing parser block index establishes comment ownership before validation;
+foreign tables/code do not supply a prefix, while reserved comments separated
+only by extra blank lines are orphan errors regardless of gap length. Malformed,
+multiline, orphan and unsupported markers fail explicitly. PHP applies validated
+alignment through TableCell attributes and controlled inline text-align; raw HTML
+remains disabled. Source actions preserve unrelated table bytes, and accepted
+visual provenance retains the original prefix and column base.
+
+Local generated-content export uses a revisioned accepted-Preview lease and
+the existing visual rasterization Port, independently of WeChat serialization
+and image uploading. PNG Clipboard writes are initiated by the explicit user
+action; formula MathML comes from the accepted KaTeX output. Download requests
+use the browser Download Port and do not claim that the user saved the file.
+Ordinary image copying has a separate pixel Port: it reads the certified,
+already loaded same-origin image without fetching, reloading, changing image
+attributes, or uploading. Source range, ordinal, accepted revision, node order,
+and complete image fingerprint must remain current until output publication.
 
 Immersive visual Preview editing synchronizes the editable surface back to the
 canonical Markdown document. Completed block and inline Markdown shortcuts are
@@ -369,6 +511,15 @@ an accepted source state for formal Preview rematerialization. Ordinary exact
 text input does not serialize the whole DOM or reuse stale accepted HTML to
 manufacture a snapshot. Exact snapshots restore code DOM and caret after
 browser-created formatting or a scripted terminal newline is normalized.
+For an exact canonical deletion in the Full visual owner, a replacement
+certificate may retain the verified native Range's Text-node path and offsets.
+It never searches for matching text. Removing an empty loose-list paragraph
+certifies its surviving list item, rather than manufacturing a paragraph or
+line break that the formal renderer does not emit. Acceptance checks the actual
+canonical revision, history and selection, source range, serialized fragment
+and mapped caret before restoring native selection. Nonempty Markdown
+insertions and other structural changes use the existing canonical mapper from
+the outset; serialization failures are not converted into fallback success.
 When pending visual input leaves a list or blockquote body empty,
 `commitPendingVisualIntent` has already materialized that body and updated the
 accepted HTML, source map, and visual baseline. The current history slot records
@@ -577,7 +728,11 @@ immersive heading menu keeps its existing Paragraph-command exclusion and
 presentation. The Registry keeps the native Typora defaults even when a browser
 reserves a combination before page dispatch; the settings owner lets users
 record a browser-deliverable replacement without creating a second default
-table.
+table. The browser shortcut adapter receives the registry defaults as
+provenance: a changed or cleared Settings binding consumes the displaced
+default key inside the editor, including repeated keydown events, without
+dispatching a command, while the configured binding remains the only command
+owner. Composition and non-editor targets keep their existing browser behavior.
 
 The Preview session debounces Reads, aborts superseded requests, rejects stale
 revisions and Markdown signatures, and renders branded server-sanitized HTML
@@ -746,6 +901,18 @@ The Mac-style source-code frame is fixed rendering behavior, not document state.
 ## Rendering
 
 `EasyMDE\Content\MarkdownRenderer` is the only production Markdown renderer and requires `league/commonmark`.
+
+Markdown image scale is represented by the reserved title suffix
+`{width=25%}`, `{width=33%}`, `{width=50%}`, `{width=67%}`, `{width=100%}`,
+`{width=150%}`, or `{width=200%}`. The marker is parsed and restored by the
+formal PHP renderer and serialized by the shared visual/source contract; the
+original alt text, destination, and non-marker title remain part of the same
+image syntax. Unsupported, repeated, or malformed markers fail explicitly.
+The renderer emits `data-easymde-image-scale` only for those validated values.
+Shared `frontend/base.css`, loaded in both editor and public output, applies
+the exact percentage and removes responsive theme caps only for those images.
+Unmarked images retain the theme's responsive sizing. Percentage sizing is
+relative to the containing content box; theme image borders remain decoration.
 
 Rendering behavior:
 

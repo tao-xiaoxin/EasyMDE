@@ -57,6 +57,7 @@ type SafePreviewHtmlSinkProps = Readonly<{
   onKeyDown?: KeyboardEventHandler<HTMLElement>;
   onPaste?: ClipboardEventHandler<HTMLElement>;
   onStagedCommit?: (revision: number) => void;
+  phase?: string;
   materializeCommit?: SafePreviewHtmlSinkMaterializeCommit | null;
   materializeScheduler?: SafePreviewHtmlSinkScheduler;
   refreshing?: boolean;
@@ -285,6 +286,42 @@ function startWindowChildrenCommit(
   validateWindowChildren(surface, desiredNodes);
   if (!hasExactChildren(surface, desiredNodes)) {
     const selection = surface.ownerDocument.defaultView?.getSelection();
+		const directRootSelection = (() => {
+			if (
+				!selection
+				|| selection.isCollapsed
+				|| !surface.isConnected
+				|| surface.ownerDocument.activeElement !== surface
+				|| selection.anchorNode !== surface
+				|| selection.focusNode !== surface
+			) {
+				return null;
+			}
+			const childCount = surface.childNodes.length;
+			const boundaries = [
+				selection.anchorOffset,
+				selection.focusOffset,
+			];
+			if (
+				boundaries.some(
+					(offset) =>
+						!Number.isInteger(offset) || offset < 0 || offset > childCount,
+				)
+			) {
+				throw new Error('preview-window-selection-restore-failed');
+			}
+			return {
+				anchor: {
+					node: surface.childNodes[selection.anchorOffset] ?? null,
+					offset: selection.anchorOffset,
+				},
+				focus: {
+					node: surface.childNodes[selection.focusOffset] ?? null,
+					offset: selection.focusOffset,
+				},
+				childCount,
+			};
+		})();
     const fullRootSelection = (() => {
       if (
         !selection
@@ -357,6 +394,33 @@ function startWindowChildrenCommit(
         'forward' === fullRootSelection ? newChildCount : 0
       );
     }
+		if (directRootSelection && selection && !fullRootSelection) {
+			const boundaryOffset = (boundary: {
+				node: Node | null;
+				offset: number;
+			}): number => {
+				if (!boundary.node) {
+					if (boundary.offset !== directRootSelection.childCount) {
+						throw new Error('preview-window-selection-restore-failed');
+					}
+					return surface.childNodes.length;
+				}
+				const offset = Array.prototype.indexOf.call(
+					surface.childNodes,
+					boundary.node,
+				);
+				if (offset < 0) {
+					throw new Error('preview-window-selection-restore-failed');
+				}
+				return offset;
+			};
+			selection.setBaseAndExtent(
+				surface,
+				boundaryOffset(directRootSelection.anchor),
+				surface,
+				boundaryOffset(directRootSelection.focus),
+			);
+		}
     if (rootBoundary && selection) {
       const range = surface.ownerDocument.createRange();
       range.setStart(
@@ -390,6 +454,7 @@ export function SafePreviewHtmlSink({
   onKeyDown,
   onPaste,
   onStagedCommit,
+  phase,
   refreshing = false,
   role,
   spellCheck,
@@ -628,6 +693,7 @@ export function SafePreviewHtmlSink({
       contentEditable={contentEditable}
       data-easymde-preview-error={error ? '1' : undefined}
       data-easymde-preview-html-sink="1"
+      data-easymde-preview-phase={phase}
       data-easymde-preview-refreshing={refreshing ? '1' : undefined}
       onDrop={onDrop}
       onInput={onInput}

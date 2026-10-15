@@ -31,6 +31,28 @@ import { movePointerNeutral } from "./copy-driver.mjs";
 import { readRect } from "./editor-session.mjs";
 import { waitForPendingMeasurement } from "./copy-driver.mjs";
 
+async function expectStaticCopyGlyph(button, initialMarkup) {
+  const glyph = button.locator('svg');
+  await expect(glyph).toHaveCount(1);
+  await expect(glyph).toBeVisible();
+  await expect(glyph).toHaveCSS('opacity', '1');
+  await expect(glyph.locator('..')).toHaveCSS('opacity', '1');
+  await expect(button).toHaveCSS('opacity', '1');
+  expect(await glyph.evaluate((element) => element.outerHTML)).toBe(initialMarkup);
+  await expect(button.locator('[role="progressbar"], .spinner')).toHaveCount(0);
+  const animatedPaint = await button.evaluate((control) => (
+    [control, ...control.querySelectorAll('*')].flatMap((element) => (
+      [null, '::before', '::after'].flatMap((pseudo) => {
+        const animation = getComputedStyle(element, pseudo).animationName;
+        return animation.split(',').some((name) => name.trim() !== 'none')
+          ? [`${element.tagName}:${pseudo ?? 'element'}:${animation}`]
+          : [];
+      })
+    ))
+  ));
+  expect(animatedPaint, 'copy control keeps its static glyph without a spinner').toEqual([]);
+}
+
 export async function runCopyFeedbackScenario1({ baseURL, context, login, page, test, testInfo }) {
 
     test.setTimeout(3 * 60_000);
@@ -222,6 +244,7 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await expect(editorStatus).toHaveCount(0);
     await movePointerNeutral(page);
     const initialRect = await readRect(copyButton);
+    const initialGlyph = await copyButton.locator('svg').evaluate((element) => element.outerHTML);
     await setupZeroWriteProbe(page);
 
     const postRequests = [];
@@ -259,7 +282,7 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await expect(copyButton).toHaveAttribute('aria-busy', 'true');
     await expect(copyButton).toHaveAttribute('aria-disabled', 'true');
     await expect(copyButton).toHaveJSProperty('disabled', false);
-    await expect(copyButton).toHaveClass(/\bis-pending\b/u);
+    await expectStaticCopyGlyph(copyButton, initialGlyph);
     expectRectStable(initialRect, await readRect(copyButton), 'pending copy button');
 
     await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
@@ -268,6 +291,10 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
       () => globalThis.__easymdeWechatCopyTrace.writes[0]?.nativeState
     )).toBe('fulfilled');
     await movePointerNeutral(page);
+    await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
+    await expect(copyButton).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(copyButton).not.toBeDisabled();
+    await expectStaticCopyGlyph(copyButton, initialGlyph);
     expectRectStable(initialRect, await readRect(copyButton), 'successful copy button');
     const successZeroWrite = await readZeroWriteProbe(page);
     expect(successZeroWrite).toMatchObject({
@@ -299,6 +326,8 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await expect(copyButton).toHaveAttribute('aria-busy', 'true');
     await expect(copyButton).toHaveAttribute('aria-disabled', 'true');
     await expect(copyButton).toHaveJSProperty('disabled', false);
+    await expectStaticCopyGlyph(copyButton, initialGlyph);
+    expectRectStable(initialRect, await readRect(copyButton), 'keyboard pending copy button');
     await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
     await waitForWechatStatusEvent(page, 'wechat-success');
     await expect.poll(() => page.evaluate((writeIndex) => (
@@ -307,6 +336,8 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await expect(copyButton).toBeFocused();
     await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
     await expect(copyButton).not.toBeDisabled();
+    await expect(copyButton).not.toHaveAttribute('aria-disabled', 'true');
+    await expectStaticCopyGlyph(copyButton, initialGlyph);
     expectRectStable(initialRect, await readRect(copyButton), 'keyboard successful copy button');
     await dismissEditorStatus(page);
 
@@ -325,6 +356,8 @@ export async function runCopyFeedbackScenario2({ baseURL, context, login, page, 
     await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
     await expect(copyButton).not.toBeDisabled();
     await movePointerNeutral(page);
+    await expect(copyButton).not.toHaveAttribute('aria-disabled', 'true');
+    await expectStaticCopyGlyph(copyButton, initialGlyph);
     expectRectStable(initialRect, await readRect(copyButton), 'failed copy button');
     const failureZeroWrite = await readZeroWriteProbe(page);
     expect(failureZeroWrite).toMatchObject({
@@ -394,6 +427,7 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
 
     await movePointerNeutral(page);
     const ordinaryRect = await readRect(copyButton);
+    const ordinaryGlyph = await copyButton.locator('svg').evaluate((element) => element.outerHTML);
     await setupZeroWriteProbe(page);
     const postRequests = [];
     page.on('request', (request) => {
@@ -427,6 +461,10 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
       hasScript: false,
       hasTable: true
     });
+    await expect(copyButton).not.toHaveAttribute('aria-busy', 'true');
+    await expect(copyButton).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(copyButton).not.toBeDisabled();
+    await expectStaticCopyGlyph(copyButton, ordinaryGlyph);
     expectRectStable(ordinaryRect, await readRect(copyButton), 'warm ordinary copy button');
     const ordinaryZeroWrite = await readZeroWriteProbe(page);
     expect(ordinaryZeroWrite).toMatchObject({
@@ -446,12 +484,11 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
     );
     await page.locator('.easymde-toolbar-immersive-toggle').click();
     await expect(page.getByRole('region', { name: immersiveLabels.immersive })).toBeVisible();
-    const immersiveButton = page.getByRole('button', {
-      exact: true,
-      name: immersiveLabels.wechat
-    });
+    const immersiveButton = page.locator('.easymde-immersive-wechat');
+    await expect(immersiveButton).toHaveAccessibleName(immersiveLabels.wechat);
     await movePointerNeutral(page);
     const immersiveRect = await readRect(immersiveButton);
+    const immersiveGlyph = await immersiveButton.locator('svg').evaluate((element) => element.outerHTML);
     const sourceBeforeImmersiveCopy = await page.locator('#easymde-source').inputValue();
     const immersiveRequestStart = postRequests.length;
     await focusPageForCopy(page);
@@ -472,7 +509,7 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
     await expect(immersiveButton).toHaveAttribute('aria-busy', 'true');
     await expect(immersiveButton).toHaveAttribute('aria-disabled', 'true');
     await expect(immersiveButton).toHaveJSProperty('disabled', false);
-    await expect(immersiveButton).toHaveClass(/\bis-pending\b/u);
+    await expectStaticCopyGlyph(immersiveButton, immersiveGlyph);
     expectRectStable(immersiveRect, await readRect(immersiveButton), 'pending immersive copy button');
     await page.evaluate(() => globalThis.__easymdeWechatCopyTrace.releaseCopy());
     await expect(page.getByRole('button', {
@@ -486,6 +523,9 @@ export async function runCopyFeedbackScenario3({ baseURL, context, login, page, 
     await expect(immersiveButton).toBeFocused();
     await expect(immersiveButton).not.toBeDisabled();
     await movePointerNeutral(page);
+    await expect(immersiveButton).not.toHaveAttribute('aria-busy', 'true');
+    await expect(immersiveButton).not.toHaveAttribute('aria-disabled', 'true');
+    await expectStaticCopyGlyph(immersiveButton, immersiveGlyph);
     expectRectStable(immersiveRect, await readRect(immersiveButton), 'warm immersive copy button');
     expect(await page.locator('#easymde-source').inputValue()).toBe(sourceBeforeImmersiveCopy);
     expect(postRequests.slice(immersiveRequestStart).filter(

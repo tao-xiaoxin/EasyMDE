@@ -46,6 +46,8 @@ export type WechatClipboardResult =
 export type WechatClipboardPreparationOptions = Readonly<{
   /** Background Preview notifications may be coalesced while a payload is preparing. */
   background?: boolean;
+  /** Prepare only hidden-Preview geometry; do not serialize or upload a payload. */
+  geometryOnly?: boolean;
   /** Cancels this background demand without canceling shared asset-cache work. */
   signal?: AbortSignal;
 }>;

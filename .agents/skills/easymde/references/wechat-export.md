@@ -69,7 +69,10 @@ focusable and expose `aria-disabled="true"` without `aria-busy`.
 ## Activation and preparation
 
 Stable Preview notifications schedule one debounced background preparation for
-the active sink after Preview settles. The environment observes image/video
+the active sink after Preview settles. PNG-enabled preparation is
+geometry-only for hidden Preview surfaces; the default path prepares the
+portable payload. Neither mode rasterizes or uploads in the background. The
+environment observes image/video
 load, error, metadata, resize, FontFaceSet completion/failure,
 ResizeObserver geometry, and inserted/removed descendants; removed nodes are
 unobserved immediately. Sink changes and Root teardown remove all observers
@@ -203,17 +206,25 @@ transfer schema 10 requires the field, while schemas 1 through 9 import it as
 
 When disabled, Copy follows the existing portable-HTML path unchanged. When
 enabled, conversion runs only during an explicit ordinary or immersive Copy
-from the current stable Preview. Background preparation performs no
-rasterization or upload. With PNG conversion enabled, EditorRoot skips unused
-portable background preparation, its resize/layout subscriptions, and its
-queued timer; explicit Copy still obtains a fresh payload for the current
-source. The only candidates are the outermost rendered
+from the current stable Preview. The only candidates are the outermost rendered
 `.easymde-mermaid` root containing SVG and outermost rendered
 `.easymde-math`, `.easymde-math-block`, or `.easymde-math-inline` root
 containing KaTeX. Nested candidate descendants are part of their outer root and
 are not converted or uploaded separately. Ordinary tables, existing `<img>`,
 ordinary SVG, code, other media, and unknown content remain on the existing
 portable-HTML path.
+When PNG conversion is enabled, background preparation skips portable
+serialization, PNG rasterization, and image upload. It may still prewarm a
+hidden Preview geometry-only lease through the existing resize/layout schedule.
+That lease is keyed by the current source markup and measured width; source,
+theme, width, Preview disposal, abort, and owner teardown invalidate it. An
+explicit Copy may transfer one matching pending lease to its transaction, and
+all success, failure, cancellation, stale-result, and teardown paths clean it;
+no hidden measurement DOM persists across Copy operations. If no matching
+lease is ready, Copy creates a transaction-local lease and cleans it in the
+same paths. Geometry-only preparation never creates a portable payload or
+uploads an asset.
+
 Rasterization must share the existing 8ms serialization task budget through
 its optional typed Port callback, not create another scheduler. Checkpoints
 follow complete geometry-host cleanup, SVG serialization, and image-URI
@@ -252,9 +263,13 @@ If pending portable background preparation started against a visible live
 Preview that is now hidden, foreground Copy cancels that exact old producer
 and acquires the current measurement lease without waiting for obsolete shared
 resource or transition promises. The old signal still prevents late geometry
-reads and cache publication. Pending preparation that already owns a hidden
-measurement lease remains reusable; Copy must not create a second lease.
-Geometry failures are not cancellation or retry substitutes.
+reads and cache publication. Repeated background demands share one pending
+hidden measurement lease. An explicit Copy transfers one matching lease to its
+transaction and cleans it on success, failure, abort, stale result, timeout,
+or teardown; it does not leave a cached measurement DOM for a later Copy.
+After terminal cleanup, the existing background owner may schedule a new
+geometry-only lease for the next Copy. Geometry failures are not cancellation
+or retry substitutes.
 The lease retains the Preview presentation marker and class context, paper
 geometry, canvas media-query presentation, and full Preview wrapping. Temporary
 geometry and raw semantic trees exclude runtime sink, acceptance, refresh,

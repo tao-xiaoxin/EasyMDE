@@ -731,10 +731,12 @@ the existing WordPress Media Library owner. Ordinary tables, existing images,
 ordinary SVG, code, other media, and unknown content retain portable HTML.
 Background preparation for ordinary Preview remains compatibility-only and
 never runs from visual editing; explicit Copy prepares the current stable
-surface on demand. With PNG conversion enabled, EditorRoot skips unused
-portable background preparation, resize/layout subscriptions, and its queued
-timer; explicit Copy still serializes a fresh payload for the current source;
-disabled/default behavior remains unchanged.
+surface on demand. With PNG conversion enabled, EditorRoot schedules only a
+hidden-Preview geometry-only lease through the existing resize/layout owner;
+it skips portable serialization, rasterization, and upload. An explicit Copy
+transfers one matching pending lease and cleans it on every terminal path, so
+measurement DOM never persists across Copy operations. Disabled/default
+behavior remains unchanged.
 The shared Mermaid runtime gives Gantt diagrams a deterministic 1200px logical
 layout width while retaining responsive `useMaxWidth` display. This prevents a
 narrow Preview host from changing task and date geometry. PNG Copy may recover

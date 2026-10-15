@@ -1,101 +1,84 @@
-import type {
-  ImageUploadPort,
-} from '../../../contracts/ports/image-upload-port';
+import type { ImageUploadPort } from '../../../contracts/ports/image-upload-port';
 
 import type {
   WechatClipboardCopyOptions,
   WechatClipboardPort,
   WechatClipboardPreparationOptions,
-  WechatClipboardResult,
+  WechatClipboardResult
 } from '../../../contracts/ports/wechat-clipboard-port';
 
-import type {
-  WechatVisualRasterizationPort,
-} from '../../../contracts/ports/wechat-visual-rasterization-port';
+import type { WechatVisualRasterizationPort } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
-import type {
-  BackgroundAssetCache,
-} from './wechat-background-images';
-
+import type { BackgroundAssetCache } from './wechat-background-images';
+import { mermaidCaptureSnapshotIsCurrent, mermaidResponsiveSnapshotIsCurrent } from './wechat-capture-plan';
 import {
-  createPreviewMeasurementLease,
-  createPreviewTransitionLease,
-  rememberPreviewWidthValue,
-  type WechatPreviewTransitionLease,
-} from './wechat-preview-measurement';
-
-
-import {
-  createTaskCheckboxGeometryLease,
-  type TaskCheckboxGeometryLease,
-} from './wechat-task-geometry';
-import {
-  serializeClipboardPayload,
-  serializeClipboardPayloadSynchronously,
-  type SerializedClipboardPayload,
-} from './wechat-portable-serialization';
-
-import {
-  createDimensionSemanticsContext,
-  type WechatDimensionSemanticsContext,
-} from './wechat-dimension-semantics';
-
-import {
-  beginWechatTiming,
-  runWechatSyncTiming,
-} from './wechat-timing';
-
-import {
-  WECHAT_COPY_TIMING_NAMES,
-  createSerializationYield,
-  waitForBrowserTask,
-  withTimeout,
   type BrowserWechatClipboardRuntime,
+  createSerializationYield,
+  WECHAT_COPY_TIMING_NAMES,
+  waitForBrowserTask,
+  withTimeout
 } from './wechat-clipboard-runtime';
-
+import { createDimensionSemanticsContext, type WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
 import {
-  WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS,
-  WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
-  WechatPngConversionError,
+  preparedDimensionGeometrySignatureWithYield,
+  preparedDimensionSemanticsSignature,
+  preparedLayoutSignature
+} from './wechat-fidelity-signature';
+import { mermaidSourceUsesAutoBlockMargins } from './wechat-mermaid-geometry';
+import {
   assertPngConversionCurrent,
   logPngFailureDiagnostic,
   pngScale,
+  WECHAT_CLIPBOARD_TRANSACTION_TIMEOUT_MS,
+  WECHAT_PNG_TRANSACTION_TIMEOUT_MS,
   type WechatPngConversionContext,
-  type WechatPngConversionState,
+  WechatPngConversionError,
+  type WechatPngConversionState
 } from './wechat-png-conversion-policy';
-
 import {
-  assertCopyPreviewCurrent,
-  assertPortableCopyCurrent,
-  clipboardSourceMarkup,
-  createClipboardSourceFreshnessGuard,
-  previewReady,
-  type ClipboardSourceFreshnessGuard,
-  type ClipboardSourceFreshnessState,
-  type WechatClipboardCopyGuard,
-} from './wechat-source-freshness';
+  type SerializedClipboardPayload,
+  serializeClipboardPayload,
+  serializeClipboardPayloadSynchronously
+} from './wechat-portable-serialization';
 import {
   type BackgroundPreparationCache,
+  coalescedBackgroundPreparation,
   type PreparedClipboardPayload,
   type PreparedClipboardPayloadCache,
-  coalescedBackgroundPreparation,
   preparedClipboardPayload,
   preparedClipboardPayloadAfterWrite,
   reusablePreparedClipboardPayload
 } from './wechat-prepared-payload';
 import {
-  preparedDimensionGeometrySignatureWithYield,
-  preparedDimensionSemanticsSignature,
-  preparedLayoutSignature,
-} from './wechat-fidelity-signature';
+  createPreviewMeasurementLease,
+  createPreviewTransitionLease,
+  rememberPreviewWidthValue,
+  type WechatPreviewTransitionLease
+} from './wechat-preview-measurement';
 import {
-  mermaidCaptureSnapshotIsCurrent,
-  mermaidResponsiveSnapshotIsCurrent,
-} from './wechat-capture-plan';
+  cachedPreviewGeometryMeasurement,
+  preparePreviewGeometryOnly,
+  previewMeasurementLeaseSourceMatches,
+  waitForPreviewMeasurement,
+  type PreviewGeometryMeasurementCache
+} from './wechat-preview-geometry-cache';
 import {
-  mermaidSourceUsesAutoBlockMargins,
-} from './wechat-mermaid-geometry';
+  assertCopyPreviewCurrent,
+  assertPortableCopyCurrent,
+  type ClipboardSourceFreshnessGuard,
+  type ClipboardSourceFreshnessState,
+  clipboardSourceMarkup,
+  createClipboardSourceFreshnessGuard,
+  previewReady,
+  type WechatClipboardCopyGuard
+} from './wechat-source-freshness';
+import { createTaskCheckboxGeometryLease, type TaskCheckboxGeometryLease } from './wechat-task-geometry';
+import { beginWechatTiming, runWechatSyncTiming } from './wechat-timing';
 
+export type {
+  BrowserWechatClipboardRuntime,
+  ClipboardItemConstructor
+} from './wechat-clipboard-runtime';
 export {
   MAX_WECHAT_PNG_DIMENSION,
   MAX_WECHAT_PNG_PIXELS,
@@ -107,7 +90,6 @@ export {
   WECHAT_PNG_RASTERIZATION_TIMEOUT_MS,
   WECHAT_PNG_TRANSACTION_TIMEOUT_MS
 } from './wechat-png-conversion-policy';
-export type { BrowserWechatClipboardRuntime, ClipboardItemConstructor } from './wechat-clipboard-runtime';
 
 export const CLIPBOARD_COMMIT_TIMEOUT_MS = 10_000;
 
@@ -131,9 +113,7 @@ type ModernCopyTransaction = Readonly<{
 
 function legacyCopy(html: string, text: string, runtime: BrowserWechatClipboardRuntime): boolean {
   const selection = runtime.getSelection();
-  const ranges = selection
-    ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index))
-    : [];
+  const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)) : [];
   const activeElement = runtime.document.activeElement as HTMLElement | null;
   const container = runtime.document.createElement('div');
   const range = runtime.document.createRange();
@@ -169,8 +149,7 @@ function legacyCopy(html: string, text: string, runtime: BrowserWechatClipboardR
       selection.addRange(range);
     }
     try {
-      const commandSucceeded =
-        'function' === typeof runtime.document.execCommand && runtime.document.execCommand('copy');
+      const commandSucceeded = 'function' === typeof runtime.document.execCommand && runtime.document.execCommand('copy');
       return Boolean(commandSucceeded && 'complete' === getClipboardSubmission());
     } catch {
       return false;
@@ -193,6 +172,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
   const backgroundAssetCache: BackgroundAssetCache = new Map();
   const preparedPayloads: PreparedClipboardPayloadCache = new WeakMap();
   const backgroundPreparations: BackgroundPreparationCache = new WeakMap();
+  const geometryMeasurements: PreviewGeometryMeasurementCache = new WeakMap();
   let preparationSequence = 0;
   const nextPreparationSequence = (): number => {
     preparationSequence += 1;
@@ -205,6 +185,10 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
     },
     async prepare(preview: HTMLElement, options: WechatClipboardPreparationOptions = {}): Promise<void> {
       if (!previewReady(preview)) return;
+      if (options.geometryOnly) {
+        await preparePreviewGeometryOnly(preview, runtime, geometryMeasurements, options.signal);
+        return;
+      }
       if (options.background) {
         await coalescedBackgroundPreparation(
           preview,
@@ -232,14 +216,21 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
       }
 
       const pngConversionEnabled = true === options.pngConversionEnabled;
-      const copyGuard: WechatClipboardCopyGuard = { isCurrent: options.isCurrent, signal: options.signal };
+      const copyGuard: WechatClipboardCopyGuard = {
+        isCurrent: options.isCurrent,
+        signal: options.signal
+      };
       const copyWasCancelled = (): boolean =>
         Boolean(options.signal?.aborted) || Boolean(options.isCurrent && !options.isCurrent());
       const requiresPreviewResolution = Boolean(
         options.resolvePreview && preview.querySelector('[data-easymde-preview-window-spacer]')
       );
       if (pngConversionEnabled && (!runtime.write || !runtime.clipboardItem)) {
-        return { code: 'wechat-png-clipboard-failed', sideEffects: 'none', status: 'failed' };
+        return {
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
       }
       if (
         pngConversionEnabled &&
@@ -250,15 +241,30 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           !Number.isSafeInteger(options.maxBytes) ||
           (options.maxBytes as number) < 1)
       ) {
-        return { code: 'wechat-png-rasterization-failed', sideEffects: 'none', status: 'failed' };
+        return {
+          code: 'wechat-png-rasterization-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
       }
       if (copyWasCancelled()) {
         return pngConversionEnabled
-          ? { code: 'wechat-png-rasterization-cancelled', sideEffects: 'none', status: 'failed' }
+          ? {
+              code: 'wechat-png-rasterization-cancelled',
+              sideEffects: 'none',
+              status: 'failed'
+            }
           : { code: 'wechat-copy-failed', status: 'failed' };
       }
 
       if (runtime.write && runtime.clipboardItem) {
+        // Claim a matching hidden geometry lease synchronously with the user
+        // activation.  Theme/mode layout work may make the Preview visible
+        // before the async resolver runs; once claimed, the foreground copy
+        // owns the lease and background preparation cannot abort its host.
+        let foregroundGeometryMeasurement = pngConversionEnabled
+          ? cachedPreviewGeometryMeasurement(preview, runtime, geometryMeasurements)
+          : null;
         const readyPreview = requiresPreviewResolution
           ? Promise.resolve()
               .then(() => options.resolvePreview?.())
@@ -280,7 +286,9 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
         let cleanupTransaction!: () => void;
 
         if (pngConversionEnabled) {
-          const conversionState: WechatPngConversionState = { uploadsMayRemain: false };
+          const conversionState: WechatPngConversionState = {
+            uploadsMayRemain: false
+          };
           const conversionController = new AbortController();
           const propagateConversionAbort = () => conversionController.abort();
           if (options.signal) {
@@ -294,9 +302,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
             options.signal?.removeEventListener('abort', propagateConversionAbort);
           };
           const conversionSignal = conversionController.signal;
-          const conversionRasterizationPort = options.visualRasterizationPort as
-            | WechatVisualRasterizationPort
-            | undefined;
+          const conversionRasterizationPort = options.visualRasterizationPort as WechatVisualRasterizationPort | undefined;
           const conversionImageUploadPort = options.imageUploadPort as ImageUploadPort | undefined;
           let disposeConversionFreshness: (() => void) | undefined;
           let disposeGeometryMeasurement: (() => void) | undefined;
@@ -314,7 +320,11 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
             if (null !== error) throw error;
           };
           finalizeTransaction = () => assertCopyPreviewCurrent(payloadPreview, copyGuard);
-          synchronousModernFailure = () => ({ code: 'wechat-png-clipboard-failed', sideEffects: 'none', status: 'failed' });
+          synchronousModernFailure = () => ({
+            code: 'wechat-png-clipboard-failed',
+            sideEffects: 'none',
+            status: 'failed'
+          });
           transactionFailure = (error: unknown) => {
             conversionController.abort();
             if (error instanceof WechatPngConversionError) logPngFailureDiagnostic(error);
@@ -333,200 +343,226 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           };
           cleanupTransaction = () => {
             conversionController.abort();
+            foregroundGeometryMeasurement?.cleanup();
+            foregroundGeometryMeasurement = null;
             disposeConversionFreshness?.();
             disposeGeometryMeasurement?.();
             disposeTaskGeometryLease?.();
             disposeTransitionReadiness?.();
             detachConversionAbort();
           };
-        payload = new Promise<SerializedClipboardPayload>((resolve, reject) => {
-              startTransaction = () => {
-                void readyPreview
-                  .then((resolvedPreview) => {
-                    if (
-                      conversionSignal.aborted ||
-                      (options.isCurrent && !options.isCurrent())
-                    ) {
-                      throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                    }
-                    payloadPreview = resolvedPreview;
-                    rememberPreviewWidthValue(resolvedPreview);
-                    const sourceFreshness = createClipboardSourceFreshnessGuard(resolvedPreview);
-                    disposeConversionFreshness = sourceFreshness.dispose;
-                    const geometryMeasurement = createPreviewMeasurementLease(
-                      resolvedPreview,
-                      runtime,
-                      conversionSignal
-                    );
-                    disposeGeometryMeasurement = () => geometryMeasurement?.cleanup();
-                    const taskGeometryLease = createTaskCheckboxGeometryLease(
-                      resolvedPreview,
-                      runtime,
-                      conversionSignal,
-                      geometryMeasurement
-                    );
-                    disposeTaskGeometryLease = () => taskGeometryLease?.cleanup();
-                    const transitionReadiness = geometryMeasurement
-                      ? null
-                      : createPreviewTransitionLease([resolvedPreview], conversionSignal);
-                    disposeTransitionReadiness = () => transitionReadiness?.cleanup();
-                    const serializationPreview = geometryMeasurement?.root ?? resolvedPreview;
-                    return Promise.all([
-                      geometryMeasurement?.ready ?? Promise.resolve(),
-                      transitionReadiness?.ready ?? Promise.resolve(),
-                      taskGeometryLease?.ready ?? Promise.resolve()
-                    ])
-                      .then(() => {
-                        const conversionContext: WechatPngConversionContext = {
-                          captureBoundary: serializationPreview,
-                          isCurrent: () => (!options.isCurrent || options.isCurrent()) && sourceFreshness.isCurrent(),
-                          imageUploadPort: conversionImageUploadPort as ImageUploadPort,
-                          maxBytes: options.maxBytes as number,
-                          mermaidSnapshots: new Map(),
-                          postId: options.postId as number,
-                          rasterizationPort: conversionRasterizationPort as WechatVisualRasterizationPort,
-                          scale: pngScale(resolvedPreview),
-                          signal: conversionSignal,
-                          state: conversionState
-                        };
-                        return waitForBrowserTask(runtime)
-                          .then(async () => {
-                            assertPngConversionCurrent(conversionContext);
-                            const yieldToBrowser = createSerializationYield(runtime, true, conversionSignal);
-                            if (!yieldToBrowser) throw new Error('wechat-copy-yield-unavailable');
-                            const dimensionSemantics = createDimensionSemanticsContext(
+          payload = new Promise<SerializedClipboardPayload>((resolve, reject) => {
+            startTransaction = () => {
+              void readyPreview
+                .then((resolvedPreview) => {
+                  if (conversionSignal.aborted || (options.isCurrent && !options.isCurrent())) {
+                    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                  }
+                  payloadPreview = resolvedPreview;
+                  rememberPreviewWidthValue(resolvedPreview);
+                  const sourceFreshness = createClipboardSourceFreshnessGuard(resolvedPreview);
+                  disposeConversionFreshness = sourceFreshness.dispose;
+                  const transferredGeometryMeasurement =
+                    foregroundGeometryMeasurement && foregroundGeometryMeasurement.lease.sourceRoot === resolvedPreview
+                      ? foregroundGeometryMeasurement
+                      : null;
+                  if (
+                    transferredGeometryMeasurement &&
+                    !previewMeasurementLeaseSourceMatches(transferredGeometryMeasurement.lease, resolvedPreview, runtime)
+                  ) {
+                    transferredGeometryMeasurement.cleanup();
+                    foregroundGeometryMeasurement = null;
+                    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                  }
+                  if (foregroundGeometryMeasurement && !transferredGeometryMeasurement) {
+                    foregroundGeometryMeasurement.cleanup();
+                    foregroundGeometryMeasurement = null;
+                  }
+                  const cachedGeometryMeasurement =
+                    transferredGeometryMeasurement ??
+                    cachedPreviewGeometryMeasurement(resolvedPreview, runtime, geometryMeasurements);
+                  foregroundGeometryMeasurement = null;
+                  const geometryMeasurement =
+                    cachedGeometryMeasurement?.lease ??
+                    createPreviewMeasurementLease(resolvedPreview, runtime, conversionSignal);
+                  disposeGeometryMeasurement = () => {
+                    if (cachedGeometryMeasurement) cachedGeometryMeasurement.cleanup();
+                    else geometryMeasurement?.cleanup();
+                  };
+                  const taskGeometryLease = createTaskCheckboxGeometryLease(
+                    resolvedPreview,
+                    runtime,
+                    conversionSignal,
+                    geometryMeasurement
+                  );
+                  disposeTaskGeometryLease = () => taskGeometryLease?.cleanup();
+                  const transitionReadiness = geometryMeasurement
+                    ? null
+                    : createPreviewTransitionLease([resolvedPreview], conversionSignal);
+                  disposeTransitionReadiness = () => transitionReadiness?.cleanup();
+                  const serializationPreview = geometryMeasurement?.root ?? resolvedPreview;
+                  const geometryReadiness = cachedGeometryMeasurement
+                    ? waitForPreviewMeasurement(geometryMeasurement?.ready ?? Promise.resolve(), conversionSignal)
+                    : (geometryMeasurement?.ready ?? Promise.resolve());
+                  return Promise.all([
+                    geometryReadiness,
+                    transitionReadiness?.ready ?? Promise.resolve(),
+                    taskGeometryLease?.ready ?? Promise.resolve()
+                  ])
+                    .then(() => {
+                      const conversionContext: WechatPngConversionContext = {
+                        captureBoundary: serializationPreview,
+                        isCurrent: () => (!options.isCurrent || options.isCurrent()) && sourceFreshness.isCurrent(),
+                        imageUploadPort: conversionImageUploadPort as ImageUploadPort,
+                        maxBytes: options.maxBytes as number,
+                        mermaidSnapshots: new Map(),
+                        postId: options.postId as number,
+                        rasterizationPort: conversionRasterizationPort as WechatVisualRasterizationPort,
+                        scale: pngScale(resolvedPreview),
+                        signal: conversionSignal,
+                        state: conversionState
+                      };
+                      return waitForBrowserTask(runtime)
+                        .then(async () => {
+                          assertPngConversionCurrent(conversionContext);
+                          const yieldToBrowser = createSerializationYield(runtime, true, conversionSignal);
+                          if (!yieldToBrowser) throw new Error('wechat-copy-yield-unavailable');
+                          const dimensionSemantics = createDimensionSemanticsContext(
+                            serializationPreview,
+                            resolvedPreview,
+                            runtime
+                          );
+                          try {
+                            dimensionSemantics.refresh();
+                            const initialSignature = await preparedDimensionGeometrySignatureWithYield(
                               serializationPreview,
-                              resolvedPreview,
-                              runtime
+                              runtime,
+                              yieldToBrowser,
+                              conversionSignal,
+                              dimensionSemantics
                             );
+                            assertPngConversionCurrent(conversionContext);
+                            const serialized = await serializeClipboardPayload(
+                              serializationPreview,
+                              runtime,
+                              backgroundAssetCache,
+                              yieldToBrowser,
+                              conversionContext,
+                              undefined,
+                              resolvedPreview,
+                              dimensionSemantics,
+                              taskGeometryLease
+                            );
+                            assertPngConversionCurrent(conversionContext);
+                            await geometryMeasurement?.wait();
+                            await transitionReadiness?.wait();
+                            await taskGeometryLease?.wait();
+                            runWechatSyncTiming(
+                              serializationPreview.ownerDocument.defaultView?.performance,
+                              WECHAT_COPY_TIMING_NAMES.finalRawContextRefresh,
+                              { mode: 'sync' },
+                              () => dimensionSemantics.refresh()
+                            );
+                            const finalGeometryTiming = beginWechatTiming(
+                              serializationPreview.ownerDocument.defaultView?.performance,
+                              WECHAT_COPY_TIMING_NAMES.finalGeometry,
+                              { mode: 'async' }
+                            );
+                            let finalSignature: string;
                             try {
-                              dimensionSemantics.refresh();
-                              const initialSignature = await preparedDimensionGeometrySignatureWithYield(
+                              finalSignature = await preparedDimensionGeometrySignatureWithYield(
                                 serializationPreview,
                                 runtime,
                                 yieldToBrowser,
                                 conversionSignal,
                                 dimensionSemantics
                               );
-                              assertPngConversionCurrent(conversionContext);
-                              const serialized = await serializeClipboardPayload(
-                                serializationPreview,
-                                runtime,
-                                backgroundAssetCache,
-                                yieldToBrowser,
-                                conversionContext,
-                                undefined,
-                                resolvedPreview,
-                                dimensionSemantics,
-                                taskGeometryLease
-                              );
-                              assertPngConversionCurrent(conversionContext);
-                              await geometryMeasurement?.wait();
-                              await transitionReadiness?.wait();
-                              await taskGeometryLease?.wait();
-                              runWechatSyncTiming(
-                                serializationPreview.ownerDocument.defaultView?.performance,
-                                WECHAT_COPY_TIMING_NAMES.finalRawContextRefresh,
-                                { mode: 'sync' },
-                                () => dimensionSemantics.refresh()
-                              );
-                              const finalGeometryTiming = beginWechatTiming(
-                                serializationPreview.ownerDocument.defaultView?.performance,
-                                WECHAT_COPY_TIMING_NAMES.finalGeometry,
-                                { mode: 'async' }
-                              );
-                              let finalSignature: string;
-                              try {
-                                finalSignature = await preparedDimensionGeometrySignatureWithYield(
-                                  serializationPreview,
-                                  runtime,
-                                  yieldToBrowser,
-                                  conversionSignal,
-                                  dimensionSemantics
-                                );
-                                finalGeometryTiming.finish('success');
-                              } catch (error: unknown) {
-                                finalGeometryTiming.finish('error');
-                                throw error;
-                              }
-                              const finalSourceTiming = beginWechatTiming(
-                                serializationPreview.ownerDocument.defaultView?.performance,
-                                WECHAT_COPY_TIMING_NAMES.finalSourceFreshness,
-                                { mode: 'sync' }
-                              );
-                              try {
-                                if (initialSignature !== finalSignature) {
-                                  finalSourceTiming.finish('error');
-                                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                                }
-                                const sourceFreshnessCurrent = sourceFreshness.finalize();
-                                if (!sourceFreshnessCurrent) {
-                                  finalSourceTiming.finish('error');
-                                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                                }
-                                for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
-                                  if (
-                                    !mermaidCaptureSnapshotIsCurrent(
-                                      source,
-                                      runtime,
-                                      conversionContext.captureBoundary,
-                                      snapshot
-                                    )
-                                  ) {
-                                    finalSourceTiming.finish('error');
-                                    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                                  }
-                                }
-                                for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
-                                  if (mermaidSourceUsesAutoBlockMargins(source, runtime) !== snapshot.autoMargins) {
-                                    finalSourceTiming.finish('error');
-                                    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                                  }
-                                }
-                                for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
-                                  if (
-                                    'mermaid-responsive' === snapshot.mode &&
-                                    !mermaidResponsiveSnapshotIsCurrent(
-                                      source,
-                                      runtime,
-                                      conversionContext.captureBoundary,
-                                      snapshot.responsive
-                                    )
-                                  ) {
-                                    finalSourceTiming.finish('error');
-                                    throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
-                                  }
-                                }
-                                finalSourceTiming.finish('success');
-                              } catch (error: unknown) {
-                                finalSourceTiming.finish('error');
-                                throw error;
-                              }
-                              return serialized;
-                            } finally {
-                              dimensionSemantics.cleanup();
+                              finalGeometryTiming.finish('success');
+                            } catch (error: unknown) {
+                              finalGeometryTiming.finish('error');
+                              throw error;
                             }
-                          })
-                          .finally(() => {
-                            conversionContext.mermaidSnapshots.clear();
-                          });
-                      })
-                      .finally(() => {
-                        disposeGeometryMeasurement?.();
-                        disposeGeometryMeasurement = undefined;
-                        disposeTaskGeometryLease?.();
-                        disposeTaskGeometryLease = undefined;
-                        disposeTransitionReadiness?.();
-                        disposeTransitionReadiness = undefined;
-                        sourceFreshness.dispose();
-                        disposeConversionFreshness = undefined;
-                      });
-                  })
-                  .then(resolve, reject);
-              };
-            })
+                            const finalSourceTiming = beginWechatTiming(
+                              serializationPreview.ownerDocument.defaultView?.performance,
+                              WECHAT_COPY_TIMING_NAMES.finalSourceFreshness,
+                              { mode: 'sync' }
+                            );
+                            try {
+                              if (initialSignature !== finalSignature) {
+                                finalSourceTiming.finish('error');
+                                throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                              }
+                              const sourceFreshnessCurrent = sourceFreshness.finalize();
+                              if (!sourceFreshnessCurrent) {
+                                finalSourceTiming.finish('error');
+                                throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                              }
+                              for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
+                                if (
+                                  !mermaidCaptureSnapshotIsCurrent(
+                                    source,
+                                    runtime,
+                                    conversionContext.captureBoundary,
+                                    snapshot
+                                  )
+                                ) {
+                                  finalSourceTiming.finish('error');
+                                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                                }
+                              }
+                              for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
+                                if (mermaidSourceUsesAutoBlockMargins(source, runtime) !== snapshot.autoMargins) {
+                                  finalSourceTiming.finish('error');
+                                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                                }
+                              }
+                              for (const [source, snapshot] of conversionContext.mermaidSnapshots) {
+                                if (
+                                  'mermaid-responsive' === snapshot.mode &&
+                                  !mermaidResponsiveSnapshotIsCurrent(
+                                    source,
+                                    runtime,
+                                    conversionContext.captureBoundary,
+                                    snapshot.responsive
+                                  )
+                                ) {
+                                  finalSourceTiming.finish('error');
+                                  throw new WechatPngConversionError('wechat-png-rasterization-cancelled');
+                                }
+                              }
+                              finalSourceTiming.finish('success');
+                            } catch (error: unknown) {
+                              finalSourceTiming.finish('error');
+                              throw error;
+                            }
+                            return serialized;
+                          } finally {
+                            dimensionSemantics.cleanup();
+                          }
+                        })
+                        .finally(() => {
+                          conversionContext.mermaidSnapshots.clear();
+                        });
+                    })
+                    .finally(() => {
+                      disposeGeometryMeasurement?.();
+                      disposeGeometryMeasurement = undefined;
+                      disposeTaskGeometryLease?.();
+                      disposeTaskGeometryLease = undefined;
+                      disposeTransitionReadiness?.();
+                      disposeTransitionReadiness = undefined;
+                      sourceFreshness.dispose();
+                      disposeConversionFreshness = undefined;
+                    });
+                })
+                .then(resolve, reject);
+            };
+          });
         } else {
-          let portablePreparation: { preview: HTMLElement; prepared: PreparedClipboardPayload } | null = null;
+          let portablePreparation: {
+            preview: HTMLElement;
+            prepared: PreparedClipboardPayload;
+          } | null = null;
           let disposePortableMeasurement: (() => void) | undefined;
           const disposePortablePreparation = (): void => {
             const owned = portablePreparation;
@@ -552,7 +588,9 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
               preparedPayloads.delete(owned.preview);
             }
           };
-          const portableSourceFreshness: { current: ClipboardSourceFreshnessGuard | null } = { current: null };
+          const portableSourceFreshness: {
+            current: ClipboardSourceFreshnessGuard | null;
+          } = { current: null };
           let portableFreshnessClosed = false;
           let resolvePortableFreshness!: () => void;
           let rejectPortableFreshness!: (error: unknown) => void;
@@ -585,8 +623,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
               rejectPortableFreshness(error);
             }
           };
-          const portablePreparationIsCurrent = (): boolean =>
-            !copyWasCancelled() && null !== portableFreshness.current();
+          const portablePreparationIsCurrent = (): boolean => !copyWasCancelled() && null !== portableFreshness.current();
           startTransaction = () => {
             if (requiresPreviewResolution) {
               void readyPreview.then(initializePortableFreshness, (error: unknown) => rejectPortableFreshness(error));
@@ -616,7 +653,10 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
             assertCopyPreviewCurrent(payloadPreview, copyGuard);
           };
           synchronousModernFailure = fallbackAfterSynchronousModernFailure;
-          transactionFailure = () => ({ code: 'wechat-copy-failed', status: 'failed' });
+          transactionFailure = () => ({
+            code: 'wechat-copy-failed',
+            status: 'failed'
+          });
           cleanupTransaction = () => {
             disposePortablePreparation();
             disposePortableMeasurement?.();
@@ -638,7 +678,10 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                     disposePortableMeasurement = cleanup;
                   },
                   (preparedPreview, prepared) => {
-                    portablePreparation = { preview: preparedPreview, prepared };
+                    portablePreparation = {
+                      preview: preparedPreview,
+                      prepared
+                    };
                   },
                   portablePreparationIsCurrent
                 ).then((prepared) => prepared.promise);
@@ -674,7 +717,9 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           if (options.signal.aborted) {
             abortDeferredPayload();
           } else {
-            options.signal.addEventListener('abort', abortDeferredPayload, { once: true });
+            options.signal.addEventListener('abort', abortDeferredPayload, {
+              once: true
+            });
           }
         }
         const transaction: ModernCopyTransaction = {
@@ -699,8 +744,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
         const textBlob = gateBlob(payload.then(({ text }) => new runtime.blob([text], { type: 'text/plain' })));
         const preparedBeforeWrite =
           !pngConversionEnabled && !requiresPreviewResolution ? preparedPayloads.get(preview) : null;
-        const pendingFallback =
-          preparedBeforeWrite && !preparedBeforeWrite.payload ? preparedBeforeWrite.fallback : null;
+        const pendingFallback = preparedBeforeWrite && !preparedBeforeWrite.payload ? preparedBeforeWrite.fallback : null;
         const observeBlobRejections = (): void => {
           if (htmlBlob instanceof Promise) void htmlBlob.catch(() => undefined);
           if (textBlob instanceof Promise) void textBlob.catch(() => undefined);
@@ -835,7 +879,11 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
       }
 
       if (pngConversionEnabled) {
-        return { code: 'wechat-png-clipboard-failed', sideEffects: 'none', status: 'failed' };
+        return {
+          code: 'wechat-png-clipboard-failed',
+          sideEffects: 'none',
+          status: 'failed'
+        };
       }
 
       if (requiresPreviewResolution) {
@@ -874,12 +922,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
         dimensionSemantics = createDimensionSemanticsContext(serializationPreview, preview, runtime);
         const prepared = preparedPayloads.get(preview);
         const currentMarkup = clipboardSourceMarkup(preview);
-        const currentLayoutSignature = preparedLayoutSignature(
-          preview,
-          runtime,
-          serializationPreview,
-          dimensionSemantics
-        );
+        const currentLayoutSignature = preparedLayoutSignature(preview, runtime, serializationPreview, dimensionSemantics);
         dimensionSemantics.refresh();
         const currentDimensionSignature = preparedDimensionSemanticsSignature(
           serializationPreview,

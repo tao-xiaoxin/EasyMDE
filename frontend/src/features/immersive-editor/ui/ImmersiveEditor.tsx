@@ -52,6 +52,7 @@ import type {
   ImmersiveStrings
 } from './immersive-editor-ui-types';
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
+import type { WechatCopyStatusStore } from '../../wechat-export/wechat-copy-status';
 
 export type { ImmersiveStrings } from './immersive-editor-ui-types';
 
@@ -313,8 +314,7 @@ type Props = Readonly<{
   restoreRevision: (restoreUrl: string) => void;
   styleControls: ReactNode;
   toolbar: ReactNode;
-  wechatCopyPending: boolean;
-  wechatCopyUnavailable: boolean;
+  wechatCopyStatus: WechatCopyStatusStore;
   onCopyWechat: () => Promise<boolean>;
   onBeforeSourceMutation: () => boolean;
   onExit: () => void;
@@ -706,8 +706,7 @@ export function ImmersiveEditor({
   restoreRevision,
   styleControls,
   toolbar,
-  wechatCopyPending,
-  wechatCopyUnavailable,
+  wechatCopyStatus,
   mode,
   onCopyWechat,
   onBeforeSourceMutation,
@@ -905,7 +904,8 @@ export function ImmersiveEditor({
     documentSession.document.focus();
   };
   const copyWechat = () => {
-    if (wechatCopyPending || wechatCopyUnavailable) return;
+    const { pending, unavailable } = wechatCopyStatus.getSnapshot();
+    if (pending || unavailable) return;
     setWechatCopied(false);
     void onCopyWechat().then((success) => {
       if (success) setWechatCopied(true);
@@ -978,8 +978,7 @@ export function ImmersiveEditor({
         strings={strings}
         styleControls={styleControls}
         toolbar={toolbar}
-        wechatCopyPending={wechatCopyPending}
-        wechatCopyUnavailable={wechatCopyUnavailable}
+        wechatCopyStatus={wechatCopyStatus}
         wechatCopied={wechatCopied}
         onCopyWechat={copyWechat}
         onExit={onExit}

@@ -129,6 +129,11 @@ import {
   type WechatExportStatus
 } from '../../features/wechat-export/wechat-export-session';
 import {
+  createWechatCopyStatusStore,
+  useWechatCopyStatus,
+  type WechatCopyStatusStore
+} from '../../features/wechat-export/wechat-copy-status';
+import {
   ImmersiveEditor,
   ImmersiveToggleIcon
 } from '../../features/immersive-editor/ui/ImmersiveEditor';
@@ -291,8 +296,7 @@ type RootExportCommandsProps = Readonly<{
   executeCommand: (commandId: string) => void;
   platform: ToolbarPlatform;
   toolbar: ToolbarBootstrap;
-  wechatCopyPending: boolean;
-  wechatCopyUnavailable: boolean;
+  wechatCopyStatus: WechatCopyStatusStore;
 }>;
 
 const WECHAT_ICON_PATHS = [
@@ -331,9 +335,12 @@ function RootExportCommands({
   executeCommand,
   platform,
   toolbar,
-  wechatCopyPending,
-  wechatCopyUnavailable
+  wechatCopyStatus
 }: RootExportCommandsProps) {
+  const {
+    pending: wechatCopyPending,
+    unavailable: wechatCopyUnavailable
+  } = useWechatCopyStatus(wechatCopyStatus);
   const commands = toolbar.commands.filter(
     (command) => 'main' === command.surface && 'export' === command.group
   );
@@ -357,7 +364,7 @@ function RootExportCommands({
           <button
             key={command.id}
             type="button"
-            className={`easymde-toolbar-button easymde-toolbar-button-compact${isWechatCopy ? ' easymde-toolbar-copy-action' : ''}${isWechatCopy && wechatCopyPending ? ' is-pending' : ''}`}
+            className={`easymde-toolbar-button easymde-toolbar-button-compact${isWechatCopy ? ' easymde-toolbar-copy-action' : ''}`}
             data-easymde-command={command.id}
             aria-label={command.label}
             aria-busy={isWechatCopy && wechatCopyPending ? 'true' : undefined}
@@ -632,7 +639,9 @@ export function EditorRoot(props: EditorRootProps) {
     useRef<ImmersiveVisualEditorRuntime | null>(null);
   const scheduledPreviewRuntimeRef = useRef<PreviewSurfaceRuntime | null>(null);
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
+  const scheduleWechatPreparationAfterCopyRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
+    completed: boolean;
     controller: AbortController;
   } | null>(null);
   const previewRevisionRef = useRef(0);
@@ -749,8 +758,7 @@ export function EditorRoot(props: EditorRootProps) {
     [fontState, props.fonts]
   );
   const [immersive, setImmersive] = useState(false);
-  const [wechatCopyPending, setWechatCopyPending] = useState(false);
-  const [wechatCopyUnavailable, setWechatCopyUnavailable] = useState(false);
+  const wechatCopyStatus = useMemo(() => createWechatCopyStatusStore(), []);
   const wechatCopyPendingRef = useRef(false);
   const wechatCopySequenceRef = useRef(0);
   const [mediaPickerDialog, setMediaPickerDialog] = useState<
@@ -842,8 +850,8 @@ export function EditorRoot(props: EditorRootProps) {
     if (!hadPendingCopy) return;
     wechatCopySequenceRef.current += 1;
     wechatCopyPendingRef.current = false;
-    if (rootActiveRef.current) setWechatCopyPending(false);
-  }, []);
+    wechatCopyStatus.setPending(false);
+  }, [wechatCopyStatus]);
   const setLocalDraftStatus = useCallback(
     (status: LocalDraftSessionStatus) => {
       if (immersiveRef.current && 'saved' === status.code) return;
@@ -994,27 +1002,36 @@ export function EditorRoot(props: EditorRootProps) {
         || visualPreviewLockingRef.current
         || 'ready' !== previewSurfaceStatusRef.current
         || !props.wechatExport.enabled
-        || props.wechatExport.pngConversionEnabled
         || !surface
         || !prepare
       ) return;
       let preparation = wechatBackgroundPreparationRef.current;
       if (!preparation) {
-        preparation = { controller: new AbortController() };
+        preparation = { completed: false, controller: new AbortController() };
         wechatBackgroundPreparationRef.current = preparation;
       }
       if (preparation.controller.signal.aborted) return;
+      preparation.completed = false;
       // Preparation runs in the background so the compatibility copy path is
       // ready when requested. Its result is reported by the actual copy
       // operation; opening or editing a Preview is not a copy failure.
       const currentPreparation = preparation;
+      const geometryOnly = props.wechatExport.pngConversionEnabled;
       void prepare(surface, {
         background: true,
+        ...(geometryOnly ? { geometryOnly: true } : {}),
         signal: currentPreparation.controller.signal
       })
         .catch(() => undefined)
         .finally(() => {
-          if (wechatBackgroundPreparationRef.current === currentPreparation) {
+          // Geometry-only preparation retains its owner controller so a later
+          // theme or Preview disposal can abort and clean the cached lease.
+          if (wechatBackgroundPreparationRef.current !== currentPreparation) {
+            return;
+          }
+          if (geometryOnly) {
+            currentPreparation.completed = true;
+          } else {
             wechatBackgroundPreparationRef.current = null;
           }
         });
@@ -1028,11 +1045,10 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduleWechatPreviewPreparation = useCallback(
     (surface: HTMLElement | null) => {
       const prepare = props.wechatClipboard.prepare;
-      if (props.wechatExport.pngConversionEnabled) {
-        clearScheduledWechatPreparation();
-        return;
-      }
       if (!props.wechatExport.enabled || !surface || !prepare) return;
+      if (props.wechatExport.pngConversionEnabled) {
+        rememberWechatPreviewWidth(surface);
+      }
       clearScheduledWechatPreparation();
       const cancel = props.immersiveEnvironment.schedule(() => {
         scheduledWechatPreparationRef.current = null;
@@ -1043,6 +1059,7 @@ export function EditorRoot(props: EditorRootProps) {
     [
       clearScheduledWechatPreparation,
       prepareWechatPreview,
+      rememberWechatPreviewWidth,
       props.immersiveEnvironment,
       props.wechatClipboard,
       props.wechatExport.enabled,
@@ -1056,10 +1073,11 @@ export function EditorRoot(props: EditorRootProps) {
       : previewRuntimeRef.current?.surface;
     scheduleWechatPreviewPreparation(surface ?? null);
   }, [scheduleWechatPreviewPreparation]);
+  scheduleWechatPreparationAfterCopyRef.current =
+    scheduleCurrentWechatPreviewPreparation;
   useEffect(() => {
     if (
       !props.wechatExport.enabled
-      || props.wechatExport.pngConversionEnabled
       || !props.wechatClipboard.prepare
     ) {
       return undefined;
@@ -1078,7 +1096,6 @@ export function EditorRoot(props: EditorRootProps) {
   useEffect(() => {
     if (
       !props.wechatExport.enabled
-      || props.wechatExport.pngConversionEnabled
       || !props.wechatClipboard.prepare
     ) {
       return undefined;
@@ -1107,6 +1124,14 @@ export function EditorRoot(props: EditorRootProps) {
     previousWechatLayoutRef.current = { immersive, mode: immersiveMode };
     scheduleCurrentWechatPreviewPreparation();
   }, [immersive, immersiveMode, scheduleCurrentWechatPreviewPreparation]);
+  useEffect(() => {
+    scheduleCurrentWechatPreviewPreparation();
+  }, [
+    props.wechatExport.enabled,
+    props.wechatExport.pngConversionEnabled,
+    props.wechatClipboard,
+    scheduleCurrentWechatPreviewPreparation
+  ]);
   const cancelVisualPreviewWindowUnlock = useCallback(() => {
     if (!visualPreviewWindowUnlockRef.current) return;
     visualPreviewWindowUnlockRef.current = null;
@@ -1579,14 +1604,15 @@ export function EditorRoot(props: EditorRootProps) {
           : null;
         if (appearanceTransition !== null) {
           appearanceTransitionPendingRef.current = appearanceTransition;
-          if (rootActiveRef.current) setWechatCopyUnavailable(true);
+          wechatCopyStatus.setUnavailable(true);
+          cancelWechatBackgroundPreparation();
           cancelWechatCopyForThemeChange();
         }
         const clearAppearanceTransition = () => {
           if (appearanceTransition !== null
             && appearanceTransitionPendingRef.current === appearanceTransition) {
             appearanceTransitionPendingRef.current = null;
-            if (rootActiveRef.current) setWechatCopyUnavailable(false);
+            wechatCopyStatus.setUnavailable(false);
           }
         };
         try {
@@ -1767,6 +1793,7 @@ export function EditorRoot(props: EditorRootProps) {
     [
       cancelVisualPreviewWindowUnlock,
       cancelVisualUnlockPreparation,
+      cancelWechatBackgroundPreparation,
       cancelWechatCopyForThemeChange,
       documentSession,
       props.appearance.articleThemes,
@@ -1978,16 +2005,15 @@ export function EditorRoot(props: EditorRootProps) {
     }
     const sequence = ++wechatCopySequenceRef.current;
     wechatCopyPendingRef.current = true;
-    setWechatCopyPending(true);
     let operation: ReturnType<typeof wechatSession.copy>;
     try {
       // Keep the session call in the originating click/key activation task. The
       // Clipboard adapter owns the activation-sensitive browser write.
       operation = wechatSession.copy();
+      wechatCopyStatus.setPending(true);
     } catch (error) {
       if (wechatCopySequenceRef.current === sequence) {
         wechatCopyPendingRef.current = false;
-        setWechatCopyPending(false);
       }
       throw error;
     }
@@ -2004,10 +2030,11 @@ export function EditorRoot(props: EditorRootProps) {
           && wechatCopySequenceRef.current === sequence
         ) {
           wechatCopyPendingRef.current = false;
-          setWechatCopyPending(false);
+          wechatCopyStatus.setPending(false);
+          scheduleWechatPreparationAfterCopyRef.current?.();
         }
       });
-  }, [wechatSession]);
+  }, [wechatSession, wechatCopyStatus]);
   const remoteImageImportPort = useMemo<RemoteImageImportPort>(
     () => ({
       import: (request) => {
@@ -2349,10 +2376,9 @@ export function EditorRoot(props: EditorRootProps) {
 
   useEffect(
     () => () => {
-      const liveRoot = rootActiveRef.current;
       wechatCopySequenceRef.current += 1;
       wechatCopyPendingRef.current = false;
-      if (liveRoot) setWechatCopyPending(false);
+      wechatCopyStatus.setPending(false);
       if (wechatSessionRef.current === wechatSession) {
         wechatSessionRef.current = null;
       }
@@ -2636,8 +2662,7 @@ export function EditorRoot(props: EditorRootProps) {
             visualPreviewEditing
             && Boolean(visualEditorRuntimeRef.current?.surface.isConnected)
           }
-          wechatCopyPending={wechatCopyPending}
-          wechatCopyUnavailable={wechatCopyUnavailable}
+          wechatCopyStatus={wechatCopyStatus}
           focusVisualPreview={focusVisualPreview}
           mode={immersiveMode}
           direction={props.layout.direction}
@@ -2749,8 +2774,7 @@ export function EditorRoot(props: EditorRootProps) {
                 }
                 platform={props.platform}
                 toolbar={props.toolbar}
-                wechatCopyPending={wechatCopyPending}
-                wechatCopyUnavailable={wechatCopyUnavailable}
+                wechatCopyStatus={wechatCopyStatus}
               />
             ) : null}
             <button

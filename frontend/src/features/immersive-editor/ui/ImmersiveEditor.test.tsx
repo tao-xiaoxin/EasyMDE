@@ -9,6 +9,7 @@ import type { ImmersiveI18nPort } from '../../../contracts/ports/immersive-i18n-
 import type { ImmersivePreferencesPort } from '../../../contracts/ports/immersive-preferences-port';
 import type { GeneralSettings } from '../../../contracts/settings-center-settings';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
+import { createWechatCopyStatusStore } from '../../wechat-export/wechat-copy-status';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -224,8 +225,7 @@ function createImmersiveEditorFixture(initial: string, viewportWidth = 1280) {
       onBeforeSourceMutation: () => true,
       onConfirmPublish: () => true,
       onCopyWechat: async () => true,
-      wechatCopyPending: false,
-      wechatCopyUnavailable: false,
+      wechatCopyStatus: createWechatCopyStatusStore(),
       onExit: () => {},
       onFailure,
       onSelectFeaturedImage: async () => null,

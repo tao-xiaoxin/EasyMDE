@@ -174,8 +174,7 @@
     background: #fff;
 }
 
-.easymde-toolbar-copy-action[aria-busy="true"],
-.easymde-toolbar-copy-action[aria-disabled="true"] {
+.easymde-toolbar-copy-action[aria-disabled="true"]:not([aria-busy="true"]) {
     opacity: .72;
 }
 

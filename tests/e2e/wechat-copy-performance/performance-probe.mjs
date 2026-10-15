@@ -34,6 +34,45 @@ export function installPerformanceProbe(page) {
 				}
 				return null;
 			};
+			const capturePreviewReadiness = () => {
+				const preview = document.querySelector(
+					'.easymde-pane-preview [data-easymde-preview-html-sink="1"]',
+				);
+				const previewAvailable = preview instanceof HTMLElement;
+				const images = previewAvailable
+					? [...preview.querySelectorAll("img")]
+					: [];
+				const completeImageCount = images.filter(
+					(image) => image.complete,
+				).length;
+				const intrinsicImageCount = images.filter(
+					(image) =>
+						Number.isFinite(image.naturalWidth) && image.naturalWidth > 0,
+				).length;
+				return {
+					completeImageCount,
+					fontsReady: document.fonts?.status === "loaded",
+					imageCount: images.length,
+					imagesReady:
+						previewAvailable &&
+						images.length > 0 &&
+						completeImageCount === images.length &&
+						intrinsicImageCount === images.length,
+					intrinsicImageCount,
+					previewAccepted:
+						previewAvailable &&
+						preview.getAttribute("data-easymde-preview-accepted") === "1",
+					previewAvailable,
+					previewBusy:
+						previewAvailable && preview.getAttribute("aria-busy") === "true",
+					previewError:
+						previewAvailable &&
+						preview.getAttribute("data-easymde-preview-error") === "1",
+					previewRefreshing:
+						previewAvailable &&
+						preview.getAttribute("data-easymde-preview-refreshing") === "1",
+				};
+			};
 			const state = {
 				active: false,
 				clickAt: null,
@@ -82,6 +121,7 @@ export function installPerformanceProbe(page) {
 					defaultViewMatches: ownerDocument.defaultView === window,
 					documentHasFocus: document.hasFocus(),
 					ownerDocumentMatches: ownerDocument === document,
+					readiness: capturePreviewReadiness(),
 					selfMatchesWindow: window.self === window,
 					topMatchesSelf,
 					visibilityState: document.visibilityState,

@@ -6,7 +6,12 @@ import {
   WechatVisualRasterizationError,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 import type { FontCache } from './wechat-font-assets';
-import { embedFontFaces } from './wechat-managed-fonts';
+import {
+  createManagedFontFacesCache,
+  embedFontFaces,
+  type ManagedFontFacesCache,
+  prewarmManagedFontFaces,
+} from './wechat-managed-fonts';
 import {
   type CaptureGeometry,
   applyCaptureTypography,
@@ -155,6 +160,7 @@ async function serializedSvg(
   Serializer: typeof XMLSerializer,
   runtime: BrowserWechatVisualRasterizerRuntime,
   fontCache: FontCache,
+  managedFacesCache: ManagedFontFacesCache,
 ): Promise<string> {
   const layoutMagnification = request.kind === 'mermaid'
     ? request.layoutMagnification ?? 1
@@ -264,7 +270,13 @@ async function serializedSvg(
   svg.querySelectorAll('script, style').forEach((element) => {
     element.remove();
   });
-  await embedFontFaces(svg, runtime, request.signal, fontCache);
+  await embedFontFaces(
+    svg,
+    runtime,
+    request.signal,
+    fontCache,
+    managedFacesCache,
+  );
   return new Serializer().serializeToString(svg);
 }
 
@@ -406,6 +418,8 @@ export function createBrowserWechatVisualRasterizer(
   ) => Promise<WechatVisualRasterizationResult>;
 }> {
   const fontCache: FontCache = new Map();
+  const managedFacesCache = createManagedFontFacesCache();
+  prewarmManagedFontFaces(runtime, managedFacesCache);
   return {
     async rasterize(request): Promise<WechatVisualRasterizationResult> {
       if (
@@ -500,6 +514,7 @@ export function createBrowserWechatVisualRasterizer(
           runtime.xmlSerializer,
           runtime,
           fontCache,
+          managedFacesCache,
         );
         serializeTiming.finish('success');
       } catch (error: unknown) {

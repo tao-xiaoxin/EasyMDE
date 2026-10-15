@@ -47,12 +47,20 @@ type FontFaceCandidate = Readonly<{
   sources: ReadonlyArray<FontSource>;
 }>;
 
+export type ManagedFontFacesCache = {
+  error: unknown;
+  faces: FontFaceCandidate[] | null;
+  key: string | null;
+  promise: Promise<FontFaceCandidate[]> | null;
+};
+
 type CssStyleLike = Readonly<{
   getPropertyValue: (property: string) => string;
 }>;
 
 type CssRuleLike = Readonly<{
   cssRules?: unknown;
+  cssText?: unknown;
   style?: CssStyleLike;
   styleSheet?: unknown;
   type?: number;
@@ -268,6 +276,231 @@ function cssRules(value: unknown): readonly CssRuleLike[] {
   }
 }
 
+function cssRuleProperty(
+  rule: CssRuleLike,
+  property: 'cssRules' | 'cssText' | 'style' | 'styleSheet' | 'type',
+): unknown {
+  try {
+    return rule[property];
+  } catch {
+    return null;
+  }
+}
+
+const FONT_FACE_SIGNATURE_PROPERTIES = [
+  'font-family',
+  'font-style',
+  'font-weight',
+  'font-stretch',
+  'font-display',
+  'unicode-range',
+  'src',
+] as const;
+
+function objectProperty(value: unknown, property: string): unknown {
+  if (!value || 'object' !== typeof value) return null;
+  try {
+    return (value as Record<string, unknown>)[property];
+  } catch {
+    return null;
+  }
+}
+
+function contentFingerprint(value: string): string {
+  let first = 2_166_136_261;
+  let second = 374_761_393;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    first = Math.imul(first ^ code, 16_777_619);
+    second = Math.imul(second ^ (code + index), 2_246_822_519);
+  }
+  return `${value.length}:${first >>> 0}:${second >>> 0}`;
+}
+
+function styleContentFingerprint(value: unknown): string {
+  if (!value || 'object' !== typeof value) return '';
+  const cssText = objectProperty(value, 'cssText');
+  if ('string' === typeof cssText) return cssText;
+  const getPropertyValue = objectProperty(value, 'getPropertyValue');
+  if ('function' !== typeof getPropertyValue) return '';
+  return FONT_FACE_SIGNATURE_PROPERTIES.map((property) => {
+    try {
+      const propertyValue = getPropertyValue.call(value, property);
+      return `${property}:${'string' === typeof propertyValue ? propertyValue : ''}`;
+    } catch {
+      return `${property}:unreadable`;
+    }
+  }).join('\u0001');
+}
+
+function stylesheetContentFingerprint(
+  value: unknown,
+  visitedSheets: Set<object>,
+  visitedRules: Set<object>,
+): string {
+  if (!value || 'object' !== typeof value) return '';
+  const sheet = value as object;
+  if (visitedSheets.has(sheet)) return 'sheet-cycle';
+  visitedSheets.add(sheet);
+  const href = objectProperty(value, 'href');
+  const cssRulesValue = objectProperty(value, 'cssRules');
+  const rules = cssRules(cssRulesValue);
+  return contentFingerprint([
+    `href:${'string' === typeof href ? href : ''}`,
+    `length:${rules.length}`,
+    ...rules.map((rule) => ruleContentFingerprint(rule, visitedSheets, visitedRules)),
+  ].join('\u0000'));
+}
+
+function ruleContentFingerprint(
+  value: CssRuleLike,
+  visitedSheets: Set<object>,
+  visitedRules: Set<object>,
+): string {
+  if (!value || 'object' !== typeof value) return '';
+  const rule = value as object;
+  if (visitedRules.has(rule)) return 'rule-cycle';
+  visitedRules.add(rule);
+  const cssText = cssRuleProperty(value, 'cssText');
+  const style = cssRuleProperty(value, 'style');
+  const nestedRules = cssRules(cssRuleProperty(value, 'cssRules'));
+  const importedSheet = cssRuleProperty(value, 'styleSheet');
+  return contentFingerprint([
+    `type:${String(cssRuleProperty(value, 'type') ?? '')}`,
+    `cssText:${'string' === typeof cssText ? cssText : ''}`,
+    `style:${styleContentFingerprint(style)}`,
+    `nested:${nestedRules.map((rule) => ruleContentFingerprint(rule, visitedSheets, visitedRules)).join('\u0002')}`,
+    `import:${stylesheetContentFingerprint(importedSheet, visitedSheets, visitedRules)}`,
+  ].join('\u0000'));
+}
+
+function managedFontFacesKey(
+  document: Document,
+  approvedAssetBaseUrl: string,
+  approvedKaTeXCssUrl: string,
+): string {
+  let sheets: readonly unknown[] = [];
+  try {
+    sheets = Array.from(document.styleSheets) as unknown[];
+  } catch {
+    return `${approvedAssetBaseUrl}\u0000${approvedKaTeXCssUrl}\u0000unreadable`;
+  }
+  const hrefs = sheets.map((sheet) => {
+    if (!sheet || 'object' !== typeof sheet) return '';
+    const typedSheet = sheet as { cssRules?: unknown; href?: unknown };
+    const href = 'string' === typeof typedSheet.href ? typedSheet.href : '';
+    let ruleCount = '';
+    try {
+      const rules = typedSheet.cssRules as { length?: unknown } | undefined;
+      ruleCount = 'number' === typeof rules?.length ? String(rules.length) : '';
+    } catch {
+      ruleCount = 'inaccessible';
+    }
+    let content = '';
+    if (href && fontAssetScope(
+      href,
+      document.baseURI,
+      document,
+      approvedAssetBaseUrl,
+      approvedKaTeXCssUrl,
+    )) {
+      content = stylesheetContentFingerprint(sheet, new Set(), new Set());
+    }
+    return `${href}:${ruleCount}:${content}`;
+  }).join('\u0000');
+  return `${approvedAssetBaseUrl}\u0000${approvedKaTeXCssUrl}\u0000${hrefs}`;
+}
+
+function managedFontFaces(
+  runtime: BrowserWechatVisualRasterizerRuntime,
+  signal: AbortSignal,
+  cache: ManagedFontFacesCache,
+): Promise<FontFaceCandidate[]> {
+  const key = managedFontFacesKey(
+    runtime.document,
+    runtime.approvedAssetBaseUrl,
+    runtime.approvedKaTeXCssUrl,
+  );
+  if (signal.aborted) {
+    throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  }
+  const forCaller = (promise: Promise<FontFaceCandidate[]>): Promise<FontFaceCandidate[]> =>
+    promise.then((faces) => {
+      if (signal.aborted) {
+        throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+      }
+      return faces;
+    });
+  if (cache.key === key) {
+    if (cache.error) throw cache.error;
+    if (cache.faces) return forCaller(Promise.resolve(cache.faces));
+    if (cache.promise) return forCaller(cache.promise);
+  }
+  cache.key = key;
+  cache.faces = null;
+  cache.error = null;
+  const promise = Promise.resolve().then(() => collectFontFaces(
+    runtime.document,
+    runtime.approvedAssetBaseUrl,
+    runtime.approvedKaTeXCssUrl,
+  ));
+  cache.promise = promise;
+  void promise.then(
+    (faces) => {
+      if (cache.promise === promise) cache.faces = faces;
+    },
+    (error: unknown) => {
+      if (cache.promise !== promise) return;
+      if (
+        error instanceof WechatVisualRasterizationError
+        && 'wechat-png-rasterization-cancelled' === error.code
+      ) {
+        cache.error = null;
+        cache.faces = null;
+        cache.key = null;
+        cache.promise = null;
+        return;
+      }
+      cache.error = error;
+    },
+  );
+  return forCaller(promise);
+}
+
+export function createManagedFontFacesCache(): ManagedFontFacesCache {
+  return {
+    error: null,
+    faces: null,
+    key: null,
+    promise: null,
+  };
+}
+
+export function prewarmManagedFontFaces(
+  runtime: BrowserWechatVisualRasterizerRuntime,
+  cache: ManagedFontFacesCache,
+): void {
+  const windowRef = runtime.document.defaultView as (Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  }) | null;
+  if (!windowRef || 'function' !== typeof windowRef.requestIdleCallback) return;
+  windowRef.requestIdleCallback(() => {
+    const previousPromise = cache.promise;
+    const promise = managedFontFaces(runtime, new AbortController().signal, cache);
+    const ownedPromise = cache.promise !== previousPromise ? cache.promise : null;
+    void promise.catch(() => {
+      // Idle preparation is opportunistic. A later foreground capture retries
+      // the collection against the current stylesheet set and still reports
+      // its own failure explicitly.
+      if (!ownedPromise || cache.promise !== ownedPromise) return;
+      cache.error = null;
+      cache.faces = null;
+      cache.key = null;
+      cache.promise = null;
+    });
+  }, { timeout: 1_000 });
+}
+
 function collectFontFaces(
   document: Document,
   approvedAssetBaseUrl: string,
@@ -309,9 +542,9 @@ function collectFontFaces(
         const face = fontFaceFromRule(rule, baseUrl, scope, document);
         if (face) faces.push(face);
       }
-      const importedSheet = rule.styleSheet;
+      const importedSheet = cssRuleProperty(rule, 'styleSheet');
       if (importedSheet) visitSheet(importedSheet, baseUrl);
-      const nestedRules = rule.cssRules;
+      const nestedRules = cssRuleProperty(rule, 'cssRules');
       if (nestedRules) visitRules(nestedRules, baseUrl, scope);
     });
   };
@@ -323,9 +556,9 @@ function collectFontFaces(
         const face = fontFaceFromRule(rule, baseUrl, scope, document);
         if (face) faces.push(face);
       }
-      const importedSheet = rule.styleSheet;
+      const importedSheet = cssRuleProperty(rule, 'styleSheet');
       if (importedSheet) visitSheet(importedSheet, baseUrl);
-      const nestedRules = rule.cssRules;
+      const nestedRules = cssRuleProperty(rule, 'cssRules');
       if (nestedRules) visitRules(nestedRules, baseUrl, scope);
     });
   };
@@ -370,15 +603,15 @@ export async function embedFontFaces(
   runtime: BrowserWechatVisualRasterizerRuntime,
   signal: AbortSignal,
   cache: FontCache,
+  managedFacesCache: ManagedFontFacesCache,
 ): Promise<void> {
   const families = fontFamilies(svg);
   if (!families.size) return;
-  const faces = collectFontFaces(
-    runtime.document,
-    runtime.approvedAssetBaseUrl,
-    runtime.approvedKaTeXCssUrl,
-  )
+  const faces = (await managedFontFaces(runtime, signal, managedFacesCache))
     .filter((face) => families.has(face.familyKey));
+  if (signal.aborted) {
+    throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+  }
   const requiredFamilies = [...families].filter(isManagedFontFamily);
   const availableFamilies = new Set(faces.map((face) => face.familyKey));
   if (requiredFamilies.some((family) => !availableFamilies.has(family))) {
@@ -390,6 +623,25 @@ export async function embedFontFaces(
     throw new WechatVisualRasterizationError('wechat-png-font-failed');
   }
   if (!faces.length) return;
+  const assetPromises = new Map<string, Promise<FontAsset>>();
+  for (const face of faces) {
+    if (signal.aborted) {
+      throw new WechatVisualRasterizationError('wechat-png-rasterization-cancelled');
+    }
+    const source = face.sources[0];
+    if (!source || assetPromises.has(source.url)) continue;
+    // FontFace.load() validates each asset independently. Start approved
+    // sources together so the first capture does not add their parser costs
+    // serially, while rule emission below remains in stylesheet order.
+    assetPromises.set(
+      source.url,
+      cachedFontAsset(source.url, source.scope, runtime, signal, cache),
+    );
+  }
+  const assets = new Map<string, FontAsset>();
+  await Promise.all([...assetPromises.entries()].map(async ([url, promise]) => {
+    assets.set(url, await promise);
+  }));
   const embeddedRules: string[] = [];
   const emittedFaceKeys = new Set<string>();
   const accountedBytes = new Set<string>();
@@ -402,7 +654,10 @@ export async function embedFontFaces(
     if (!face.sources.length) continue;
     const source = face.sources[0];
     if (!source) continue;
-    const asset = await cachedFontAsset(source.url, source.scope, runtime, signal, cache);
+    const asset = assets.get(source.url);
+    if (!asset) {
+      throw new WechatVisualRasterizationError('wechat-png-font-failed');
+    }
     if (!accountedBytes.has(source.url)) {
       accountedBytes.add(source.url);
       totalBytes += asset.size;

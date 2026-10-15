@@ -120,6 +120,7 @@ export async function configurePerformanceMode(page, mode) {
 	const definition = performanceModeDefinitions[mode];
 	if (!definition) throw new Error("wechat-copy-performance-mode-invalid");
 	await waitForPreviewReady(page, {
+		requireImages: mode === "ordinarySource" ? true : undefined,
 		visible: definition.immersive || definition.editingMode !== "source",
 	});
 	if (!definition.immersive) {

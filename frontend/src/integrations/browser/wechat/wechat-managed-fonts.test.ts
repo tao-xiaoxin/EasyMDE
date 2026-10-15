@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatVisualRasterizer } from './create-browser-wechat-visual-rasterizer';
+import { createManagedFontFacesCache, embedFontFaces } from './wechat-managed-fonts';
 import {
   FontFaceStub,
   ImageStub,
@@ -171,6 +172,295 @@ describe('createBrowserWechatVisualRasterizer', () => {
     expect(fetch.mock.calls[0]?.[0]).toBe(
       `${document.location.origin}/wp-content/plugins/easymde/assets/vendor/katex/fonts/KaTeX_Main-Italic.woff2`,
     );
+  });
+
+  it('loads distinct approved font faces concurrently while preserving rule order', async () => {
+    stubCanvas();
+    installFontFaces([
+      {
+        'font-family': 'KaTeX_Main',
+        src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2")',
+      },
+      {
+        'font-family': 'KaTeX_Math',
+        src: 'url("fonts/KaTeX_Math-Italic.woff2") format("woff2")',
+      },
+    ]);
+    const releases: Array<() => void> = [];
+    const loadedSources: string[] = [];
+    class DeferredFontFaceStub {
+      constructor(
+        _family: string,
+        private readonly source: string,
+      ) {}
+
+      load = vi.fn(async () => {
+        loadedSources.push(this.source);
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return this;
+      });
+    }
+    Object.defineProperty(window, 'FontFace', {
+      configurable: true,
+      value: DeferredFontFaceStub,
+    });
+    const fetch = vi.fn(async () => fontResponse());
+    const source = document.createElement('div');
+    source.innerHTML = '<span style="font-family:KaTeX_Main">x</span><span style="font-family:KaTeX_Math">y</span>';
+    const operation = createBrowserWechatVisualRasterizer(runtime({ fetch })).rasterize(
+      request(source, 'math', 1, 80, 30),
+    );
+
+    for (let attempt = 0; attempt < 128 && loadedSources.length < 2; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(loadedSources).toHaveLength(2);
+    releases.forEach((release) => { release(); });
+    await operation;
+
+    const svg = serializedImage();
+    expect(svg.indexOf('font-family:"KaTeX_Main"')).toBeLessThan(
+      svg.indexOf('font-family:"KaTeX_Math"'),
+    );
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('rebuilds the managed face collection when the theme stylesheet changes', async () => {
+    stubCanvas();
+    const firstStylesheet = `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/first.css`;
+    const secondStylesheet = `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/second.css`;
+    installFontFaces([{
+      'font-family': 'EasyMDE Inter',
+      src: 'url("../../vendor/fonts/inter/inter-latin-400-normal.woff2") format("woff2")',
+    }], firstStylesheet);
+    const fetch = vi.fn(async () => fontResponse());
+    const source = document.createElement('div');
+    source.setAttribute('style', 'font-family:EasyMDE Inter');
+    source.textContent = 'E=mc2';
+    const rasterizer = createBrowserWechatVisualRasterizer(runtime({ fetch }));
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+    Object.defineProperty(document, 'styleSheets', {
+      configurable: true,
+      value: [{
+        cssRules: [{
+          style: {
+            getPropertyValue: (property: string) => ({
+              'font-family': 'EasyMDE Lora',
+              src: 'url("../../vendor/fonts/lora/lora-latin-400-normal.woff2") format("woff2")',
+            }[property] ?? ''),
+          },
+          type: 5,
+        }],
+        href: secondStylesheet,
+      }],
+    });
+    source.setAttribute('style', 'font-family:EasyMDE Lora');
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(serializedImage()).toContain('font-family:"EasyMDE Lora"');
+  });
+
+  it('keeps a shared collection alive for an independent active caller', async () => {
+    installFontFaces([{
+      'font-family': 'KaTeX_Main',
+      src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2")',
+    }]);
+    const fetch = vi.fn(async () => fontResponse());
+    const managedFacesCache = createManagedFontFacesCache();
+    const fontCache = new Map();
+    const first = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    first.setAttribute('font-family', 'KaTeX_Main');
+    const second = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    second.setAttribute('font-family', 'KaTeX_Main');
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    const firstOperation = embedFontFaces(
+      first,
+      runtime({ fetch }),
+      firstController.signal,
+      fontCache,
+      managedFacesCache,
+    );
+    const secondOperation = embedFontFaces(
+      second,
+      runtime({ fetch }),
+      secondController.signal,
+      fontCache,
+      managedFacesCache,
+    );
+    firstController.abort();
+
+    await expect(firstOperation).rejects.toThrow('wechat-png-rasterization-cancelled');
+    await expect(secondOperation).resolves.toBeUndefined();
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(second.querySelector('style')?.textContent).toContain('font-family:"KaTeX_Main"');
+  });
+
+  it('invalidates face collection when same stylesheet content changes', async () => {
+    stubCanvas();
+    const stylesheetHref = `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/active.css`;
+    const face: Record<string, string> = {
+      'font-family': 'EasyMDE Inter',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("../../vendor/fonts/inter/inter-latin-400-normal.woff2") format("woff2")',
+    };
+    installFontFaces([face], stylesheetHref);
+    const fetch = vi.fn(async () => fontResponse());
+    const source = document.createElement('div');
+    source.setAttribute('style', 'font-family:EasyMDE Inter');
+    source.textContent = 'same stylesheet';
+    const rasterizer = createBrowserWechatVisualRasterizer(runtime({ fetch }));
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+    expect(serializedImage()).toContain('font-weight:400');
+    face['font-weight'] = '700';
+    face.src = 'url("../../vendor/fonts/inter/inter-latin-700-normal.woff2") format("woff2")';
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+
+    expect(serializedImage()).toContain('font-weight:700');
+    expect(serializedImage()).not.toContain('font-weight:400');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('invalidates nested face content when same stylesheet content changes', async () => {
+    stubCanvas();
+    const stylesheetHref = `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/nested.css`;
+    const face: Record<string, string> = {
+      'font-family': 'EasyMDE Inter',
+      'font-style': 'normal',
+      'font-weight': '400',
+      src: 'url("../../vendor/fonts/inter/inter-latin-400-normal.woff2") format("woff2")',
+    };
+    const nestedFace = {
+      style: {
+        getPropertyValue: (property: string) => face[property] ?? '',
+      },
+      type: 5,
+    };
+    Object.defineProperty(document, 'styleSheets', {
+      configurable: true,
+      value: [{
+        cssRules: [{
+          cssRules: [nestedFace],
+          type: 4,
+        }],
+        href: stylesheetHref,
+      }],
+    });
+    const fetch = vi.fn(async () => fontResponse());
+    const source = document.createElement('div');
+    source.setAttribute('style', 'font-family:EasyMDE Inter');
+    source.textContent = 'nested stylesheet';
+    const rasterizer = createBrowserWechatVisualRasterizer(runtime({ fetch }));
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+    face['font-weight'] = '700';
+    face.src = 'url("../../vendor/fonts/inter/inter-latin-700-normal.woff2") format("woff2")';
+
+    await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+
+    expect(serializedImage()).toContain('font-weight:700');
+    expect(serializedImage()).not.toContain('font-weight:400');
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips inaccessible stylesheet rules without failing an approved face', async () => {
+    stubCanvas();
+    installFontFaces([{
+      'font-family': 'KaTeX_Main',
+      src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2")',
+    }]);
+    const inaccessibleSheet = {
+      href: `${document.location.origin}/wp-content/plugins/easymde/assets/themes/article/cross.css`,
+    };
+    Object.defineProperty(inaccessibleSheet, 'cssRules', {
+      configurable: true,
+      get: () => { throw new DOMException('cross-origin', 'SecurityError'); },
+    });
+    Object.defineProperty(document, 'styleSheets', {
+      configurable: true,
+      value: [inaccessibleSheet, {
+        cssRules: [{
+          style: {
+            getPropertyValue: (property: string) => ({
+              'font-family': 'KaTeX_Main',
+              src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2")',
+            }[property] ?? ''),
+          },
+          type: 5,
+        }],
+        href: `${document.location.origin}/wp-content/plugins/easymde/assets/vendor/katex/katex.min.css`,
+      }],
+    });
+    const fetch = vi.fn(async () => fontResponse());
+    const source = document.createElement('div');
+    source.setAttribute('style', 'font-family:KaTeX_Main');
+    source.textContent = 'E=mc2';
+
+    await createBrowserWechatVisualRasterizer(runtime({ fetch })).rasterize(
+      request(source, 'math', 1, 80, 30),
+    );
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(serializedImage()).toContain('font-family:"KaTeX_Main"');
+  });
+
+  it('retries foreground collection after an idle prewarm failure with a stable fingerprint', async () => {
+    stubCanvas();
+    const face = {
+      'font-family': 'KaTeX_Main',
+      src: 'url("fonts/KaTeX_Main-Regular.woff2") format("woff2")',
+    };
+    let failCollection = true;
+    installFontFaces([face]);
+    Object.defineProperty(document, 'styleSheets', {
+      configurable: true,
+      value: [{
+        cssRules: [{
+          style: {
+            cssText: '@font-face{font-family:KaTeX_Main;src:url("fonts/KaTeX_Main-Regular.woff2") format("woff2")}',
+            getPropertyValue: (property: string) => {
+              if (failCollection) throw new Error('stylesheet-read-failed');
+              return face[property as keyof typeof face] ?? '';
+            },
+          },
+          type: 5,
+        }],
+        href: `${document.location.origin}/wp-content/plugins/easymde/assets/vendor/katex/katex.min.css`,
+      }],
+    });
+    const idleDescriptor = Object.getOwnPropertyDescriptor(window, 'requestIdleCallback');
+    Object.defineProperty(window, 'requestIdleCallback', {
+      configurable: true,
+      value: (callback: () => void) => {
+        callback();
+        return 1;
+      },
+    });
+    try {
+      const fetch = vi.fn(async () => fontResponse());
+      const source = document.createElement('div');
+      source.setAttribute('style', 'font-family:KaTeX_Main');
+      source.textContent = 'E=mc2';
+      const rasterizer = createBrowserWechatVisualRasterizer(runtime({ fetch }));
+      await Promise.resolve();
+      await Promise.resolve();
+      failCollection = false;
+
+      await rasterizer.rasterize(request(source, 'math', 1, 80, 30));
+
+      expect(fetch).toHaveBeenCalledOnce();
+      expect(serializedImage()).toContain('font-family:"KaTeX_Main"');
+    } finally {
+      if (idleDescriptor) Object.defineProperty(window, 'requestIdleCallback', idleDescriptor);
+      else Reflect.deleteProperty(window, 'requestIdleCallback');
+    }
   });
 
   it('uses the first approved source in a face without fetching fallback formats', async () => {

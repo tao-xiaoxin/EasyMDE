@@ -1569,7 +1569,7 @@ function imageActionContext(
   return { canCopyImage, lease, match };
 }
 
-function isPreviewImageSelectionUnavailable(error: unknown): boolean {
+function isPreviewSelectionUnavailable(error: unknown): boolean {
   return (
     error instanceof PreviewWindowDomError
     && (error.message === 'preview-window-selection-block-unavailable'
@@ -5931,7 +5931,7 @@ export function EditorRoot(props: EditorRootProps) {
                 }
               }
             } catch (error) {
-              if (!isPreviewImageSelectionUnavailable(error)) throw error;
+              if (!isPreviewSelectionUnavailable(error)) throw error;
             }
           }
         }
@@ -5998,16 +5998,26 @@ export function EditorRoot(props: EditorRootProps) {
               pin = null;
             }
             if (!pin) {
-              pin = runtime.prepareGeneratedContentTargetForSelection({
-                index: {
-                  blocks: blockIndex.blocks,
-                  length: blockIndex.length,
-                  mathSpans: blockIndex.mathSpans,
-                  revision: snapshot.revision,
-                  source: blockIndex.source
-                },
-                selection: snapshot.selection
-              });
+              try {
+                pin = runtime.prepareGeneratedContentTargetForSelection({
+                  index: {
+                    blocks: blockIndex.blocks,
+                    length: blockIndex.length,
+                    mathSpans: blockIndex.mathSpans,
+                    revision: snapshot.revision,
+                    source: blockIndex.source
+                  },
+                  selection: snapshot.selection
+                });
+              } catch (error) {
+                // A caret can legitimately land on a source line that has no
+                // editable Preview block (for example after the final
+                // rendered block). Generated-content actions are optional
+                // context; keep the generic menu available and let the model
+                // omit only the unsafe generated actions.
+                if (!isPreviewSelectionUnavailable(error)) throw error;
+                pin = null;
+              }
               if (pin) {
                 resource = {
                   context: null,
@@ -6449,7 +6459,7 @@ export function EditorRoot(props: EditorRootProps) {
                     );
                   }
                 } catch (error) {
-                  if (!isPreviewImageSelectionUnavailable(error)) throw error;
+                  if (!isPreviewSelectionUnavailable(error)) throw error;
                 }
               }
             }

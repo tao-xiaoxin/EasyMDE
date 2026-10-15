@@ -3982,6 +3982,27 @@ async function applySourceTableAlignment(
 }
 
 test.describe('Editor context menu production surfaces', () => {
+  test('opens the generic Source menu when the caret is after the final rendered block', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, sourceEditor } = await loadCanonicalFixture(page);
+
+    await sourceEditor.focus();
+    await sourceEditor.press(sourceLineEndKey);
+    await sourceEditor.press('ControlOrMeta+End');
+    await openSourceMenu(page, sourceEditor);
+
+    await expect(rootItem(page, 'copy')).toHaveAttribute(
+      'aria-disabled',
+      'true'
+    );
+    await expect(rootItem(page, 'insert')).toHaveAttribute(
+      'aria-disabled',
+      'false'
+    );
+    await expect(page.locator('#easymde-source')).toHaveValue(markdown);
+  });
+
   test('keeps ordinary Source source-exact through inventory, copy/cancel, Bold Undo, table, and image actions', async ({ page }) => {
     await login(page);
     await openNewPost(page);

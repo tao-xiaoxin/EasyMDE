@@ -313,7 +313,15 @@ function blockForContext(
 }
 
 function codeFromError(error: unknown, fallback: string): string {
-  return error instanceof Error && CONTEXT_MENU_ERROR_CODES.has(error.message)
+  if (!(error instanceof Error)) return fallback;
+  if (CONTEXT_MENU_ERROR_CODES.has(error.message)) return error.message;
+  // Preserve privacy-safe operation codes from the editor owners so a
+  // readiness/open failure remains diagnosable without exposing exception
+  // messages or document content. Unknown errors still use the stable
+  // feature-level fallback.
+  return /^editor-(?:block-index|code-content|source-link|context-menu)-[a-z0-9-]+$/u.test(
+    error.message
+  )
     ? error.message
     : fallback;
 }

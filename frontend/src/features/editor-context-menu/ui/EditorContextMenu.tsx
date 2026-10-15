@@ -87,6 +87,7 @@ export type EditorContextMenuProps = Readonly<{
 type MenuLayerProps = Readonly<{
   direction: EditorContextMenuDirection;
   focusPath: string | null;
+  hoverPath: string | null;
   items: ReadonlyArray<EditorContextMenuItem>;
   onInteraction: () => void;
   onMenuPointerDown?: () => void;
@@ -94,6 +95,7 @@ type MenuLayerProps = Readonly<{
   onAction: (id: string) => void;
   onDismiss: (dismiss: EditorContextMenuDismiss) => void;
   onFocusPath: (path: string) => void;
+  onHoverPath: (path: string | null) => void;
   onCloseSubmenusToLayer: (path: string) => void;
   onOpenSubmenu: (
     path: string,
@@ -264,6 +266,7 @@ function itemPath(path: string, index: number): string {
 function MenuLayer({
   direction,
   focusPath,
+  hoverPath,
   items,
   onInteraction,
   onMenuPointerDown,
@@ -271,6 +274,7 @@ function MenuLayer({
   onAction,
   onDismiss,
   onFocusPath,
+  onHoverPath,
   onCloseSubmenusToLayer,
   onOpenSubmenu,
   onCloseSubmenu,
@@ -295,6 +299,7 @@ function MenuLayer({
     item: EditorContextMenuItem,
     currentPath: string
   ): void => {
+    onHoverPath(null);
     const forward = 'rtl' === direction ? 'ArrowLeft' : 'ArrowRight';
     const backward = 'rtl' === direction ? 'ArrowRight' : 'ArrowLeft';
     switch (event.key) {
@@ -356,12 +361,18 @@ function MenuLayer({
   const layer = (
     <div
       aria-label={ariaLabel}
-      className={`easymde-editor-context-menu__layer${'' === path ? '' : ' easymde-editor-context-menu__submenu'}`}
+      className={`easymde-editor-context-menu__layer${'' === path ? '' : ' easymde-editor-context-menu__submenu'}${null === hoverPath ? '' : ' is-pointer-hovering'}`}
       data-easymde-context-menu-layer={path || 'root'}
       data-easymde-context-menu-placement={'' === path ? undefined : submenuPosition?.placement}
       dir={direction}
       role="menu"
       ref={'' === path ? undefined : (element) => registerSubmenuRef(path, element)}
+      onMouseLeave={(event) => {
+        const related = event.relatedTarget;
+        if (!(related instanceof Node) || !portalTarget?.contains(related)) {
+          onHoverPath(null);
+        }
+      }}
       onScroll={onSubmenuScroll}
       style={'' === path
         ? undefined
@@ -381,6 +392,7 @@ function MenuLayer({
         const childPosition = submenuPositions[currentPath];
         const expanded = openPath === currentPath || Boolean(openPath?.startsWith(`${currentPath}.`));
         const className = `easymde-editor-context-menu__item${expanded ? ' is-expanded' : ''}`;
+        const hovered = hoverPath === currentPath;
         const Icon = CONTEXT_MENU_ICONS[item.id];
         return (
           <div className={className} key={item.id}>
@@ -388,7 +400,7 @@ function MenuLayer({
               aria-disabled={item.disabled ? 'true' : 'false'}
               aria-expanded={'submenu' === item.kind ? expanded : undefined}
               aria-haspopup={'submenu' === item.kind ? 'menu' : undefined}
-              className="easymde-editor-context-menu__button"
+              className={`easymde-editor-context-menu__button${hovered ? ' is-hovered' : ''}`}
               data-easymde-context-menu-item={item.id}
               disabled={item.disabled}
               onClick={() => {
@@ -418,6 +430,7 @@ function MenuLayer({
                 onMenuPointerDown?.();
               }}
               onMouseEnter={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                onHoverPath(currentPath);
                 if ('submenu' === item.kind && !item.disabled) {
                   onOpenSubmenu(currentPath, event.currentTarget, item.children);
                 } else {
@@ -474,6 +487,7 @@ function MenuLayer({
                     <MenuLayer
                       direction={direction}
                       focusPath={focusPath}
+                      hoverPath={hoverPath}
                       items={item.children}
                       onInteraction={onInteraction}
                       {...(onMenuPointerDown ? { onMenuPointerDown } : {})}
@@ -481,6 +495,7 @@ function MenuLayer({
                       onAction={onAction}
                       onDismiss={onDismiss}
                       onFocusPath={onFocusPath}
+                      onHoverPath={onHoverPath}
                       onCloseSubmenusToLayer={onCloseSubmenusToLayer}
                       onOpenSubmenu={onOpenSubmenu}
                       onCloseSubmenu={onCloseSubmenu}
@@ -551,6 +566,7 @@ export function EditorContextMenu({
   const openPathRef = useRef<string | null>(null);
   const initialFocusCancelledRef = useRef(false);
   const [focusPath, setFocusPath] = useState<string | null>(null);
+  const [hoverPath, setHoverPath] = useState<string | null>(null);
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [position, setPosition] = useState<MenuPosition>({ left: anchor.x, top: anchor.y });
   const [submenuPositions, setSubmenuPositions] = useState<Record<string, EditorContextMenuPosition>>({});
@@ -866,6 +882,7 @@ export function EditorContextMenu({
     clampPosition();
     const first = firstEnabled(model.items, 'last' === initialFocus);
     setOpenPath(null);
+    setHoverPath(null);
     setSubmenuPositions({});
     setFocusPath(null);
     const frame = requestAnimationFrame(() => {
@@ -1039,6 +1056,7 @@ export function EditorContextMenu({
         <MenuLayer
           direction={direction}
           focusPath={focusPath}
+          hoverPath={hoverPath}
           items={model.items}
           onInteraction={() => {
             initialFocusCancelledRef.current = true;
@@ -1048,6 +1066,7 @@ export function EditorContextMenu({
           onAction={onAction}
           onDismiss={onDismiss}
           onFocusPath={setFocusPath}
+          onHoverPath={setHoverPath}
           onCloseSubmenusToLayer={closeSubmenusToLayer}
           onOpenSubmenu={openSubmenu}
           onCloseSubmenu={closeSubmenu}

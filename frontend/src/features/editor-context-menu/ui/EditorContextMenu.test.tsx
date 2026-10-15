@@ -292,6 +292,47 @@ describe('EditorContextMenu', () => {
     );
   });
 
+  it('moves the visible selection frame with the pointer through nested menus', async () => {
+    render(
+      <EditorContextMenu
+        anchor={{ x: 12, y: 18 }}
+        direction="ltr"
+        model={fourLevelModel}
+        onAction={vi.fn()}
+        onDismiss={vi.fn()}
+        open
+      />
+    );
+
+    const insert = screen.getByRole('menuitem', { name: 'Insert' });
+    fireEvent.mouseEnter(insert);
+    await waitFor(() => expect(insert.classList.contains('is-hovered')).toBe(true));
+
+    const more = await screen.findByRole('menuitem', { name: 'More' });
+    fireEvent.mouseEnter(more);
+    await waitFor(() => {
+      expect(insert.classList.contains('is-hovered')).toBe(false);
+      expect(more.classList.contains('is-hovered')).toBe(true);
+    });
+
+    const deep = await screen.findByRole('menuitem', { name: 'Deep' });
+    fireEvent.mouseEnter(deep);
+    await waitFor(() => {
+      expect(more.classList.contains('is-hovered')).toBe(false);
+      expect(deep.classList.contains('is-hovered')).toBe(true);
+    });
+
+    const leaf = await screen.findByRole('menuitem', { name: 'Leaf' });
+    fireEvent.mouseEnter(leaf);
+    await waitFor(() => {
+      expect(deep.classList.contains('is-hovered')).toBe(false);
+      expect(leaf.classList.contains('is-hovered')).toBe(true);
+    });
+
+    fireEvent.mouseLeave(leaf, { relatedTarget: document.body });
+    await waitFor(() => expect(leaf.classList.contains('is-hovered')).toBe(false));
+  });
+
   it('keeps root focus when the opening pointer hovers the menu before Escape', () => {
     let frame: FrameRequestCallback | null = null;
     const requestAnimationFrame = vi

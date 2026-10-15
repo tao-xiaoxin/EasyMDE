@@ -701,6 +701,14 @@ test('context menu CSS keeps system/CJK typography, compact items, and clipped t
     css,
     /\.easymde-editor-context-menu__button:focus-visible:not\(:disabled\)\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--easymde-context-menu-focus\);/s
   );
+  assert.match(
+    css,
+    /\.easymde-editor-context-menu__button\.is-hovered:not\(:disabled\)\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--easymde-context-menu-focus\);/s
+  );
+  assert.match(
+    css,
+    /\.easymde-editor-context-menu__layer\.is-pointer-hovering[\s\S]*?\.easymde-editor-context-menu__button:focus-visible:not\(\.is-hovered\):not\(:disabled\)\s*\{[^}]*box-shadow:\s*none;/s
+  );
   assertDeclaration(menu, 'box-sizing', 'border-box');
   assertDeclaration(menu, 'border-radius', '8px');
   assertDeclaration(menu, 'border', '1px solid #dfe4ea');

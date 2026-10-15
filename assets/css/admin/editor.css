@@ -1417,6 +1417,18 @@ body:has(.easymde-editor.is-immersive) .wrap {
     box-shadow: inset 0 0 0 2px var(--easymde-context-menu-focus);
 }
 
+/* Pointer selection is independent from keyboard focus. The frame follows
+ * the item under the pointer while a focused-but-not-hovered item does not
+ * leave a stale blue outline behind it. */
+.easymde-editor-context-menu__button.is-hovered:not(:disabled) {
+    box-shadow: inset 0 0 0 2px var(--easymde-context-menu-focus);
+}
+
+.easymde-editor-context-menu__layer.is-pointer-hovering
+    .easymde-editor-context-menu__button:focus-visible:not(.is-hovered):not(:disabled) {
+    box-shadow: none;
+}
+
 .easymde-editor-context-menu__button:disabled {
     color: #8c8f94;
     cursor: default;

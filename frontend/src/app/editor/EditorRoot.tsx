@@ -641,7 +641,6 @@ export function EditorRoot(props: EditorRootProps) {
   const scheduledWechatPreparationRef = useRef<(() => void) | null>(null);
   const scheduleWechatPreparationAfterCopyRef = useRef<(() => void) | null>(null);
   const wechatBackgroundPreparationRef = useRef<{
-    completed: boolean;
     controller: AbortController;
   } | null>(null);
   const previewRevisionRef = useRef(0);
@@ -1007,11 +1006,10 @@ export function EditorRoot(props: EditorRootProps) {
       ) return;
       let preparation = wechatBackgroundPreparationRef.current;
       if (!preparation) {
-        preparation = { completed: false, controller: new AbortController() };
+        preparation = { controller: new AbortController() };
         wechatBackgroundPreparationRef.current = preparation;
       }
       if (preparation.controller.signal.aborted) return;
-      preparation.completed = false;
       // Preparation runs in the background so the compatibility copy path is
       // ready when requested. Its result is reported by the actual copy
       // operation; opening or editing a Preview is not a copy failure.
@@ -1029,9 +1027,7 @@ export function EditorRoot(props: EditorRootProps) {
           if (wechatBackgroundPreparationRef.current !== currentPreparation) {
             return;
           }
-          if (geometryOnly) {
-            currentPreparation.completed = true;
-          } else {
+          if (!geometryOnly) {
             wechatBackgroundPreparationRef.current = null;
           }
         });

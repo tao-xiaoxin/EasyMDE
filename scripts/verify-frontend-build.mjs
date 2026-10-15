@@ -37,7 +37,7 @@ const productionSpec = {
 	resourceHasManifestRecord: false,
 	resourceReferencedByScript: false,
 	label: "production build",
-	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
+	ignoredOutputPrefixes: ["admin-editor-loader/", "code-copy/", "editor-block-index-worker/", "frontend-enhancements/", "frontend-bootstrap/", "frontend-mermaid/", "media-picker/", "settings-center/"],
 	requiredRuntimePatterns: [
 		{ pattern: /\bwp\.element\b/, label: "WordPress element runtime" },
 		{ pattern: /\bwp\.i18n\b/, label: "WordPress i18n runtime" },
@@ -183,6 +183,23 @@ const mediaPickerProductionSpec = {
 const mediaPickerProductionCheckRoot = join(
 	repositoryRoot,
 	".cache/easymde-media-picker-production-check",
+);
+const editorBlockIndexWorkerProductionSpec = {
+	outputRoot: join(repositoryRoot, "assets/build/editor-block-index-worker"),
+	sourceEntry: "frontend/src/entrypoints/editor-block-index-worker.ts",
+	expectedHandle: "easymde-editor-block-index-worker",
+	expectedDependencies: [],
+	resourceField: null,
+	expectedResourceCount: 0,
+	resourceHasManifestRecord: false,
+	resourceReferencedByScript: false,
+	label: "editor block-index worker production build",
+	requiredRuntimePattern: /editor-block-index/,
+	requiredRuntimeLabel: "editor block-index worker protocol",
+};
+const editorBlockIndexWorkerProductionCheckRoot = join(
+	repositoryRoot,
+	".cache/easymde-editor-block-index-worker-production-check",
 );
 const forbiddenContent = [
 	{
@@ -594,6 +611,12 @@ export function validateMediaPickerProductionBuild(
 	return validateBuild(mediaPickerProductionSpec, outputRoot);
 }
 
+export function validateEditorBlockIndexWorkerProductionBuild(
+	outputRoot = editorBlockIndexWorkerProductionSpec.outputRoot,
+) {
+	return validateBuild(editorBlockIndexWorkerProductionSpec, outputRoot);
+}
+
 export function compareFrontendProductionBuilds(
 	generatedRoot = productionCheckRoot,
 	committedRoot = productionSpec.outputRoot,
@@ -713,6 +736,18 @@ export function compareMediaPickerProductionBuilds(
 	);
 }
 
+export function compareEditorBlockIndexWorkerProductionBuilds(
+	generatedRoot = editorBlockIndexWorkerProductionCheckRoot,
+	committedRoot = editorBlockIndexWorkerProductionSpec.outputRoot,
+) {
+	compareProductionBuild(
+		editorBlockIndexWorkerProductionSpec,
+		generatedRoot,
+		committedRoot,
+		"editor block-index worker production build",
+	);
+}
+
 if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(resolve(process.argv[1])).href
@@ -725,8 +760,9 @@ if (
 			compareSettingsProductionBuilds();
 			compareFrontendEnhancementsProductionBuilds();
 			compareFrontendBootstrapProductionBuilds();
-			compareFrontendMermaidProductionBuilds();
-			compareMediaPickerProductionBuilds();
+				compareFrontendMermaidProductionBuilds();
+				compareMediaPickerProductionBuilds();
+				compareEditorBlockIndexWorkerProductionBuilds();
 			console.log(
 				"Committed frontend production build matches the validated source build.",
 			);
@@ -737,8 +773,9 @@ if (
 			validateCodeCopyProductionBuild();
 			validateFrontendEnhancementsProductionBuild();
 			validateFrontendBootstrapProductionBuild();
-			validateFrontendMermaidProductionBuild();
-			validateMediaPickerProductionBuild();
+				validateFrontendMermaidProductionBuild();
+				validateMediaPickerProductionBuild();
+				validateEditorBlockIndexWorkerProductionBuild();
 			console.log("Frontend production build is valid.");
 		} else {
 			validateFrontendBuild();

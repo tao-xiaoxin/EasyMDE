@@ -43,7 +43,9 @@ function validBootstrap() {
         saveCss: 'Save CSS'
       }
     },
-    schemaVersion: 2,
+    schemaVersion: 3,
+    editorBlockIndexWorkerUrl:
+      'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js',
     document: { strings: { editorLabel: 'Markdown source' } },
     fonts: {
       options: {
@@ -160,6 +162,68 @@ function validBootstrap() {
     },
     previewEnhancement: previewEnhancementBootstrapFixture,
     strings: {
+      contextMenu: {
+        alignCenter: 'Align center',
+        alignLeft: 'Align left',
+        alignRight: 'Align right',
+        alignment: 'Alignment',
+        ariaLabel: 'Editor context menu',
+        bold: 'Bold',
+        codeBlock: 'Code block',
+        copy: 'Copy',
+        copyAsHtml: 'Copy as HTML code',
+        copyAsMarkdown: 'Copy as Markdown',
+        copyCodeBlock: 'Copy code block',
+        copyCodeContent: 'Copy Code Block Content',
+        indentCodeBlock: 'Adjust Code Block Indentation',
+        indentSelectedCode: 'Adjust Selected Code Indentation',
+        copyDiagramSource: 'Copy code',
+        copyGeneratedImage: 'Copy as image',
+        copyGeneratedMathMl: 'Copy MathML',
+        copyImage: 'Copy image',
+        copyLinkAddress: 'Copy link address',
+        copyPasteAs: 'Copy / Paste as',
+        copyMathSource: 'Copy TeX',
+        copySimplifiedFormatting: 'Copy with simplified formatting',
+        copyTable: 'Copy table',
+        formatTableSource: 'Format Table Source',
+        cut: 'Cut',
+        deleteCodeBlock: 'Delete code block',
+        deleteColumn: 'Delete column',
+        deleteGeneratedContent: 'Delete',
+        deleteImage: 'Delete image',
+        deleteRow: 'Delete row',
+        deleteTable: 'Delete table',
+        deleteThematicBreak: 'Delete horizontal rule',
+        diagramBlock: 'Diagram',
+        editGeneratedContent: 'Edit',
+        image: 'Image',
+        imageScale: 'Image scale',
+        insert: 'Insert',
+        insertAbove: 'Insert paragraph above',
+        insertBelow: 'Insert paragraph below',
+        insertCodeAbove: 'Insert paragraph above code block',
+        insertCodeBelow: 'Insert paragraph below code block',
+        insertColumnLeft: 'Insert column left',
+        insertColumnRight: 'Insert column right',
+        insertParagraphAboveGenerated: 'Insert paragraph above',
+        insertParagraphAboveTable: 'Insert paragraph above table',
+        insertParagraphBelowGenerated: 'Insert paragraph below',
+        insertParagraphBelowTable: 'Insert paragraph below table',
+        insertRowAbove: 'Insert row above',
+        insertRowBelow: 'Insert row below',
+        mathBlock: 'Formula',
+        openLink: 'Open link',
+        paste: 'Paste',
+        pastePlainText: 'Paste as plain text',
+        saveGeneratedImage: 'Save as image',
+        statusActionFailed: 'The editor action could not be completed.',
+        statusClipboardUnavailable:
+          'Clipboard text is unavailable in this browser.',
+        table: 'Table',
+        unsupported: 'Unsupported for this selection.',
+        uploadImage: 'Upload image'
+      },
       immersive: {
         autoSave: 'Auto save',
         autoSaveEnabled: 'Auto save is enabled',
@@ -342,11 +406,13 @@ describe('parseEditorRootBootstrap', () => {
   it('validates the complete single-root bootstrap contract', () => {
     expect(parseEditorRootBootstrap(validBootstrap())).toEqual({
       appearance: validBootstrap().appearance,
-      schemaVersion: 2,
+      schemaVersion: 3,
+      editorBlockIndexWorkerUrl: validBootstrap().editorBlockIndexWorkerUrl,
       document: { editorLabel: 'Markdown source' },
       fonts: validBootstrap().fonts,
       imageUpload: validBootstrap().imageUpload,
       settings: validBootstrap().settings,
+      contextMenuStrings: validBootstrap().strings.contextMenu,
       immersiveStrings: validBootstrap().strings.immersive,
       layout: {
         direction: 'ltr',
@@ -383,6 +449,54 @@ describe('parseEditorRootBootstrap', () => {
     });
   });
 
+  it.each(['copyGeneratedImage', 'copyLinkAddress', 'saveGeneratedImage'] as const)(
+    'rejects a missing context-menu label: %s',
+    (key) => {
+      const value = validBootstrap();
+      const contextMenu = { ...value.strings.contextMenu } as Record<string, unknown>;
+      delete contextMenu[key];
+      value.strings = { ...value.strings, contextMenu } as typeof value.strings;
+
+      expect(() => parseEditorRootBootstrap(value)).toThrowError(
+        expect.objectContaining({ code: 'editor-root-context-menu-label-invalid' })
+      );
+    }
+  );
+
+  it('rejects a non-string generated-content label', () => {
+    const value = validBootstrap();
+    value.strings.contextMenu.copyGeneratedMathMl = 7 as unknown as string;
+
+    expect(() => parseEditorRootBootstrap(value)).toThrowError(
+      expect.objectContaining({ code: 'editor-root-context-menu-label-invalid' })
+    );
+  });
+
+  it('accepts a version query on the manifest-backed worker URL', () => {
+    const value = validBootstrap();
+    value.editorBlockIndexWorkerUrl = `${value.editorBlockIndexWorkerUrl}?ver=abcdef0123456789`;
+
+    expect(parseEditorRootBootstrap(value).editorBlockIndexWorkerUrl).toBe(
+      value.editorBlockIndexWorkerUrl
+    );
+  });
+
+  it('accepts the production localhost manifest URL', () => {
+    const value = validBootstrap();
+    value.previewEnhancement = JSON.parse(
+      JSON.stringify(value.previewEnhancement).replaceAll(
+        'https://example.test',
+        'http://localhost:8094'
+      )
+    ) as typeof value.previewEnhancement;
+    value.editorBlockIndexWorkerUrl =
+      'http://localhost:8094/wp-content/plugins/easymde/assets/build/editor-block-index-worker/assets/editor-block-index-worker-DKcdIWB6.js?ver=d01150a8fcd15fec';
+
+    expect(parseEditorRootBootstrap(value).editorBlockIndexWorkerUrl).toBe(
+      value.editorBlockIndexWorkerUrl
+    );
+  });
+
   it.each([
     [null, 'editor-root-bootstrap-invalid'],
     [
@@ -390,6 +504,45 @@ describe('parseEditorRootBootstrap', () => {
       'editor-root-schema-unsupported'
     ],
     [{ ...validBootstrap(), document: null }, 'editor-root-document-invalid'],
+    [
+      {
+        ...validBootstrap(),
+        editorBlockIndexWorkerUrl: 'https://other.example/worker.js'
+      },
+      'editor-root-block-index-worker-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        editorBlockIndexWorkerUrl:
+          'https://example.test/wp-content/plugins/other/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js'
+      },
+      'editor-root-block-index-worker-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        editorBlockIndexWorkerUrl:
+          'https://example.test/wp-content/plugins/easymdeX/assets/build/editor-block-index-worker/assets/editor-block-index-worker-test.js'
+      },
+      'editor-root-block-index-worker-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        editorBlockIndexWorkerUrl:
+          'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker%2Fassets/editor-block-index-worker-test.js'
+      },
+      'editor-root-block-index-worker-invalid'
+    ],
+    [
+      {
+        ...validBootstrap(),
+        editorBlockIndexWorkerUrl:
+          'https://example.test/wp-content/plugins/easymde/assets/build/editor-block-index-worker%5Cassets/editor-block-index-worker-test.js'
+      },
+      'editor-root-block-index-worker-invalid'
+    ],
     [
       { ...validBootstrap(), appearance: null },
       'editor-root-appearance-invalid'

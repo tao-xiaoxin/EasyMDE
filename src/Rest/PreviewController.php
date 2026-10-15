@@ -103,13 +103,19 @@ final class PreviewController {
 			);
 		}
 
-		return rest_ensure_response(
-			array(
-				'html'     => $preview['html'],
-				'features' => $this->feature_detector->detect( $markdown ),
-				'editMap'  => $preview['editMap'],
-			)
+		$response = array(
+			'html'     => $preview['html'],
+			'features' => $this->feature_detector->detect( $markdown ),
+			'editMap'  => $preview['editMap'],
 		);
+		if ( isset( $preview['codeMap'] ) ) {
+			$response['codeMap'] = $preview['codeMap'];
+		}
+		if ( isset( $preview['codeProjection'] ) ) {
+			$response['codeProjection'] = $preview['codeProjection'];
+		}
+
+		return rest_ensure_response( $response );
 	}
 
 	public function sanitize_string( $value ) {

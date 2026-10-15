@@ -7,9 +7,19 @@ const outputPath = path.join(root, 'frontend/src/generated/lucide-icons.tsx');
 const icons = {
   Bold: 'bold',
   BarChart3: 'chart-column',
+  AlignCenter: 'align-center',
+  AlignLeft: 'align-left',
+  AlignRight: 'align-right',
+  ArrowDown: 'arrow-down',
+  ArrowLeft: 'arrow-left',
+  ArrowRight: 'arrow-right',
+  ArrowUp: 'arrow-up',
   BellRing: 'bell-ring',
   BookOpen: 'book-open',
   CalendarCheck: 'calendar-check',
+  Clipboard: 'clipboard',
+  ClipboardCopy: 'clipboard-copy',
+  ClipboardPaste: 'clipboard-paste',
   Braces: 'braces',
   Check: 'check',
   ChevronLeft: 'chevron-left',
@@ -32,6 +42,7 @@ const icons = {
   Eye: 'eye',
   ExternalLink: 'external-link',
   FileText: 'file-text',
+  FileCode2: 'file-code-2',
   FolderOpen: 'folder-open',
   Hash: 'hash',
   GitBranch: 'git-branch',
@@ -69,6 +80,7 @@ const icons = {
   RotateCcw: 'rotate-ccw',
   Search: 'search',
   Save: 'save',
+  Scissors: 'scissors',
   Send: 'send',
   Settings: 'settings',
   ShieldCheck: 'shield-check',
@@ -87,7 +99,8 @@ const icons = {
   UserRound: 'user-round',
   Workflow: 'workflow',
   WandSparkles: 'wand-sparkles',
-  X: 'x'
+  X: 'x',
+  ZoomIn: 'zoom-in'
 };
 
 const rootPackageJson = JSON.parse(await readFile(

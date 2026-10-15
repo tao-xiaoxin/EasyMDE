@@ -3,8 +3,8 @@
   "entries": {
     "frontend/src/entrypoints/media-picker-bridge.ts": {
       "handle": "easymde-media-picker-bridge",
-      "file": "assets/media-picker-bridge-S5fT_33y.js",
-      "asset": "assets/media-picker-bridge-S5fT_33y.asset.php",
+      "file": "assets/media-picker-bridge-CrzOQCzK.js",
+      "asset": "assets/media-picker-bridge-CrzOQCzK.asset.php",
       "dependencies": [
         "media-editor"
       ],

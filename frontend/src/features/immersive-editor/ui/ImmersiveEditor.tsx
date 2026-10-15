@@ -8,7 +8,7 @@ import {
   useState,
   useTransition
 } from '@wordpress/element';
-import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type {
   NativeFeaturedImage,
   NativePublishDraft,
@@ -20,7 +20,6 @@ import {
   Info,
   RotateCcw,
   Save,
-  Table,
   X
 } from '../../../generated/lucide-icons';
 import type {
@@ -47,6 +46,7 @@ import { ImmersiveHeader } from './ImmersiveHeader';
 import { ImmersiveOutline } from './ImmersiveOutline';
 import { ImmersivePublishDialog } from './ImmersivePublishDialog';
 import { ImmersiveToolbar } from './ImmersiveToolbar';
+import { EditorTableDialog, trapFocus } from '../../editor-context-menu/ui/EditorTableDialog';
 import type {
   ImmersiveSettings,
   ImmersiveStrings
@@ -327,177 +327,6 @@ type Props = Readonly<{
   onViewModeChange: (mode: ImmersiveViewMode) => void;
   strings: ImmersiveStrings;
 }>;
-
-const TABLE_DIMENSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
-
-function trapFocus(event: ReactKeyboardEvent<HTMLElement>) {
-  if ('Tab' !== event.key) return;
-  const controls = Array.from(
-    event.currentTarget.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'
-    )
-  ).filter((element) => !element.hidden);
-  if (!controls.length) return;
-  const first = controls[0];
-  const last = controls[controls.length - 1];
-  const activeElement = event.currentTarget.ownerDocument.activeElement;
-  if (event.shiftKey && activeElement === first) {
-    event.preventDefault();
-    last?.focus();
-  } else if (!event.shiftKey && activeElement === last) {
-    event.preventDefault();
-    first?.focus();
-  }
-}
-
-function Modal({
-  children,
-  closeLabel,
-  environment,
-  label,
-  onClose
-}: Readonly<{
-  children: ReactNode;
-  closeLabel: string;
-  environment: ImmersiveEnvironmentPort;
-  label: string;
-  onClose: () => void;
-}>) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previous = environment.activeElement();
-    ref.current
-      ?.querySelector<HTMLElement>('[data-autofocus], button, input')
-      ?.focus();
-    return () => previous?.focus();
-  }, [environment]);
-  return (
-    <div className="easymde-immersive-modal-backdrop">
-      <div
-        ref={ref}
-        className="easymde-immersive-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        onKeyDown={trapFocus}
-      >
-        <button
-          type="button"
-          className="easymde-immersive-modal-close"
-          onClick={onClose}
-          aria-label={closeLabel}
-        >
-          <X size={16} />
-        </button>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function TableDialog({
-  environment,
-  strings,
-  onClose,
-  onInsert
-}: Readonly<{
-  environment: ImmersiveEnvironmentPort;
-  strings: ImmersiveStrings;
-  onClose: () => void;
-  onInsert: (rows: number, columns: number) => void;
-}>) {
-  const [rows, setRows] = useState(3);
-  const [columns, setColumns] = useState(3);
-  const [hovered, setHovered] = useState<Readonly<{
-    rows: number;
-    columns: number;
-  }> | null>(null);
-  const activeRows = hovered?.rows ?? rows;
-  const activeColumns = hovered?.columns ?? columns;
-  return (
-    <Modal
-      closeLabel={strings.cancel}
-      environment={environment}
-      label={strings.insertTable}
-      onClose={onClose}
-    >
-      <div className="easymde-immersive-table-title">
-        <Table size={15} />
-        <strong>{strings.insertTable}</strong>
-      </div>
-      <div className="easymde-immersive-table-picker">
-        <p className="easymde-immersive-table-size">
-          {activeRows} {strings.line} × {activeColumns} {strings.column}
-        </p>
-        <fieldset
-          className="easymde-immersive-table-grid"
-          aria-label={strings.table}
-          onMouseLeave={() => setHovered(null)}
-        >
-          {TABLE_DIMENSIONS.map((row) =>
-            TABLE_DIMENSIONS.map((column) => (
-              <button
-                key={`${row}-${column}`}
-                type="button"
-                className={
-                  row <= activeRows && column <= activeColumns ? 'is-active' : ''
-                }
-                aria-label={`${row} × ${column}`}
-                onFocus={() => setHovered({ rows: row, columns: column })}
-                onMouseEnter={() => setHovered({ rows: row, columns: column })}
-                onClick={() => onInsert(row, column)}
-              />
-            ))
-          )}
-        </fieldset>
-      </div>
-      <div className="easymde-immersive-table-inputs">
-        <label>
-          {strings.tableRows}
-          <input
-            data-autofocus
-            type="number"
-            min="1"
-            max="20"
-            value={rows}
-            onChange={(event) =>
-              setRows(
-                Math.max(1, Math.min(20, Number(event.target.value) || 1))
-              )
-            }
-          />
-        </label>
-        <span aria-hidden="true">×</span>
-        <label>
-          {strings.tableColumns}
-          <input
-            type="number"
-            min="1"
-            max="20"
-            value={columns}
-            onChange={(event) =>
-              setColumns(
-                Math.max(1, Math.min(20, Number(event.target.value) || 1))
-              )
-            }
-          />
-        </label>
-      </div>
-      <div className="easymde-immersive-modal-actions">
-        <button type="button" onClick={onClose}>
-          {strings.cancel}
-        </button>
-        <button
-          type="button"
-          className="is-primary"
-          onClick={() => onInsert(rows, columns)}
-        >
-          {strings.insertTable}
-        </button>
-      </div>
-    </Modal>
-  );
-}
 
 function HistoryDialog({
   dirty,
@@ -917,7 +746,7 @@ export function ImmersiveEditor({
       aria-label={strings.immersive}
     >
       {tableOpen ? (
-        <TableDialog
+        <EditorTableDialog
           environment={environment}
           strings={strings}
           onClose={() => setTableOpen(false)}

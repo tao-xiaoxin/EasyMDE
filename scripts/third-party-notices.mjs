@@ -26,7 +26,14 @@ const composerPurposes = {
 
 export const bundledFrontendPackages = {
   '@codemirror/commands': 'CodeMirror editing commands, keymaps, and undo history.',
+  '@codemirror/lang-css': 'Official CSS language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-html': 'Official HTML language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-javascript': 'Official JavaScript and TypeScript language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-json': 'Official JSON language parsing and indentation for detached code formatting.',
   '@codemirror/lang-markdown': 'Markdown language parsing and syntax support for CodeMirror.',
+  '@codemirror/lang-python': 'Official Python language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-sql': 'Official SQL language parsing and indentation for detached code formatting.',
+  '@codemirror/lang-yaml': 'Official YAML language parsing and indentation for detached code formatting.',
   '@codemirror/language': 'Language-aware command infrastructure used by CodeMirror commands.',
   '@codemirror/state': 'CodeMirror document, selection, transaction, and editor state.',
   '@codemirror/view': 'CodeMirror browser editor view and input handling.',

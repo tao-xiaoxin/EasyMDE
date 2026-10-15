@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "frontend/src/entrypoints/editor-block-index-worker.ts": {
+      "handle": "easymde-editor-block-index-worker",
+      "file": "assets/editor-block-index-worker-Do3jtgD6.js",
+      "asset": "assets/editor-block-index-worker-Do3jtgD6.asset.php",
+      "dependencies": [],
+      "resources": []
+    }
+  }
+}

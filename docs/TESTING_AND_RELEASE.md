@@ -244,9 +244,9 @@ npm run notices:check
 npm test
 ```
 
-`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all eight manifest-backed Vite entries. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
+`npm run frontend:check` verifies the locked generated Lucide nodes, runs Biome linting, strict TypeScript checking, Vitest component and contract tests, the test-only WordPress Classic Script contract, and read-only production comparisons for all nine manifest-backed Vite entries. The current locked toolchain uses Biome 2.5.4, Vite 8.1.5, TypeScript 7.0.2, CodeMirror 6, and development-only `lucide-react@0.487.0` on Node 20.19 or newer, while React, ReactDOM, and `@wordpress/element` stay aligned with the WordPress 6.7 React 18 runtime.
 
-The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the eight Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
+The test-only build writes to `.cache/easymde-frontend-contract/`. `npm run build:frontend` writes the committed outputs for the nine Vite configs below, while `npm run check:frontend-production` writes temporary outputs, validates each output, and compares each complete file set and its bytes with the committed runtimes without rewriting them. The validators fail on private React, invalid or inconsistent manifests, missing or stale output, non-plugin-relative resource paths, remote or development URLs, absolute local paths, and source maps.
 
 The current production build and entry matrix is:
 
@@ -260,8 +260,81 @@ The current production build and entry matrix is:
 | `frontend/vite.bootstrap.config.ts` | `assets/build/frontend-bootstrap` | `frontend/src/entrypoints/frontend-bootstrap.ts` | `easymde-frontend` | none |
 | `frontend/vite.mermaid.config.ts` | `assets/build/frontend-mermaid` | `frontend/src/entrypoints/frontend-mermaid-runtime.ts` | `easymde-mermaid` | none |
 | `frontend/vite.media-picker.config.ts` | `assets/build/media-picker` | `frontend/src/entrypoints/media-picker-bridge.ts` | `easymde-media-picker-bridge` | `media-editor` |
+| `frontend/vite.editor-block-index-worker.config.ts` | `assets/build/editor-block-index-worker` | `frontend/src/entrypoints/editor-block-index-worker.ts` | `easymde-editor-block-index-worker` (manifest identity; not enqueued) | none |
 
 Each row has a committed `manifest.json` and `wordpress-manifest.json`, and the `media-editor` dependency appears only in the `media-picker` WordPress manifest.
+
+The Editor constructs the structural Worker from the validated, same-origin
+plugin-relative `editorBlockIndexWorkerUrl`. It has no React root or remote
+resources. Verify its request/result limits, cancellation, stale generations,
+teardown, and real-browser main-thread response cost independently of build
+success; its exact manifest-backed runtime must be present in the plugin ZIP.
+
+The focused context-menu checks are:
+
+```bash
+npm run test:frontend -- frontend/src/features/editor-context-menu
+npm run test:frontend -- frontend/src/contracts/bootstrap/editor-root-bootstrap.test.ts frontend/src/entrypoints/admin-editor.test.tsx frontend/src/app/editor/EditorRoot.test.tsx
+npm run typecheck:frontend
+```
+
+These checks cover the strict PHP-owned menu bootstrap strings, Source and
+visual-surface event gates, Shift+F10/Context Menu activation, IME/read-only
+rejection, focus restoration, Clipboard failure/stale paths, menu inventory,
+table rules, image scale syntax, and the shared Root wiring. They do not prove
+real WordPress locale loading or authenticated browser Clipboard/media flows;
+those remain an explicit E2E/unverified boundary until run in the authorized
+Chinese WordPress environment.
+
+For a code-body-copy or Full Visual Cut increment, use the focused regressions
+and rebuild the runtime before this bounded browser check:
+
+```bash
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'copies canonical Bash code content without fences in Source and Full Visual|accepts Full Visual list Cut through accepted Preview and native Undo'
+```
+
+Code-copy verification must reach the formal PHP `codeMap`, not a synthetic
+body or browser container-stripping oracle. Cut must start with the actual
+non-collapsed native selection and retain an editable accepted Preview before
+native Undo. A passing parser or menu-inventory test proves neither behavior.
+
+For Source link-resolution wiring, the bounded partial-caption/reference
+browser check is:
+
+```bash
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'copies explicit and reference Link addresses from partial Source captions in ordinary and immersive split modes'
+```
+
+It uses exact native selections within inline and reference captions and checks
+real Clipboard addresses, unchanged source/selection/Preview and zero source
+transactions in ordinary and immersive split Source. It does not prove popup
+navigation, Visual link actions or dependency-absent Root configurations.
+
+For the bounded code-indentation behavior check, run:
+
+```bash
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off --grep 'repairs TS code indentation in Source and Full Visual while preserving code bytes and Undo'
+```
+
+It misindents the canonical fixture only in browser memory and checks selected
+half-open rows, whole-block correction, exact source, native Undo, repeat no-op,
+and visible-disabled Bash actions in ordinary Source and Full Visual. It does
+not establish every language, immersive split or Windowed Visual behavior.
+
+The complete canonical-fixture context-menu browser matrix is:
+
+```bash
+EASYMDE_E2E_BASE_URL=http://localhost:8094 npx playwright test tests/e2e/editor-context-menu.spec.mjs --project=chromium --workers=1 --trace=off
+```
+
+Use the authorized local site URL and credentials from the ignored root `.env`;
+never put credentials in command arguments or captured traces. The fixture is
+`docs/examples/markdown-full-capability-test.md`; the browser test replaces only
+its image URL with a local served copy for deterministic image loading. Record
+category results separately for ordinary Source, immersive split Source, full
+Visual and Windowed Visual. Menu inventory alone does not prove Clipboard PNG
+pixels, download completion, media upload, or Save/reload persistence; exercise
+and record those separately.
 
 The focused visual Markdown-transfer regression is:
 
@@ -399,7 +472,7 @@ Stable tag, the root `package.json` version, the top-level `package-lock.json`
 must be present non-empty strings; invalid JSON, missing fields, empty strings,
 and non-string values fail with the field named in the error. It also fails if
 required runtime dependencies, local runtime assets, registered theme assets,
-any of the eight production Frontend manifest pairs, any manifest-referenced
+any of the nine production Frontend manifest pairs, any manifest-referenced
 production entry script or matching `.asset.php` artifact, translation files,
 or third-party notices are missing, or if the generated third-party notice
 content is stale. CodeMirror and its compiled runtime dependencies are listed
@@ -418,7 +491,7 @@ cannot change the source archive identity:
 
 Those source archives use `EasyMDE-<version>/` as their root directory. They are separate from the installable runtime plugin ZIP and are not consumed by Plugin Check or E2E.
 
-The installable plugin ZIP includes all eight committed production entries under their manifest-backed `assets/build/` roots, including the Editor, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, and feature-gated Mermaid artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
+The installable plugin ZIP includes all nine committed production entries under their manifest-backed `assets/build/` roots, including the Editor, loader, media-picker, public code-copy, shared enhancement/bootstrap, Settings Center, feature-gated Mermaid, and editor structural Worker artifacts; it excludes `frontend/`, TypeScript and TSX source, Vite configuration, frontend test fixtures, `.cache/`, and development metadata. Source ZIP and tar.gz archives are created from the tracked Git tree and intentionally retain tracked `frontend/` source and configuration for contributors.
 
 CI uploads the release outputs as separate Actions artifacts:
 
@@ -999,7 +1072,7 @@ The current release package includes runtime plugin files such as:
 - `easymde.php`, `uninstall.php`, and `readme.txt`;
 - root `README.md`, `SECURITY.md`, `UPGRADING.md`, `THIRD-PARTY-NOTICES.md`, and `LICENSE`;
 - `composer.json` and `composer.lock`;
-- `includes/`, `src/`, `templates/`, `assets/` including all eight manifest-backed production browser entries, `languages/`, and runtime `vendor/`.
+- `includes/`, `src/`, `templates/`, `assets/` including all nine manifest-backed production browser entries, `languages/`, and runtime `vendor/`.
 
 The package must include Composer runtime dependencies, local Highlight.js and
 KaTeX assets, the manifest-backed Mermaid TypeScript bundle, KaTeX fonts,

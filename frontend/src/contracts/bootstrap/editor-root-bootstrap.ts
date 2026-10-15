@@ -1,3 +1,4 @@
+import { resolveEditorBlockIndexWorkerUrl } from '../ports/editor-block-index-port';
 import {
   isPreviewFeatureKey,
   type PreviewFeatures,
@@ -83,13 +84,77 @@ export type EditorRootSettingsBootstrap = Readonly<{
   markdown: Pick<MarkdownSettings, 'wordWrap'>;
 }>;
 
+export type EditorContextMenuBootstrapStrings = Readonly<{
+  alignCenter: string;
+  alignLeft: string;
+  alignRight: string;
+  alignment: string;
+  ariaLabel: string;
+  bold: string;
+  codeBlock: string;
+  copy: string;
+  copyAsHtml: string;
+  copyAsMarkdown: string;
+  copyCodeBlock: string;
+  copyCodeContent: string;
+  indentCodeBlock: string;
+  indentSelectedCode: string;
+  copyDiagramSource: string;
+  copyGeneratedImage: string;
+  copyGeneratedMathMl: string;
+  copyImage: string;
+  copyLinkAddress: string;
+  copyPasteAs: string;
+  copyMathSource: string;
+  copySimplifiedFormatting: string;
+  copyTable: string;
+  formatTableSource: string;
+  cut: string;
+  deleteCodeBlock: string;
+  deleteColumn: string;
+  deleteGeneratedContent: string;
+  deleteImage: string;
+  deleteRow: string;
+  deleteTable: string;
+  deleteThematicBreak: string;
+  diagramBlock: string;
+  editGeneratedContent: string;
+  image: string;
+  imageScale: string;
+  insert: string;
+  insertAbove: string;
+  insertBelow: string;
+  insertCodeAbove: string;
+  insertCodeBelow: string;
+  insertColumnLeft: string;
+  insertColumnRight: string;
+  insertParagraphAboveGenerated: string;
+  insertParagraphAboveTable: string;
+  insertParagraphBelowGenerated: string;
+  insertParagraphBelowTable: string;
+  insertRowAbove: string;
+  insertRowBelow: string;
+  mathBlock: string;
+  openLink: string;
+  paste: string;
+  pastePlainText: string;
+  saveGeneratedImage: string;
+  statusActionFailed: string;
+  statusClipboardUnavailable: string;
+  table: string;
+  unsupported: string;
+  uploadImage: string;
+}>;
+
 export type EditorRootBootstrap = Readonly<{
   appearance: AppearanceBootstrap;
-  schemaVersion: 2;
+  editorBlockIndexWorkerUrl: string;
+  schemaVersion: 3;
   document: DocumentSourceBootstrap;
   fonts: FontControlsBootstrap;
   imageUpload: ImageUploadBootstrap;
   settings: EditorRootSettingsBootstrap;
+  contextMenuStrings: EditorContextMenuBootstrapStrings;
   immersiveStrings: Readonly<{
     autoSave: string;
     autoSaveEnabled: string;
@@ -360,9 +425,98 @@ function parsePublishCategories(
   });
 }
 
+function parseContextMenuStrings(
+  value: unknown
+): EditorContextMenuBootstrapStrings {
+  const strings = objectValue(value, 'editor-root-context-menu-label-invalid');
+  const keys: ReadonlyArray<keyof EditorContextMenuBootstrapStrings> = [
+    'alignCenter',
+    'alignLeft',
+    'alignRight',
+    'alignment',
+    'ariaLabel',
+    'bold',
+    'codeBlock',
+    'copy',
+    'copyAsHtml',
+    'copyAsMarkdown',
+    'copyCodeBlock',
+    'copyCodeContent',
+    'indentCodeBlock',
+    'indentSelectedCode',
+    'copyDiagramSource',
+    'copyGeneratedImage',
+    'copyGeneratedMathMl',
+    'copyImage',
+    'copyLinkAddress',
+    'copyPasteAs',
+    'copyMathSource',
+    'copySimplifiedFormatting',
+    'copyTable',
+    'formatTableSource',
+    'cut',
+    'deleteCodeBlock',
+    'deleteColumn',
+    'deleteGeneratedContent',
+    'deleteImage',
+    'deleteRow',
+    'deleteTable',
+    'deleteThematicBreak',
+    'diagramBlock',
+    'editGeneratedContent',
+    'image',
+    'imageScale',
+    'insert',
+    'insertAbove',
+    'insertBelow',
+    'insertCodeAbove',
+    'insertCodeBelow',
+    'insertColumnLeft',
+    'insertColumnRight',
+    'insertParagraphAboveGenerated',
+    'insertParagraphAboveTable',
+    'insertParagraphBelowGenerated',
+    'insertParagraphBelowTable',
+    'insertRowAbove',
+    'insertRowBelow',
+    'mathBlock',
+    'openLink',
+    'paste',
+    'pastePlainText',
+    'saveGeneratedImage',
+    'statusActionFailed',
+    'statusClipboardUnavailable',
+    'table',
+    'unsupported',
+    'uploadImage'
+  ];
+  return Object.fromEntries(
+    keys.map((key) => [
+      key,
+      boundedString(strings[key], 'editor-root-context-menu-label-invalid')
+    ])
+  ) as EditorContextMenuBootstrapStrings;
+}
+
+function parseEditorBlockIndexWorkerUrl(
+  value: unknown,
+  assetBaseUrl: string
+): string {
+  const raw = boundedString(value, 'editor-root-block-index-worker-invalid', {
+    maxLength: 4096
+  });
+  try {
+    return resolveEditorBlockIndexWorkerUrl(raw, assetBaseUrl);
+  } catch {
+    throw new EditorRootBootstrapError(
+      'editor-root-block-index-worker-invalid'
+    );
+  }
+}
+
 export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   const bootstrap = objectValue(value, 'editor-root-bootstrap-invalid');
-  if (2 !== bootstrap.schemaVersion) {
+  if (3 !== bootstrap.schemaVersion) {
     throw new EditorRootBootstrapError('editor-root-schema-unsupported');
   }
   const labels = objectValue(bootstrap.strings, 'editor-root-label-invalid');
@@ -379,6 +533,7 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
   let localDrafts: EditorRootLocalDraftsBootstrap;
   let mediaPicker: MediaPickerBootstrap;
   let previewEnhancement: PreviewEnhancementBootstrap;
+  let editorBlockIndexWorkerUrl: string;
   let toolbar: ToolbarBootstrap;
   let wechatExport: WechatExportBootstrap;
 
@@ -516,6 +671,17 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
     );
   }
   try {
+    editorBlockIndexWorkerUrl = parseEditorBlockIndexWorkerUrl(
+      bootstrap.editorBlockIndexWorkerUrl,
+      previewEnhancement.assetBaseUrl
+    );
+  } catch (error) {
+    if (error instanceof EditorRootBootstrapError) throw error;
+    throw new EditorRootBootstrapError(
+      'editor-root-block-index-worker-invalid'
+    );
+  }
+  try {
     toolbar = parseToolbarBootstrap(bootstrap.toolbar);
   } catch {
     throw new EditorRootBootstrapError('editor-root-toolbar-invalid');
@@ -528,11 +694,13 @@ export function parseEditorRootBootstrap(value: unknown): EditorRootBootstrap {
 
   return {
     appearance,
-    schemaVersion: 2,
+    editorBlockIndexWorkerUrl,
+    schemaVersion: 3,
     document,
     fonts,
     imageUpload,
     settings,
+    contextMenuStrings: parseContextMenuStrings(labels.contextMenu),
     immersiveStrings: Object.fromEntries(
       [
         'autoSave',

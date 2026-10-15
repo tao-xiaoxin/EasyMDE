@@ -682,6 +682,85 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   );
 });
 
+test('context menu CSS keeps system/CJK typography, compact items, and two-level shadows', () => {
+  const menu = cssRule(css, '.easymde-editor-context-menu');
+  const viewport = cssRule(css, '.easymde-editor-context-menu__viewport');
+  const item = cssRule(css, '.easymde-editor-context-menu__button');
+  const shortcut = cssRule(css, '.easymde-editor-context-menu__shortcut');
+  const icon = cssRule(css, '.easymde-editor-context-menu__icon');
+  const submenu = cssRule(css, '.easymde-editor-context-menu__submenu');
+  const pointer = cssRule(css, '.easymde-editor-context-menu__pointer');
+  const glass = cssBlock(css, '.easymde-editor-context-menu::before,');
+  assertDeclaration(viewport, '--easymde-context-menu-background', '#fff');
+  assertDeclaration(viewport, '--easymde-context-menu-border', '#dfe4ea');
+  assertDeclaration(viewport, '--easymde-context-menu-focus', '#2271b1');
+  assertDeclaration(viewport, '--easymde-context-menu-foreground', '#1d2327');
+  assertDeclaration(viewport, '--easymde-context-menu-muted', '#646970');
+  assert.match(
+    css,
+    /\.easymde-editor-context-menu__button:focus-visible:not\(:disabled\)\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--easymde-context-menu-focus\);/s
+  );
+  assertDeclaration(menu, 'box-sizing', 'border-box');
+  assertDeclaration(menu, 'border-radius', '8px');
+  assertDeclaration(menu, 'border', '1px solid #dfe4ea');
+  assertDeclaration(menu, 'max-inline-size', /min\(324px, calc\(100vw - 16px\)\)/);
+  assertDeclaration(menu, 'min-inline-size', /min\(198px, calc\(100vw - 16px\)\)/);
+  assertDeclaration(menu, 'max-block-size', 'calc(100vh - 16px)');
+  assertDeclaration(menu, 'overflow-y', 'auto');
+  assertDeclaration(menu, 'overscroll-behavior', 'contain');
+  assertDeclaration(menu, 'font-family', /"EasyMDE Inter"[^;]*Noto Sans CJK SC[^;]*/);
+  assertDeclaration(menu, 'backdrop-filter', /blur\(18px\) saturate\(150%\)/);
+  assertDeclaration(glass, 'background', 'rgba(255, 255, 255, .92)');
+  assert.doesNotMatch(glass, /backdrop-filter/);
+  assertDeclaration(glass, 'border', '0');
+  assertDeclaration(glass, 'box-shadow', /0 14px 32px rgba\(15, 23, 42, \.18\)[^;]*/);
+  assertDeclaration(item, 'border-radius', '4px');
+  assertDeclaration(item, 'font-size', '13px');
+  assertDeclaration(item, 'font-weight', '400');
+  assertDeclaration(item, 'line-height', '1.35');
+  assertDeclaration(item, 'letter-spacing', '0');
+  assertDeclaration(item, 'white-space', 'normal');
+  assertDeclaration(shortcut, 'font-size', '12px');
+  assertDeclaration(shortcut, 'font-weight', '400');
+  assertDeclaration(shortcut, 'unicode-bidi', 'isolate');
+  assertDeclaration(shortcut, 'white-space', 'nowrap');
+  assertDeclaration(icon, 'flex', '0 0 16px');
+  assertDeclaration(icon, 'inline-size', '16px');
+  assertDeclaration(icon, 'block-size', '16px');
+  assertDeclaration(submenu, 'border-radius', '8px');
+  assertDeclaration(submenu, 'border', '1px solid #dfe4ea');
+  assertDeclaration(submenu, 'box-sizing', 'border-box');
+  assertDeclaration(submenu, 'font-family', /"EasyMDE Inter"[^;]*Noto Sans CJK SC[^;]*/);
+  assertDeclaration(submenu, 'max-inline-size', /min\(324px, calc\(100vw - 16px\)\)/);
+  assertDeclaration(submenu, 'min-inline-size', /min\(198px, calc\(100vw - 16px\)\)/);
+  assertDeclaration(submenu, 'backdrop-filter', /blur\(18px\) saturate\(150%\)/);
+  assertDeclaration(submenu, '--easymde-context-menu-focus', '#2271b1');
+  assertDeclaration(submenu, '--easymde-context-menu-foreground', '#1d2327');
+  assertDeclaration(submenu, '--easymde-context-menu-muted', '#646970');
+  assertDeclaration(submenu, 'color', 'var(--easymde-context-menu-foreground)');
+  assert.match(
+    css,
+    /\.easymde-editor-context-menu__submenu \.easymde-editor-context-menu__button:focus-visible:not\(:disabled\)\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--easymde-context-menu-focus\);/s
+  );
+  assert.doesNotMatch(css, /\.easymde-editor-context-menu__submenu\[data-easymde-context-menu-placement="(?:right|left)"\][^{]*\{[^}]*border-inline-(?:start|end)-color:\s*transparent;/s);
+  assertDeclaration(pointer, 'height', '14px');
+  assertDeclaration(pointer, 'width', '14px');
+  assertDeclaration(pointer, 'transform', /translate\(-50%, -50%\) rotate\(45deg\)/);
+  assertDeclaration(pointer, 'background', 'rgba(255, 255, 255, .92)');
+  assertDeclaration(pointer, 'pointer-events', 'none');
+  assertDeclaration(pointer, 'z-index', '3');
+  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="right"\]\s*\{[^}]*border-left:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 0 0 2px;/s);
+  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="left"\]\s*\{[^}]*border-top:\s*1px solid #dfe4ea;[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 2px 0 0;/s);
+  assertDeclaration(viewport, 'z-index', '100250');
+  assert.match(css, /\.easymde-editor-context-menu__viewport\s*\{[^}]*z-index:\s*100250;/s);
+  assert.match(css, /\.easymde-media-picker-backdrop\s*\{[^}]*z-index:\s*100400;/s);
+  assert.match(css, /prefers-reduced-transparency:\s*reduce/);
+  assert.match(
+    css,
+    /\.easymde-editor-context-menu__button:disabled\s*\{[^}]*color:\s*#8c8f94;[^}]*opacity:\s*1;/s
+  );
+});
+
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {
   assert.match(
     css,

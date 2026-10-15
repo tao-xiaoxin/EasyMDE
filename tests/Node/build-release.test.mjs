@@ -295,6 +295,9 @@ function createCompleteFixture(root) {
   const mediaPickerEntry = 'frontend/src/entrypoints/media-picker-bridge.ts';
   const mediaPickerScript = 'assets/media-picker-bridge-fixture.js';
   const mediaPickerMetadata = 'assets/media-picker-bridge-fixture.asset.php';
+  const editorBlockIndexWorkerEntry = 'frontend/src/entrypoints/editor-block-index-worker.ts';
+  const editorBlockIndexWorkerScript = 'assets/editor-block-index-worker-fixture.js';
+  const editorBlockIndexWorkerMetadata = 'assets/editor-block-index-worker-fixture.asset.php';
 
   writeText(
     root,
@@ -442,6 +445,14 @@ function createCompleteFixture(root) {
       handle: 'easymde-media-picker-bridge',
       dependencies: ['media-editor'],
       source: 'window.EasyMDEMediaPickerBridge = {}; easymde-media-picker-connect;\n'
+    },
+    {
+      root: 'assets/build/editor-block-index-worker',
+      entry: editorBlockIndexWorkerEntry,
+      script: editorBlockIndexWorkerScript,
+      metadata: editorBlockIndexWorkerMetadata,
+      handle: 'easymde-editor-block-index-worker',
+      source: 'editor-block-index; createEditorMarkdownBlockIndex;\n'
     }
   ]) {
     writeText(
@@ -723,6 +734,9 @@ test('release build succeeds for a complete runtime fixture', () => {
     assert.ok(entries.includes('easymde/assets/build/media-picker/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/media-picker\/assets\/media-picker-bridge-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
+    assert.ok(entries.includes('easymde/assets/build/editor-block-index-worker/wordpress-manifest.json'));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.js$/.test(entry)));
+    assert.ok(entries.some((entry) => /easymde\/assets\/build\/editor-block-index-worker\/assets\/editor-block-index-worker-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));
     assert.ok(entries.includes('easymde/assets/build/settings-center/wordpress-manifest.json'));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.js$/.test(entry)));
     assert.ok(entries.some((entry) => /easymde\/assets\/build\/settings-center\/assets\/settings-center-[A-Za-z0-9_-]+\.asset\.php$/.test(entry)));

@@ -94,6 +94,102 @@ Chrome and other browsers may reserve exact Typora combinations such as
 Ctrl/Cmd+1 through 6, Ctrl/Cmd+K, or Ctrl+Shift+I before a page receives the
 keyboard event. EasyMDE still displays and restores the exact Typora defaults;
 when a browser reserves one, record a different combination for that command.
+After a binding changes or is cleared, the previous registry default is
+consumed inside the editor, including held-key repeats, so it cannot trigger
+browser-native formatting; only the Settings Center binding can run the
+EasyMDE command.
+
+## Editor Context Menu
+
+Right-click an editable Markdown Source or unlocked visual Preview, or press
+Shift+F10/Context Menu, to open the shared editor menu. It keeps Bold, Cut,
+Copy, Paste, Copy as Markdown/HTML, plain-text paste, paragraph/table actions,
+and the WordPress Media picker on the same document and permission owners as
+the toolbar. Paste is enabled only after the browser reports readable text;
+failed or stale Clipboard operations leave the document unchanged.
+
+The root menu is confined to the current editor workspace. Submenus may cross
+the Source/Preview divider, open on the forward side when space permits, and
+flip and clamp to the viewport when needed; scrolling or right-clicking
+outside the editor dismisses the menu without changing Markdown.
+The menu prepares the selected content before first placement so contextual
+items do not move it afterward. Cancelling or changing the selection during
+preparation prevents a late menu from appearing.
+
+A selection spanning an object and surrounding text keeps text commands;
+it does not expose that object's deletion, alignment or adjacent insertion.
+Selections crossing the editable visual surface boundary are rejected without
+changing Markdown.
+
+Standalone Markdown thematic breaks (`---`, `***`, or `___`) use the same
+paragraph insertion actions as other editable blocks. Inserting above a rule
+keeps a blank line so later text remains a paragraph instead of becoming a
+Setext heading. Marker spelling, whitespace, line endings and surrounding
+source remain unchanged. Nested or fenced rule text is owned by its enclosing
+list, quote or code block. Full and Windowed Visual map an exact native
+`selectNode(hr)` selection through accepted source provenance; stale or mixed
+selections are rejected without whole-surface fallback. In Windowed Visual,
+Delete/Backspace removes only the HR marker bytes, keeps the original line
+ending, records one Undo/Redo entry, and restores the accepted HR or blank-gap
+selection. Non-cancelable, stale, read-only, mixed and spacer input is rejected
+without a Markdown write. The local browser check covers Windowed native source
+deletion and accepted Undo/Redo Preview; exact DOM selection restoration is
+covered by the focused editor tests.
+
+Source link commands work with a caret or a selection inside the link caption,
+including reference-style links. **Copy Link Address** copies the formal
+renderer's resolved address, not the selected caption or a guessed definition.
+It does not change source, selection or Preview. Unresolved reference links do
+not expose an invented address; preparation failures use the existing error
+message rather than reporting a successful copy.
+
+Code Tools offers whole-block indentation and selected-row indentation for
+code blocks with a supported language service, including blocks nested in
+lists and quotes. Selected-row indentation requires a nonempty selection; a
+selection ending at the start of the next row excludes that row. Unsupported
+languages such as Bash keep these actions visible but disabled. The language
+service may repair invalid indentation, but preserves literal payloads, blank
+rows, surrounding Markdown and line endings. A changed operation creates one
+Undo step only after formal Preview validates it; repeating an unchanged result
+adds no history step.
+
+When the selection is inside a Markdown image, **Image scale** offers 25%, 33%,
+50%, 67%, 100%, 150%, and 200%. **Upload image** is shown for the selected image
+and enabled only for an eligible absolute remote image with a configured
+remote-import owner; the selected image is
+replaced only after the protected WordPress result succeeds. The scale marker
+is stored in the image title as `{width=NN%}` and preserves alt text, URL, and
+the rest of the title. These percentages use the containing content width;
+150% and 200% intentionally exceed it instead of being capped at 100% by the
+article theme. Images without a scale marker keep responsive theme sizing.
+Image actions keep Markdown image syntax; there is no conversion to raw HTML
+`<img>`. Copy as HTML Code is Clipboard output only, not a source rewrite.
+Image menus intentionally omit Open in Browser and Save as PNG; these are not
+editor image actions. Formula and diagram exports below remain separate.
+
+The table Direction submenu aligns a selected table, row or column to the left,
+center or right. The latest alignment action wins. Column and whole-table actions
+use standard Markdown separators; independent row alignment adds a validated
+table-alignment comment without rewriting the original cells. Row/column edits
+retain the corresponding alignment, and Undo restores the original source.
+**Format Table Source** changes only the selected table's safe outer cell
+padding. Cell Markdown, alignment separators, URLs, line endings and surrounding
+source are retained. Repeating it on an already formatted table is a no-op;
+one Undo restores a changed table.
+Published pages retain the Settings Center's global Table Alignment policy:
+choose Auto to display the document's individual row/column alignment; an
+explicit global Left or Center setting overrides it without rewriting Markdown.
+
+Selected rendered formulas and Mermaid diagrams expose local image copying and
+PNG saving, source copying, editing, deletion, and paragraph insertion before or
+after the target. Formula copying also offers MathML. These local exports do not
+upload images or change Markdown. The accepted Preview must still match the
+current document; unavailable or stale targets cannot be exported.
+
+**Copy image** uses an already loaded, same-origin Preview image at its natural
+pixel size. It does not reload remote images or upload them. Unsupported,
+unloaded, cross-origin, oversized, or stale images are unavailable; browser
+Clipboard or encoding failures are reported rather than treated as success.
 
 ## Media Insertion
 

@@ -5,6 +5,8 @@ export type ToolbarCommand = Readonly<{
   surface: string;
   action: string;
   group: string;
+  defaultShortcutWin?: string;
+  defaultShortcutMac?: string;
   level?: number;
   usesLevelLabel?: boolean;
   linePrefix?: string;
@@ -91,6 +93,14 @@ function parseCommand(value: unknown): ToolbarCommand {
     command.usesLevelLabel,
     'invalid-command-uses-level-label'
   );
+  const defaultShortcutWin = optionalString(
+    command.defaultShortcutWin,
+    'invalid-command-default-shortcut-win'
+  );
+  const defaultShortcutMac = optionalString(
+    command.defaultShortcutMac,
+    'invalid-command-default-shortcut-mac'
+  );
   const linePrefix = optionalString(command.linePrefix, 'invalid-command-line-prefix');
   const placeholder = optionalString(command.placeholder, 'invalid-command-placeholder');
   const prefix = optionalString(command.prefix, 'invalid-command-prefix');
@@ -103,6 +113,8 @@ function parseCommand(value: unknown): ToolbarCommand {
     surface: requiredString(command.surface, 'invalid-command-surface'),
     action: requiredString(command.action, 'invalid-command-action'),
     group: requiredString(command.group, 'invalid-command-group'),
+    ...(undefined === defaultShortcutWin ? {} : { defaultShortcutWin }),
+    ...(undefined === defaultShortcutMac ? {} : { defaultShortcutMac }),
     ...(undefined === level ? {} : { level }),
     ...(undefined === usesLevelLabel ? {} : { usesLevelLabel }),
     ...(undefined === linePrefix ? {} : { linePrefix }),

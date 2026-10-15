@@ -15,6 +15,11 @@ import {
   isMarkdownTerminalWhitespaceSuffix,
   markdownLineStarts
 } from '../../shared/markdown/markdown-line-model';
+import {
+  imageScaleFromAttribute,
+  serializeLegacyMarkdownImageWidth,
+  serializeMarkdownImage
+} from '../image-scale/image-scale-contract';
 
 export { VISUAL_MARKDOWN_READ_ONLY_SELECTOR };
 
@@ -26,6 +31,157 @@ const VISUAL_FENCE_OPEN_EOF_ATTRIBUTE =
   'data-easymde-visual-fence-open-eof';
 const VISUAL_CODE_PLACEHOLDER_ATTRIBUTE =
   'data-easymde-visual-code-placeholder';
+
+export type VisualThematicBreakSelection = Readonly<{
+  block: HTMLHRElement;
+  direction: 'backward' | 'forward';
+}>;
+
+/**
+ * A native selectNode(<hr>) range has no descendant caret boundary. Keep this
+ * narrow so mixed or foreign selections continue through their normal owner.
+ */
+export function captureVisualThematicBreakSelection(
+  surface: HTMLElement
+): VisualThematicBreakSelection | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    1 !== selection?.rangeCount
+    || selection.isCollapsed
+    || selection.anchorNode !== surface
+    || selection.focusNode !== surface
+  ) {
+    return null;
+  }
+
+  const start = Math.min(selection.anchorOffset, selection.focusOffset);
+  const end = Math.max(selection.anchorOffset, selection.focusOffset);
+  if (
+    !Number.isInteger(start)
+    || !Number.isInteger(end)
+    || end - start !== 1
+    || start < 0
+    || end > surface.childNodes.length
+  ) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (
+    range.startContainer !== surface
+    || range.endContainer !== surface
+    || range.startOffset !== start
+    || range.endOffset !== end
+  ) {
+    return null;
+  }
+
+  const selected = surface.childNodes[start];
+  if (
+    !(selected instanceof HTMLHRElement)
+    || selected.parentNode !== surface
+    || !selected.isConnected
+    || !selected.getAttribute('data-easymde-visual-block-id')
+  ) {
+    return null;
+  }
+
+  let ancestor: HTMLElement | null = selected;
+  while (ancestor) {
+    if (
+      ancestor.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      || ancestor.hasAttribute('data-easymde-preview-window-spacer')
+      || 'false' === ancestor.getAttribute('contenteditable')?.toLowerCase()
+    ) {
+      return null;
+    }
+    if (ancestor === surface) break;
+    ancestor = ancestor.parentElement;
+  }
+
+  return {
+    block: selected,
+    direction: selection.anchorOffset > selection.focusOffset
+      ? 'backward'
+      : 'forward'
+  };
+}
+
+/**
+ * Browsers can place a context-menu caret inside an image void element. Make
+ * that target an explicit node selection before the normal Markdown mapper
+ * reads it, so the source owner can identify the complete image syntax.
+ */
+export function shouldNormalizeVisualImageContextMenuSelection(
+  selection: Pick<Selection, 'isCollapsed' | 'rangeCount'> | null | undefined
+): boolean {
+  return !selection
+    || 0 === selection.rangeCount
+    || (1 === selection.rangeCount && selection.isCollapsed);
+}
+
+export function selectVisualImageForContextMenu(
+  surface: HTMLElement,
+  target: Element | null | undefined
+): boolean {
+  const image = target?.closest('img');
+  if (!(image instanceof HTMLImageElement) || !surface.contains(image)) {
+    return false;
+  }
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  if (!shouldNormalizeVisualImageContextMenuSelection(selection)) return false;
+  const range = surface.ownerDocument.createRange();
+  try {
+    range.selectNode(image);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } catch {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+  return true;
+}
+
+export function visualThematicBreakSourceSelection(
+  sourceMarkdown: string,
+  sourceRange: Readonly<{ end: number; start: number }>,
+  direction: VisualThematicBreakSelection['direction']
+): Readonly<{
+  direction: VisualThematicBreakSelection['direction'];
+  end: number;
+  start: number;
+}> {
+  if (
+    !Number.isInteger(sourceRange.start)
+    || !Number.isInteger(sourceRange.end)
+    || sourceRange.start < 0
+    || sourceRange.end <= sourceRange.start
+    || sourceRange.end > sourceMarkdown.length
+  ) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+
+  const sourceSlice = sourceMarkdown.slice(sourceRange.start, sourceRange.end);
+  const selectedSource = sourceSlice.endsWith('\r\n')
+    ? sourceSlice.slice(0, -2)
+    : /[\r\n]$/u.test(sourceSlice)
+      ? sourceSlice.slice(0, -1)
+      : sourceSlice;
+  if (
+    '' === selectedSource
+    || /[\r\n]/u.test(selectedSource)
+    || !/[^\t ]/u.test(selectedSource)
+  ) {
+    throw new Error('visual-editor-selection-map-failed');
+  }
+
+  return {
+    direction,
+    end: sourceRange.start + selectedSource.length,
+    start: sourceRange.start
+  };
+}
+
 function placeCaretAtEnd(node: Node): void {
   const selection = window.getSelection();
   if (!selection) return;
@@ -340,17 +496,59 @@ export function captureVisualSelection(
   ) {
     return null;
   }
+  const normalizeBoundary = (
+    node: Node,
+    offset: number,
+    atEnd: boolean
+  ): Readonly<{ node: Node; offset: number }> => {
+    const validOffset = node instanceof Text
+      ? offset >= 0 && offset <= node.data.length
+      : offset >= 0 && offset <= node.childNodes.length;
+    if (validOffset && (node instanceof Text ? node.data.length > 0 : true)) {
+      return { node, offset };
+    }
+    const block = visualBlockForNode(editor, node);
+    if (!block) return { node, offset: 0 };
+    const textNodes: Text[] = [];
+    const walker = editor.ownerDocument.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const text = walker.currentNode;
+      if (text instanceof Text && text.data.length > 0) textNodes.push(text);
+    }
+    const text = atEnd ? textNodes[textNodes.length - 1] : textNodes[0];
+    return text
+      ? { node: text, offset: atEnd ? text.data.length : 0 }
+      : { node: block, offset: atEnd ? block.childNodes.length : 0 };
+  };
+  const anchor = normalizeBoundary(
+    selection.anchorNode,
+    selection.anchorOffset,
+    selection.anchorOffset > (
+      selection.anchorNode instanceof Text
+        ? selection.anchorNode.data.length
+        : selection.anchorNode.childNodes.length
+    )
+  );
+  const focus = normalizeBoundary(
+    selection.focusNode,
+    selection.focusOffset,
+    selection.focusOffset > (
+      selection.focusNode instanceof Text
+        ? selection.focusNode.data.length
+        : selection.focusNode.childNodes.length
+    )
+  );
   const range = editor.ownerDocument.createRange();
-  range.setStart(selection.anchorNode, selection.anchorOffset);
-  range.setEnd(selection.focusNode, selection.focusOffset);
-  const forward = range.startContainer === selection.anchorNode
-    && range.startOffset === selection.anchorOffset;
+  range.setStart(anchor.node, anchor.offset);
+  range.setEnd(focus.node, focus.offset);
+  const forward = range.startContainer === anchor.node
+    && range.startOffset === anchor.offset;
   return {
-    anchorNode: selection.anchorNode,
-    anchorOffset: selection.anchorOffset,
+    anchorNode: anchor.node,
+    anchorOffset: anchor.offset,
     backward: !selection.isCollapsed && !forward,
-    focusNode: selection.focusNode,
-    focusOffset: selection.focusOffset
+    focusNode: focus.node,
+    focusOffset: focus.offset
   };
 }
 
@@ -2714,6 +2912,36 @@ function visualMarkdownSerializer(): TurndownService {
     strongDelimiter: '**'
   });
   service.use(gfm);
+  service.addRule('easymde-image-scale', {
+    filter: (node) => 'IMG' === node.nodeName,
+    replacement: (_content, node) => {
+      const image = node as HTMLImageElement;
+      const destination = image.getAttribute('src');
+      if (null === destination || '' === destination) {
+        throw new Error('image-scale-image-source-missing');
+      }
+      const width = image.getAttribute('width');
+      let scale: ReturnType<typeof imageScaleFromAttribute>;
+      try {
+        scale = imageScaleFromAttribute(width);
+      } catch (error) {
+        if (null !== width && /^\d+%$/u.test(width)) {
+          return serializeLegacyMarkdownImageWidth({
+            alt: image.getAttribute('alt') ?? '',
+            destination,
+            title: image.getAttribute('title')
+          }, width);
+        }
+        throw error;
+      }
+      return serializeMarkdownImage({
+        alt: image.getAttribute('alt') ?? '',
+        destination,
+        scale,
+        title: image.getAttribute('title')
+      });
+    }
+  });
   service.addRule('easymde-strikethrough', {
     filter: (node) => ['DEL', 'S', 'STRIKE'].includes(node.nodeName),
     replacement: (content) => `~~${content}~~`
@@ -2808,7 +3036,7 @@ function removeVisualCaretMarkersFromSerializationRoot(
   }
 }
 
-function visualBoundarySourceOffset(
+export function visualBoundarySourceOffset(
   editor: HTMLElement,
   sourceMarkdown: string,
   baselineVisualMarkdown: string,
@@ -3340,6 +3568,54 @@ function visualEditableBoundaryAtEdge(
   };
 }
 
+function visualPlainHeadingBoundaryFromSourceOffset(
+  editor: HTMLElement,
+  sourceMarkdown: string,
+  sourceOffset: number
+): VisualBoundary | null {
+  if (!/^H[1-6]$/u.test(editor.tagName)) return null;
+  const sourceLine = sourceMarkdown.replace(/(?:\r\n|\r|\n)$/u, '');
+  if (sourceLine.includes('\n') || sourceLine.includes('\r')) return null;
+  const heading = sourceLine.match(/^( {0,3})(#{1,6})(?:[ \t]+(.*))?$/u);
+  if (!heading) return null;
+  const body = heading[3] ?? '';
+  if (editor.textContent !== body) return null;
+  const bodyStart = sourceLine.length - body.length;
+  if (sourceOffset < 0 || sourceOffset > bodyStart + body.length) return null;
+  const editableTextNodes: Text[] = [];
+  const walker = editor.ownerDocument.createTreeWalker(
+    editor,
+    NodeFilter.SHOW_TEXT
+  );
+  let current = walker.nextNode();
+  while (current) {
+    if (
+      current instanceof Text
+      && !current.parentElement?.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      && !(
+        current.parentElement
+        && isVisualCaretExcludedElement(current.parentElement)
+      )
+    ) {
+      editableTextNodes.push(current);
+    }
+    current = walker.nextNode();
+  }
+  const bodyOffset = Math.max(0, sourceOffset - bodyStart);
+  let remaining = bodyOffset;
+  for (const text of editableTextNodes) {
+    if (remaining <= text.length) return { node: text, offset: remaining };
+    remaining -= text.length;
+  }
+  if (0 === bodyOffset && editableTextNodes.length === 0) {
+    return visualEditableBoundaryAtEdge(editor, 'start');
+  }
+  if (remaining === 0 && editableTextNodes.length > 0) {
+    return visualEditableBoundaryAtEdge(editor, 'end');
+  }
+  return null;
+}
+
 function visualSourceBoundaryCandidates(
   editor: HTMLElement,
   sourceOffset: number
@@ -3575,6 +3851,12 @@ export function visualCaretBoundaryFromSourceOffset(
   if (sourceOffset < 0 || sourceOffset > sourceMarkdown.length) {
     throw new Error('visual-editor-selection-map-failed');
   }
+  const plainHeadingBoundary = visualPlainHeadingBoundaryFromSourceOffset(
+    editor,
+    sourceMarkdown,
+    sourceOffset
+  );
+  if (plainHeadingBoundary) return plainHeadingBoundary;
   const documentBoundary = findVisualCaretAtSourceBoundary(
     editor,
     sourceMarkdown,

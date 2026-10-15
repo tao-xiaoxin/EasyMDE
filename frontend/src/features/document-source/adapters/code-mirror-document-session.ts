@@ -3,6 +3,7 @@ import {
   history,
   historyKeymap,
   isolateHistory,
+  invertedEffects,
   redo as redoCommand,
   redoDepth,
   undo as undoCommand,
@@ -17,6 +18,8 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  StateEffect,
+  StateField,
   Transaction
 } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
@@ -29,6 +32,38 @@ export type DocumentSelection = Readonly<{
   end: number;
   start: number;
 }>;
+
+type CanonicalHistorySelectionEffectValue = Readonly<{
+  inverse: DocumentSelection | null;
+  selection: DocumentSelection | null;
+}>;
+
+const canonicalHistorySelectionEffect = StateEffect.define<CanonicalHistorySelectionEffectValue>();
+const canonicalHistorySelectionField = StateField.define<DocumentSelection | null>({
+  create: () => null,
+  update(value, transaction) {
+    let next = value;
+    let hasCanonicalHistoryEffect = false;
+    for (const effect of transaction.effects) {
+      if (effect.is(canonicalHistorySelectionEffect)) {
+        hasCanonicalHistoryEffect = true;
+        next = effect.value.selection;
+      }
+    }
+    if (transaction.docChanged && !hasCanonicalHistoryEffect) {
+      return null;
+    }
+    return next;
+  }
+});
+const invertCanonicalHistorySelection = (transaction: Transaction) =>
+  transaction.effects.flatMap((effect) => {
+    if (!effect.is(canonicalHistorySelectionEffect)) return [];
+    return [canonicalHistorySelectionEffect.of({
+      inverse: effect.value.selection,
+      selection: effect.value.inverse
+    })];
+  });
 
 export type DocumentTextChangeRange = Readonly<{
   from: number;
@@ -69,6 +104,7 @@ export type CodeMirrorDocumentSession = Readonly<{
   destroy: () => void;
   flush: () => void;
   focus: () => void;
+  isEditable: () => boolean;
   getCursorPosition: () => DocumentCursorPosition;
   getInputElement: () => HTMLElement;
   getHistoryState: () => DocumentHistoryState;
@@ -76,6 +112,7 @@ export type CodeMirrorDocumentSession = Readonly<{
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
+  getRevision?: () => number;
   replaceSavedValue: (value: string) => void;
   redo: () => boolean;
   revealPosition: (position: number) => void;
@@ -178,6 +215,24 @@ function editorSelection(selection: DocumentSelection, documentLength: number) {
   return EditorSelection.single(start, end);
 }
 
+function normalizedSelection(
+  selection: DocumentSelection,
+  documentLength: number
+): DocumentSelection {
+  const normalized = editorSelection(selection, documentLength).main;
+  const direction = normalized.empty
+    ? 'none'
+    : normalized.anchor > normalized.head
+      ? 'backward'
+      : 'forward';
+
+  return {
+    direction,
+    end: Math.max(normalized.anchor, normalized.head),
+    start: Math.min(normalized.anchor, normalized.head)
+  };
+}
+
 function nativeSelection(field: HTMLTextAreaElement): DocumentSelection {
   return {
     direction: field.selectionDirection,
@@ -236,6 +291,7 @@ export function createCodeMirrorDocumentSession({
 }: CreateCodeMirrorDocumentSessionOptions): CodeMirrorDocumentSession {
   let syncingFromNative = false;
   let destroyed = false;
+  let documentRevision = 0;
   const initialValue = submissionField.value;
   let savedValue = submissionField.defaultValue;
   const initialSelection = nativeSelection(submissionField);
@@ -249,6 +305,7 @@ export function createCodeMirrorDocumentSession({
     if (destroyed || value === snapshot.value) {
       return;
     }
+    documentRevision += 1;
     snapshot = { savedValue, value };
     for (const listener of listeners) {
       listener();
@@ -274,6 +331,8 @@ export function createCodeMirrorDocumentSession({
   ];
   const extensions = [
     history(),
+    canonicalHistorySelectionField,
+    invertedEffects.of(invertCanonicalHistorySelection),
     markdownSyntax.of(markdownSyntaxExtensions),
     EditorView.domEventHandlers({
       drop(event) {
@@ -497,6 +556,31 @@ export function createCodeMirrorDocumentSession({
       view.dispatch(transaction);
     }
   };
+  const restoreHistorySelection = (): void => {
+    const state = authoritativeState();
+    const expected = state.field(canonicalHistorySelectionField, false) ?? null;
+    if (!expected) return;
+    const current = stateSelection(state);
+    if (
+      current.direction === expected.direction
+      && current.start === expected.start
+      && current.end === expected.end
+    ) return;
+    const transaction = state.update({
+      annotations: [
+        Transaction.addToHistory.of(false),
+        Transaction.userEvent.of('select.canonicalHistory')
+      ],
+      selection: editorSelection(expected, state.doc.length)
+    });
+    if (activeVisualState) {
+      activeVisualState = transaction.state;
+      scheduleVisualNativeBridge(expected, null, false, false);
+      for (const listener of selectionListeners) listener();
+    } else {
+      view.dispatch(transaction);
+    }
+  };
 
   const mutationObserver = new MutationObserver(() => {
     if (destroyed) {
@@ -545,6 +629,14 @@ export function createCodeMirrorDocumentSession({
           Transaction.addToHistory.of(valueChanged),
           Transaction.userEvent.of('input')
         ],
+        ...(valueChanged
+          ? {
+            effects: [canonicalHistorySelectionEffect.of({
+              inverse: null,
+              selection: null
+            })]
+          }
+          : {}),
         selection: editorSelection(selection, value.length),
         ...(valueChanged
           ? { changes: { from: 0, to: currentValue.length, insert: value } }
@@ -579,6 +671,7 @@ export function createCodeMirrorDocumentSession({
         return;
       }
       const state = authoritativeState();
+      const selectionBefore = stateSelection(state);
       let valueChanged = false;
       let resolvedChanges: DocumentTextChangeRange | null = null;
       if (changes) {
@@ -617,6 +710,18 @@ export function createCodeMirrorDocumentSession({
             : [])
         ],
         ...(resolvedChanges ? { changes: resolvedChanges } : {}),
+        ...(valueChanged
+          ? {
+            effects: [canonicalHistorySelectionEffect.of({
+              inverse: recordHistorySelection
+                ? selectionBefore
+                : null,
+              selection: recordHistorySelection
+                ? normalizedSelection(selection, value.length)
+                : null
+            })]
+          }
+          : {}),
         selection: editorSelection(selection, value.length)
       };
       if (activeVisualState) {
@@ -675,6 +780,7 @@ export function createCodeMirrorDocumentSession({
         view.focus();
       }
     },
+    isEditable: () => !destroyed && !submissionField.disabled && !submissionField.readOnly,
     getCursorPosition() {
       const state = authoritativeState();
       const selection = stateSelection(state);
@@ -698,6 +804,7 @@ export function createCodeMirrorDocumentSession({
     getSelection: () => stateSelection(authoritativeState()),
     getSnapshot: () => snapshot,
     getValue: () => authoritativeState().doc.toString(),
+    getRevision: () => documentRevision,
     replaceSavedValue(value: string) {
       if (destroyed || value === savedValue) return;
       savedValue = value;
@@ -781,6 +888,7 @@ export function createCodeMirrorDocumentSession({
           dispatchAuthoritative(transaction),
         state
       });
+      if (changed) restoreHistorySelection();
       if (changed && !visualEditingActive) view.focus();
       return changed;
     },
@@ -792,6 +900,7 @@ export function createCodeMirrorDocumentSession({
           dispatchAuthoritative(transaction),
         state
       });
+      if (changed) restoreHistorySelection();
       if (changed && !visualEditingActive) view.focus();
       return changed;
     }

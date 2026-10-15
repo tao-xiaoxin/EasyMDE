@@ -5,10 +5,13 @@ namespace EasyMDE\Content;
 use DOMDocument;
 use DOMElement;
 use DOMNode;
+use League\CommonMark\Extension\CommonMark\Node\Block\FencedCode;
+use League\CommonMark\Extension\CommonMark\Node\Block\IndentedCode;
 use League\CommonMark\Node\Block\AbstractBlock;
 use League\CommonMark\Node\Block\Document;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Image;
 use League\CommonMark\Extension\CommonMark\Node\Inline\Link;
+use League\CommonMark\Extension\Table\Table;
 use RuntimeException;
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -24,8 +27,16 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class VisualPreviewBlockAnnotator {
 
-	const SOURCE_ATTRIBUTE = 'data-easymde-visual-source-id';
-	const BLOCK_ATTRIBUTE  = 'data-easymde-visual-block-id';
+	const SOURCE_ATTRIBUTE            = 'data-easymde-visual-source-id';
+	const BLOCK_ATTRIBUTE             = 'data-easymde-visual-block-id';
+	const MAX_CODE_BODY_ENTRIES       = 50000;
+	const MAX_CODE_BODY_BYTES         = 4194304;
+	const CODE_BODY_UNAVAILABLE       = 'preview-code-body-source-unavailable';
+	const CODE_BODY_LIMIT             = 'preview-code-body-limit';
+	const MAX_CODE_PROJECTION_ENTRIES = 50000;
+	const MAX_CODE_PROJECTION_ROWS    = 50000;
+	const MAX_CODE_PROJECTION_BYTES   = 4194304;
+	const MAX_CODE_PROJECTION_INFO    = 1024;
 
 	/**
 	 * @param array<int,array{start:int,end:int}> $line_map Optional transformed-line to source-line map.
@@ -44,6 +55,12 @@ final class VisualPreviewBlockAnnotator {
 			if ( null === $start_line || null === $end_line || $start_line < 1 || $end_line < $start_line ) {
 				throw new RuntimeException( 'CommonMark did not provide a valid source range for a Preview block.' );
 			}
+			if ( $node instanceof Table ) {
+				$prefix_start = TableAlignmentAnnotation::source_prefix_start_line( $node );
+				if ( null !== $prefix_start && $prefix_start < $start_line ) {
+					$start_line = $prefix_start;
+				}
+			}
 
 			$range = empty( $line_map )
 				? array(
@@ -61,6 +78,525 @@ final class VisualPreviewBlockAnnotator {
 		}
 
 		return $blocks;
+	}
+
+	/**
+	 * Build the source-backed code-body map from the same parsed Preview AST.
+	 *
+	 * CommonMark's code literal is authoritative for content characters. The
+	 * source line map supplies original line endings and verifies that theme
+	 * normalization did not change a code row before it is exposed to REST.
+	 *
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @return array{version:int,coordinate:string,status:string,entries:array<int,array<string,mixed>>}|null
+	 */
+	public static function describe_source_code_bodies( Document $document, $normalized_markdown, array $line_map, $original_markdown ) {
+		$nodes = array();
+		self::collect_source_code_nodes( $document, $nodes );
+		if ( empty( $nodes ) ) {
+			return null;
+		}
+
+		if ( count( $nodes ) > self::MAX_CODE_BODY_ENTRIES ) {
+			return self::unavailable_code_map( self::CODE_BODY_LIMIT );
+		}
+
+		$normalized_lines = self::split_source_lines( $normalized_markdown );
+		$original_lines   = self::split_source_lines( $original_markdown );
+		$entries          = array();
+		$total_bytes      = 0;
+
+		foreach ( $nodes as $node ) {
+			$kind       = $node instanceof FencedCode ? 'fenced' : 'indented';
+			$start_line = $node->getStartLine();
+			$end_line   = $node->getEndLine();
+			$range      = null;
+
+			if ( null !== $start_line && null !== $end_line && $start_line >= 1 && $end_line >= $start_line ) {
+				try {
+					$range = self::map_line_range( $start_line, $end_line, $line_map );
+				} catch ( RuntimeException $exception ) {
+					$range = null;
+				}
+			}
+
+			$entry_start  = null !== $range ? $range['startLine'] : max( 0, (int) $start_line - 1 );
+			$entry_end    = null !== $range ? $range['endLine'] : max( $entry_start, (int) $end_line );
+			$literal      = (string) $node->getLiteral();
+			$literal_rows = self::code_literal_rows( $literal );
+			$content      = '';
+			$available    = null !== $range;
+
+			if ( $available && ! empty( $literal_rows ) ) {
+				$body_start_line = (int) $start_line + ( 'fenced' === $kind ? 1 : 0 );
+				$previous_source = null;
+				$content_rows    = array();
+
+				foreach ( $literal_rows as $index => $literal_row ) {
+					$normalized_line_number = $body_start_line + $index;
+					if (
+						$normalized_line_number > (int) $end_line
+						||
+						! isset( $line_map[ $normalized_line_number ]['start'], $line_map[ $normalized_line_number ]['end'] )
+						|| $line_map[ $normalized_line_number ]['start'] !== $line_map[ $normalized_line_number ]['end']
+						|| ( null !== $previous_source && $line_map[ $normalized_line_number ]['start'] !== $previous_source + 1 )
+					) {
+						$available = false;
+						break;
+					}
+
+					$source_line_number = (int) $line_map[ $normalized_line_number ]['start'];
+					$source_index       = $source_line_number - 1;
+					if ( ! isset( $normalized_lines[ $normalized_line_number - 1 ], $original_lines[ $source_index ] ) ) {
+						$available = false;
+						break;
+					}
+					if ( $normalized_lines[ $normalized_line_number - 1 ]['content'] !== $original_lines[ $source_index ]['content'] ) {
+						$available = false;
+						break;
+					}
+
+					$content_rows[]  = $literal_row . $original_lines[ $source_index ]['ending'];
+					$previous_source = $source_line_number;
+				}
+
+				if ( $available ) {
+					$content = implode( '', $content_rows );
+				}
+			}
+
+			if ( ! $available ) {
+				$entries[] = array(
+					'kind'      => $kind,
+					'startLine' => $entry_start,
+					'endLine'   => $entry_end,
+					'status'    => 'unavailable',
+					'code'      => self::CODE_BODY_UNAVAILABLE,
+				);
+				continue;
+			}
+
+			$total_bytes += strlen( $content );
+			if ( $total_bytes > self::MAX_CODE_BODY_BYTES ) {
+				return self::unavailable_code_map( self::CODE_BODY_LIMIT );
+			}
+
+			$entries[] = array(
+				'kind'      => $kind,
+				'startLine' => $entry_start,
+				'endLine'   => $entry_end,
+				'status'    => 'available',
+				'content'   => $content,
+			);
+		}
+
+		return array(
+			'version'    => 1,
+			'coordinate' => 'line',
+			'status'     => 'available',
+			'entries'    => $entries,
+		);
+	}
+
+	/**
+	 * Build the source cursor projection observed by the CommonMark code parsers.
+	 *
+	 * This is raw source provenance, not rendered HTML or a persistence format.
+	 * A malformed row makes only its entry unavailable; parser and Preview HTML
+	 * remain authoritative and continue to be returned.
+	 *
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @param CodeProjectionBudget|null           $budget
+	 * @return array<string,mixed>|null
+	 */
+	public static function describe_source_code_projections( Document $document, $normalized_markdown, array $line_map, $original_markdown, $budget = null ) {
+		if ( $budget instanceof CodeProjectionBudget && $budget->is_limited() ) {
+			return self::unavailable_code_projection( 'preview-code-projection-limit' );
+		}
+
+		$nodes = array();
+		self::collect_source_code_nodes( $document, $nodes );
+		if ( empty( $nodes ) ) {
+			return null;
+		}
+
+		if ( count( $nodes ) > self::MAX_CODE_PROJECTION_ENTRIES ) {
+			return self::unavailable_code_projection( 'preview-code-projection-limit' );
+		}
+
+		$normalized_lines = self::split_source_lines( $normalized_markdown );
+		$original_lines   = self::split_source_lines( $original_markdown );
+		$entries          = array();
+		$row_count        = 0;
+
+		foreach ( $nodes as $node ) {
+			$kind       = $node instanceof FencedCode ? 'fenced' : 'indented';
+			$start_line = $node->getStartLine();
+			$end_line   = $node->getEndLine();
+			$range      = null;
+			if ( null !== $start_line && null !== $end_line && $start_line >= 1 && $end_line >= $start_line ) {
+				try {
+					$range = self::map_line_range( $start_line, $end_line, $line_map );
+				} catch ( RuntimeException $exception ) {
+					$range = null;
+				}
+			}
+
+			$entry_start = null !== $range ? $range['startLine'] : max( 0, (int) $start_line - 1 );
+			$entry_end   = null !== $range ? $range['endLine'] : max( $entry_start, (int) $end_line );
+			$entry       = array(
+				'kind'      => $kind,
+				'startLine' => $entry_start,
+				'endLine'   => $entry_end,
+				'status'    => 'available',
+			);
+			$metadata    = $node->data->get( CodeProjectionParser::DATA_KEY );
+			$available   = null !== $range && is_array( $metadata ) && isset( $metadata['rows'] ) && is_array( $metadata['rows'] );
+
+			if ( 'fenced' === $kind ) {
+				$info = (string) $node->getInfo();
+				if ( strlen( $info ) > self::MAX_CODE_PROJECTION_INFO ) {
+					$available       = false;
+					$entry['status'] = 'unavailable';
+					$entry['code']   = 'preview-code-projection-info-limit';
+				} elseif ( $node->getOffset() < 0 || $node->getOffset() > 3 ) {
+					$available       = false;
+					$entry['status'] = 'unavailable';
+					$entry['code']   = 'preview-code-projection-source-unavailable';
+				} else {
+					$entry['info']        = $info;
+					$entry['fenceOffset'] = (int) $node->getOffset();
+				}
+			}
+
+			if ( $available ) {
+				$rows = self::project_code_rows(
+					$node,
+					$metadata['rows'],
+					$normalized_lines,
+					$original_lines,
+					$line_map,
+					$row_count
+				);
+				if ( self::MAX_CODE_PROJECTION_ROWS < $row_count ) {
+					return self::unavailable_code_projection( 'preview-code-projection-limit' );
+				}
+				if ( null === $rows ) {
+					$available = false;
+					$entry     = array(
+						'kind'      => $kind,
+						'startLine' => $entry_start,
+						'endLine'   => $entry_end,
+						'status'    => 'unavailable',
+						'code'      => 'preview-code-projection-source-unavailable',
+					);
+				} else {
+					$entry['rows'] = $rows;
+				}
+			}
+
+			if ( ! $available ) {
+				if ( ! isset( $entry['code'] ) ) {
+					$entry = array(
+						'kind'      => $kind,
+						'startLine' => $entry_start,
+						'endLine'   => $entry_end,
+						'status'    => 'unavailable',
+						'code'      => 'preview-code-projection-source-unavailable',
+					);
+				}
+			}
+
+			$entries[] = $entry;
+		}
+
+		$projection = array(
+			'version'    => 1,
+			'coordinate' => 'line',
+			'offsetUnit' => 'utf16',
+			'status'     => 'available',
+			'entries'    => $entries,
+		);
+		$encoded    = self::encode_code_projection( $projection );
+		if ( false === $encoded ) {
+			return self::unavailable_code_projection( 'preview-code-projection-unavailable' );
+		}
+		if ( strlen( $encoded ) > self::MAX_CODE_PROJECTION_BYTES ) {
+			return self::unavailable_code_projection( 'preview-code-projection-limit' );
+		}
+
+		return $projection;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $metadata_rows
+	 * @param array<int,array{content:string,ending:string}> $normalized_lines
+	 * @param array<int,array{content:string,ending:string}> $original_lines
+	 * @param array<int,array{start:int,end:int}> $line_map
+	 * @return array<int,array<string,int>>|null
+	 */
+	private static function project_code_rows( AbstractBlock $node, array $metadata_rows, array $normalized_lines, array $original_lines, array $line_map, &$row_count ) {
+		$literal_rows     = self::code_literal_rows( (string) $node->getLiteral() );
+		$metadata_by_line = array();
+		foreach ( $metadata_rows as $metadata_row ) {
+			if ( ! is_array( $metadata_row ) || ! isset( $metadata_row['contentLine'] ) ) {
+				return null;
+			}
+			$content_line = (int) $metadata_row['contentLine'];
+			if ( $content_line < 0 || isset( $metadata_by_line[ $content_line ] ) ) {
+				return null;
+			}
+			$metadata_by_line[ $content_line ] = $metadata_row;
+		}
+
+		$start_line = $node->getStartLine();
+		$end_line   = $node->getEndLine();
+		if ( null === $start_line || null === $end_line ) {
+			return null;
+		}
+		$body_start_line = (int) $start_line + ( $node instanceof FencedCode ? 1 : 0 );
+		$rows            = array();
+		$previous_source = null;
+
+		foreach ( $literal_rows as $content_line => $literal_row ) {
+			$normalized_line_number = $body_start_line + $content_line;
+			if ( $normalized_line_number > (int) $end_line || ! isset( $line_map[ $normalized_line_number ]['start'], $line_map[ $normalized_line_number ]['end'] ) ) {
+				return null;
+			}
+			if ( $line_map[ $normalized_line_number ]['start'] !== $line_map[ $normalized_line_number ]['end'] ) {
+				return null;
+			}
+
+			$source_line  = (int) $line_map[ $normalized_line_number ]['start'];
+			$source_index = $source_line - 1;
+			if ( $source_line < 1 || ! isset( $normalized_lines[ $normalized_line_number - 1 ], $original_lines[ $source_index ] ) ) {
+				return null;
+			}
+			if ( $normalized_lines[ $normalized_line_number - 1 ]['content'] !== $original_lines[ $source_index ]['content'] ) {
+				return null;
+			}
+			if ( null !== $previous_source && $source_line !== $previous_source + 1 ) {
+				return null;
+			}
+			$previous_source = $source_line;
+
+			if ( preg_match( '/^[ \t]*$/D', $literal_row ) ) {
+				if ( isset( $metadata_by_line[ $content_line ] ) ) {
+					return null;
+				}
+				continue;
+			}
+
+			if ( ! isset( $metadata_by_line[ $content_line ] ) ) {
+				return null;
+			}
+			++$row_count;
+			$metadata = $metadata_by_line[ $content_line ];
+			if ( isset( $metadata['unavailable'] ) || ! isset( $metadata['line'], $metadata['before'], $metadata['after'] ) ) {
+				return null;
+			}
+			if ( (int) $metadata['line'] !== $normalized_line_number ) {
+				return null;
+			}
+
+			$normalized_row   = $normalized_lines[ $normalized_line_number - 1 ]['content'];
+			$original_row     = $original_lines[ $source_index ]['content'];
+			$before           = $metadata['before'];
+			$after            = $metadata['after'];
+			$before_position  = (int) $before['position'];
+			$literal_position = (int) $after['position'] + ( self::partial_tab_width( $after, $normalized_row ) > 0 ? 1 : 0 );
+			if ( $before_position < 0 || $literal_position < $before_position || $literal_position > self::character_length( $original_row ) ) {
+				return null;
+			}
+			$consumed = self::character_substring( $original_row, $before_position, $literal_position - $before_position );
+			if ( 1 !== preg_match( '/^[ \t]*$/D', $consumed ) ) {
+				return null;
+			}
+
+			$leading_spaces    = self::partial_tab_width( $after, $normalized_row );
+			$projected_literal = str_repeat( ' ', $leading_spaces ) . self::character_substring( $original_row, $literal_position );
+			if ( $normalized_row !== $original_row || $projected_literal !== $literal_row ) {
+				return null;
+			}
+			$prefix_tab_columns = self::partial_tab_columns( $before, $normalized_row );
+			if ( null === $prefix_tab_columns ) {
+				return null;
+			}
+
+			$rows[] = array(
+				'sourceLine'           => $source_line - 1,
+				'contentLine'          => (int) $content_line,
+				'prefixEnd'            => self::utf16_offset( $original_row, $before_position ),
+				'prefixTabColumns'     => $prefix_tab_columns,
+				'literalFrom'          => self::utf16_offset( $original_row, $literal_position ),
+				'literalLeadingSpaces' => $leading_spaces,
+			);
+		}
+
+		foreach ( $metadata_by_line as $content_line => $metadata ) {
+			if ( $content_line >= count( $literal_rows ) || preg_match( '/^[ \t]*$/D', $literal_rows[ $content_line ] ) ) {
+				return null;
+			}
+		}
+
+		return $rows;
+	}
+
+	private static function partial_tab_width( array $snapshot, $line ) {
+		$position = (int) $snapshot['position'];
+		$column   = (int) $snapshot['column'];
+		if ( "\t" !== self::character_at( $line, $position ) || 0 === $column % 4 ) {
+			return 0;
+		}
+
+		$width           = 4 - ( $column % 4 );
+		$suffix          = self::character_substring( $line, $position + 1 );
+		$expected_length = $width + self::character_length( $suffix );
+		if ( $expected_length !== (int) $snapshot['remainderLength'] || (int) $snapshot['remainderLeadingSpaces'] < $width ) {
+			return 0;
+		}
+
+		return $width;
+	}
+
+	private static function partial_tab_columns( array $snapshot, $line ) {
+		if ( self::partial_tab_width( $snapshot, $line ) < 1 ) {
+			return 0;
+		}
+
+		$raw_prefix_columns = self::raw_prefix_columns( $line, (int) $snapshot['position'] );
+		$consumed_columns   = (int) $snapshot['column'] - $raw_prefix_columns;
+
+		return $consumed_columns >= 1 && $consumed_columns <= 3 ? $consumed_columns : null;
+	}
+
+	private static function raw_prefix_columns( $line, $position ) {
+		$prefix  = self::character_substring( $line, 0, $position );
+		$columns = 0;
+		$length  = self::character_length( $prefix );
+		for ( $index = 0; $index < $length; ++$index ) {
+			if ( "\t" === self::character_at( $prefix, $index ) ) {
+				$columns += 4 - ( $columns % 4 );
+			} else {
+				++$columns;
+			}
+		}
+
+		return $columns;
+	}
+
+	private static function character_length( $value ) {
+		return function_exists( 'mb_strlen' ) ? mb_strlen( (string) $value, 'UTF-8' ) : strlen( (string) $value );
+	}
+
+	private static function character_at( $value, $position ) {
+		return function_exists( 'mb_substr' ) ? mb_substr( (string) $value, (int) $position, 1, 'UTF-8' ) : substr( (string) $value, (int) $position, 1 );
+	}
+
+	private static function character_substring( $value, $start, $length = null ) {
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( (string) $value, (int) $start, null === $length ? null : (int) $length, 'UTF-8' );
+		}
+
+		return null === $length ? substr( (string) $value, (int) $start ) : substr( (string) $value, (int) $start, (int) $length );
+	}
+
+	private static function utf16_offset( $value, $character_position ) {
+		$prefix = self::character_substring( $value, 0, $character_position );
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			return (int) ( strlen( mb_convert_encoding( $prefix, 'UTF-16LE', 'UTF-8' ) ) / 2 );
+		}
+
+		return (int) $character_position;
+	}
+
+	private static function unavailable_code_projection( $code ) {
+		return array(
+			'version'    => 1,
+			'coordinate' => 'line',
+			'offsetUnit' => 'utf16',
+			'status'     => 'unavailable',
+			'code'       => (string) $code,
+		);
+	}
+
+	private static function encode_code_projection( array $projection ) {
+		return wp_json_encode( $projection, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_LINE_TERMINATORS );
+	}
+
+	/**
+	 * @param array<int,AbstractBlock> $nodes
+	 */
+	private static function collect_source_code_nodes( AbstractBlock $container, array &$nodes ) {
+		foreach ( $container->children() as $child ) {
+			if ( $child instanceof FencedCode || $child instanceof IndentedCode ) {
+				$nodes[] = $child;
+				continue;
+			}
+			if ( $child instanceof AbstractBlock ) {
+				self::collect_source_code_nodes( $child, $nodes );
+			}
+		}
+	}
+
+	/**
+	 * @return array<int,array{content:string,ending:string}>
+	 */
+	private static function split_source_lines( $source ) {
+		$source = (string) $source;
+		$lines  = array();
+		$length = strlen( $source );
+		$start  = 0;
+
+		for ( $index = 0; $index < $length; ++$index ) {
+			if ( "\r" !== $source[ $index ] && "\n" !== $source[ $index ] ) {
+				continue;
+			}
+
+			$ending_length = 1;
+			if ( "\r" === $source[ $index ] && $index + 1 < $length && "\n" === $source[ $index + 1 ] ) {
+				$ending_length = 2;
+			}
+			$lines[] = array(
+				'content' => substr( $source, $start, $index - $start ),
+				'ending'  => substr( $source, $index, $ending_length ),
+			);
+			$index  += $ending_length - 1;
+			$start   = $index + 1;
+		}
+
+		if ( $start < $length || empty( $lines ) ) {
+			$lines[] = array(
+				'content' => substr( $source, $start ),
+				'ending'  => '',
+			);
+		}
+
+		return $lines;
+	}
+
+	/**
+	 * @return array<int,string>
+	 */
+	private static function code_literal_rows( $literal ) {
+		$literal = (string) $literal;
+		if ( '' === $literal ) {
+			return array();
+		}
+		if ( "\n" === substr( $literal, -1 ) ) {
+			$literal = substr( $literal, 0, -1 );
+		}
+
+		return explode( "\n", $literal );
+	}
+
+	private static function unavailable_code_map( $code ) {
+		return array(
+			'version'    => 1,
+			'coordinate' => 'line',
+			'status'     => 'unavailable',
+			'code'       => (string) $code,
+		);
 	}
 
 	/**

@@ -9,6 +9,16 @@ export type ToolbarCommandSession = Readonly<{
   dispose: () => void;
   execute: (commandId: string) => boolean;
   owns: (commandId: string) => boolean;
+  plan: (commandId: string) => ToolbarCommandPlan | null;
+}>;
+
+export type ToolbarCommandPlan = Readonly<{
+  change: Readonly<{
+    changes: Readonly<{ from: number; insert: string; to: number }>;
+    selection: ToolbarCommandSelection;
+    value: string;
+  }>;
+  expected: ToolbarCommandDocumentSnapshot;
 }>;
 
 type CreateToolbarCommandSessionOptions = Readonly<{
@@ -209,6 +219,40 @@ function ownsCommand(command: ToolbarCommand): boolean {
   }
 }
 
+function minimalChange(
+  before: ToolbarCommandDocumentSnapshot,
+  after: ToolbarCommandDocumentSnapshot
+): ToolbarCommandPlan {
+  let from = 0;
+  while (
+    from < before.value.length
+    && from < after.value.length
+    && before.value[from] === after.value[from]
+  ) from += 1;
+  let beforeTo = before.value.length;
+  let afterTo = after.value.length;
+  while (
+    beforeTo > from
+    && afterTo > from
+    && before.value[beforeTo - 1] === after.value[afterTo - 1]
+  ) {
+    beforeTo -= 1;
+    afterTo -= 1;
+  }
+  return {
+    change: {
+      changes: {
+        from,
+        insert: after.value.slice(from, afterTo),
+        to: beforeTo
+      },
+      selection: after.selection,
+      value: after.value
+    },
+    expected: before
+  };
+}
+
 export function createToolbarCommandSession({
   commands,
   document,
@@ -217,11 +261,22 @@ export function createToolbarCommandSession({
 }: CreateToolbarCommandSessionOptions): ToolbarCommandSession {
   const commandMap = new Map(commands.map((command) => [command.id, command]));
   let active = true;
+  const planCommand = (commandId: string): ToolbarCommandPlan | null => {
+    if (!active) return null;
+    const command = commandMap.get(commandId);
+    if (!command || !ownsCommand(command) || 'image' === command.action) {
+      return null;
+    }
+    const snapshot = documentSnapshot(document);
+    const change = commandChange(command, snapshot, linkText);
+    return change ? minimalChange(snapshot, change) : null;
+  };
 
   return {
     dispose() {
       active = false;
     },
+    plan: planCommand,
     execute(commandId: string): boolean {
       if (!active) {
         return false;
@@ -233,11 +288,14 @@ export function createToolbarCommandSession({
       if ('image' === command.action) {
         return false !== executeExternalCommand(commandId);
       }
-      const change = commandChange(command, documentSnapshot(document), linkText);
-      if (!change) {
+      const plan = planCommand(commandId);
+      if (!plan) {
         return false;
       }
-      document.applyTextChange(change);
+      document.applyTextChange({
+        selection: plan.change.selection,
+        value: plan.change.value
+      });
       document.focus();
       return true;
     },

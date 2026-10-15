@@ -13,9 +13,7 @@ import {
   unsafeMermaidDimensionRules,
   unsafeMermaidInlineDimensionValue,
 } from './wechat-mermaid-policy';
-import {
-  pseudoContent,
-} from './wechat-style-policy';
+import { pseudoContent } from './wechat-pseudo-content';
 
 export {
   MERMAID_INTRINSIC_LAYOUT_ROLES,

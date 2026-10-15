@@ -15,7 +15,8 @@ import {
 } from './wechat-dimension-semantics';
 import { MERMAID_ASPECT_RATIO_QUANTUM } from './wechat-png-conversion-policy';
 import { clipboardSourceMarkup } from './wechat-source-freshness';
-import { TASK_LIST_CHECKBOX_STYLE_PROPERTIES, isHiddenPseudoPaint, pseudoContent } from './wechat-style-policy';
+import { TASK_LIST_CHECKBOX_STYLE_PROPERTIES, isHiddenPseudoPaint } from './wechat-style-policy';
+import { pseudoContent } from './wechat-pseudo-content';
 import {
   TASK_CHECKBOX_GEOMETRY_STYLE_PROPERTIES,
   TASK_CHECKBOX_INPUT_LAYOUT_STYLE_PROPERTIES,

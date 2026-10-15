@@ -3,7 +3,6 @@ import {
   COPY_STYLE_PROPERTIES,
   ORDINARY_DIMENSION_PROPERTIES,
   PREPARED_PSEUDO_ELEMENTS,
-  pseudoContent,
   rootExportComputedStyle,
   semanticMarginSignature,
   semanticMarginSource,
@@ -11,6 +10,7 @@ import {
   signatureStyleProperties,
   supportsSpecialLayout
 } from './wechat-style-policy';
+import { pseudoContent } from './wechat-pseudo-content';
 import {
   listMarkerSignature,
   tableHeaderPaintFreshnessSignature,

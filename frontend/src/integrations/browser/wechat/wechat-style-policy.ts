@@ -12,6 +12,7 @@ import {
   WECHAT_PNG_VISUAL_CLONES
 } from './wechat-clone-metadata';
 import type { WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
+import { pseudoContent } from './wechat-pseudo-content';
 import { taskCheckboxFontWithoutZeroLineHeight, taskCheckboxLineHeightIsZero } from './wechat-task-checkbox-style';
 
 export const COPY_STYLE_PROPERTIES = [
@@ -709,15 +710,6 @@ export function appendDeclarations(element: Element, declarations: string[], imp
 }
 
 export const CSS_PERCENTAGE_TOKEN = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?%$/;
-
-export function pseudoContent(value: string): string | null {
-  const normalized = value.trim();
-  if (!normalized || 'none' === normalized || 'normal' === normalized) return null;
-  const match = /^("|')([\s\S]*)\1$/.exec(normalized);
-  const content = match?.[2];
-  if (undefined === content) return null;
-  return content.replace(/\\([\\"'])/g, '$1');
-}
 
 export function isHiddenPseudoPaint(computed: CSSStyleDeclaration): boolean {
   const display = computed.getPropertyValue('display').trim().toLowerCase();

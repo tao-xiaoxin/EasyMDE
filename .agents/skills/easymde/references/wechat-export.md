@@ -647,14 +647,26 @@ Root-scoped export Text records restore its empty original value during connecte
 plaintext measurement and restore encoded values in `finally`, alongside the
 fenced-code records; this must add no plaintext character or line boundary.
 The paired pseudo serializer may apply the same transport only to a generated
-H1-H4 `::after` whose parsed content is quoted empty, whose visible block-flow
-box has positive emitted dimensions, and whose emitted CSS retains background
-paint after URL filtering or materialization. Root, special-layout, textual,
-hidden, transparent, absolute/fixed/sticky, zero-size, and unexportable pseudos remain on
-the existing path. Replace only the generated clone's sole ASCII-space Text,
-and register its exact space/U+2060 values with the same root Text owner. The
-heading-after visibility input participates in freshness without widening
-unrelated pseudo signatures.
+H1-H4 `::after` whose parsed content is empty or whitespace-only, whose visible
+block-flow box has positive emitted dimensions, and whose emitted CSS retains
+paint after URL filtering or materialization. Retained paint is background
+paint or at least one border edge with a visible color and positive emitted
+width; zero-alpha transparent edges supply geometry only, while nonzero-alpha
+colors count as visible paint. A shape whose every border color is transparent
+or invisible stays on the existing path. Root, special-layout, textual, hidden,
+absolute/fixed/sticky, zero-size, and unexportable pseudos remain on the
+existing path. Replace only
+the generated clone's whitespace Text (space, tab, or non-breaking space) with
+one U+2060 glyph, and register its original whitespace content and the encoded
+glyph with the same root Text owner. The heading-after visibility input
+participates in freshness without widening unrelated pseudo signatures.
+The canonical `pseudoContent()` boundary decodes CSSOM quoted strings with CSS
+character escapes before this qualification: up to six hexadecimal digits and
+one following CSS whitespace code point form one code point (`\9 ` and
+`\000009 ` both become U+0009, while `\a ` becomes a newline). Escaped quotes
+and a literal backslash retain their CSS string meaning, so newline, authored
+text, and literal `\\9 ` content remain textual and never enter the generated
+whitespace transport.
 Eligible empty H1-H4 `::before` decorations whose solid paint extends left of
 the heading use a heading-local normal-flow carrier in the copied tree.
 Qualification requires joint evidence: explicitly visible Source and pseudo,

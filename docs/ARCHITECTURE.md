@@ -906,15 +906,25 @@ contributes only its raw `content` sentinel to freshness and skips unused
 pseudo-style reads, serialization, and asset fetch; quoted empty and text
 pseudos retain full styles and existing limits. Ordinary-node, source, and
 geometry handling is unchanged.
-For generated H1-H4 `::after` decorations with quoted-empty content, visible
-normal-flow placement, positive emitted dimensions, and retained background
-paint, the paired sync/async serializer marks the generated span and converts
-only its sole ASCII-space Text to U+2060 after normalization. The existing
-root-scoped Text map restores the original space during connected plaintext
+For generated H1-H4 `::after` decorations whose parsed content is empty,
+space-only, tab-only, or non-breaking-space-only, with visible normal-flow
+placement, positive emitted dimensions, and retained paint, the paired
+sync/async serializer marks the generated span and converts its generated
+whitespace Text to one U+2060 glyph after normalization. Retained paint is
+emitted background paint or at least one border edge with a visible color and
+positive emitted width; zero-alpha transparent edges supply geometry only,
+while nonzero-alpha colors count as visible paint. The existing root-scoped
+Text map restores the original whitespace content during connected plaintext
 measurement and restores encoded HTML in `finally`. Root, special-layout,
-textual, hidden, transparent, absolute/fixed/sticky, zero-size, filtered-paint, and
+textual, hidden, absolute/fixed/sticky, zero-size, invisible-paint, and
 unexportable pseudos are excluded; only heading-after visibility extends the
 pseudo freshness signature.
+The canonical `pseudoContent()` boundary decodes CSSOM quoted strings with CSS
+character escapes before generated-whitespace qualification: up to six
+hexadecimal digits plus one following CSS whitespace code point form one code
+point (`\9 ` and `\000009 ` both become U+0009, while `\a ` becomes a newline).
+Escaped quotes and literal backslashes keep their CSS string meaning, so
+newline, authored text, and literal `\\9 ` content remain textual.
 Portable output retains safe computed inherited typography defaults on
 each node and pseudo-element for `font-style`, `font-variant`, `font-stretch`,
 `letter-spacing`, `text-transform`, `white-space`, `text-indent`, `text-shadow`,

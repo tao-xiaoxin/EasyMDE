@@ -32,10 +32,10 @@ import {
   createStyleDeclarationContext,
   isHiddenPseudoPaint,
   portableStyleProperties,
-  pseudoContent,
   rootExportComputedStyle,
   supportsSpecialLayout
 } from './wechat-style-policy';
+import { pseudoContent } from './wechat-pseudo-content';
 import {
   type TaskCheckboxTransformState,
   taskCheckboxStrictNumber,
@@ -209,7 +209,7 @@ export function isGeneratedEmptyHeadingAfter(
     '::after' !== pseudo ||
     !['H1', 'H2', 'H3', 'H4'].includes(source.tagName) ||
     source.closest('svg, math, .katex, .easymde-math-block, .easymde-math-inline') ||
-    '' !== content
+    !generatedHeadingAfterContentIsEmpty(content)
   )
     return false;
   const display = computed.getPropertyValue('display').trim().toLowerCase();
@@ -250,7 +250,11 @@ export function isGeneratedEmptyHeadingAfter(
     Boolean(backgroundColor) &&
     'transparent' !== backgroundColor &&
     (undefined === alpha || Number.parseFloat(alpha) > 0);
-  return /(?:url\(|gradient\()/u.test(backgroundImage) || visibleBackgroundColor;
+  return (
+    /(?:url\(|gradient\()/u.test(backgroundImage) ||
+    visibleBackgroundColor ||
+    generatedHeadingAfterBorderPaintIsVisible(computed, portableDeclarations)
+  );
 }
 
 export type HeadingEmptyPseudoFlow = Readonly<{
@@ -289,6 +293,58 @@ export function headingEmptyPseudoPaintColorIsVisible(value: string): boolean {
   const alpha =
     /^rgba\([^)]*,\s*([^,)]+)\s*\)$/u.exec(normalized)?.[1] ?? /\/\s*([^\s)]+)\s*\)$/u.exec(normalized)?.[1];
   return undefined === alpha || Number.parseFloat(alpha) > 0;
+}
+
+/**
+ * Parsed `content` values a generated heading suffix may carry. CSS sources
+ * write both `content:""` and a separating `content:" "`, the destination drops
+ * that generated whitespace, and non-breaking space is written both literally
+ * and as `\a0`. All three therefore reach the same U+2060 transport. Newlines
+ * and any authored text stay on the existing path: they are not
+ * layout-neutral here and must not be rewritten as generated decoration.
+ */
+export const GENERATED_HEADING_AFTER_TRANSPORT_WHITESPACE = /^[ \t\u00a0]*$/u;
+
+const GENERATED_HEADING_AFTER_BORDER_SIDE_PROPERTIES = [
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left'
+] as const;
+
+/**
+ * A generated heading suffix is empty for transport purposes when its parsed
+ * content carries no text of its own. Sources write both `content:""` and a
+ * separating `content:" "`, and the destination drops that generated
+ * whitespace, so every generated space, tab, or non-breaking space must reach
+ * the same U+2060 transport.
+ */
+export function generatedHeadingAfterContentIsEmpty(content: string): boolean {
+  return GENERATED_HEADING_AFTER_TRANSPORT_WHITESPACE.test(content);
+}
+
+/**
+ * Reports whether emitted declarations retain at least one painted border edge.
+ * Transparent and unset edges contribute geometry only; a visible edge is the
+ * paint of a CSS triangle or a partial rule.
+ */
+export function generatedHeadingAfterBorderPaintIsVisible(
+  computed: CSSStyleDeclaration,
+  portableDeclarations: readonly string[]
+): boolean {
+  return GENERATED_HEADING_AFTER_BORDER_SIDE_PROPERTIES.some((side) => {
+    const declaredColor = portableDeclarations.find((declaration) =>
+      declaration.startsWith(`${side}-color:`)
+    );
+    const emittedColor = declaredColor?.slice(declaredColor.indexOf(':') + 1).trim() ?? '';
+    const color = emittedColor || computed.getPropertyValue(`${side}-color`).trim();
+    if (!headingEmptyPseudoPaintColorIsVisible(color)) return false;
+    const declaredWidth = portableDeclarations.find((declaration) => declaration.startsWith(`${side}-width:`));
+    const emittedWidth = declaredWidth?.slice(declaredWidth.indexOf(':') + 1).trim() ?? '';
+    const width = null !== finiteCssPixelValue(emittedWidth) ? emittedWidth : computed.getPropertyValue(`${side}-width`);
+    const widthPixels = finiteCssPixelValue(width);
+    return null !== widthPixels && widthPixels > 0;
+  });
 }
 
 export function headingEmptyPseudoFinitePixel(computed: CSSStyleDeclaration, property: string): number | null {

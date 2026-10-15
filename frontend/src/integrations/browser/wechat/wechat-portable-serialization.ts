@@ -75,6 +75,8 @@ import {
   addPseudoElement,
   addPseudoElementSynchronously,
   assertHeadingEmptyPseudoFlows,
+  generatedHeadingAfterContentIsEmpty,
+  isVisiblePaintedThemeHeadingSuffix,
   styleDeclarations,
   styleDeclarationsSynchronously,
   type HeadingEmptyPseudoFlowCollector,
@@ -106,7 +108,6 @@ import {
   normalizeTaskCheckboxStaticFlow,
   normalizeTaskCheckboxStaticFlowSynchronously
 } from './wechat-task-static-flow';
-import { isVisiblePaintedThemeHeadingSuffix } from './wechat-pseudo-elements';
 import { normalizePortableTaskListMarkers, projectCompleteTaskListStructures } from './wechat-task-list-projection';
 import {
   type TaskCheckboxGeometryLease,
@@ -649,14 +650,18 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
   generatedEmptyHeadingSuffixClones.forEach((element) => {
     if (!normalized.contains(element)) return;
     const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
-    if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
-    const textNode = textNodes[0];
+    const textNode = 1 === textNodes.length ? textNodes[0] : null;
+    if (!textNode) return;
+    // One transport owns the whole generated whitespace set: a marker whose
+    // remaining text is a generated space, tab, or non-breaking space becomes
+    // one U+2060 glyph, and the root-scoped record restores the parsed
+    // `content` for connected plain-text measurement. A generated flow marker
+    // keeps its empty plain-text authority.
+    if (!generatedHeadingAfterContentIsEmpty(textNode.nodeValue ?? '')) return;
+    const original = HEADING_EMPTY_PSEUDO_FLOW_CLONES.has(element) ? '' : (textNode.nodeValue ?? '');
     textNode.nodeValue = '\u2060';
     exportTextNormalizations ??= new Map();
-    exportTextNormalizations.set(textNode, {
-      original: HEADING_EMPTY_PSEUDO_FLOW_CLONES.has(element) ? '' : ' ',
-      encoded: '\u2060'
-    });
+    exportTextNormalizations.set(textNode, { original, encoded: '\u2060' });
   });
   // A task owner whose paint is element-level only (background and border with
   // no pseudo layer) reaches the destination as a completely empty span, and

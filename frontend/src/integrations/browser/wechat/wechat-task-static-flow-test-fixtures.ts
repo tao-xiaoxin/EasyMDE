@@ -456,8 +456,8 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
         expect(declaredStyleValue(owner, 'position')).toBe('static');
         const carriers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
         expect(carriers).toHaveLength(1);
-        expect(carriers[0]?.getAttribute('style')).toBe('font-size:0;line-height:0');
-        expect(carriers[0]?.textContent).toBe('x');
+        expect(carriers[0]?.getAttribute('style')).toBeNull();
+        expect(carriers[0]?.textContent).toBe('\u2060');
         return;
       }
       // The paint transform survives once, outside the allocation.

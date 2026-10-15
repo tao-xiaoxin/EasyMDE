@@ -661,10 +661,11 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
   // A task owner whose paint is element-level only (background and border with
   // no pseudo layer) reaches the destination as a completely empty span, and
   // the native WeChat import or Save drops that span, which loses the unchecked
-  // state. Give every empty unchecked owner one plain ASCII transport glyph
-  // inside a zero-size carrier after static-flow allocation and leaf wrapping:
-  // the glyph keeps the owner from being empty, while the carrier's zero font
-  // and line box keep the settled owner geometry untouched. Register the text
+  // state. Give every empty unchecked owner one U+2060 word-joiner transport
+  // glyph inside an unstyled carrier after static-flow allocation and leaf
+  // wrapping. The glyph keeps the owner from being empty without contributing
+  // a visible glyph or a style declaration that WeChat's structure checker can
+  // flag. Register the text
   // as an export normalization so the separate `text/plain` payload and
   // repeated serialization still read the original empty owner instead of the
   // glyph. The authoring `class` attribute is removed from every clone, so the
@@ -677,11 +678,10 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
       if (owner.childElementCount || owner.textContent?.trim()) return;
       const carrier = normalized.ownerDocument.createElement('span');
       carrier.setAttribute('aria-hidden', 'true');
-      appendDeclarations(carrier, ['font-size:0', 'line-height:0']);
-      const textNode = normalized.ownerDocument.createTextNode('x');
+      const textNode = normalized.ownerDocument.createTextNode('\u2060');
       carrier.appendChild(textNode);
       owner.appendChild(carrier);
-      exportTextNormalizations.set(textNode, { encoded: 'x', original: '' });
+      exportTextNormalizations.set(textNode, { encoded: '\u2060', original: '' });
     });
   if (exportTextNormalizations) EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
   assertTaskCheckboxCaptionRuns(normalized, exportTextNormalizations);

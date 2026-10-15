@@ -468,8 +468,12 @@ payload captures private and outside the repository and public artifacts.
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.
 Verify Preview readiness, task-list state, removal of editor-only or unsafe content, and absence of exporter-created article-wide vertical scrolling.
-For task lists, compare every checked and unchecked marker with the settled
-visible Preview after native paste, Save and QR-opened Reader. Disabled inputs
+For task lists, first verify that the source Preview is correct independently
+of export parity: marker paint must not overlap its caption, duplicate a native
+bullet or retain WordPress form-control paint. Typora-derived adapters must
+include the host layout rules required by their theme, including tight and loose
+task-item containing blocks. Then compare every checked and unchecked marker
+with that settled Preview after native paste, Save and QR-opened Reader. Disabled inputs
 remaining in Clipboard HTML are not destination evidence: the native importer
 may remove them. Check marker paint, geometry, text alignment, effective opacity,
 RTL and nested-list indentation at each tested width; reject missing states or

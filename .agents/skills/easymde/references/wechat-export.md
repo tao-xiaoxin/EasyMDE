@@ -708,10 +708,14 @@ sections plus rebuilt ordinary list runs inside a legal block container remains
 UNVERIFIED. Never change source controls, invent platform colors or
 emoji, duplicate native list bullets, or keep an INPUT as proof of a
 destination-visible state. An empty unchecked generated owner receives one
-`aria-hidden` zero-font/zero-line-height carrier containing an ASCII `x` after
+unstyled `aria-hidden` carrier containing the U+2060 word joiner after
 static-flow allocation; the exporter registers that glyph for per-node
 plain-text restoration so it preserves native Save state without changing
-geometry or visible plain text. Remove arbitrary form controls. A marker that
+geometry or visible plain text. Do not use an ASCII sentinel, zero-font style,
+or explicit `line-height:0`: WeChat's structure checker reports those hidden
+transport variants as formatting problems. The word joiner keeps the owner
+non-empty while the carrier remains visually inert. Remove arbitrary form
+controls. A marker that
 cannot be faithfully represented fails
 explicitly rather than silently losing state; native-appearance themes require
 their own verified normal path before all-theme acceptance. Retain each source table's authored/computed

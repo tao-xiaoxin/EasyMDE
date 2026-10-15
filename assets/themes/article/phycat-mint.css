@@ -316,9 +316,29 @@
     left: -12.5px
 }
 
+.easymde-rendered-content.easymde-markdown-theme-phycat-mint .task-list-item {
+    position: relative;
+    list-style-type: none;
+    padding-left: 0
+}
+
+.easymde-rendered-content.easymde-markdown-theme-phycat-mint .task-list-item > p:has(> input[type="checkbox"]) {
+    position: relative;
+    line-height: inherit
+}
+
 .easymde-rendered-content.easymde-markdown-theme-phycat-mint .task-list-item input{
     appearance: none;
     -webkit-appearance: none;
+    font: inherit;
+    line-height: normal;
+    box-sizing: border-box;
+    padding: 0;
+    margin: calc(1em - 10px) 0 0 -1.2em;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    opacity: 1;
     width: 1.3rem;
     height: 1.3rem;
     position: absolute;
@@ -340,6 +360,7 @@
     border-radius: 50%;
     border: 1px solid var(--element-color-deep, #ffa531);
     background: #fff;
+    opacity: 1;
     transition: all .4s cubic-bezier(.5, 1.6, .4, .7);
     box-sizing: border-box
 }

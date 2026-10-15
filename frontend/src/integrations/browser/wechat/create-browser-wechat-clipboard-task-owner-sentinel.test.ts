@@ -15,8 +15,9 @@ import {
 /**
  * Native WeChat drops a completely empty task owner span on import, so an
  * unchecked owner whose paint is element-level only (background/border with no
- * pseudo layer) would lose its box. These focused tests pin the ASCII transport
- * glyph that keeps the owner, its geometry, its ARIA state, the checked paint,
+ * pseudo layer) would lose its box. These focused tests pin the U+2060 word
+ * joiner transport glyph that keeps the owner, its geometry, its ARIA state,
+ * the checked paint,
  * the plain-text payload, repeated serialization, and the modern/legacy paths.
  */
 describe('createBrowserWechatClipboard task owner sentinel', () => {
@@ -298,6 +299,7 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       // The glyph may live only in the HTML payload.
       expect(firstText).toBe('Open task\nDone task');
       expect(firstText).not.toContain('x');
+      expect(firstText).not.toContain('\u2060');
       // The same blob stays byte-identical when the payload is read twice.
       await expect(blobText(htmlBlob)).resolves.toBe(firstHtml);
 
@@ -310,20 +312,20 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       const [uncheckedOwner, checkedOwner] = owners;
       if (!uncheckedOwner || !checkedOwner) throw new Error('task owners missing');
       // The unchecked owner keeps its ARIA state, keeps its element-level paint
-      // and now carries exactly one plain ASCII transport glyph inside a
-      // zero-size carrier that cannot contribute to the owner's box.
+      // and now carries exactly one U+2060 transport glyph inside an unstyled
+      // carrier that cannot contribute a visible glyph to the owner's box.
       expect(uncheckedOwner.getAttribute('style')).toContain('background-color:rgb(255, 255, 255)');
       expect(uncheckedOwner.getAttribute('style')).toContain('border-top-color:rgb(41, 128, 185)');
       expect(uncheckedOwner.childNodes).toHaveLength(1);
       const uncheckedCarrier = uncheckedOwner.firstElementChild as HTMLElement | null;
       expect(uncheckedCarrier?.tagName).toBe('SPAN');
       expect(uncheckedCarrier?.getAttribute('aria-hidden')).toBe('true');
-      expect(uncheckedCarrier?.getAttribute('style')).toBe('font-size:0;line-height:0');
+      expect(uncheckedCarrier?.getAttribute('style')).toBeNull();
       expect(uncheckedCarrier?.childNodes).toHaveLength(1);
-      expect(uncheckedCarrier?.textContent).toBe('x');
-      expect(uncheckedOwner.textContent).toBe('x');
-      // The sentinel adds a zero font and line box, so the settled owner
-      // allocation matches the captured geometry exactly.
+      expect(uncheckedCarrier?.textContent).toBe('\u2060');
+      expect(uncheckedOwner.textContent).toBe('\u2060');
+      // The invisible transport glyph keeps the settled owner allocation
+      // unchanged so it matches the captured geometry exactly.
       expectStaticAllocation(uncheckedOwner, { height: 20, left: -22, top: 3, width: 20 });
       // The checked owner keeps its captured paint layers and receives no
       // direct transport text of its own.
@@ -334,7 +336,10 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       expectStaticAllocation(checkedOwner, { height: 20, left: -22, top: 3, width: 20 });
       expectStaticAllocation(checkedMarkers[0] as HTMLElement, { height: 16, left: 18, top: -2, width: 16 });
       expectStaticAllocation(checkedMarkers[1] as HTMLElement, { height: 12, left: 27.6, top: 8, width: 8 });
-      expect(firstHtml).toContain('<span aria-hidden="true" style="font-size:0;line-height:0">x</span>');
+      expect(firstHtml).toContain('<span aria-hidden="true">\u2060</span>');
+      expect(firstHtml).not.toContain('<span aria-hidden="true">x</span>');
+      expect(firstHtml).not.toContain('style="font-size:0"');
+      expect(firstHtml).not.toContain('line-height:0');
       expect(firstHtml).not.toContain('✓');
       expect(preview.innerHTML).toBe(sourceMarkup);
 
@@ -353,8 +358,8 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       secondHolder.innerHTML = secondHtml;
       const secondOwners = [...secondHolder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
       expect(secondOwners[0]?.childNodes).toHaveLength(1);
-      expect(secondOwners[0]?.firstElementChild?.getAttribute('style')).toBe('font-size:0;line-height:0');
-      expect(secondOwners[0]?.textContent).toBe('x');
+      expect(secondOwners[0]?.firstElementChild?.getAttribute('style')).toBeNull();
+      expect(secondOwners[0]?.textContent).toBe('\u2060');
 
       let legacyHtml = '';
       let legacyClipboardHtml = '';
@@ -404,9 +409,9 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       const legacyOwners = [...legacyHolder.querySelectorAll<HTMLElement>('[role="checkbox"]')];
       expect(legacyOwners).toHaveLength(2);
       expect(legacyOwners[0]?.getAttribute('aria-checked')).toBe('false');
-      expect(legacyOwners[0]?.textContent).toBe('x');
+      expect(legacyOwners[0]?.textContent).toBe('\u2060');
       expect(legacyOwners[0]?.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
-      expect(legacyOwners[0]?.firstElementChild?.getAttribute('style')).toBe('font-size:0;line-height:0');
+      expect(legacyOwners[0]?.firstElementChild?.getAttribute('style')).toBeNull();
       // The checked owner keeps only its painted marker layers; the transport
       // text lives in the unchecked owner alone.
       expect(Array.from(legacyOwners[1]?.childNodes ?? []).every((node) => node.nodeType === 1)).toBe(true);

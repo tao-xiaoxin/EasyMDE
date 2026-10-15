@@ -1604,6 +1604,112 @@ test('all Phycat list items anchor their task and connector decorations', () => 
   }
 });
 
+test('all Phycat task adapters neutralize host checkbox rules and anchor loose rows to direct paragraphs', () => {
+  const phycatThemes = [
+    'phycat-cherry',
+    'phycat-caramel',
+    'phycat-forest',
+    'phycat-mint',
+    'phycat-sky',
+    'phycat-prussian',
+    'phycat-sakura',
+    'phycat-mauve'
+  ];
+  const hostCheckboxCss = `
+    input[type="checkbox"] {
+      box-sizing: content-box;
+      font-size: 14px;
+      margin: -4px 4px 0;
+      opacity: .4;
+      padding: 6px;
+      background: rgb(1 2 3);
+      box-shadow: 0 0 0 2px rgb(4 5 6);
+    }
+  `;
+
+  for (const theme of phycatThemes) {
+    const css = readFileSync(join(repoRoot, `assets/themes/article/${theme}.css`), 'utf8');
+    const root = scopedArticleRoot(theme);
+    const taskItemBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item`,
+      (body) => /position:\s*relative/.test(body)
+        && /list-style-type:\s*none/.test(body)
+        && /padding-left:\s*0/.test(body)
+    );
+    const inputBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input`,
+      (body) => /font:\s*inherit/.test(body)
+        && /line-height:\s*normal/.test(body)
+        && /box-sizing:\s*border-box/.test(body)
+        && /padding:\s*0/.test(body)
+        && /margin:\s*calc\(1em - 10px\)\s+0\s+0\s+-1\.2em/.test(body)
+        && /border:\s*none/.test(body)
+        && /background:\s*transparent/.test(body)
+        && /box-shadow:\s*none/.test(body)
+        && /opacity:\s*1/.test(body)
+        && /width:\s*1\.3rem/.test(body)
+        && /height:\s*1\.3rem/.test(body)
+        && /top:\s*3px/.test(body)
+        && /left:\s*-22px/.test(body)
+    );
+    const beforeBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input::before`,
+      (body) => /opacity:\s*1/.test(body)
+        && /top:\s*-2px/.test(body)
+        && /left:\s*18px/.test(body)
+    );
+    const afterBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item input::after`,
+      (body) => /top:\s*40%/.test(body)
+        && /left:\s*138%/.test(body)
+        && /opacity:\s*0/.test(body)
+    );
+    const paragraphBody = cssRuleBodyMatching(
+      css,
+      `${root} .task-list-item > p:has(> input[type="checkbox"])`,
+      (body) => /position:\s*relative/.test(body)
+        && /line-height:\s*inherit/.test(body)
+    );
+
+    assert.ok(taskItemBody, `${theme} task rows should own list positioning and marker removal`);
+    assert.ok(inputBody, `${theme} task inputs should restore the Typora base input contract`);
+    assert.ok(beforeBody, `${theme} task marker circles should keep their upstream offset and isolate host pseudo-element opacity`);
+    assert.ok(afterBody, `${theme} task checkmarks should keep their upstream offset`);
+    assert.ok(paragraphBody, `${theme} loose task rows should anchor direct paragraph owners`);
+
+    const dom = new JSDOM(
+      `<style>${hostCheckboxCss}${css}</style>
+      <article class="easymde-rendered-content easymde-markdown-theme-${theme}">
+        <ul>
+          <li class="task-list-item"><input id="${theme}-tight" type="checkbox">Tight</li>
+          <li class="task-list-item"><p id="${theme}-owner"><input type="checkbox">Loose</p></li>
+          <li class="task-list-item"><div><p id="${theme}-nested">Ordinary nested paragraph</p></div></li>
+        </ul>
+      </article>`
+    );
+    const { window } = dom;
+    const inputStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-tight`)
+    );
+    const ownerStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-owner`)
+    );
+    const nestedStyle = window.getComputedStyle(
+      window.document.querySelector(`#${theme}-nested`)
+    );
+
+    assert.equal(inputStyle.boxSizing, 'border-box', `${theme} should override host content-box sizing`);
+    assert.equal(inputStyle.opacity, '1', `${theme} should override host disabled opacity`);
+    assert.equal(inputStyle.padding, '0px', `${theme} should override host checkbox padding`);
+    assert.equal(ownerStyle.position, 'relative', `${theme} should position loose task content from its direct paragraph`);
+    assert.equal(nestedStyle.position, 'static', `${theme} should not position nested ordinary paragraphs`);
+  }
+});
+
 test('all Phycat H1 decorations use normal flow and preserve neighboring declarations', () => {
   const phycatThemes = [
     'phycat-cherry',

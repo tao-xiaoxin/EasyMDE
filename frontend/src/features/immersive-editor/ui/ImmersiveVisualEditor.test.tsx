@@ -407,6 +407,277 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('preserves a partial code-body selection for a code context target', () => {
+    const source = '```js\nalpha\nbeta\n```';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<pre data-easymde-visual-block-id="b0" data-easymde-visual-fence="```" data-easymde-visual-fence-info="js"><code class="language-js">alpha\nbeta\n</code></pre>';
+    document.body.append(surface);
+    const documentSession = {
+      document: history.document
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(source, 'partial-code-context'),
+          revision: 1,
+          signature: 'partial-code-context'
+        }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const code = surface.querySelector('pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-partial-code-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.setEnd(text, 8);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const sourceStart = source.indexOf('alpha');
+
+    try {
+      expect(runtimeHolder.current?.prepareContextMenuSelection?.(code)).toBe(true);
+      expect(history.document.getSelection()).toEqual({
+        direction: 'forward',
+        end: sourceStart + 8,
+        start: sourceStart + 1
+      });
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
+  it('maps a nested quote code context target without rejecting the menu', () => {
+    const source = '> ```js\n> alpha\n> ```';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<blockquote data-easymde-visual-block-id="b0"><pre data-easymde-visual-fence="```" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>';
+    document.body.append(surface);
+    const onFailure = vi.fn();
+    const documentSession = {
+      document: history.document
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(source, 'nested-code-context'),
+          revision: 1,
+          signature: 'nested-code-context'
+        }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const code = surface.querySelector('blockquote pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-nested-code-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.setEnd(text, 4);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.prepareContextMenuSelection?.(code)).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getSelection().end).toBeGreaterThan(
+        history.document.getSelection().start
+      );
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
+  it('selects the owning block for a collapsed nested quote code target', () => {
+    const source = '> ```js\n> alpha\n> ```';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<blockquote data-easymde-visual-block-id="b0"><pre data-easymde-visual-fence="```" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>';
+    document.body.append(surface);
+    const onFailure = vi.fn();
+    const documentSession = {
+      document: history.document
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(source, 'collapsed-nested-code-context'),
+          revision: 1,
+          signature: 'collapsed-nested-code-context'
+        }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const code = surface.querySelector('blockquote pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-collapsed-nested-code-context-fixture-missing');
+    }
+    placeCaretInText(text, 2);
+
+    try {
+      expect(runtimeHolder.current?.prepareContextMenuSelection?.(code)).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
+      const caret = source.indexOf('alpha') + 2;
+      expect(history.document.getSelection()).toEqual({
+        direction: 'none',
+        end: caret,
+        start: caret
+      });
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
+  it('maps a nested list code context target without rejecting the menu', () => {
+    const source = '- item\n\n  ```\n  alpha\n  ```\n\nTail';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<ul data-easymde-visual-block-id="b0"><li><p>item</p><pre><code>alpha\n</code></pre></li></ul><p data-easymde-visual-block-id="b1">Tail</p>';
+    document.body.append(surface);
+    const onFailure = vi.fn();
+    const documentSession = {
+      document: history.document
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: {
+            blocks: [
+              { editable: true, endLine: 5, id: 'b0', startLine: 0 },
+              { editable: true, endLine: 7, id: 'b1', startLine: 6 }
+            ],
+            coordinate: 'line',
+            signature: 'nested-list-code-context',
+            version: 1
+          },
+          revision: 1,
+          signature: 'nested-list-code-context'
+        }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const code = surface.querySelector('ul pre > code');
+    const text = code?.firstChild;
+    if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-nested-list-code-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(text, 1);
+    range.setEnd(text, 4);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.prepareContextMenuSelection?.(code)).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getSelection().end).toBeGreaterThan(
+        history.document.getSelection().start
+      );
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
   it('uses the reselected native range after a cancelled context-menu preparation', () => {
     const source = 'alpha beta';
     const history = createHistoryDocument(source);

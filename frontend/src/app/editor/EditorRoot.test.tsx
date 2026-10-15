@@ -2382,6 +2382,94 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('keeps an exhausted block-index failure unavailable instead of pending forever', async () => {
+    const props = fixture();
+    const onFailure = vi.fn();
+    const editorBlockIndexPort: EditorMarkdownBlockIndexPort = {
+      build: vi.fn(async () => {
+        throw new Error('worker-failed');
+      }),
+      dispose: vi.fn()
+    };
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={editorBlockIndexPort}
+        onFailure={onFailure}
+      />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    await waitFor(() =>
+      expect(editorBlockIndexPort.build).toHaveBeenCalledTimes(2)
+    );
+    expect(within(document.body).queryByRole('menu')).toBeNull();
+    const failureCount = onFailure.mock.calls.length;
+
+    fireEvent.contextMenu(source, { clientX: 24, clientY: 28 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(editorBlockIndexPort.build).toHaveBeenCalledTimes(2);
+    expect(onFailure.mock.calls.length).toBeGreaterThanOrEqual(
+      failureCount
+    );
+    expect(within(document.body).queryByRole('menu')).toBeNull();
+    view.unmount();
+  });
+
+  it('opens the original menu after a same-key block-index retry resolves', async () => {
+    const props = fixture();
+    const sourceValue = '```\ncode\n```';
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(0, sourceValue.length);
+    const retry = deferred<EditorMarkdownBlockIndexData>();
+    const editorBlockIndexPort: EditorMarkdownBlockIndexPort = {
+      build: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('first-failure'))
+        .mockImplementationOnce(() => retry.promise),
+      dispose: vi.fn()
+    };
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={editorBlockIndexPort} />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    await waitFor(() =>
+      expect(editorBlockIndexPort.build).toHaveBeenCalledTimes(2)
+    );
+    expect(within(document.body).queryByRole('menu')).toBeNull();
+
+    retry.resolve({
+      blocks: [
+        {
+          editable: true,
+          from: 0,
+          kind: 'code',
+          lineEnd: 2,
+          lineStart: 0,
+          to: sourceValue.length
+        }
+      ],
+      imageBlocks: [{ count: 0, firstImageIndex: 0, status: 'ready' }],
+      imageRanges: [],
+      length: sourceValue.length,
+      mathSpans: []
+    });
+    await within(document.body).findByRole('menuitem', { name: 'Code block' });
+    view.unmount();
+  });
+
   it('mounts the shared context menu through the complete visual owner', async () => {
     const props = fixture();
     props.submissionField.value = 'Rendered';
@@ -3940,6 +4028,93 @@ describe('EditorRoot', () => {
     expect(props.onFailure).not.toHaveBeenCalled();
     view.unmount();
   });
+
+  it('keeps the generic menu for a real code-plus-paragraph selection', async () => {
+    const props = fixture();
+    const sourceValue = '```js\nconst value = 1;\n```\n\nTail';
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(0, sourceValue.length);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createCodeContentPreviewResponse(
+          request,
+          sourceValue,
+          sourceValue.indexOf('const'),
+          'const value = 1;\n'
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={sourceLinkBlockIndexPort()}
+      />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    await within(document.body).findByRole('menu');
+    await waitFor(() =>
+      expect(
+        within(document.body).queryByRole('menuitem', { name: 'Code block' })
+      ).toBeNull()
+    );
+    expect(props.submissionField.value).toBe(sourceValue);
+    expect(props.onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it.each(['rejected', 'pending'] as const)(
+    'opens generic Copy/Cut for a mixed code selection without a %s code query',
+    async (queryOutcome) => {
+      const props = fixture();
+      const sourceValue = '```js\nconst value = 1;\n```\n\nTail';
+      props.submissionField.value = sourceValue;
+      props.submissionField.defaultValue = sourceValue;
+      props.submissionField.setSelectionRange(0, sourceValue.length);
+      const pendingCodeRender = deferred<PreviewResponse>();
+      const codeRender = vi.fn(() => queryOutcome === 'rejected'
+        ? Promise.reject(new Error('code-render-rejected'))
+        : pendingCodeRender.promise);
+      const renderPreview = vi.mocked(props.previewPort.render).getMockImplementation();
+      if (!renderPreview) throw new Error('preview-render-fixture-missing');
+      vi.mocked(props.previewPort.render).mockImplementation((request, signal) =>
+        request.signature.startsWith('editor-code-content:')
+          ? codeRender()
+          : renderPreview(request, signal)
+      );
+      const view = render(
+        <EditorRoot
+          {...props}
+          editorBlockIndexPort={sourceLinkBlockIndexPort()}
+        />
+      );
+      const source = await waitFor(() => {
+        const element = view.container.querySelector<HTMLElement>('.cm-content');
+        if (!element) throw new Error('source-surface-missing');
+        return element;
+      });
+
+      layoutContextMenuSurface(source);
+      fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+      const menu = await within(document.body).findByRole('menu');
+      for (const name of ['Copy', 'Cut']) {
+        expect(within(menu).getByRole('menuitem', { name }).getAttribute('aria-disabled'))
+          .toBe('false');
+      }
+      expect(within(menu).queryByRole('menuitem', { name: 'Code block' })).toBeNull();
+      expect(codeRender).not.toHaveBeenCalled();
+      expect(props.submissionField.value).toBe(sourceValue);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  );
 
   it('accepts an exact code-block end boundary for a code action', async () => {
     const props = fixture();

@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
 	captureEditorContext,
 	createTextEdit,
-	editMarkdownTable,
 	deleteThematicBreak,
+	editMarkdownTable,
 	editorContextSelectionFitsRange,
 	findMarkdownBlock,
 	findMarkdownTable,
@@ -55,6 +55,17 @@ describe("editor context menu rules", () => {
 			),
 		).toMatchObject({ value: "| A | B |\n| :---: | --- |\n| 1 | 2 |" });
 	});
+
+	it("keeps a prepared-index lookup bounded after delimiter-looking table rows", () => {
+		const source = `${("| --- |\n").repeat(12000)}ordinary ending`;
+		const blockIndex = createEditorMarkdownBlockIndex(source);
+		const position = source.indexOf("ordinary ending");
+		const startedAt = performance.now();
+		const block = findMarkdownBlock(source, position, blockIndex);
+
+		expect(performance.now() - startedAt).toBeLessThan(400);
+		expect(block?.kind).toBe("table");
+	}, 1000);
 
 	it("returns an editable paragraph for an empty document and whitespace-only line", () => {
 		expect(

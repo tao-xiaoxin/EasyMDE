@@ -147,6 +147,11 @@ type MarkdownTable = Readonly<{
 	startLine: number;
 }>;
 
+type TableLineRange = Readonly<{
+	endLine: number;
+	startLine: number;
+}>;
+
 type InternalBlock = MarkdownBlock & Readonly<{ table?: MarkdownTable }>;
 
 export type MarkdownTableContext = Readonly<{
@@ -250,12 +255,21 @@ function lineIndexAt(
 	lines: ReadonlyArray<MarkdownLine>,
 	position: number,
 ): number {
-	for (let index = 0; index < lines.length; index += 1) {
-		const line = lines[index];
-		if (line && position <= line.end) return index;
-		if (line && position < line.fullEnd) return index;
+	let low = 0;
+	let high = lines.length - 1;
+	let result = Math.max(0, lines.length - 1);
+	while (low <= high) {
+		const middle = Math.floor((low + high) / 2);
+		const line = lines[middle];
+		if (!line) break;
+		if (position <= line.end || position < line.fullEnd) {
+			result = middle;
+			high = middle - 1;
+			continue;
+		}
+		low = middle + 1;
 	}
-	return Math.max(0, lines.length - 1);
+	return result;
 }
 
 function pipePositions(text: string): number[] {
@@ -307,41 +321,73 @@ function isTableDelimiter(cell: TableCell): boolean {
 function tableAtLine(
 	lines: ReadonlyArray<MarkdownLine>,
 	targetLine: number,
+	range?: TableLineRange,
 ): MarkdownTable | null {
-	for (let startLine = targetLine; startLine >= 0; startLine -= 1) {
-		const headerLine = lines[startLine];
-		const separatorLine = lines[startLine + 1];
-		const header = headerLine ? parseTableRow(headerLine, startLine) : null;
-		const separator = separatorLine
-			? parseTableRow(separatorLine, startLine + 1)
-			: null;
-		if (!header || !separator || header.cells.length !== separator.cells.length)
-			continue;
+	const searchStartLine = Math.max(0, range?.startLine ?? 0);
+	const searchEndLine = Math.min(
+		lines.length - 1,
+		range?.endLine ?? lines.length - 1,
+	);
+	if (
+		targetLine < searchStartLine ||
+		targetLine > searchEndLine ||
+		searchStartLine > searchEndLine
+	)
+		return null;
+
+	// Cache each candidate row once. In a document made of delimiter-looking
+	// rows, every pair can look like a table header and separator. Re-parsing
+	// the complete suffix for each candidate makes the old lookup quadratic.
+	const parsedRows = new Array<TableRow | null>(lines.length).fill(null);
+	const sameWidthRunEnd = new Array<number | undefined>(lines.length);
+	for (
+		let lineIndex = searchEndLine;
+		lineIndex >= searchStartLine;
+		lineIndex -= 1
+	) {
+		const line = lines[lineIndex];
+		const row = line ? parseTableRow(line, lineIndex) : null;
+		parsedRows[lineIndex] = row;
+		if (!row) continue;
+		const nextRow = parsedRows[lineIndex + 1];
+		sameWidthRunEnd[lineIndex] =
+			nextRow && nextRow.cells.length === row.cells.length
+				? (sameWidthRunEnd[lineIndex + 1] ?? lineIndex + 2)
+				: lineIndex + 1;
+	}
+
+	for (
+		let startLine = targetLine;
+		startLine >= searchStartLine;
+		startLine -= 1
+	) {
+		const header = parsedRows[startLine];
+		const separator = parsedRows[startLine + 1];
+		if (!header || !separator) continue;
+		if (header.cells.length !== separator.cells.length) continue;
 		if (!separator.cells.every(isTableDelimiter)) continue;
 
-		const rows = [header, separator];
 		let endLine = startLine + 2;
-		let malformedBody = false;
-		while (endLine < lines.length) {
-			const rowLine = lines[endLine];
-			const row = rowLine ? parseTableRow(rowLine, endLine) : null;
-			if (!row) break;
-			if (row.cells.length !== header.cells.length) {
-				malformedBody = true;
-				break;
-			}
-			rows.push(row);
-			endLine += 1;
+		const firstBody = parsedRows[endLine];
+		if (firstBody && firstBody.cells.length === header.cells.length) {
+			endLine = sameWidthRunEnd[endLine] ?? endLine + 1;
 		}
-		if (malformedBody) return null;
-		if (targetLine >= startLine && targetLine < endLine) {
-			return {
-				endLine: endLine - 1,
-				rows,
-				separatorLine: startLine + 1,
-				startLine,
-			};
+		const malformedBody = parsedRows[endLine];
+		if (malformedBody && malformedBody.cells.length !== header.cells.length)
+			return null;
+		if (targetLine >= endLine) continue;
+
+		const tableRows = [header, separator];
+		for (let bodyLine = startLine + 2; bodyLine < endLine; bodyLine += 1) {
+			const row = parsedRows[bodyLine];
+			if (row) tableRows.push(row);
 		}
+		return {
+			endLine: endLine - 1,
+			rows: tableRows,
+			separatorLine: startLine + 1,
+			startLine,
+		};
 	}
 	return null;
 }
@@ -624,7 +670,12 @@ export function findMarkdownBlock(
 	if (!indexed) return null;
 	if ("table" === indexed.kind) {
 		const lines = linesOf(value);
-		const table = tableAtLine(lines, lineIndexAt(lines, position));
+		const targetLine = lineIndexAt(lines, position);
+		const tableRange: TableLineRange = {
+			endLine: indexed.lineEnd,
+			startLine: indexed.lineStart,
+		};
+		const table = tableAtLine(lines, targetLine, tableRange);
 		if (table) return markdownTableBlock(value, lines, table, blockIndex);
 	}
 	if ("paragraph" !== indexed.kind) {
@@ -637,7 +688,12 @@ export function findMarkdownBlock(
 		};
 	}
 	const lines = linesOf(value);
-	const table = tableAtLine(lines, lineIndexAt(lines, position));
+	const targetLine = lineIndexAt(lines, position);
+	const tableRange: TableLineRange = {
+		endLine: indexed.lineEnd,
+		startLine: indexed.lineStart,
+	};
+	const table = tableAtLine(lines, targetLine, tableRange);
 	if (table && "paragraph" === indexed.kind) {
 		return markdownTableBlock(value, lines, table, blockIndex);
 	}
@@ -928,7 +984,10 @@ function tableForPosition(
 	if ("table" !== block?.kind) return null;
 	const lines = linesOf(value);
 	const targetLine = lineIndexAt(lines, position);
-	const table = tableAtLine(lines, targetLine);
+	const table = tableAtLine(lines, targetLine, {
+		endLine: block.lineEnd,
+		startLine: block.lineStart,
+	});
 	if (!table) return null;
 	const metadata = tableAlignmentMetadata(value, lines, table, blockIndex);
 	const tableBlock = markdownTableBlock(value, lines, table, blockIndex);

@@ -8,6 +8,7 @@ import {
   useState
 } from '@wordpress/element';
 import type {
+  CSSProperties,
   KeyboardEvent,
   MutableRefObject,
   MouseEvent as ReactMouseEvent
@@ -352,7 +353,7 @@ function MenuLayer({
     }
   };
 
-  return (
+  const layer = (
     <div
       aria-label={ariaLabel}
       className={`easymde-editor-context-menu__layer${'' === path ? '' : ' easymde-editor-context-menu__submenu'}`}
@@ -502,6 +503,27 @@ function MenuLayer({
           </div>
         );
       })}
+    </div>
+  );
+
+  if ('' === path) return layer;
+
+  const frameStyle: CSSProperties & { '--easymde-context-menu-pointer-top'?: string } = submenuPosition
+    ? {
+        '--easymde-context-menu-pointer-top': `${submenuPosition.pointerTop ?? 20}px`,
+        clipPath: submenuPosition.clipPath,
+        left: `${submenuPosition.left}px`,
+        top: `${submenuPosition.top}px`
+      }
+    : { visibility: 'hidden' };
+
+  return (
+    <div
+      className="easymde-editor-context-menu__submenu-frame"
+      data-easymde-context-menu-placement={submenuPosition?.placement}
+      style={frameStyle}
+    >
+      {layer}
     </div>
   );
 }

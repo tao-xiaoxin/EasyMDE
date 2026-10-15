@@ -67,6 +67,21 @@ export type EditorCodeContentQuerySession = Readonly<{
   subscribe: (listener: () => void) => () => void;
 }>;
 
+/**
+ * Code-content discovery is an optional context for the shared menu. An
+ * ambiguous selection cannot safely expose code-only actions, but it must not
+ * block generic Clipboard/formatting actions for the same selection.
+ */
+export function editorCodeContentReadinessBlocksMenu(
+  state: EditorCodeContentQueryState
+): state is Extract<EditorCodeContentQueryState, { status: 'pending' | 'unavailable' }> {
+  return state.status === 'pending'
+    || (
+      state.status === 'unavailable'
+      && state.code !== 'editor-code-content-selection-ambiguous'
+    );
+}
+
 type ActiveQuery = {
   binding: EditorCodeContentQueryBinding;
   blockIndex?: EditorMarkdownBlockIndex;
@@ -312,8 +327,16 @@ export function createEditorCodeContentQuery({
       binding.selection,
       blockIndex
     );
-    if ('unavailable' === targetResult.status) {
-      const state = 'editor-code-content-selection-not-code' === targetResult.code
+    if (
+      'unavailable' === targetResult.status
+      || binding.selection.start < targetResult.target.from
+      || binding.selection.end > targetResult.target.to
+    ) {
+      // Mixed coverage has no single code context. Classify it before asking
+      // the renderer so an unrelated code read cannot gate the generic menu.
+      const state = 'available' === targetResult.status
+        || 'editor-code-content-selection-not-code' === targetResult.code
+        || 'editor-code-content-selection-ambiguous' === targetResult.code
         ? { status: 'none' as const }
         : unavailable(targetResult.code);
       active = {

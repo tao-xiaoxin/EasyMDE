@@ -223,6 +223,7 @@ import {
 } from '../../features/editor-context-menu/editor-markdown-block-index';
 import {
   createEditorCodeContentQuery,
+  editorCodeContentReadinessBlocksMenu,
   type EditorCodeContentQueryBinding,
   type EditorCodeContentQuerySession,
   type EditorCodeContentQueryState
@@ -332,6 +333,14 @@ function editorCodeContentActionContext(
   selection?: EditorContextSnapshot['selection']
 ): EditorContextMenuActionContext['code'] | null {
   if ('ready' !== state.status) return null;
+  if (
+    source
+    && selection
+    && !editorContextSelectionFitsRange(selection, {
+      from: state.target.from,
+      to: state.target.to
+    })
+  ) return null;
   const projectionEntry =
     'available' === state.codeProjection?.status
       ? state.codeProjection.entries.find(
@@ -5694,8 +5703,7 @@ export function EditorRoot(props: EditorRootProps) {
       const port = props.editorBlockIndexPort;
       const session = documentSession;
       if (!port || !session) return null;
-      contextMenuBlockIndexFailureRef.current = null;
-      contextMenuBlockIndexCache.schedule({
+      const scheduled = contextMenuBlockIndexCache.schedule({
         build: async (signal, { deadline }) => {
           const scheduler = createBrowserEditorImageHydrationScheduler(
             session.document.getInputElement().ownerDocument,
@@ -5727,6 +5735,7 @@ export function EditorRoot(props: EditorRootProps) {
         revision,
         timeoutMs: 10_000
       });
+      if (scheduled) contextMenuBlockIndexFailureRef.current = null;
       return null;
     },
     [
@@ -6158,8 +6167,7 @@ export function EditorRoot(props: EditorRootProps) {
           })
         );
         if (
-          ('pending' === codeReadiness.status
-            || 'unavailable' === codeReadiness.status)
+          editorCodeContentReadinessBlocksMenu(codeReadiness)
           && !selectionFitsCodeBlock
         ) return codeReadiness;
         if (editorSourceLinkQuery && undefined !== blockIndex) {
@@ -6567,8 +6575,7 @@ export function EditorRoot(props: EditorRootProps) {
           })
         );
         if (
-          ('pending' === codeReadiness.status
-            || 'unavailable' === codeReadiness.status)
+          editorCodeContentReadinessBlocksMenu(codeReadiness)
           && !selectionFitsCodeBlock
         ) return codeReadiness;
         return { status: 'ready' };

@@ -20,7 +20,6 @@ export type EditorSourceLinkCandidate = Readonly<{
 export type EditorSourceLinkUnavailableCode =
 	| "editor-source-link-block-index-stale"
 	| "editor-source-link-block-index-unavailable"
-	| "editor-source-link-node-malformed"
 	| "editor-source-link-selection-invalid";
 
 export type EditorSourceLinkResolution =
@@ -306,10 +305,10 @@ export function findEditorSourceLink({
 	for (const node of linkNodes) {
 		const result = candidateForNode(blockSource, node, nodes, block.from);
 		if (result && "malformed" in result) {
-			return {
-				code: "editor-source-link-node-malformed",
-				status: "unavailable",
-			};
+			// A partially typed link is ordinary editable Markdown. Link-specific
+			// actions are unavailable, but the generic context menu must remain
+			// usable for Copy/Cut/Paste and formatting.
+			return { status: "none" };
 		}
 		if (result && "candidate" in result) candidates.push(result.candidate);
 	}

@@ -3958,12 +3958,24 @@ export function WindowedImmersiveVisualEditor({
 						return report(error);
 					}
 				}
+				const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+				if (preparedSelection && nativeSelection && !nativeSelection.isCollapsed) {
+					try {
+						return finishPreparation(this.prepareMediaSelection());
+					} catch (error) {
+						return report(error);
+					}
+				}
 				try {
-					const blockId = pre.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+					const owner = rootBlock(surface, pre);
+					if (owner !== pre) {
+						return finishPreparation(this.prepareMediaSelection());
+					}
+					const blockId = owner?.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
 					const range = blockId ? rangesRef.current.get(blockId) : null;
 					const source = sourceRef.current;
-					if (!range?.editable || !source) {
-						throw new Error("visual-editor-window-selection-map-failed");
+					if (!range?.editable || null === source) {
+						return finishPreparation(this.prepareMediaSelection());
 					}
 					applyDocumentChange({
 						selection: {

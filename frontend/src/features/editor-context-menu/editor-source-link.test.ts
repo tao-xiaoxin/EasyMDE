@@ -150,7 +150,7 @@ describe("findEditorSourceLink", () => {
 		expect(result.status).toBe("none");
 	});
 
-	it("rejects a parser node that is incomplete rather than treating its label as a shortcut link", () => {
+	it("treats an incomplete parser node as plain text rather than a menu failure", () => {
 		const source = "[caption](https://example.test";
 		const result = findEditorSourceLink({
 			blockIndex: createEditorMarkdownBlockIndex(source),
@@ -158,10 +158,7 @@ describe("findEditorSourceLink", () => {
 			source,
 		});
 
-		expect(result).toEqual({
-			code: "editor-source-link-node-malformed",
-			status: "unavailable",
-		});
+		expect(result).toEqual({ status: "none" });
 	});
 
 	it("distinguishes the ordinary no-anchor path from an unavailable index", () => {

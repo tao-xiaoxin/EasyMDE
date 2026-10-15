@@ -6776,14 +6776,20 @@ export function ImmersiveVisualEditor({
         if (!pre || !surface.contains(pre)) {
           return finishPreparation(this.prepareMediaSelection());
         }
+        const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+        if (preparedSelection && nativeSelection && !nativeSelection.isCollapsed) {
+          return finishPreparation(this.prepareMediaSelection());
+        }
         try {
           const editMap = previewSnapshotRef.current.editMap;
-          if (!editMap) throw new Error('visual-editor-selection-map-failed');
+          if (!editMap) return finishPreparation(this.prepareMediaSelection());
           const children = acceptedTopLevelVisualChildren(surface, editMap);
+          const owner = directVisualBlockForSelectionNode(surface, pre);
+          if (owner !== pre) return finishPreparation(this.prepareMediaSelection());
           const blockIndex = children.indexOf(pre);
           const source = sourceMarkdownRef.current;
           if (blockIndex < 0 || null === source) {
-            throw new Error('visual-editor-selection-map-failed');
+            return finishPreparation(this.prepareMediaSelection());
           }
           const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
             source,

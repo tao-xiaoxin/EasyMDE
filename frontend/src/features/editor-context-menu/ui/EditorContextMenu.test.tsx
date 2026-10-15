@@ -878,6 +878,15 @@ describe('EditorContextMenu', () => {
     const pointer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-pointer="true"]');
     expect(pointer?.dataset.easymdeContextMenuPointerPlacement).toBe('left');
     expect(pointer?.style.left).toBe('304px');
+    const submenu = table.closest<HTMLElement>('[data-easymde-context-menu-layer]');
+    const frame = submenu?.parentElement;
+    expect(frame?.className).toBe('easymde-editor-context-menu__submenu-frame');
+    expect(frame?.dataset.easymdeContextMenuPlacement).toBe('left');
+    expect(frame?.style.left).toBe(submenu?.style.left);
+    expect(frame?.style.top).toBe(submenu?.style.top);
+    expect(Number.parseFloat(frame?.style.getPropertyValue('--easymde-context-menu-pointer-top') ?? '')).toBe(
+      Number.parseFloat(pointer?.style.top ?? '') - Number.parseFloat(submenu?.style.top ?? '')
+    );
   });
 
   it('places a forward-opening pointer in the gap before the submenu', async () => {
@@ -909,11 +918,20 @@ describe('EditorContextMenu', () => {
       })
     });
     fireEvent.mouseEnter(insert);
-    await screen.findByRole('menuitem', { name: 'Table' });
+    const table = await screen.findByRole('menuitem', { name: 'Table' });
     await waitFor(() => {
       const pointer = document.body.querySelector<HTMLElement>('[data-easymde-context-menu-pointer="true"]');
       expect(pointer?.dataset.easymdeContextMenuPointerPlacement).toBe('right');
       expect(pointer?.style.left).toBe('176px');
+      const submenu = table.closest<HTMLElement>('[data-easymde-context-menu-layer]');
+      const frame = submenu?.parentElement;
+      expect(frame?.className).toBe('easymde-editor-context-menu__submenu-frame');
+      expect(frame?.dataset.easymdeContextMenuPlacement).toBe('right');
+      expect(frame?.style.left).toBe(submenu?.style.left);
+      expect(frame?.style.top).toBe(submenu?.style.top);
+      expect(Number.parseFloat(frame?.style.getPropertyValue('--easymde-context-menu-pointer-top') ?? '')).toBe(
+        Number.parseFloat(pointer?.style.top ?? '') - Number.parseFloat(submenu?.style.top ?? '')
+      );
     });
   });
 

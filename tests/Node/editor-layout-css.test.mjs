@@ -682,15 +682,16 @@ test('withdrawn ordinary editor surfaces have no retained CSS runtime', () => {
   );
 });
 
-test('context menu CSS keeps system/CJK typography, compact items, and two-level shadows', () => {
+test('context menu CSS keeps system/CJK typography, compact items, and clipped two-level pointer tails', () => {
   const menu = cssRule(css, '.easymde-editor-context-menu');
   const viewport = cssRule(css, '.easymde-editor-context-menu__viewport');
   const item = cssRule(css, '.easymde-editor-context-menu__button');
   const shortcut = cssRule(css, '.easymde-editor-context-menu__shortcut');
   const icon = cssRule(css, '.easymde-editor-context-menu__icon');
   const submenu = cssRule(css, '.easymde-editor-context-menu__submenu');
+  const frame = cssRule(css, '.easymde-editor-context-menu__submenu-frame');
   const pointer = cssRule(css, '.easymde-editor-context-menu__pointer');
-  const glass = cssBlock(css, '.easymde-editor-context-menu::before,');
+  const glass = cssRule(css, '.easymde-editor-context-menu::before');
   assertDeclaration(viewport, '--easymde-context-menu-background', '#fff');
   assertDeclaration(viewport, '--easymde-context-menu-border', '#dfe4ea');
   assertDeclaration(viewport, '--easymde-context-menu-focus', '#2271b1');
@@ -728,12 +729,12 @@ test('context menu CSS keeps system/CJK typography, compact items, and two-level
   assertDeclaration(icon, 'inline-size', '16px');
   assertDeclaration(icon, 'block-size', '16px');
   assertDeclaration(submenu, 'border-radius', '8px');
-  assertDeclaration(submenu, 'border', '1px solid #dfe4ea');
+  assertDeclaration(submenu, 'border', '1px solid transparent');
   assertDeclaration(submenu, 'box-sizing', 'border-box');
   assertDeclaration(submenu, 'font-family', /"EasyMDE Inter"[^;]*Noto Sans CJK SC[^;]*/);
   assertDeclaration(submenu, 'max-inline-size', /min\(324px, calc\(100vw - 16px\)\)/);
   assertDeclaration(submenu, 'min-inline-size', /min\(198px, calc\(100vw - 16px\)\)/);
-  assertDeclaration(submenu, 'backdrop-filter', /blur\(18px\) saturate\(150%\)/);
+  assertDeclaration(frame, 'backdrop-filter', /blur\(18px\) saturate\(150%\)/);
   assertDeclaration(submenu, '--easymde-context-menu-focus', '#2271b1');
   assertDeclaration(submenu, '--easymde-context-menu-foreground', '#1d2327');
   assertDeclaration(submenu, '--easymde-context-menu-muted', '#646970');
@@ -743,14 +744,15 @@ test('context menu CSS keeps system/CJK typography, compact items, and two-level
     /\.easymde-editor-context-menu__submenu \.easymde-editor-context-menu__button:focus-visible:not\(:disabled\)\s*\{[^}]*box-shadow:\s*inset 0 0 0 2px var\(--easymde-context-menu-focus\);/s
   );
   assert.doesNotMatch(css, /\.easymde-editor-context-menu__submenu\[data-easymde-context-menu-placement="(?:right|left)"\][^{]*\{[^}]*border-inline-(?:start|end)-color:\s*transparent;/s);
-  assertDeclaration(pointer, 'height', '14px');
-  assertDeclaration(pointer, 'width', '14px');
+  assertDeclaration(viewport, '--easymde-context-menu-pointer-size', '14px');
+  assertDeclaration(pointer, 'height', 'var(--easymde-context-menu-pointer-size)');
+  assertDeclaration(pointer, 'width', 'var(--easymde-context-menu-pointer-size)');
   assertDeclaration(pointer, 'transform', /translate\(-50%, -50%\) rotate\(45deg\)/);
   assertDeclaration(pointer, 'background', 'rgba(255, 255, 255, .92)');
   assertDeclaration(pointer, 'pointer-events', 'none');
   assertDeclaration(pointer, 'z-index', '3');
-  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="right"\]\s*\{[^}]*border-left:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 0 0 2px;/s);
-  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="left"\]\s*\{[^}]*border-top:\s*1px solid #dfe4ea;[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 2px 0 0;/s);
+  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="right"\]\s*\{[^}]*clip-path:\s*polygon\(0 0,\s*0 100%,\s*100% 100%\);[^}]*border-left:\s*1px solid #dfe4ea;[^}]*border-bottom:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 0 0 2px;/s);
+  assert.match(css, /\.easymde-editor-context-menu__pointer\[data-easymde-context-menu-pointer-placement="left"\]\s*\{[^}]*clip-path:\s*polygon\(0 0,\s*100% 0,\s*100% 100%\);[^}]*border-top:\s*1px solid #dfe4ea;[^}]*border-right:\s*1px solid #dfe4ea;[^}]*border-radius:\s*0 2px 0 0;/s);
   assertDeclaration(viewport, 'z-index', '100250');
   assert.match(css, /\.easymde-editor-context-menu__viewport\s*\{[^}]*z-index:\s*100250;/s);
   assert.match(css, /\.easymde-media-picker-backdrop\s*\{[^}]*z-index:\s*100400;/s);
@@ -759,6 +761,31 @@ test('context menu CSS keeps system/CJK typography, compact items, and two-level
     css,
     /\.easymde-editor-context-menu__button:disabled\s*\{[^}]*color:\s*#8c8f94;[^}]*opacity:\s*1;/s
   );
+});
+
+test('context submenu border joins the clipped tail without masking its glass or scrolling surface', () => {
+  const frame = cssRule(css, '.easymde-editor-context-menu__submenu-frame');
+  const outline = cssRule(css, '.easymde-editor-context-menu__submenu-frame::after');
+  const submenu = cssRule(css, '.easymde-editor-context-menu__submenu');
+  const flipped = cssRule(css, '.easymde-editor-context-menu__submenu-frame[data-easymde-context-menu-placement="left"]');
+  assertDeclaration(frame, 'position', 'fixed');
+  assertDeclaration(frame, 'background', 'rgba(255, 255, 255, .92)');
+  assertDeclaration(frame, 'border-radius', '8px');
+  assertDeclaration(frame, 'filter', 'drop-shadow(0 14px 32px rgba(15, 23, 42, .18))');
+  assert.doesNotMatch(frame, /\bmask(?:-image)?:|overflow/);
+  assertDeclaration(submenu, 'border', '1px solid transparent');
+  assertDeclaration(submenu, 'overflow-y', 'auto');
+  assertDeclaration(submenu, 'position', 'static');
+  assertDeclaration(outline, 'position', 'absolute');
+  assertDeclaration(outline, 'inset', '0');
+  assertDeclaration(outline, 'border', '1px solid #dfe4ea');
+  assertDeclaration(outline, 'border-radius', 'inherit');
+  assertDeclaration(outline, 'pointer-events', 'none');
+  assertDeclaration(outline, 'mask-composite', 'exclude');
+  assertDeclaration(outline, 'mask-size', '100% 100%, 1px calc(var(--easymde-context-menu-pointer-size) * sqrt(2))');
+  assertDeclaration(outline, 'mask-position', '0 0, var(--easymde-context-menu-join-side) calc(var(--easymde-context-menu-pointer-top) - var(--easymde-context-menu-pointer-size) / sqrt(2))');
+  assertDeclaration(frame, '--easymde-context-menu-join-side', '0%');
+  assertDeclaration(flipped, '--easymde-context-menu-join-side', '100%');
 });
 
 test('immersive publish CSS preserves reference geometry without hiding the password field', () => {

@@ -413,6 +413,7 @@ function renderCodeBodyEditor(
 		onFailure?: (code: string) => void;
 		requestPreview?: (markdown: string) => string;
 		sourceBlockCount?: number;
+		onReady?: (runtime: ImmersiveVisualEditorRuntime) => void;
 	}> = {},
 ) {
 	const blockIndex = 160;
@@ -675,6 +676,185 @@ describe("WindowedImmersiveVisualEditor", () => {
 					direction: "forward",
 					end: sourceStart + imageMarkdown.length,
 					start: sourceStart,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("preserves a partial code-body selection for a code context target", () => {
+		const initialFence = "```js\nalpha\nbeta\n```";
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderCodeBodyEditor(initialFence, "alpha\nbeta\n", {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const { code, current, sourceStart, view } = rendered;
+		const text = code.firstChild;
+		if (!(text instanceof Text)) {
+			throw new Error("windowed-partial-code-context-text-missing");
+		}
+		const range = document.createRange();
+		range.setStart(text, 1);
+		range.setEnd(text, 8);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+		const runtime = runtimeHolder.current;
+		if (!runtime) throw new Error("windowed-partial-code-context-runtime-missing");
+		const bodyStart = initialFence.indexOf("alpha");
+		if (bodyStart < 0) throw new Error("windowed-partial-code-context-source-missing");
+
+		try {
+			expect(runtime.prepareContextMenuSelection?.(code)).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: sourceStart + bodyStart + 8,
+					start: sourceStart + bodyStart + 1,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("maps a nested quote code context target through the window ledger", () => {
+		const blockIndex = 160;
+		const blockMarkdown = "> ~~~js\n> alpha\n> ~~~";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: {
+				[blockIndex]: `<blockquote data-easymde-visual-block-id="b${blockIndex}"><pre data-easymde-visual-fence="\`\`\`" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>`,
+			},
+			mounted: [blockIndex],
+		});
+		const onFailure = vi.fn();
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const code = current.surface.querySelector("blockquote pre > code");
+		const text = code?.firstChild;
+		if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+			throw new Error("windowed-nested-code-context-fixture-missing");
+		}
+		const range = document.createRange();
+		range.setStart(text, 1);
+		range.setEnd(text, 4);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+		const runtime = runtimeHolder.current;
+		if (!runtime) throw new Error("windowed-nested-code-context-runtime-missing");
+
+		try {
+			expect(runtime.prepareContextMenuSelection?.(code)).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.documentSession.document.getSelection().end).toBeGreaterThan(
+				current.documentSession.document.getSelection().start,
+			);
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("selects the owning block for a collapsed nested quote code target", () => {
+		const blockIndex = 160;
+		const blockMarkdown = "> ~~~js\n> alpha\n> ~~~";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: {
+				[blockIndex]: `<blockquote data-easymde-visual-block-id="b${blockIndex}"><pre data-easymde-visual-fence="~~~" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>`,
+			},
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const code = current.surface.querySelector("blockquote pre > code");
+		const text = code?.firstChild;
+		if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+			throw new Error("windowed-collapsed-nested-code-context-fixture-missing");
+		}
+		placeCaret(text, 2);
+		const runtime = runtimeHolder.current;
+		if (!runtime) throw new Error("windowed-collapsed-nested-code-context-runtime-missing");
+		const sourceStart = current.canonical().indexOf(blockMarkdown);
+		if (sourceStart < 0) throw new Error("windowed-collapsed-nested-code-context-source-missing");
+
+		try {
+			expect(runtime.prepareContextMenuSelection?.(code)).toBe(true);
+			const caret = sourceStart + blockMarkdown.indexOf("alpha") + 2;
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "none",
+					end: caret,
+					start: caret,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("selects the owning block for a collapsed nested list code target", () => {
+		const blockIndex = 160;
+		const blockMarkdown = "- item\n\n  ```\n  alpha\n  ```";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: {
+				[blockIndex]: `<ul data-easymde-visual-block-id="b${blockIndex}"><li><p>item</p><pre><code>alpha\n</code></pre></li></ul>`,
+			},
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const code = current.surface.querySelector("ul pre > code");
+		const text = code?.firstChild;
+		if (!(code instanceof HTMLElement) || !(text instanceof Text)) {
+			throw new Error("windowed-collapsed-nested-list-code-context-fixture-missing");
+		}
+		placeCaret(text, 2);
+		const runtime = runtimeHolder.current;
+		if (!runtime) throw new Error("windowed-collapsed-nested-list-code-context-runtime-missing");
+		const sourceStart = current.canonical().indexOf(blockMarkdown);
+		if (sourceStart < 0) throw new Error("windowed-collapsed-nested-list-code-context-source-missing");
+
+		try {
+			expect(runtime.prepareContextMenuSelection?.(code)).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "none",
+					end: sourceStart + blockMarkdown.indexOf("alpha") + 2,
+					start: sourceStart + blockMarkdown.indexOf("alpha") + 2,
 				},
 				value: current.canonical(),
 			});

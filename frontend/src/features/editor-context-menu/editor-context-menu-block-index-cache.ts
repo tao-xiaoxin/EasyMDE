@@ -35,7 +35,7 @@ export type EditorContextMenuBlockIndexCache = Readonly<{
 			revision: EditorContextMenuBlockIndexRevision;
 			timeoutMs?: number;
 		}>,
-	) => void;
+	) => boolean;
 	subscribe: (listener: () => void) => () => void;
 	dispose: () => void;
 }>;
@@ -52,6 +52,8 @@ type CacheKey = Readonly<{
 	owner: object;
 	revision: EditorContextMenuBlockIndexRevision;
 }>;
+
+type FailedCacheKey = CacheKey & Readonly<{ retryAvailable: boolean }>;
 
 type PendingBuild = {
 	build: EditorContextMenuBlockIndexBuild;
@@ -70,6 +72,7 @@ const DEFAULT_INDEX_BUILD_TIMEOUT_MS = 10_000;
 const CACHE_TIMEOUT_CODE = "editor-block-index-cache-timeout";
 const CACHE_TIMEOUT_INVALID_CODE =
 	"editor-context-menu-block-index-cache-timeout-invalid";
+const MAX_SAME_KEY_RETRIES = 1;
 
 function defaultNow(): number {
 	return "function" === typeof globalThis.performance?.now
@@ -102,7 +105,7 @@ export function createEditorContextMenuBlockIndexCache(
 	const now = options.now ?? defaultNow;
 	let disposed = false;
 	let entry: CacheEntry | null = null;
-	let failed: CacheKey | null = null;
+	let failed: FailedCacheKey | null = null;
 	let pending: PendingBuild | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	const listeners = new Set<() => void>();
@@ -142,10 +145,12 @@ export function createEditorContextMenuBlockIndexCache(
 		if (pending !== request) return;
 		clearDeadline(request);
 		pending = null;
+		const retriedSameKey = failed && sameKey(request, failed);
 		failed = {
 			generation: request.generation,
 			owner: request.owner,
 			revision: request.revision,
+			retryAvailable: !retriedSameKey && MAX_SAME_KEY_RETRIES > 0,
 		};
 		notify();
 		request.onFailure(error);
@@ -183,23 +188,28 @@ export function createEditorContextMenuBlockIndexCache(
 		owner,
 		revision,
 		timeoutMs = DEFAULT_INDEX_BUILD_TIMEOUT_MS,
-	}: Parameters<EditorContextMenuBlockIndexCache["schedule"]>[0]): void => {
+	}: Parameters<EditorContextMenuBlockIndexCache["schedule"]>[0]): boolean => {
 		assertActive();
 		if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
 			throw new Error(CACHE_TIMEOUT_INVALID_CODE);
 		}
 		const key: CacheKey = { generation, owner, revision };
-		if (failed && sameKey(key, failed)) {
-			return;
-		}
 		if (peek(key)) {
-			return;
+			return true;
 		}
 		if (pending && sameKey(key, pending)) {
-			return;
+			return true;
+		}
+		if (failed && sameKey(key, failed)) {
+			if (!failed.retryAvailable) return false;
+			// Permit one recovery attempt for the key that just failed. The
+			// consumed marker remains until this attempt succeeds or the owner
+			// is invalidated, so repeated readiness renders cannot retry forever.
+			failed = { ...failed, retryAvailable: false };
+		} else {
+			failed = null;
 		}
 		cancelPending();
-		failed = null;
 		const controller = new AbortController();
 		const request: PendingBuild = {
 			build,
@@ -265,9 +275,11 @@ export function createEditorContextMenuBlockIndexCache(
 					owner: request.owner,
 					revision: request.revision,
 				};
+				failed = null;
 				notify();
 			})();
 		}, delayMs);
+		return true;
 	};
 
 	return {

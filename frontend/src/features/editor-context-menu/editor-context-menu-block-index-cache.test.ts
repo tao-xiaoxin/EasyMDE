@@ -132,7 +132,7 @@ describe("createEditorContextMenuBlockIndexCache", () => {
 		);
 	});
 
-	it("does not retry a failed key until its owner is invalidated", async () => {
+	it("allows one bounded same-key retry without creating a retry storm", async () => {
 		vi.useFakeTimers();
 		const cache = createEditorContextMenuBlockIndexCache();
 		const owner = {};
@@ -144,15 +144,55 @@ describe("createEditorContextMenuBlockIndexCache", () => {
 		await Promise.resolve();
 		expect(build).toHaveBeenCalledOnce();
 
-		cache.schedule(request(owner, 1, build));
-		vi.advanceTimersByTime(0);
-		expect(build).toHaveBeenCalledOnce();
-
-		cache.invalidate(owner);
-		cache.schedule(request(owner, 1, build));
+		expect(cache.schedule(request(owner, 1, build))).toBe(true);
 		vi.advanceTimersByTime(0);
 		await Promise.resolve();
+		await Promise.resolve();
 		expect(build).toHaveBeenCalledTimes(2);
+
+		expect(cache.schedule(request(owner, 1, build))).toBe(false);
+		vi.advanceTimersByTime(0);
+		expect(build).toHaveBeenCalledTimes(2);
+
+		cache.invalidate(owner);
+		expect(cache.schedule(request(owner, 1, build))).toBe(true);
+		vi.advanceTimersByTime(0);
+		await Promise.resolve();
+		expect(build).toHaveBeenCalledTimes(3);
+		cache.dispose();
+	});
+
+	it("keeps a same-key retry pending instead of exhausting its budget early", async () => {
+		vi.useFakeTimers();
+		const cache = createEditorContextMenuBlockIndexCache();
+		const owner = {};
+		const failure = vi.fn();
+		let resolveRetry: ((value: EditorMarkdownBlockIndex) => void) | undefined;
+		const firstBuild = vi.fn(() => Promise.reject(new Error("first-failure")));
+		const retryBuild = vi.fn(
+			() =>
+				new Promise<EditorMarkdownBlockIndex>((resolve) => {
+					resolveRetry = resolve;
+				}),
+		);
+
+		cache.schedule(request(owner, 1, firstBuild, failure));
+		vi.advanceTimersByTime(0);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(cache.schedule(request(owner, 1, retryBuild, failure))).toBe(true);
+		vi.advanceTimersByTime(0);
+		expect(retryBuild).toHaveBeenCalledOnce();
+		expect(cache.schedule(request(owner, 1, retryBuild, failure))).toBe(true);
+
+		resolveRetry?.(index(11));
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(cache.peek({ generation: 1, owner, revision: 1 })).toEqual(
+			index(11),
+		);
+		expect(failure).toHaveBeenCalledOnce();
 		cache.dispose();
 	});
 

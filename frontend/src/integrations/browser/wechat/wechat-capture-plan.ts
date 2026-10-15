@@ -63,6 +63,11 @@ export type VisualCandidate = Readonly<{
   source: Element;
 }>;
 
+/**
+ * Mermaid modes describe the source geometry sent to the rasterizer. Intrinsic
+ * captures retain a pixel cap for fidelity, while the replacement owner applies
+ * responsive destination bounds to the generated PNG and its local wrapper.
+ */
 export type WechatCapturePlan =
   | Readonly<{
       mode: 'math-block';

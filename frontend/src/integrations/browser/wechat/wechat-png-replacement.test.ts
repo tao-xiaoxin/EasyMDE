@@ -93,33 +93,26 @@ describe('replaceCompletedVisuals', () => {
     const image = root.querySelector('img');
     if (!image) throw new Error('wechat-png-replacement-test-image-missing');
     expect(singleDeclarationValue(image, 'width')).toBe('100%');
-    // WeChat text columns measure 586px in the desktop editor, 375px on a phone,
-    // and 320px on a narrow phone: `width:100%` fills the column while the single
-    // `max-width:586px` caps it at the authored Mermaid size.
-    const renderedWidth = (destination: number): number =>
-      Math.min(destination, Number.parseFloat(singleDeclarationValue(image, 'max-width')));
-    expect([586, 375, 320].map(renderedWidth)).toEqual([586, 375, 320]);
-    // A destination wider than the cap must not upscale the raster frame.
-    expect(renderedWidth(760)).toBe(586);
+    expect(singleDeclarationValue(image, 'max-width')).toBe('586px');
     expect(singleDeclarationValue(image, 'height')).toBe('auto');
     expect(image.getAttribute('width')).toBe('586');
     expect(image.getAttribute('height')).toBe('1200');
   });
 
-  it('keeps an intrinsic Mermaid frame at its rasterized size instead of scaling it to the destination', () => {
+  it.each([200, 586, 900])('caps an intrinsic Mermaid capture at %dpx while following its owner width', (captureWidth) => {
     const { candidate, root, svg } = mermaidFixture();
     const completed: CompletedUpload = {
       autoMargins: false,
       candidate: { element: candidate, kind: 'mermaid', source: svg },
-      captureSize: { height: 1200, width: 900 },
+      captureSize: { height: 100, width: captureWidth },
       kind: 'mermaid',
       layoutMagnification: 1,
       mode: 'mermaid-intrinsic',
       rasterized: {
         file: new File(['png'], 'mermaid-intrinsic.png', { type: 'image/png' }),
-        height: 1200,
-        pixelCount: 900 * 1200,
-        width: 900
+        height: 100,
+        pixelCount: captureWidth * 100,
+        width: captureWidth
       },
       url: 'https://example.test/mermaid-intrinsic.png'
     };
@@ -128,10 +121,12 @@ describe('replaceCompletedVisuals', () => {
 
     const image = root.querySelector('img');
     if (!image) throw new Error('wechat-png-replacement-test-image-missing');
-    expect(singleDeclarationValue(image, 'width')).toBe('900px');
-    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: '1200px' }]);
-    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([{ important: true, property: 'max-width', value: 'none' }]);
-    expect(image.getAttribute('style')).not.toContain('width:100%');
+    expect(singleDeclarationValue(image, 'width')).toBe(`${captureWidth}px`);
+    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
+    expect(image.getAttribute('style')).toContain(`width:${captureWidth}px!important`);
     expect(candidate.getAttribute('style')).toContain('overflow-x:auto!important');
     expect(candidate.hasAttribute('data-ignore-width')).toBe(true);
   });

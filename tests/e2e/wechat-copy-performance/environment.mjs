@@ -32,6 +32,23 @@ export const expectedArticleTheme = "phycat-cherry";
 export const expectedCodeTheme = "phycat-code";
 export const evidenceDirectoryEnvironment = "EASYMDE_E2E_PERFORMANCE_EVIDENCE_DIR";
 export const localDiagnosticsEnvironment = "EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS";
+export const imageProviderEnvironment = "EASYMDE_E2E_WECHAT_IMAGE_PROVIDER";
+export const supportedImageProviders = Object.freeze([
+	"cloudflare-r2",
+	"qiniu-kodo",
+]);
+export function expectedImageProviderFromSetting(value) {
+	const configured = value?.trim() ?? "";
+	const provider = configured || "cloudflare-r2";
+	if (!supportedImageProviders.includes(provider)) {
+		throw new Error("wechat-copy-performance-image-provider-invalid");
+	}
+	return provider;
+}
+export const expectedImageProvider = expectedImageProviderFromSetting(
+	process.env[imageProviderEnvironment],
+);
+
 export function localDiagnosticsEnabledFromSetting(value) {
 	const setting = value?.trim() ?? "";
 	if (!["", "0", "1"].includes(setting)) {

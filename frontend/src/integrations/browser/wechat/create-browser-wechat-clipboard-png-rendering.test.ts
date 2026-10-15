@@ -371,7 +371,7 @@ describe('createBrowserWechatClipboard', () => {
   });
 
   it.each(['fixed', 'relative'] as const)(
-    'keeps magnified Mermaid PNGs in an autoheight local scroll owner inside a %s UI shell',
+    'renders magnified Mermaid PNGs responsively inside a local owner in a %s UI shell',
     async (shellPosition) => {
       const writes: unknown[] = [];
       class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
@@ -474,9 +474,9 @@ describe('createBrowserWechatClipboard', () => {
         expect(ownerStyle).not.toContain('63px');
         expect(image.getAttribute('width')).toBe('100');
         expect(image.getAttribute('height')).toBe('50');
-        expect(imageStyle).toContain('width:100px!important');
-        expect(imageStyle).toContain('height:50px!important');
-        expect(imageStyle).toContain('max-width:none!important');
+        expect(imageStyle).toContain('width:100%!important');
+        expect(imageStyle).toContain('max-width:100%!important');
+        expect(imageStyle).toContain('height:auto!important');
         expect(imageStyle).toContain('display:block!important');
       } finally {
         shell.remove();

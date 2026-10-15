@@ -70,6 +70,7 @@ import {
   wrapMermaidLabelContents,
 } from './wechat-portable-content';
 import { previewMeasurementWidth } from './wechat-preview-measurement';
+import { normalizePortableMedia } from './wechat-portable-media';
 import {
   addPseudoElement,
   addPseudoElementSynchronously,
@@ -582,13 +583,11 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
   normalized.querySelectorAll('img, video').forEach((element) => {
     const generatedVisualOwner = element.parentElement?.getAttribute('data-ignore-width') === '';
     if (THEME_IMAGE_CLONES.has(element) || WECHAT_PNG_GENERATED_IMAGES.has(element) || generatedVisualOwner) return;
-    // Keep the preview's computed display and margins so inline media remains
-    // inline after paste. Replace, rather than append, the responsive bounds:
-    // source themes can carry `max-width:none!important` and WeChat preserves
-    // the first important declaration even when a later plain declaration says
-    // `max-width:100%`. A single exporter-owned declaration keeps every image
-    // inside the destination article width while height:auto preserves ratio.
-    replaceDeclarations(element, ['max-width:100%', 'height:auto'], true);
+    // Inline media keeps its captured width and display. Block media gets an
+    // explicit responsive width and a natural-width cap because
+    // WeChat may preserve a fixed width when only max-width/height:auto are
+    // supplied.
+    normalizePortableMedia(element);
   });
   normalized.querySelectorAll('svg').forEach((element) => {
     // KaTeX stretchy symbols use absolutely positioned SVGs whose intrinsic

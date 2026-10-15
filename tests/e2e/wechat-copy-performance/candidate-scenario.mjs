@@ -16,6 +16,7 @@ import { captureCandidateTaskScreenshots } from "./candidate-capture.mjs";
 import { createUploadTimeline } from "./copy-timeline.mjs";
 import { expectedArticleTheme } from "./environment.mjs";
 import { expectedCodeTheme } from "./environment.mjs";
+import { expectedImageProvider } from "./environment.mjs";
 import { installPerformanceProbe } from "./performance-probe.mjs";
 import { previewSelector } from "./environment.mjs";
 import { privateEvidenceDirectory } from "./private-evidence.mjs";
@@ -137,7 +138,7 @@ export async function runCandidateCaptureScenario({ baseURL, context, createOwne
 		expect(serverSettings).toEqual({
 			backupEnabled: false,
 			imageHostingEnabled: true,
-			service: "cloudflare-r2",
+			service: expectedImageProvider,
 			wechatPngExportEnabled: true,
 		});
 		await page.mouse.move(0, 0);

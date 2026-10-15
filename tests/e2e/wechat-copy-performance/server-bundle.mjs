@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { repositoryRoot } from "./environment.mjs";
+import { expectedImageProvider, repositoryRoot } from "./environment.mjs";
 
 export const candidateFrontendBuildRoot = join(
 	repositoryRoot,
@@ -85,9 +85,9 @@ export function readServerImageSettings(runWp) {
 		fields.imageHostingEnabled !== true ||
 		fields.wechatPngExportEnabled !== true ||
 		fields.backupEnabled !== false ||
-		fields.service !== "cloudflare-r2"
+		fields.service !== expectedImageProvider
 	) {
-		throw new Error("wechat-copy-performance-r2-settings-mismatch");
+		throw new Error("wechat-copy-performance-image-settings-mismatch");
 	}
 	return fields;
 }

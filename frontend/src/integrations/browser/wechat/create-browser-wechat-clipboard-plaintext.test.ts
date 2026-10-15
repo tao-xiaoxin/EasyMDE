@@ -141,7 +141,7 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
-  it('preserves inline media layout while adding responsive bounds', async () => {
+  it('preserves inline media layout and width with responsive bounds', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = document.createElement('article');
@@ -183,6 +183,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(image?.getAttribute('style')).toContain('display:inline');
     expect(image?.getAttribute('style')).toContain('margin-left:3px');
     expect(image?.getAttribute('style')).toContain('margin-right:4px');
+    expect(image?.getAttribute('style')).toContain('width:24px');
     expect(image?.getAttribute('style')).toContain('max-width:100%');
     expect(image?.getAttribute('style')).toContain('height:auto');
     expect(image?.getAttribute('style')).not.toContain('display:block');

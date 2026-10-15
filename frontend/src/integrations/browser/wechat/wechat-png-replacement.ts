@@ -94,7 +94,7 @@ export function replaceCompletedVisuals(
         const sourceStyle = (completed.candidate.element as Element & { style?: CSSStyleDeclaration }).style;
         const sourceDisplay = sourceStyle?.getPropertyValue('display').trim().toLowerCase() ?? '';
         const inlineLayout = completed.rasterized.inlineLayout;
-        const localScrollMermaid =
+        const responsiveMermaid =
           'mermaid-intrinsic' === completed.mode ||
           ('mermaid-root' === completed.mode && completed.layoutMagnification > 1 + 1e-6);
         if ('mermaid-responsive' === completed.mode) {
@@ -117,7 +117,15 @@ export function replaceCompletedVisuals(
           );
           continue;
         }
-        if (localScrollMermaid) {
+        if (responsiveMermaid) {
+          let imageWidth = '100%';
+          if ('mermaid-intrinsic' === completed.mode) {
+            const intrinsicCaptureWidth = Math.min(completed.captureSize.width, completed.rasterized.width);
+            if (!Number.isFinite(intrinsicCaptureWidth) || intrinsicCaptureWidth <= 0) {
+              throw new WechatPngConversionError('wechat-png-rasterization-failed');
+            }
+            imageWidth = `${intrinsicCaptureWidth}px`;
+          }
           const flowDeclarations = [
             'margin-top',
             'margin-right',
@@ -129,6 +137,12 @@ export function replaceCompletedVisuals(
             const value = sourceStyle?.getPropertyValue(property).trim() ?? '';
             return value ? [`${property}:${value}`] : [];
           });
+          // Intrinsic Mermaid capture keeps its source/viewBox pixels for the
+          // rasterizer, but the destination presentation must follow the
+          // article column without upscaling a smaller capture. The wrapper
+          // supplies the owner bound; the intrinsic image cap supplies the
+          // capture bound. Compensated mermaid-root output keeps its validated
+          // responsive owner bound.
           completed.candidate.element.setAttribute(
             'style',
             [
@@ -146,6 +160,7 @@ export function replaceCompletedVisuals(
           );
           markWechatOwnedScrollOwner(completed.candidate.element);
           appendDeclarations(image, ['display:block'], true);
+          replaceDeclarations(image, [`width:${imageWidth}`, 'max-width:100%', 'height:auto'], true);
           centerMermaidGeneratedBlock(image, completed.autoMargins);
           runWechatSyncTiming(
             timingPerformance,

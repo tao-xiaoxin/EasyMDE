@@ -53,12 +53,12 @@ describe('createBrowserWechatClipboard', () => {
     expect(text).toBe('Rendered');
   });
 
-  it('replaces stale important image bounds so pasted media stays inside the destination width', async () => {
+  it('gives block media responsive bounds for capped, percentage, and auto widths', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = document.createElement('article');
     preview.setAttribute('data-easymde-preview-html-sink', '1');
-    preview.innerHTML = '<p>Before</p><img src="https://example.test/chart.png" style="width:1200px!important;height:268px!important;max-width:none!important">';
+    preview.innerHTML = '<p>Before</p><img src="https://example.test/chart.png" style="width:1200px!important;height:268px!important;max-width:332px!important"><video src="https://example.test/chart.mp4" style="width:332px!important;height:268px!important;max-width:none!important"></video><video src="https://example.test/auto-video.mp4" style="width:auto!important;height:268px!important;max-width:none!important"></video><video src="https://example.test/percentage-video.mp4" style="width:50%!important;height:268px!important;max-width:none!important"></video><img class="wide-inline" src="https://example.test/wide-inline.png" style="width:1200px!important;height:675px!important;max-width:none!important">';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Before\n' });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -66,12 +66,35 @@ describe('createBrowserWechatClipboard', () => {
       document,
       getComputedStyle: (element, pseudoElement) => {
         if (pseudoElement) return declaration({});
-        if ('IMG' === element.tagName) {
+        if (element.classList.contains('wide-inline')) {
+          return declaration({
+            display: 'inline-block',
+            width: '1200px',
+            height: '675px',
+            'max-width': 'none',
+            'box-sizing': 'border-box'
+          });
+        }
+        if (
+          'VIDEO' === element.tagName
+          && ['https://example.test/auto-video.mp4', 'https://example.test/percentage-video.mp4'].includes(
+            element.getAttribute('src') ?? ''
+          )
+        ) {
           return declaration({
             display: 'block',
-            width: '1200px',
+            width: 'https://example.test/auto-video.mp4' === element.getAttribute('src') ? 'auto' : '50%',
             height: '268px',
             'max-width': 'none',
+            'box-sizing': 'border-box'
+          });
+        }
+        if ('IMG' === element.tagName || 'VIDEO' === element.tagName) {
+          return declaration({
+            display: 'block',
+            width: 'IMG' === element.tagName ? '1200px' : '332px',
+            height: '268px',
+            'max-width': 'IMG' === element.tagName ? '332px' : 'none',
             'box-sizing': 'border-box'
           });
         }
@@ -93,11 +116,67 @@ describe('createBrowserWechatClipboard', () => {
     const holder = document.createElement('div');
     holder.innerHTML = await blobText(htmlBlob);
     const image = holder.querySelector('img');
-    if (!image) throw new Error('clipboard image missing');
+    const video = holder.querySelector('video[src="https://example.test/chart.mp4"]');
+    const autoVideo = holder.querySelector('video[src="https://example.test/auto-video.mp4"]');
+    const percentageVideo = holder.querySelector('video[src="https://example.test/percentage-video.mp4"]');
+    const wideInline = holder.querySelector('img[src="https://example.test/wide-inline.png"]');
+    if (!image || !video || !autoVideo || !percentageVideo || !wideInline) throw new Error('clipboard media missing');
     const maxWidth = declaredStyleDeclarations(image, 'max-width');
     const height = declaredStyleDeclarations(image, 'height');
+    const width = declaredStyleDeclarations(image, 'width');
+    expect(width).toEqual([{ property: 'width', value: '332px', important: true }]);
     expect(maxWidth).toEqual([{ property: 'max-width', value: '100%', important: true }]);
     expect(height).toEqual([{ property: 'height', value: 'auto', important: true }]);
+    expect(declaredStyleDeclarations(video, 'width')).toEqual([{ property: 'width', value: '332px', important: true }]);
+    expect(declaredStyleDeclarations(video, 'max-width')).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(declaredStyleDeclarations(video, 'height')).toEqual([{ property: 'height', value: 'auto', important: true }]);
+    expect(declaredStyleDeclarations(autoVideo, 'width')).toEqual([{ property: 'width', value: 'auto', important: false }]);
+    expect(declaredStyleDeclarations(autoVideo, 'max-width')).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(declaredStyleDeclarations(autoVideo, 'height')).toEqual([{ property: 'height', value: 'auto', important: true }]);
+    expect(declaredStyleDeclarations(percentageVideo, 'width')).toEqual([{ property: 'width', value: '50%', important: false }]);
+    expect(declaredStyleDeclarations(percentageVideo, 'max-width')).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(declaredStyleDeclarations(percentageVideo, 'height')).toEqual([{ property: 'height', value: 'auto', important: true }]);
+    expect(declaredStyleDeclarations(wideInline, 'width')).toEqual([{ property: 'width', value: '1200px', important: false }]);
+    expect(declaredStyleDeclarations(wideInline, 'max-width')).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(declaredStyleDeclarations(wideInline, 'height')).toEqual([{ property: 'height', value: 'auto', important: true }]);
+  });
+
+  it('preserves inline icon width while adding responsive bounds', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<p>Icon <img src="https://example.test/icon.png" style="width:16px!important;height:16px!important"></p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Icon' });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({});
+        if ('IMG' === element.tagName) {
+          return declaration({ display: 'inline', height: '16px', width: '16px' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      }
+    });
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const image = holder.querySelector('img');
+    if (!image) throw new Error('clipboard inline image missing');
+    expect(declaredStyleDeclarations(image, 'width')).toEqual([{ property: 'width', value: '16px', important: false }]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([{ property: 'max-width', value: '100%', important: true }]);
+    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ property: 'height', value: 'auto', important: true }]);
   });
 
   it('marks only owned table, math, and code scroll containers across modern and legacy payloads', async () => {
@@ -456,9 +535,11 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('table td')?.textContent).toBe('Cell');
     expect(holder.querySelector('figure')?.getAttribute('style')).toContain('display:flex');
     expect(holder.querySelector('img')?.getAttribute('alt')).toBe('Synthetic image');
-    expect(declaredStyleDeclarations(holder.querySelector('img') as Element, 'max-width')).toEqual([
-      { property: 'max-width', value: '100%', important: true }
-    ]);
+    expect(declaredStyleDeclarations(holder.querySelector('img') as Element, 'max-width')).toContainEqual({
+      property: 'max-width',
+      value: '100%',
+      important: true
+    });
     expect(holder.querySelector('pre code')?.textContent?.replaceAll('\u2060', '').replaceAll('\u00a0', ' ')).toContain(
       'const value = 1;'
     );

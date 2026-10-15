@@ -325,17 +325,17 @@ export function summarizeUploadTimeline(timeline) {
 	if (!Number.isFinite(timeline.copyWindowDurationMs))
 		throw new Error("wechat-copy-performance-upload-copy-window-invalid");
 	if (!Number.isInteger(timeline.peakInFlight) || timeline.peakInFlight < 1)
-		throw new Error("wechat-copy-performance-r2-upload-unobserved");
+		throw new Error("wechat-copy-performance-image-upload-unobserved");
 	if (!Array.isArray(timeline.uploads) || timeline.uploads.length < 1)
-		throw new Error("wechat-copy-performance-r2-upload-unobserved");
+		throw new Error("wechat-copy-performance-image-upload-unobserved");
 	if (timeline.unsettledCount !== 0)
-		throw new Error("wechat-copy-performance-r2-upload-unsettled");
+		throw new Error("wechat-copy-performance-image-upload-unsettled");
 	const ordinals = timeline.uploads.map(({ ordinal }) => ordinal);
 	if (
 		ordinals.some((ordinal, index) => ordinal !== index + 1) ||
 		new Set(ordinals).size !== ordinals.length
 	)
-		throw new Error("wechat-copy-performance-r2-upload-ordinal-invalid");
+		throw new Error("wechat-copy-performance-image-upload-ordinal-invalid");
 	for (const upload of timeline.uploads) {
 		if (upload.timing !== "available")
 			throw new Error("wechat-copy-performance-upload-timing-unavailable");
@@ -348,7 +348,7 @@ export function summarizeUploadTimeline(timeline) {
 			!Number.isInteger(upload.status) ||
 			!Number.isInteger(upload.peakInFlight)
 		)
-			throw new Error("wechat-copy-performance-r2-upload-timing-invalid");
+			throw new Error("wechat-copy-performance-image-upload-timing-invalid");
 		if (
 			upload.startMs < 0 ||
 			upload.firstByteMs < upload.startMs ||
@@ -356,9 +356,9 @@ export function summarizeUploadTimeline(timeline) {
 			upload.settleMs > timeline.copyWindowDurationMs ||
 			Math.abs(upload.durationMs - (upload.settleMs - upload.startMs)) > 0.001
 		)
-			throw new Error("wechat-copy-performance-r2-upload-window-invalid");
+			throw new Error("wechat-copy-performance-image-upload-window-invalid");
 		if (upload.status < 200 || upload.status >= 300)
-			throw new Error("wechat-copy-performance-r2-upload-http-failed");
+			throw new Error("wechat-copy-performance-image-upload-http-failed");
 	}
 	return timeline;
 }

@@ -8,6 +8,7 @@ import { configuredPerformanceMode } from "./performance-mode.mjs";
 import { createUploadTimeline } from "./copy-timeline.mjs";
 import { expectedArticleTheme } from "./environment.mjs";
 import { expectedCodeTheme } from "./environment.mjs";
+import { expectedImageProvider } from "./environment.mjs";
 import { installPerformanceModeOverride } from "./editor-session.mjs";
 import { installPerformanceProbe } from "./performance-probe.mjs";
 import { performanceModeExpectations } from "./performance-mode.mjs";
@@ -111,7 +112,7 @@ export async function runPerformanceProfileScenario({ baseURL, context, createOw
 		expect(serverSettings).toEqual({
 			backupEnabled: false,
 			imageHostingEnabled: true,
-			service: "cloudflare-r2",
+			service: expectedImageProvider,
 			wechatPngExportEnabled: true,
 		});
 
@@ -167,6 +168,7 @@ export async function runPerformanceProfileScenario({ baseURL, context, createOw
 			earlyStages: pageTiming.earlyStages,
 			uploads: uploadEvidence,
 			serverBundleIdentity,
+			serverSettings,
 			earlyFunctionAttribution: traceTiming.earlyFunctionAttribution,
 			traceReason: traceTiming.reason ?? null,
 			traceStatus: traceTiming.status,

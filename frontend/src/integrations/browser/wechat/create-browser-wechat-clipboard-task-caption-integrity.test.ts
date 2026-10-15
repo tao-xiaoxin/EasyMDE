@@ -6,7 +6,8 @@ import {
   blobText,
   declaration,
   installClipboardTestEnvironment,
-  prepareClipboard
+  prepareClipboard,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 
@@ -216,7 +217,7 @@ describe('createBrowserWechatClipboard', () => {
       const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
       Object.defineProperty(document, 'execCommand', {
         configurable: true,
-        value: vi.fn(() => true)
+        value: vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; })
       });
       try {
         const legacy = createBrowserWechatClipboard({
@@ -681,7 +682,7 @@ describe('createBrowserWechatClipboard', () => {
       const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
       Object.defineProperty(document, 'execCommand', {
         configurable: true,
-        value: vi.fn(() => true)
+        value: vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; })
       });
       try {
         const legacy = createBrowserWechatClipboard({

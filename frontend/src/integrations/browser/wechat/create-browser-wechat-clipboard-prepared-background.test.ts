@@ -10,7 +10,8 @@ import {
   declaration,
   deferred,
   installClipboardTestEnvironment,
-  prepareClipboard
+  prepareClipboard,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -354,6 +355,7 @@ describe('createBrowserWechatClipboard', () => {
     let activationAtCopy: boolean | null = null;
     const execCommand = vi.fn(() => {
       activationAtCopy = activation;
+      dispatchSuccessfulLegacyCopy();
       return true;
     });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
@@ -417,6 +419,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });

@@ -10,6 +10,15 @@ import type { createBrowserWechatClipboard } from './create-browser-wechat-clipb
 import { splitCssDeclarations, type CssDeclaration } from './wechat-css-list';
 
 
+export function dispatchSuccessfulLegacyCopy(): void {
+  const event = new Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    configurable: true,
+    value: { setData: (): void => undefined }
+  });
+  document.dispatchEvent(event);
+}
+
 export function readyPreview(): HTMLElement {
   const preview = document.createElement('article');
   preview.setAttribute('data-easymde-preview-html-sink', 'true');
@@ -263,6 +272,13 @@ export function installClipboardTestEnvironment(): void {
   const originalGetAnimations = Object.getOwnPropertyDescriptor(document, 'getAnimations');
 
   beforeEach(() => {
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: (): boolean => {
+        dispatchSuccessfulLegacyCopy();
+        return true;
+      }
+    });
     Object.defineProperty(Element.prototype, 'computedStyleMap', {
       configurable: true,
       value: safeMermaidComputedStyleMap

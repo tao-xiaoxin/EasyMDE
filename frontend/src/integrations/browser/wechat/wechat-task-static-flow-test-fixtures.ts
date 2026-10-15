@@ -5,7 +5,8 @@ import {
   blobText,
   declaration,
   declaredStylePixels,
-  declaredStyleValue
+  declaredStyleValue,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 /**
@@ -108,6 +109,7 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });
@@ -452,7 +454,10 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
     owners.forEach((owner, index) => {
       if (secondOwnerStatic && 1 === index) {
         expect(declaredStyleValue(owner, 'position')).toBe('static');
-        expect([...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')]).toHaveLength(0);
+        const carriers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+        expect(carriers).toHaveLength(1);
+        expect(carriers[0]?.getAttribute('style')).toBe('font-size:0;line-height:0');
+        expect(carriers[0]?.textContent).toBe('x');
         return;
       }
       // The paint transform survives once, outside the allocation.

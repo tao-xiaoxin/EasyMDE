@@ -11,7 +11,8 @@ import {
   deferred,
   installClipboardTestEnvironment,
   pngOptions,
-  readyPreview
+  readyPreview,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -284,7 +285,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('fails after portable freshness setup breaks without legacy fallback', async () => {
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     const observe = vi.spyOn(window.MutationObserver.prototype, 'observe').mockImplementation(() => {
       throw new Error('freshness-observer-setup-failed');
     });
@@ -323,7 +324,7 @@ describe('createBrowserWechatClipboard', () => {
   });
 
   it('fails explicitly without modern Clipboard support and never enters legacy copy', async () => {
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const rasterize = vi.fn();
     const upload = vi.fn(async () => ({
@@ -358,7 +359,7 @@ describe('createBrowserWechatClipboard', () => {
       }
     }
     const write = vi.fn();
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const rasterize = vi.fn();
     const upload = vi.fn();

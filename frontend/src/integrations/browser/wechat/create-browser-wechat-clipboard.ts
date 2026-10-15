@@ -129,7 +129,7 @@ type ModernCopyTransaction = Readonly<{
   start: () => void;
 }>;
 
-function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boolean {
+function legacyCopy(html: string, text: string, runtime: BrowserWechatClipboardRuntime): boolean {
   const selection = runtime.getSelection();
   const ranges = selection
     ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index))
@@ -142,6 +142,26 @@ function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boole
   container.setAttribute('contenteditable', 'true');
   container.innerHTML = html;
   runtime.document.body.appendChild(container);
+  let clipboardSubmission: 'pending' | 'complete' | 'failed' = 'pending';
+  const handleCopy = (event: Event): void => {
+    const clipboardData = (event as ClipboardEvent).clipboardData;
+    if (!clipboardData) {
+      clipboardSubmission = 'failed';
+      event.preventDefault();
+      return;
+    }
+    try {
+      clipboardData.setData('text/html', html);
+      clipboardData.setData('text/plain', text);
+      clipboardSubmission = 'complete';
+      event.preventDefault();
+    } catch {
+      clipboardSubmission = 'failed';
+      event.preventDefault();
+    }
+  };
+  runtime.document.addEventListener('copy', handleCopy, true);
+  const getClipboardSubmission = (): 'pending' | 'complete' | 'failed' => clipboardSubmission;
   try {
     if (selection) {
       selection.removeAllRanges();
@@ -149,11 +169,14 @@ function legacyCopy(html: string, runtime: BrowserWechatClipboardRuntime): boole
       selection.addRange(range);
     }
     try {
-      return 'function' === typeof runtime.document.execCommand && runtime.document.execCommand('copy');
+      const commandSucceeded =
+        'function' === typeof runtime.document.execCommand && runtime.document.execCommand('copy');
+      return Boolean(commandSucceeded && 'complete' === getClipboardSubmission());
     } catch {
       return false;
     }
   } finally {
+    runtime.document.removeEventListener('copy', handleCopy, true);
     if (selection) {
       selection.removeAllRanges();
       ranges.forEach((storedRange) => {
@@ -754,7 +777,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                 dimensionSemantics,
                 taskGeometryLease
               );
-            if (fallback && legacyCopy(fallback.html, runtime)) {
+            if (fallback && legacyCopy(fallback.html, fallback.text, runtime)) {
               return { method: 'legacy', status: 'copied' };
             }
           } finally {
@@ -894,7 +917,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           }
           return { code: 'wechat-copy-failed', status: 'failed' };
         }
-        if (legacyCopy(payload.html, runtime)) {
+        if (legacyCopy(payload.html, payload.text, runtime)) {
           return { method: 'legacy', status: 'copied' };
         }
         return { code: 'wechat-clipboard-unsupported', status: 'failed' };

@@ -13,7 +13,8 @@ import {
   deferred,
   installClipboardTestEnvironment,
   prepareClipboard,
-  readyPreview
+  readyPreview,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -68,7 +69,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('reuses the prepared legacy payload when only refresh attributes change', async () => {
     const preview = readyPreview();
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -117,7 +118,7 @@ describe('createBrowserWechatClipboard', () => {
       }
     ]
   ])('invalidates a prepared legacy payload after %s changes', async (_, change) => {
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -135,6 +136,124 @@ describe('createBrowserWechatClipboard', () => {
 
     await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
     expect(execCommand).not.toHaveBeenCalled();
+  });
+
+  it('fails legacy Copy when execCommand reports success without dispatching a copy event', async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    try {
+      const preview = readyPreview();
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-clipboard-unsupported', status: 'failed' });
+      expect(execCommand).toHaveBeenCalledWith('copy');
+      let postCopyWrites = 0;
+      const postCopyEvent = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(postCopyEvent, 'clipboardData', {
+        configurable: true,
+        value: { setData: (): void => { postCopyWrites += 1; } }
+      });
+      document.dispatchEvent(postCopyEvent);
+      expect(postCopyWrites).toBe(0);
+      expect(postCopyEvent.defaultPrevented).toBe(false);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('fails legacy Copy when the browser omits clipboardData and removes the listener', async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn(() => {
+      document.dispatchEvent(new Event('copy', { bubbles: true, cancelable: true }));
+      return true;
+    });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    try {
+      const preview = readyPreview();
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-clipboard-unsupported', status: 'failed' });
+      let postCopyWrites = 0;
+      const postCopyEvent = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(postCopyEvent, 'clipboardData', {
+        configurable: true,
+        value: { setData: (): void => { postCopyWrites += 1; } }
+      });
+      document.dispatchEvent(postCopyEvent);
+      expect(postCopyWrites).toBe(0);
+      expect(postCopyEvent.defaultPrevented).toBe(false);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
+
+  it('fails legacy Copy when either normalized MIME write throws and cleans up the listener', async () => {
+    const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    let setDataCalls = 0;
+    const execCommand = vi.fn(() => {
+      const event = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'clipboardData', {
+        configurable: true,
+        value: {
+          setData(type: string): void {
+            setDataCalls += 1;
+            if ('text/plain' === type) throw new Error('clipboard-data-write-failed');
+          }
+        }
+      });
+      document.dispatchEvent(event);
+      return true;
+    });
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    try {
+      const preview = readyPreview();
+      await prepareClipboard(clipboard, preview);
+      await expect(clipboard.copy(preview)).resolves.toEqual({ code: 'wechat-clipboard-unsupported', status: 'failed' });
+      expect(setDataCalls).toBe(2);
+      let postCopyWrites = 0;
+      const postCopyEvent = new Event('copy', { bubbles: true, cancelable: true });
+      Object.defineProperty(postCopyEvent, 'clipboardData', {
+        configurable: true,
+        value: { setData: (): void => { postCopyWrites += 1; } }
+      });
+      document.dispatchEvent(postCopyEvent);
+      expect(postCopyWrites).toBe(0);
+      expect(postCopyEvent.defaultPrevented).toBe(false);
+    } finally {
+      if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
+      else delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
   });
 
   it('rejects an accepted windowed Preview during refresh before resolving materialization', async () => {
@@ -170,7 +289,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('does not start legacy serialization before preview preparation', async () => {
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
     const fetch = vi.fn(
@@ -220,7 +339,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('does not enter legacy copy after an asynchronous modern write rejection', async () => {
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -449,7 +568,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('uses a prepared legacy payload when modern Clipboard setup throws synchronously', async () => {
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const write = vi.fn(() => {
       throw new Error('clipboard-write-setup-failed');
@@ -490,6 +609,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });
@@ -583,6 +703,7 @@ describe('createBrowserWechatClipboard', () => {
           const sandbox = document.querySelector('.easymde-copy-sandbox') as HTMLElement | null;
           copiedMarkup = sandbox?.innerHTML ?? '';
           sandbox?.focus();
+          dispatchSuccessfulLegacyCopy();
           return true;
         })
       });
@@ -625,6 +746,7 @@ describe('createBrowserWechatClipboard', () => {
         configurable: true,
         value: vi.fn(() => {
           legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+          dispatchSuccessfulLegacyCopy();
           return true;
         })
       });
@@ -655,7 +777,7 @@ describe('createBrowserWechatClipboard', () => {
 
   it('does not reuse a prepared payload after root-only style changes', async () => {
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     try {
       const clipboard = createBrowserWechatClipboard({
@@ -796,6 +918,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });

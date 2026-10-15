@@ -10,7 +10,8 @@ import {
   declaredStyleValue,
   deferred,
   installClipboardTestEnvironment,
-  prepareClipboard
+  prepareClipboard,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -300,7 +301,7 @@ describe('createBrowserWechatClipboard', () => {
       expect(owners.every((owner) => Boolean(owner.getAttribute('style')))).toBe(true);
       expect(owners.every((owner) => owner.parentElement?.tagName === 'SECTION')).toBe(true);
       const uncheckedOwner = owners.find((owner) => owner.getAttribute('aria-checked') === 'false');
-      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('\u200b');
+      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('x');
       // Destination-safe projection replaces the complete task list and every
       // task item with sections. The task structure is therefore the lowest
       // common section ancestor of all owners, and its section children are the
@@ -389,7 +390,7 @@ describe('createBrowserWechatClipboard', () => {
       ).toHaveLength(18);
       expect(owners[18]?.querySelectorAll(':scope > span[aria-hidden="true"]')).toHaveLength(0);
       expect(holder.querySelectorAll('li span[leaf]')).toHaveLength(0);
-      expect(modernHtml).toContain('\u200b');
+      expect(modernHtml).toContain('x');
       expect(modernHtml).not.toContain('✓');
       expect(preview.innerHTML).toBe(sourceMarkup);
 
@@ -399,6 +400,7 @@ describe('createBrowserWechatClipboard', () => {
         configurable: true,
         value: vi.fn(() => {
           legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+          dispatchSuccessfulLegacyCopy();
           return true;
         })
       });

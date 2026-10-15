@@ -19,15 +19,18 @@ sanitized, locally enhanced Preview sink. Never copy Markdown, CodeMirror DOM,
 editor chrome, or a separately rendered document.
 
 The modern Clipboard API and legacy `document.execCommand('copy')` path consume
-the same normalized HTML. The modern path derives `text/plain` from a connected
-plain-text clone of that same serialized export surface, removes
-exporter whitespace markers, and normalizes non-breaking spaces. The legacy
-path selects the same HTML and lets the destination derive visible plain text.
-After the HTML string is captured, browser layout derives plain text from
-the exclusive detached serialization tree. Non-layout DOM environments may
-retain the existing line-aware source-text fallback when their connected tree
-flattens block boundaries. The temporary layout host is removed in `finally`
-on every path.
+the same normalized HTML and normalized `text/plain` payload. The modern path
+derives `text/plain` from a connected plain-text clone of that same serialized
+export surface, removes exporter whitespace markers, and normalizes non-breaking
+spaces. The legacy path installs a synchronous `copy` listener during
+`execCommand`, writes both MIME values from that shared payload, and prevents
+the browser from deriving plain text from the HTML. Missing `clipboardData` or
+a failed MIME write makes the legacy operation fail explicitly; the listener is
+removed in `finally`. After the HTML string is captured, browser layout derives
+plain text from the exclusive detached serialization tree. Non-layout DOM
+environments may retain the existing line-aware source-text fallback when their
+connected tree flattens block boundaries. The temporary layout host is removed
+in `finally` on every path.
 The plain-text measurement host uses the rendered Preview width, including the
 last non-zero visible width while immersive source mode hides Preview.
 The optional `rememberPreviewWidth` port hook records only one positive finite
@@ -680,8 +683,12 @@ emits `ul > section` or `ol > section`. Projecting a mixed list into task
 sections plus rebuilt ordinary list runs inside a legal block container remains
 UNVERIFIED. Never change source controls, invent platform colors or
 emoji, duplicate native list bullets, or keep an INPUT as proof of a
-destination-visible state. Remove
-arbitrary form controls. A marker that cannot be faithfully represented fails
+destination-visible state. An empty unchecked generated owner receives one
+`aria-hidden` zero-font/zero-line-height carrier containing an ASCII `x` after
+static-flow allocation; the exporter registers that glyph for per-node
+plain-text restoration so it preserves native Save state without changing
+geometry or visible plain text. Remove arbitrary form controls. A marker that
+cannot be faithfully represented fails
 explicitly rather than silently losing state; native-appearance themes require
 their own verified normal path before all-theme acceptance. Retain each source table's authored/computed
 `min-width`; only the generated scroll wrapper owns `min-width:0`, so the

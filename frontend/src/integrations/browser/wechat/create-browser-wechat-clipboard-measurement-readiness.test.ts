@@ -9,7 +9,8 @@ import {
   installClipboardTestEnvironment,
   installHiddenImageProbe,
   pngOptions,
-  readyPreview
+  readyPreview,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
@@ -791,7 +792,7 @@ describe('createBrowserWechatClipboard', () => {
   it('does not enter synchronous legacy copy before hidden clone readiness', async () => {
     const probe = installHiddenImageProbe();
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,

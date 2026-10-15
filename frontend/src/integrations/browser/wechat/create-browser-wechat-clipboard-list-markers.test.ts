@@ -6,7 +6,8 @@ import {
   blobText,
   declaration,
   installClipboardTestEnvironment,
-  prepareClipboard
+  prepareClipboard,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 import { TASK_LIST_CHECKBOX_CLONES } from './wechat-clone-metadata';
 import {
@@ -230,6 +231,7 @@ describe('createBrowserWechatClipboard', () => {
               configurable: true,
               value: vi.fn(() => {
                 legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+                dispatchSuccessfulLegacyCopy();
                 return true;
               })
             });
@@ -381,6 +383,7 @@ describe('createBrowserWechatClipboard', () => {
         configurable: true,
         value: vi.fn(() => {
           legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+          dispatchSuccessfulLegacyCopy();
           return true;
         })
       });
@@ -715,6 +718,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });

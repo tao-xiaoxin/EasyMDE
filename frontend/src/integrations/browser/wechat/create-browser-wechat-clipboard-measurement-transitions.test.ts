@@ -7,7 +7,8 @@ import {
   deferred,
   installClipboardTestEnvironment,
   pngOptions,
-  readyPreview
+  readyPreview,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -501,7 +502,7 @@ describe('createBrowserWechatClipboard', () => {
     const preview = readyPreview();
     Object.defineProperty(preview, 'getAnimations', { configurable: true, value: () => [animation] });
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -538,7 +539,7 @@ describe('createBrowserWechatClipboard', () => {
     const preview = readyPreview();
     Object.defineProperty(preview, 'getAnimations', { configurable: true, value: () => [animation] });
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,
@@ -621,7 +622,7 @@ describe('createBrowserWechatClipboard', () => {
       }
     });
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: Blob,

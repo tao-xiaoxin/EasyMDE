@@ -719,7 +719,7 @@ export function createPseudoMarker(
   // WeChat drops completely empty decoration spans during paste. A zero-size
   // whitespace marker keeps CSS-only decorations while remaining invisible.
   // Keep the layout-time marker whitespace-only; finalizeMarkup replaces the
-  // task marker with U+200B after static-flow geometry has been captured so the
+  // task marker with ASCII `x` after static-flow geometry has been captured so the
   // native WeChat Save path retains the paint span without changing allocation.
   marker.textContent = textContent || (appendedImageLayers.length || svgContent ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));

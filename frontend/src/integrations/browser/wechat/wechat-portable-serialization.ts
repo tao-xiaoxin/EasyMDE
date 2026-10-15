@@ -626,8 +626,8 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
     const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
     if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
     const textNode = textNodes[0];
-    textNode.nodeValue = '\u200b';
-    taskPaintNormalizations.set(textNode, { original: '', encoded: '\u200b' });
+    textNode.nodeValue = 'x';
+    taskPaintNormalizations.set(textNode, { original: '', encoded: 'x' });
   });
   taskPaintNormalizations.forEach((value, textNode) => {
     exportTextNormalizations.set(textNode, value);
@@ -659,6 +659,31 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
       encoded: '\u2060'
     });
   });
+  // A task owner whose paint is element-level only (background and border with
+  // no pseudo layer) reaches the destination as a completely empty span, and
+  // the native WeChat import or Save drops that span, which loses the unchecked
+  // state. Give every empty unchecked owner one plain ASCII transport glyph
+  // inside a zero-size carrier after static-flow allocation and leaf wrapping:
+  // the glyph keeps the owner from being empty, while the carrier's zero font
+  // and line box keep the settled owner geometry untouched. Register the text
+  // as an export normalization so the separate `text/plain` payload and
+  // repeated serialization still read the original empty owner instead of the
+  // glyph. The authoring `class` attribute is removed from every clone, so the
+  // owner contract is the ARIA state that both the generated static owner and
+  // the immersive marker expose; an owner that already carries painted children
+  // is left untouched.
+  normalized
+    .querySelectorAll<HTMLElement>('[role="checkbox"][aria-checked="false"][aria-disabled="true"]')
+    .forEach((owner) => {
+      if (owner.childElementCount || owner.textContent?.trim()) return;
+      const carrier = normalized.ownerDocument.createElement('span');
+      carrier.setAttribute('aria-hidden', 'true');
+      appendDeclarations(carrier, ['font-size:0', 'line-height:0']);
+      const textNode = normalized.ownerDocument.createTextNode('x');
+      carrier.appendChild(textNode);
+      owner.appendChild(carrier);
+      exportTextNormalizations.set(textNode, { encoded: 'x', original: '' });
+    });
   if (exportTextNormalizations) EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
   assertTaskCheckboxCaptionRuns(normalized, exportTextNormalizations);
   return normalized;

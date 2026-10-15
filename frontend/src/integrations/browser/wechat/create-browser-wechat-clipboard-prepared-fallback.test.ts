@@ -7,7 +7,8 @@ import {
   declaration,
   deferred,
   installClipboardTestEnvironment,
-  prepareClipboard
+  prepareClipboard,
+  dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -21,7 +22,7 @@ describe('createBrowserWechatClipboard', () => {
     Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Theme heading' });
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     let includeDecoration = false;
     const clipboard = createBrowserWechatClipboard({
@@ -92,6 +93,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });
@@ -176,6 +178,7 @@ describe('createBrowserWechatClipboard', () => {
       configurable: true,
       value: vi.fn(() => {
         legacyHtml = document.querySelector('.easymde-copy-sandbox')?.innerHTML ?? '';
+        dispatchSuccessfulLegacyCopy();
         return true;
       })
     });
@@ -262,7 +265,7 @@ describe('createBrowserWechatClipboard', () => {
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
     let includeDecoration = false;
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: window.Blob,
@@ -322,7 +325,7 @@ describe('createBrowserWechatClipboard', () => {
       value: () => ({ bottom: scrollTop + 24, height: 24, left: 10, right: 330, top: scrollTop, width: 320 })
     });
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: window.Blob,
@@ -366,7 +369,7 @@ describe('createBrowserWechatClipboard', () => {
       value: () => ({ bottom: 24, height: 24, left: 0, right: width, top: 0, width })
     });
     const originalExecCommand = Object.getOwnPropertyDescriptor(document, 'execCommand');
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: window.Blob,
@@ -403,7 +406,7 @@ describe('createBrowserWechatClipboard', () => {
     const imageUrl = new URL('/assets/images/cupid-busy-heart.png', document.baseURI).href;
     const retryFetchStarted = deferred<void>();
     let attempts = 0;
-    const execCommand = vi.fn(() => true);
+    const execCommand = vi.fn(() => { dispatchSuccessfulLegacyCopy(); return true; });
     Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand });
     const clipboard = createBrowserWechatClipboard({
       blob: window.Blob,

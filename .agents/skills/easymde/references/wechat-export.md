@@ -623,6 +623,13 @@ excluded. Raw margin semantics participate in initial, current, final, prepared,
 and fallback freshness keys, so equal used pixels do not hide an `auto` to fixed
 change. Refresh the raw style snapshot at each guarded serialization/signature
 phase; never modify the live Preview or introduce fixed destination widths.
+For ordinary elements, preserve a transportable raw `transform-origin` semantic
+from the raw dimension context: the default center, axis keywords, percentages,
+and explicit pixel origins remain relative to the pasted element's own box. The
+measured pixel used value is retained only when the raw grammar cannot be
+validated. The asynchronous and synchronous style serializers share this owner,
+and its raw semantic participates in ordinary fidelity freshness signatures so
+equal used pixels with different source semantics are not reused.
 The generated, empty absolute `pre::before` frame decoration uses a portable
 normal-flow header in the copied tree. Its band transfers the source's reserved
 top padding; offsets, margins, dimensions, borders, and paint come from the

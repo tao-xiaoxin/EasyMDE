@@ -630,6 +630,11 @@ managed font discovery and font assets; Mermaid capture validation and math
 capture geometry; and the shared CSS-list and CSS-declaration scanner with the
 UserTiming helpers. Their
 focused suites are partitioned the same way.
+Ordinary transform origins use the raw dimension context when the CSSOM value
+is a validated center, axis-keyword, percentage, or pixel semantic; unsupported
+raw grammar keeps the measured value. The asynchronous and synchronous
+serializers share this style-policy owner, and the transportable raw semantic is
+included in ordinary fidelity freshness signatures.
 
 While Copy is pending, both ordinary and immersive controls remain focusable and expose `aria-busy="true"` and `aria-disabled="true"` instead of native `disabled`; the shared pending reference rejects duplicate click and keyboard activation. The static WeChat glyph preserves control geometry while Copy is pending. Native `disabled` remains reserved for an unavailable capability.
 An article-theme, code-theme, or Custom CSS change owns cancellation of an active Copy. The session returns `status: cancelled` with `wechat-copy-cancelled`, emits an info diagnostic for the intentional cancellation, and emits no success or failure status. A real Adapter failure or residual upload remains an explicit diagnostic and side-effect result. The appearance change refreshes Preview only; it never starts Copy automatically, so a new theme requires a new explicit Copy. During style loading, both controls remain focusable with `aria-disabled="true"` and without `aria-busy`.

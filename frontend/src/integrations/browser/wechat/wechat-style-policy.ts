@@ -630,6 +630,42 @@ export function semanticMarginSignature(
   );
 }
 
+const TRANSFORM_ORIGIN_HORIZONTAL_KEYWORDS = new Set(['left', 'right']);
+const TRANSFORM_ORIGIN_VERTICAL_KEYWORDS = new Set(['top', 'bottom']);
+
+/**
+ * The raw style context reports `transform-origin` before it is resolved
+ * against a layout box (`50% 50%` for the default center), while the measured
+ * layout context resolves the same declaration into source pixels
+ * (`327.5px 1.5px`). Transporting those pixels freezes the origin to the source
+ * width, so a narrower paste target paints the scaled element outside its own
+ * box. Only a bounded percentage, pixel, or axis-keyword token list is
+ * transported verbatim; every other form, such as an unresolved `calc()`,
+ * keeps the measured value instead of inventing semantics.
+ */
+export function transportableTransformOriginSemantics(value: string): string | null {
+  const tokens = value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length || tokens.length > 3) return null;
+  const zAxis = tokens[2];
+  if (3 === tokens.length && (!zAxis || !CONTENT_BOX_PIXEL_TOKEN.test(zAxis))) return null;
+  let horizontalKeywords = 0;
+  let verticalKeywords = 0;
+  for (const token of tokens.slice(0, 2)) {
+    if (CONTENT_BOX_PERCENTAGE_TOKEN.test(token) || CONTENT_BOX_PIXEL_TOKEN.test(token)) continue;
+    if ('center' === token) continue;
+    if (TRANSFORM_ORIGIN_HORIZONTAL_KEYWORDS.has(token)) {
+      horizontalKeywords += 1;
+      continue;
+    }
+    if (TRANSFORM_ORIGIN_VERTICAL_KEYWORDS.has(token)) {
+      verticalKeywords += 1;
+      continue;
+    }
+    return null;
+  }
+  return horizontalKeywords > 1 || verticalKeywords > 1 ? null : tokens.join(' ');
+}
+
 export function rootExportComputedStyle(
   source: Element,
   computed: CSSStyleDeclaration,
@@ -651,6 +687,12 @@ export function signatureStyleProperties(source: Element, root = false, pseudoEl
   if (svg) return SIGNATURE_SVG_PROPERTIES;
   if (special) return SIGNATURE_SPECIAL_PROPERTIES;
   return root ? SIGNATURE_ORDINARY_ROOT_PROPERTIES : SIGNATURE_ORDINARY_PROPERTIES;
+}
+
+export function semanticTransformOriginSignature(source: Element, rawComputed: CSSStyleDeclaration | null): string {
+  if (!rawComputed || supportsSpecialLayout(source) || isSvgElement(source)) return '';
+  const semantic = transportableTransformOriginSemantics(rawComputed.getPropertyValue('transform-origin'));
+  return semantic ? `transform-origin=${semantic}` : '';
 }
 
 export function removeTransientAttributes(clone: Element): void {
@@ -844,11 +886,18 @@ export function appendPortableStyleDeclaration(
     !supportsSpecialLayout(context.source) &&
     ORDINARY_DIMENSION_PROPERTIES.includes(property as (typeof ORDINARY_DIMENSION_PROPERTIES)[number]);
   const preserveRawContentBoxTuple = context.promoteContentBoxBounds && ('box-sizing' === property || isOrdinaryDimension);
+  // Ordinary `transform-origin` transports the raw percentage/pixel/keyword
+  // semantics when the raw context still exposes them, so the origin stays
+  // relative to the paste target's own box instead of the source measurement
+  // width. Explicit pixel origins keep their exact value.
+  const semanticTransformOrigin =
+    'transform-origin' === property ? transportableTransformOriginSemantics(semanticCandidate) : null;
   const sourceValue =
-    preserveRawContentBoxTuple && semanticCandidate
+    semanticTransformOrigin ??
+    (preserveRawContentBoxTuple && semanticCandidate
       ? semanticCandidate
       : (semanticMarginCandidate ??
-        (isOrdinaryDimension && semanticCandidate ? semanticCandidate : materializedValue));
+        (isOrdinaryDimension && semanticCandidate ? semanticCandidate : materializedValue)));
   const pseudoElementContent = context.pseudoElement ? context.computed.getPropertyValue('content') : '';
   const normalizedValue = preserveRawContentBoxTuple
     ? sourceValue

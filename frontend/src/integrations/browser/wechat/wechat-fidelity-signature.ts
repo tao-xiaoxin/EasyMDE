@@ -7,6 +7,7 @@ import {
   semanticMarginSignature,
   semanticMarginSource,
   semanticMarginValue,
+  semanticTransformOriginSignature,
   signatureStyleProperties,
   supportsSpecialLayout
 } from './wechat-style-policy';
@@ -110,7 +111,11 @@ export function ordinaryDimensionSemanticsSignature(
           .join(';')
       : '';
   const margins = semanticMarginSignature(element, computed, dimensionSemantics, undefined, computed);
-  return `${dimensions}${dimensions && margins ? ';' : ''}${margins}`;
+  // The portable payload transports the raw `transform-origin` semantics, so a
+  // source semantic change with identical resolved pixels must still invalidate
+  // a prepared payload instead of reusing the previous declaration.
+  const transformOrigin = semanticTransformOriginSignature(element, computed);
+  return [dimensions, margins, transformOrigin].filter(Boolean).join(';');
 }
 function layoutViewportSignature(layoutPreview: HTMLElement): string {
   const viewport = layoutPreview.ownerDocument.defaultView;

@@ -120,9 +120,8 @@ import {
 import {
   replaceVisualObjects,
 } from './wechat-png-conversion';
-import {
-  runWechatSyncTiming,
-} from './wechat-timing';
+import { runWechatSyncTiming } from './wechat-timing';
+import { createWechatMarkupPreparationTimings } from './wechat-copy-timing';
 
 type NodeFidelityResult = Readonly<{
   exportComputed: CSSStyleDeclaration;
@@ -797,6 +796,10 @@ export async function createMarkup(
   }
   const taskGeometry = createTaskCheckboxGeometryContext(taskGeometryLease, runtime, dimensionSemantics);
   const headingFlowCollector: HeadingEmptyPseudoFlowCollector = { expectations: [] };
+  const markupTimings = createWechatMarkupPreparationTimings(
+    clone.ownerDocument.defaultView?.performance,
+    Boolean(conversion)
+  );
   try {
     await inlineStyles(
       preview,
@@ -814,6 +817,7 @@ export async function createMarkup(
       taskGeometry,
       headingFlowCollector
     );
+    markupTimings.inlineStyles.finish('success');
     throwIfBackgroundPreparationAborted(signal);
     if (conversion) {
       mathMlNodes.forEach((element) => {
@@ -835,7 +839,12 @@ export async function createMarkup(
     assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
     assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
     throwIfBackgroundPreparationAborted(signal);
+    markupTimings.markupPreparation.finish('success');
     return finalized;
+  } catch (error: unknown) {
+    markupTimings.inlineStyles.finish('error');
+    markupTimings.markupPreparation.finish('error');
+    throw error;
   } finally {
     taskGeometry?.cleanup();
   }

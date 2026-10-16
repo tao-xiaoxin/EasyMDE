@@ -24,12 +24,18 @@ export const WECHAT_COPY_TIMING_NAMES = {
   candidateGeometry: 'easymde.wechat.copy.candidate.geometry',
   candidateRasterization: 'easymde.wechat.copy.candidate.rasterization',
   connectedPlainText: 'easymde.wechat.copy.connected-plain-text',
+  copyTotal: 'easymde.wechat.copy.total',
   finalGeometry: 'easymde.wechat.copy.final-geometry',
   finalRawContextRefresh: 'easymde.wechat.copy.final-raw-context-refresh',
   finalSourceFreshness: 'easymde.wechat.copy.final-source-freshness',
   finalizeMarkup: 'easymde.wechat.copy.finalize-markup',
+  geometryReadiness: 'easymde.wechat.copy.geometry-readiness',
+  inlineStyles: 'easymde.wechat.copy.inline-styles',
+  markupPreparation: 'easymde.wechat.copy.markup-preparation',
   outerHtml: 'easymde.wechat.copy.outer-html',
-  replacement: 'easymde.wechat.copy.replacement'
+  replacement: 'easymde.wechat.copy.replacement',
+  taskGeometryReadiness: 'easymde.wechat.copy.task-geometry-readiness',
+  transitionReadiness: 'easymde.wechat.copy.transition-readiness'
 } as const;
 
 export function backgroundPreparationAbortError(): Error {

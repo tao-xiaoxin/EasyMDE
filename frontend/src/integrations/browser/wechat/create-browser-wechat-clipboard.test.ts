@@ -98,26 +98,46 @@ describe('createBrowserWechatClipboard', () => {
         'easymde.wechat.copy.connected-plain-text',
         'easymde.wechat.copy.final-raw-context-refresh',
         'easymde.wechat.copy.final-geometry',
-        'easymde.wechat.copy.final-source-freshness'
+        'easymde.wechat.copy.final-source-freshness',
+        'easymde.wechat.copy.geometry-readiness',
+        'easymde.wechat.copy.inline-styles',
+        'easymde.wechat.copy.markup-preparation',
+        'easymde.wechat.copy.task-geometry-readiness',
+        'easymde.wechat.copy.total',
+        'easymde.wechat.copy.transition-readiness'
       ])
     );
     expect(clearMeasures.mock.calls.map(([name]) => name)).toEqual(measure.mock.calls.map(([name]) => name));
-    measure.mock.calls.forEach(([, options]) => {
+    measure.mock.calls.forEach(([name, options]) => {
       const timingOptions = options as PerformanceMeasureOptions & { detail?: Record<string, unknown> };
       expect(timingOptions.start).toEqual(expect.any(Number));
       expect(timingOptions.end).toEqual(expect.any(Number));
       expect(Object.keys(timingOptions.detail ?? {}).sort()).toEqual(
         Object.keys(timingOptions.detail ?? {})
-          .filter((key) => ['candidate', 'kind', 'mode', 'terminal'].includes(key))
+          .filter((key) => ['candidate', 'hidden', 'kind', 'mode', 'owner', 'pairs', 'terminal'].includes(key))
           .sort()
       );
       expect(timingOptions.detail?.mode).toMatch(/^(?:sync|async)$/u);
       expect(timingOptions.detail?.terminal).toMatch(/^(?:success|error)$/u);
+      if ('easymde.wechat.copy.markup-preparation' === name) {
+        expect(timingOptions.detail).toEqual(
+          expect.objectContaining({ mode: expect.any(String), terminal: expect.any(String) })
+        );
+        expect(timingOptions.detail).not.toHaveProperty('candidate');
+        expect(timingOptions.detail).not.toHaveProperty('kind');
+      }
       if ('candidate' in (timingOptions.detail ?? {})) {
         expect(timingOptions.detail?.candidate).toEqual(expect.any(Number));
         expect(timingOptions.detail?.candidate as number).toBeGreaterThanOrEqual(0);
         expect(timingOptions.detail?.candidate as number).toBeLessThanOrEqual(31);
         expect(timingOptions.detail?.kind).toMatch(/^(?:math|mermaid)$/u);
+      }
+      if ('owner' in (timingOptions.detail ?? {})) {
+        expect(timingOptions.detail?.owner).toMatch(/^(?:measurement|source|task-geometry)$/u);
+        expect(timingOptions.detail?.hidden).toEqual(expect.any(Boolean));
+      }
+      if ('pairs' in (timingOptions.detail ?? {})) {
+        expect(timingOptions.detail?.pairs).toEqual(expect.any(Number));
       }
     });
     const item = (writes[0] as ClipboardItemStub[])[0];

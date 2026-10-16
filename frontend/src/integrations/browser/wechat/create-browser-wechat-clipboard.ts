@@ -74,6 +74,11 @@ import {
 } from './wechat-source-freshness';
 import { createTaskCheckboxGeometryLease, type TaskCheckboxGeometryLease } from './wechat-task-geometry';
 import { beginWechatTiming, runWechatSyncTiming } from './wechat-timing';
+import {
+  createWechatCopyTotalTiming,
+  createWechatReadinessTiming,
+  type WechatReadinessTiming
+} from './wechat-copy-timing';
 
 export type {
   BrowserWechatClipboardRuntime,
@@ -284,6 +289,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
         let synchronousModernFailure!: () => WechatClipboardResult;
         let transactionFailure!: (error: unknown) => WechatClipboardResult;
         let cleanupTransaction!: () => void;
+        let finishCopyTotal: (terminal: 'error' | 'success') => void = () => undefined;
 
         if (pngConversionEnabled) {
           const conversionState: WechatPngConversionState = {
@@ -308,6 +314,11 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           let disposeGeometryMeasurement: (() => void) | undefined;
           let disposeTaskGeometryLease: (() => void) | undefined;
           let disposeTransitionReadiness: (() => void) | undefined;
+          let readinessTiming: WechatReadinessTiming | null = null;
+          finishCopyTotal = createWechatCopyTotalTiming(
+            preview.ownerDocument.defaultView?.performance,
+            true
+          );
           assertBlobCurrent = () => assertCopyPreviewCurrent(payloadPreview, copyGuard);
           awaitCompletion = async (writeResult, writeFailure, htmlBlob, textBlob) => {
             const completion = Promise.all([payload, htmlBlob, textBlob, writeResult]);
@@ -326,6 +337,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
             status: 'failed'
           });
           transactionFailure = (error: unknown) => {
+            finishCopyTotal('error');
             conversionController.abort();
             if (error instanceof WechatPngConversionError) logPngFailureDiagnostic(error);
             return {
@@ -342,6 +354,8 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
             };
           };
           cleanupTransaction = () => {
+            finishCopyTotal('error');
+            readinessTiming?.fail();
             conversionController.abort();
             foregroundGeometryMeasurement?.cleanup();
             foregroundGeometryMeasurement = null;
@@ -396,6 +410,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                     geometryMeasurement
                   );
                   disposeTaskGeometryLease = () => taskGeometryLease?.cleanup();
+                  const measurementOwnedGeometry = null !== geometryMeasurement;
                   const transitionReadiness = geometryMeasurement
                     ? null
                     : createPreviewTransitionLease([resolvedPreview], conversionSignal);
@@ -404,11 +419,19 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                   const geometryReadiness = cachedGeometryMeasurement
                     ? waitForPreviewMeasurement(geometryMeasurement?.ready ?? Promise.resolve(), conversionSignal)
                     : (geometryMeasurement?.ready ?? Promise.resolve());
-                  return Promise.all([
+                  readinessTiming = createWechatReadinessTiming({
+                    geometryOwner: measurementOwnedGeometry ? 'measurement' : 'source',
+                    geometryPairs: geometryMeasurement
+                      ? geometryMeasurement.root.querySelectorAll('img').length
+                      : null,
                     geometryReadiness,
-                    transitionReadiness?.ready ?? Promise.resolve(),
-                    taskGeometryLease?.ready ?? Promise.resolve()
-                  ])
+                    hidden: measurementOwnedGeometry,
+                    performance: resolvedPreview.ownerDocument.defaultView?.performance,
+                    taskGeometryOwner: taskGeometryLease ? 'task-geometry' : 'source',
+                    taskGeometryReadiness: taskGeometryLease?.ready ?? Promise.resolve(),
+                    transitionReadiness: transitionReadiness?.ready ?? Promise.resolve()
+                  });
+                  return readinessTiming.ready
                     .then(() => {
                       const conversionContext: WechatPngConversionContext = {
                         captureBoundary: serializationPreview,
@@ -843,6 +866,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           });
           writePromise = Promise.resolve(runtime.write([item]));
         } catch {
+          finishCopyTotal('error');
           transaction.cleanup();
           detachCopyAbort();
           observeBlobRejections();
@@ -863,6 +887,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           });
           await transaction.awaitCompletion(writeResult, writeFailure, htmlBlob, textBlob);
           transaction.finalize();
+          finishCopyTotal('success');
           return { method: 'clipboard', status: 'copied' };
         } catch (error: unknown) {
           // A rejected modern write resumes after an await and cannot safely

@@ -4,12 +4,23 @@ export type WechatTimingMode = 'async' | 'sync';
 export type WechatTimingTerminal = 'error' | 'success';
 export type WechatTimingMetadata = Readonly<{
   candidate?: number;
+  hidden?: boolean;
   kind?: WechatVisualRasterizationKind;
   mode: WechatTimingMode;
+  owner?: 'measurement' | 'source' | 'task-geometry';
+  pairs?: number;
 }>;
 export type WechatTimingHandle = Readonly<{
   finish: (terminal: WechatTimingTerminal) => void;
 }>;
+
+/**
+ * A handle for a diagnostic phase that the current path does not instrument.
+ * Callers keep one reporting flow while an unchanged path records nothing.
+ */
+export const noWechatTimingHandle: WechatTimingHandle = {
+  finish: () => undefined
+};
 
 export function beginWechatTiming(
   performance: Performance | undefined,

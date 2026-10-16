@@ -1,4 +1,3 @@
-
 export const copyTimingStages = new Map([
 	["easymde.wechat.copy.candidate.capture", "copy-candidate-capture"],
 	["easymde.wechat.copy.candidate.geometry", "copy-candidate-geometry"],
@@ -7,12 +6,21 @@ export const copyTimingStages = new Map([
 		"copy-candidate-rasterization",
 	],
 	["easymde.wechat.copy.connected-plain-text", "copy-connected-plain-text"],
+	["easymde.wechat.copy.total", "copy-total"],
 	["easymde.wechat.copy.final-geometry", "copy-final-geometry"],
 	["easymde.wechat.copy.final-raw-context-refresh", "copy-final-raw-context"],
 	["easymde.wechat.copy.final-source-freshness", "copy-final-source-freshness"],
 	["easymde.wechat.copy.finalize-markup", "copy-finalize-markup"],
+	["easymde.wechat.copy.geometry-readiness", "copy-geometry-readiness"],
+	["easymde.wechat.copy.inline-styles", "copy-inline-styles"],
+	["easymde.wechat.copy.markup-preparation", "copy-markup-preparation"],
 	["easymde.wechat.copy.outer-html", "copy-outer-html"],
 	["easymde.wechat.copy.replacement", "copy-replacement"],
+	[
+		"easymde.wechat.copy.task-geometry-readiness",
+		"copy-task-geometry-readiness",
+	],
+	["easymde.wechat.copy.transition-readiness", "copy-transition-readiness"],
 	["easymde.wechat.rasterizer.canvas-draw-encode", "rasterizer-canvas-encode"],
 	["easymde.wechat.rasterizer.decode-wait", "rasterizer-decode-wait"],
 	["easymde.wechat.rasterizer.digest-wait", "rasterizer-digest-wait"],
@@ -25,6 +33,11 @@ export const copyTimingStages = new Map([
 export const timingDetailModes = new Set(["async", "sync"]);
 export const timingDetailTerminals = new Set(["error", "success"]);
 export const timingDetailKinds = new Set(["math", "mermaid"]);
+export const timingDetailOwners = new Set([
+	"measurement",
+	"source",
+	"task-geometry",
+]);
 export const genericTraceStageByName = new Map([
 	["RunTask", "main-task"],
 	["ThreadControllerImpl::RunTask", "main-task"],

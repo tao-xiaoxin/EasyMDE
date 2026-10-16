@@ -3,12 +3,19 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { JSDOM } from "jsdom";
+import {
+	copyTimingStages,
+	timingDetailOwners,
+} from "../e2e/wechat-copy-performance/trace-contract.mjs";
 
 // The performance spec keeps registration and fixture binding; the probe,
 // diagnostics environment, and server bundle identity owners are dedicated
 // modules loaded here for focused verification.
 const probeSource = readFileSync(
-	new URL("../e2e/wechat-copy-performance/performance-probe.mjs", import.meta.url),
+	new URL(
+		"../e2e/wechat-copy-performance/performance-probe.mjs",
+		import.meta.url,
+	),
 	"utf8",
 );
 const diagnosticsSource = readFileSync(
@@ -19,38 +26,54 @@ const serverBundleSource = readFileSync(
 	new URL("../e2e/wechat-copy-performance/server-bundle.mjs", import.meta.url),
 	"utf8",
 );
-const performanceSources = [probeSource, diagnosticsSource, serverBundleSource].join("\n");
+const performanceSources = [
+	probeSource,
+	diagnosticsSource,
+	serverBundleSource,
+].join("\n");
 const probeArguments = {
 	beginMarker: "test.begin",
 	clickMarker: "test.click",
-	copyTimingStageEntries: [],
+	copyTimingStageEntries: [...copyTimingStages.entries()],
 	endMarker: "test.end",
 	timingDetailKindValues: ["math", "mermaid"],
 	timingDetailModeValues: ["async", "sync"],
+	timingDetailOwnerValues: [...timingDetailOwners],
 	timingDetailTerminalValues: ["error", "success"],
 };
 
 function loadProbeInitializer(context) {
-	const installStart = probeSource.indexOf("function installPerformanceProbe(page)");
-	const callbackStart = probeSource.indexOf("({\n\t\t\tbeginMarker", installStart);
+	const installStart = probeSource.indexOf(
+		"function installPerformanceProbe(page)",
+	);
+	const callbackStart = probeSource.indexOf(
+		"({\n\t\t\tbeginMarker",
+		installStart,
+	);
 	const callbackEndMarker =
 		"\n\t\t},\n\t\t{\n\t\t\tbeginMarker: traceBeginMarker";
 	const callbackEnd = probeSource.indexOf(callbackEndMarker, callbackStart);
 	assert.ok(installStart >= 0);
 	assert.ok(callbackStart > installStart);
 	assert.ok(callbackEnd > callbackStart);
-	const callbackSource = probeSource.slice(callbackStart, callbackEnd + "\n\t\t}".length);
+	const callbackSource = probeSource.slice(
+		callbackStart,
+		callbackEnd + "\n\t\t}".length,
+	);
 	return vm.runInContext(`(${callbackSource})`, context);
 }
 
 function loadDiagnosticsFlagValidator() {
-	const start = diagnosticsSource.indexOf("function localDiagnosticsEnabledFromSetting(value)");
-	const end = diagnosticsSource.indexOf("\nexport const localDiagnosticsEnabled =", start);
+	const start = diagnosticsSource.indexOf(
+		"function localDiagnosticsEnabledFromSetting(value)",
+	);
+	const end = diagnosticsSource.indexOf(
+		"\nexport const localDiagnosticsEnabled =",
+		start,
+	);
 	assert.ok(start >= 0);
 	assert.ok(end > start);
-	return vm.runInNewContext(
-		`(${diagnosticsSource.slice(start, end).trim()})`,
-	);
+	return vm.runInNewContext(`(${diagnosticsSource.slice(start, end).trim()})`);
 }
 
 function bindDomContext(context, PerformanceObserver) {
@@ -64,6 +87,7 @@ function createProbeHarness(markup) {
 	});
 	const { window } = dom;
 	const nativeWrites = [];
+	const observers = [];
 	const clipboard = {
 		write(items) {
 			nativeWrites.push(items);
@@ -87,9 +111,12 @@ function createProbeHarness(markup) {
 
 		constructor(callback) {
 			this.callback = callback;
+			observers.push(this);
 		}
 
-		observe() {}
+		observe(options) {
+			this.type = options?.type;
+		}
 
 		takeRecords() {
 			return [];
@@ -108,7 +135,7 @@ function createProbeHarness(markup) {
 	});
 	const context = vm.createContext(window);
 	bindDomContext(context, StubPerformanceObserver);
-	return { context, dom, nativeWrites, window };
+	return { context, dom, nativeWrites, observers, window };
 }
 
 function initializeProbe(context) {
@@ -220,3 +247,183 @@ test("performance profile identity follows the current checked-in artifact", () 
 	assert.match(serverBundleSource, /assets\/build\/manifest\.json/u);
 	assert.doesNotMatch(performanceSources, /expectedDtdEditor|MatchesDtd/u);
 });
+
+function measureEntry(name, detail, startTime = 10, duration = 2) {
+	return { detail, duration, entryType: "measure", name, startTime };
+}
+
+function emitMeasures(observers, entries) {
+	const measureObserver = observers.find(({ type }) => type === "measure");
+	assert.ok(measureObserver);
+	measureObserver.callback({ getEntries: () => entries });
+}
+
+function normalize(value) {
+	return JSON.parse(JSON.stringify(value));
+}
+
+test("performance probe whitelists production copy timings and retains safe detail fields", () => {
+	const names = [
+		"easymde.wechat.copy.total",
+		"easymde.wechat.copy.geometry-readiness",
+		"easymde.wechat.copy.inline-styles",
+		"easymde.wechat.copy.markup-preparation",
+		"easymde.wechat.copy.task-geometry-readiness",
+		"easymde.wechat.copy.transition-readiness",
+	];
+	for (const name of names) assert.ok(copyTimingStages.has(name), name);
+
+	const harness = createProbeHarness(
+		"<!doctype html><html><body></body></html>",
+	);
+	try {
+		const probe = initializeProbe(harness.context);
+		probe.begin();
+		emitMeasures(harness.observers, [
+			measureEntry("easymde.wechat.copy.total", {
+				mode: "async",
+				terminal: "success",
+			}),
+			measureEntry("easymde.wechat.copy.geometry-readiness", {
+				hidden: false,
+				mode: "async",
+				owner: "source",
+				pairs: 3,
+				terminal: "success",
+			}),
+			measureEntry("easymde.wechat.copy.inline-styles", {
+				mode: "async",
+				terminal: "success",
+			}),
+			measureEntry("easymde.wechat.copy.markup-preparation", {
+				mode: "async",
+				terminal: "success",
+			}),
+			measureEntry("easymde.wechat.copy.task-geometry-readiness", {
+				hidden: true,
+				mode: "async",
+				owner: "task-geometry",
+				terminal: "success",
+			}),
+			measureEntry("easymde.wechat.copy.transition-readiness", {
+				hidden: false,
+				mode: "async",
+				owner: "source",
+				terminal: "success",
+			}),
+		]);
+		const sample = probe.end();
+		assert.equal(sample.observerError, null);
+		assert.deepEqual(
+			normalize(sample.measures.map(({ name, detail }) => ({ name, detail }))),
+			[
+				{
+					name: "easymde.wechat.copy.total",
+					detail: { mode: "async", terminal: "success" },
+				},
+				{
+					name: "easymde.wechat.copy.geometry-readiness",
+					detail: {
+						hidden: false,
+						mode: "async",
+						owner: "source",
+						pairs: 3,
+						terminal: "success",
+					},
+				},
+				{
+					name: "easymde.wechat.copy.inline-styles",
+					detail: { mode: "async", terminal: "success" },
+				},
+				{
+					name: "easymde.wechat.copy.markup-preparation",
+					detail: { mode: "async", terminal: "success" },
+				},
+				{
+					name: "easymde.wechat.copy.task-geometry-readiness",
+					detail: {
+						hidden: true,
+						mode: "async",
+						owner: "task-geometry",
+						terminal: "success",
+					},
+				},
+				{
+					name: "easymde.wechat.copy.transition-readiness",
+					detail: {
+						hidden: false,
+						mode: "async",
+						owner: "source",
+						terminal: "success",
+					},
+				},
+			],
+		);
+	} finally {
+		vm.runInContext(
+			"globalThis.__easymdeWechatCopyPerformance?.stop()",
+			harness.context,
+		);
+		harness.dom.window.close();
+	}
+});
+
+const unknownDetailCases = [
+	[
+		"enumerable",
+		(detail, sentinel) => {
+			detail.secret = sentinel;
+			return detail;
+		},
+	],
+	[
+		"non-enumerable",
+		(detail, sentinel) => {
+			Object.defineProperty(detail, "secret", {
+				configurable: true,
+				value: sentinel,
+			});
+			return detail;
+		},
+	],
+	[
+		"Symbol",
+		(detail, sentinel) => {
+			detail[Symbol("secret")] = sentinel;
+			return detail;
+		},
+	],
+];
+
+for (const [kind, addUnknownField] of unknownDetailCases) {
+	test(`performance probe rejects unknown ${kind} timing detail fields`, () => {
+		const sentinel = `wechat-sensitive-${kind}-sentinel`;
+		const harness = createProbeHarness(
+			"<!doctype html><html><body></body></html>",
+		);
+		try {
+			const probe = initializeProbe(harness.context);
+			probe.begin();
+			const detail = addUnknownField(
+				{ mode: "async", terminal: "success" },
+				sentinel,
+			);
+			emitMeasures(harness.observers, [
+				measureEntry("easymde.wechat.copy.total", detail),
+			]);
+			const sample = probe.end();
+			assert.equal(
+				sample.observerError,
+				"wechat-copy-performance-measure-detail-keys-invalid",
+			);
+			assert.deepEqual(normalize(sample.measures), []);
+			assert.equal(JSON.stringify(sample).includes(sentinel), false);
+		} finally {
+			vm.runInContext(
+				"globalThis.__easymdeWechatCopyPerformance?.stop()",
+				harness.context,
+			);
+			harness.dom.window.close();
+		}
+	});
+}

@@ -1,11 +1,13 @@
-import { resolve } from "node:path";
-import { copyTimingStages } from "./trace-contract.mjs";
-import { timingDetailKinds } from "./trace-contract.mjs";
-import { timingDetailModes } from "./trace-contract.mjs";
-import { timingDetailTerminals } from "./trace-contract.mjs";
-import { traceBeginMarker } from "./trace-contract.mjs";
-import { traceClickMarker } from "./trace-contract.mjs";
-import { traceEndMarker } from "./trace-contract.mjs";
+import {
+	copyTimingStages,
+	timingDetailKinds,
+	timingDetailModes,
+	timingDetailOwners,
+	timingDetailTerminals,
+	traceBeginMarker,
+	traceClickMarker,
+	traceEndMarker,
+} from "./trace-contract.mjs";
 
 export function installPerformanceProbe(page) {
 	return page.addInitScript(
@@ -16,10 +18,12 @@ export function installPerformanceProbe(page) {
 			endMarker,
 			timingDetailKindValues,
 			timingDetailModeValues,
+			timingDetailOwnerValues = [],
 			timingDetailTerminalValues,
 		}) => {
 			const copyTimingStages = new Map(copyTimingStageEntries);
 			const timingDetailModes = new Set(timingDetailModeValues);
+			const timingDetailOwners = new Set(timingDetailOwnerValues);
 			const timingDetailTerminals = new Set(timingDetailTerminalValues);
 			const timingDetailKinds = new Set(timingDetailKindValues);
 			const copyOwner = (target) => {
@@ -142,31 +146,43 @@ export function installPerformanceProbe(page) {
 							"wechat-copy-performance-measure-detail-invalid";
 						continue;
 					}
-					const keys = Object.keys(detail).sort();
-					const allowedKeys = ["candidate", "kind", "mode", "terminal"];
-					if (keys.some((key) => !allowedKeys.includes(key))) {
+					const keys = Reflect.ownKeys(detail);
+					const allowedKeys = [
+						"candidate",
+						"hidden",
+						"kind",
+						"mode",
+						"owner",
+						"pairs",
+						"terminal",
+					];
+					if (
+						keys.some(
+							(key) => typeof key !== "string" || !allowedKeys.includes(key),
+						)
+					) {
 						state.observerError ??=
 							"wechat-copy-performance-measure-detail-keys-invalid";
 						continue;
 					}
+					const hasDetailKey = (key) => Object.hasOwn(detail, key);
 					if (
+						!hasDetailKey("mode") ||
 						!timingDetailModes.has(detail.mode) ||
+						!hasDetailKey("terminal") ||
 						!timingDetailTerminals.has(detail.terminal)
 					) {
 						state.observerError ??=
 							"wechat-copy-performance-measure-detail-enum-invalid";
 						continue;
 					}
-					if (
-						detail.kind !== undefined &&
-						!timingDetailKinds.has(detail.kind)
-					) {
+					if (hasDetailKey("kind") && !timingDetailKinds.has(detail.kind)) {
 						state.observerError ??=
 							"wechat-copy-performance-measure-detail-kind-invalid";
 						continue;
 					}
 					if (
-						detail.candidate !== undefined &&
+						hasDetailKey("candidate") &&
 						(!Number.isInteger(detail.candidate) ||
 							detail.candidate < 0 ||
 							detail.candidate > 31)
@@ -175,10 +191,34 @@ export function installPerformanceProbe(page) {
 							"wechat-copy-performance-measure-detail-candidate-invalid";
 						continue;
 					}
+					if (hasDetailKey("hidden") && typeof detail.hidden !== "boolean") {
+						state.observerError ??=
+							"wechat-copy-performance-measure-detail-hidden-invalid";
+						continue;
+					}
+					if (hasDetailKey("owner") && !timingDetailOwners.has(detail.owner)) {
+						state.observerError ??=
+							"wechat-copy-performance-measure-detail-owner-invalid";
+						continue;
+					}
+					if (
+						hasDetailKey("pairs") &&
+						(!Number.isInteger(detail.pairs) || detail.pairs < 0)
+					) {
+						state.observerError ??=
+							"wechat-copy-performance-measure-detail-pairs-invalid";
+						continue;
+					}
 					state.measures.push({
 						detail: {
-							...(detail.kind === undefined ? {} : { kind: detail.kind }),
+							...(hasDetailKey("candidate")
+								? { candidate: detail.candidate }
+								: {}),
+							...(hasDetailKey("hidden") ? { hidden: detail.hidden } : {}),
+							...(hasDetailKey("kind") ? { kind: detail.kind } : {}),
 							mode: detail.mode,
+							...(hasDetailKey("owner") ? { owner: detail.owner } : {}),
+							...(hasDetailKey("pairs") ? { pairs: detail.pairs } : {}),
 							terminal: detail.terminal,
 						},
 						durationMs: entry.duration,
@@ -517,6 +557,7 @@ export function installPerformanceProbe(page) {
 			endMarker: traceEndMarker,
 			timingDetailKindValues: [...timingDetailKinds],
 			timingDetailModeValues: [...timingDetailModes],
+			timingDetailOwnerValues: [...timingDetailOwners],
 			timingDetailTerminalValues: [...timingDetailTerminals],
 		},
 	);

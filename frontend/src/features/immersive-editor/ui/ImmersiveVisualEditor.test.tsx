@@ -12,6 +12,7 @@ import {
   type DocumentTextChange
 } from '../../document-source/adapters/code-mirror-document-session';
 import type { EditorDocumentSession } from '../../document-source/editor-document-session';
+import type { PreviewSurfaceStatus } from '../../live-preview/ui/PreviewSurfaceOwner';
 import * as visualMarkdown from '../visual-markdown';
 import {
   serializeVisualMarkdown,
@@ -264,7 +265,378 @@ function createSourceNavigationFixture() {
   };
 }
 
+const VISUAL_HISTORY_REBUILD_MARKDOWN = 'Before\n\n~~~js\nalpha\n~~~';
+const VISUAL_HISTORY_REBUILD_CODE_BLOCK_START = 8;
+const VISUAL_HISTORY_REBUILD_CODE_BLOCK_END = 23;
+const VISUAL_HISTORY_REBUILD_PARAGRAPH_START = 1;
+const VISUAL_HISTORY_REBUILD_PARAGRAPH_END = 4;
+const VISUAL_HISTORY_REBUILD_PARAGRAPH_CARET = 6;
+const VISUAL_HISTORY_REBUILD_CODE_HTML = [
+  '<pre data-easymde-visual-block-id="b1" data-easymde-visual-fence="~~~" data-easymde-visual-fence-info="js">',
+  '<code class="language-js">alpha\n</code></pre>'
+].join('');
+const VISUAL_HISTORY_REBUILD_HTML = [
+  '<p data-easymde-visual-block-id="b0">Before</p>',
+  VISUAL_HISTORY_REBUILD_CODE_HTML
+].join('');
+// Cutting the whole fence removes its block, so the rebuilt Preview renders
+// the remaining paragraph as the only block.
+const VISUAL_HISTORY_REBUILD_CODE_REMAINDER = 'Before\n\n';
+const VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML =
+  '<p data-easymde-visual-block-id="b0">Before</p>';
+// Cutting inside the paragraph keeps both blocks in the rebuilt Preview.
+const VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER =
+  'Bre\n\n~~~js\nalpha\n~~~';
+const VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER_HTML = [
+  '<p data-easymde-visual-block-id="b0">Bre</p>',
+  VISUAL_HISTORY_REBUILD_CODE_HTML
+].join('');
+
+function visualHistoryRebuildEditMap(signature: string): PreviewEditMap {
+  return {
+    blocks: [
+      { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+      { editable: true, endLine: 5, id: 'b1', startLine: 2 }
+    ],
+    coordinate: 'line',
+    signature,
+    version: 1
+  };
+}
+
+function visualHistoryRebuildCodeRemainderEditMap(
+  signature: string
+): PreviewEditMap {
+  return {
+    blocks: [{ editable: true, endLine: 1, id: 'b0', startLine: 0 }],
+    coordinate: 'line',
+    signature,
+    version: 1
+  };
+}
+
+function createVisualHistoryRebuildFixture() {
+  const surface = document.createElement('article');
+  surface.contentEditable = 'true';
+  surface.tabIndex = 0;
+  surface.innerHTML = VISUAL_HISTORY_REBUILD_HTML;
+  const container = document.createElement('div');
+  const submissionField = document.createElement('textarea');
+  submissionField.value = VISUAL_HISTORY_REBUILD_MARKDOWN;
+  submissionField.defaultValue = VISUAL_HISTORY_REBUILD_MARKDOWN;
+  document.body.append(surface, container, submissionField);
+  const history = createCodeMirrorDocumentSession({
+    container,
+    label: 'Markdown source',
+    submissionField
+  });
+  const initialSignature = 'visual-history-rebuild-initial';
+  let previewRevision = 1;
+  let previewRequestCount = 0;
+  const requestPreview = vi.fn((_markdown: string) => {
+    previewRequestCount += 1;
+    return `visual-history-rebuild-${previewRequestCount}`;
+  });
+  const onFailure = vi.fn();
+  const onPendingChange = vi.fn();
+  const onTransferFailure = vi.fn();
+  const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+    current: null
+  };
+  let previewSnapshot = {
+    editMap: visualHistoryRebuildEditMap(initialSignature),
+    revision: previewRevision,
+    signature: initialSignature
+  };
+  const props = {
+    documentSession: {
+      document: history
+    } as unknown as EditorDocumentSession,
+    imageUploadEnabled: false,
+    imagePasteUploadEnabled: false,
+    onCanonicalDocumentChange: vi.fn(),
+    onDiagnostic: vi.fn(),
+    onDispose: vi.fn(),
+    onFailure,
+    onMarkdownChange: vi.fn(),
+    onPendingChange,
+    onReady: (runtime: ImmersiveVisualEditorRuntime) => {
+      runtimeHolder.current = runtime;
+    },
+    onTransferFailure,
+    pending: false,
+    previewSnapshot,
+    previewStatus: 'ready' as PreviewSurfaceStatus,
+    requestPreview,
+    surface
+  };
+  const view = render(<ImmersiveVisualEditor {...props} />);
+  const rerender = (previewStatus?: PreviewSurfaceStatus): void => {
+    view.rerender(
+      <ImmersiveVisualEditor
+        {...props}
+        previewSnapshot={previewSnapshot}
+        previewStatus={previewStatus ?? 'ready'}
+      />
+    );
+  };
+  const acceptPreview = (
+    markdown: string,
+    html: string,
+    editMap: PreviewEditMap,
+    signature?: string
+  ): void => {
+    const acceptedSignature = signature
+      ?? requestPreview.mock.results.at(-1)?.value;
+    if ('string' !== typeof acceptedSignature) {
+      throw new Error('visual-history-rebuild-signature-missing');
+    }
+    if (markdown !== history.getValue()) {
+      throw new Error('visual-history-rebuild-preview-markdown-mismatch');
+    }
+    surface.innerHTML = html;
+    previewRevision += 1;
+    previewSnapshot = {
+      editMap: { ...editMap, signature: acceptedSignature },
+      revision: previewRevision,
+      signature: acceptedSignature
+    };
+    rerender();
+  };
+  return {
+    acceptPreview,
+    history,
+    onFailure,
+    onPendingChange,
+    onTransferFailure,
+    requestPreview,
+    runtime: (): ImmersiveVisualEditorRuntime => {
+      if (!runtimeHolder.current) {
+        throw new Error('visual-history-rebuild-runtime-missing');
+      }
+      return runtimeHolder.current;
+    },
+    setPreviewStatus: (status: PreviewSurfaceStatus): void => {
+      rerender(status);
+    },
+    surface,
+    unmount: (): void => {
+      view.unmount();
+      history.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  };
+}
+
+async function performVisualHistoryCut(
+  fixture: ReturnType<typeof createVisualHistoryRebuildFixture>,
+  prepared: Readonly<{
+    direction: 'backward' | 'forward' | 'none';
+    end: number;
+    start: number;
+  }>
+): Promise<Readonly<{ clipboardText: string; value: string }>> {
+  const clipboardText = VISUAL_HISTORY_REBUILD_MARKDOWN.slice(
+    prepared.start,
+    prepared.end
+  );
+  const writeControl: { settle: (() => void) | null } = { settle: null };
+  const clipboardWrite = vi.fn(
+    (_text: string) =>
+      new Promise<{ status: 'written' }>((resolve) => {
+        writeControl.settle = () => resolve({ status: 'written' });
+      })
+  );
+  const pendingWrite = clipboardWrite(clipboardText);
+  // The Cut owner writes the Clipboard before it deletes: the canonical
+  // document must still hold the selection while the write is unsettled.
+  expect(fixture.history.getValue()).toBe(VISUAL_HISTORY_REBUILD_MARKDOWN);
+  if (!writeControl.settle) {
+    throw new Error('visual-history-rebuild-clipboard-unsettled');
+  }
+  writeControl.settle();
+  await expect(pendingWrite).resolves.toEqual({ status: 'written' });
+  const value =
+    VISUAL_HISTORY_REBUILD_MARKDOWN.slice(0, prepared.start)
+    + VISUAL_HISTORY_REBUILD_MARKDOWN.slice(prepared.end);
+  const result = fixture.runtime().applyCanonicalChange({
+    change: {
+      changes: { from: prepared.start, insert: '', to: prepared.end },
+      selection: {
+        direction: 'none',
+        end: prepared.start,
+        start: prepared.start
+      },
+      value
+    },
+    expected: {
+      revision: fixture.history.getRevision?.() ?? 0,
+      selection: prepared,
+      value: VISUAL_HISTORY_REBUILD_MARKDOWN
+    }
+  });
+  expect(result).toBe('handled');
+  expect(clipboardWrite).toHaveBeenCalledOnce();
+  expect(clipboardWrite).toHaveBeenCalledWith(clipboardText);
+  expect(fixture.history.getValue()).toBe(value);
+  expect(fixture.onFailure).not.toHaveBeenCalled();
+  expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+  return { clipboardText, value };
+}
+
+async function visualHistoryCutCodeBlock(
+  fixture: ReturnType<typeof createVisualHistoryRebuildFixture>
+): Promise<Readonly<{ clipboardText: string; value: string }>> {
+  const code = fixture.surface.querySelector('pre > code');
+  const codeText = code?.firstChild;
+  if (!(code instanceof HTMLElement) || !(codeText instanceof Text)) {
+    throw new Error('visual-history-rebuild-code-missing');
+  }
+  placeCaretInText(codeText, 2);
+  expect(
+    fixture.runtime().prepareContextMenuSelection?.(code, { x: 12, y: 12 })
+  ).toBe(true);
+  const prepared = fixture.history.getSelection();
+  expect(prepared).toEqual({
+    // The canonical owner normalizes a non-empty selection to a direction.
+    direction: 'forward',
+    end: VISUAL_HISTORY_REBUILD_CODE_BLOCK_END,
+    start: VISUAL_HISTORY_REBUILD_CODE_BLOCK_START
+  });
+  return performVisualHistoryCut(fixture, prepared);
+}
+
+async function visualHistoryCutParagraph(
+  fixture: ReturnType<typeof createVisualHistoryRebuildFixture>,
+  backward: boolean
+): Promise<Readonly<{ clipboardText: string; value: string }>> {
+  const paragraph = fixture.surface.querySelector('p');
+  const paragraphText = paragraph?.firstChild;
+  if (!(paragraph instanceof HTMLElement) || !(paragraphText instanceof Text)) {
+    throw new Error('visual-history-rebuild-paragraph-missing');
+  }
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  if (backward) {
+    selection?.setBaseAndExtent(paragraphText, 4, paragraphText, 1);
+  } else {
+    selection?.setBaseAndExtent(paragraphText, 1, paragraphText, 4);
+  }
+  expect(
+    fixture.runtime().prepareContextMenuSelection?.(paragraph, {
+      x: 20,
+      y: 40
+    })
+  ).toBe(true);
+  const prepared = fixture.history.getSelection();
+  expect(prepared).toEqual({
+    direction: backward ? 'backward' : 'forward',
+    end: VISUAL_HISTORY_REBUILD_PARAGRAPH_END,
+    start: VISUAL_HISTORY_REBUILD_PARAGRAPH_START
+  });
+  return performVisualHistoryCut(fixture, prepared);
+}
+
 describe('ImmersiveVisualEditor', () => {
+  it('projects PRE endpoints through CODE content boundaries on the full surface', () => {
+    const source = 'Before\n\n~~~js\nAlpha\n~~~\n\nAfter';
+    const surface = document.createElement('article');
+    surface.innerHTML =
+      '<p>Before</p>'
+      + '<pre data-easymde-visual-fence="~~~" '
+      + 'data-easymde-visual-fence-info="js"><code>Alpha</code></pre>'
+      + '<p>After</p>';
+    document.body.append(surface);
+    const pre = surface.querySelector('pre');
+    const afterText = surface.querySelector('p:last-child')?.firstChild;
+    if (!(pre instanceof HTMLElement) || !(afterText instanceof Text)) {
+      throw new Error('immersive-pre-boundary-fixture-invalid');
+    }
+    const selection = window.getSelection();
+    selection?.setBaseAndExtent(afterText, 2, pre, 0);
+
+    expect(
+      visualMarkdown.visualSelectionSourceRange(surface, source, source)
+    ).toEqual({
+      direction: 'backward',
+      end: source.indexOf('After') + 2,
+      start: source.indexOf('Alpha')
+    });
+    surface.remove();
+  });
+
+  it('keeps a straddling selection and rejects the image context gesture', () => {
+    const imageMarkdown = '![alt](https://example.test/image.png)';
+    const source = `Before ${imageMarkdown} after`;
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<p>Before <img alt="alt" src="https://example.test/image.png"> after</p>';
+    document.body.append(surface);
+    const outside = document.createElement('p');
+    outside.textContent = 'Outside';
+    document.body.append(outside);
+    const documentSession = {
+      document: history.document
+    } as unknown as EditorDocumentSession;
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={documentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={vi.fn()}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'straddling-image-context-menu' }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const insideText = surface.querySelector('p')?.firstChild;
+    const image = surface.querySelector('img');
+    const outsideText = outside.firstChild;
+    if (
+      !(insideText instanceof Text)
+      || !(image instanceof HTMLImageElement)
+      || !(outsideText instanceof Text)
+    ) {
+      throw new Error('full-straddling-image-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(insideText, 0);
+    range.setEnd(outsideText, 3);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    try {
+      expect(runtimeHolder.current?.prepareContextMenuSelection?.(image)).toBe(false);
+      expect(history.applyTextChange).not.toHaveBeenCalled();
+      expect(selection?.rangeCount).toBe(1);
+      expect(selection?.anchorNode).toBe(insideText);
+      expect(selection?.focusNode).toBe(outsideText);
+    } finally {
+      view.unmount();
+      surface.remove();
+      outside.remove();
+    }
+  });
+
   it('preserves a mixed text-and-image range for an image context target', () => {
     const imageMarkdown = '![alt](https://example.test/image.png)';
     const source = `Before ${imageMarkdown} after`;
@@ -540,6 +912,70 @@ describe('ImmersiveVisualEditor', () => {
     }
   });
 
+  it('maps a cold nested quote code target from the pointer hit', () => {
+    const source = '> ```js\n> alpha\n> ```';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML =
+      '<blockquote data-easymde-visual-block-id="b0"><pre data-easymde-visual-fence="```" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>';
+    document.body.append(surface);
+    const onFailure = vi.fn();
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={{ document: history.document } as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{
+          editMap: oneFencedBlockEditMap(source, 'nested-cold-context'),
+          revision: 1,
+          signature: 'nested-cold-context'
+        }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const code = surface.querySelector('blockquote pre > code');
+    if (!(code instanceof HTMLElement)) {
+      throw new Error('visual-cold-nested-code-context-fixture-missing');
+    }
+    window.getSelection()?.removeAllRanges();
+
+    try {
+      expect(
+        runtimeHolder.current?.prepareContextMenuSelection?.(code, {
+          x: 20,
+          y: 20
+        })
+      ).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getSelection()).toEqual({
+        direction: 'none',
+        end: source.indexOf('alpha'),
+        start: source.indexOf('alpha')
+      });
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
   it('selects the owning block for a collapsed nested quote code target', () => {
     const source = '> ```js\n> alpha\n> ```';
     const history = createHistoryDocument(source);
@@ -745,6 +1181,65 @@ describe('ImmersiveVisualEditor', () => {
       select(6, 10);
       expect(runtimeHolder.current?.executeCommand(bold)).toBe('handled');
       expect(history.document.getValue()).toBe('alpha **beta**');
+    } finally {
+      view.unmount();
+      surface.remove();
+    }
+  });
+
+  it('creates a current-surface caret for a cold-entry context menu', () => {
+    const source = 'alpha beta';
+    const history = createHistoryDocument(source);
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    surface.tabIndex = 0;
+    surface.innerHTML = '<p>alpha beta</p>';
+    document.body.append(surface);
+    const onFailure = vi.fn();
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null
+    };
+    const view = render(
+      <ImmersiveVisualEditor
+        documentSession={{ document: history.document } as unknown as EditorDocumentSession}
+        imageUploadEnabled={false}
+        imagePasteUploadEnabled={false}
+        onCanonicalDocumentChange={vi.fn()}
+        onDiagnostic={vi.fn()}
+        onDispose={vi.fn()}
+        onFailure={onFailure}
+        onMarkdownChange={vi.fn()}
+        onPendingChange={vi.fn()}
+        onReady={(runtime) => {
+          runtimeHolder.current = runtime;
+        }}
+        onTransferFailure={vi.fn()}
+        pending={false}
+        previewSnapshot={{ revision: 1, signature: 'cold-entry-context-menu' }}
+        previewStatus='ready'
+        requestPreview={vi.fn(() => 'next')}
+        surface={surface}
+      />
+    );
+    const paragraph = surface.querySelector('p');
+    if (!(paragraph instanceof HTMLElement)) {
+      throw new Error('full-cold-entry-context-fixture-missing');
+    }
+    window.getSelection()?.removeAllRanges();
+
+    try {
+      expect(
+        runtimeHolder.current?.prepareContextMenuSelection?.(paragraph, {
+          x: 20,
+          y: 20
+        })
+      ).toBe(true);
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(history.document.getSelection()).toEqual({
+        direction: 'none',
+        end: 0,
+        start: 0
+      });
     } finally {
       view.unmount();
       surface.remove();
@@ -1338,6 +1833,130 @@ describe('ImmersiveVisualEditor', () => {
       expect(onPendingChange).toHaveBeenCalledWith(true);
       expect(requestPreview).toHaveBeenCalledWith(nextValue);
       expect(onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps a landed canonical replacement pending until the accepted render owns the block', async () => {
+    const source = 'alpha beta gamma';
+    const surface = document.createElement('article');
+    surface.innerHTML =
+      '<p data-easymde-visual-block-id="b0">alpha beta gamma</p>';
+    document.body.append(surface);
+    let canonical = source;
+    let revision = 0;
+    let selection: DocumentTextChange['selection'] = {
+      direction: 'none',
+      end: 0,
+      start: 0
+    };
+    const applyTextChange = vi.fn((change: DocumentTextChange) => {
+      selection = change.selection;
+      if (change.value !== canonical) revision += 1;
+      canonical = change.value;
+    });
+    const documentSession = {
+      document: {
+        applyTextChange,
+        getHistoryState: () => ({ redoDepth: 0, undoDepth: revision }),
+        getRevision: () => revision,
+        getSelection: () => selection,
+        getValue: () => canonical,
+        setVisualEditingActive: vi.fn(),
+        subscribe: () => vi.fn()
+      }
+    } as unknown as EditorDocumentSession;
+    const editMap = (signature: string): PreviewEditMap => ({
+      blocks: [{ editable: true, endLine: 1, id: 'b0', startLine: 0 }],
+      coordinate: 'line',
+      signature,
+      version: 1
+    });
+    const requestPreview = vi.fn(() => 'visual-cut-next');
+    const onCanonicalDocumentChange = vi.fn();
+    const onDiagnostic = vi.fn();
+    const onDispose = vi.fn();
+    const onFailure = vi.fn();
+    const onMarkdownChange = vi.fn();
+    const onPendingChange = vi.fn();
+    const onTransferFailure = vi.fn();
+    let runtime: ImmersiveVisualEditorRuntime | null = null;
+    const onReady = (nextRuntime: ImmersiveVisualEditorRuntime) => {
+      runtime = nextRuntime;
+    };
+    const editor = (signature: string, snapshotRevision: number) =>
+      createElement(ImmersiveVisualEditor, {
+        documentSession,
+        imageUploadEnabled: false,
+        imagePasteUploadEnabled: false,
+        onCanonicalDocumentChange,
+        onDiagnostic,
+        onDispose,
+        onFailure,
+        onMarkdownChange,
+        onPendingChange,
+        onReady,
+        onTransferFailure,
+        pending: false,
+        previewSnapshot: {
+          editMap: editMap(signature),
+          revision: snapshotRevision,
+          signature
+        },
+        previewStatus: 'ready' as const,
+        requestPreview,
+        surface
+      });
+    const view = render(editor('visual-cut-accepted', 1));
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(text instanceof Text) || !runtime) {
+      throw new Error('visual-canonical-adoption-fixture-missing');
+    }
+    const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+    // The Cut owner writes the Clipboard first and then deletes the native
+    // selection, leaving the caret where the removed text started.
+    selection = { direction: 'forward', end: 11, start: 6 };
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.setBaseAndExtent(text, 6, text, 11);
+
+    try {
+      expect(
+        readyRuntime.applyCanonicalChange({
+          change: {
+            changes: { from: 6, insert: '', to: 11 },
+            selection: { direction: 'none', end: 6, start: 6 },
+            value: 'alpha gamma'
+          },
+          expected: { revision: 0, selection, value: source }
+        })
+      ).toBe('handled');
+      expect(canonical).toBe('alpha gamma');
+      expect(requestPreview).toHaveBeenCalledWith('alpha gamma');
+
+      // The accepted Preview snapshot for the new value arrives before the
+      // Preview sink has replaced the block DOM. The already-landed command
+      // must wait for that adoption instead of reporting a failed action.
+      view.rerender(editor('visual-cut-next', 2));
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(onDiagnostic).toHaveBeenCalledWith(
+        'visual-editor-canonical-change-preview-adoption-wait'
+      );
+      expect(onPendingChange).toHaveBeenLastCalledWith(true);
+
+      // Adoption: the accepted render for the new Markdown owns the surface.
+      surface.innerHTML =
+        '<p data-easymde-visual-block-id="b0">alpha gamma</p>';
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(onFailure).not.toHaveBeenCalled();
+      expect(onPendingChange).toHaveBeenLastCalledWith(false);
+      const current = window.getSelection();
+      expect(current?.isCollapsed).toBe(true);
+      expect(current?.anchorNode).toBe(surface.querySelector('p')?.firstChild);
+      expect(current?.anchorOffset).toBe(6);
     } finally {
       view.unmount();
     }
@@ -14854,5 +15473,432 @@ describe('ImmersiveVisualEditor', () => {
     });
 
     expect(applyTextChange).not.toHaveBeenCalled();
+  });
+  it('rebuilds a cut code block through the formal Preview owner before Undo restores it', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      const cut = await visualHistoryCutCodeBlock(fixture);
+      expect(cut.clipboardText).toBe('~~~js\nalpha\n~~~');
+      expect(cut.value).toBe(VISUAL_HISTORY_REBUILD_CODE_REMAINDER);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      expect(fixture.history.getValue()).toBe(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+
+      const previewsBeforeUndo = fixture.requestPreview.mock.calls.length;
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      expect(undo.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe(VISUAL_HISTORY_REBUILD_MARKDOWN);
+      expect(fixture.requestPreview).toHaveBeenCalledTimes(
+        previewsBeforeUndo + 1
+      );
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(false);
+      expect(fixture.history.getValue()).toBe(VISUAL_HISTORY_REBUILD_MARKDOWN);
+      expect(fixture.history.getHistoryState().redoDepth).toBe(1);
+
+      const restoredCode = fixture.surface.querySelector('pre > code');
+      const restoredCodeText = restoredCode?.firstChild;
+      if (
+        !(restoredCode instanceof HTMLElement)
+        || !(restoredCodeText instanceof Text)
+      ) {
+        throw new Error('visual-history-rebuild-restored-code-missing');
+      }
+      placeCaretInText(restoredCodeText, 2);
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(restoredCode, {
+          x: 12,
+          y: 12
+        })
+      ).toBe(true);
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'forward',
+        end: VISUAL_HISTORY_REBUILD_CODE_BLOCK_END,
+        start: VISUAL_HISTORY_REBUILD_CODE_BLOCK_START
+      });
+
+      const paragraph = fixture.surface.querySelector('p');
+      const paragraphText = paragraph?.firstChild;
+      if (
+        !(paragraph instanceof HTMLElement)
+        || !(paragraphText instanceof Text)
+      ) {
+        throw new Error('visual-history-rebuild-paragraph-missing');
+      }
+      placeCaretInText(paragraphText);
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(paragraph, {
+          x: 20,
+          y: 40
+        })
+      ).toBe(true);
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'none',
+        end: VISUAL_HISTORY_REBUILD_PARAGRAPH_CARET,
+        start: VISUAL_HISTORY_REBUILD_PARAGRAPH_CARET
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('keeps the context-menu Cut working across an Undo that rebuilds the Preview', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+
+      const undoCut = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undoCut);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+
+      const secondCut = await visualHistoryCutCodeBlock(fixture);
+      expect(secondCut.clipboardText).toBe('~~~js\nalpha\n~~~');
+      expect(secondCut.value).toBe(VISUAL_HISTORY_REBUILD_CODE_REMAINDER);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      expect(fixture.history.getValue()).toBe(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER
+      );
+
+      const undoSecondCut = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undoSecondCut);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+
+      const paragraph = fixture.surface.querySelector('p');
+      const paragraphText = paragraph?.firstChild;
+      if (
+        !(paragraph instanceof HTMLElement)
+        || !(paragraphText instanceof Text)
+      ) {
+        throw new Error('visual-history-rebuild-paragraph-missing');
+      }
+      placeCaretInText(paragraphText);
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(paragraph, {
+          x: 20,
+          y: 40
+        })
+      ).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('rebuilds the Preview for each direction of a consecutive Undo and Redo', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+
+      const redo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        shiftKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(redo);
+      expect(redo.defaultPrevented).toBe(true);
+      expect(fixture.history.getValue()).toBe(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER
+      );
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER
+      );
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      expect(fixture.surface.querySelector('pre')).toBeNull();
+
+      const secondUndo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(secondUndo);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+
+      const restoredCode = fixture.surface.querySelector('pre > code');
+      const restoredCodeText = restoredCode?.firstChild;
+      if (
+        !(restoredCode instanceof HTMLElement)
+        || !(restoredCodeText instanceof Text)
+      ) {
+        throw new Error('visual-history-rebuild-restored-code-missing');
+      }
+      placeCaretInText(restoredCodeText, 2);
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(restoredCode, {
+          x: 12,
+          y: 12
+        })
+      ).toBe(true);
+      expect(fixture.history.getHistoryState()).toEqual({
+        redoDepth: 1,
+        undoDepth: 0
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('restores the reverse native selection direction when Undo rebuilds the Preview', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      const cut = await visualHistoryCutParagraph(fixture, true);
+      expect(cut.clipboardText).toBe('efo');
+      expect(cut.value).toBe(VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER,
+        VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+      expect(fixture.history.getValue()).toBe(
+        VISUAL_HISTORY_REBUILD_PARAGRAPH_REMAINDER
+      );
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+      expect(fixture.history.getHistoryState()).toEqual({
+        redoDepth: 0,
+        undoDepth: 1
+      });
+
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+
+      const restoredSelection = window.getSelection();
+      expect(restoredSelection?.isCollapsed).toBe(false);
+      expect(restoredSelection?.anchorOffset).toBe(4);
+      expect(restoredSelection?.focusOffset).toBe(1);
+      expect(fixture.history.getSelection()).toEqual({
+        direction: 'backward',
+        end: VISUAL_HISTORY_REBUILD_PARAGRAPH_END,
+        start: VISUAL_HISTORY_REBUILD_PARAGRAPH_START
+      });
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('refuses context-menu preparation while the history rebuild is pending', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+
+      const pendingCode = fixture.surface.querySelector('pre > code');
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(pendingCode, {
+          x: 12,
+          y: 12
+        })
+      ).toBe(false);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused')
+      );
+      const restoredCode = fixture.surface.querySelector('pre > code');
+      const restoredCodeText = restoredCode?.firstChild;
+      if (
+        !(restoredCode instanceof HTMLElement)
+        || !(restoredCodeText instanceof Text)
+      ) {
+        throw new Error('visual-history-rebuild-restored-code-missing');
+      }
+      placeCaretInText(restoredCodeText, 2);
+      expect(
+        fixture.runtime().prepareContextMenuSelection?.(restoredCode, {
+          x: 12,
+          y: 12
+        })
+      ).toBe(true);
+      expect(fixture.onFailure).not.toHaveBeenCalled();
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('rejects a stale Preview for an Undo that rebuilds the history snapshot', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      expect(fixture.requestPreview).toHaveBeenLastCalledWith(
+        VISUAL_HISTORY_REBUILD_MARKDOWN
+      );
+
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_MARKDOWN,
+        VISUAL_HISTORY_REBUILD_HTML,
+        visualHistoryRebuildEditMap('unused'),
+        'visual-history-rebuild-superseded'
+      );
+      expect(fixture.onFailure).toHaveBeenLastCalledWith(
+        'visual-editor-history-preview-stale'
+      );
+      expect(fixture.onTransferFailure).toHaveBeenCalledOnce();
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(false);
+      expect(fixture.history.getValue()).toBe(VISUAL_HISTORY_REBUILD_MARKDOWN);
+    } finally {
+      fixture.unmount();
+    }
+  });
+
+  it('reports a failed Preview for an Undo that rebuilds the history snapshot', async () => {
+    const fixture = createVisualHistoryRebuildFixture();
+    try {
+      await visualHistoryCutCodeBlock(fixture);
+      fixture.acceptPreview(
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER,
+        VISUAL_HISTORY_REBUILD_CODE_REMAINDER_HTML,
+        visualHistoryRebuildCodeRemainderEditMap('unused')
+      );
+      const undo = new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z'
+      });
+      fixture.surface.dispatchEvent(undo);
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(true);
+
+      fixture.setPreviewStatus('error');
+      expect(fixture.onFailure).toHaveBeenLastCalledWith(
+        'visual-editor-history-preview-failed'
+      );
+      expect(fixture.onTransferFailure).toHaveBeenCalledOnce();
+      expect(fixture.onPendingChange).toHaveBeenLastCalledWith(false);
+      expect(fixture.history.getValue()).toBe(VISUAL_HISTORY_REBUILD_MARKDOWN);
+    } finally {
+      fixture.unmount();
+    }
   });
 });

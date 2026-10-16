@@ -10,8 +10,6 @@ import type { WordPressApiFetch } from '../integrations/wordpress/preview/create
 import { createBrowserScrollSync } from '../integrations/browser/editor-layout/create-browser-scroll-sync';
 import { createBrowserEditorClipboard } from '../integrations/browser/clipboard/create-browser-editor-clipboard';
 import { createBrowserEditorImagePixels } from '../integrations/browser/image-copy/create-browser-editor-image-pixels';
-import { createBrowserEditorDownload } from '../integrations/browser/download/create-browser-editor-download';
-import { createBrowserEditorLink } from '../integrations/browser/link/create-browser-editor-link';
 import {
   createBrowserEditorBlockIndexWorker,
   type CreateBrowserEditorBlockIndexWorkerOptions
@@ -384,17 +382,6 @@ export function mountAdminEditor(
       : {}),
     workerUrl: bootstrap.editorBlockIndexWorkerUrl
   });
-  const browserUrl = (windowRef as Window & { URL: typeof URL }).URL;
-  const editorDownloadPort = createBrowserEditorDownload({
-    createObjectURL: (image) => browserUrl.createObjectURL(image),
-    document: documentRef,
-    revokeObjectURL: (url) => browserUrl.revokeObjectURL(url),
-    setTimeout: (callback, delayMs) => windowRef.setTimeout(callback, delayMs)
-  });
-  const editorLinkPort = createBrowserEditorLink({
-    baseUrl: windowRef.location.href,
-    open: (href, target, features) => windowRef.open(href, target, features)
-  });
   const wechatVisualRasterizer = createBrowserWechatVisualRasterizer({
     blob: Blob,
     document: documentRef,
@@ -404,7 +391,6 @@ export function mountAdminEditor(
   });
   const generatedContentExportSession = createGeneratedContentExportSession({
     clipboard: editorClipboardPort,
-    download: editorDownloadPort,
     rasterizer: wechatVisualRasterizer
   });
   const props: EditorRootProps = {
@@ -424,7 +410,6 @@ export function mountAdminEditor(
     editorBlockIndexPort,
     editorClipboardPort,
     editorImagePixelsPort,
-    editorLinkPort,
     enhancementPort,
     executeExternalCommand: createExternalCommandExecutor(
       bootstrap,
@@ -595,8 +580,6 @@ export function mountAdminEditor(
     editorBlockIndexPort.dispose();
     editorClipboardPort.dispose();
     editorImagePixelsPort.dispose();
-    editorDownloadPort.dispose();
-    editorLinkPort.dispose();
     nativeEditor?.classList.remove('easymde-native-editor-hidden');
   };
 }

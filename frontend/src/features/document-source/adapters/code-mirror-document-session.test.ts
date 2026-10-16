@@ -1513,3 +1513,156 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(session.getValue()).toBe('alpha beta');
   });
 });
+
+describe('prepareContextMenuPointer', () => {
+  function sourceFixture(value: string, caret: number) {
+    const container = document.createElement('div');
+    const submissionField = document.createElement('textarea');
+    submissionField.value = value;
+    submissionField.setSelectionRange(caret, caret);
+    document.body.append(container, submissionField);
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    const view = EditorView.findFromDOM(session.getInputElement());
+    if (!view) throw new Error('test-editor-view-missing');
+    return { container, session, submissionField, view };
+  }
+
+  it('commits the pointer-mapped selection without writing or recording history', () => {
+    const value = '## Heading two\n\nBody';
+    // The caret starts at the document end: a bare pointer gesture must move
+    // it to the pointed position instead of reusing that stale caret.
+    const { session, submissionField, view } = sourceFixture(value, value.length);
+    const pointer = { x: 1, y: 0 };
+    const mapped = view.posAtCoords(pointer, false);
+    if (null === mapped) throw new Error('test-pointer-unmappable');
+    expect(mapped).toBeLessThan(value.length);
+    const snapshotBefore = session.getSnapshot();
+    const revisionBefore = session.getRevision?.();
+    const historyBefore = session.getHistoryState();
+
+    expect(session.prepareContextMenuPointer(pointer)).toBe(true);
+
+    expect(session.getSelection()).toEqual({
+      direction: 'none',
+      end: mapped,
+      start: mapped
+    });
+    // No document write, no published revision, and no history entry: the
+    // transaction changes the selection only.
+    expect(session.getSnapshot()).toEqual(snapshotBefore);
+    expect(session.getRevision?.()).toBe(revisionBefore);
+    expect(session.getHistoryState()).toEqual(historyBefore);
+    expect(session.canUndo()).toBe(false);
+    expect(session.canRedo()).toBe(false);
+    // It is not a selection history step either: `undoSelection` (Mod-u /
+    // Alt-u) has nothing to pop, so opening the menu cannot become an
+    // observable history action.
+    expect(
+      undoSelection({
+        dispatch: (transaction) => view.dispatch(transaction),
+        state: view.state
+      })
+    ).toBe(false);
+    expect(session.getHistoryState()).toEqual(historyBefore);
+    // The hidden submission field stays a projection of the canonical
+    // selection rather than the owner of the pointer mapping.
+    expect(submissionField.selectionStart).toBe(mapped);
+    expect(submissionField.selectionEnd).toBe(mapped);
+    expect(submissionField.selectionDirection).toBe('none');
+
+    session.destroy();
+  });
+
+  it('keeps the pointer selection out of the undo and redo history', () => {
+    const value = 'alpha beta';
+    const { session, view } = sourceFixture(value, 0);
+    // A real edit owns exactly one undo step.
+    session.applyTextChange({
+      changes: { from: 5, insert: ' beta two', to: 10 },
+      selection: { direction: 'none', end: 14, start: 14 },
+      value: 'alpha beta two'
+    });
+    expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+    const edited = session.getValue();
+
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(true);
+    expect(session.getSelection()).not.toEqual({
+      direction: 'none',
+      end: 14,
+      start: 14
+    });
+    // Opening the menu recorded nothing: the recorded history is unchanged,
+    // and the first selection-undo still consumes the real edit instead of a
+    // pointer-selection step that a retained history entry would offer first.
+    expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+    expect(
+      undoSelection({
+        dispatch: (transaction) => view.dispatch(transaction),
+        state: view.state
+      })
+    ).toBe(true);
+    expect(session.getValue()).toBe(value);
+    expect(session.getHistoryState()).toEqual({ redoDepth: 1, undoDepth: 0 });
+
+    // The pre-existing edit is still redoable.
+    expect(session.redo()).toBe(true);
+    expect(session.getValue()).toBe(edited);
+    expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+
+    session.destroy();
+  });
+
+  it('preserves a deliberate non-empty selection and its direction', () => {
+    const { container, submissionField } = createFixture('alpha beta');
+    const session = createCodeMirrorDocumentSession({
+      container,
+      label: 'Markdown source',
+      submissionField
+    });
+    expect(session.getSelection()).toEqual({
+      direction: 'backward',
+      end: 10,
+      start: 6
+    });
+
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(true);
+
+    expect(session.getSelection()).toEqual({
+      direction: 'backward',
+      end: 10,
+      start: 6
+    });
+    expect(session.getValue()).toBe('alpha beta');
+    expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 0 });
+
+    session.destroy();
+  });
+
+  it('rejects an unmappable pointer, a detached view, a read-only source, and a destroyed session', () => {
+    const { container, session, submissionField, view } = sourceFixture('alpha beta', 5);
+    const selection = { direction: 'none', end: 5, start: 5 };
+    const unmappable = vi.spyOn(view, 'posAtCoords').mockReturnValue(null);
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(false);
+    unmappable.mockRestore();
+
+    expect(session.prepareContextMenuPointer({ x: Number.NaN, y: 0 })).toBe(false);
+    expect(session.prepareContextMenuPointer({ x: 0, y: Number.POSITIVE_INFINITY })).toBe(false);
+    expect(session.getSelection()).toEqual(selection);
+
+    submissionField.readOnly = true;
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(false);
+    submissionField.readOnly = false;
+    expect(session.getSelection()).toEqual(selection);
+
+    container.remove();
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(false);
+
+    session.destroy();
+    expect(session.prepareContextMenuPointer({ x: 1, y: 0 })).toBe(false);
+    expect(session.getSelection()).toEqual(selection);
+  });
+});

@@ -11,12 +11,19 @@ import { createCodeMirrorDocumentSession } from "../../document-source/adapters/
 import { createNativeTitleSession } from "../../document-source/adapters/native-title-session";
 import type { EditorDocumentSession } from "../../document-source/editor-document-session";
 import { createEditorDocumentSession } from "../../document-source/editor-document-session";
-import { createVisualMarkdownSourceRangeFromPreviewEditMap } from "../visual-markdown";
+import {
+	createVisualMarkdownSourceRangeFromPreviewEditMap,
+	serializeVisualMarkdownBlockFragment,
+	visualSelectionSourceRangeForBlocks,
+} from "../visual-markdown";
 import type {
 	ImmersiveVisualEditorRuntime,
 	ImmersiveWindowAcceptedSnapshot,
 } from "./ImmersiveVisualEditor";
-import { WindowedImmersiveVisualEditor } from "./WindowedImmersiveVisualEditor";
+import {
+	resolveLiveWindowContextMenuTarget,
+	WindowedImmersiveVisualEditor,
+} from "./WindowedImmersiveVisualEditor";
 
 function fixture(
 	options: Readonly<{
@@ -533,6 +540,90 @@ function dispatchCodeBodyDeletion(
 }
 
 describe("WindowedImmersiveVisualEditor", () => {
+	it("creates a current-surface caret for a cold-entry context menu", () => {
+		const blockIndex = 160;
+		const current = fixture({
+			markupOverrides: {
+				[blockIndex]: `<p data-easymde-visual-block-id="b${blockIndex}">Line ${blockIndex}</p>`,
+			},
+			mounted: [blockIndex],
+		});
+		const onFailure = vi.fn();
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const paragraph = current.surface.querySelector("p");
+		if (!(paragraph instanceof HTMLElement) || !runtimeHolder.current) {
+			throw new Error("windowed-cold-entry-context-fixture-missing");
+		}
+		window.getSelection()?.removeAllRanges();
+
+		try {
+			expect(
+			runtimeHolder.current.prepareContextMenuSelection?.(paragraph, { x: 20, y: 20 }),
+			).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(current.applyTextChange).toHaveBeenCalledOnce();
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("projects PRE endpoints through CODE content boundaries across mounted blocks", () => {
+		const current = fixture({
+			blockOverrides: {
+				0: "~~~js\nAlpha\n~~~",
+				1: "After",
+			},
+			markupOverrides: {
+				0: '<pre data-easymde-visual-block-id="b0" '
+					+ 'data-easymde-visual-fence="~~~" '
+					+ 'data-easymde-visual-fence-info="js"><code>Alpha</code></pre>',
+				1: '<p data-easymde-visual-block-id="b1">After</p>',
+			},
+			mounted: [0, 1],
+			paragraphBlocks: true,
+			sourceBlockCount: 2,
+		});
+		const { view } = renderWindowEditor(current);
+		const pre = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b0"]',
+		);
+		const afterText = current.surface.querySelector(
+			'[data-easymde-visual-block-id="b1"]',
+		)?.firstChild;
+		const blocks = Array.from(
+			current.surface.querySelectorAll<HTMLElement>(
+				'[data-easymde-visual-block-id]',
+			),
+		);
+		if (!(pre instanceof HTMLElement)
+			|| !(afterText instanceof Text)
+			|| 2 !== blocks.length) {
+			throw new Error("windowed-pre-boundary-fixture-invalid");
+		}
+		const selection = window.getSelection();
+		selection?.setBaseAndExtent(afterText, 2, pre, 0);
+		const source = current.canonical();
+		const baseline = serializeVisualMarkdownBlockFragment(blocks);
+
+		expect(
+			visualSelectionSourceRangeForBlocks(blocks, source, baseline),
+		).toEqual({
+			direction: "backward",
+			end: source.indexOf("After") + 2,
+			start: source.indexOf("Alpha"),
+		});
+		view.unmount();
+	});
+
 	it.each([
 		{ backward: false, direction: "forward" as const },
 		{ backward: true, direction: "backward" as const },
@@ -629,6 +720,61 @@ describe("WindowedImmersiveVisualEditor", () => {
 		}
 	});
 
+	it("keeps a straddling selection and rejects the image context gesture", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkdown = `Before ${imageMarkdown}`;
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const insideText = current.surface.querySelector("p")?.firstChild;
+		const image = current.surface.querySelector("img");
+		const outside = document.createElement("p");
+		outside.textContent = "Outside";
+		document.body.append(outside);
+		const outsideText = outside.firstChild;
+		if (
+			!(insideText instanceof Text)
+			|| !(image instanceof HTMLImageElement)
+			|| !(outsideText instanceof Text)
+		) {
+			throw new Error("windowed-straddling-selection-fixture-missing");
+		}
+		const straddling = document.createRange();
+		straddling.setStart(insideText, 0);
+		straddling.setEnd(outsideText, 3);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(straddling);
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image),
+			).toBe(false);
+			expect(current.applyTextChange).not.toHaveBeenCalled();
+			expect(selection?.rangeCount).toBe(1);
+			expect(selection?.anchorNode).toBe(insideText);
+			expect(selection?.focusNode).toBe(outsideText);
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+			outside.remove();
+		}
+	});
+
 	it("maps an image-element context-menu target through the current ledger", () => {
 		const blockIndex = 160;
 		const imageMarkdown = "![alt](https://example.test/image.png)";
@@ -679,6 +825,433 @@ describe("WindowedImmersiveVisualEditor", () => {
 				},
 				value: current.canonical(),
 			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("re-resolves a replaced image context target on a menu refresh pass", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkdown = `Before ${imageMarkdown}`;
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => {
+				failures.push(code);
+			},
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const image = current.surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-refresh-image-missing");
+		}
+		const sourceStart = current.canonical().indexOf(imageMarkdown);
+		if (sourceStart < 0) throw new Error("windowed-refresh-source-missing");
+		const expectedSelection = {
+			direction: "forward",
+			end: sourceStart + imageMarkdown.length,
+			start: sourceStart,
+		};
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image),
+			).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: expectedSelection,
+				value: current.canonical(),
+			});
+
+			// An accepted Preview window re-render replaces the mounted block and
+			// leaves the browser with a surface-level caret.
+			const paragraph = current.surface.querySelector("p");
+			if (!(paragraph instanceof HTMLParagraphElement)) {
+				throw new Error("windowed-refresh-block-missing");
+			}
+			paragraph.outerHTML = blockMarkup;
+			const caret = document.createRange();
+			caret.selectNodeContents(current.surface);
+			caret.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(caret);
+
+			// The pending menu refresh replays the now-stale target element.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image, {
+					x: 20,
+					y: 20,
+				}),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: expectedSelection,
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("maps a live second image after an accepted window rebuild replaced its block", () => {
+		const firstIndex = 160;
+		const secondIndex = 161;
+		const firstMarkdown = "![first](https://example.test/first.png)";
+		const secondMarkdown = "![second](https://example.test/second.png)";
+		const firstMarkup =
+			`<p data-easymde-visual-block-id="b${firstIndex}">`
+			+ '<img alt="first" src="https://example.test/first.png"></p>';
+		const secondMarkup =
+			`<p data-easymde-visual-block-id="b${secondIndex}">`
+			+ '<img alt="second" src="https://example.test/second.png"></p>';
+		const current = fixture({
+			blockOverrides: {
+				[firstIndex]: firstMarkdown,
+				[secondIndex]: secondMarkdown,
+			},
+			markupOverrides: {
+				[firstIndex]: firstMarkup,
+				[secondIndex]: secondMarkup,
+			},
+			mounted: [firstIndex, secondIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => {
+				failures.push(code);
+			},
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const firstImage = current.surface.querySelector("img");
+		if (!(firstImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-first-image-missing");
+		}
+		const firstStart = current.canonical().indexOf(firstMarkdown);
+		const secondStart = current.canonical().indexOf(secondMarkdown);
+		if (firstStart < 0 || secondStart < 0) {
+			throw new Error("windowed-image-source-missing");
+		}
+
+		try {
+			// First image menu, closed with Esc.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(firstImage),
+			).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: firstStart + firstMarkdown.length,
+					start: firstStart,
+				},
+				value: current.canonical(),
+			});
+			window.getSelection()?.removeAllRanges();
+
+			// The accepted Preview window commit replaces both mounted blocks
+			// and leaves the browser with a surface-level caret.
+			for (const [index, markup] of [
+				[firstIndex, firstMarkup],
+				[secondIndex, secondMarkup],
+			] as const) {
+				const block = current.surface.querySelector(
+					`[data-easymde-visual-block-id="b${index}"]`,
+				);
+				if (!(block instanceof HTMLElement)) {
+					throw new Error("windowed-rebuild-block-missing");
+				}
+				block.outerHTML = markup;
+			}
+			const surfaceCaret = document.createRange();
+			surfaceCaret.selectNodeContents(current.surface);
+			surfaceCaret.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(surfaceCaret);
+
+			// The second image is a fresh live element from the replayed
+			// window, so its own source range must map without borrowing the
+			// first image's selection.
+			const secondImage = current.surface.querySelectorAll("img")[1];
+			if (!(secondImage instanceof HTMLImageElement)) {
+				throw new Error("windowed-second-image-missing");
+			}
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(secondImage),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: secondStart + secondMarkdown.length,
+					start: secondStart,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("keeps the replayed image ordinal when a block repeats one image source", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkdown = `First ${imageMarkdown} second ${imageMarkdown}`;
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">First `
+			+ '<img alt="alt" src="https://example.test/image.png"> second '
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => {
+				failures.push(code);
+			},
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const images = current.surface.querySelectorAll("img");
+		const second = images[1];
+		if (!(second instanceof HTMLImageElement)) {
+			throw new Error("windowed-duplicate-image-missing");
+		}
+		const firstStart = current.canonical().indexOf(imageMarkdown);
+		const secondStart =
+			firstStart < 0
+				? -1
+				: current.canonical().indexOf(imageMarkdown, firstStart + 1);
+		if (firstStart < 0 || secondStart < 0) {
+			throw new Error("windowed-duplicate-image-source-missing");
+		}
+		const expectedSelection = {
+			direction: "forward",
+			end: secondStart + imageMarkdown.length,
+			start: secondStart,
+		};
+		const surfaceCaret = document.createRange();
+		surfaceCaret.selectNodeContents(current.surface);
+		surfaceCaret.collapse(true);
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(second),
+			).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: expectedSelection,
+				value: current.canonical(),
+			});
+
+			// An accepted Preview window re-render replaces the mounted block
+			// and leaves the browser with a surface-level caret.
+			const paragraph = current.surface.querySelector("p");
+			if (!(paragraph instanceof HTMLParagraphElement)) {
+				throw new Error("windowed-duplicate-block-missing");
+			}
+			paragraph.outerHTML = blockMarkup;
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(surfaceCaret);
+
+			// The replayed stale target must keep its ordinal instead of
+			// binding to the first same-source image in the live block.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(second, {
+					x: 20,
+					y: 20,
+				}),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: expectedSelection,
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("fails explicitly when a replaced image context target cannot be restored", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkdown = `Before ${imageMarkdown}`;
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const image = current.surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-unrestorable-image-missing");
+		}
+		const sourceStart = current.canonical().indexOf(imageMarkdown);
+		if (sourceStart < 0) {
+			throw new Error("windowed-unrestorable-image-source-missing");
+		}
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image),
+			).toBe(true);
+			const writesAfterCapture = current.applyTextChange.mock.calls.length;
+
+			// The re-render keeps the block but renders a different image, so
+			// the replayed identity can no longer be authenticated.
+			const paragraph = current.surface.querySelector("p");
+			if (!(paragraph instanceof HTMLParagraphElement)) {
+				throw new Error("windowed-unrestorable-block-missing");
+			}
+			paragraph.outerHTML =
+				`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+				+ '<img alt="alt" src="https://example.test/changed.png"></p>';
+			const caret = document.createRange();
+			caret.selectNodeContents(current.surface);
+			caret.collapse(true);
+			const selection = window.getSelection();
+			selection?.removeAllRanges();
+			selection?.addRange(caret);
+
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image, {
+					x: 20,
+					y: 20,
+				}),
+			).toBe(false);
+			expect(current.applyTextChange.mock.calls.length).toBe(
+				writesAfterCapture,
+			);
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("rejects a replaced image target that this surface never prepared", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkdown = `Before ${imageMarkdown}`;
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const image = current.surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-unprepared-image-missing");
+		}
+		const paragraph = current.surface.querySelector("p");
+		if (!(paragraph instanceof HTMLParagraphElement)) {
+			throw new Error("windowed-unprepared-block-missing");
+		}
+		paragraph.outerHTML = blockMarkup;
+		const caret = document.createRange();
+		caret.selectNodeContents(current.surface);
+		caret.collapse(true);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(caret);
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(image, {
+					x: 20,
+					y: 20,
+				}),
+			).toBe(false);
+			expect(current.applyTextChange).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("maps a cold direct top-level code target from the block ledger", () => {
+		const initialFence = "```js\nalpha\nbeta\n```";
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderCodeBodyEditor(initialFence, "alpha\nbeta\n", {
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const { code, current, sourceStart } = rendered;
+		const text = code.firstChild;
+		if (!(text instanceof Text)) {
+			throw new Error("windowed-cold-direct-code-text-missing");
+		}
+
+		try {
+			// A warm caret inside the code body establishes the canonical
+			// code-block selection through the normal preparation path.
+			placeCaret(text, 0);
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(code),
+			).toBe(true);
+			const warmSelection = current.documentSession.document.getSelection();
+			expect(warmSelection.start).toBe(sourceStart);
+			expect(warmSelection.end).toBeGreaterThan(sourceStart);
+
+			// A cold entry has no native range at all, so the direct top-level
+			// PRE target itself must drive the same canonical mapping instead
+			// of failing the native-selection gate.
+			window.getSelection()?.removeAllRanges();
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(code),
+			).toBe(true);
+			expect(current.documentSession.document.getSelection()).toEqual(
+				warmSelection,
+			);
 		} finally {
 			rendered.view.unmount();
 			if (current.surface.isConnected) current.surface.remove();
@@ -765,8 +1338,54 @@ describe("WindowedImmersiveVisualEditor", () => {
 			expect(runtime.prepareContextMenuSelection?.(code)).toBe(true);
 			expect(onFailure).not.toHaveBeenCalled();
 			expect(current.documentSession.document.getSelection().end).toBeGreaterThan(
-				current.documentSession.document.getSelection().start,
-			);
+			current.documentSession.document.getSelection().start,
+		);
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("maps a cold nested quote code target from the pointer hit", () => {
+		const blockIndex = 160;
+		const blockMarkdown = "> ~~~js\n> alpha\n> ~~~";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: blockMarkdown },
+			markupOverrides: {
+				[blockIndex]: `<blockquote data-easymde-visual-block-id="b${blockIndex}"><pre data-easymde-visual-fence="~~~" data-easymde-visual-fence-info="js"><code class="language-js">alpha\n</code></pre></blockquote>`,
+			},
+			mounted: [blockIndex],
+		});
+		const onFailure = vi.fn();
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const rendered = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const code = current.surface.querySelector("blockquote pre > code");
+		if (!(code instanceof HTMLElement)) {
+			throw new Error("windowed-cold-nested-code-context-fixture-missing");
+		}
+		window.getSelection()?.removeAllRanges();
+
+		try {
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(code, {
+				x: 20,
+				y: 20,
+			}),
+			).toBe(true);
+			expect(onFailure).not.toHaveBeenCalled();
+			const expectedOffset = current.canonical().indexOf("alpha");
+			expect(current.documentSession.document.getSelection()).toEqual({
+				direction: "none",
+				end: expectedOffset,
+				start: expectedOffset,
+			});
 		} finally {
 			rendered.view.unmount();
 			if (current.surface.isConnected) current.surface.remove();
@@ -8700,4 +9319,67 @@ describe("WindowedImmersiveVisualEditor", () => {
 			view.unmount();
 		},
 	);
+});
+
+describe("resolveLiveWindowContextMenuTarget", () => {
+	it("re-anchors a retired target onto the live element of the same visual block", () => {
+		const surface = document.createElement("article");
+		surface.innerHTML = [
+			'<p data-easymde-visual-block-id="b0"><a href="https://example.test/link"><span>link</span><img alt="linked" src="https://example.test/linked.png"></a><span class="easymde-math" data-easymde-generated-source="x">x</span><img alt="alt" src="https://example.test/original.png"></p>',
+			'<p data-easymde-visual-block-id="b1">Line 1</p>',
+		].join("");
+		document.body.append(surface);
+		const liveImage = surface.querySelectorAll("img")[1];
+		const liveLinkedImage = surface.querySelector("a img");
+		const liveLink = surface.querySelector("a");
+		const liveMath = surface.querySelector(".easymde-math");
+		const retiredBlock = document.createElement("p");
+		retiredBlock.setAttribute("data-easymde-visual-block-id", "b0");
+		const retiredLink = document.createElement("a");
+		retiredLink.href = "https://example.test/link";
+		retiredLink.innerHTML = '<span>link</span><img alt="linked" src="https://example.test/linked.png">';
+		const retiredMath = document.createElement("span");
+		retiredMath.className = "easymde-math";
+		retiredMath.setAttribute("data-easymde-generated-source", "x");
+		retiredMath.textContent = "x";
+		const retiredImage = document.createElement("img");
+		retiredImage.setAttribute("alt", "alt");
+		retiredImage.setAttribute("src", "https://example.test/original.png");
+		const retiredLinkedImage = retiredLink.querySelector("img") as HTMLImageElement;
+		retiredBlock.append(retiredLink, retiredMath);
+		retiredBlock.append(retiredImage);
+		const retiredParagraph = document.createElement("p");
+		retiredParagraph.setAttribute("data-easymde-visual-block-id", "b1");
+
+		// A target that still lives in the surface is its own live element.
+		expect(resolveLiveWindowContextMenuTarget(surface, liveImage)).toBe(
+			liveImage,
+		);
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBe(
+			liveImage,
+		);
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredLinkedImage)).toBe(
+			liveLinkedImage,
+		);
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredLink)).toBe(
+			liveLink,
+		);
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredMath)).toBe(
+			liveMath,
+		);
+		expect(
+			resolveLiveWindowContextMenuTarget(surface, retiredParagraph),
+		).toBe(surface.children[1]);
+		expect(resolveLiveWindowContextMenuTarget(surface, null)).toBeNull();
+		// The live slot is only the same image target while it renders the same
+		// source, and a block that is not mounted any more cannot be
+		// re-anchored at all.
+		liveImage?.setAttribute("src", "https://example.test/other.png");
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBeNull();
+		// A block that is not mounted any more cannot be re-anchored at all.
+		liveImage?.setAttribute("src", "https://example.test/original.png");
+		retiredBlock.setAttribute("data-easymde-visual-block-id", "b9");
+		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBeNull();
+		surface.remove();
+	});
 });

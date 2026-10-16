@@ -726,8 +726,10 @@ test('context menu CSS keeps system/CJK typography, compact items, and clipped t
   assertDeclaration(item, 'border-radius', '4px');
   assertDeclaration(item, 'font-size', '13px');
   assertDeclaration(item, 'font-weight', '400');
+  assertDeclaration(item, 'gap', '14.4px');
   assertDeclaration(item, 'line-height', '1.35');
   assertDeclaration(item, 'letter-spacing', '0');
+  assertDeclaration(item, 'padding', '6px 10px');
   assertDeclaration(item, 'white-space', 'normal');
   assertDeclaration(shortcut, 'font-size', '12px');
   assertDeclaration(shortcut, 'font-weight', '400');
@@ -736,6 +738,8 @@ test('context menu CSS keeps system/CJK typography, compact items, and clipped t
   assertDeclaration(icon, 'flex', '0 0 16px');
   assertDeclaration(icon, 'inline-size', '16px');
   assertDeclaration(icon, 'block-size', '16px');
+  const label = cssRule(css, '.easymde-editor-context-menu__label');
+  assertDeclaration(label, 'margin-inline-start', '-4.4px');
   assertDeclaration(submenu, 'border-radius', '8px');
   assertDeclaration(submenu, 'border', '1px solid transparent');
   assertDeclaration(submenu, 'box-sizing', 'border-box');

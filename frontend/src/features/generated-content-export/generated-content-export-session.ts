@@ -5,10 +5,6 @@ import {
 	type EditorClipboardWriteResult,
 } from "../../contracts/ports/editor-clipboard-port";
 import type {
-	EditorDownloadPort,
-	EditorDownloadResult,
-} from "../../contracts/ports/editor-download-port";
-import type {
 	WechatVisualRasterizationPort,
 	WechatVisualRasterizationResult,
 } from "../../contracts/ports/wechat-visual-rasterization-port";
@@ -41,8 +37,7 @@ export type GeneratedContentExportFailureCode =
 	| "generated-content-export-rasterization-invalid"
 	| "generated-content-export-rasterization-timeout"
 	| "generated-content-export-source-stale"
-	| "generated-content-export-target-invalid"
-	| "generated-content-export-download-failed";
+	| "generated-content-export-target-invalid";
 
 export type GeneratedContentExportResult =
 	| Readonly<{ status: "copied" | "requested" }>
@@ -67,11 +62,6 @@ export type GeneratedContentExportRequest = Readonly<{
 	) => boolean;
 }>;
 
-export type GeneratedContentSaveAsImageRequest = GeneratedContentExportRequest &
-	Readonly<{
-		filename: string;
-	}>;
-
 export type GeneratedContentExportSession = Readonly<{
 	copyAsImage: (
 		request: GeneratedContentExportRequest,
@@ -80,14 +70,10 @@ export type GeneratedContentExportSession = Readonly<{
 		request: GeneratedContentExportRequest,
 	) => Promise<GeneratedContentExportResult>;
 	dispose: () => void;
-	saveAsImage: (
-		request: GeneratedContentSaveAsImageRequest,
-	) => Promise<GeneratedContentExportResult>;
 }>;
 
 export type CreateGeneratedContentExportSessionOptions = Readonly<{
 	clipboard: EditorClipboardPort;
-	download: EditorDownloadPort;
 	maxBytes?: number;
 	maxPixels?: number;
 	rasterScale?: number;
@@ -265,12 +251,6 @@ function textClipboardFailure(
 		: failed("generated-content-export-clipboard-failed");
 }
 
-function downloadFailure(
-	_result: EditorDownloadResult,
-): GeneratedContentExportResult {
-	return failed("generated-content-export-download-failed");
-}
-
 function mathMlText(source: Element): string | null {
 	const katexRoot = source.matches(".katex")
 		? source
@@ -284,7 +264,6 @@ function mathMlText(source: Element): string | null {
 
 export function createGeneratedContentExportSession({
 	clipboard,
-	download,
 	maxBytes = DEFAULT_EDITOR_CLIPBOARD_IMAGE_MAX_BYTES,
 	maxPixels = DEFAULT_MAX_PIXELS,
 	rasterScale = DEFAULT_RASTER_SCALE,
@@ -566,61 +545,6 @@ export function createGeneratedContentExportSession({
 			: textClipboardFailure(result);
 	};
 
-	const saveAsImage = async (
-		request: GeneratedContentSaveAsImageRequest,
-	): Promise<GeneratedContentExportResult> => {
-		if (!active) return failed("generated-content-export-disposed");
-		const requestFailure = leaseFailure(request);
-		if (requestFailure) return failed(requestFailure);
-		const operation = begin();
-		if (!operation) return failed("generated-content-export-disposed");
-		let rasterizationFailure: GeneratedContentExportFailureCode | null = null;
-		let result: WechatVisualRasterizationResult;
-		try {
-			result = await rasterize(operation, request);
-		} catch (error: unknown) {
-			rasterizationFailure =
-				error instanceof ExportError
-					? error.code
-					: "generated-content-export-rasterization-failed";
-			finish(operation);
-			return failed(rasterizationFailure);
-		}
-		if (rasterizationFailure) {
-			finish(operation);
-			return failed(rasterizationFailure);
-		}
-		const stale = currentFailure(operation, active, currentSequence, request);
-		if (stale) {
-			finish(operation);
-			return failed(stale);
-		}
-		let downloadResult: EditorDownloadResult;
-		try {
-			downloadResult = await download.requestPngDownload(
-				result.file,
-				request.filename,
-				operation.controller.signal,
-			);
-		} catch {
-			finish(operation);
-			const stale = currentFailure(operation, active, currentSequence, request);
-			if (stale) return failed(stale);
-			return failed("generated-content-export-download-failed");
-		}
-		const afterDownloadFailure = currentFailure(
-			operation,
-			active,
-			currentSequence,
-			request,
-		);
-		finish(operation);
-		if (afterDownloadFailure) return failed(afterDownloadFailure);
-		return "requested" === downloadResult.status
-			? { status: "requested" }
-			: downloadFailure(downloadResult);
-	};
-
 	return {
 		copyAsImage,
 		copyMathMl,
@@ -631,6 +555,5 @@ export function createGeneratedContentExportSession({
 			pending?.controller.abort();
 			pending = null;
 		},
-		saveAsImage,
 	};
 }

@@ -13,6 +13,7 @@ import {
 } from "./editor-source-link";
 
 export const MAX_EDITOR_SOURCE_LINK_QUERY_BYTES = 1_048_576;
+export const EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS = 10_000;
 const VISUAL_BLOCK_ATTRIBUTE = "data-easymde-visual-block-id";
 
 export type EditorSourceLinkQuerySelection = EditorSourceLinkSelection &
@@ -49,6 +50,7 @@ export type EditorSourceLinkQueryUnavailableCode =
 	| "editor-source-link-query-disposed"
 	| "editor-source-link-query-failed"
 	| "editor-source-link-query-current-check-failed"
+	| "editor-source-link-query-timeout"
 	| "editor-source-link-query-too-large"
 	| "editor-source-link-request-failed"
 	| "editor-source-link-request-markdown-mismatch";
@@ -92,6 +94,7 @@ type ActiveQuery = {
 	candidate: EditorSourceLinkCandidate;
 	controller: AbortController;
 	state: EditorSourceLinkQueryState;
+	timeoutId: ReturnType<typeof setTimeout> | null;
 };
 
 type CachedState = Readonly<{
@@ -264,7 +267,14 @@ function responseHref(
 	if (!href?.trim()) {
 		return { code: "editor-source-link-preview-anchor-missing" };
 	}
-	if (hasOutsideText(owner, anchor) || hasGeneratedOrImageNode(owner)) {
+	if (hasGeneratedOrImageNode(owner)) {
+		return { code: "editor-source-link-preview-ownership-invalid" };
+	}
+	if (hasOutsideText(owner, anchor)) {
+		// A reference link only renders when the document defines its label.
+		// Literal text beside the anchor therefore means this caret has no
+		// rendered link, while generated or unexpected nodes stay a failure.
+		if (candidate.reference) return { status: "none" };
 		return { code: "editor-source-link-preview-ownership-invalid" };
 	}
 	return { href };
@@ -296,8 +306,18 @@ export function createEditorSourceLinkQuery({
 
 	const clearActive = (candidate: ActiveQuery): void => {
 		if (active !== candidate) return;
+		if (null !== candidate.timeoutId) {
+			clearTimeout(candidate.timeoutId);
+			candidate.timeoutId = null;
+		}
 		candidate.controller.abort();
 		active = null;
+	};
+
+	const clearQueryTimeout = (candidate: ActiveQuery): void => {
+		if (null === candidate.timeoutId) return;
+		clearTimeout(candidate.timeoutId);
+		candidate.timeoutId = null;
 	};
 
 	const currentAndLive = (candidate: ActiveQuery): boolean => {
@@ -319,8 +339,19 @@ export function createEditorSourceLinkQuery({
 			}
 			return false;
 		}
-		if (!live) clearActive(candidate);
+		if (!live && "pending" === candidate.state.status) clearActive(candidate);
 		return live;
+	};
+
+	const fail = (
+		query: ActiveQuery,
+		code: EditorSourceLinkQueryUnavailableCode,
+	): void => {
+		if (!currentQueryIsLive(query)) return;
+		clearQueryTimeout(query);
+		query.state = failed(code);
+		query.controller.abort();
+		publish();
 	};
 
 	const run = async (
@@ -336,9 +367,7 @@ export function createEditorSourceLinkQuery({
 				markdown: queryMarkdown,
 			});
 		} catch {
-			if (!currentQueryIsLive(query)) return;
-			query.state = failed("editor-source-link-request-failed");
-			publish();
+			fail(query, "editor-source-link-request-failed");
 			return;
 		}
 		if (
@@ -346,27 +375,22 @@ export function createEditorSourceLinkQuery({
 			"object" !== typeof request ||
 			"string" !== typeof request.markdown
 		) {
-			if (!currentQueryIsLive(query)) return;
-			query.state = failed("editor-source-link-request-failed");
-			publish();
+			fail(query, "editor-source-link-request-failed");
 			return;
 		}
 		if (request.markdown !== queryMarkdown) {
-			if (!currentQueryIsLive(query)) return;
-			query.state = failed("editor-source-link-request-markdown-mismatch");
-			publish();
+			fail(query, "editor-source-link-request-markdown-mismatch");
 			return;
 		}
 		let response: PreviewResponse;
 		try {
 			response = await previewPort.render(request, query.controller.signal);
 		} catch {
-			if (!currentQueryIsLive(query)) return;
-			query.state = failed("editor-source-link-query-failed");
-			publish();
+			fail(query, "editor-source-link-query-failed");
 			return;
 		}
 		if (!currentQueryIsLive(query)) return;
+		clearQueryTimeout(query);
 		const result = responseHref(response, query.candidate, parser);
 		if ("status" in result) {
 			query.state = { status: "none" };
@@ -422,8 +446,16 @@ export function createEditorSourceLinkQuery({
 			candidate: resolution.candidate,
 			controller: new AbortController(),
 			state: { status: "pending" },
+			timeoutId: null,
 		};
 		active = query;
+		query.timeoutId = setTimeout(() => {
+			if (!currentQueryIsLive(query)) return;
+			clearQueryTimeout(query);
+			query.state = failed("editor-source-link-query-timeout");
+			query.controller.abort();
+			publish();
+		}, EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS);
 		void run(query, queryMarkdown);
 		return query.state;
 	};

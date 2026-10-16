@@ -1,9 +1,12 @@
+import { markdownLanguage } from '@codemirror/lang-markdown';
+
 import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type {
   ToolbarCommandDocumentPort,
   ToolbarCommandDocumentSnapshot,
   ToolbarCommandSelection
 } from '../../contracts/ports/toolbar-command-port';
+import { markdownLineStarts } from '../../shared/markdown/markdown-line-model';
 
 export type ToolbarCommandSession = Readonly<{
   dispose: () => void;
@@ -91,6 +94,145 @@ function stripLineMarkup(line: string): string {
     .replace(/^\s{0,3}(?:[-+*]\s+|\d+\.\s+)/, '');
 }
 
+// Source lines keep their own terminator so a transformation can rebuild a
+// CRLF document without mixing line endings or losing a trailing newline.
+type MarkdownLine = Readonly<{
+  contentEnd: number;
+  end: number;
+  start: number;
+  terminator: string;
+}>;
+
+type SetextHeadingBlock = Readonly<{
+  contentEndLine: number;
+  contentStartLine: number;
+  headerLine: number;
+}>;
+
+const EMPTY_ATX_HEADING_LINE = /^[ \t]{0,3}#{1,6}[ \t]*$/u;
+
+function markdownLines(value: string): ReadonlyArray<MarkdownLine> {
+  const starts = markdownLineStarts(value);
+
+  return starts.map((start, index) => {
+    const next = starts[index + 1];
+    const end = undefined === next ? value.length : next;
+    const raw = value.slice(start, end);
+    const terminator = raw.endsWith('\r\n')
+      ? '\r\n'
+      : raw.endsWith('\n')
+        ? '\n'
+        : raw.endsWith('\r')
+          ? '\r'
+          : '';
+
+    return { contentEnd: end - terminator.length, end, start, terminator };
+  });
+}
+
+function markdownParserValue(
+  value: string,
+  lines: ReadonlyArray<MarkdownLine>
+): string {
+  return lines
+    .map((line) =>
+      value.slice(line.start, line.contentEnd) + (line.terminator ? '\n' : '')
+    )
+    .join('');
+}
+
+function lineIndexAtStarts(starts: ReadonlyArray<number>, position: number): number {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if ((starts[middle] ?? 0) <= position) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+function lineAt(lines: ReadonlyArray<MarkdownLine>, index: number): MarkdownLine {
+  const line = lines[index];
+  if (!line) {
+    throw new Error('toolbar-command-markdown-line-missing');
+  }
+
+  return line;
+}
+
+function lineIndexAt(lines: ReadonlyArray<MarkdownLine>, position: number): number {
+  let low = 0;
+  let high = lines.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (lineAt(lines, middle).start <= position) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return low;
+}
+
+// A Setext underline belongs to the whole heading block above it, and the block
+// boundary must come from the Markdown parser: a neighbouring `---` inside
+// fenced or indented code is content, not an underline, and a heading block may
+// span several body lines. Only the parser knows where that block starts, where
+// it ends, and which line carries the underline.
+function setextHeadingBlocks(
+  value: string,
+  lines: ReadonlyArray<MarkdownLine>,
+  firstLine: number,
+  lastLine: number
+): ReadonlyArray<SetextHeadingBlock> {
+  const blocks: SetextHeadingBlock[] = [];
+  const parserValue = markdownParserValue(value, lines);
+  const parserLineStarts = markdownLineStarts(parserValue);
+  const cursor = markdownLanguage.parser.parse(parserValue).cursor();
+  const visit = (): void => {
+    do {
+      if ('SetextHeading1' === cursor.name || 'SetextHeading2' === cursor.name) {
+        const contentStartLine = lineIndexAtStarts(parserLineStarts, cursor.from);
+        const headerLine = lineIndexAtStarts(
+          parserLineStarts,
+          Math.max(cursor.from, cursor.to - 1)
+        );
+        if (headerLine <= contentStartLine) {
+          throw new Error('toolbar-command-setext-heading-invalid');
+        }
+        if (headerLine >= firstLine && contentStartLine <= lastLine) {
+          blocks.push({
+            contentEndLine: headerLine - 1,
+            contentStartLine,
+            headerLine
+          });
+        }
+      }
+      if (cursor.firstChild()) {
+        visit();
+        cursor.parent();
+      }
+    } while (cursor.nextSibling());
+  };
+  visit();
+
+  return blocks;
+}
+
+function headingLineContent(line: string, level: number): string {
+  if (EMPTY_ATX_HEADING_LINE.test(line)) {
+    return 0 === level ? '' : '#'.repeat(level);
+  }
+  const content = stripLineMarkup(line).trim();
+  if (!content || 0 === level) {
+    return content;
+  }
+
+  return `${'#'.repeat(level)} ${content}`;
+}
+
 function transformSelectedLines(
   snapshot: ToolbarCommandDocumentSnapshot,
   transform: (lines: ReadonlyArray<string>) => ReadonlyArray<string>
@@ -135,13 +277,87 @@ function headingLines(
   snapshot: ToolbarCommandDocumentSnapshot,
   level: number
 ): ToolbarCommandDocumentSnapshot {
-  return transformSelectedLines(snapshot, (lines) => lines.map((line) => {
-    const content = stripLineMarkup(line).trim();
-    if (!content || 0 === level) {
-      return content;
+  const lines = markdownLines(snapshot.value);
+  const { end, start } = snapshot.selection;
+  const firstLine = lineIndexAt(lines, start);
+  const lastLine = lineIndexAt(lines, end);
+  const blocks = setextHeadingBlocks(snapshot.value, lines, firstLine, lastLine);
+  const removedLines = new Set<number>();
+  const transformedLines = new Set<number>();
+  let rangeStartLine = firstLine;
+  let rangeEndLine = lastLine;
+  for (const block of blocks) {
+    removedLines.add(block.headerLine);
+    let contentSelected = false;
+    for (let line = block.contentStartLine; line <= block.contentEndLine; line += 1) {
+      if (line >= firstLine && line <= lastLine) {
+        contentSelected = true;
+        transformedLines.add(line);
+      }
     }
-    return `${'#'.repeat(level)} ${content}`;
-  }));
+    // The underline belongs to the entire heading block, so the complete block
+    // stays inside the edited range and the underline never survives as body
+    // text or turns another line into a new heading. When the selection covers
+    // only the underline, the nearest content line above it receives the target
+    // level instead of leaving the heading behind as plain text.
+    if (!contentSelected) {
+      transformedLines.add(block.contentEndLine);
+    }
+    rangeStartLine = Math.min(rangeStartLine, block.contentStartLine);
+    rangeEndLine = Math.max(rangeEndLine, block.headerLine);
+  }
+  for (let line = firstLine; line <= lastLine; line += 1) {
+    if (!removedLines.has(line)) {
+      transformedLines.add(line);
+    }
+  }
+
+  let transformed = '';
+  let lastTerminator = '';
+  let selectionStart = -1;
+  let selectionEnd = -1;
+  let offset = lineAt(lines, rangeStartLine).start;
+  for (let line = rangeStartLine; line <= rangeEndLine; line += 1) {
+    if (removedLines.has(line)) {
+      continue;
+    }
+    const source = lineAt(lines, line);
+    const text = transformedLines.has(line)
+      ? headingLineContent(snapshot.value.slice(source.start, source.contentEnd), level)
+      : snapshot.value.slice(source.start, source.contentEnd);
+    if (transformedLines.has(line)) {
+      if (selectionStart < 0) {
+        selectionStart = offset;
+      }
+      selectionEnd = offset + text.length;
+    }
+    transformed += text + source.terminator;
+    lastTerminator = source.terminator;
+    offset += text.length + source.terminator.length;
+  }
+  if (selectionStart < 0) {
+    throw new Error('toolbar-command-heading-selection-missing');
+  }
+  // The removed underline takes its own terminator with it. When it ends the
+  // source without one, the previous line's terminator would otherwise become a
+  // new trailing blank line.
+  if (
+    removedLines.has(rangeEndLine)
+    && '' === lineAt(lines, rangeEndLine).terminator
+    && '' !== lastTerminator
+    && transformed.endsWith(lastTerminator)
+  ) {
+    transformed = transformed.slice(0, -lastTerminator.length);
+  }
+
+  return replacement(
+    snapshot,
+    snapshot.value.slice(0, lineAt(lines, rangeStartLine).start)
+      + transformed
+      + snapshot.value.slice(lineAt(lines, rangeEndLine).end),
+    selectionStart,
+    selectionEnd
+  );
 }
 
 function insertBlock(

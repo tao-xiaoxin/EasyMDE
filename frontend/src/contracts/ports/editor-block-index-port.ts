@@ -45,12 +45,36 @@ export type EditorMarkdownImageIndexData = Readonly<{
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
 }>;
 
+export type EditorMarkdownLinkCandidateKind = "autolink" | "link";
+
+/**
+ * Exact link construct ranges prepared by the block-index owner. Text stays in
+ * the canonical source; consumers only map these source ranges back to it.
+ * Candidates are sorted and non-overlapping: nested link syntax inside a link
+ * label is literal CommonMark text, so only the outermost rendered link keeps
+ * a range there.
+ */
+export type EditorMarkdownLinkCandidate = Readonly<{
+	blockFrom: number;
+	blockTo: number;
+	from: number;
+	kind: EditorMarkdownLinkCandidateKind;
+	reference: boolean;
+	to: number;
+}>;
+
 /** The worker result is source-free; the Root retains the canonical source. */
 export type EditorMarkdownBlockIndexData = Readonly<{
 	blocks: ReadonlyArray<EditorMarkdownSourceBlock>;
 	imageBlocks: ReadonlyArray<EditorMarkdownImageBlock>;
 	imageRanges: ReadonlyArray<EditorMarkdownImageRange>;
 	length: number;
+	/**
+	 * Prepared by the block-index build for every current producer. Hand-written
+	 * fixtures may omit it; consumers must then fail explicitly instead of
+	 * re-deriving link candidates themselves.
+	 */
+	linkCandidates?: ReadonlyArray<EditorMarkdownLinkCandidate>;
 	mathSpans: ReadonlyArray<EditorMarkdownMathSpan>;
 }>;
 
@@ -62,10 +86,12 @@ export type EditorMarkdownBlockIndexDataWithImages =
 export type EditorMarkdownBlockIndexPackedData = Readonly<{
 	blockCount: number;
 	blocks: ArrayBuffer;
-	format: "packed-v2";
+	format: "packed-v3";
 	imageCount: number;
 	images: ArrayBuffer;
 	length: number;
+	linkCount: number;
+	links: ArrayBuffer;
 	mathSpanCount: number;
 	mathSpans: ArrayBuffer;
 }>;
@@ -119,10 +145,14 @@ export const MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES = 1_048_576;
 export const MAX_EDITOR_BLOCK_INDEX_BLOCKS = 100_000;
 export const MAX_EDITOR_BLOCK_INDEX_MATH_SPANS = 100_000;
 export const MAX_EDITOR_BLOCK_INDEX_IMAGES = 100_000;
+export const MAX_EDITOR_BLOCK_INDEX_LINKS = 100_000;
 export const EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS = 6;
 export const EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS = 5;
 export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS = 3;
 export const EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS = 2;
+export const EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS = 6;
+export const EDITOR_BLOCK_INDEX_LINK_KIND_LINK = 0;
+export const EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK = 1;
 export const EDITOR_BLOCK_INDEX_IMAGE_STATUS_READY = 0;
 export const EDITOR_BLOCK_INDEX_IMAGE_STATUS_UNAVAILABLE = 1;
 export const EDITOR_MARKDOWN_BLOCK_KIND_ORDER: ReadonlyArray<EditorMarkdownBlockKind> =

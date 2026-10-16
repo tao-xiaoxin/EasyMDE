@@ -108,13 +108,23 @@ and the WordPress Media picker on the same document and permission owners as
 the toolbar. Paste is enabled only after the browser reports readable text;
 failed or stale Clipboard operations leave the document unchanged.
 
+The menu describes the element the pointer is on, so a plain right-click does
+not require a preceding left-click. A deliberate text selection keeps its
+extent and direction, and keyboard activation follows the current selection
+instead of the menu anchor. The Source editor establishes the pointed caret
+before the context is read, without writing Markdown and without adding an
+Undo/Redo entry.
+
 The root menu is confined to the current editor workspace. Submenus may cross
 the Source/Preview divider, open on the forward side when space permits, and
 flip and clamp to the viewport when needed; scrolling or right-clicking
 outside the editor dismisses the menu without changing Markdown.
 The menu prepares the selected content before first placement so contextual
 items do not move it afterward. Cancelling or changing the selection during
-preparation prevents a late menu from appearing.
+preparation prevents a late menu from appearing. An open menu also stays in
+place while a background Preview or block-index refresh is still building; its
+context is replaced once that refreshed inventory is ready, while a real
+document or selection change still dismisses it.
 
 A selection spanning an object and surrounding text keeps text commands;
 it does not expose that object's deletion, alignment or adjacent insertion.
@@ -180,11 +190,12 @@ Published pages retain the Settings Center's global Table Alignment policy:
 choose Auto to display the document's individual row/column alignment; an
 explicit global Left or Center setting overrides it without rewriting Markdown.
 
-Selected rendered formulas and Mermaid diagrams expose local image copying and
-PNG saving, source copying, editing, deletion, and paragraph insertion before or
-after the target. Formula copying also offers MathML. These local exports do not
-upload images or change Markdown. The accepted Preview must still match the
-current document; unavailable or stale targets cannot be exported.
+Selected rendered formulas and Mermaid diagrams expose local image copying,
+source copying, editing, deletion, and paragraph insertion before or after the
+target. Formula copying also offers MathML. The editor intentionally does not
+offer browser-download or Save-as-PNG context-menu actions. These local exports
+do not upload images or change Markdown. The accepted Preview must still match
+the current document; unavailable or stale targets cannot be exported.
 
 **Copy image** uses an already loaded, same-origin Preview image at its natural
 pixel size. It does not reload remote images or upload them. Unsupported,

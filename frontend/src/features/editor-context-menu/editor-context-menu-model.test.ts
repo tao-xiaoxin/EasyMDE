@@ -51,18 +51,20 @@ const labels: EditorContextMenuLabels = {
   insertRowAbove: 'Insert row above',
   insertRowBelow: 'Insert row below',
   mathBlock: 'Formula',
-  openLink: 'Open link',
   paste: 'Paste',
   pastePlainText: 'Paste as plain text',
-  saveGeneratedImage: 'Save as image',
   table: 'Table',
   unsupported: 'Unsupported for this selection.',
   uploadImage: 'Upload image',
   copyCodeBlock: 'Copy code block',
   insertCodeAbove: 'Insert paragraph above code block',
   insertCodeBelow: 'Insert paragraph below code block',
+  insertImageAbove: 'Insert image above',
+  insertImageBelow: 'Insert image below',
   insertParagraphAboveTable: 'Insert paragraph above table',
-  insertParagraphBelowTable: 'Insert paragraph below table'
+  insertParagraphBelowTable: 'Insert paragraph below table',
+  insertTableAbove: 'Insert table above',
+  insertTableBelow: 'Insert table below'
 };
 
 function context(overrides: Partial<Parameters<typeof createEditorContextMenuModel>[0]> = {}) {
@@ -146,8 +148,10 @@ describe('createEditorContextMenuModel', () => {
     if (unavailableInsert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
     expect(unavailableInsert.children.find((item) => item.id === 'insert-paragraph-above')?.disabled).toBe(true);
     expect(unavailableInsert.children.find((item) => item.id === 'insert-paragraph-below')?.disabled).toBe(true);
-    expect(unavailableInsert.children.find((item) => item.id === 'insert-table')?.disabled).toBe(false);
-    expect(unavailableInsert.children.find((item) => item.id === 'insert-image')?.disabled).toBe(false);
+    expect(unavailableInsert.children.find((item) => item.id === 'insert-table-above')?.disabled).toBe(true);
+    expect(unavailableInsert.children.find((item) => item.id === 'insert-table-below')?.disabled).toBe(true);
+    expect(unavailableInsert.children.find((item) => item.id === 'insert-image-above')?.disabled).toBe(true);
+    expect(unavailableInsert.children.find((item) => item.id === 'insert-image-below')?.disabled).toBe(true);
 
     const math = createEditorContextMenuModel(context({ block: 'math' }));
     const mathInsert = math.items.find((item) => item.id === 'insert');
@@ -183,6 +187,63 @@ describe('createEditorContextMenuModel', () => {
       'insert-paragraph-above-table',
       'insert-paragraph-below-table',
       'table-alignment'
+    ]);
+  });
+
+  it('keeps table bold available while removing formula bold and generated edit entries', () => {
+    const table = createEditorContextMenuModel(context({
+      block: 'table',
+      hasSelection: true
+    }));
+    expect(table.items.find((item) => item.id === 'bold')?.disabled).toBe(false);
+
+    const formula = createEditorContextMenuModel(context({
+      block: 'math',
+      hasSelection: true
+    }));
+    expect(formula.items.some((item) => item.id === 'bold')).toBe(false);
+
+    for (const kind of ['math', 'mermaid'] as const) {
+      const generatedModel = createEditorContextMenuModel(context({
+        block: 'code',
+        generated: {
+          canCopyImage: true,
+          canCopyMathMl: true,
+          canUseSource: true,
+          kind
+        }
+      }));
+      expect(generatedModel.items.some((item) => item.id === 'bold')).toBe(false);
+      const generated = generatedModel.items.find((item) => item.id === 'generated-content');
+      if (generated?.kind !== 'submenu') throw new Error('generated-submenu-missing');
+      expect(generated.children.some((item) => item.id === 'edit-generated-content')).toBe(false);
+    }
+  });
+
+  it('keeps alignment and column deletion available for a multi-row column selection', () => {
+    const model = createEditorContextMenuModel(context({
+      block: 'table',
+      tableSelection: {
+        canDeleteColumn: true,
+        canDeleteRow: false,
+        column: 1,
+        columnCount: 2,
+        kind: 'column',
+        rowIndex: 2
+      }
+    }));
+    const table = model.items.find((item) => item.id === 'table');
+    if (table?.kind !== 'submenu') throw new Error('table-submenu-missing');
+    expect(table.children.find((item) => item.id === 'delete-row')?.disabled).toBe(true);
+    expect(table.children.find((item) => item.id === 'delete-column')?.disabled).toBe(false);
+    expect(table.children.find((item) => item.id === 'format-table-source')?.disabled).toBe(false);
+    const alignment = table.children.find((item) => item.id === 'table-alignment');
+    if (alignment?.kind !== 'submenu') throw new Error('alignment-submenu-missing');
+    expect(alignment.disabled).toBe(false);
+    expect(alignment.children.map((item) => [item.id, item.disabled])).toEqual([
+      ['align-left', false],
+      ['align-center', false],
+      ['align-right', false]
     ]);
   });
 
@@ -272,6 +333,52 @@ describe('createEditorContextMenuModel', () => {
     expect(invalidAnnotationItems.children.find((item) => item.id === 'format-table-source')?.disabled).toBe(true);
   });
 
+  it('keeps block- and anchor-scoped table operations available for a mixed multi-row selection', () => {
+    const model = createEditorContextMenuModel(context({
+      block: 'table',
+      hasSelection: true,
+      tableSelection: {
+        canDeleteColumn: false,
+        canDeleteRow: false,
+        columnCount: 2,
+        kind: 'ambiguous'
+      }
+    }));
+    const table = model.items.find((item) => item.id === 'table');
+    if (table?.kind !== 'submenu') throw new Error('table-submenu-missing');
+    for (const id of [
+      'insert-row-above',
+      'insert-row-below',
+      'insert-column-left',
+      'insert-column-right',
+      'copy-table',
+      'delete-table',
+      'insert-paragraph-above-table',
+      'insert-paragraph-below-table'
+    ]) {
+      expect(
+        [id, table.children.find((item) => item.id === id)?.disabled]
+      ).toEqual([id, false]);
+    }
+    for (const id of ['delete-row', 'delete-column', 'format-table-source']) {
+      expect(
+        [id, table.children.find((item) => item.id === id)?.disabled]
+      ).toEqual([id, true]);
+    }
+    const alignment = table.children.find(
+      (item) => item.id === 'table-alignment'
+    );
+    if (alignment?.kind !== 'submenu') {
+      throw new Error('alignment-submenu-missing');
+    }
+    expect(alignment.disabled).toBe(true);
+    expect(alignment.children.map((item) => item.disabled)).toEqual([
+      true,
+      true,
+      true
+    ]);
+  });
+
   it('exposes whole-table, row, and column alignment states when annotation support is available', () => {
     const model = createEditorContextMenuModel(context({
       block: 'table',
@@ -324,7 +431,10 @@ describe('createEditorContextMenuModel', () => {
     expect(model.items.find((item) => item.id === 'copy')?.disabled).toBe(false);
     const insert = model.items.find((item) => item.id === 'insert');
     if (insert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
-    expect(insert.children.find((item) => item.id === 'insert-table')?.disabled).toBe(false);
+    expect(insert.children.find((item) => item.id === 'insert-table-above')?.disabled).toBe(false);
+    expect(insert.children.find((item) => item.id === 'insert-table-below')?.disabled).toBe(false);
+    expect(insert.children.find((item) => item.id === 'insert-image-above')?.disabled).toBe(false);
+    expect(insert.children.find((item) => item.id === 'insert-image-below')?.disabled).toBe(false);
   });
 
   it('only exposes thematic-break deletion for a parser-owned thematic-break block', () => {
@@ -343,6 +453,34 @@ describe('createEditorContextMenuModel', () => {
         (item) => item.id === 'delete-thematic-break'
       )
     ).toBe(false);
+  });
+
+  it('adds heading-level choices only for a heading context and marks its current level', () => {
+    const levels = [1, 2, 3, 4, 5, 6].map((level) => ({
+      id: `heading${level}`,
+      label: `Heading ${level}`,
+      level
+    }));
+    const model = createEditorContextMenuModel(context({
+      block: 'heading',
+      heading: { currentLevel: 2, label: 'Heading level', levels }
+    }));
+    const submenu = model.items.find((item) => item.id === 'heading-level');
+    if (submenu?.kind !== 'submenu') throw new Error('heading-level-submenu-missing');
+    expect(submenu.children.map((item) => item.id)).toEqual(
+      levels.map(({ id }) => id)
+    );
+    expect(submenu.children.find((item) => item.id === 'heading2')).toMatchObject({
+      checked: true,
+      disabled: false
+    });
+    expect(submenu.children.find((item) => item.id === 'heading1')).toMatchObject({
+      checked: false,
+      disabled: false
+    });
+    expect(createEditorContextMenuModel(context({
+      heading: { currentLevel: 2, label: 'Heading level', levels }
+    })).items.some((item) => item.id === 'heading-level')).toBe(false);
   });
 
   it('keeps row alignment disabled when the annotation owner is unavailable', () => {
@@ -374,14 +512,44 @@ describe('createEditorContextMenuModel', () => {
     expect(model.items.find((item) => item.id === 'copy-image')?.disabled).toBe(false);
   });
 
-  it('projects an image shortcut only onto the insert-image action', () => {
+  it('omits text-formatting groups from a resolved image context', () => {
+    const model = createEditorContextMenuModel(context({
+      block: 'paragraph',
+      clipboard: { status: 'available' },
+      hasSelection: true,
+      image: { canCopyImage: true, scale: 100, uploadDisabled: false }
+    }));
+
+    expect(model.items.map((item) => item.id)).not.toContain('bold');
+    expect(model.items.map((item) => item.id)).not.toContain('copy-paste-as');
+    expect(model.items.find((item) => item.id === 'cut')?.disabled).toBe(false);
+    expect(model.items.find((item) => item.id === 'copy')?.disabled).toBe(false);
+    expect(model.items.find((item) => item.id === 'paste')?.disabled).toBe(false);
+    expect(model.items.find((item) => item.id === 'image-scale')?.kind).toBe('submenu');
+    expect(model.items.find((item) => item.id === 'upload-image')?.disabled).toBe(false);
+    expect(model.items.find((item) => item.id === 'delete-image')?.disabled).toBe(false);
+    expect(model.items.find((item) => item.id === 'copy-image')?.disabled).toBe(false);
+
+    const readOnly = createEditorContextMenuModel(context({
+      clipboard: { status: 'available' },
+      hasSelection: true,
+      image: { canCopyImage: true, scale: 100, uploadDisabled: false },
+      readOnly: true
+    }));
+    expect(readOnly.items.find((item) => item.id === 'cut')?.disabled).toBe(true);
+    expect(readOnly.items.find((item) => item.id === 'copy')?.disabled).toBe(false);
+    expect(readOnly.items.find((item) => item.id === 'paste')?.disabled).toBe(true);
+  });
+
+  it('projects an image shortcut onto the primary directional image action', () => {
     const model = createEditorContextMenuModel(context({ imageShortcut: 'Ctrl-Alt-I' }));
     const insert = model.items.find((item) => item.id === 'insert');
     if (insert?.kind !== 'submenu') throw new Error('insert-submenu-missing');
-    expect(insert.children.find((item) => item.id === 'insert-image')).toMatchObject({
+    expect(insert.children.find((item) => item.id === 'insert-image-above')).toMatchObject({
       shortcut: 'Ctrl-Alt-I'
     });
-    expect(insert.children.find((item) => item.id === 'insert-table')).not.toHaveProperty('shortcut');
+    expect(insert.children.find((item) => item.id === 'insert-image-below')).not.toHaveProperty('shortcut');
+    expect(insert.children.find((item) => item.id === 'insert-table-above')).not.toHaveProperty('shortcut');
   });
 
   it('disables image scale and upload actions on a read-only surface', () => {
@@ -406,6 +574,9 @@ describe('createEditorContextMenuModel', () => {
     expect(code?.kind).toBe('submenu');
     if (code?.kind !== 'submenu') throw new Error('code-submenu-missing');
     expect(code.children.map((item) => item.id)).toEqual([
+      'bold',
+      'copy-paste-as',
+      'insert',
       'copy-code-block',
       'copy-code-content',
       'indent-code-block',
@@ -421,6 +592,9 @@ describe('createEditorContextMenuModel', () => {
     const unsupportedCode = unsupported.items.find((item) => item.id === 'code-block');
     if (unsupportedCode?.kind !== 'submenu') throw new Error('code-submenu-missing');
     expect(unsupportedCode.children.map((item) => item.id)).toEqual([
+      'bold',
+      'copy-paste-as',
+      'insert',
       'copy-code-block',
       'indent-code-block',
       'indent-selected-code',
@@ -474,17 +648,79 @@ describe('createEditorContextMenuModel', () => {
     expect(nestedSupportedCode.children.find(
       (item) => item.id === 'indent-selected-code'
     )?.disabled).toBe(false);
+
+    const mermaid = createEditorContextMenuModel(context({
+      block: 'code',
+      code: { canCopyContent: true, info: 'mermaid' }
+    }));
+    expect(mermaid.items.some((item) => item.id === 'code-block')).toBe(false);
   });
 
-  it('adds link actions only for a captured target and keeps copy independent of open capability', () => {
-    const model = createEditorContextMenuModel(context({
-      link: { canOpen: false }
+  it('keeps code-block formatting, copy/paste-as, and insert actions inside the code submenu', () => {
+    const collapsed = createEditorContextMenuModel(context({
+      block: 'code',
+      canCopySimplified: true,
+      clipboard: { status: 'available' },
+      code: { canCopyContent: true },
+      hasSelection: false
     }));
-    expect(model.items.find((item) => item.id === 'open-link')?.disabled).toBe(true);
+    const collapsedCode = collapsed.items.find((item) => item.id === 'code-block');
+    if (collapsedCode?.kind !== 'submenu') throw new Error('code-submenu-missing');
+
+    expect(collapsed.items.map((item) => item.id)).not.toContain('bold');
+    expect(collapsed.items.map((item) => item.id)).not.toContain('copy-paste-as');
+    expect(collapsed.items.map((item) => item.id)).not.toContain('insert');
+    expect(collapsedCode.children.map((item) => item.id)).toEqual(expect.arrayContaining([
+      'bold',
+      'copy-paste-as',
+      'insert'
+    ]));
+    expect(collapsedCode.children.find((item) => item.id === 'bold')?.disabled).toBe(true);
+
+    const copyPaste = collapsedCode.children.find((item) => item.id === 'copy-paste-as');
+    if (copyPaste?.kind !== 'submenu') throw new Error('code-copy-paste-submenu-missing');
+    expect(copyPaste.children.map((item) => item.id)).toEqual([
+      'copy-as-markdown',
+      'copy-as-html',
+      'copy-simplified-formatting',
+      'paste-plain-text'
+    ]);
+    expect(copyPaste.children.find((item) => item.id === 'copy-as-html')?.disabled).toBe(true);
+    expect(copyPaste.children.find((item) => item.id === 'copy-simplified-formatting')?.disabled).toBe(true);
+
+    const insert = collapsedCode.children.find((item) => item.id === 'insert');
+    if (insert?.kind !== 'submenu') throw new Error('code-insert-submenu-missing');
+    expect(insert.children.map((item) => item.id)).toEqual([
+      'insert-table-above',
+      'insert-table-below',
+      'insert-image-above',
+      'insert-image-below'
+    ]);
+    expect(insert.children.every((item) => !item.disabled)).toBe(true);
+    expect(collapsedCode.children.find((item) => item.id === 'delete-code-block')?.disabled).toBe(false);
+
+    const selected = createEditorContextMenuModel(context({
+      block: 'code',
+      canCopySimplified: true,
+      clipboard: { status: 'available' },
+      code: { canCopyContent: true },
+      hasSelection: true
+    }));
+    const selectedCode = selected.items.find((item) => item.id === 'code-block');
+    if (selectedCode?.kind !== 'submenu') throw new Error('selected-code-submenu-missing');
+    expect(selectedCode.children.map((item) => item.id)).not.toContain('bold');
+    expect(selectedCode.children.map((item) => item.id)).not.toContain('copy-paste-as');
+    expect(selectedCode.children.map((item) => item.id)).not.toContain('insert');
+  });
+
+  it('adds the copy link address action only for a captured link target', () => {
+    const model = createEditorContextMenuModel(context({
+      link: { href: 'https://example.test/target' }
+    }));
     expect(model.items.find((item) => item.id === 'copy-link-address')?.disabled).toBe(false);
+    expect(model.items.some((item) => item.id === 'open-link')).toBe(false);
 
     const withoutLink = createEditorContextMenuModel(context());
-    expect(withoutLink.items.some((item) => item.id === 'open-link')).toBe(false);
     expect(withoutLink.items.some((item) => item.id === 'copy-link-address')).toBe(false);
   });
 
@@ -494,7 +730,6 @@ describe('createEditorContextMenuModel', () => {
       generated: {
         canCopyImage: true,
         canCopyMathMl: true,
-        canSaveImage: true,
         canUseSource: false,
         code: {
           canCopyBlock: false,
@@ -508,18 +743,14 @@ describe('createEditorContextMenuModel', () => {
     const generated = model.items.find((item) => item.id === 'generated-content');
     if (generated?.kind !== 'submenu') throw new Error('generated-submenu-missing');
     expect(generated.children.map((item) => item.id)).toEqual([
-      'edit-generated-content',
       'copy-generated',
-      'code-block',
-      'save-generated-image',
       'insert-paragraph-above-generated',
       'insert-paragraph-below-generated',
       'delete-generated-content'
     ]);
-    expect(generated.children.find((item) => item.id === 'edit-generated-content')?.disabled).toBe(true);
+    expect(generated.children.some((item) => item.id === 'edit-generated-content')).toBe(false);
     expect(generated.children.find((item) => item.id === 'insert-paragraph-above-generated')?.disabled).toBe(true);
     expect(generated.children.find((item) => item.id === 'delete-generated-content')?.disabled).toBe(true);
-    expect(generated.children.find((item) => item.id === 'save-generated-image')?.disabled).toBe(false);
     const copyGenerated = generated.children.find((item) => item.id === 'copy-generated');
     if (copyGenerated?.kind !== 'submenu') throw new Error('generated-copy-submenu-missing');
     expect(copyGenerated.children.map((item) => item.id)).toEqual([
@@ -530,14 +761,7 @@ describe('createEditorContextMenuModel', () => {
     expect(copyGenerated.children.find((item) => item.id === 'copy-generated-image')?.disabled).toBe(false);
     expect(copyGenerated.children.find((item) => item.id === 'copy-generated-source')?.disabled).toBe(true);
     expect(copyGenerated.children.find((item) => item.id === 'copy-generated-mathml')?.disabled).toBe(false);
-    const code = generated.children.find((item) => item.id === 'code-block');
-    if (code?.kind !== 'submenu') throw new Error('generated-code-submenu-missing');
-    expect(code.children.map((item) => item.id)).toEqual([
-      'copy-code-block',
-      'indent-code-block',
-      'indent-selected-code'
-    ]);
-    expect(code.children.every((item) => item.disabled)).toBe(true);
+    expect(generated.children.some((item) => item.id === 'code-block')).toBe(false);
   });
 
   it('omits MathML and preserves source gating for diagram generated content', () => {
@@ -546,7 +770,6 @@ describe('createEditorContextMenuModel', () => {
       generated: {
         canCopyImage: false,
         canCopyMathMl: true,
-        canSaveImage: false,
         canUseSource: true,
         code: {
           canCopyBlock: true,
@@ -568,12 +791,8 @@ describe('createEditorContextMenuModel', () => {
     ]);
     expect(copyGenerated.children.find((item) => item.id === 'copy-generated-image')?.disabled).toBe(true);
     expect(copyGenerated.children.find((item) => item.id === 'copy-generated-source')?.disabled).toBe(false);
-    const code = generated.children.find((item) => item.id === 'code-block');
-    if (code?.kind !== 'submenu') throw new Error('generated-code-submenu-missing');
-    expect(code.children.find((item) => item.id === 'copy-code-block')?.disabled).toBe(false);
-    expect(code.children.find((item) => item.id === 'indent-code-block')?.disabled).toBe(true);
-    expect(code.children.find((item) => item.id === 'indent-selected-code')?.disabled).toBe(true);
-    expect(generated.children.find((item) => item.id === 'edit-generated-content')?.disabled).toBe(false);
-    expect(generated.children.find((item) => item.id === 'save-generated-image')?.disabled).toBe(true);
+    expect(generated.children.some((item) => item.id === 'code-block')).toBe(false);
+    expect(generated.children.some((item) => item.id === 'edit-generated-content')).toBe(false);
+    expect(generated.children.some((item) => item.id === 'save-generated-image')).toBe(false);
   });
 });

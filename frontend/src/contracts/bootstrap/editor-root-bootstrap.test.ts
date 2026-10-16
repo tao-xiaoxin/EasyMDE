@@ -204,19 +204,21 @@ function validBootstrap() {
         insertBelow: 'Insert paragraph below',
         insertCodeAbove: 'Insert paragraph above code block',
         insertCodeBelow: 'Insert paragraph below code block',
+        insertImageAbove: 'Insert image above',
+        insertImageBelow: 'Insert image below',
         insertColumnLeft: 'Insert column left',
         insertColumnRight: 'Insert column right',
         insertParagraphAboveGenerated: 'Insert paragraph above',
         insertParagraphAboveTable: 'Insert paragraph above table',
         insertParagraphBelowGenerated: 'Insert paragraph below',
         insertParagraphBelowTable: 'Insert paragraph below table',
+        insertTableAbove: 'Insert table above',
+        insertTableBelow: 'Insert table below',
         insertRowAbove: 'Insert row above',
         insertRowBelow: 'Insert row below',
         mathBlock: 'Formula',
-        openLink: 'Open link',
         paste: 'Paste',
         pastePlainText: 'Paste as plain text',
-        saveGeneratedImage: 'Save as image',
         statusActionFailed: 'The editor action could not be completed.',
         statusClipboardUnavailable:
           'Clipboard text is unavailable in this browser.',
@@ -449,7 +451,7 @@ describe('parseEditorRootBootstrap', () => {
     });
   });
 
-  it.each(['copyGeneratedImage', 'copyLinkAddress', 'saveGeneratedImage'] as const)(
+  it.each(['copyGeneratedImage', 'copyLinkAddress'] as const)(
     'rejects a missing context-menu label: %s',
     (key) => {
       const value = validBootstrap();

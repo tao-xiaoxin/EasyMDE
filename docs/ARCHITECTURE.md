@@ -351,13 +351,30 @@ Root without either does not guess link addresses or reject ordinary text
 commands; a configured owner's failure follows the existing visible error path.
 Visual link actions continue to use the accepted sanitized anchor owner.
 
-Clipboard demand starts in the original menu activation. Initial placement
-waits for the captured target's final structural inventory through the existing
-index/Preview readiness owners; pending, ready and unavailable are explicit.
-The full model mounts and clamps once, while later image loading only updates
-capabilities. Source/revision/selection/surface changes or cancellation discard
-pending demand rather than mounting a stale menu. This does not add a parser,
-document store, reserved blank panel or post-mount repositioning.
+Clipboard demand starts in the original menu activation. A pointer activation
+first establishes the selection it must be captured with: the source session
+maps the real pointer through CodeMirror's own coordinates and commits a
+selection-only transaction (no document write, no history entry, no scroll),
+while a deliberate non-empty selection and every keyboard activation keep the
+user's current selection. That preparation runs before the demand snapshot is
+read, so a demand that still waits for its inventory already describes the
+pointed element instead of an earlier caret, and a replay reuses the
+established selection rather than reinterpreting old screen coordinates.
+Initial placement waits for the captured target's final structural inventory
+through the existing index/Preview readiness owners; pending, ready and
+unavailable are explicit. A visible menu survives a benign owner-drift refresh
+that returns pending readiness: it keeps its captured target and anchor, does
+not present the retired inventory's action context, and replaces its context
+once the refreshed inventory is ready. Such a retained menu is validated
+against the same document state a pending demand uses, including a
+selection-only change that publishes no text snapshot, so it is retired
+instead of describing a selection the user no longer has; retirement is
+effective synchronously, so a notification arriving in the same batch cannot
+re-match the retired capture and bring the menu back. The full model
+mounts and clamps once, while later image loading only updates capabilities.
+Source/revision/selection/surface changes or cancellation discard pending
+demand rather than mounting a stale menu. This does not add a parser, document
+store, reserved blank panel or post-mount repositioning.
 
 Column and whole-table alignment minimally edit GFM separator cells. A bare
 `---` is a null alignment, not explicit left. Independent row alignment uses
@@ -383,9 +400,9 @@ visual provenance retains the original prefix and column base.
 Local generated-content export uses a revisioned accepted-Preview lease and
 the existing visual rasterization Port, independently of WeChat serialization
 and image uploading. PNG Clipboard writes are initiated by the explicit user
-action; formula MathML comes from the accepted KaTeX output. Download requests
-use the browser Download Port and do not claim that the user saved the file.
-Ordinary image copying has a separate pixel Port: it reads the certified,
+action; formula MathML comes from the accepted KaTeX output. The editor does
+not expose a browser-download or Save-as-PNG context-menu action. Ordinary
+image copying has a separate pixel Port: it reads the certified,
 already loaded same-origin image without fetching, reloading, changing image
 attributes, or uploading. Source range, ordinal, accepted revision, node order,
 and complete image fingerprint must remain current until output publication.

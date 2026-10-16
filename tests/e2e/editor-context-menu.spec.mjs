@@ -468,24 +468,14 @@ async function runGeneratedExportAction(
   await selectSourceText(page, sourceEditor, markdown, selectText);
   await openSourceMenu(page, sourceEditor);
   await openRootSubmenu(page, 'generated-content');
-  if ('save-generated-image' !== action && 'copy-code-block' !== action) {
+  if ('copy-code-block' !== action) {
     await openVisibleSubmenu(page, 'copy-generated');
-  } else if ('copy-code-block' === action) {
+  } else {
     await openVisibleSubmenu(page, 'code-block');
   }
   const before = await readGeneratedExportSnapshot(page);
   const actionItem = anyMenuItem(page, action);
-  if ('save-generated-image' === action) {
-    const downloadPromise = page.waitForEvent('download');
-    await actionItem.click();
-    const download = await downloadPromise;
-    const path = await download.path();
-    if (!path) throw new Error(`generated-export-download-path-unavailable:${label}`);
-    if (!/\.png$/iu.test(download.suggestedFilename())) {
-      throw new Error(`generated-export-download-type-invalid:${label}`);
-    }
-    await decodeGeneratedPng(page, readFileSync(path), `${label}-download`);
-  } else if ('copy-generated-image' === action) {
+  if ('copy-generated-image' === action) {
     await actionItem.click();
     await readClipboardPng(page, `${label}-clipboard`);
   } else if ('copy-generated-mathml' === action) {
@@ -669,8 +659,8 @@ async function openSourceInsertImagePicker(page, sourceEditor, markdown) {
   const sourceState = await readSourceMediaBridgeState(sourceEditor);
   await openSourceMenu(page, sourceEditor);
   await openRootSubmenu(page, 'insert');
-  await expectMenuItemState(page, 'insert-image', 'enabled');
-  await anyMenuItem(page, 'insert-image').click();
+  await expectMenuItemState(page, 'insert-image-above', 'enabled');
+  await anyMenuItem(page, 'insert-image-above').click();
   await expect(page.locator(menuSelector)).toHaveCount(0);
 
   const dialog = page.locator('.easymde-media-picker-dialog');
@@ -3734,7 +3724,7 @@ function visualCategoryMatrix(visualEditor, occurrence = 'first') {
     },
     {
       id: 'link',
-      items: { 'copy-link-address': 'enabled', 'open-link': 'enabled' },
+      items: { 'copy-link-address': 'enabled' },
       targetFactory: target('a', 'OpenAI 官网')
     },
     {
@@ -3828,7 +3818,7 @@ async function assertSourceCategoryMatrix(
     },
     {
       id: 'link',
-      items: { 'copy-link-address': 'enabled', 'open-link': 'enabled' },
+      items: { 'copy-link-address': 'enabled' },
       selectText: '[OpenAI 官网](https://openai.com)'
     },
     {
@@ -3875,8 +3865,7 @@ async function assertSourceCategoryMatrix(
         'delete-generated-content': 'enabled',
         'edit-generated-content': 'enabled',
         'insert-paragraph-above-generated': 'enabled',
-        'insert-paragraph-below-generated': 'enabled',
-        'save-generated-image': 'enabled'
+        'insert-paragraph-below-generated': 'enabled'
       },
       id: 'math',
       items: { 'generated-content': 'enabled' },
@@ -3895,8 +3884,7 @@ async function assertSourceCategoryMatrix(
         'delete-generated-content': 'enabled',
         'edit-generated-content': 'enabled',
         'insert-paragraph-above-generated': 'enabled',
-        'insert-paragraph-below-generated': 'enabled',
-        'save-generated-image': 'enabled'
+        'insert-paragraph-below-generated': 'enabled'
       },
       id: 'mermaid',
       items: { 'generated-content': 'enabled' },
@@ -4071,7 +4059,6 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(source).toHaveValue(markdown);
     await selectSourceText(page, sourceEditor, markdown, '[OpenAI 官网](https://openai.com)');
     await openSourceMenu(page, sourceEditor);
-    await expectMenuItemState(page, 'open-link', 'enabled');
     await expectMenuItemState(page, 'copy-link-address', 'enabled');
     await closeMenu(page);
     await expect(source).toHaveValue(markdown);
@@ -4310,7 +4297,6 @@ test.describe('Editor context menu production surfaces', () => {
       const sourceProbe = await startSourceTransactionProbe(page);
       try {
         await openSourceNativeMenu(page, editor, linkCase.selectedText);
-        await expectMenuItemState(page, 'open-link', 'enabled');
         await expectMenuItemState(page, 'copy-link-address', 'enabled');
         await rootItem(page, 'copy-link-address').click();
         await expect(page.locator(menuSelector)).toHaveCount(0);
@@ -4955,7 +4941,6 @@ test.describe('Editor context menu production surfaces', () => {
         ['copy-generated-source', 'formula-copy-source'],
         ['copy-generated-mathml', 'formula-copy-mathml'],
         ['copy-generated-image', 'formula-copy-png'],
-        ['save-generated-image', 'formula-save-png'],
         ['copy-code-block', 'formula-copy-code-block']
       ]) {
         await runGeneratedExportAction(page, {
@@ -4975,7 +4960,6 @@ test.describe('Editor context menu production surfaces', () => {
       for (const [action, label] of [
         ['copy-generated-source', 'mermaid-copy-source'],
         ['copy-generated-image', 'mermaid-copy-png'],
-        ['save-generated-image', 'mermaid-save-png'],
         ['copy-code-block', 'mermaid-copy-code-block']
       ]) {
         await runGeneratedExportAction(page, {

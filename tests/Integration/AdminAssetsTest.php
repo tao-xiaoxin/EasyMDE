@@ -89,8 +89,6 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 				'Formula',
 				'Insert paragraph above',
 				'Insert paragraph below',
-				'Open link',
-				'Save as image',
 			),
 			array(
 				$bootstrap['strings']['contextMenu']['copyDiagramSource'],
@@ -111,8 +109,6 @@ final class AdminAssetsTest extends WP_UnitTestCase {
 				$bootstrap['strings']['contextMenu']['mathBlock'],
 				$bootstrap['strings']['contextMenu']['insertParagraphAboveGenerated'],
 				$bootstrap['strings']['contextMenu']['insertParagraphBelowGenerated'],
-				$bootstrap['strings']['contextMenu']['openLink'],
-				$bootstrap['strings']['contextMenu']['saveGeneratedImage'],
 			)
 		);
 		$this->assertMatchesRegularExpression(

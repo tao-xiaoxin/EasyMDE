@@ -13,6 +13,117 @@ const XHTML_NAMESPACE = w3cNamespace('1999/xhtml');
 const MIN_DIMENSION = 1;
 const MAX_DIMENSION = 4096;
 
+const SVG_VISUAL_STYLE_PROPERTIES = [
+  'color',
+  'display',
+  'fill',
+  'fill-opacity',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'letter-spacing',
+  'line-height',
+  'opacity',
+  'paint-order',
+  'shape-rendering',
+  'stroke',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'stroke-miterlimit',
+  'stroke-dasharray',
+  'stroke-dashoffset',
+  'stroke-opacity',
+  'stroke-width',
+  'text-anchor',
+  'text-decoration',
+  'text-rendering',
+  'transform',
+  'transform-origin',
+  'visibility',
+  'white-space',
+  'word-spacing'
+] as const;
+
+function computedStyle(
+  document: Document,
+  element: Element,
+): CSSStyleDeclaration {
+  const view = document.defaultView;
+  if (!view || 'function' !== typeof view.getComputedStyle) {
+    throw new WechatVisualRasterizationError('wechat-png-image-failed');
+  }
+  try {
+    return view.getComputedStyle(element);
+  } catch {
+    throw new WechatVisualRasterizationError('wechat-png-image-failed');
+  }
+}
+
+function inlineComputedStyles(
+  original: Element,
+  clone: Element,
+  document: Document,
+): void {
+  const originals = [original, ...Array.from(original.querySelectorAll('*'))];
+  const clones = [clone, ...Array.from(clone.querySelectorAll('*'))];
+  const count = Math.min(originals.length, clones.length);
+
+  for (let index = 0; index < count; index += 1) {
+    const originalElement = originals[index];
+    const cloneElement = clones[index];
+    if (!originalElement || !cloneElement) continue;
+    if (!(cloneElement instanceof HTMLElement) && !(cloneElement instanceof SVGElement)) {
+      continue;
+    }
+    const style = computedStyle(document, originalElement);
+    for (const property of SVG_VISUAL_STYLE_PROPERTIES) {
+      const value = style.getPropertyValue(property);
+      if (value) cloneElement.style.setProperty(property, value);
+    }
+  }
+}
+
+function inlineMermaidBackground(
+  source: Element,
+  svg: SVGSVGElement,
+  document: Document,
+): void {
+  let background: CSSStyleDeclaration | null = null;
+  for (let element: Element | null = source; element; element = element.parentElement) {
+    const style = computedStyle(document, element);
+    const hasColor =
+      style.backgroundColor !== 'rgba(0, 0, 0, 0)'
+      && style.backgroundColor !== 'transparent';
+    const hasImage = Boolean(style.backgroundImage && style.backgroundImage !== 'none');
+    if (hasColor || hasImage) {
+      background = style;
+      break;
+    }
+  }
+  const svgStyle = computedStyle(document, source.matches('svg') ? source : svg);
+  let backgroundColor = background?.backgroundColor ?? '';
+  if (!backgroundColor
+    && svgStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
+    && svgStyle.backgroundColor !== 'transparent') {
+    backgroundColor = svgStyle.backgroundColor;
+  }
+  if (backgroundColor && backgroundColor !== 'rgba(0, 0, 0, 0)' && backgroundColor !== 'transparent') {
+    svg.style.setProperty('background-color', backgroundColor);
+  }
+
+  // CSS gradients are self-contained and remain safe to serialize. External
+  // URLs are deliberately excluded so a copied image cannot pull in an
+  // untrusted or cross-origin resource and taint the canvas.
+  const backgroundImage = background?.backgroundImage ?? '';
+  if (backgroundImage && backgroundImage !== 'none' && !/url\(/iu.test(backgroundImage)) {
+    svg.style.setProperty('background-image', backgroundImage);
+    svg.style.setProperty('background-position', background?.backgroundPosition ?? '');
+    svg.style.setProperty('background-size', background?.backgroundSize ?? '');
+    svg.style.setProperty('background-repeat', background?.backgroundRepeat ?? '');
+  }
+}
+
 export type BrowserWechatVisualRasterizerRuntime = Readonly<{
   blob: typeof Blob;
   document: Document;
@@ -73,6 +184,8 @@ function serializedSvg(
   let svg: SVGSVGElement;
   if (source) {
     svg = source.cloneNode(true) as SVGSVGElement;
+    inlineComputedStyles(source, svg, document);
+    inlineMermaidBackground(request.source, svg, document);
     if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', SVG_NAMESPACE);
     svg.setAttribute('width', String(dimensionsValue.width));
     svg.setAttribute('height', String(dimensionsValue.height));
@@ -96,7 +209,9 @@ function serializedSvg(
     foreignObject.setAttribute('height', '100%');
     const container = document.createElementNS(XHTML_NAMESPACE, 'div');
     container.setAttribute('xmlns', XHTML_NAMESPACE);
-    container.appendChild(request.source.cloneNode(true));
+    const clone = request.source.cloneNode(true) as Element;
+    inlineComputedStyles(request.source, clone, document);
+    container.appendChild(clone);
     foreignObject.appendChild(container);
     svg.appendChild(foreignObject);
   }

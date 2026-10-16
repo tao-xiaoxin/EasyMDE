@@ -24,7 +24,6 @@ import type {
 import { undoDepth } from '@codemirror/commands';
 import type { ImageUploadResult } from '../../contracts/ports/image-upload-port';
 import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
-import type { EditorLinkPort } from '../../contracts/ports/editor-link-port';
 import type {
   EditorImagePixelsPort,
   EditorImagePixelsResult
@@ -122,19 +121,21 @@ const contextMenuStrings = {
   insertBelow: 'Insert paragraph below',
   insertCodeAbove: 'Insert paragraph above code block',
   insertCodeBelow: 'Insert paragraph below code block',
+  insertImageAbove: 'Insert image above',
+  insertImageBelow: 'Insert image below',
   insertColumnLeft: 'Insert column left',
   insertColumnRight: 'Insert column right',
   insertParagraphAboveGenerated: 'Insert paragraph above',
   insertParagraphAboveTable: 'Insert paragraph above table',
   insertParagraphBelowGenerated: 'Insert paragraph below',
   insertParagraphBelowTable: 'Insert paragraph below table',
+  insertTableAbove: 'Insert table above',
+  insertTableBelow: 'Insert table below',
   insertRowAbove: 'Insert row above',
   insertRowBelow: 'Insert row below',
   mathBlock: 'Formula',
-  openLink: 'Open link',
   paste: 'Paste',
   pastePlainText: 'Paste as plain text',
-  saveGeneratedImage: 'Save as image',
   statusActionFailed: 'The editor action could not be completed.',
   statusClipboardUnavailable: 'Clipboard unavailable.',
   table: 'Table',
@@ -1288,7 +1289,6 @@ async function renderMixedGeneratedVisual(
     copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
     copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
     dispose: vi.fn(),
-    saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
   } as GeneratedContentExportSession;
   const view = render(
     <EditorRoot
@@ -1491,7 +1491,7 @@ describe('EditorRoot', () => {
         await within(document.body).findByRole('menuitem', { name: 'Insert' })
       );
       const image = await within(document.body).findByRole('menuitem', {
-        name: /^Image/
+        name: /^Insert image above/
       });
       const hint = image.querySelector(
         '.easymde-editor-context-menu__shortcut'
@@ -1539,6 +1539,137 @@ describe('EditorRoot', () => {
       expect(props.editorClipboardPort?.write).toHaveBeenCalledWith('selected')
     );
     expect(props.submissionField.value).toBe('selected');
+    view.unmount();
+  });
+
+  it('opens the heading-level submenu for a Source heading and marks its current level', async () => {
+    const props = fixture();
+    const sourceValue = '## Heading two\n\nBody';
+    const headingPosition = sourceValue.indexOf('Heading');
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(headingPosition, headingPosition);
+    const headingLevels = [1, 2, 3, 4, 5, 6] as const;
+    const view = render(
+      <EditorRoot
+        {...props}
+        toolbar={{
+          ...props.toolbar,
+          commands: [
+            ...props.toolbar.commands,
+            ...headingLevels.map((level) => ({
+              action: 'heading' as const,
+              group: 'heading',
+              icon: 'heading',
+              id: `heading${level}`,
+              label: `Heading ${level}`,
+              level,
+              surface: 'heading-menu' as const
+            }))
+          ]
+        }}
+      />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    const headingLevel = await within(document.body).findByRole('menuitem', {
+      name: 'Heading level'
+    });
+    fireEvent.mouseEnter(headingLevel);
+    const currentLevel = await within(document.body).findByRole('menuitem', {
+      name: 'Heading 2'
+    });
+    expect(
+      currentLevel.getAttribute('data-easymde-context-menu-checked')
+    ).toBe('true');
+    expect(
+      within(document.body)
+        .getByRole('menuitem', { name: 'Heading 3' })
+        .getAttribute('data-easymde-context-menu-checked')
+    ).toBeNull();
+
+    fireEvent.click(
+      within(document.body).getByRole('menuitem', { name: 'Heading 3' })
+    );
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe('### Heading two\n\nBody')
+    );
+    expect(EditorView.findFromDOM(source)?.state.doc.toString()).toBe(
+      '### Heading two\n\nBody'
+    );
+    fireEvent.click(view.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(props.submissionField.value).toBe(sourceValue));
+    view.unmount();
+  });
+
+  it('opens the pointed Source context from a bare right-click instead of the previous caret', async () => {
+    const props = fixture();
+    const sourceValue = '## Heading two\n\nBody';
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    // The collapsed caret is deliberately left in a different block: only the
+    // pointer gesture may decide the captured context.
+    props.submissionField.setSelectionRange(sourceValue.length, sourceValue.length);
+    const headingLevels = [1, 2, 3, 4, 5, 6] as const;
+    const view = render(
+      <EditorRoot
+        {...props}
+        toolbar={{
+          ...props.toolbar,
+          commands: [
+            ...props.toolbar.commands,
+            ...headingLevels.map((level) => ({
+              action: 'heading' as const,
+              group: 'heading',
+              icon: 'heading',
+              id: `heading${level}`,
+              label: `Heading ${level}`,
+              level,
+              surface: 'heading-menu' as const
+            }))
+          ]
+        }}
+      />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+    const editorView = EditorView.findFromDOM(source);
+    if (!editorView) throw new Error('source-editor-view-missing');
+    layoutContextMenuSurface(source);
+    const pointer = { x: 1, y: 0 };
+    const mapped = editorView.posAtCoords(pointer, false);
+    if (null === mapped) throw new Error('source-pointer-unmappable');
+    const headingLine = editorView.state.doc.line(1);
+    expect(mapped).toBeGreaterThanOrEqual(headingLine.from);
+    expect(mapped).toBeLessThanOrEqual(headingLine.to);
+    expect(mapped).toBeLessThan(sourceValue.length);
+
+    // A real right-click: the pointer gesture precedes the native context-menu
+    // request, exactly as the browser dispatches it.
+    fireEvent.mouseDown(source, { button: 2, clientX: pointer.x, clientY: pointer.y });
+    fireEvent.contextMenu(source, { clientX: pointer.x, clientY: pointer.y });
+
+    const headingLevel = await within(document.body).findByRole('menuitem', {
+      name: 'Heading level'
+    });
+    fireEvent.mouseEnter(headingLevel);
+    expect(
+      (
+        await within(document.body).findByRole('menuitem', { name: 'Heading 2' })
+      ).getAttribute('data-easymde-context-menu-checked')
+    ).toBe('true');
+    // The canonical selection was established from the pointer before the
+    // demand snapshot was captured.
+    expect(editorView.state.selection.main.head).toBe(mapped);
     view.unmount();
   });
 
@@ -1610,7 +1741,6 @@ describe('EditorRoot', () => {
       copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
       copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
       dispose: vi.fn(),
-      saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
     } as GeneratedContentExportSession;
     const view = render(
       <EditorRoot
@@ -1652,25 +1782,16 @@ describe('EditorRoot', () => {
         name: 'Copy MathML'
       })
     ).toBeTruthy();
-    const codeSubmenu = within(document.body).getByRole('menuitem', {
+    expect(within(document.body).queryByRole('menuitem', {
       name: 'Code block'
+    })).toBeNull();
+    fireEvent.mouseEnter(copySubmenu);
+    const copyMathSource = await within(document.body).findByRole('menuitem', {
+      name: 'Copy TeX'
     });
-    fireEvent.mouseEnter(codeSubmenu);
+    fireEvent.click(copyMathSource);
     await waitFor(() =>
-      expect(codeSubmenu.getAttribute('aria-expanded')).toBe('true')
-    );
-    const copyCodeBlock = await within(document.body).findByRole('menuitem', {
-      name: 'Copy code block'
-    });
-    expect(copyCodeBlock.getAttribute('aria-disabled')).toBe('false');
-    expect(
-      within(document.body).getByRole('menuitem', {
-        name: 'Adjust Code Block Indentation'
-      }).getAttribute('aria-disabled')
-    ).toBe('true');
-    fireEvent.click(copyCodeBlock);
-    await waitFor(() =>
-      expect(props.editorClipboardPort?.write).toHaveBeenCalledWith('$x$')
+      expect(props.editorClipboardPort?.write).toHaveBeenCalledWith('x')
     );
     expect(props.submissionField.value).toBe(sourceMarkdown);
     view.unmount();
@@ -1746,7 +1867,6 @@ describe('EditorRoot', () => {
       copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
       copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
       dispose: vi.fn(),
-      saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
     } as GeneratedContentExportSession;
     let now = 0;
     const scheduled: Array<{
@@ -1892,7 +2012,6 @@ describe('EditorRoot', () => {
             copyAsImage: vi.fn(),
             copyMathMl: vi.fn(),
             dispose: vi.fn(),
-            saveAsImage: vi.fn()
           } as unknown as GeneratedContentExportSession
         }
         immersiveEnvironment={immersiveEnvironment}
@@ -2007,7 +2126,6 @@ describe('EditorRoot', () => {
       ),
       copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' as const }),
       dispose: vi.fn(),
-      saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' as const })
     } as GeneratedContentExportSession;
     const view = render(
       <EditorRoot
@@ -2182,7 +2300,6 @@ describe('EditorRoot', () => {
             copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
             copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
             dispose: vi.fn(),
-            saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
           } as GeneratedContentExportSession
         }
       />
@@ -2578,6 +2695,659 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('keeps the visual image context bound to the pointer target', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      'Before ![alt](https://example.test/original.png) after\nHeading paragraph';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <img alt="alt" src="https://example.test/original.png"> after</p><h1>Heading paragraph</h1>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const image = visual.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-context-image-missing');
+    }
+    const heading = visual.querySelector('h1');
+    if (!(heading instanceof HTMLElement)) {
+      throw new Error('visual-context-heading-missing');
+    }
+    const nativeSelection = window.getSelection();
+    const selectNode = (node: Node): void => {
+      const range = document.createRange();
+      range.selectNode(node);
+      nativeSelection?.removeAllRanges();
+      nativeSelection?.addRange(range);
+    };
+    // A real session leaves the hit image node selected after the image menu
+    // ran, so the later non-image right click still owns that stale selection.
+    selectNode(image);
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(image, { clientX: 24, clientY: 30 });
+    const imageMenu = await within(document.body).findByRole('menu');
+    expect(
+      within(imageMenu).getByRole('menuitem', { name: 'Image scale' })
+    ).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(within(document.body).queryByRole('menu')).toBeNull()
+    );
+
+    fireEvent.contextMenu(heading, { clientX: 24, clientY: 30 });
+    const headingMenu = await within(document.body).findByRole('menu');
+    expect(
+      within(headingMenu).queryByRole('menuitem', { name: 'Image scale' })
+    ).toBeNull();
+    expect(
+      within(headingMenu).queryByRole('menuitem', { name: 'Delete image' })
+    ).toBeNull();
+    expect(
+      within(headingMenu).queryByRole('menuitem', { name: 'Upload image' })
+    ).toBeNull();
+    expect(
+      within(headingMenu).queryByRole('menuitem', { name: 'Copy image' })
+    ).toBeNull();
+    view.unmount();
+  });
+
+  it('fails the image context explicitly when the accepted Preview no longer owns the hit image', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      'Before ![alt](https://example.test/original.png) after\nHeading paragraph';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <img alt="alt" src="https://example.test/original.png"> after</p><h1>Heading paragraph</h1>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const image = visual.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-context-image-missing');
+    }
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(image, { clientX: 24, clientY: 30 });
+    const imageMenu = await within(document.body).findByRole('menu');
+    expect(
+      within(imageMenu).getByRole('menuitem', { name: 'Image scale' })
+    ).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(within(document.body).queryByRole('menu')).toBeNull()
+    );
+
+    // A Windowed-style DOM replacement retires the element the accepted
+    // Preview certified: the new live <img> is still the pointer target, but
+    // no image lease can be verified for it. Image commands must fail
+    // explicitly instead of silently degrading to the generic text menu.
+    const replacement = image.cloneNode(true) as HTMLImageElement;
+    image.replaceWith(replacement);
+    fireEvent.contextMenu(replacement, { clientX: 24, clientY: 30 });
+    expect(props.onFailure).toHaveBeenCalledWith(
+      'editor-context-menu-image-stale'
+    );
+    expect(within(document.body).queryByRole('menu')).toBeNull();
+    view.unmount();
+  });
+
+  it('keeps a paragraph image menu off a selection that names the sibling image', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      'Before ![a](https://example.test/a.png) mid ![b](https://example.test/b.png) after';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <img alt="a" src="https://example.test/a.png"> mid <img alt="b" src="https://example.test/b.png"> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const [imageA, imageB] = Array.from(visual.querySelectorAll('img'));
+    if (
+      !(imageA instanceof HTMLImageElement)
+      || !(imageB instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-context-images-missing');
+    }
+    const nativeSelection = window.getSelection();
+    const selectNode = (node: Node): void => {
+      const range = document.createRange();
+      range.selectNode(node);
+      nativeSelection?.removeAllRanges();
+      nativeSelection?.addRange(range);
+    };
+    // A deliberate non-collapsed source selection names image B while the
+    // pointer hits image A. The menu must not borrow B's image lease, so no
+    // image command may appear and B must stay untouched.
+    selectNode(imageB);
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(imageA, { clientX: 24, clientY: 30 });
+    const foreignMenu = await within(document.body).findByRole('menu');
+    for (const name of [
+      'Image scale',
+      'Delete image',
+      'Copy image',
+      'Upload image'
+    ]) {
+      expect(
+        within(foreignMenu).queryByRole('menuitem', { name })
+      ).toBeNull();
+    }
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(within(document.body).queryByRole('menu')).toBeNull()
+    );
+    expect(props.submissionField.value).toBe(sourceMarkdown);
+
+    // The same pointer target with its own selection keeps its own image
+    // commands and deletes only that image.
+    selectNode(imageA);
+    fireEvent.contextMenu(imageA, { clientX: 24, clientY: 30 });
+    const imageMenu = await within(document.body).findByRole('menu');
+    const deleteImage = within(imageMenu).getByRole('menuitem', {
+      name: 'Delete image'
+    });
+    expect(deleteImage.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.click(deleteImage);
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        'Before  mid ![b](https://example.test/b.png) after'
+      )
+    );
+    view.unmount();
+  });
+
+  it('keeps a cross-block duplicate image menu off the selection image', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      'First ![dup](https://example.test/dup.png)\nSecond ![dup](https://example.test/dup.png)';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>First <img alt="dup" src="https://example.test/dup.png"></p><h2>Second <img alt="dup" src="https://example.test/dup.png"></h2>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const [imageA, imageB] = Array.from(visual.querySelectorAll('img'));
+    if (
+      !(imageA instanceof HTMLImageElement)
+      || !(imageB instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-context-images-missing');
+    }
+    const nativeSelection = window.getSelection();
+    const selectNode = (node: Node): void => {
+      const range = document.createRange();
+      range.selectNode(node);
+      nativeSelection?.removeAllRanges();
+      nativeSelection?.addRange(range);
+    };
+    // Duplicate rendered URLs must not let the block-local ordinal proof fall
+    // back to the selection's image in the other block.
+    selectNode(imageB);
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(imageA, { clientX: 24, clientY: 30 });
+    const foreignMenu = await within(document.body).findByRole('menu');
+    expect(
+      within(foreignMenu).queryByRole('menuitem', { name: 'Delete image' })
+    ).toBeNull();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(within(document.body).queryByRole('menu')).toBeNull()
+    );
+    expect(props.submissionField.value).toBe(sourceMarkdown);
+
+    selectNode(imageA);
+    fireEvent.contextMenu(imageA, { clientX: 24, clientY: 30 });
+    const imageMenu = await within(document.body).findByRole('menu');
+    fireEvent.click(
+      within(imageMenu).getByRole('menuitem', { name: 'Delete image' })
+    );
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        'First \nSecond ![dup](https://example.test/dup.png)'
+      )
+    );
+    view.unmount();
+  });
+
+  it('keeps a failed visual Cut transfer an explicit failure after the canonical write', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered paragraph';
+    props.submissionField.defaultValue = 'Rendered paragraph';
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p>${request.markdown}</p>` as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const paragraph = visual.querySelector('p');
+    const text = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-cut-selection-target-missing');
+    }
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 8);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    visual.focus();
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(paragraph, { clientX: 24, clientY: 30 });
+    await within(document.body).findByRole('menu');
+    fireEvent.click(
+      within(document.body).getByRole('menuitem', { name: 'Cut' })
+    );
+    await waitFor(() => expect(props.submissionField.value).toBe(' paragraph'));
+    // The canonical write landed, but the visual transaction that maps the
+    // cut result failed. It must stay an explicit failure instead of being
+    // announced as a completed command.
+    const failureCodes = vi
+      .mocked(props.onFailure)
+      .mock.calls.map(([code]) => code);
+    expect(
+      failureCodes.some((code) =>
+        /^visual-editor-(?:selection-map|markdown-merge)/u.test(code)
+      )
+    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull()
+    );
+    await waitFor(() =>
+      expect(
+        view.queryByText('The editor action could not be completed.')
+      ).not.toBeNull()
+    );
+    view.unmount();
+  });
+
+  it('keeps a rejected Preview transfer an explicit failure after the canonical Cut write', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered paragraph';
+    props.submissionField.defaultValue = 'Rendered paragraph';
+    const cutMarkdown = ' paragraph';
+    let rejectedOnce = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (request.markdown === cutMarkdown && !rejectedOnce) {
+        rejectedOnce = true;
+        return Promise.reject(new Error('synthetic-cut-preview-rejection'));
+      }
+      return Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p>${request.markdown}</p>` as SafePreviewHtml,
+          {}
+        )
+      );
+    });
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const paragraph = visual.querySelector('p');
+    const text = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLElement) || !(text instanceof Text)) {
+      throw new Error('visual-cut-selection-target-missing');
+    }
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 8);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+    visual.focus();
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(paragraph, { clientX: 24, clientY: 30 });
+    await within(document.body).findByRole('menu');
+    fireEvent.click(
+      within(document.body).getByRole('menuitem', { name: 'Cut' })
+    );
+
+    // The canonical write lands, but the rejected Preview transfer is a
+    // visual transaction failure: it must stay visible instead of being
+    // announced as a completed command.
+    await waitFor(() => expect(props.submissionField.value).toBe(cutMarkdown));
+    await waitFor(() =>
+      expect(
+        view.queryByRole('textbox', { name: '可视化文章编辑器' })
+      ).toBeNull()
+    );
+    await waitFor(() =>
+      expect(
+        view.queryByText('The editor action could not be completed.')
+      ).not.toBeNull()
+    );
+    view.unmount();
+  });
+
+  it('exposes the code block context for a visual Preview code block', async () => {
+    const props = fixture();
+    const sourceMarkdown = '```js\nconst value = 1;\n```\n\nTail';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        request.markdown.includes('const value = 1;')
+          ? {
+              ...createCodeContentPreviewResponse(
+                request,
+                sourceMarkdown,
+                sourceMarkdown.indexOf('const'),
+                'const value = 1;\n'
+              ),
+              // The rendered fence owns its complete source line range,
+              // closing fence terminator included, exactly like a real Preview
+              // edit map.
+              editMap: {
+                blocks: [
+                  { editable: true, endLine: 3, id: 'b0', startLine: 0 }
+                ],
+                coordinate: 'line',
+                signature: request.signature,
+                version: 1
+              }
+            }
+          : createPreviewResponse(
+              request,
+              '<p>Tail</p>' as SafePreviewHtml,
+              {}
+            )
+      )
+    );
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={sourceLinkBlockIndexPort()}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const codeBlock = visual.querySelector('pre');
+    const codeText = codeBlock?.querySelector('code')?.firstChild;
+    if (!(codeBlock instanceof HTMLElement) || !(codeText instanceof Text)) {
+      throw new Error('visual-code-block-missing');
+    }
+    const range = document.createRange();
+    range.setStart(codeText, 0);
+    range.collapse(true);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(codeBlock, { clientX: 24, clientY: 30 });
+    const menu = await within(document.body).findByRole('menu');
+    const trigger = within(menu).queryByRole('menuitem', { name: 'Code block' });
+    if (!trigger) {
+      const items = Array.from(
+        menu.querySelectorAll('[data-easymde-context-menu-item]')
+      )
+        .map((item) => item.getAttribute('data-easymde-context-menu-item'))
+        .join(',');
+      throw new Error(`visual-code-block-menu-missing:${items}`);
+    }
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Code block'
+    });
+    const deleteItem = within(submenu).getByRole('menuitem', {
+      name: 'Delete code block'
+    });
+    expect(deleteItem.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.pointerDown(deleteItem, { button: 0 });
+    fireEvent.click(deleteItem);
+    await waitFor(() =>
+      expect(props.submissionField.value).not.toContain('```')
+    );
+    expect(props.submissionField.value).toContain('Tail');
+    expect(vi.mocked(props.onFailure).mock.calls.map((call) => call[0])).toEqual(
+      []
+    );
+    view.unmount();
+  });
+
+  it('exposes the generated context for a visual Preview formula', async () => {
+    const props = fixture();
+    const sourceMarkdown = 'Before\n$x$\nAfter';
+    const mathStart = sourceMarkdown.indexOf('$x$');
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before</p><p><span class="easymde-math easymde-math-inline"><span class="katex"><span class="katex-mathml"><math><mi>x</mi></math></span></span></span></p><p>After</p>' as SafePreviewHtml,
+          { math: true }
+        )
+      )
+    );
+    const editorBlockIndexPort: EditorMarkdownBlockIndexPort = {
+      build: vi.fn(async ({ source }) => ({
+        ...imageBlockIndexData(source),
+        mathSpans: [
+          {
+            bodyFrom: mathStart + 1,
+            bodyTo: mathStart + 2,
+            displayMode: false,
+            from: mathStart,
+            to: mathStart + 3
+          }
+        ]
+      })),
+      dispose: vi.fn()
+    };
+    const generatedContentExportSession = {
+      copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
+      copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
+      dispose: vi.fn(),
+    } as GeneratedContentExportSession;
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={editorBlockIndexPort}
+        generatedContentExportSession={generatedContentExportSession}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const math = visual.querySelector('.easymde-math');
+    if (!(math instanceof HTMLElement)) {
+      throw new Error('visual-generated-content-missing');
+    }
+    // A rendered formula cannot own the browser caret, so a plain right click
+    // reaches it without any selection inside the formula root.
+    window.getSelection()?.removeAllRanges();
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(math, { clientX: 24, clientY: 30 });
+    const menu = await within(document.body).findByRole('menu');
+    const trigger = within(menu).getByRole('menuitem', { name: 'Formula' });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Formula'
+    });
+    expect(
+      within(submenu)
+        .getByRole('menuitem', { name: 'Delete' })
+        .getAttribute('aria-disabled')
+    ).toBe('false');
+    view.unmount();
+  });
+
+  it('exposes the generated context for a visual Preview diagram', async () => {
+    const props = fixture();
+    const sourceMarkdown = '```mermaid\nflowchart TD\nA-->B\n```\n\nTail';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        request.markdown.includes('flowchart TD')
+          ? {
+              ...createPreviewResponse(
+                request,
+                '<div class="easymde-mermaid" data-easymde-visual-markdown-source="flowchart TD\nA-->B"><svg></svg></div><p>Tail</p>' as SafePreviewHtml,
+                { mermaid: true }
+              ),
+              // The rendered diagram owns its complete fenced source range,
+              // closing fence terminator included, exactly like a real
+              // Preview edit map.
+              editMap: {
+                blocks: [
+                  { editable: true, endLine: 4, id: 'b0', startLine: 0 },
+                  { editable: true, endLine: 6, id: 'b1', startLine: 5 }
+                ],
+                coordinate: 'line',
+                signature: request.signature,
+                version: 1
+              }
+            }
+          : createPreviewResponse(
+              request,
+              '<p>Tail</p>' as SafePreviewHtml,
+              {}
+            )
+      )
+    );
+    const generatedContentExportSession = {
+      copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
+      copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
+      dispose: vi.fn()
+    } as GeneratedContentExportSession;
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={sourceLinkBlockIndexPort()}
+        generatedContentExportSession={generatedContentExportSession}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const diagram = visual.querySelector('.easymde-mermaid');
+    if (!(diagram instanceof HTMLElement)) {
+      throw new Error('visual-diagram-content-missing');
+    }
+    // A rendered diagram cannot own the browser caret, so a plain right click
+    // reaches it without any selection inside the diagram root.
+    window.getSelection()?.removeAllRanges();
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(diagram, { clientX: 24, clientY: 30 });
+    const menu = await within(document.body).findByRole('menu');
+    const trigger = within(menu).getByRole('menuitem', { name: 'Diagram' });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Diagram'
+    });
+    expect(
+      within(submenu)
+        .getByRole('menuitem', { name: 'Delete' })
+        .getAttribute('aria-disabled')
+    ).toBe('false');
+    view.unmount();
+  });
+
   it('applies an unsupported planned Link command through the canonical Visual owner', async () => {
     const props = fixture();
     const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
@@ -2886,7 +3656,6 @@ describe('EditorRoot', () => {
             : `line ${index}`
       );
       const markdown = lines.join('\n');
-      const mathStart = markdown.indexOf('$$x$$');
       props.submissionField.value = markdown;
       props.submissionField.defaultValue = markdown;
       props.submissionField.setSelectionRange(markdown.length, markdown.length);
@@ -2964,7 +3733,6 @@ describe('EditorRoot', () => {
         copyAsImage: vi.fn(),
         copyMathMl: vi.fn(),
         dispose: vi.fn(),
-        saveAsImage: vi.fn()
       } as GeneratedContentExportSession;
       const view = render(
         <EditorRoot
@@ -3053,15 +3821,13 @@ describe('EditorRoot', () => {
         expect(katex.isConnected).toBe(true);
         layoutContextMenuSurface(visual);
         fireEvent.contextMenu(math, { clientX: 24, clientY: 30 });
-        fireEvent.mouseEnter(
-          await within(document.body).findByRole('menuitem', {
-            name: 'Formula'
-          })
-        );
-        const edit = await within(document.body).findByRole('menuitem', {
-          name: 'Edit'
+        const formula = await within(document.body).findByRole('menuitem', {
+          name: 'Formula'
         });
-        expect(edit.getAttribute('aria-disabled')).toBe('false');
+        fireEvent.mouseEnter(formula);
+        expect(within(document.body).queryByRole('menuitem', {
+          name: 'Edit'
+        })).toBeNull();
 
         const retained = document.createRange();
         retained.selectNodeContents(katex);
@@ -3072,7 +3838,7 @@ describe('EditorRoot', () => {
         expect(katex.closest('[contenteditable="false"]')).not.toBeNull();
 
         const activeOwnerSpy = vi.spyOn(owner, 'setVisualEditingActive');
-        const capturedMenu = edit.closest('[role="menu"]');
+        const capturedMenu = formula.closest('[role="menu"]');
         const beforeWindowNodes = Array.from(visual.childNodes);
         const previewRuntime = previewRuntimeRef.current;
         if (!previewRuntime)
@@ -3104,11 +3870,8 @@ describe('EditorRoot', () => {
             (node, index) => node !== beforeWindowNodes[index]
           )
         ).toBe(true);
-        expect(edit.isConnected).toBe(true);
-        if (!foreign) {
-          expect(props.onFailure).not.toHaveBeenCalled();
-        }
-        expect(edit.closest('[role="menu"]')).toBe(capturedMenu);
+        expect(formula.isConnected).toBe(true);
+        expect(formula.closest('[role="menu"]')).toBe(capturedMenu);
         expect(activeOwnerSpy).not.toHaveBeenCalled();
         expect(katex.isConnected).toBe(true);
 
@@ -3119,49 +3882,9 @@ describe('EditorRoot', () => {
         expect(window.getSelection()?.anchorNode).toBe(katex);
         expect(window.getSelection()?.focusNode).toBe(katex);
 
-        fireEvent.click(edit);
-        if (foreign) {
-          expect(
-            view.container.querySelector('.easymde-immersive-shell.is-source')
-          ).toBeNull();
-          expect(props.onFailure).toHaveBeenCalledWith(
-            'visual-editor-read-only-region-mutated'
-          );
-          expect(props.onFailure).toHaveBeenCalledWith(
-            'editor-context-menu-visual-selection-unavailable'
-          );
-        } else {
-          await waitFor(() =>
-            expect(
-              Boolean(
-                view.container.querySelector(
-                  '.easymde-immersive-shell.is-source'
-                )
-              )
-            ).toBe(true)
-          );
-          const source =
-            view.container.querySelector<HTMLElement>('.cm-content');
-          expect(document.activeElement).toBe(source);
-          expect(
-            source && EditorView.findFromDOM(source)?.state.selection.main.head
-          ).toBe(mathStart);
-          expect(
-            visual.querySelectorAll('[data-easymde-visual-block-id]').length
-          ).toBeLessThanOrEqual(DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED);
-          await act(async () => {
-            for (let index = 0; index < 12; index += 1) {
-              await new Promise<void>((resolve) =>
-                requestAnimationFrame(() => resolve())
-              );
-            }
-          });
-          expect(
-            visual.querySelectorAll('[data-easymde-visual-block-id]').length
-          ).toBeLessThanOrEqual(DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED);
-          expect(document.activeElement).toBe(source);
-          expect(props.onFailure).not.toHaveBeenCalled();
-        }
+        expect(
+          view.container.querySelector('.easymde-immersive-shell.is-source')
+        ).toBeNull();
         expect(owner.getValue()).toBe(markdown);
         expect(props.submissionField.value).toBe(markdown);
         expect(owner.getRevision?.()).toBe(revision);
@@ -3376,10 +4099,13 @@ describe('EditorRoot', () => {
         const visual = frameQueue
           ? view.getByRole('textbox', { name: '可视化文章编辑器' })
           : await view.findByRole('textbox', { name: '可视化文章编辑器' });
-        const imageBlock = visual
-          .querySelector<HTMLElement>('img')
-          ?.closest<HTMLElement>('[data-easymde-visual-block-id]');
-        if (!imageBlock) throw new Error('visual-image-block-missing');
+        const imageElement = visual.querySelector('img');
+        const imageBlock = imageElement?.closest<HTMLElement>(
+          '[data-easymde-visual-block-id]'
+        );
+        if (!(imageElement instanceof HTMLImageElement) || !imageBlock) {
+          throw new Error('visual-image-block-missing');
+        }
         const range = document.createRange();
         range.selectNodeContents(imageBlock);
         const nativeSelection = window.getSelection();
@@ -3387,7 +4113,7 @@ describe('EditorRoot', () => {
         nativeSelection?.addRange(range);
 
         layoutContextMenuSurface(visual);
-        fireEvent.contextMenu(visual, { clientX: 24, clientY: 30 });
+        fireEvent.contextMenu(imageElement, { clientX: 24, clientY: 30 });
         await waitFor(() =>
           expect(editorBlockIndexPort.build).toHaveBeenCalled()
         );
@@ -3407,6 +4133,17 @@ describe('EditorRoot', () => {
                 uploadedUrl
               );
         await waitFor(() => expect(props.submissionField.value).toBe(expected));
+        if ('unchanged' !== status) {
+          // The rewritten destination keeps the whole updated image selected so
+          // the visual owner never has to map a caret inside image syntax.
+          const imported = imageScaleContract.parseMarkdownImageScale(
+            props.submissionField.value,
+            props.submissionField.value.indexOf('![')
+          );
+          if (!imported) throw new Error('uploaded-image-parse-missing');
+          expect(props.submissionField.selectionStart).toBe(imported.start);
+          expect(props.submissionField.selectionEnd).toBe(imported.end);
+        }
       } finally {
         unmountView?.();
         frameQueue?.restore();
@@ -3503,6 +4240,126 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it.each([false, true] as const)(
+    'keeps the scaled image target selected after a visual image scale action (windowed=%s)',
+    async (windowed) => {
+      const props = fixture();
+      const firstLine =
+        'Before ![alt](https://example.test/original.png "{width=100%}") after';
+      const sourceMarkdown = windowed
+        ? [
+            firstLine,
+            ...Array.from({ length: 160 }, (_, index) => `suffix ${index}`)
+          ].join('\n')
+        : firstLine;
+      props.submissionField.value = sourceMarkdown;
+      props.submissionField.defaultValue = sourceMarkdown;
+      const rendered = windowed
+        ? [
+            '<p>Before <img alt="alt" src="https://example.test/original.png" title="{width=100%}"> after</p>',
+            ...Array.from(
+              { length: 160 },
+              (_, index) => `<p>suffix ${index}</p>`
+            )
+          ].join('')
+        : '<p>Before <img alt="alt" src="https://example.test/original.png" title="{width=100%}"> after</p>';
+      vi.mocked(props.previewPort.render).mockImplementation((request) =>
+        Promise.resolve(
+          createPreviewResponse(request, rendered as SafePreviewHtml, {})
+        )
+      );
+      const view = render(
+        <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+      );
+      fireEvent.click(
+        await view.findByRole('button', { name: '进入沉浸写作' })
+      );
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', {
+        name: '可视化文章编辑器'
+      });
+      const currentImage = (): HTMLImageElement => {
+        const image = visual.querySelector('img');
+        if (!(image instanceof HTMLImageElement)) {
+          throw new Error('visual-context-image-missing');
+        }
+        return image;
+      };
+      // Retain one non-collapsed image-node selection, the way an earlier
+      // visual interaction leaves it behind before a later right click reuses
+      // the same image target, and keep the surface focused like a real
+      // editing session does.
+      visual.focus();
+      const retained = document.createRange();
+      retained.selectNode(currentImage());
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      nativeSelection?.addRange(retained);
+      document.dispatchEvent(new Event('selectionchange'));
+
+      const scaleImage = async (
+        percentage: '50%' | '100%'
+      ): Promise<void> => {
+        layoutContextMenuSurface(visual);
+        fireEvent.contextMenu(currentImage(), { clientX: 24, clientY: 30 });
+        const menu = await within(document.body).findByRole('menu');
+        const imageScaleTrigger = within(menu).getByRole('menuitem', {
+          name: 'Image scale'
+        });
+        fireEvent.pointerDown(imageScaleTrigger, { button: 0 });
+        fireEvent.click(imageScaleTrigger);
+        const imageScaleMenu = await within(document.body).findByRole('menu', {
+          name: 'Image scale'
+        });
+        const item = within(imageScaleMenu).getByRole('menuitem', {
+          name: percentage
+        });
+        fireEvent.pointerDown(item, { button: 0 });
+        fireEvent.click(item);
+      };
+      const expectImageTargetSelected = (percentage: '50%' | '100%'): void => {
+        const scaled = imageScaleContract.parseMarkdownImageScale(
+          props.submissionField.value,
+          props.submissionField.value.indexOf('![alt](')
+        );
+        if (!scaled) throw new Error('scaled-image-parse-missing');
+        expect(scaled.scale).toBe(Number(percentage.slice(0, -1)));
+        expect(props.submissionField.selectionStart).toBe(scaled.start);
+        expect(props.submissionField.selectionEnd).toBe(scaled.end);
+      };
+
+      await scaleImage('50%');
+      await waitFor(() =>
+        expect(props.submissionField.value).toContain('"{width=50%}"')
+      );
+      // The canonical image target survives the write, so the visual owner
+      // reports no failure and can restore the retained non-collapsed range.
+      expect(props.onFailure).not.toHaveBeenCalled();
+      // The canonical selection stays the complete scaled image target on both
+      // surfaces, so no owner ever maps a caret inside image syntax.
+      expectImageTargetSelected('50%');
+      if (!windowed) {
+        const restored = window.getSelection()?.getRangeAt(0);
+        if (!restored) throw new Error('visual-image-selection-missing');
+        expect(restored.collapsed).toBe(false);
+        expect(restored.intersectsNode(currentImage())).toBe(true);
+      }
+
+      // A repeated action replays the menu after the accepted Preview window
+      // re-rendered the scaled image. The replayed target is stale, so the
+      // owner must rebuild a legal target/selection instead of failing.
+      await scaleImage('100%');
+      await waitFor(() =>
+        expect(props.submissionField.value).toContain('"{width=100%}"')
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expectImageTargetSelected('100%');
+      view.unmount();
+    }
+  );
+
   it('mounts the shared context menu through the windowed visual owner', async () => {
     const props = fixture();
     const markdown = Array.from(
@@ -3562,7 +4419,7 @@ describe('EditorRoot', () => {
   });
 
   it.each([false, true] as const)(
-    'reveals generated source edits from %s visual Preview without changing Markdown',
+    'keeps generated visual Preview protected without changing Markdown (%s)',
     async (windowed) => {
       const props = fixture();
       const sourceMarkdown = windowed
@@ -3614,7 +4471,6 @@ describe('EditorRoot', () => {
         copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
         copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
         dispose: vi.fn(),
-        saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
       } as GeneratedContentExportSession;
       const view = render(
         <EditorRoot
@@ -3642,30 +4498,12 @@ describe('EditorRoot', () => {
         name: 'Formula'
       });
       fireEvent.mouseEnter(formula);
-      const edit = await within(document.body).findByRole('menuitem', {
+      expect(within(document.body).queryByRole('menuitem', {
         name: 'Edit'
-      });
-      expect(edit.getAttribute('aria-disabled')).toBe('false');
-      fireEvent.click(edit);
-
-      const source = await waitFor(() => {
-        const element =
-          view.container.querySelector<HTMLElement>('.cm-content');
-        if (!element) throw new Error('source-surface-missing');
-        return element;
-      });
-      await waitFor(() =>
-        expect(
-          view.container.querySelector('.easymde-immersive-shell.is-source')
-        ).not.toBeNull()
-      );
+      })).toBeNull();
       expect(
         view.queryByRole('textbox', { name: '可视化文章编辑器' })
-      ).toBeNull();
-      expect(document.activeElement).toBe(source);
-      expect(EditorView.findFromDOM(source)?.state.selection.main.head).toBe(
-        mathStart
-      );
+      ).not.toBeNull();
       expect(props.submissionField.value).toBe(sourceMarkdown);
       view.unmount();
     }
@@ -3717,7 +4555,6 @@ describe('EditorRoot', () => {
         copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' }),
         copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' }),
         dispose: vi.fn(),
-        saveAsImage: vi.fn().mockResolvedValue({ status: 'requested' })
       } as GeneratedContentExportSession;
       const view = render(
         <EditorRoot
@@ -3745,8 +4582,13 @@ describe('EditorRoot', () => {
         name: 'Formula'
       });
       fireEvent.mouseEnter(formula);
-      const edit = await within(document.body).findByRole('menuitem', {
-        name: 'Edit'
+      const copyGenerated = within(document.body)
+        .getAllByRole('menuitem', { name: 'Copy' })
+        .find((item) => item.getAttribute('aria-haspopup') === 'menu');
+      if (!copyGenerated) throw new Error('generated-copy-submenu-missing');
+      fireEvent.mouseEnter(copyGenerated);
+      const copySource = await within(document.body).findByRole('menuitem', {
+        name: 'Copy TeX'
       });
       if ('text' === mutation) {
         math.textContent = 'foreign';
@@ -3763,7 +4605,7 @@ describe('EditorRoot', () => {
       } else {
         math.remove();
       }
-      fireEvent.click(edit);
+      fireEvent.click(copySource);
 
       await waitFor(() => expect(props.onFailure).toHaveBeenCalled());
       expect(props.submissionField.value).toBe(sourceMarkdown);
@@ -3839,7 +4681,7 @@ describe('EditorRoot', () => {
         within(document.body).getByRole('menuitem', { name: 'Insert' })
       );
       fireEvent.click(
-        await within(document.body).findByRole('menuitem', { name: 'Table' })
+        await within(document.body).findByRole('menuitem', { name: 'Insert table above' })
       );
       return within(document.body).findByRole('dialog', { name: '插入表格' });
     };
@@ -3912,6 +4754,156 @@ describe('EditorRoot', () => {
 
     fireEvent.click(view.getByRole('button', { name: 'Undo' }));
     expect(EditorView.findFromDOM(source)?.state.doc.toString()).toBe(sourceValue);
+    view.unmount();
+  });
+
+  it('keeps block- and anchor-scoped table actions available for a mixed multi-row Source selection', async () => {
+    const props = fixture();
+    const sourceValue = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |';
+    const firstBodyRow = sourceValue.indexOf('| 1');
+    const nextRow = sourceValue.indexOf('| 3');
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(firstBodyRow, nextRow + 3);
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    const table = await within(document.body).findByRole('menuitem', {
+      name: 'Table'
+    });
+    fireEvent.mouseEnter(table);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Table'
+    });
+    const availability = (name: string): string | null =>
+      within(submenu).getByRole('menuitem', { name }).getAttribute('aria-disabled');
+    // The selection cannot prove a single target row, column, or alignment, so
+    // those operations stay disabled while the deterministic anchor and the
+    // table block itself remain actionable.
+    expect(availability('Insert row above')).toBe('false');
+    expect(availability('Insert column right')).toBe('false');
+    expect(availability('Copy table')).toBe('false');
+    expect(availability('Delete table')).toBe('false');
+    expect(availability('Insert paragraph below table')).toBe('false');
+    expect(availability('Delete row')).toBe('true');
+    expect(availability('Delete column')).toBe('true');
+    expect(availability('Alignment')).toBe('true');
+    expect(props.submissionField.value).toBe(sourceValue);
+    expect(view.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(
+      true
+    );
+    view.unmount();
+  });
+
+  it('keeps whole-table alignment available while row and column deletion stay unproven', async () => {
+    const props = fixture();
+    const sourceValue = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\nTail';
+    const tableEnd = sourceValue.indexOf('\n\nTail');
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(0, tableEnd);
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    const table = await within(document.body).findByRole('menuitem', {
+      name: 'Table'
+    });
+    fireEvent.mouseEnter(table);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Table'
+    });
+    expect(
+      within(submenu)
+        .getByRole('menuitem', { name: 'Delete row' })
+        .getAttribute('aria-disabled')
+    ).toBe('true');
+    expect(
+      within(submenu)
+        .getByRole('menuitem', { name: 'Delete column' })
+        .getAttribute('aria-disabled')
+    ).toBe('true');
+    const alignment = within(submenu).getByRole('menuitem', {
+      name: 'Alignment'
+    });
+    expect(alignment.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.mouseEnter(alignment);
+    fireEvent.click(
+      await within(document.body).findByRole('menuitem', { name: 'Align left' })
+    );
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        '| A | B |\n| :--- | :--- |\n| 1 | 2 |\n| 3 | 4 |\n\nTail'
+      )
+    );
+    expect(props.onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('applies column alignment from a real-browser column drag selection', async () => {
+    const props = fixture();
+    const sourceValue = '| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |';
+    const firstColumnStart = sourceValue.indexOf('1');
+    const firstColumnEnd = sourceValue.indexOf('3') + 1;
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(firstColumnStart, firstColumnEnd);
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    const table = await within(document.body).findByRole('menuitem', {
+      name: 'Table'
+    });
+    fireEvent.mouseEnter(table);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Table'
+    });
+    const availability = (name: string): string | null =>
+      within(submenu)
+        .getByRole('menuitem', { name })
+        .getAttribute('aria-disabled');
+    // The drag spans multiple rows inside one column: the column and the
+    // anchor stay provable, while no single row is.
+    expect(availability('Delete row')).toBe('true');
+    expect(availability('Delete column')).toBe('false');
+    expect(availability('Format Table Source')).toBe('false');
+    const alignment = within(submenu).getByRole('menuitem', {
+      name: 'Alignment'
+    });
+    expect(alignment.getAttribute('aria-disabled')).toBe('false');
+    fireEvent.mouseEnter(alignment);
+    fireEvent.click(
+      await within(document.body).findByRole('menuitem', { name: 'Align right' })
+    );
+    await waitFor(() =>
+      expect(props.submissionField.value).toBe(
+        '| A | B |\n| ---: | --- |\n| 1 | 2 |\n| 3 | 4 |'
+      )
+    );
+    expect(props.onFailure).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -4338,6 +5330,59 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('keeps code-block common actions grouped without duplicating root actions', async () => {
+    const props = fixture();
+    const sourceValue = '```js\nconst value = 1;\n```';
+    const codePosition = sourceValue.indexOf('value');
+    props.submissionField.value = sourceValue;
+    props.submissionField.defaultValue = sourceValue;
+    props.submissionField.setSelectionRange(codePosition, codePosition);
+
+    const view = render(<EditorRoot {...props} />);
+    const source = await waitFor(() => {
+      const element = view.container.querySelector<HTMLElement>('.cm-content');
+      if (!element) throw new Error('source-surface-missing');
+      return element;
+    });
+
+    layoutContextMenuSurface(source);
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+    const codeTrigger = await within(document.body).findByRole('menuitem', {
+      name: 'Code block'
+    });
+    fireEvent.mouseEnter(codeTrigger);
+    const codeMenu = await within(document.body).findByRole('menu', {
+      name: 'Code block'
+    });
+
+    const bold = within(codeMenu).getByRole('menuitem', { name: /^Bold/ });
+    expect(bold.getAttribute('aria-disabled')).toBe('true');
+    expect(within(codeMenu).getByRole('menuitem', { name: 'Delete code block' })).toBeTruthy();
+    expect(within(codeMenu).getByRole('menuitem', { name: 'Copy / Paste as' })).toBeTruthy();
+    expect(within(codeMenu).getByRole('menuitem', { name: 'Insert' })).toBeTruthy();
+    expect(within(document.body).queryAllByRole('menuitem', { name: /^Bold/ })).toHaveLength(1);
+    expect(within(document.body).queryAllByRole('menuitem', { name: 'Copy / Paste as' })).toHaveLength(1);
+    expect(within(document.body).queryAllByRole('menuitem', { name: 'Insert' })).toHaveLength(1);
+
+    fireEvent.mouseEnter(within(codeMenu).getByRole('menuitem', { name: 'Copy / Paste as' }));
+    const copyPasteMenu = await within(document.body).findByRole('menu', {
+      name: 'Copy / Paste as'
+    });
+    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Copy as HTML code' })).toBeTruthy();
+    expect(within(copyPasteMenu).getByRole('menuitem', { name: 'Copy with simplified formatting' })).toBeTruthy();
+
+    fireEvent.mouseEnter(within(codeMenu).getByRole('menuitem', { name: 'Insert' }));
+    const insertMenu = await within(document.body).findByRole('menu', {
+      name: 'Insert'
+    });
+    expect(within(insertMenu).getByRole('menuitem', { name: 'Insert table above' })).toBeTruthy();
+    expect(within(insertMenu).getByRole('menuitem', { name: 'Insert table below' })).toBeTruthy();
+    expect(within(insertMenu).getByRole('menuitem', { name: 'Insert image above' })).toBeTruthy();
+    expect(within(insertMenu).getByRole('menuitem', { name: 'Insert image below' })).toBeTruthy();
+    expect(props.onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it.each([
     {
       name: 'quote',
@@ -4682,10 +5727,6 @@ describe('EditorRoot', () => {
         selectedStart,
         selectedStart + selectedText.length - selectionOffset
       );
-      const linkPort: EditorLinkPort = {
-        dispose: vi.fn(),
-        open: vi.fn(() => ({ status: 'requested' as const }))
-      };
       const blockIndexPort = sourceLinkBlockIndexPort();
       const previewRender = vi.mocked(props.previewPort.render);
       previewRender.mockImplementation((request) =>
@@ -4700,7 +5741,6 @@ describe('EditorRoot', () => {
         <EditorRoot
           {...props}
           editorBlockIndexPort={blockIndexPort}
-          editorLinkPort={linkPort}
           simplifiedFormattingParser={sourceLinkParser()}
         />
       );
@@ -4712,16 +5752,19 @@ describe('EditorRoot', () => {
 
       layoutContextMenuSurface(source);
       fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
-      const openLink = await within(document.body).findByRole('menuitem', {
-        name: 'Open link'
-      });
       const copyAddress = await within(document.body).findByRole('menuitem', {
         name: 'Copy link address'
       });
-      expect(openLink.getAttribute('aria-disabled')).toBe('false');
+      expect(
+        within(document.body).queryByRole('menuitem', { name: 'Open link' })
+      ).toBeNull();
       expect(copyAddress.getAttribute('aria-disabled')).toBe('false');
-      fireEvent.click(openLink);
-      expect(linkPort.open).toHaveBeenCalledWith('https://actual.test/resolved');
+      fireEvent.click(copyAddress);
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalledWith(
+          'https://actual.test/resolved'
+        )
+      );
       expect(props.submissionField.value).toBe(sourceValue);
       expect(props.onFailure).not.toHaveBeenCalled();
       expect(
@@ -4764,8 +5807,11 @@ describe('EditorRoot', () => {
     await waitFor(() => expect(props.onFailure).toHaveBeenCalledWith(
       'editor-source-link-preview-anchor-missing'
     ));
-    expect(within(document.body).queryByRole('menuitem', { name: 'Open link' }))
-      .toBeNull();
+    expect(
+      within(document.body).queryByRole('menuitem', {
+        name: 'Copy link address'
+      })
+    ).toBeNull();
     expect(props.submissionField.value).toBe(sourceValue);
     view.unmount();
   });

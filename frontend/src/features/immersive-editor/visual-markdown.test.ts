@@ -16,6 +16,7 @@ import {
   applyVisualMarkdownEditIntent,
   captureVisualThematicBreakSelection,
   captureVisualCodeInputSnapshot,
+  classifyVisualSelectionProvenance,
   createVisualMarkdownSourceIntervalMap,
   expandVisualCodeFenceForBody,
   createVisualMarkdownDirectSourceIntervalMap,
@@ -1475,6 +1476,221 @@ A--&gt;B</code></pre>
     expect(selection?.isCollapsed).toBe(false);
   });
 
+  it('classifies selection provenance before image or caret recovery', () => {
+    const surface = editor(
+      '<p id="inside">Inside <img src="https://example.test/x.png"></p>'
+    );
+    const outside = document.createElement('p');
+    outside.textContent = 'Outside';
+    document.body.append(outside);
+    const insideText = surface.querySelector('p')?.firstChild;
+    const outsideText = outside.firstChild;
+    if (!(insideText instanceof Text) || !(outsideText instanceof Text)) {
+      throw new Error('visual-selection-provenance-fixture-missing');
+    }
+    const selection = window.getSelection();
+    if (!selection) throw new Error('visual-selection-owner-missing');
+
+    selection.removeAllRanges();
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe('absent');
+    expect(classifyVisualSelectionProvenance(surface, null)).toBe('absent');
+
+    const owned = document.createRange();
+    owned.setStart(insideText, 0);
+    owned.setEnd(insideText, 3);
+    selection.removeAllRanges();
+    selection.addRange(owned);
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe('owned');
+
+    const foreign = document.createRange();
+    foreign.selectNodeContents(outside);
+    selection.removeAllRanges();
+    selection.addRange(foreign);
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe(
+      'wholly-foreign'
+    );
+
+    const straddling = document.createRange();
+    straddling.setStart(insideText, 0);
+    straddling.setEnd(outsideText, 3);
+    selection.removeAllRanges();
+    selection.addRange(straddling);
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe(
+      'straddling'
+    );
+
+    // A reversed selection keeps the same provenance.
+    selection.removeAllRanges();
+    selection.setBaseAndExtent(outsideText, 3, insideText, 0);
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe(
+      'straddling'
+    );
+
+    // A range that encloses the whole surface has both endpoints outside but
+    // still intersects the editable surface.
+    const enclosing = document.createRange();
+    enclosing.selectNodeContents(document.body);
+    selection.removeAllRanges();
+    selection.addRange(enclosing);
+    expect(classifyVisualSelectionProvenance(surface, selection)).toBe(
+      'straddling'
+    );
+
+    // A multi-range selection that reaches into the surface is never owned.
+    // jsdom keeps a single range per selection, so the additional range is
+    // supplied structurally; real browsers report every range here.
+    const first = document.createRange();
+    first.selectNodeContents(outside);
+    const second = document.createRange();
+    second.setStart(insideText, 0);
+    second.setEnd(insideText, 3);
+    expect(
+      classifyVisualSelectionProvenance(surface, {
+        anchorNode: outsideText,
+        focusNode: outsideText,
+        getRangeAt: (index: number) => (0 === index ? first : second),
+        rangeCount: 2
+      })
+    ).toBe('straddling');
+  });
+
+  it.each([
+    { expected: true, name: 'an absent selection', setup: 'absent' },
+    {
+      expected: true,
+      name: 'an owned collapsed image caret',
+      setup: 'owned-collapsed'
+    },
+    {
+      expected: true,
+      name: 'a wholly foreign selection',
+      setup: 'foreign'
+    },
+    {
+      expected: false,
+      name: 'an owned deliberate selection',
+      setup: 'owned-ranged'
+    },
+    { expected: false, name: 'a straddling selection', setup: 'straddling' }
+  ] as const)(
+    'decides image context-menu normalization for $name: $expected',
+    ({ expected, setup }) => {
+      const surface = editor(
+        '<p>Before <img src="https://example.test/x.png"> after</p>'
+      );
+      const outside = document.createElement('p');
+      outside.textContent = 'Outside';
+      document.body.append(outside);
+      const image = surface.querySelector('img');
+      const insideText = surface.querySelector('p')?.firstChild;
+      const outsideText = outside.firstChild;
+      const paragraph = surface.querySelector('p');
+      if (
+        !(image instanceof HTMLImageElement)
+        || !(insideText instanceof Text)
+        || !(outsideText instanceof Text)
+        || !(paragraph instanceof HTMLElement)
+      ) {
+        throw new Error('visual-image-normalization-fixture-missing');
+      }
+      const selection = window.getSelection();
+      if (!selection) throw new Error('visual-selection-owner-missing');
+
+      selection.removeAllRanges();
+      if ('owned-collapsed' === setup) {
+        const caret = document.createRange();
+        caret.setStart(insideText, 0);
+        caret.collapse(true);
+        selection.addRange(caret);
+      }
+      if ('owned-ranged' === setup) {
+        const owned = document.createRange();
+        owned.setStart(insideText, 0);
+        owned.setEnd(insideText, 3);
+        selection.addRange(owned);
+      }
+      if ('foreign' === setup) {
+        const foreign = document.createRange();
+        foreign.selectNodeContents(outside);
+        selection.addRange(foreign);
+      }
+      if ('straddling' === setup) {
+        const straddling = document.createRange();
+        straddling.setStart(insideText, 0);
+        straddling.setEnd(outsideText, 3);
+        selection.addRange(straddling);
+      }
+
+      expect(selectVisualImageForContextMenu(surface, image)).toBe(expected);
+      if (expected) {
+        expect(selection.isCollapsed).toBe(false);
+        expect(selection.anchorNode).toBe(paragraph);
+        expect(selection.focusNode).toBe(paragraph);
+      } else if ('straddling' === setup) {
+        expect(selection.anchorNode).toBe(insideText);
+        expect(selection.focusNode).toBe(outsideText);
+      }
+      selection.removeAllRanges();
+    }
+  );
+
+  it('keeps straddling and enclosing selections instead of rebinding them', () => {
+    const surface = editor(
+      '<p id="inside">Before <img src="https://example.test/x.png"> after</p>'
+    );
+    const outside = document.createElement('p');
+    outside.textContent = 'Outside';
+    document.body.append(outside);
+    const image = surface.querySelector('img');
+    const insideText = surface.querySelector('p')?.firstChild;
+    const outsideText = outside.firstChild;
+    if (
+      !(image instanceof HTMLImageElement)
+      || !(insideText instanceof Text)
+      || !(outsideText instanceof Text)
+    ) {
+      throw new Error('visual-selection-preservation-fixture-missing');
+    }
+    const selection = window.getSelection();
+    if (!selection) throw new Error('visual-selection-owner-missing');
+
+    const straddling = document.createRange();
+    straddling.setStart(insideText, 0);
+    straddling.setEnd(outsideText, 3);
+    selection.removeAllRanges();
+    selection.addRange(straddling);
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selection.rangeCount).toBe(1);
+    expect(selection.anchorNode).toBe(insideText);
+    expect(selection.focusNode).toBe(outsideText);
+    expect(selection.getRangeAt(0).startContainer).toBe(insideText);
+    expect(selection.getRangeAt(0).endContainer).toBe(outsideText);
+
+    const enclosing = document.createRange();
+    enclosing.selectNodeContents(document.body);
+    selection.removeAllRanges();
+    selection.addRange(enclosing);
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selection.rangeCount).toBe(1);
+    expect(selection.getRangeAt(0).startContainer).toBe(document.body);
+
+    // Only an absent or wholly foreign selection is recovered onto the hit
+    // image.
+    const foreign = document.createRange();
+    foreign.selectNodeContents(outside);
+    selection.removeAllRanges();
+    selection.addRange(foreign);
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    const paragraph = surface.querySelector('p');
+    expect(selection.anchorNode).toBe(paragraph);
+    expect(selection.focusNode).toBe(paragraph);
+    expect(selection.isCollapsed).toBe(false);
+
+    selection.removeAllRanges();
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selection.isCollapsed).toBe(false);
+  });
+
   it.each([
     {
       isCollapsed: true,
@@ -1574,6 +1790,30 @@ A--&gt;B</code></pre>
     expect(selection?.anchorOffset).toBe(0);
     expect(selection?.focusNode).toBe(after);
     expect(selection?.focusOffset).toBe(after.length);
+    expect(selection?.isCollapsed).toBe(false);
+  });
+
+  it('normalizes an image target when a stale selection belongs outside the visual surface', () => {
+    const surface = editor(
+      '<p>Before <img src="https://example.test/x.png"> after</p>'
+    );
+    const image = surface.querySelector('img');
+    const foreign = document.createElement('p');
+    foreign.append('stale toolbar selection');
+    document.body.append(foreign);
+    if (!(image instanceof HTMLImageElement) || !(foreign.firstChild instanceof Text)) {
+      throw new Error('visual-foreign-image-context-fixture-missing');
+    }
+    const range = document.createRange();
+    range.setStart(foreign.firstChild, 0);
+    range.setEnd(foreign.firstChild, foreign.firstChild.length);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selection?.anchorNode).toBe(surface.querySelector('p'));
+    expect(selection?.focusNode).toBe(surface.querySelector('p'));
     expect(selection?.isCollapsed).toBe(false);
   });
 
@@ -1770,6 +2010,66 @@ A--&gt;B</code></pre>
 
     expect(() => restoreVisualCodeFenceFamilies(surface, '~~~\nbody\n~~~'))
       .toThrow('visual-editor-code-shape-invalid');
+  });
+
+  it('maps valid PRE boundaries through CODE content boundaries', () => {
+    const source = 'Before\n\n~~~js\nAlpha\n~~~\n\nAfter';
+    const surface = editor(
+      '<p>Before</p>'
+      + '<pre data-easymde-visual-fence="~~~" '
+      + 'data-easymde-visual-fence-info="js"><code>Alpha</code></pre>'
+      + '<p>After</p>'
+    );
+    const pre = surface.querySelector('pre');
+    const codeText = surface.querySelector('pre > code')?.firstChild;
+    const afterText = surface.querySelector('p:last-child')?.firstChild;
+    if (!(pre instanceof HTMLElement)
+      || !(codeText instanceof Text)
+      || !(afterText instanceof Text)) {
+      throw new Error('visual-pre-boundary-fixture-invalid');
+    }
+    const codeStart = source.indexOf('Alpha');
+    const codeEnd = codeStart + 'Alpha'.length;
+    const selection = window.getSelection();
+
+    selection?.setBaseAndExtent(pre, 0, codeText, 2);
+    expect(visualSelectionSourceRange(surface, source, source)).toEqual({
+      direction: 'forward',
+      end: codeStart + 2,
+      start: codeStart
+    });
+
+    selection?.setBaseAndExtent(pre, pre.childNodes.length, codeText, 2);
+    expect(visualSelectionSourceRange(surface, source, source)).toEqual({
+      direction: 'backward',
+      end: codeEnd,
+      start: codeStart + 2
+    });
+
+    selection?.setBaseAndExtent(afterText, 2, pre, 0);
+    expect(visualSelectionSourceRange(surface, source, source)).toEqual({
+      direction: 'backward',
+      end: source.indexOf('After') + 2,
+      start: codeStart
+    });
+    surface.remove();
+  });
+
+  it('keeps malformed PRE boundaries rejected by directCodeChild', () => {
+    const source = '~~~\nAlpha\n~~~';
+    const surface = editor(
+      '<pre data-easymde-visual-fence="~~~">'
+      + '<span>unexpected</span><code>Alpha</code></pre>'
+    );
+    const pre = surface.querySelector('pre');
+    if (!(pre instanceof HTMLElement)) {
+      throw new Error('visual-malformed-pre-boundary-fixture-invalid');
+    }
+    placeCaret(pre, 0);
+
+    expect(() => visualSelectionSourceRange(surface, source, source))
+      .toThrow('visual-editor-code-shape-invalid');
+    surface.remove();
   });
 
   it('keeps Markdown-looking tokens literal inside a fenced code block', () => {

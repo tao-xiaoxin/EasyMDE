@@ -2,7 +2,6 @@ import katex from "katex";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EditorClipboardPort } from "../../contracts/ports/editor-clipboard-port";
-import type { EditorDownloadPort } from "../../contracts/ports/editor-download-port";
 import type { WechatVisualRasterizationPort } from "../../contracts/ports/wechat-visual-rasterization-port";
 import {
 	createGeneratedContentExportSession,
@@ -144,16 +143,6 @@ function rasterizer(
 	};
 }
 
-function download(
-	overrides: Partial<EditorDownloadPort> = {},
-): EditorDownloadPort {
-	return {
-		requestPngDownload: vi.fn().mockResolvedValue({ status: "requested" }),
-		dispose: vi.fn(),
-		...overrides,
-	};
-}
-
 function expectFailed(
 	result: GeneratedContentExportResult,
 	code: string,
@@ -169,15 +158,13 @@ describe("generated content export session", () => {
 		const rasterizerPort = rasterizer();
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			maxPixels: 100,
 			rasterizer: rasterizerPort,
 		});
 
 		expectFailed(
-			await session.saveAsImage({
+			await session.copyAsImage({
 				dimensions: { height: 20, width: 10 },
-				filename: "formula.png",
 				identity: () => identity(target),
 				mode: "ordinary",
 				...lease,
@@ -188,7 +175,6 @@ describe("generated content export session", () => {
 
 		const invalidResult = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			maxPixels: 100,
 			rasterizer: rasterizer({
 				rasterize: vi.fn(async () => ({
@@ -200,9 +186,8 @@ describe("generated content export session", () => {
 			}),
 		});
 		expectFailed(
-			await invalidResult.saveAsImage({
+			await invalidResult.copyAsImage({
 				dimensions: { height: 1, width: 1 },
-				filename: "formula.png",
 				identity: () => identity(target),
 				mode: "ordinary",
 				...lease,
@@ -217,7 +202,6 @@ describe("generated content export session", () => {
 		const lease = validatedLease(target, source);
 		const invalidResult = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			rasterScale: 1.5,
 			rasterizer: rasterizer({
 				rasterize: vi.fn(async () => ({
@@ -230,9 +214,8 @@ describe("generated content export session", () => {
 		});
 
 		expectFailed(
-			await invalidResult.saveAsImage({
+			await invalidResult.copyAsImage({
 				dimensions: { height: 2, width: 2 },
-				filename: "formula.png",
 				identity: () => identity(target),
 				mode: "ordinary",
 				...lease,
@@ -242,7 +225,6 @@ describe("generated content export session", () => {
 
 		const validResult = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			rasterScale: 1.5,
 			rasterizer: rasterizer({
 				rasterize: vi.fn(async () => ({
@@ -255,14 +237,13 @@ describe("generated content export session", () => {
 		});
 
 		expect(
-			await validResult.saveAsImage({
+			await validResult.copyAsImage({
 				dimensions: { height: 2, width: 2 },
-				filename: "formula.png",
 				identity: () => identity(target),
 				mode: "ordinary",
 				...lease,
 			}),
-		).toEqual({ status: "requested" });
+		).toEqual({ status: "copied" });
 	});
 
 	it("times out an unresponsive rasterizer and aborts its operation", async () => {
@@ -277,13 +258,11 @@ describe("generated content export session", () => {
 			const lease = validatedLease(target, source);
 			const session = createGeneratedContentExportSession({
 				clipboard: clipboard(),
-				download: download(),
 				rasterizationTimeoutMs: 10,
 				rasterizer: rasterizer({ rasterize: vi.fn(() => pending.promise) }),
 			});
-			const result = session.saveAsImage({
+			const result = session.copyAsImage({
 				dimensions: { height: 1, width: 1 },
-				filename: "diagram.png",
 				identity: () => identity(target),
 				mode: "ordinary",
 				...lease,
@@ -314,12 +293,10 @@ describe("generated content export session", () => {
 		const lease = validatedLease(target, source);
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			rasterizer: rasterizer({ rasterize: vi.fn(() => pending.promise) }),
 		});
-		const operation = session.saveAsImage({
+		const operation = session.copyAsImage({
 			dimensions: { height: 1, width: 1 },
-			filename: "diagram.png",
 			identity: () => identity(target),
 			mode: "ordinary",
 			...lease,
@@ -340,7 +317,6 @@ describe("generated content export session", () => {
 		const rasterizerPort = rasterizer();
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizerPort,
 		});
 		const source = document.createElement("div");
@@ -373,7 +349,6 @@ describe("generated content export session", () => {
 		});
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizerPort,
 		});
 		const target = mathTarget();
@@ -409,7 +384,6 @@ describe("generated content export session", () => {
 		let current: GeneratedContentExportIdentity = identity(target);
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizerPort,
 		});
 		const promise = session.copyAsImage({
@@ -444,12 +418,10 @@ describe("generated content export session", () => {
 		let accepted = true;
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			rasterizer: rasterizer({ rasterize: vi.fn(() => pending.promise) }),
 		});
-		const operation = session.saveAsImage({
+		const operation = session.copyAsImage({
 			dimensions: { height: 1, width: 1 },
-			filename: "diagram.png",
 			identity: () => identity(target),
 			mode: "ordinary",
 			...lease,
@@ -470,31 +442,29 @@ describe("generated content export session", () => {
 		expectFailed(await operation, "generated-content-export-lease-stale");
 	});
 
-	it("rejects a stale mode and teardown without download or source mutation", async () => {
+	it("rejects a stale mode and teardown without Clipboard or source mutation", async () => {
 		const target = mermaidTarget();
 		const original = target.original.full;
 		const source = document.createElement("div");
 		const lease = validatedLease(target, source);
-		const downloadPort = download();
+		const clipboardPort = clipboard();
 		let current: GeneratedContentExportIdentity = identity(target, "ordinary");
 		const session = createGeneratedContentExportSession({
-			clipboard: clipboard(),
-			download: downloadPort,
+			clipboard: clipboardPort,
 			rasterizer: rasterizer(),
 		});
 
 		current = identity(target, "immersive");
 		expectFailed(
-			await session.saveAsImage({
+			await session.copyAsImage({
 				dimensions: { height: 20, width: 10 },
-				filename: "diagram.png",
 				identity: () => current,
 				mode: "ordinary",
 				...lease,
 			}),
 			"generated-content-export-mode-stale",
 		);
-		expect(downloadPort.requestPngDownload).not.toHaveBeenCalled();
+		expect(clipboardPort.writeImageDeferred).not.toHaveBeenCalled();
 		expect(target.original.full).toBe(original);
 
 		const pending =
@@ -503,12 +473,10 @@ describe("generated content export session", () => {
 			>();
 		const teardownSession = createGeneratedContentExportSession({
 			clipboard: clipboard(),
-			download: download(),
 			rasterizer: rasterizer({ rasterize: vi.fn(() => pending.promise) }),
 		});
-		const operation = teardownSession.saveAsImage({
+		const operation = teardownSession.copyAsImage({
 			dimensions: { height: 20, width: 10 },
-			filename: "diagram.png",
 			identity: () => identity(target),
 			mode: "ordinary",
 			...lease,
@@ -528,7 +496,6 @@ describe("generated content export session", () => {
 		const target = mathTarget();
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizer(),
 		});
 		const source = document.createElement("div");
@@ -567,7 +534,6 @@ describe("generated content export session", () => {
 		const lease = validatedLease(target, source);
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizer(),
 		});
 
@@ -597,7 +563,6 @@ describe("generated content export session", () => {
 		document.body.append(unrelatedRoot);
 		const session = createGeneratedContentExportSession({
 			clipboard: clipboardPort,
-			download: download(),
 			rasterizer: rasterizer(),
 		});
 
@@ -613,30 +578,4 @@ describe("generated content export session", () => {
 		expect(clipboardPort.write).not.toHaveBeenCalled();
 	});
 
-	it("saves PNG through the download owner without Clipboard or source writes", async () => {
-		const clipboardPort = clipboard();
-		const downloadPort = download();
-		const target = mermaidTarget();
-		const source = document.createElement("div");
-		const lease = validatedLease(target, source);
-		const before = target.original.full;
-		const session = createGeneratedContentExportSession({
-			clipboard: clipboardPort,
-			download: downloadPort,
-			rasterizer: rasterizer(),
-		});
-
-		expect(
-			await session.saveAsImage({
-				dimensions: { height: 20, width: 10 },
-				filename: "diagram.png",
-				identity: () => identity(target),
-				mode: "ordinary",
-				...lease,
-			}),
-		).toEqual({ status: "requested" });
-		expect(clipboardPort.writeImageDeferred).not.toHaveBeenCalled();
-		expect(downloadPort.requestPngDownload).toHaveBeenCalledOnce();
-		expect(target.original.full).toBe(before);
-	});
 });

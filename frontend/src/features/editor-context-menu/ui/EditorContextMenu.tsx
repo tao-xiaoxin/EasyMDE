@@ -23,17 +23,18 @@ import {
   ArrowRight,
   ArrowUp,
   Bold,
+  Check,
   Code2,
   Clipboard,
   ClipboardCopy,
   ClipboardPaste,
   Copy,
-  Download,
-  ExternalLink,
   FileCode2,
+  Hash,
   Image,
   Link2,
   Pencil,
+  Pilcrow,
   Plus,
   Scissors,
   Table2,
@@ -177,7 +178,6 @@ const CONTEXT_MENU_ICONS: Readonly<Record<string, LucideIcon>> = {
   'delete-table': Trash2,
   'delete-thematic-break': Trash2,
   'edit-generated-content': Pencil,
-  'save-generated-image': Download,
   'image': Image,
   'image-scale': ZoomIn,
   'image-scale-25': ZoomIn,
@@ -190,22 +190,23 @@ const CONTEXT_MENU_ICONS: Readonly<Record<string, LucideIcon>> = {
   'insert': Plus,
   'insert-column-left': ArrowLeft,
   'insert-column-right': ArrowRight,
-  'insert-image': Image,
-  'insert-table': Table2,
-  'insert-paragraph-above': ArrowUp,
-  'insert-paragraph-above-code': ArrowUp,
-  'insert-paragraph-above-generated': ArrowUp,
-  'insert-paragraph-above-table': ArrowUp,
-  'insert-paragraph-below': ArrowDown,
-  'insert-paragraph-below-code': ArrowDown,
-  'insert-paragraph-below-generated': ArrowDown,
-  'insert-paragraph-below-table': ArrowDown,
+  'insert-image-above': Image,
+  'insert-image-below': Image,
+  'insert-paragraph-above': Pilcrow,
+  'insert-paragraph-above-code': Pilcrow,
+  'insert-paragraph-above-generated': Pilcrow,
+  'insert-paragraph-above-table': Pilcrow,
+  'insert-paragraph-below': Pilcrow,
+  'insert-paragraph-below-code': Pilcrow,
+  'insert-paragraph-below-generated': Pilcrow,
+  'insert-paragraph-below-table': Pilcrow,
   'insert-row-above': ArrowUp,
   'insert-row-below': ArrowDown,
+  'insert-table-above': Table2,
+  'insert-table-below': Table2,
   'format-table-source': FileCode2,
   'indent-code-block': ArrowRight,
   'indent-selected-code': ArrowRight,
-  'open-link': ExternalLink,
   'paste': ClipboardPaste,
   'paste-plain-text': Clipboard,
   'table': Table2,
@@ -393,7 +394,8 @@ function MenuLayer({
         const expanded = openPath === currentPath || Boolean(openPath?.startsWith(`${currentPath}.`));
         const className = `easymde-editor-context-menu__item${expanded ? ' is-expanded' : ''}`;
         const hovered = hoverPath === currentPath;
-        const Icon = CONTEXT_MENU_ICONS[item.id];
+        const Icon = CONTEXT_MENU_ICONS[item.id] ?? ('heading-level' === item.id ? Hash : undefined);
+        const ItemIcon = 'item' === item.kind && item.checked ? Check : Icon;
         return (
           <div className={className} key={item.id}>
             <button
@@ -402,6 +404,9 @@ function MenuLayer({
               aria-haspopup={'submenu' === item.kind ? 'menu' : undefined}
               className={`easymde-editor-context-menu__button${hovered ? ' is-hovered' : ''}`}
               data-easymde-context-menu-item={item.id}
+              data-easymde-context-menu-checked={
+                'item' === item.kind && item.checked ? 'true' : undefined
+              }
               disabled={item.disabled}
               onClick={() => {
                 if (item.disabled) return;
@@ -445,8 +450,8 @@ function MenuLayer({
               tabIndex={focusPath === currentPath || ('' === path && null === focusPath && 0 === index) ? 0 : -1}
               type="button"
             >
-              {Icon ? (
-                <Icon
+              {ItemIcon ? (
+                <ItemIcon
                   aria-hidden="true"
                   className="easymde-editor-context-menu__icon"
                   size={16}

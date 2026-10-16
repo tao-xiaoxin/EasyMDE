@@ -1396,6 +1396,14 @@ msgid "Insert paragraph below code block"
 msgstr "在代码块下方插入段落"
 
 #: src/Admin/AdminAssets.php:1136
+msgid "Insert image above"
+msgstr "在上方插入图片"
+
+#: src/Admin/AdminAssets.php:1137
+msgid "Insert image below"
+msgstr "在下方插入图片"
+
+#: src/Admin/AdminAssets.php:1136
 msgid "Insert column left"
 msgstr "在左侧插入列"
 
@@ -1418,6 +1426,14 @@ msgstr "在上方插入行"
 #: src/Admin/AdminAssets.php:1143
 msgid "Insert row below"
 msgstr "在下方插入行"
+
+#: src/Admin/AdminAssets.php:1144
+msgid "Insert table above"
+msgstr "在上方插入表格"
+
+#: src/Admin/AdminAssets.php:1145
+msgid "Insert table below"
+msgstr "在下方插入表格"
 
 #: src/Admin/AdminAssets.php:1144
 msgid "Formula"

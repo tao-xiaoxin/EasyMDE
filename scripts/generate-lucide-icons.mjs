@@ -72,6 +72,7 @@ const icons = {
   Palette: 'palette',
   PenLine: 'pen-line',
   Pencil: 'pencil',
+  Pilcrow: 'pilcrow',
   PieChart: 'chart-pie',
   Plus: 'plus',
   Puzzle: 'puzzle',

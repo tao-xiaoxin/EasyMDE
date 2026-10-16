@@ -19,6 +19,7 @@ import {
 	captureVisualCodeInputSnapshot,
 	captureVisualMarkdownReadOnlySnapshot,
 	captureVisualThematicBreakSelection,
+	classifyVisualSelectionProvenance,
 	mergeVisualMarkdownChangeDetails,
 	normalizeVisualCaretAtDocumentBoundary,
 	normalizeVisualCodePlaceholders,
@@ -41,6 +42,7 @@ import {
 	visualCodeBodyOrdinalForSourceRange,
 	visualSelectionSourceRangeForBlocks,
 	visualThematicBreakSourceSelection,
+	visualContextMenuCaretRangeAtPoint,
 } from "../visual-markdown";
 import type {
 	ImmersiveVisualEditorProps,
@@ -630,6 +632,231 @@ function isWindowedParagraphCodeSplit(
 
 function focusSurface(surface: HTMLElement): void {
 	surface.focus({ preventScroll: true });
+}
+
+function placeContextMenuCaret(
+	surface: HTMLElement,
+	target: Element | null,
+	point?: Readonly<{ x: number; y: number }>,
+): boolean {
+	const selection = surface.ownerDocument.defaultView?.getSelection();
+	if (!selection) throw new Error("visual-editor-window-selection-invalid");
+	const range = visualContextMenuCaretRangeAtPoint(surface, target, point);
+	if (!range) return false;
+	selection.removeAllRanges();
+	selection.addRange(range);
+	return true;
+}
+
+/**
+ * A menu refresh can replay a target element that an accepted Preview window
+ * re-render already replaced. Re-resolve the equivalent live element through
+ * the replayed target's visual block identity so the refresh still prepares
+ * the original image target instead of leaving the surface-level selection
+ * behind.
+ */
+function visualBlockImages(block: Element): HTMLImageElement[] {
+  return Array.from(block.querySelectorAll("img")).filter(
+    (image): image is HTMLImageElement =>
+      image instanceof HTMLImageElement
+      && image.closest(`[${VISUAL_BLOCK_ATTRIBUTE}]`) === block,
+  );
+}
+
+type ContextMenuTargetSnapshotIdentity = Readonly<{
+  key: number;
+  revision: number;
+  signature: string;
+}>;
+
+type ContextMenuInlineTargetKind = "link" | "math" | "mermaid";
+
+type ContextMenuTargetIdentity = Readonly<{
+  blockId: string | null;
+  imageOrdinal: number | null;
+  inlinePath: ReadonlyArray<number> | null;
+  inlineKind: ContextMenuInlineTargetKind | null;
+  inlineSignature: string | null;
+  snapshot: ContextMenuTargetSnapshotIdentity | null;
+}>;
+
+function contextMenuTargetSnapshotStillMatches(
+  recorded: ContextMenuTargetSnapshotIdentity | null,
+  current: ContextMenuTargetSnapshotIdentity | null,
+): boolean {
+  // The window commit key changes on every accepted re-render, while the
+  // revision and signature identify the document state that the recorded
+  // target belongs to. A cleared identity means no accepted window commit is
+  // installed at this instant, so there is no positive evidence of a mismatch;
+  // the pending demand's own captured surface snapshot remains the
+  // document-state authority for the replay.
+  if (!recorded || !current) return true;
+  return (
+    recorded.revision === current.revision
+    && recorded.signature === current.signature
+  );
+}
+
+function contextMenuTargetIdentity(
+  target: Element,
+  snapshot: ContextMenuTargetSnapshotIdentity | null,
+): ContextMenuTargetIdentity {
+  const block = target.closest(`[${VISUAL_BLOCK_ATTRIBUTE}]`);
+  const image =
+    target instanceof HTMLImageElement ? target : target.closest("img");
+  const ordinal = block && image ? visualBlockImages(block).indexOf(image) : -1;
+  const inlineTarget = target.closest<HTMLElement>(
+    "a, .easymde-math, .easymde-mermaid",
+  );
+  const inlineKind = inlineTarget?.matches("a")
+    ? "link"
+    : inlineTarget?.matches(".easymde-math")
+      ? "math"
+      : inlineTarget?.matches(".easymde-mermaid")
+        ? "mermaid"
+        : null;
+  const inlinePath = (() => {
+    if (!block || !inlineTarget || !inlineKind) return null;
+    const path: number[] = [];
+    let current: Node = inlineTarget;
+    while (current !== block) {
+      const parent = current.parentNode;
+      if (!parent) return null;
+      const index = Array.prototype.indexOf.call(parent.childNodes, current);
+      if (index < 0) return null;
+      path.unshift(index);
+      current = parent;
+    }
+    return path;
+  })();
+  const inlineSignature = inlineTarget && inlineKind === "link"
+    ? inlineTarget.getAttribute("href") ?? inlineTarget.textContent ?? ""
+    : inlineTarget && inlineKind
+      ? inlineTarget.getAttribute("data-easymde-generated-source")
+        ?? inlineTarget.textContent
+        ?? ""
+      : null;
+  return {
+    blockId: block?.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? null,
+    imageOrdinal: 0 <= ordinal ? ordinal : null,
+    inlinePath,
+    inlineKind,
+    inlineSignature,
+    snapshot,
+  };
+}
+
+function elementAtPath(
+  root: Element,
+  path: ReadonlyArray<number>,
+): Element | null {
+  let current: Node = root;
+  for (const index of path) {
+    const child = current.childNodes[index];
+    if (!child) return null;
+    current = child;
+  }
+  return current instanceof Element ? current : null;
+}
+
+function inlineTargetMatchesIdentity(
+  target: Element,
+  kind: ContextMenuInlineTargetKind,
+  signature: string | null,
+): boolean {
+  if (
+    (kind === "link" && !target.matches("a"))
+    || (kind === "math" && !target.matches(".easymde-math"))
+    || (kind === "mermaid" && !target.matches(".easymde-mermaid"))
+  ) return false;
+  if (null === signature) return true;
+  const current = kind === "link"
+    ? target.getAttribute("href") ?? target.textContent ?? ""
+    : target.getAttribute("data-easymde-generated-source")
+      ?? target.textContent
+      ?? "";
+  return current === signature;
+}
+
+/**
+ * Re-anchor a replayed context-menu target onto the live element of this
+ * surface that carries the same visual block identity. An accepted Preview
+ * window commit replaces the block DOM, which retires the element a demand was
+ * anchored to; the block id and the image slot are the identity that survives
+ * such a commit. `null` states that the target cannot be re-anchored onto this
+ * surface.
+ */
+export function resolveLiveWindowContextMenuTarget(
+  surface: HTMLElement,
+  target: Element | null | undefined,
+): Element | null {
+  if (!target) return null;
+  if (target.isConnected && surface.contains(target)) return target;
+  const identity = contextMenuTargetIdentity(target, null);
+  const blockId = identity.blockId;
+  if (!blockId) return null;
+  const block = Array.from(surface.children).find(
+    (child) => child.getAttribute(VISUAL_BLOCK_ATTRIBUTE) === blockId,
+  );
+  if (!block) return null;
+  // An image nested inside a link is still an image context. Resolve the
+  // concrete image slot before the enclosing link so image scale/copy/delete
+  // actions cannot silently degrade to link actions after a window commit.
+  if (null !== identity.imageOrdinal) {
+    const liveImage = visualBlockImages(block)[identity.imageOrdinal] ?? null;
+    if (
+      !liveImage
+      || liveImage.getAttribute("src") !== target.getAttribute("src")
+      || (liveImage.getAttribute("alt") ?? "")
+        !== (target.getAttribute("alt") ?? "")
+    ) return null;
+    return liveImage;
+  }
+  if (identity.inlinePath && identity.inlineKind) {
+    const inlineTarget = elementAtPath(block, identity.inlinePath);
+    if (
+      !inlineTarget
+      || !inlineTargetMatchesIdentity(
+        inlineTarget,
+        identity.inlineKind,
+        identity.inlineSignature,
+      )
+    ) return null;
+    return inlineTarget;
+  }
+  return block;
+}
+
+/**
+ * A menu refresh can replay a target element that an accepted Preview window
+ * re-render already replaced. Only a target captured by an earlier live
+ * prepare may be restored, and only while the accepted snapshot still
+ * describes the same document state. Restoration resolves the recorded target
+ * itself by block id and image slot; an image whose live slot no longer matches
+ * the recorded rendered source is an explicit failure instead of a silent block
+ * rebind.
+ */
+function resolveLiveContextMenuTarget(
+  surface: HTMLElement,
+  target: Element | null | undefined,
+  tracked: WeakMap<Element, ContextMenuTargetIdentity>,
+  currentSnapshot: ContextMenuTargetSnapshotIdentity | null,
+): Element | null {
+  if (!target) return null;
+  if (target.isConnected && surface.contains(target)) {
+    tracked.set(target, contextMenuTargetIdentity(target, currentSnapshot));
+    return target;
+  }
+  const identity = tracked.get(target);
+  if (!identity) return null;
+  if (!contextMenuTargetSnapshotStillMatches(identity.snapshot, currentSnapshot)) {
+    return null;
+  }
+  const live = resolveLiveWindowContextMenuTarget(surface, target);
+  if (live) {
+    tracked.set(live, contextMenuTargetIdentity(live, currentSnapshot));
+  }
+  return live;
 }
 
 function selectedVisualCodeBlock(surface: HTMLElement): HTMLElement | null {
@@ -2202,6 +2429,9 @@ export function WindowedImmersiveVisualEditor({
 		null,
 	);
 	const contextMenuSelectionRef = useRef<VisualSelectionSnapshot | null>(null);
+	const contextMenuTargetsRef = useRef(
+		new WeakMap<Element, ContextMenuTargetIdentity>(),
+	);
 	const editMapRef = useRef(editMap);
 	editMapRef.current = editMap;
 	const thematicBreakDeletionHistoryRef = useRef<
@@ -3901,8 +4131,33 @@ export function WindowedImmersiveVisualEditor({
 					return report(error);
 				}
 			},
-			prepareContextMenuSelection(target) {
-				selectVisualImageForContextMenu(surface, target);
+			prepareContextMenuSelection(target, point) {
+				const provenance = classifyVisualSelectionProvenance(
+					surface,
+					surface.ownerDocument.defaultView?.getSelection(),
+				);
+				if ("straddling" === provenance) {
+					// A selection that straddles or encloses the editable
+					// surface keeps the browser's own selection: overwriting it
+					// with an image or caret would silently discard the user's
+					// intent, so the gesture is rejected explicitly instead.
+					return false;
+				}
+				const resolvedTarget = resolveLiveContextMenuTarget(
+					surface,
+					target,
+					contextMenuTargetsRef.current,
+					acceptedWindowSnapshotIdentityRef.current,
+				);
+				if (target && !resolvedTarget) {
+					// The target was never captured by a live prepare, or an
+					// accepted Preview window re-render replaced it and its
+					// visual block/image identity cannot be restored. Fail
+					// explicitly instead of silently preparing the
+					// surface-level caret or rebinding the action to the block.
+					return false;
+				}
+				selectVisualImageForContextMenu(surface, resolvedTarget);
 				let preparedSelection: VisualSelectionSnapshot | null = null;
 				try {
 					preparedSelection = captureVisualSelection(surface);
@@ -3914,7 +4169,11 @@ export function WindowedImmersiveVisualEditor({
 					if (result) contextMenuSelectionRef.current = preparedSelection;
 					return result;
 				};
-				if (target?.closest("hr") && surface.contains(target.closest("hr"))) {
+				const targetThematicBreak = resolvedTarget?.closest("hr");
+				if (
+					targetThematicBreak
+					&& surface.contains(targetThematicBreak)
+				) {
 					try {
 						const thematicBreak = prepareThematicBreakSelection();
 						if (!thematicBreak) {
@@ -3930,7 +4189,43 @@ export function WindowedImmersiveVisualEditor({
 						return report(error);
 					}
 				}
-				const pre = target?.closest("pre");
+				const pre = resolvedTarget?.closest("pre");
+				const preOwner = pre ? rootBlock(surface, pre) : null;
+				const isDirectPre = Boolean(pre && preOwner === pre);
+				let nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+				const selectionResolvesToBlocks = (): boolean => {
+					const selection = surface.ownerDocument.defaultView?.getSelection();
+					if (
+						!selection?.anchorNode
+						|| !selection.focusNode
+						|| !selection.anchorNode.isConnected
+						|| !selection.focusNode.isConnected
+						|| !surface.contains(selection.anchorNode)
+						|| !surface.contains(selection.focusNode)
+					) {
+						return false;
+					}
+					return Boolean(
+						rootBlock(surface, selection.anchorNode)
+						&& rootBlock(surface, selection.focusNode),
+					);
+				};
+				const selectionInsideSurface = selectionResolvesToBlocks();
+				if (
+					!selectionInsideSurface
+					&& !isDirectPre
+					&& !placeContextMenuCaret(
+						surface,
+						resolvedTarget ?? target ?? null,
+						point,
+					)
+				) {
+					return finishPreparation(false);
+				}
+				if (!selectionInsideSurface && !isDirectPre) {
+					nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+					if (!selectionResolvesToBlocks()) return finishPreparation(false);
+				}
 				if (!pre || !surface.contains(pre)) {
 					try {
 						const source = sourceRef.current;
@@ -3958,7 +4253,6 @@ export function WindowedImmersiveVisualEditor({
 						return report(error);
 					}
 				}
-				const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
 				if (preparedSelection && nativeSelection && !nativeSelection.isCollapsed) {
 					try {
 						return finishPreparation(this.prepareMediaSelection());

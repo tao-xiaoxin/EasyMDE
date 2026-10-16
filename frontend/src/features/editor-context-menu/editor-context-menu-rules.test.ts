@@ -9,8 +9,10 @@ import {
 	findMarkdownBlock,
 	findMarkdownTable,
 	formatMarkdownTableSource,
+	insertMarkdownBlockRelative,
 	insertParagraphRelative,
 	isEditorContextCurrent,
+	markdownHeadingLevel,
 	setMarkdownTableAlignment,
 	tableSelectionAt,
 } from "./editor-context-menu-rules";
@@ -189,6 +191,104 @@ describe("editor context menu rules", () => {
 				)?.value,
 			).toBe(`body${newline}${newline}`);
 		}
+	});
+
+	it.each(["\n", "\r\n", "\r"])(
+		"keeps relative block insertions separated with the source newline %j",
+		(newline) => {
+			const source = [
+				"before",
+				"```python",
+				"print('hello')",
+				"```",
+				"after",
+			].join(newline);
+			const block = findMarkdownBlock(
+				source,
+				source.indexOf("print"),
+				createEditorMarkdownBlockIndex(source),
+			);
+			expect(block?.kind).toBe("code");
+			if (!block) return;
+
+			const imageAbove = insertMarkdownBlockRelative(
+				source,
+				block,
+				"above",
+				"![above](above.png)",
+			);
+			const tableBelow = insertMarkdownBlockRelative(
+				source,
+				block,
+				"below",
+				"| A |\n| --- |\n| B |",
+			);
+
+			expect(imageAbove.value).toBe(
+				[
+					"before",
+					"![above](above.png)",
+					"",
+					"```python",
+					"print('hello')",
+					"```",
+					"after",
+				].join(newline),
+			);
+			expect(tableBelow.value).toBe(
+				[
+					"before",
+					"```python",
+					"print('hello')",
+					"```",
+					"",
+					"| A |",
+					"| --- |",
+					"| B |",
+					"",
+					"after",
+				].join(newline),
+			);
+		},
+	);
+
+	it("does not merge a table inserted beside an existing table", () => {
+		const source = "| A |\n| --- |\n| 1 |\n\nnext";
+		const block = findMarkdownBlock(
+			source,
+			source.indexOf("1"),
+			createEditorMarkdownBlockIndex(source),
+		);
+		expect(block?.kind).toBe("table");
+		if (!block) return;
+
+		const inserted = insertMarkdownBlockRelative(
+			source,
+			block,
+			"below",
+			"| B |\n| --- |\n| 2 |",
+		);
+		expect(inserted.value).toBe(
+			"| A |\n| --- |\n| 1 |\n\n| B |\n| --- |\n| 2 |\n\nnext",
+		);
+	});
+
+	it("preserves a block insertion at the document boundaries", () => {
+		const source = "body";
+		const block = findMarkdownBlock(
+			source,
+			0,
+			createEditorMarkdownBlockIndex(source),
+		);
+		expect(block).not.toBeNull();
+		if (!block) return;
+
+		expect(
+			insertMarkdownBlockRelative(source, block, "above", "# heading").value,
+		).toBe("# heading\n\nbody");
+		expect(
+			insertMarkdownBlockRelative(source, block, "below", "# heading").value,
+		).toBe("body\n\n# heading\n\n");
 	});
 
 	it("captures direction and rejects a changed document or range", () => {
@@ -1590,6 +1690,105 @@ describe("editor context menu rules", () => {
 		}
 	});
 
+	it("recognizes real-browser whole-table and column drag boundaries", () => {
+		const source = [
+			"| A | B |",
+			"| --- | --- |",
+			"| 1 | 2 |",
+			"| 3 | 4 |",
+		].join("\n");
+		// The pointer drag anchors on the header line and releases inside the
+		// final row, so the table end is covered row-wise rather than exactly.
+		const wholeTableSelection = {
+			direction: "forward" as const,
+			end: source.indexOf("3") + 1,
+			start: 0,
+		};
+		const wholeTable = tableSelectionAt(source, wholeTableSelection);
+		expect(wholeTable).toEqual({
+			canDeleteColumn: false,
+			canDeleteRow: false,
+			columnCount: 2,
+			kind: "whole-table",
+		});
+		if (!wholeTable) throw new Error("table-whole-selection-missing");
+		expect(
+			setMarkdownTableAlignment(
+				source,
+				wholeTableSelection.start,
+				{ alignment: "center", selection: wholeTable },
+				wholeTableSelection,
+			),
+		).toMatchObject({
+			value: "| A | B |\n| :---: | :---: |\n| 1 | 2 |\n| 3 | 4 |",
+		});
+		// A header-anchored drag that releases in the last row covers every
+		// table row even when it anchors inside a header cell.
+		expect(
+			tableSelectionAt(source, {
+				direction: "forward",
+				end: source.indexOf("4") + 1,
+				start: source.indexOf("A") + 1,
+			}),
+		).toMatchObject({ kind: "whole-table" });
+
+		const cases = [
+			{
+				cell: "1",
+				column: 0,
+				last: "3",
+				value: "| A | B |\n| ---: | --- |\n| 1 | 2 |\n| 3 | 4 |",
+			},
+			{
+				cell: "2",
+				column: 1,
+				last: "4",
+				value: "| A | B |\n| --- | ---: |\n| 1 | 2 |\n| 3 | 4 |",
+			},
+		];
+		for (const testCase of cases) {
+			const columnSelection = {
+				direction: "forward" as const,
+				end: source.indexOf(testCase.last) + 1,
+				start: source.indexOf(testCase.cell),
+			};
+			const derived = tableSelectionAt(source, columnSelection);
+			expect(derived).toEqual({
+				canDeleteColumn: true,
+				canDeleteRow: false,
+				column: testCase.column,
+				columnCount: 2,
+				kind: "column",
+				rowIndex: 2,
+			});
+			if (!derived) throw new Error("table-column-selection-missing");
+			expect(
+				setMarkdownTableAlignment(
+					source,
+					columnSelection.start,
+					{ alignment: "right", selection: derived },
+					columnSelection,
+				),
+			).toMatchObject({ value: testCase.value });
+		}
+	});
+
+	it("keeps cross-column multi-row drags ambiguous", () => {
+		const source = "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |";
+		expect(
+			tableSelectionAt(source, {
+				direction: "forward",
+				end: source.indexOf("4") + 1,
+				start: source.indexOf("1"),
+			}),
+		).toEqual({
+			canDeleteColumn: false,
+			canDeleteRow: false,
+			columnCount: 2,
+			kind: "ambiguous",
+		});
+	});
+
 	it("keeps domain edits aligned with body-cell identity", () => {
 		const source = "| A | B |\n| --- | --- |\n| 1 | 2 |";
 		const bodyCell = source.indexOf("1");
@@ -1701,5 +1900,87 @@ describe("editor context menu rules", () => {
 			selection: { direction: "none", end: 1, start: 1 },
 			value: "b",
 		});
+	});
+
+	it("resolves one CommonMark heading level from a parser-owned heading block", () => {
+		for (let level = 1; level <= 6; level += 1) {
+			const source = `${"#".repeat(level)} Heading ${level}`;
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(
+				markdownHeadingLevel(source, findMarkdownBlock(source, 0, index)),
+			).toBe(level);
+		}
+
+		for (const [source, expected] of [
+			["#", 1],
+			["  ### Indented heading", 3],
+			["## Closed heading ##", 2],
+			["# Carriage\r\nbody", 1],
+		] as ReadonlyArray<readonly [string, number]>) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(
+				markdownHeadingLevel(source, findMarkdownBlock(source, 0, index)),
+			).toBe(expected);
+		}
+
+		for (const [source, expected] of [
+			["Title\n=====\nbody", 1],
+			["Title\n---\nbody", 2],
+			["Two line title\nstill the title\n===\nbody", 1],
+			["CRLF title\r\n===\r\nbody", 1],
+			["CR title\r===\rbody", 1],
+		] as ReadonlyArray<readonly [string, number]>) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(
+				markdownHeadingLevel(source, findMarkdownBlock(source, 0, index)),
+			).toBe(expected);
+		}
+	});
+
+	it("keeps non-heading and unresolved lexical forms explicitly level-free", () => {
+		for (const source of [
+			"plain paragraph",
+			"####### Seven hashes",
+			"#\tTabbed heading",
+			"    # indented code",
+			"> # quoted heading",
+			"- # list heading",
+			"",
+		]) {
+			const index = createEditorMarkdownBlockIndex(source);
+			expect(
+				markdownHeadingLevel(source, findMarkdownBlock(source, 0, index)),
+			).toBe(null);
+		}
+
+		const value = "Escaped \\# not a heading";
+		expect(markdownHeadingLevel(value, null)).toBe(null);
+		expect(
+			markdownHeadingLevel(value, {
+				end: value.length,
+				kind: "paragraph",
+				lineEnd: 0,
+				lineStart: 0,
+				start: 0,
+			}),
+		).toBe(null);
+		expect(
+			markdownHeadingLevel(value, {
+				end: value.length,
+				kind: "heading",
+				lineEnd: 0,
+				lineStart: 0,
+				start: 0,
+			}),
+		).toBe(null);
+		expect(
+			markdownHeadingLevel(value, {
+				end: value.length,
+				kind: "heading",
+				lineEnd: 1,
+				lineStart: 0,
+				start: 0,
+			}),
+		).toBe(null);
 	});
 });

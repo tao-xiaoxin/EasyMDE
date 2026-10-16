@@ -241,7 +241,7 @@ msgstr ""
 msgid "Live preview editing area (what you see is what you get)"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:519 src/Admin/AdminAssets.php:1151
+#: src/Admin/AdminAssets.php:519 src/Admin/AdminAssets.php:1153
 msgid "Table"
 msgstr ""
 
@@ -1373,11 +1373,11 @@ msgstr ""
 msgid "Adjust Selected Code Indentation"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1132 src/Admin/AdminAssets.php:1138
+#: src/Admin/AdminAssets.php:1132 src/Admin/AdminAssets.php:1140
 msgid "Insert paragraph above"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1133 src/Admin/AdminAssets.php:1140
+#: src/Admin/AdminAssets.php:1133 src/Admin/AdminAssets.php:1142
 msgid "Insert paragraph below"
 msgstr ""
 
@@ -1390,62 +1390,70 @@ msgid "Insert paragraph below code block"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1136
-msgid "Insert column left"
+msgid "Insert image above"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1137
-msgid "Insert column right"
+msgid "Insert image below"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:1138
+msgid "Insert column left"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1139
-msgid "Insert paragraph above table"
+msgid "Insert column right"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1141
-msgid "Insert paragraph below table"
-msgstr ""
-
-#: src/Admin/AdminAssets.php:1142
-msgid "Insert row above"
+msgid "Insert paragraph above table"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1143
-msgid "Insert row below"
+msgid "Insert paragraph below table"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1144
-msgid "Formula"
+msgid "Insert row above"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1145
-msgid "Open link"
+msgid "Insert row below"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1146
-msgid "Paste"
+msgid "Insert table above"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1147
-msgid "Paste as plain text"
+msgid "Insert table below"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1148
-msgid "Save as image"
+msgid "Formula"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1149
-msgid "The editor action could not be completed."
+msgid "Paste"
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1150
-msgid "Clipboard text is unavailable in this browser."
+msgid "Paste as plain text"
+msgstr ""
+
+#: src/Admin/AdminAssets.php:1151
+msgid "The editor action could not be completed."
 msgstr ""
 
 #: src/Admin/AdminAssets.php:1152
+msgid "Clipboard text is unavailable in this browser."
+msgstr ""
+
+#: src/Admin/AdminAssets.php:1154
 msgid "Unsupported for this selection."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1153
+#: src/Admin/AdminAssets.php:1155
 msgid "Upload image"
 msgstr ""
 

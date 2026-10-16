@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef } from '@wordpress/element';
+import { useCallback, useLayoutEffect, useRef, useState } from '@wordpress/element';
 
 import type { ToolbarCommand } from '../../../contracts/bootstrap/toolbar-bootstrap';
 import type { PreviewEditMap } from '../../../contracts/ports/preview-request';
@@ -31,6 +31,7 @@ import {
   captureVisualCodeInputSnapshot,
   captureVisualSelection,
   captureVisualMarkdownReadOnlySnapshot,
+  classifyVisualSelectionProvenance,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
   createVisualMarkdownWindowChange,
   createVisualCodeBodyOrdinalsForPreviewBlocks,
@@ -67,7 +68,8 @@ import {
   visualSelectionSourceRangeForBlocks,
   visualSelectionVisualOffset,
   visualThematicBreakSourceSelection,
-  visualStructuralBodyIsEmpty
+  visualStructuralBodyIsEmpty,
+  visualContextMenuCaretRangeAtPoint
 } from '../visual-markdown';
 
 export type ImmersiveVisualEditorRuntime = Readonly<{
@@ -93,7 +95,10 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
     request: PreviewGeneratedContentTargetForSelectionRequest
   ) => PreviewGeneratedContentTargetPinLease | null;
   prepareMediaSelection: () => boolean;
-  prepareContextMenuSelection?: (target?: Element | null) => boolean;
+  prepareContextMenuSelection?: (
+    target?: Element | null,
+    point?: Readonly<{ x: number; y: number }>
+  ) => boolean;
   prepareSourceNavigation: (
     expected: Readonly<{ revision: number; value: string }>
   ) => boolean;
@@ -252,6 +257,7 @@ type CanonicalReplacementBoundary = Readonly<{
 	postSelection: VisualSelectionSourceRange;
 	postSourceRange: Readonly<{ end: number; start: number }>;
 	serializedBlock: string;
+	sourceBlockMarkdown: string;
   sourceRange: Readonly<{ end: number; start: number }>;
 }>;
 
@@ -885,6 +891,11 @@ type ApplyDocumentChangeOptions = Readonly<{
 }>;
 
 const VISUAL_INPUT_DEBOUNCE_MS = 80;
+const VISUAL_CANONICAL_ADOPTION_PENDING_CODE =
+  'visual-editor-canonical-change-preview-adoption-pending';
+const VISUAL_CANONICAL_STALE_SERIALIZATION_CODE =
+  'visual-editor-canonical-change-preview-stale-serialization';
+const VISUAL_CANONICAL_ADOPTION_DEADLINE_MS = 1500;
 const VISUAL_WHOLE_DOCUMENT_DELETION_TYPES = new Set([
   'deleteContentBackward',
   'deleteContentForward'
@@ -972,7 +983,20 @@ type LocalVisualCodeBodyRegistration = Readonly<{
   >;
 }>;
 
+/**
+ * Accepted Preview identity captured with a history snapshot. A stored
+ * snapshot is only a complete restore target while the live Preview identity
+ * is still exactly this render: its DOM, Markdown, edit map, and accepted
+ * identity then belong to one document state.
+ */
+type VisualHistoryPreviewIdentity = Readonly<{
+  markdown: string | null;
+  revision: number;
+  signature: string;
+}>;
+
 type VisualHistorySnapshot = Readonly<{
+  acceptedPreview: VisualHistoryPreviewIdentity;
   codeBodyPreviewSourceMarkdown: string | null;
   codeBodyPreviewStructureSignature: string | null;
   html: string;
@@ -1183,6 +1207,20 @@ function placeVisualCaretAtAcceptedCodeBlockStart(
 
 function focusVisualSurface(surface: HTMLElement): void {
   surface.focus({ preventScroll: true });
+}
+
+function placeVisualContextMenuCaret(
+  surface: HTMLElement,
+  target: Element | null,
+  point?: Readonly<{ x: number; y: number }>
+): boolean {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (!selection) throw new Error('visual-editor-selection-unavailable');
+  const range = visualContextMenuCaretRangeAtPoint(surface, target, point);
+  if (!range) return false;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
 }
 
 function selectedVisualCodeBlock(surface: HTMLElement): HTMLElement | null {
@@ -2226,6 +2264,7 @@ function canonicalReplacementBoundaryForBlock(
   const selectedSource = sourceMarkdown.slice(change.from, change.to);
   if (!selectedSource) return null;
   const clone = block.cloneNode(true) as HTMLElement;
+  const sourceBlockMarkdown = serializeVisualMarkdownBlockFragment([clone]);
   let textNode: Node = clone;
   for (const index of nativeTextSelection.path) {
     const child = textNode.childNodes[index];
@@ -2286,6 +2325,7 @@ function canonicalReplacementBoundaryForBlock(
       start: sourceRange.start
     },
     serializedBlock: serializeVisualMarkdownBlockFragment([clone]),
+    sourceBlockMarkdown,
     sourceRange
   };
 }
@@ -2382,12 +2422,35 @@ function placeVisualSelectionFromAcceptedSourceRange(
     const clone = block.cloneNode(true) as HTMLElement;
     const endpointMarkdown = sourceMarkdown.slice(range.start, range.end);
     const endpointBaseline = serializeVisualMarkdownBlockFragment([clone]);
-    const boundary = acceptedVisualCaretBoundaryFromSourceOffset(
-      clone,
-      endpointMarkdown,
-      endpointBaseline,
-      sourceOffset - range.start
-    );
+    let boundary: Readonly<{ node: Node; offset: number }>;
+    try {
+      boundary = acceptedVisualCaretBoundaryFromSourceOffset(
+        clone,
+        endpointMarkdown,
+        endpointBaseline,
+        sourceOffset - range.start
+      );
+    } catch (error) {
+      // A fenced code block's source endpoint includes the closing fence,
+      // while the editable DOM ends at the code element's content boundary.
+      // Preserve the exact source range and map only this structural endpoint
+      // to the live code boundary; all other mapping failures stay explicit.
+      const code = clone.matches('pre')
+        ? clone.querySelector<HTMLElement>(':scope > code')
+        : null;
+      if (
+        sourceOffset !== range.end
+        || !code
+        || !(error instanceof Error)
+        || error.message !== 'visual-editor-selection-map-failed'
+      ) {
+        throw error;
+      }
+      const endRange = clone.ownerDocument.createRange();
+      endRange.selectNodeContents(code);
+      endRange.collapse(false);
+      boundary = { node: endRange.startContainer, offset: endRange.startOffset };
+    }
     if (boundary.node !== clone && !clone.contains(boundary.node)) {
       throw new Error('visual-editor-selection-map-failed');
     }
@@ -2435,7 +2498,16 @@ function placeVisualSelectionFromAcceptedSourceRange(
     }
     const serializedBlock = serializeVisualMarkdownBlockFragment([block]);
     if (serializedBlock !== canonicalReplacement.serializedBlock) {
-      throw new Error('visual-editor-canonical-change-preview-stale-serialization');
+      // The accepted Preview render for the post-write Markdown may not own
+      // this block yet: the Preview sink publishes the accepted snapshot and
+      // replaces the surface DOM on its own ordering. While the block still
+      // serializes to its pre-write value that is a bounded adoption wait,
+      // not a stale document; any other difference stays an explicit
+      // staleness failure.
+      if (serializedBlock === canonicalReplacement.sourceBlockMarkdown) {
+        throw new Error(VISUAL_CANONICAL_ADOPTION_PENDING_CODE);
+      }
+      throw new Error(VISUAL_CANONICAL_STALE_SERIALIZATION_CODE);
     }
     const clone = block.cloneNode(true) as HTMLElement;
     const cloneNode = (() => {
@@ -2727,6 +2799,11 @@ export function ImmersiveVisualEditor({
   requestPreview,
   surface
 }: ImmersiveVisualEditorProps) {
+  // A Preview sink can adopt the new DOM without changing the accepted
+  // snapshot object identity. This tick is only advanced while a canonical
+  // transfer is waiting for that adoption, giving the commit effect a real
+  // wake-up source instead of relying on a synthetic revision.
+  const [previewAdoptionTick, setPreviewAdoptionTick] = useState(0);
   const sourceMarkdownRef = useRef<string | null>(null);
   const visualMarkdownRef = useRef<string | null>(null);
   const acceptedHtmlRef = useRef<string | null>(null);
@@ -2743,6 +2820,9 @@ export function ImmersiveVisualEditor({
   const visualInputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
+  const canonicalAdoptionDeadlineRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const visualSelectionMemoryRef = useRef<VisualSelectionMemory | null>(null);
   const visualSourceIntervalMapRef =
     useRef<VisualMarkdownSourceIntervalMap | null>(null);
@@ -3128,6 +3208,11 @@ export function ImmersiveVisualEditor({
         ? surface.innerHTML
         : (acceptedHtmlRef.current ?? surface.innerHTML)
     ): VisualHistorySnapshot => ({
+      acceptedPreview: {
+        markdown: visualCodeBodyPreviewSourceRef.current,
+        revision: previewSnapshotRef.current.revision,
+        signature: previewSnapshotRef.current.signature
+      },
       codeBodyPreviewSourceMarkdown: visualCodeBodyPreviewSourceRef.current,
       codeBodyPreviewStructureSignature:
         visualCodeBodyPreviewStructureRef.current,
@@ -3138,6 +3223,31 @@ export function ImmersiveVisualEditor({
       selection: captureVisualHistorySelection(surface)
     }),
     [documentSession, surface]
+  );
+
+  /**
+   * A stored history snapshot may only be restored in place while the live
+   * Preview identity is still the render the snapshot was captured against.
+   * Any later Preview render owns a different edit map, so restoring the
+   * stored DOM would pair it with a map that never described it. The target
+   * state must then be rebuilt by the formal Preview owner instead.
+   */
+  const visualHistorySnapshotIsRestorable = useCallback(
+    (snapshot: VisualHistorySnapshot): boolean => {
+      const current = previewSnapshotRef.current;
+      // A Preview without an edit map has no block identity that could be
+      // paired with stale DOM. Preserve the existing plain-text history path;
+      // mapped visual content still requires an exact accepted identity.
+      if (!current.editMap) return true;
+      if (
+        snapshot.acceptedPreview.signature !== current.signature ||
+        snapshot.acceptedPreview.revision !== current.revision
+      ) {
+        return false;
+      }
+      return current.editMap.signature === current.signature;
+    },
+    []
   );
 
   const appendVisualHistoryTransition = useCallback(
@@ -3275,16 +3385,10 @@ export function ImmersiveVisualEditor({
               visualMarkdown
             );
       const html = surface.innerHTML;
-      const historySnapshot: VisualHistorySnapshot = {
-        codeBodyPreviewSourceMarkdown: visualCodeBodyPreviewSourceRef.current,
-        codeBodyPreviewStructureSignature:
-          visualCodeBodyPreviewStructureRef.current,
-        html,
-        historyState: documentHistoryState(documentSession.document),
-        localCodeBodies: visualLocalCodeBodyRecords(),
-        markdown: sourceMarkdown,
-        selection: captureVisualHistorySelection(surface)
-      };
+      const historySnapshot = captureVisualHistorySnapshot(
+        sourceMarkdown,
+        html
+      );
       acceptedHtmlRef.current = historySnapshot.html;
       acceptedCodeBodySnapshotsRef.current.clear();
       acceptedLocalCodeBodiesRef.current = historySnapshot.localCodeBodies;
@@ -3299,7 +3403,7 @@ export function ImmersiveVisualEditor({
       visualBaselineMaterializedRef.current = true;
       capturedPreviewRevisionRef.current = previewSnapshotRevisionRef.current;
     },
-    [documentSession, surface]
+    [captureVisualHistorySnapshot, documentSession, surface]
   );
 
   const captureAcceptedPasteSnapshot = useCallback(
@@ -3578,6 +3682,10 @@ export function ImmersiveVisualEditor({
 
   const failPendingTransfer = useCallback(
     (code: string) => {
+      if (null !== canonicalAdoptionDeadlineRef.current) {
+        clearTimeout(canonicalAdoptionDeadlineRef.current);
+        canonicalAdoptionDeadlineRef.current = null;
+      }
       if (!pendingTransferRef.current) {
         onFailure(code);
         return;
@@ -4147,6 +4255,26 @@ export function ImmersiveVisualEditor({
           );
         }
       } catch (error) {
+        if (
+          pending.acceptedPreviewSource
+          && error instanceof Error
+          && VISUAL_CANONICAL_ADOPTION_PENDING_CODE === error.message
+        ) {
+          // The canonical write already landed and this block still carries
+          // the pre-write render. Keep the transfer pending until the accepted
+          // Preview render owns the surface, and keep one bounded, explicit
+          // terminal failure instead of reporting a stale command now.
+          onDiagnostic('visual-editor-canonical-change-preview-adoption-wait');
+          if (null === canonicalAdoptionDeadlineRef.current) {
+            canonicalAdoptionDeadlineRef.current = setTimeout(() => {
+              canonicalAdoptionDeadlineRef.current = null;
+              if (pendingTransferRef.current === pending) {
+                failPendingTransfer(VISUAL_CANONICAL_STALE_SERIALIZATION_CODE);
+              }
+            }, VISUAL_CANONICAL_ADOPTION_DEADLINE_MS);
+          }
+          return;
+        }
         const canUseSelectionFallback = Boolean(
           pending.acceptedPreviewSource
           && ('caret' === pending.selectionFallback
@@ -4205,6 +4333,10 @@ export function ImmersiveVisualEditor({
         ) {
           throw new Error('visual-editor-history-preview-stale');
         }
+      }
+      if (null !== canonicalAdoptionDeadlineRef.current) {
+        clearTimeout(canonicalAdoptionDeadlineRef.current);
+        canonicalAdoptionDeadlineRef.current = null;
       }
       pendingTransferRef.current = null;
       acceptedPasteDocumentBoundaryRef.current =
@@ -4265,6 +4397,7 @@ export function ImmersiveVisualEditor({
     failPendingTransfer,
     onDiagnostic,
     onPendingChange,
+    previewAdoptionTick,
     previewSnapshot,
     previewStatus,
     surface
@@ -4281,8 +4414,12 @@ export function ImmersiveVisualEditor({
     if (!MutationObserverConstructor) {
       throw new Error('visual-editor-code-block-observer-unavailable');
     }
+    let active = true;
     const codeBlockOrderObserver = new MutationObserverConstructor(() => {
       visualCodeBodyDomOrderInvalidRef.current = true;
+      if (active && pendingTransferRef.current?.acceptedPreviewSource) {
+        setPreviewAdoptionTick((tick) => tick + 1);
+      }
     });
     codeBlockOrderObserver.observe(surface, {
       attributeFilter: ['data-easymde-visual-block-id'],
@@ -4291,7 +4428,6 @@ export function ImmersiveVisualEditor({
       subtree: true
     });
     visualCodeBodyDomOrderObserverRef.current = codeBlockOrderObserver;
-    let active = true;
     let composing = false;
     let compositionRejected = false;
     let rejectedCompositionSelection: VisualHistorySelection | null = null;
@@ -4870,6 +5006,12 @@ export function ImmersiveVisualEditor({
     };
 
     const restoreHistorySnapshot = (snapshot: VisualHistorySnapshot): void => {
+      if (!visualHistorySnapshotIsRestorable(snapshot)) {
+        // Restoring this DOM would publish an accepted state that the live
+        // Preview edit map cannot describe. The caller must request a formal
+        // Preview instead of restoring the snapshot in place.
+        throw new Error('visual-editor-history-preview-identity-stale');
+      }
       clearVisualLocalCodeBodyProvenance();
       visualCodeBodyPreviewSourceRef.current =
         snapshot.codeBodyPreviewSourceMarkdown;
@@ -4985,19 +5127,43 @@ export function ImmersiveVisualEditor({
         if (historyAfter.undoDepth !== targetDepth) {
           throw new Error('visual-editor-history-state-stale');
         }
-        if (!targetSlot || targetSlot.kind === 'rematerialize') {
+        const targetSnapshot =
+          targetSlot?.kind === 'snapshot' ? targetSlot.snapshot : null;
+        const restoreInPlace =
+          null !== targetSnapshot
+          && visualHistorySnapshotIsRestorable(targetSnapshot);
+        if (
+          !targetSlot
+          || targetSlot.kind === 'rematerialize'
+          || !restoreInPlace
+        ) {
           if (targetSlot && targetSlot.markdown !== targetMarkdown) {
             throw new Error('visual-editor-history-snapshot-stale');
           }
+          // A stored snapshot whose accepted Preview identity is no longer
+          // current cannot be paired with the live edit map, so this target
+          // is rebuilt by the formal Preview owner instead of restoring the
+          // stored DOM in place.
+          const rebuildSlot =
+            targetSlot?.kind === 'rematerialize' ? targetSlot : null;
+          // A stale stored snapshot is rebuilt as one whole: the incoming
+          // Preview render becomes the accepted source for this Markdown, so
+          // selection placement and the accepted snapshot use that render's
+          // own edit map instead of a serialized map of the abandoned DOM.
+          const rebuildsStoredSnapshot =
+            null !== targetSnapshot && !restoreInPlace;
           sourceMarkdownRef.current = targetMarkdown;
           const selection = documentSession.document.getSelection();
           const visualSelection = captureVisualHistorySelection(surface);
           pendingTransferRef.current = {
             acceptedDocumentBoundary: null,
+            ...(rebuildsStoredSnapshot
+              ? { acceptedPreviewSource: true }
+              : {}),
             historyState: historyAfter,
-            ...(targetSlot
+            ...(rebuildSlot
               ? {
-                  historySlot: targetSlot,
+                  historySlot: rebuildSlot,
                   historySlotDepth: targetDepth
                 }
               : {}),
@@ -5013,10 +5179,13 @@ export function ImmersiveVisualEditor({
           const signature = requestPreview(targetMarkdown);
           pendingTransferRef.current = {
             acceptedDocumentBoundary: null,
+            ...(rebuildsStoredSnapshot
+              ? { acceptedPreviewSource: true }
+              : {}),
             historyState: historyAfter,
-            ...(targetSlot
+            ...(rebuildSlot
               ? {
-                  historySlot: targetSlot,
+                  historySlot: rebuildSlot,
                   historySlotDepth: targetDepth
                 }
               : {}),
@@ -5029,13 +5198,14 @@ export function ImmersiveVisualEditor({
           return true;
         }
         if (
+          !targetSnapshot ||
           targetSlot.kind !== 'snapshot' ||
           targetSlot.markdown !== targetMarkdown ||
-          targetSlot.snapshot.markdown !== targetMarkdown
+          targetSnapshot.markdown !== targetMarkdown
         ) {
           throw new Error('visual-editor-history-snapshot-stale');
         }
-        restoreHistorySnapshot(targetSlot.snapshot);
+        restoreHistorySnapshot(targetSnapshot);
         sourceMarkdownRef.current = targetMarkdown;
         onMarkdownChange();
         return true;
@@ -6759,7 +6929,28 @@ export function ImmersiveVisualEditor({
           mapSelectionWhenUnchanged: true
         });
       },
-      prepareContextMenuSelection(target) {
+      prepareContextMenuSelection(target, point) {
+        if (
+          pendingTransferRef.current ||
+          externalChangeReportedRef.current ||
+          visualTransferFailureReportedRef.current
+        ) {
+          // A pending transfer owns an unsettled document/Preview pair; no
+          // selection may be mapped against it. Reject the gesture explicitly
+          // instead of mapping through a stale edit map.
+          return false;
+        }
+        const provenance = classifyVisualSelectionProvenance(
+          surface,
+          surface.ownerDocument.defaultView?.getSelection()
+        );
+        if ('straddling' === provenance) {
+          // A selection that straddles or encloses the editable surface keeps
+          // the browser's own selection: overwriting it with an image or
+          // caret would silently discard the user's intent, so the gesture is
+          // rejected explicitly instead.
+          return false;
+        }
         selectVisualImageForContextMenu(surface, target);
         let preparedSelection: VisualHistorySelection | null = null;
         try {
@@ -6773,10 +6964,28 @@ export function ImmersiveVisualEditor({
           return result;
         };
         const pre = target?.closest('pre');
+        const preOwner = pre
+          ? directVisualBlockForSelectionNode(surface, pre)
+          : null;
+        const isDirectPre = Boolean(pre && preOwner === pre);
+        let nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+        const selectionInsideSurface = Boolean(
+          nativeSelection?.anchorNode
+          && nativeSelection.focusNode
+          && nativeSelection.anchorNode.isConnected
+          && nativeSelection.focusNode.isConnected
+          && surface.contains(nativeSelection.anchorNode)
+          && surface.contains(nativeSelection.focusNode)
+        );
+        if (!selectionInsideSurface && !isDirectPre) {
+          if (!placeVisualContextMenuCaret(surface, target ?? null, point)) {
+            return finishPreparation(false);
+          }
+          nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+        }
         if (!pre || !surface.contains(pre)) {
           return finishPreparation(this.prepareMediaSelection());
         }
-        const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
         if (preparedSelection && nativeSelection && !nativeSelection.isCollapsed) {
           return finishPreparation(this.prepareMediaSelection());
         }
@@ -6978,6 +7187,10 @@ export function ImmersiveVisualEditor({
       if (null !== visualInputTimerRef.current) {
         clearTimeout(visualInputTimerRef.current);
         visualInputTimerRef.current = null;
+      }
+      if (null !== canonicalAdoptionDeadlineRef.current) {
+        clearTimeout(canonicalAdoptionDeadlineRef.current);
+        canonicalAdoptionDeadlineRef.current = null;
       }
       visualInputPendingRef.current = false;
       pendingUnmappedVisualInputRef.current = false;

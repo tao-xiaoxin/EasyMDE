@@ -8,6 +8,7 @@ import {
 	type EditorMarkdownBlockIndexPackedData,
 	MAX_EDITOR_BLOCK_INDEX_BLOCKS,
 	MAX_EDITOR_BLOCK_INDEX_IMAGES,
+	MAX_EDITOR_BLOCK_INDEX_LINKS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 } from "../../../contracts/ports/editor-block-index-port";
 import { createBrowserEditorBlockIndexWorker } from "./create-browser-editor-block-index-worker";
@@ -104,6 +105,7 @@ function data(
 		imageBlocks: [{ count: 0, firstImageIndex: 0, status: "ready" }],
 		imageRanges: [],
 		length: 3,
+		linkCandidates: [],
 		mathSpans: [],
 		...overrides,
 	};
@@ -131,10 +133,12 @@ function packedData(
 	return {
 		blockCount,
 		blocks: blocks.buffer,
-		format: "packed-v2",
+		format: "packed-v3",
 		imageCount: 0,
 		images: imageHeaders.buffer,
 		length: sourceLength,
+		linkCount: 0,
+		links: new Int32Array().buffer,
 		mathSpanCount: 0,
 		mathSpans: new Int32Array().buffer,
 	};
@@ -145,6 +149,7 @@ function packedFields(
 	length = 3,
 	imageFields: ReadonlyArray<number> = [],
 	imageHeaderFields: ReadonlyArray<number> = [],
+	linkFields: ReadonlyArray<number> = [],
 ): EditorMarkdownBlockIndexPackedData {
 	const blockCount = blockFields.length / 6;
 	const imageCount = imageFields.length / 2;
@@ -161,10 +166,12 @@ function packedFields(
 	return {
 		blockCount,
 		blocks: Int32Array.from(blockFields).buffer,
-		format: "packed-v2",
+		format: "packed-v3",
 		imageCount,
 		images: images.buffer,
 		length,
+		linkCount: linkFields.length / 6,
+		links: Int32Array.from(linkFields).buffer,
 		mathSpanCount: mathFields.length / 5,
 		mathSpans: Int32Array.from(mathFields).buffer,
 	};
@@ -185,10 +192,12 @@ function packedImageData(
 	return {
 		blockCount: 1,
 		blocks: blocks.buffer,
-		format: "packed-v2",
+		format: "packed-v3",
 		imageCount,
 		images: images.buffer,
 		length: sourceLength,
+		linkCount: 0,
+		links: new Int32Array().buffer,
 		mathSpanCount: 0,
 		mathSpans: new Int32Array().buffer,
 	};
@@ -406,6 +415,144 @@ describe("createBrowserEditorBlockIndexWorker", () => {
 				imageRanges: [{ from: 0, to: source.length }],
 				length: source.length,
 			}),
+		);
+		adapter.dispose();
+	});
+
+	it("decodes prepared link candidates from the packed result", async () => {
+		const adapter = createAdapter();
+		const source = "[caption](https://source.test)";
+		const pending = adapter.build(
+			{ generation: 4, revision: 8, source },
+			signal(),
+		);
+		const worker = FakeWorker.instances[0];
+		if (!worker) throw new Error("test-worker-missing");
+		worker.emit({
+			data: packedFields(
+				[0, source.length, 0, 0, 4, 1],
+				[],
+				source.length,
+				[],
+				[],
+				[0, source.length, 0, source.length, 0, 0],
+			),
+			generation: 4,
+			revision: 8,
+			type: "result",
+		});
+
+		await expect(pending).resolves.toEqual(
+			data({
+				blocks: [
+					{
+						editable: true,
+						from: 0,
+						kind: "paragraph",
+						lineEnd: 0,
+						lineStart: 0,
+						to: source.length,
+					},
+				],
+				length: source.length,
+				linkCandidates: [
+					{
+						blockFrom: 0,
+						blockTo: source.length,
+						from: 0,
+						kind: "link",
+						reference: false,
+						to: source.length,
+					},
+				],
+			}),
+		);
+		adapter.dispose();
+	});
+
+	it.each([
+		["a candidate outside its declared block", "abc", [0, 3, 0, 1, 0, 0]],
+		["an unknown link kind code", "abc", [0, 3, 0, 3, 3, 0]],
+		["a non boolean reference marker", "abc", [0, 3, 0, 3, 0, 2]],
+		[
+			"an overlapping prepared candidate range",
+			"abcdefghij",
+			[0, 10, 0, 10, 0, 0, 4, 6, 0, 10, 0, 0],
+		],
+	])("rejects %s in the packed result", async (_label, source, linkFields) => {
+		const adapter = createAdapter();
+		const pending = adapter.build(
+			{ generation: 4, revision: 8, source },
+			signal(),
+		);
+		const worker = FakeWorker.instances[0];
+		if (!worker) throw new Error("test-worker-missing");
+		worker.emit({
+			data: packedFields(
+				[0, source.length, 0, 0, 4, 1],
+				[],
+				source.length,
+				[],
+				[],
+				linkFields,
+			),
+			generation: 4,
+			revision: 8,
+			type: "result",
+		});
+
+		await expect(pending).rejects.toThrow("editor-block-index-result-invalid");
+		adapter.dispose();
+	});
+
+	it("rejects decreasing prepared candidate starts", async () => {
+		const adapter = createAdapter();
+		const source = "abcd";
+		const pending = adapter.build(
+			{ generation: 4, revision: 8, source },
+			signal(),
+		);
+		const worker = FakeWorker.instances[0];
+		if (!worker) throw new Error("test-worker-missing");
+		worker.emit({
+			data: packedFields(
+				[0, source.length, 0, 0, 4, 1],
+				[],
+				source.length,
+				[],
+				[],
+				[2, 4, 0, 4, 0, 0, 0, 2, 0, 4, 0, 0],
+			),
+			generation: 4,
+			revision: 8,
+			type: "result",
+		});
+
+		await expect(pending).rejects.toThrow("editor-block-index-result-invalid");
+		adapter.dispose();
+	});
+
+	it("rejects a packed result above the prepared link limit", async () => {
+		const adapter = createAdapter();
+		const source = "abc";
+		const pending = adapter.build(
+			{ generation: 4, revision: 8, source },
+			signal(),
+		);
+		const worker = FakeWorker.instances[0];
+		if (!worker) throw new Error("test-worker-missing");
+		worker.emit({
+			data: {
+				...packedFields([0, source.length, 0, 0, 4, 1], [], source.length),
+				linkCount: MAX_EDITOR_BLOCK_INDEX_LINKS + 1,
+			},
+			generation: 4,
+			revision: 8,
+			type: "result",
+		});
+
+		await expect(pending).rejects.toThrow(
+			"editor-block-index-result-too-large",
 		);
 		adapter.dispose();
 	});

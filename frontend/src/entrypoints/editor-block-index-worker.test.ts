@@ -15,18 +15,21 @@ function packedBuild(source: string): EditorBlockIndexWorkerBuildResult {
 	const blocks = new Int32Array([0, source.length, 0, 0, 4, 1]);
 	const mathSpans = new Int32Array();
 	const images = new Int32Array([0, 0, 0]);
+	const links = new Int32Array();
 	return {
 		data: {
 			blockCount: 1,
 			blocks: blocks.buffer,
-			format: "packed-v2",
+			format: "packed-v3",
 			imageCount: 0,
 			images: images.buffer,
 			length: source.length,
+			linkCount: 0,
+			links: links.buffer,
 			mathSpanCount: 0,
 			mathSpans: mathSpans.buffer,
 		},
-		transfer: [blocks.buffer, mathSpans.buffer, images.buffer],
+		transfer: [blocks.buffer, mathSpans.buffer, images.buffer, links.buffer],
 	};
 }
 
@@ -71,7 +74,7 @@ describe("editor block-index worker entry", () => {
 		]);
 	});
 
-	it("returns packed-v2 data with transferable buffers in the production path", () => {
+	it("returns packed-v3 data with transferable buffers in the production path", () => {
 		const messages: EditorBlockIndexWorkerResponse[] = [];
 		const transfers: Array<ReadonlyArray<Transferable>> = [];
 		const handler = createEditorBlockIndexWorkerHandler((message, transfer) => {
@@ -86,11 +89,38 @@ describe("editor block-index worker entry", () => {
 		const result = messages[0];
 		if ("result" !== result?.type) throw new Error("result-missing");
 		const packed = result?.data as unknown as { format?: unknown };
-		if ("packed-v2" !== packed?.format)
+		if ("packed-v3" !== packed?.format)
 			throw new Error("packed-result-missing");
-		expect(packed.format).toBe("packed-v2");
+		expect(packed.format).toBe("packed-v3");
 		expect(JSON.stringify(result)).not.toContain("abc");
-		expect(transfers[0]).toHaveLength(3);
+		expect(transfers[0]).toHaveLength(4);
+	});
+
+	it("packs prepared link candidates without echoing any source text", () => {
+		const source = 'Before [caption](https://source.test "a)b") after';
+		const messages: EditorBlockIndexWorkerResponse[] = [];
+		const handler = createEditorBlockIndexWorkerHandler((message) =>
+			messages.push(message),
+		);
+
+		handler({
+			data: { generation: 1, revision: 2, source, type: "build" },
+		});
+
+		const result = messages[0];
+		if ("result" !== result?.type) throw new Error("result-missing");
+		const from = source.indexOf("[caption]");
+		const to = source.indexOf("after") - 1;
+		expect(result.data.linkCount).toBe(1);
+		expect(Array.from(new Int32Array(result.data.links))).toEqual([
+			from,
+			to,
+			0,
+			source.length,
+			0,
+			0,
+		]);
+		expect(JSON.stringify(result)).not.toContain("caption");
 	});
 
 	it("forwards production scope transfers and detaches source buffers", () => {

@@ -126,19 +126,21 @@ export type EditorContextMenuBootstrapStrings = Readonly<{
   insertBelow: string;
   insertCodeAbove: string;
   insertCodeBelow: string;
+  insertImageAbove: string;
+  insertImageBelow: string;
   insertColumnLeft: string;
   insertColumnRight: string;
   insertParagraphAboveGenerated: string;
   insertParagraphAboveTable: string;
   insertParagraphBelowGenerated: string;
   insertParagraphBelowTable: string;
+  insertTableAbove: string;
+  insertTableBelow: string;
   insertRowAbove: string;
   insertRowBelow: string;
   mathBlock: string;
-  openLink: string;
   paste: string;
   pastePlainText: string;
-  saveGeneratedImage: string;
   statusActionFailed: string;
   statusClipboardUnavailable: string;
   table: string;
@@ -471,19 +473,21 @@ function parseContextMenuStrings(
     'insertBelow',
     'insertCodeAbove',
     'insertCodeBelow',
+    'insertImageAbove',
+    'insertImageBelow',
     'insertColumnLeft',
     'insertColumnRight',
     'insertParagraphAboveGenerated',
     'insertParagraphAboveTable',
     'insertParagraphBelowGenerated',
     'insertParagraphBelowTable',
+    'insertTableAbove',
+    'insertTableBelow',
     'insertRowAbove',
     'insertRowBelow',
     'mathBlock',
-    'openLink',
     'paste',
     'pastePlainText',
-    'saveGeneratedImage',
     'statusActionFailed',
     'statusClipboardUnavailable',
     'table',

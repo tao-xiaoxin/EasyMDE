@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { markdownLanguage } from "@codemirror/lang-markdown";
+
 import type {
 	PreviewRequest,
 	PreviewRequestPort,
@@ -11,6 +13,7 @@ import {
 	createEditorSourceLinkQuery,
 	type EditorSourceLinkQueryBinding,
 	type EditorSourceLinkQuerySession,
+	EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS,
 	MAX_EDITOR_SOURCE_LINK_QUERY_BYTES,
 } from "./editor-source-link-query";
 
@@ -218,6 +221,192 @@ describe("createEditorSourceLinkQuery", () => {
 		});
 		await settle();
 		expect(session.peek(current)).toEqual({ href, status: "ready" });
+	});
+
+	// Astra review blockers: a >32 KiB prefix previously switched to a second
+	// scanner that truncated legal titles and lost the destination context, so
+	// the menu either reported an ownership failure or offered no link actions.
+	it.each([
+		[
+			"caption",
+			'[caption](https://example.test "a)b")',
+			(snippet: string) => snippet.indexOf("caption") + 1,
+		],
+		[
+			"destination",
+			'[caption](https://example.test "a)b")',
+			(snippet: string) => snippet.indexOf("example") + 2,
+		],
+		[
+			"angle destination",
+			"[caption](<https://example.test/a)b>)",
+			(snippet: string) => snippet.indexOf("example") + 2,
+		],
+	] as const)(
+		"keeps a long-paragraph %s caret on the complete owned candidate",
+		async (_label, snippet, offset) => {
+			const source = `${"ordinary ".repeat(4_000)}${snippet}`;
+			const caret = source.indexOf(snippet) + offset(snippet);
+			const current = binding(source, "menu-long-source-link", {
+				end: caret,
+				start: caret,
+			});
+			const { requestFactory, session } = createHarness({
+				render: async (request) =>
+					response(
+						request.markdown,
+						'<p><a href="https://actual.test/title">caption</a></p><p>canonical</p>',
+					),
+			});
+
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}).status,
+			).toBe("pending");
+			await settle();
+			expect(requestFactory.mock.calls[0]?.[0]?.markdown).toBe(
+				`${snippet}\n\n${source}`,
+			);
+			expect(session.peek(current)).toEqual({
+				href: "https://actual.test/title",
+				status: "ready",
+			});
+		},
+	);
+
+	it("answers a long-paragraph prompt from the prepared index without parsing", () => {
+		const snippet = '[caption](https://example.test "a)b")';
+		const source = `${"ordinary ".repeat(100_000)}${snippet}`;
+		expect(source.length).toBeGreaterThan(900_000);
+		const blockIndex = createEditorMarkdownBlockIndex(source);
+		const parse = vi.spyOn(markdownLanguage.parser, "parse");
+		const caret = source.indexOf("caption") + 1;
+		const current = binding(source, "menu-cold-index", {
+			end: caret,
+			start: caret,
+		});
+		const { session } = createHarness();
+
+		const started = performance.now();
+		const state = session.ensure({ binding: current, blockIndex });
+		const elapsed = performance.now() - started;
+		const parsedInputs = parse.mock.calls.map(([input]) => input);
+		parse.mockRestore();
+
+		expect(state.status).toBe("pending");
+		expect(parsedInputs).toEqual([]);
+		expect(elapsed).toBeLessThan(250);
+	});
+
+	it.each([
+		"[<https://inner.test>][missing]",
+		"[<https://inner.test>]",
+		"[<https://inner.test>][]",
+	] as const)(
+		"keeps the rendered inner autolink ready for the undefined reference %s",
+		async (snippet) => {
+			const source = `${"ordinary ".repeat(4_000)}${snippet}`;
+			const caret = source.indexOf("inner") + 2;
+			const current = binding(source, "menu-undefined-reference", {
+				end: caret,
+				start: caret,
+			});
+			const { render, requestFactory, session } = createHarness({
+				render: async (request) =>
+					response(
+						request.markdown,
+						'<p><a href="https://inner.test">https://inner.test</a></p><p>canonical</p>',
+					),
+			});
+
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}).status,
+			).toBe("pending");
+			await settle();
+			expect(render).toHaveBeenCalledOnce();
+			expect(requestFactory.mock.calls[0]?.[0]?.markdown).toBe(
+				`<https://inner.test>\n\n${source}`,
+			);
+			expect(session.peek(current)).toEqual({
+				href: "https://inner.test",
+				status: "ready",
+			});
+		},
+	);
+
+	it("keeps the resolved outer reference ready over its inner autolink", async () => {
+		const source = "[<https://inner.test>][ref]\n\n[ref]: https://outer.test";
+		const caret = source.indexOf("inner") + 2;
+		const current = binding(source, "menu-defined-reference", {
+			end: caret,
+			start: caret,
+		});
+		const { requestFactory, session } = createHarness({
+			render: async (request) =>
+				response(
+					request.markdown,
+					'<p><a href="https://outer.test">https://inner.test</a></p><p>canonical</p>',
+				),
+		});
+
+		session.ensure({
+			binding: current,
+			blockIndex: createEditorMarkdownBlockIndex(source),
+		});
+		await settle();
+		expect(requestFactory.mock.calls[0]?.[0]?.markdown).toBe(
+			`[<https://inner.test>][ref]\n\n${source}`,
+		);
+		expect(session.peek(current)).toEqual({
+			href: "https://outer.test",
+			status: "ready",
+		});
+	});
+
+	it("keeps a reference candidate that did not render as a unique link as none", async () => {
+		const source = "[caption][ref]\n\n[ref]: https://source.test";
+		const caret = source.indexOf("caption") + 1;
+		const current = binding(source, "menu-reference-not-rendered", {
+			end: caret,
+			start: caret,
+		});
+		const { session } = createHarness({
+			render: async (request) =>
+				response(
+					request.markdown,
+					'<p>[caption]<a href="https://inner.test">inner</a>[missing]</p><p>canonical</p>',
+				),
+		});
+
+		session.ensure({
+			binding: current,
+			blockIndex: createEditorMarkdownBlockIndex(source),
+		});
+		await settle();
+		expect(session.peek(current)).toEqual({ status: "none" });
+	});
+
+	it("keeps a long-paragraph code-span selection as none instead of a failure", async () => {
+		const source = `${"ordinary ".repeat(4_000)}\`[caption](https://example.test)\``;
+		const caret = source.indexOf("caption") + 1;
+		const current = binding(source, "menu-long-code-span", {
+			end: caret,
+			start: caret,
+		});
+		const { render, session } = createHarness();
+
+		expect(
+			session.ensure({
+				binding: current,
+				blockIndex: createEditorMarkdownBlockIndex(source),
+			}),
+		).toEqual({ status: "none" });
+		expect(render).not.toHaveBeenCalled();
 	});
 
 	it("keeps an undefined reference use-site as normal none rather than failure", async () => {
@@ -439,5 +628,58 @@ describe("createEditorSourceLinkQuery", () => {
 		expect(listeners.length).toBeGreaterThan(0);
 		unsubscribe();
 		session.cancel(current);
+	});
+
+	it("ends an unresolved Preview request with a visible stable timeout", async () => {
+		vi.useFakeTimers();
+		try {
+			const source = "[caption](https://source.test)";
+			const current = binding(source, "timeout");
+			let requestSignal: AbortSignal | undefined;
+			let resolveRender!: (value: PreviewResponse) => void;
+			const render = vi.fn((_request: PreviewRequest, signal: AbortSignal) => {
+				requestSignal = signal;
+				return new Promise<PreviewResponse>((resolve) => {
+					resolveRender = resolve;
+				});
+			});
+			const { notify, session } = createHarness({ render });
+
+			expect(
+				session.ensure({
+					binding: current,
+					blockIndex: createEditorMarkdownBlockIndex(source),
+				}),
+			).toEqual({ status: "pending" });
+			await settle();
+			if (!requestSignal) throw new Error("expected Preview request signal");
+			expect(requestSignal.aborted).toBe(false);
+
+			await vi.advanceTimersByTimeAsync(EDITOR_SOURCE_LINK_QUERY_TIMEOUT_MS);
+
+			expect(requestSignal.aborted).toBe(true);
+			expect(session.readiness(current)).toEqual({
+				code: "editor-source-link-query-timeout",
+				status: "unavailable",
+			});
+			expect(session.peek(current)).toEqual({
+				code: "editor-source-link-query-timeout",
+				status: "unavailable",
+			});
+			expect(notify).toHaveBeenCalled();
+			resolveRender(
+				response(
+					`${source}\n\n${source}`,
+					'<p><a href="https://late.test">caption</a></p><p>canonical</p>',
+				),
+			);
+			await settle();
+			expect(session.readiness(current)).toEqual({
+				code: "editor-source-link-query-timeout",
+				status: "unavailable",
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

@@ -105,6 +105,19 @@ export type CodeMirrorDocumentSession = Readonly<{
   flush: () => void;
   focus: () => void;
   isEditable: () => boolean;
+  /**
+   * Commits the selection a context-menu pointer gesture must be described
+   * by, mapping the real pointer through CodeMirror's own coordinates. The
+   * committed transaction changes the selection only: no document write, no
+   * history entry, and no scrolling. A deliberate non-empty selection is
+   * preserved as the user's own pointer extent. Returns `false` when the
+   * pointer cannot be established against this source - a destroyed session,
+   * a detached view, or an unmappable pointer coordinate - instead of
+   * falling back to a fabricated position.
+   */
+  prepareContextMenuPointer: (
+    position: Readonly<{ x: number; y: number }>
+  ) => boolean;
   getCursorPosition: () => DocumentCursorPosition;
   getInputElement: () => HTMLElement;
   getHistoryState: () => DocumentHistoryState;
@@ -781,6 +794,42 @@ export function createCodeMirrorDocumentSession({
       }
     },
     isEditable: () => !destroyed && !submissionField.disabled && !submissionField.readOnly,
+    prepareContextMenuPointer({ x, y }) {
+      // CodeMirror starts its own mouse selection for the primary button
+      // only, so the pointer gesture that requests a context menu cannot be
+      // assumed to have moved the canonical selection. A detached view has no
+      // pointer coordinates to map: immersive visual editing owns the
+      // canonical state and has moved this view's DOM out of the document.
+      if (destroyed || !view.dom.isConnected) return false;
+      // A context-menu gesture has no context to establish on a source the
+      // user cannot edit, and a read-only source must not have its selection
+      // moved either: the surface's own read-only failure owns that gesture.
+      if (submissionField.disabled || submissionField.readOnly) return false;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+      const state = view.state;
+      const current = stateSelection(state);
+      // A deliberate non-empty selection is the user's own pointer extent;
+      // collapsing it onto the hit position would discard that intent.
+      if (current.start !== current.end) return true;
+      const mapped = view.posAtCoords({ x, y }, false);
+      if (null === mapped) return false;
+      const cursor = clampPosition(mapped, state.doc.length);
+      if (cursor === current.start) return true;
+      view.dispatch({
+        annotations: [
+          // Opening a menu is not an edit and must not become a history step:
+          // without this, CodeMirror records the selection change and
+          // `undoSelection` (Mod-u / Alt-u) could pop it as a selection entry.
+          // The canonical selection-only path (`syncFromNative`) gates the same
+          // annotation, and the pointer selection still reaches the submission
+          // field through the update listener.
+          Transaction.addToHistory.of(false),
+          Transaction.userEvent.of('select.pointer')
+        ],
+        selection: EditorSelection.cursor(cursor)
+      });
+      return true;
+    },
     getCursorPosition() {
       const state = authoritativeState();
       const selection = stateSelection(state);

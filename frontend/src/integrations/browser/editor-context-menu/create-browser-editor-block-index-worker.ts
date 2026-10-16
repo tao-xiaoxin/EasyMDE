@@ -1,9 +1,12 @@
 import {
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_READY,
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_UNAVAILABLE,
+	EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK,
+	EDITOR_BLOCK_INDEX_LINK_KIND_LINK,
 	EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
+	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
 	type EditorBlockIndexWorkerRequest,
@@ -16,10 +19,13 @@ import {
 	type EditorMarkdownImageBlock,
 	type EditorMarkdownImageBlockStatus,
 	type EditorMarkdownImageRange,
+	type EditorMarkdownLinkCandidate,
+	type EditorMarkdownLinkCandidateKind,
 	type EditorMarkdownMathSpan,
 	type EditorMarkdownSourceBlock,
 	MAX_EDITOR_BLOCK_INDEX_BLOCKS,
 	MAX_EDITOR_BLOCK_INDEX_IMAGES,
+	MAX_EDITOR_BLOCK_INDEX_LINKS,
 	MAX_EDITOR_BLOCK_INDEX_MATH_SPANS,
 	MAX_EDITOR_BLOCK_INDEX_SOURCE_BYTES,
 	resolveEditorBlockIndexWorkerUrl,
@@ -313,6 +319,12 @@ function imageStatus(value: number): EditorMarkdownImageBlockStatus | null {
 	return null;
 }
 
+function linkKind(value: number): EditorMarkdownLinkCandidateKind | null {
+	if (value === EDITOR_BLOCK_INDEX_LINK_KIND_LINK) return "link";
+	if (value === EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK) return "autolink";
+	return null;
+}
+
 async function validatePackedData(
 	data: EditorMarkdownBlockIndexPackedData,
 	source: string,
@@ -326,13 +338,16 @@ async function validatePackedData(
 			"imageCount",
 			"images",
 			"length",
+			"linkCount",
+			"links",
 			"mathSpanCount",
 			"mathSpans",
 		]) ||
-		data.format !== "packed-v2" ||
+		data.format !== "packed-v3" ||
 		data.length !== source.length ||
 		!safeInteger(data.length) ||
 		!safeInteger(data.blockCount) ||
+		!safeInteger(data.linkCount) ||
 		!safeInteger(data.mathSpanCount) ||
 		!safeInteger(data.imageCount)
 	)
@@ -340,7 +355,8 @@ async function validatePackedData(
 	if (
 		data.blockCount > MAX_EDITOR_BLOCK_INDEX_BLOCKS ||
 		data.mathSpanCount > MAX_EDITOR_BLOCK_INDEX_MATH_SPANS ||
-		data.imageCount > MAX_EDITOR_BLOCK_INDEX_IMAGES
+		data.imageCount > MAX_EDITOR_BLOCK_INDEX_IMAGES ||
+		data.linkCount > MAX_EDITOR_BLOCK_INDEX_LINKS
 	)
 		return { status: "too-large" };
 	const blocksBuffer = packedBuffer(
@@ -358,7 +374,12 @@ async function validatePackedData(
 		data.blockCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS +
 			data.imageCount * EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
 	);
-	if (!blocksBuffer || !mathBuffer || !imageBuffer)
+	const linkBuffer = packedBuffer(
+		data.links,
+		data.linkCount,
+		EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
+	);
+	if (!blocksBuffer || !mathBuffer || !imageBuffer || !linkBuffer)
 		return { status: "invalid" };
 
 	const lines = await lineCount(source, cancelled);
@@ -562,6 +583,71 @@ async function validatePackedData(
 			yielded = true;
 		}
 	}
+	const linkCandidates: EditorMarkdownLinkCandidate[] = [];
+	let linkBlockIndex = 0;
+	let previousLinkTo = 0;
+	processed = 0;
+	sliceStarted = now();
+	yielded = false;
+	for (let index = 0; index < data.linkCount; index += 1) {
+		if (cancelled()) return { status: "cancelled" };
+		const offset = index * EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS;
+		const from = linkBuffer[offset] ?? -1;
+		const to = linkBuffer[offset + 1] ?? -1;
+		const blockFrom = linkBuffer[offset + 2] ?? -1;
+		const blockTo = linkBuffer[offset + 3] ?? -1;
+		const kind = linkKind(linkBuffer[offset + 4] ?? -1);
+		const referenceCode = linkBuffer[offset + 5] ?? -1;
+		while (
+			linkBlockIndex < blocks.length &&
+			(blocks[linkBlockIndex]?.to ?? 0) <= from
+		) {
+			linkBlockIndex += 1;
+			if (now() - sliceStarted >= VALIDATION_SLICE_MS) {
+				await yieldValidation();
+				sliceStarted = now();
+				if (cancelled()) return { status: "cancelled" };
+			}
+		}
+		const block = blocks[linkBlockIndex];
+		if (
+			!block ||
+			!kind ||
+			(referenceCode !== 0 && referenceCode !== 1) ||
+			!safeInteger(from) ||
+			!safeInteger(to) ||
+			!safeInteger(blockFrom) ||
+			!safeInteger(blockTo) ||
+			from < previousLinkTo ||
+			from < blockFrom ||
+			from >= to ||
+			to > blockTo ||
+			blockFrom !== block.from ||
+			blockTo !== block.to ||
+			"unavailable" === block.kind ||
+			"code" === block.kind ||
+			"math" === block.kind
+		)
+			return { status: "invalid" };
+		previousLinkTo = to;
+		linkCandidates.push({
+			blockFrom,
+			blockTo,
+			from,
+			kind,
+			reference: referenceCode === 1,
+			to,
+		});
+		processed += 1;
+		if (
+			now() - sliceStarted >= VALIDATION_SLICE_MS ||
+			(!yielded && processed >= VALIDATION_FIRST_BATCH_SIZE)
+		) {
+			await yieldValidation();
+			sliceStarted = now();
+			yielded = true;
+		}
+	}
 	return {
 		status: "valid",
 		value: {
@@ -569,6 +655,7 @@ async function validatePackedData(
 			imageBlocks,
 			imageRanges,
 			length: data.length,
+			linkCandidates,
 			mathSpans,
 		},
 	};
@@ -580,7 +667,7 @@ async function validateData(
 	cancelled: () => boolean,
 ): Promise<DataValidation> {
 	const data = record(value);
-	if ("packed-v2" !== data?.format) return { status: "invalid" };
+	if ("packed-v3" !== data?.format) return { status: "invalid" };
 	return validatePackedData(
 		data as unknown as EditorMarkdownBlockIndexPackedData,
 		source,

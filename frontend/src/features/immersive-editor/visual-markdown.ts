@@ -120,6 +120,56 @@ export function shouldNormalizeVisualImageContextMenuSelection(
     || (1 === selection.rangeCount && selection.isCollapsed);
 }
 
+export type VisualSelectionProvenance =
+  | 'absent'
+  | 'owned'
+  | 'straddling'
+  | 'wholly-foreign';
+
+export type VisualSelectionLike = Readonly<{
+  anchorNode: Node | null;
+  focusNode: Node | null;
+  getRangeAt: (index: number) => Range;
+  rangeCount: number;
+}>;
+
+/**
+ * Classify the browser selection against the editable visual surface before
+ * any image or caret normalization runs.
+ *
+ * Only an `absent` or `wholly-foreign` selection may be recovered onto the
+ * hit target. A selection that owns the surface, or that straddles or encloses
+ * it, still carries user intent that the editable surface cannot represent, so
+ * it must be preserved instead of being silently overwritten.
+ */
+export function classifyVisualSelectionProvenance(
+  surface: HTMLElement,
+  selection: VisualSelectionLike | null | undefined
+): VisualSelectionProvenance {
+  if (
+    !selection?.rangeCount
+    || !selection.anchorNode
+    || !selection.focusNode
+  ) return 'absent';
+  const anchorInside = selection.anchorNode.isConnected
+    && surface.contains(selection.anchorNode);
+  const focusInside = selection.focusNode.isConnected
+    && surface.contains(selection.focusNode);
+  if (1 === selection.rangeCount && anchorInside && focusInside) {
+    return 'owned';
+  }
+  if (anchorInside || focusInside) return 'straddling';
+  // Both endpoints sit outside the editable surface. A range that still
+  // intersects it, including a range enclosing the whole surface, cannot be
+  // mapped onto a target without destroying one of its ends.
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(surface)) {
+      return 'straddling';
+    }
+  }
+  return 'wholly-foreign';
+}
+
 export function selectVisualImageForContextMenu(
   surface: HTMLElement,
   target: Element | null | undefined
@@ -130,7 +180,23 @@ export function selectVisualImageForContextMenu(
   }
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (!selection) throw new Error('visual-editor-selection-unavailable');
-  if (!shouldNormalizeVisualImageContextMenuSelection(selection)) return false;
+  // A context-menu event can arrive after focus moved to a toolbar/header
+  // control while the document still owns a non-empty selection elsewhere.
+  // That foreign selection is not a valid image target and would later make
+  // canonical visual replacement map against the wrong source range. Preserve
+  // a deliberate mixed selection only when both endpoints still belong to the
+  // editable visual surface; otherwise normalize the hit image to a node
+  // selection before the visual owner captures its source range.
+  const provenance = classifyVisualSelectionProvenance(surface, selection);
+  // A straddling or enclosing selection is kept exactly as the browser owns
+  // it: the caller rejects the gesture explicitly instead of rebinding it to
+  // the hit image. An owned, deliberate selection is preserved as well, while
+  // an absent, wholly foreign, or owned collapsed selection is normalized.
+  if ('straddling' === provenance) return false;
+  if (
+    'owned' === provenance
+    && !shouldNormalizeVisualImageContextMenuSelection(selection)
+  ) return false;
   const range = surface.ownerDocument.createRange();
   try {
     range.selectNode(image);
@@ -3048,6 +3114,12 @@ export function visualBoundarySourceOffset(
   if (sourceMarkdown.includes(marker) || baselineVisualMarkdown.includes(marker)) {
     throw new Error('visual-editor-selection-marker-conflict');
   }
+  const sourcePre = node instanceof HTMLElement && 'PRE' === node.tagName
+    ? node
+    : null;
+  if (sourcePre) {
+    directCodeChild(sourcePre);
+  }
   const path: number[] = [];
   let current: Node | null = node;
   while (current && current !== editor) {
@@ -3067,6 +3139,22 @@ export function visualBoundarySourceOffset(
     const child = cloneNode.childNodes[index];
     if (!child) throw new Error('visual-editor-selection-map-failed');
     cloneNode = child;
+  }
+  if (cloneNode instanceof HTMLElement && 'PRE' === cloneNode.tagName) {
+    const code = directCodeChild(cloneNode);
+    if (!code) throw new Error('visual-editor-code-child-missing');
+    const codeIndex = Array.prototype.indexOf.call(
+      cloneNode.childNodes,
+      code
+    );
+    if (
+      Number.isInteger(offset)
+      && offset >= 0
+      && offset <= cloneNode.childNodes.length
+    ) {
+      cloneNode = code;
+      offset = offset <= codeIndex ? 0 : code.childNodes.length;
+    }
   }
   const range = editor.ownerDocument.createRange();
   range.setStart(cloneNode, offset);
@@ -3670,6 +3758,60 @@ function lastEditableVisualBoundary(
 }
 
 export type AcceptedPasteDocumentBoundary = 'end' | 'start';
+
+export function visualContextMenuCaretRangeAtPoint(
+  surface: HTMLElement,
+  target: Element | null,
+  point?: Readonly<{ x: number; y: number }>
+): Range | null {
+  const documentWithCaret = surface.ownerDocument as Document & {
+    caretPositionFromPoint?: (
+      x: number,
+      y: number
+    ) => Readonly<{ offset: number; offsetNode: Node }> | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  let range: Range | null = null;
+  if (
+    point
+    && Number.isFinite(point.x)
+    && Number.isFinite(point.y)
+  ) {
+    const caretPosition = documentWithCaret.caretPositionFromPoint?.(
+      point.x,
+      point.y
+    );
+    if (
+      caretPosition
+      && caretPosition.offsetNode !== surface
+      && surface.contains(caretPosition.offsetNode)
+    ) {
+      range = surface.ownerDocument.createRange();
+      range.setStart(caretPosition.offsetNode, caretPosition.offset);
+      range.collapse(true);
+    } else {
+      const caretRange = documentWithCaret.caretRangeFromPoint?.(
+        point.x,
+        point.y
+      );
+      if (
+        caretRange
+        && caretRange.startContainer !== surface
+        && surface.contains(caretRange.startContainer)
+        && surface.contains(caretRange.endContainer)
+      ) {
+        range = caretRange.cloneRange();
+        range.collapse(true);
+      }
+    }
+  }
+  if (!range && target && surface.contains(target) && target !== surface) {
+    range = surface.ownerDocument.createRange();
+    range.selectNodeContents(target);
+    range.collapse(true);
+  }
+  return range;
+}
 
 function visualCaretAtDocumentBoundary(
   editor: HTMLElement

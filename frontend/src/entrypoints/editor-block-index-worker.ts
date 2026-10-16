@@ -1,9 +1,12 @@
 import {
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_READY,
 	EDITOR_BLOCK_INDEX_IMAGE_STATUS_UNAVAILABLE,
+	EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK,
+	EDITOR_BLOCK_INDEX_LINK_KIND_LINK,
 	EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_BLOCK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_IMAGE_RANGE_FIELDS,
+	EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
 	EDITOR_BLOCK_INDEX_PACKED_MATH_FIELDS,
 	EDITOR_MARKDOWN_BLOCK_KIND_ORDER,
 	type EditorBlockIndexWorkerData,
@@ -73,6 +76,8 @@ function isBuildRequest(
 
 function dataWithoutSource(source: string): EditorBlockIndexWorkerBuildResult {
 	const parsedIndex = createEditorMarkdownBlockIndex(source);
+	const linkCandidates = parsedIndex.linkCandidates;
+	if (!linkCandidates) throw new Error("editor-block-index-link-data-invalid");
 	const blocks = new Int32Array(
 		parsedIndex.blocks.length * EDITOR_BLOCK_INDEX_PACKED_BLOCK_FIELDS,
 	);
@@ -145,18 +150,52 @@ function dataWithoutSource(source: string): EditorBlockIndexWorkerBuildResult {
 		images[offset] = range.from;
 		images[offset + 1] = range.to;
 	});
+	const links = new Int32Array(
+		linkCandidates.length * EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS,
+	);
+	linkCandidates.forEach((candidate, candidateIndex) => {
+		const offset = candidateIndex * EDITOR_BLOCK_INDEX_PACKED_LINK_FIELDS;
+		const kind =
+			"autolink" === candidate.kind
+				? EDITOR_BLOCK_INDEX_LINK_KIND_AUTOLINK
+				: "link" === candidate.kind
+					? EDITOR_BLOCK_INDEX_LINK_KIND_LINK
+					: -1;
+		if (
+			kind < 0 ||
+			"boolean" !== typeof candidate.reference ||
+			!Number.isSafeInteger(candidate.from) ||
+			!Number.isSafeInteger(candidate.to) ||
+			!Number.isSafeInteger(candidate.blockFrom) ||
+			!Number.isSafeInteger(candidate.blockTo) ||
+			candidate.from < candidate.blockFrom ||
+			candidate.from >= candidate.to ||
+			candidate.to > candidate.blockTo ||
+			candidate.blockTo > source.length
+		) {
+			throw new Error("editor-block-index-link-data-invalid");
+		}
+		links[offset] = candidate.from;
+		links[offset + 1] = candidate.to;
+		links[offset + 2] = candidate.blockFrom;
+		links[offset + 3] = candidate.blockTo;
+		links[offset + 4] = kind;
+		links[offset + 5] = candidate.reference ? 1 : 0;
+	});
 	return {
 		data: {
 			blockCount: parsedIndex.blocks.length,
 			blocks: blocks.buffer,
-			format: "packed-v2",
+			format: "packed-v3",
 			imageCount: parsedIndex.imageRanges.length,
 			images: images.buffer,
 			length: parsedIndex.length,
+			linkCount: linkCandidates.length,
+			links: links.buffer,
 			mathSpanCount: parsedIndex.mathSpans.length,
 			mathSpans: mathSpans.buffer,
 		},
-		transfer: [blocks.buffer, mathSpans.buffer, images.buffer],
+		transfer: [blocks.buffer, mathSpans.buffer, images.buffer, links.buffer],
 	};
 }
 

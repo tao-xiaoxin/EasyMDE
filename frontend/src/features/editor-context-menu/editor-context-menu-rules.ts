@@ -706,6 +706,30 @@ export function findMarkdownBlock(
 	};
 }
 
+/**
+ * Resolves the CommonMark level of a parser-owned heading block so the menu can
+ * mark the current level. ATX headings report their leading `#` run; setext
+ * headings report 1 or 2 from their underline. Any other lexical form stays
+ * explicitly unresolved instead of being guessed.
+ */
+export function markdownHeadingLevel(
+	value: string,
+	block: MarkdownBlock | null,
+): number | null {
+	if ("heading" !== block?.kind) return null;
+	const lines = linesOf(value);
+	const firstLine = lines[block.lineStart]?.text;
+	if (undefined === firstLine) return null;
+	const atx = /^ {0,3}(#{1,6})(?:[ \t]+|\r?$)/u.exec(firstLine);
+	if (atx?.[1]) return atx[1].length;
+	if (block.lineEnd <= block.lineStart) return null;
+	const lastLine = lines[block.lineEnd]?.text;
+	if (undefined === lastLine) return null;
+	const setext = /^ {0,3}(=+|-+)[ \t]*\r?$/u.exec(lastLine);
+	if (!setext?.[1]) return null;
+	return "=" === setext[1][0] ? 1 : 2;
+}
+
 export function captureEditorContext(
 	input: Readonly<{
 		direction: EditorContextMenuDirection;
@@ -793,6 +817,64 @@ function newlineFor(value: string, lines: ReadonlyArray<MarkdownLine>): string {
 	const line = lines.find((candidate) => "" !== candidate.separator);
 	if (line) return line.separator;
 	return value.includes("\r\n") ? "\r\n" : "\n";
+}
+
+function leadingNewlineCount(value: string, newline: string): number {
+	let count = 0;
+	let offset = 0;
+	while (value.startsWith(newline, offset)) {
+		count += 1;
+		offset += newline.length;
+	}
+	return count;
+}
+
+function trimBlockInsertionText(value: string): string {
+	return value
+		.replace(/^(?:\r\n|\r|\n)+/u, "")
+		.replace(/(?:\r\n|\r|\n)+$/u, "");
+}
+
+function normalizeBlockInsertionNewlines(value: string, newline: string): string {
+	return value.replace(/\r\n|\r|\n/gu, newline);
+}
+
+/**
+ * Builds a block-safe insertion around a parser-owned Markdown block. The
+ * original source is never normalized: only the new block's separators are
+ * added, with the document's existing newline convention preserved.
+ */
+export function insertMarkdownBlockRelative(
+	value: string,
+	block: MarkdownBlock,
+	direction: "above" | "below",
+	rawText: string,
+): EditorTextEdit {
+	const lines = linesOf(value);
+	const newline = newlineFor(value, lines);
+	const text = normalizeBlockInsertionNewlines(
+		trimBlockInsertionText(rawText),
+		newline,
+	);
+	const position = "above" === direction ? block.start : block.end;
+	if (position < 0 || position > value.length) {
+		throw new Error("editor-context-menu-insertion-position-invalid");
+	}
+	const suffix = value.slice(position);
+	const trailingSeparator = "below" === direction
+		? newline.repeat(Math.max(0, 2 - leadingNewlineCount(suffix, newline)))
+		: newline.repeat(2);
+	const prefix = "below" === direction ? newline.repeat(2) : "";
+	const insert = prefix + text + trailingSeparator;
+	const nextValue = value.slice(0, position) + insert + suffix;
+	const caret = position + insert.length;
+	return createTextEdit(
+		value,
+		nextValue,
+		{ direction: "none", end: caret, start: caret },
+		position,
+		position,
+	);
 }
 
 function validCodeInsertionTarget(
@@ -1347,18 +1429,6 @@ export function tableSelectionAt(
 		"invalid" === context.annotationRead.status
 			? { tableAlignmentAvailable: false as const }
 			: {};
-	if (
-		selection.start <= context.tableStart &&
-		selection.end >= context.tableEnd
-	) {
-		return {
-			...alignmentCapability,
-			canDeleteColumn: false,
-			canDeleteRow: false,
-			columnCount,
-			kind: "whole-table",
-		};
-	}
 	const position = tableRowForPosition(selection.start, table, lines);
 	const row = table.rows[position.row];
 	const line = row ? lines[row.lineIndex] : undefined;
@@ -1371,13 +1441,45 @@ export function tableSelectionAt(
 				lines,
 			)
 		: position;
-	if (endPosition.row !== position.row) {
+	// A real pointer drag over the whole table anchors on the header line and
+	// releases inside the last row, so the whole-table boundary is every table
+	// row covered - header through last row - instead of an exact end at
+	// `tableEnd`. Drags that stay inside body rows keep their row or column
+	// identity below.
+	if (0 === position.row && endPosition.row === table.rows.length - 1) {
 		return {
 			...alignmentCapability,
 			canDeleteColumn: false,
 			canDeleteRow: false,
 			columnCount,
-			kind: "ambiguous",
+			kind: "whole-table",
+		};
+	}
+	if (endPosition.row !== position.row) {
+		// A multi-row drag keeps a provable column only when its anchor row is
+		// not fully covered - a complete row plus more describes a row-shaped
+		// selection - and its start and end anchor the same column. The
+		// deterministic anchor then owns column alignment and column deletion,
+		// while no single row is provable.
+		const coversAnchorRow =
+			selection.start <= line.start && selection.end >= line.end;
+		if (coversAnchorRow || endPosition.column !== position.column) {
+			return {
+				...alignmentCapability,
+				canDeleteColumn: false,
+				canDeleteRow: false,
+				columnCount,
+				kind: "ambiguous",
+			};
+		}
+		return {
+			...alignmentCapability,
+			canDeleteColumn: columnCount > 1,
+			canDeleteRow: false,
+			column: position.column,
+			columnCount,
+			kind: "column",
+			rowIndex: position.row,
 		};
 	}
 	if (

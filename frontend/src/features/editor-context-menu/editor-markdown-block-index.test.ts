@@ -66,6 +66,81 @@ function blockAt(
 }
 
 describe("createEditorMarkdownBlockIndex", () => {
+	it("prepares the exact link candidates with their block ranges", () => {
+		const source =
+			'Before [caption](https://example.test "a)b") and <https://auto.test/x>\n\n[标题][引用]\n\n[引用]: https://example.test/ref';
+		const index = createEditorMarkdownBlockIndex(source);
+
+		expect(
+			(index.linkCandidates ?? []).map((candidate) => ({
+				blockKind: index.blocks.find(
+					(block) =>
+						block.from === candidate.blockFrom &&
+						block.to === candidate.blockTo,
+				)?.kind,
+				from: source.slice(candidate.from, candidate.to),
+				kind: candidate.kind,
+				reference: candidate.reference,
+			})),
+		).toEqual([
+			{
+				blockKind: "paragraph",
+				from: '[caption](https://example.test "a)b")',
+				kind: "link",
+				reference: false,
+			},
+			{
+				blockKind: "paragraph",
+				from: "<https://auto.test/x>",
+				kind: "autolink",
+				reference: false,
+			},
+			{
+				blockKind: "paragraph",
+				from: "[标题][引用]",
+				kind: "link",
+				reference: true,
+			},
+		]);
+	});
+
+	it("keeps rendered link ownership unique and non-overlapping for nested syntax", () => {
+		const source =
+			"[<https://inner.test>](https://outer.test) [tail](https://tail.test)";
+		const index = createEditorMarkdownBlockIndex(source);
+		const candidates = index.linkCandidates ?? [];
+
+		expect(
+			candidates.map((candidate) => source.slice(candidate.from, candidate.to)),
+		).toEqual([
+			"[<https://inner.test>](https://outer.test)",
+			"[tail](https://tail.test)",
+		]);
+		for (const [position, candidate] of candidates.entries()) {
+			const previous = candidates[position - 1];
+			if (previous) expect(candidate.from).toBeGreaterThanOrEqual(previous.to);
+		}
+	});
+
+	it("keeps images and code spans out of the prepared candidates", () => {
+		const index = createEditorMarkdownBlockIndex(
+			"![image](https://image.test)\n\n`[caption](https://example.test)`",
+		);
+
+		expect(index.linkCandidates).toEqual([]);
+	});
+
+	it("never prepares a partially typed inline link as a link candidate", () => {
+		const source = "[caption](https://example.test";
+		const index = createEditorMarkdownBlockIndex(source);
+
+		expect(
+			(index.linkCandidates ?? []).map((candidate) =>
+				source.slice(candidate.from, candidate.to),
+			),
+		).toEqual(["https://example.test"]);
+	});
+
 	it.each(["---", "***", "___"])(
 		"classifies a standalone %s as a thematic break",
 		(marker) => {

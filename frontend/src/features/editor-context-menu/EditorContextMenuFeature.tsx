@@ -8,6 +8,7 @@ import {
 } from '@wordpress/element';
 
 import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
+import type { ToolbarCommand } from '../../contracts/bootstrap/toolbar-bootstrap';
 import type {
   GeneratedContentExportIdentity,
   GeneratedContentExportMode
@@ -19,6 +20,7 @@ import type {
 import type { GeneratedImageTarget } from '../generated-content-export/generated-image-target';
 import type {
   EditorContextMenuLabels,
+  EditorContextMenuHeadingContext,
   EditorContextMenuModelContext
 } from './editor-context-menu-model';
 import { createEditorContextMenuModel } from './editor-context-menu-model';
@@ -27,6 +29,7 @@ import {
   captureEditorContext,
   editorContextSelectionFitsRange,
   findMarkdownBlock,
+  markdownHeadingLevel,
   tableSelectionAt,
   type EditorContextMenuSurface as ContextSurfaceKind,
   type EditorContextSnapshot,
@@ -52,14 +55,12 @@ export type EditorContextMenuSurfaceSnapshot = SurfaceSnapshot;
 export type EditorContextMenuGeneratedContext = Readonly<{
   canCopyImage: boolean;
   canCopyMathMl: boolean;
-  canSaveImage: boolean;
   canUseSource: boolean;
   code?: Readonly<{
     canCopyBlock: boolean;
     canIndentBlock: boolean;
     canIndentSelection: boolean;
   }>;
-  filename: string;
   identity: () => GeneratedContentExportIdentity | null;
   kind: GeneratedContentTarget['kind'];
   lease: GeneratedContentTargetLease & Readonly<{
@@ -81,6 +82,7 @@ export type EditorContextMenuActionContext = Readonly<{
     codeMap?: PreviewCodeBodyMap;
     content?: string;
     codeProjection?: PreviewCodeProjection;
+    info?: string;
     requestSignature?: string;
     target?: Readonly<{
       bodyFrom: number;
@@ -108,7 +110,6 @@ export type EditorContextMenuActionContext = Readonly<{
     match: MarkdownImageScaleMatch;
   }>;
   link?: Readonly<{
-    canOpen: boolean;
     href: string;
   }>;
 }>;
@@ -131,7 +132,22 @@ export type EditorContextMenuSurface = Readonly<{
   generation?: number;
   prepare?: (
     target?: Element | null,
-    blockIndex?: EditorMarkdownBlockIndex | null
+    blockIndex?: EditorMarkdownBlockIndex | null,
+    position?: Readonly<{ x: number; y: number }>
+  ) => boolean;
+  /**
+   * Establish the selection a *pointer* activation must be captured with,
+   * before the demand snapshot is read and before readiness is evaluated. A
+   * surface whose canonical selection is owned by a pointer-driven editor
+   * (the CodeMirror source) cannot rely on its own gated `prepare`: a demand
+   * that is still waiting for structural readiness would otherwise be
+   * captured from a selection an earlier gesture left behind. Returning
+   * `false` states that the pointer cannot be established and the activation
+   * fails explicitly; keyboard activation never calls this operation and
+   * keeps the user's current selection.
+   */
+  preparePointerSelection?: (
+    position: Readonly<{ x: number; y: number }>
   ) => boolean;
   restoreFocus?: () => void;
   canUploadImage?: (image: MarkdownImageScaleMatch) => boolean;
@@ -144,8 +160,24 @@ export type EditorContextMenuSurface = Readonly<{
     target: Element | null,
     snapshot: SurfaceSnapshot,
     blockIndex: EditorMarkdownBlockIndex | null | undefined,
-    actionContext: EditorContextMenuActionContext | null
+    /**
+     * The action context this demand already owns. `null` states that the
+     * demand was evaluated and owns none, while `undefined` states that the
+     * caller has not built the context yet because the preparation that builds
+     * it is gated by this very answer. A readiness rule that the demand's own
+     * context satisfies must therefore stay silent for `undefined` and report
+     * only the structural readiness.
+     */
+    actionContext: EditorContextMenuActionContext | null | undefined
   ) => EditorContextMenuContextReadiness;
+  /**
+   * Re-anchor a replayed demand target onto the live element that carries the
+   * same document position. An owner that replaces its editable DOM while a
+   * demand waits for readiness (an accepted Preview window commit) retires the
+   * element the demand was anchored to; returning `null` states that the owner
+   * cannot re-anchor it and the demand keeps the original target.
+   */
+  resolveTarget?: (target: Element | null) => Element | null;
   subscribeBlockIndex?: (listener: () => void) => () => void;
   subscribeReadiness?: (listener: () => void) => () => void;
   subscribeSnapshot?: (listener: () => void) => () => void;
@@ -156,6 +188,10 @@ export type EditorContextMenuSurface = Readonly<{
 export type EditorContextMenuFeatureProps = Readonly<{
   clipboard: EditorClipboardPort;
   direction: 'ltr' | 'rtl';
+  heading?: Readonly<{
+    commands: ReadonlyArray<ToolbarCommand>;
+    label: string;
+  }>;
   imageShortcut?: string;
   labels: EditorContextMenuLabels;
   onAction: (
@@ -176,9 +212,10 @@ type OpenState = Readonly<{
   boundaryElement: HTMLElement;
   block: ReturnType<typeof findMarkdownBlock>;
   captured: EditorContextSnapshot;
-  contextSelection: Range | null;
+  contextSelection: CapturedContextSelection | null;
   generation: number;
   getBlockIndex?: EditorContextMenuSurface['getBlockIndex'];
+  heading: EditorContextMenuHeadingContext | null;
   image: MarkdownImageScaleMatch | null;
   imageUploadDisabled: boolean;
   restoreFocus: () => void;
@@ -202,6 +239,14 @@ type PendingOpenDemand = Readonly<{
   target: Element | null;
 }>;
 
+type CapturedContextSelection = Readonly<{
+  anchorNode: Node;
+  anchorOffset: number;
+  focusNode: Node;
+  focusOffset: number;
+  range: Range;
+}>;
+
 function eventTargetInside(event: Event, element: HTMLElement): boolean {
   return event.target instanceof Node && element.contains(event.target);
 }
@@ -209,7 +254,7 @@ function eventTargetInside(event: Event, element: HTMLElement): boolean {
 function captureSelectionForContextPointer(
   event: MouseEvent,
   surface: HTMLElement
-): Range | null {
+): CapturedContextSelection | null {
   if (2 !== event.button || !eventTargetInside(event, surface)) return null;
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (!selection || selection.isCollapsed || 1 !== selection.rangeCount) {
@@ -222,13 +267,21 @@ function captureSelectionForContextPointer(
     || !surface.contains(selection.focusNode)
   ) return null;
   try {
-    return selection.getRangeAt(0).cloneRange();
+    return {
+      anchorNode: selection.anchorNode,
+      anchorOffset: selection.anchorOffset,
+      focusNode: selection.focusNode,
+      focusOffset: selection.focusOffset,
+      range: selection.getRangeAt(0).cloneRange()
+    };
   } catch {
     return null;
   }
 }
 
-function captureSurfaceContextSelection(surface: HTMLElement): Range | null {
+function captureSurfaceContextSelection(
+  surface: HTMLElement
+): CapturedContextSelection | null {
   const selection = surface.ownerDocument.defaultView?.getSelection();
   if (
     !selection?.rangeCount
@@ -238,7 +291,13 @@ function captureSurfaceContextSelection(surface: HTMLElement): Range | null {
     || !surface.contains(selection.focusNode)
   ) return null;
   try {
-    return selection.getRangeAt(0).cloneRange();
+    return {
+      anchorNode: selection.anchorNode,
+      anchorOffset: selection.anchorOffset,
+      focusNode: selection.focusNode,
+      focusOffset: selection.focusOffset,
+      range: selection.getRangeAt(0).cloneRange()
+    };
   } catch {
     return null;
   }
@@ -246,19 +305,28 @@ function captureSurfaceContextSelection(surface: HTMLElement): Range | null {
 
 function restoreCapturedContextSelection(
   surface: HTMLElement,
-  range: Range | null
+  captured: CapturedContextSelection | null
 ): boolean {
   if (
-    !range?.startContainer.isConnected
-    || !range.endContainer.isConnected
-    || !surface.contains(range.startContainer)
-    || !surface.contains(range.endContainer)
+    !captured?.range.startContainer.isConnected
+    || !captured.range.endContainer.isConnected
+    || !captured.anchorNode.isConnected
+    || !captured.focusNode.isConnected
+    || !surface.contains(captured.range.startContainer)
+    || !surface.contains(captured.range.endContainer)
+    || !surface.contains(captured.anchorNode)
+    || !surface.contains(captured.focusNode)
   ) return false;
   try {
     const selection = surface.ownerDocument.defaultView?.getSelection();
     if (!selection) return false;
     selection.removeAllRanges();
-    selection.addRange(range);
+    selection.setBaseAndExtent(
+      captured.anchorNode,
+      captured.anchorOffset,
+      captured.focusNode,
+      captured.focusOffset
+    );
     return true;
   } catch {
     return false;
@@ -268,12 +336,14 @@ function restoreCapturedContextSelection(
 function restoreContextSelection(
   event: MouseEvent,
   surface: HTMLElement,
-  range: Range | null
+  captured: CapturedContextSelection | null
 ): void {
   const target = event.target;
   if (
-    !range?.startContainer.isConnected
-    || !range.endContainer.isConnected
+    !captured?.range.startContainer.isConnected
+    || !captured.range.endContainer.isConnected
+    || !captured.anchorNode.isConnected
+    || !captured.focusNode.isConnected
     || !(target instanceof Node)
     || !surface.contains(target)
   ) return;
@@ -281,7 +351,12 @@ function restoreContextSelection(
     const selection = surface.ownerDocument.defaultView?.getSelection();
     if (!selection?.isCollapsed) return;
     selection.removeAllRanges();
-    selection.addRange(range);
+    selection.setBaseAndExtent(
+      captured.anchorNode,
+      captured.anchorOffset,
+      captured.focusNode,
+      captured.focusOffset
+    );
   } catch {
     return;
   }
@@ -371,6 +446,33 @@ function releaseActionUnlessSharedWithPending(
   if (!sharesOwnedLease(actionContext, pending?.context)) releaseActionContext(actionContext);
 }
 
+function releaseStateResourcesUnlessShared(
+  state: OpenState,
+  retainedContexts: ReadonlyArray<EditorContextMenuActionContext | null | undefined>,
+  pending: PendingAction | null,
+  reason?: EditorContextMenuPendingReleaseReason
+): void {
+  const retained = [
+    pending?.context,
+    ...retainedContexts
+  ];
+  const shared = retained.some((context) => sharesOwnedLease(state.actionContext, context));
+  if (shared) return;
+  releaseActionContext(state.actionContext);
+  state.releasePending(reason ?? ('pending' === state.readiness.status ? 'cancelled' : undefined));
+}
+
+function releaseActionUnlessSharedWithContexts(
+  actionContext: EditorContextMenuActionContext | null | undefined,
+  retainedContexts: ReadonlyArray<EditorContextMenuActionContext | null | undefined>,
+  pending: PendingAction | null
+): void {
+  const retained = [pending?.context, ...retainedContexts];
+  if (!retained.some((context) => sharesOwnedLease(actionContext, context))) {
+    releaseActionContext(actionContext);
+  }
+}
+
 function surfaceSnapshotMatchesCapture(
   state: OpenState,
   surface: EditorContextMenuSurface,
@@ -385,6 +487,32 @@ function surfaceSnapshotMatchesCapture(
     && captured.selection.end === snapshot.selection.end
     && captured.selection.direction === snapshot.selection.direction
     && captured.revision === snapshot.revision;
+}
+
+/**
+ * A pending demand is still anchored to the pointer gesture that created it,
+ * not to the revision that happened to be current while the surface owner was
+ * still materializing its context inventory. Readiness advancement (a worker
+ * block-index build, an accepted Preview, a rebuilt visual surface) legally
+ * advances the revision and the surface generation without any user edit, so
+ * those fields are rebound to the latest snapshot instead of being treated as
+ * a stale capture. The document value, the selection, and the surface identity
+ * remain the demand's truth: when the user (or another owner) changed the text
+ * or moved the selection, the demand no longer describes what the user pointed
+ * at and must not open a menu for it.
+ */
+function surfaceSnapshotStillDescribesPendingDemand(
+  state: OpenState,
+  surface: EditorContextMenuSurface,
+  snapshot: SurfaceSnapshot
+): boolean {
+  const captured = state.captured;
+  return captured.surfaceIdentity === (surface.identity ?? surface.element)
+    && captured.surface === surface.kind
+    && captured.value === snapshot.value
+    && captured.selection.start === snapshot.selection.start
+    && captured.selection.end === snapshot.selection.end
+    && captured.selection.direction === snapshot.selection.direction;
 }
 
 const CONTEXT_MENU_ERROR_CODES = new Set([
@@ -404,14 +532,108 @@ function keyboardAnchor(element: HTMLElement): Readonly<{ x: number; y: number }
   };
 }
 
+function headingForContext(
+  value: string,
+  block: ReturnType<typeof findMarkdownBlock>,
+  source: EditorContextMenuFeatureProps['heading']
+): EditorContextMenuHeadingContext | null {
+  if ('heading' !== block?.kind || !source) return null;
+  const levels = source.commands
+    .filter((command) =>
+      'heading-menu' === command.surface && 'heading' === command.action
+    )
+    .map((command) => {
+      const level = command.level;
+      if (
+        'number' !== typeof level
+        || !Number.isInteger(level)
+        || level < 1
+        || level > 6
+      ) {
+        throw new Error('editor-context-menu-heading-command-invalid');
+      }
+      return { id: command.id, label: command.label, level };
+    });
+  if (0 === levels.length) return null;
+  return {
+    currentLevel: markdownHeadingLevel(value, block),
+    label: source.label,
+    levels
+  };
+}
+
 function contextSurface(
   surface: EditorContextMenuSurface,
   direction: 'ltr' | 'rtl',
   position: Readonly<{ x: number; y: number }>,
-  target: Element | null
+  replayTarget: Element | null,
+  heading: EditorContextMenuFeatureProps['heading']
 ): OpenState {
   if (!surface.element.isConnected) {
     throw new Error('editor-context-menu-surface-disconnected');
+  }
+  // A demand outlives the DOM node it was anchored to: an accepted Preview
+  // window commit retires the element while the demand still waits for
+  // readiness. Re-anchor such a replayed target onto the live element that
+  // carries the same document position, so the selection mapping, the action
+  // context, the stored target, and every later refresh all describe the
+  // element the user actually pointed at.
+  const target = surface.resolveTarget?.(replayTarget) ?? replayTarget;
+  let snapshot = surface.getSnapshot();
+  // The structural index is derived from the Markdown value alone and is the
+  // very input readiness waits for, so it must be requested even while the
+  // surface is still pending; otherwise a surface whose readiness needs the
+  // index would never receive one and the demand would wait forever. The
+  // owner's selection mapping (`prepare`) and action context remain gated
+  // behind readiness, because a visual Preview transfer deliberately
+  // invalidates the old edit map.
+  let blockIndex = surface.getBlockIndex?.(snapshot);
+  const initialReadiness = surface.getContextReadiness?.(
+    target,
+    snapshot,
+    blockIndex,
+    // The demand's own action context cannot exist yet: preparation builds it,
+    // and this answer decides whether preparation may run at all. A pending
+    // answer therefore has to come from a structural rule that the demand's
+    // own context cannot satisfy; the evaluated pass below states the context
+    // and owns every context-dependent rule.
+    undefined
+  );
+  if (initialReadiness && 'ready' !== initialReadiness.status) {
+    // A visual Preview transfer temporarily makes its surface non-editable.
+    // Check readiness before asking the owner to prepare a selection: while a
+    // transfer is pending, the old edit map is deliberately not a valid input
+    // and must not be read. The demand is kept alive by the readiness
+    // subscription and is rebuilt after the matching Preview is accepted.
+    const captured = captureEditorContext({
+      direction,
+      position,
+      ...(undefined === snapshot.revision ? {} : { revision: snapshot.revision }),
+      selection: snapshot.selection,
+      surfaceIdentity: surface.identity ?? surface.element,
+      ...(undefined === surface.generation ? {} : { surfaceGeneration: surface.generation }),
+      surface: surface.kind,
+      value: snapshot.value
+    });
+    return {
+      boundaryElement: surface.boundaryElement,
+      block: null,
+      captured,
+      contextSelection: null,
+      generation: 0,
+      ...(surface.getBlockIndex ? { getBlockIndex: surface.getBlockIndex } : {}),
+      actionContext: null,
+      heading: null,
+      image: null,
+      imageUploadDisabled: false,
+      restoreFocus: surface.restoreFocus ?? (() => undefined),
+      releasePending: surface.releasePending ?? (() => undefined),
+      readiness: initialReadiness,
+      selectionOutsideTarget: false,
+      surfaceElement: surface.element,
+      tableSelection: undefined,
+      targetElement: target
+    };
   }
   if (
     !surface.isEditable()
@@ -422,9 +644,7 @@ function contextSurface(
         : 'editor-context-menu-source-read-only'
     );
   }
-  let snapshot = surface.getSnapshot();
-  let blockIndex = surface.getBlockIndex?.(snapshot);
-  if (surface.prepare && !surface.prepare(target, blockIndex)) {
+  if (surface.prepare && !surface.prepare(target, blockIndex, position)) {
     throw new Error('editor-context-menu-selection-map-failed');
   }
   snapshot = surface.getSnapshot();
@@ -445,6 +665,11 @@ function contextSurface(
     snapshot.selection,
     blockIndex
   );
+  const headingContext = headingForContext(
+    snapshot.value,
+    blockContext.block,
+    heading
+  );
   const actionContext = actionContextForMenu(
     surface.getActionContext?.(target, snapshot, blockIndex) ?? null
   );
@@ -463,6 +688,7 @@ function contextSurface(
     generation: 0,
     ...(surface.getBlockIndex ? { getBlockIndex: surface.getBlockIndex } : {}),
     actionContext,
+    heading: headingContext,
     image,
     imageUploadDisabled: Boolean(image && !surface.canUploadImage?.(image)),
     restoreFocus: surface.restoreFocus ?? (() => undefined),
@@ -480,6 +706,7 @@ function contextSurface(
 export function EditorContextMenuFeature({
   clipboard,
   direction,
+  heading,
   labels,
   onAction,
   onFailure,
@@ -495,7 +722,7 @@ export function EditorContextMenuFeature({
   const openRef = useRef<OpenState | null>(null);
   const pendingOpenRef = useRef<PendingOpenDemand | null>(null);
   const clipboardAbortRef = useRef<AbortController | null>(null);
-  const preservedContextSelectionRef = useRef<Range | null>(null);
+  const preservedContextSelectionRef = useRef<CapturedContextSelection | null>(null);
   const demandGenerationRef = useRef(0);
   const onFailureRef = useRef(onFailure);
   const onActionRef = useRef(onAction);
@@ -513,6 +740,96 @@ export function EditorContextMenuFeature({
     releasePendingUnlessActionOwns(pending.state, actionPromiseRef.current);
   }, []);
 
+  /**
+   * Retire the live demand synchronously, then schedule the React update that
+   * removes it from the tree. `openRef.current` is only rewritten on the next
+   * render, so clearing it here is what keeps a notification arriving in the
+   * same batch (an A -> B -> A selection change) from reading a retired state
+   * and re-matching its captured snapshot, which would resurrect a menu the
+   * user's change already retired. The render that follows assigns the actual
+   * state - `null`, or the state of a demand opened in the same batch - back
+   * to the ref.
+   */
+  const retireOpenState = useCallback((): void => {
+    openRef.current = null;
+    setOpen(null);
+  }, []);
+
+  /**
+   * Rebuild the context of a *visible* menu for the demand it was opened
+   * with. A legal background transition - an accepted Preview, a rebuilt
+   * block index, a replaced surface object - advances the revision, the
+   * surface generation, or the inventory the menu was derived from while the
+   * user changed neither the document nor the selection. The menu then keeps
+   * its captured target and anchor, replaces its context with the rebuilt
+   * one, and stays on screen while that inventory is still pending, instead
+   * of dismissing itself over a benign refresh. A demand that no longer
+   * describes the document state is still dismissed, and a genuine readiness
+   * failure still reports its code.
+   */
+  const refreshOpenMenu = useCallback((
+    surface: EditorContextMenuSurface,
+    current: OpenState
+  ): void => {
+    if (!surfaceSnapshotStillDescribesPendingDemand(current, surface, surface.getSnapshot())) {
+      clipboardAbortRef.current?.abort();
+      clipboardAbortRef.current = null;
+      releaseStateResourcesUnlessShared(current, [], actionPromiseRef.current);
+      retireOpenState();
+      current.restoreFocus();
+      return;
+    }
+    let refreshed: OpenState;
+    try {
+      refreshed = {
+        ...contextSurface(
+          surface,
+          direction,
+          current.captured.position,
+          current.targetElement,
+          heading
+        ),
+        generation: current.generation
+      };
+    } catch (error) {
+      clipboardAbortRef.current?.abort();
+      clipboardAbortRef.current = null;
+      releaseActionUnlessSharedWithPending(current.actionContext, actionPromiseRef.current);
+      releasePendingUnlessActionOwns(current, actionPromiseRef.current);
+      retireOpenState();
+      current.restoreFocus();
+      onFailureRef.current(codeFromError(error, 'editor-context-menu-open-failed'));
+      return;
+    }
+    // Rebinding a valid owner is not a cancellation. The surface's
+    // releasePending callback is an EditorRoot-wide cleanup owner, so
+    // invoking it here can release the freshly prepared lease held by
+    // `refreshed` as well. Only retire the old action lease; keep the pending
+    // resources until the refreshed state is explicitly dismissed or fails
+    // readiness.
+    releaseActionUnlessSharedWithContexts(
+      current.actionContext,
+      [refreshed.actionContext],
+      actionPromiseRef.current
+    );
+    if ('unavailable' === refreshed.readiness.status) {
+      retireOpenState();
+      releaseActionUnlessSharedWithPending(
+        refreshed.actionContext,
+        actionPromiseRef.current
+      );
+      if (!sharesOwnedLease(refreshed.actionContext, actionPromiseRef.current?.context)) {
+        refreshed.releasePending('unavailable');
+      }
+      onFailureRef.current(refreshed.readiness.code);
+      return;
+    }
+    // A `pending` rebuild keeps the menu visible with the same target and
+    // anchor; the `ready` rebuild replaces its context with the new
+    // inventory.
+    setOpen(refreshed);
+  }, [direction, heading]);
+
   useEffect(() => clipboard.subscribe(() => setClipboardState(clipboard.getState())), [clipboard]);
 
   useEffect(() => {
@@ -520,19 +837,26 @@ export function EditorContextMenuFeature({
       (candidate): candidate is EditorContextMenuSurface => Boolean(candidate)
     );
     const cleanups = surfaces.flatMap((surface) => {
-      const refresh = (): void => {
+      let evaluating = false;
+      const evaluateRefresh = (): void => {
         const current = openRef.current;
         const pending = pendingOpenRef.current;
         if (!current && pending && pending.surface.element === surface.element) {
           const snapshot = surface.getSnapshot();
-          if (!surfaceSnapshotMatchesCapture(pending.state, surface, snapshot)) {
+          if (!surfaceSnapshotStillDescribesPendingDemand(pending.state, surface, snapshot)) {
             cancelPendingOpen();
             return;
           }
           let next: OpenState;
           try {
             next = {
-              ...contextSurface(surface, direction, pending.position, pending.target),
+              ...contextSurface(
+                surface,
+                direction,
+                pending.position,
+                pending.target,
+                heading
+              ),
               generation: pending.state.generation
             };
           } catch (error) {
@@ -545,17 +869,29 @@ export function EditorContextMenuFeature({
               ...pending,
               state: next
             };
+            releaseActionUnlessSharedWithContexts(
+              pending.state.actionContext,
+              [next.actionContext],
+              actionPromiseRef.current
+            );
             return;
           }
           pendingOpenRef.current = null;
-          if (!sharesOwnedLease(pending.state.actionContext, next.actionContext)) {
-            releaseActionContext(pending.state.actionContext);
-          }
+          releaseActionUnlessSharedWithContexts(
+            pending.state.actionContext,
+            [next.actionContext],
+            actionPromiseRef.current
+          );
           if ('unavailable' === next.readiness.status) {
             clipboardAbortRef.current?.abort();
             clipboardAbortRef.current = null;
-            releaseActionContext(next.actionContext);
-            next.releasePending('unavailable');
+            releaseActionUnlessSharedWithPending(
+              next.actionContext,
+              actionPromiseRef.current
+            );
+            if (!sharesOwnedLease(next.actionContext, actionPromiseRef.current?.context)) {
+              next.releasePending('unavailable');
+            }
             onFailureRef.current(next.readiness.code);
             return;
           }
@@ -568,12 +904,22 @@ export function EditorContextMenuFeature({
           || current.getBlockIndex !== surface.getBlockIndex
         ) return;
         const snapshot = surface.getSnapshot();
+        if ('pending' === current.readiness.status) {
+          // A visible menu whose refreshed inventory is still building is not
+          // a pending *demand*: the user already has the menu, and only a
+          // real document, selection, owner, or surface change may retire it.
+          // Rebuilding it keeps the owner's selection mapping and action
+          // context gated behind the same readiness, so the visible menu
+          // never activates a resource from the retired inventory.
+          refreshOpenMenu(surface, current);
+          return;
+        }
         if (!surfaceSnapshotMatchesCapture(current, surface, snapshot)) {
           clipboardAbortRef.current?.abort();
           clipboardAbortRef.current = null;
           releaseActionUnlessSharedWithPending(current.actionContext, actionPromiseRef.current);
           releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-          setOpen(null);
+          retireOpenState();
           current.restoreFocus();
           return;
         }
@@ -609,6 +955,21 @@ export function EditorContextMenuFeature({
             }
           : previous);
       };
+      const refresh = (): void => {
+        // A pending preparation flow can publish a selection update while this
+        // evaluation is already re-running `prepare`; that publication belongs
+        // to the demand being evaluated, so a nested pass would only repeat the
+        // same work. Dropping the nested pass keeps the synchronous
+        // prepare -> selection -> refresh cycle from recursing while the
+        // outermost evaluation still observes the resulting snapshot.
+        if (evaluating) return;
+        evaluating = true;
+        try {
+          evaluateRefresh();
+        } finally {
+          evaluating = false;
+        }
+      };
       const subscriptions = [] as Array<() => void>;
       if (surface.subscribeBlockIndex) {
         subscriptions.push(surface.subscribeBlockIndex(refresh));
@@ -621,10 +982,47 @@ export function EditorContextMenuFeature({
       }
       if (surface.subscribeSelection) {
         subscriptions.push(surface.subscribeSelection(() => {
-          if (pendingOpenRef.current?.surface.element === surface.element) {
-            cancelPendingOpen();
-          }
+          const current = openRef.current;
+          const pendingHere = pendingOpenRef.current?.surface.element === surface.element;
+          // A visible menu that is still waiting for its refreshed inventory
+          // was retained by `refreshOpenMenu` and has no pending demand behind
+          // it. Its captured selection is part of the demand it was opened
+          // with, and a selection-only change publishes through this
+          // subscription (never through the text snapshot), so it has to be
+          // validated here exactly like a pending demand. Otherwise the
+          // retained menu keeps describing a selection the user no longer has;
+          // a same-batch A -> B -> A change is handled by the synchronous
+          // retirement in `retireOpenState`.
+          const retainedPendingHere = Boolean(
+            current
+            && current.surfaceElement === surface.element
+            && 'pending' === current.readiness.status
+          );
+          if (!pendingHere && !retainedPendingHere) return;
+          // Windowed preparation establishes the caret/selection through the
+          // browser and then publishes that normalized selection while the
+          // block index or readiness build is still pending. `refresh` keeps
+          // such a demand alive because its snapshot still matches the captured
+          // demand, and it cancels explicitly once the selection moved
+          // somewhere else, so a real user change never opens a stale menu.
+          refresh();
         }));
+      }
+      // A surface object can be replaced after its readiness owner has already
+      // notified the old subscription. Replaying only a demand anchored to
+      // this same surface closes that notification gap. An already-open menu
+      // has no pending demand: refreshing it here would rebuild its action
+      // context during an ordinary owner rerender and could release a
+      // generated/image resource that a later action still owns.
+      const pendingSurface = pendingOpenRef.current?.surface;
+      if (
+        pendingSurface
+        && pendingSurface.element === surface.element
+        && pendingSurface.boundaryElement === surface.boundaryElement
+        && (pendingSurface.identity ?? pendingSurface.element)
+          === (surface.identity ?? surface.element)
+      ) {
+        refresh();
       }
       return subscriptions;
     });
@@ -634,6 +1032,8 @@ export function EditorContextMenuFeature({
   }, [
     cancelPendingOpen,
     direction,
+    heading,
+    refreshOpenMenu,
     source?.canUploadImage,
     source?.element,
     source?.getActionContext,
@@ -661,7 +1061,8 @@ export function EditorContextMenuFeature({
     const openSurface = (
       surface: EditorContextMenuSurface,
       position: Readonly<{ x: number; y: number }>,
-      target: Element | null
+      target: Element | null,
+      activation: 'keyboard' | 'pointer'
     ): void => {
       clipboardAbortRef.current?.abort();
       const clipboardController = new AbortController();
@@ -680,11 +1081,34 @@ export function EditorContextMenuFeature({
       const previous = openRef.current;
       releaseActionUnlessSharedWithPending(previous?.actionContext, actionPromiseRef.current);
       releasePendingUnlessActionOwns(previous, actionPromiseRef.current);
-      setOpen(null);
+      retireOpenState();
       let next: OpenState;
       try {
+        // A pointer activation must describe the element the pointer is on,
+        // not whatever selection an earlier gesture left behind. This runs
+        // before the demand snapshot is read so a demand that still has to
+        // wait for structural readiness is captured from the pointed
+        // selection, and it runs before the owner's gated `prepare` because
+        // that callback only executes once readiness is already available.
+        if (
+          'pointer' === activation
+          && surface.preparePointerSelection
+          && !surface.preparePointerSelection(position)
+        ) {
+          // The pointer selection could not be established, and that failure
+          // is explicit: a read-only owner keeps its own surface failure code,
+          // while an unmappable, detached, or otherwise unusable pointer
+          // reports the selection-mapping failure.
+          throw new Error(
+            surface.isEditable()
+              ? 'editor-context-menu-selection-map-failed'
+              : ('visual' === surface.kind
+                ? 'editor-context-menu-visual-surface-read-only'
+                : 'editor-context-menu-source-read-only')
+          );
+        }
         next = {
-          ...contextSurface(surface, direction, position, target),
+          ...contextSurface(surface, direction, position, target, heading),
           generation
         };
       } catch (error) {
@@ -707,7 +1131,13 @@ export function EditorContextMenuFeature({
       setOpen(next);
     };
     const listeners = surfaces.map((surface) => {
-      let preservedSelection: Range | null = null;
+      let preservedSelection: CapturedContextSelection | null = null;
+      // A native context-menu request is a *pointer* activation only when a
+      // pointer gesture preceded it on this surface. The Context Menu key and
+      // Shift+F10 make some browsers fire their own `contextmenu` event whose
+      // coordinates are a menu anchor, not a pointer hit-test position; such
+      // an activation must keep the user's current selection.
+      let pointerGesturePending = false;
       const rememberSelection = (): void => {
         const selection = surface.element.ownerDocument.defaultView?.getSelection();
         if (
@@ -720,18 +1150,26 @@ export function EditorContextMenuFeature({
           || !surface.element.contains(selection.focusNode)
         ) return;
         try {
-          preservedSelection = selection.getRangeAt(0).cloneRange();
+          preservedSelection = {
+            anchorNode: selection.anchorNode,
+            anchorOffset: selection.anchorOffset,
+            focusNode: selection.focusNode,
+            focusOffset: selection.focusOffset,
+            range: selection.getRangeAt(0).cloneRange()
+          };
         } catch {
           preservedSelection = null;
         }
       };
       const handlePointerDown = (event: PointerEvent): void => {
+        pointerGesturePending = true;
         preservedSelection = captureSelectionForContextPointer(event, surface.element);
         if (preservedSelection) {
           event.preventDefault();
         }
       };
       const handleMouseDown = (event: MouseEvent): void => {
+        pointerGesturePending = true;
         preservedSelection = captureSelectionForContextPointer(event, surface.element);
         if (preservedSelection) {
           event.preventDefault();
@@ -739,6 +1177,8 @@ export function EditorContextMenuFeature({
       };
       const handleContextMenu = (event: MouseEvent): void => {
         if (!eventTargetInside(event, surface.element) || event.defaultPrevented) return;
+        const pointerGesture = pointerGesturePending;
+        pointerGesturePending = false;
         restoreContextSelection(event, surface.element, preservedSelection);
         preservedSelection = null;
         event.preventDefault();
@@ -746,7 +1186,8 @@ export function EditorContextMenuFeature({
         openSurface(
           surface,
           { x: event.clientX, y: event.clientY },
-          event.target instanceof Element ? event.target : null
+          event.target instanceof Element ? event.target : null,
+          pointerGesture ? 'pointer' : 'keyboard'
         );
       };
       const handleKeyDown = (event: KeyboardEvent): void => {
@@ -757,9 +1198,10 @@ export function EditorContextMenuFeature({
           || event.defaultPrevented
           || !(('ContextMenu' === event.key) || ('F10' === event.key && event.shiftKey))
         ) return;
+        pointerGesturePending = false;
         event.preventDefault();
         event.stopPropagation();
-        openSurface(surface, keyboardAnchor(surface.element), surface.element);
+        openSurface(surface, keyboardAnchor(surface.element), surface.element, 'keyboard');
       };
       surface.element.ownerDocument.addEventListener(
         'selectionchange',
@@ -784,14 +1226,18 @@ export function EditorContextMenuFeature({
     });
     return () => {
       for (const cleanup of listeners) cleanup();
-      clipboardAbortRef.current?.abort();
-      clipboardAbortRef.current = null;
-      cancelPendingOpen();
+      // This effect re-runs whenever the owner recreates its surface object,
+      // which an accepted Preview or a block-index build does legally while a
+      // demand waits for readiness. Cancelling here would silently drop the
+      // user's first right-click, so only the listener set is torn down; the
+      // demand is cancelled by the owner-replacement check (validation effect)
+      // or by the explicit dismissal, outside-interaction, and unmount paths.
     };
   }, [
     cancelPendingOpen,
     clipboard,
     direction,
+    heading,
     source?.element,
     source?.generation,
     source?.getActionContext,
@@ -879,16 +1325,22 @@ export function EditorContextMenuFeature({
       source?.identity ?? source?.element,
       visual?.identity ?? visual?.element
     ];
-    const activeGenerations = [source?.generation, visual?.generation];
-    const activeBlockIndices = [source?.getBlockIndex, visual?.getBlockIndex];
+    // A pending demand describes the pointer gesture the user made, not the
+    // revision that happened to be current while the surface was still
+    // materializing. An accepted Preview or a block-index build legally
+    // recreates the owner's memoized surface, which advances the runtime
+    // generation and the structural provider identity, and a demand that
+    // survived the readiness transition must still be rebound to the current
+    // surface instead of being cancelled silently. Only the surface itself
+    // going away (element, boundary, or owner identity) invalidates the
+    // demand. An open menu keeps the stricter check below because it presents
+    // the capture it was opened with.
     if (
       pending
       && (
         !activeElements.includes(pending.surface.element)
         || !activeBoundaries.includes(pending.state.boundaryElement)
         || !activeIdentities.includes(pending.state.captured.surfaceIdentity)
-        || !activeGenerations.includes(pending.state.captured.surfaceGeneration)
-        || !activeBlockIndices.includes(pending.state.getBlockIndex)
       )
     ) {
       cancelPendingOpen();
@@ -899,19 +1351,48 @@ export function EditorContextMenuFeature({
         !activeElements.includes(current.surfaceElement)
         || !activeBoundaries.includes(current.boundaryElement)
         || !activeIdentities.includes(current.captured.surfaceIdentity)
-        || !activeGenerations.includes(current.captured.surfaceGeneration)
-        || !activeBlockIndices.includes(current.getBlockIndex)
       )
     ) {
       clipboardAbortRef.current?.abort();
       clipboardAbortRef.current = null;
       releaseActionUnlessSharedWithPending(current.actionContext, actionPromiseRef.current);
       releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-      setOpen(null);
+      retireOpenState();
       current.restoreFocus();
+      return;
+    }
+    if (current) {
+      const currentSurface = [source, visual].find(
+        (candidate): candidate is EditorContextMenuSurface =>
+          Boolean(
+            candidate
+            && candidate.element === current.surfaceElement
+            && candidate.boundaryElement === current.boundaryElement
+            && (candidate.identity ?? candidate.element)
+              === current.captured.surfaceIdentity
+          )
+      );
+      const ownerDrift = Boolean(
+        currentSurface
+        && (
+          current.captured.surfaceGeneration !== currentSurface.generation
+          || current.getBlockIndex !== currentSurface.getBlockIndex
+        )
+      );
+      if (ownerDrift && currentSurface) {
+        // A visible menu keeps presenting the target and anchor the user
+        // opened it with; the helper revalidates the demand's document state,
+        // rebuilds the context against the replaced surface, and retains the
+        // menu across a pending inventory instead of dismissing it.
+        refreshOpenMenu(currentSurface, current);
+        return;
+      }
     }
   }, [
     cancelPendingOpen,
+    direction,
+    heading,
+    refreshOpenMenu,
     source?.element,
     source?.boundaryElement,
     source?.generation,
@@ -930,7 +1411,7 @@ export function EditorContextMenuFeature({
     cancelPendingOpen();
     releaseActionUnlessSharedWithPending(openRef.current?.actionContext, actionPromiseRef.current);
     releasePendingUnlessActionOwns(openRef.current, actionPromiseRef.current);
-    setOpen(null);
+    retireOpenState();
   }, []);
 
   const modelContext = useMemo<EditorContextMenuModelContext | null>(() => {
@@ -946,6 +1427,7 @@ export function EditorContextMenuFeature({
       ...(open.actionContext?.generated
         ? { generated: open.actionContext.generated }
         : {}),
+      ...(open.heading ? { heading: open.heading } : {}),
       hasSelection: open.captured.selection.start !== open.captured.selection.end,
       ...(open.image
         ? {
@@ -974,7 +1456,7 @@ export function EditorContextMenuFeature({
     const current = openRef.current;
     releaseActionUnlessSharedWithPending(current?.actionContext, actionPromiseRef.current);
     releasePendingUnlessActionOwns(current, actionPromiseRef.current);
-    setOpen(null);
+    retireOpenState();
     current?.restoreFocus();
   };
   const restoreMenuSelection = (): void => {

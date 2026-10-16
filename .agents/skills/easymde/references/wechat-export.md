@@ -725,6 +725,12 @@ on a later visible refresh. Preserve theme table shims (`display:contents`,
 survive the native importer's removal of form controls. Materialize recognized
 task markers from the current settled Preview paint into safe static Clipboard
 output; preserve checked state, effective opacity, geometry and text alignment.
+For visible task-checkbox geometry, raise each task scope to the outermost
+`ul`/`ol` contained by the source Preview root, deduplicate roots by element
+identity, remove nested redundant roots, and deep-clone each retained list so
+ordinary predecessors and nested list flow remain measurable. Keep the source
+geometry reference and existing geometry assertions; unavailable or mismatched
+geometry remains an explicit failure.
 Task marker properties are normalized to one
 `list-style-type:none!important` and one `list-style-image:none!important`
 declaration before structural projection. A complete task list, meaning every

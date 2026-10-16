@@ -393,9 +393,13 @@ export async function readNativeCodeSurfaceEvidence(
       }
       return null;
     };
+    const authoredTaskCheckboxes = (root) => [...root.querySelectorAll('input[type="checkbox"]')]
+      .filter((element) => element.closest('.task-list-item, .task-list'));
+    const destinationTaskCheckboxOwners = (root) => [...root.querySelectorAll(
+      '[role="checkbox"][aria-disabled="true"]'
+    )].filter((element) => Boolean(taskBlockRow(element)));
     const taskEvidence = (root, rootBox, label, view, documentRef) => {
-      const sourceInputs = [...root.querySelectorAll('input[type="checkbox"]')]
-        .filter((element) => element.closest('.task-list-item, .task-list'));
+      const sourceInputs = authoredTaskCheckboxes(root);
       const staticOwners = [...root.querySelectorAll('[role="checkbox"]')]
         .filter((element) => Boolean(taskBlockRow(element)));
       const markerElements = sourceInputs.length ? sourceInputs : staticOwners;
@@ -728,6 +732,17 @@ export async function readNativeCodeSurfaceEvidence(
           tokenClassCount: code.querySelectorAll('[class*="hljs-"]').length
         };
       });
+      const authoredTaskInputs = authoredTaskCheckboxes(root);
+      const destinationTaskOwners = destinationTaskCheckboxOwners(root);
+      const taskOwnerSvgNodes = new Set(
+        destinationTaskOwners.flatMap((owner) => [...owner.querySelectorAll('svg')])
+      );
+      // Source inputs and destination static owners are two representations of
+      // the same task marker. Count one representation and omit only marker SVG
+      // descendants; authored Mermaid, math, and code SVGs remain structural.
+      const semanticTaskCheckboxCount = authoredTaskInputs.length + destinationTaskOwners.length;
+      const semanticSvgCount = [...root.querySelectorAll('svg')]
+        .filter((svg) => !taskOwnerSvgNodes.has(svg)).length;
       return {
         blocks: codeBlocks,
         elements: {
@@ -746,12 +761,12 @@ export async function readNativeCodeSurfaceEvidence(
             root.textContent?.includes('A quote remains part of the same rendered article.')
             || root.textContent?.includes('STYLE-QUOTE')
           ) ?? false,
-          svg: root.querySelectorAll('svg').length,
+          svg: semanticSvgCount,
           tables: root.querySelectorAll('table').length,
           tableColumnCounts: [...root.querySelectorAll('table')].map(
             (table) => table.rows[0]?.cells.length ?? 0
           ),
-          taskCheckboxes: root.querySelectorAll('input[type="checkbox"]').length,
+          taskCheckboxes: semanticTaskCheckboxCount,
           unorderedLists: root.querySelectorAll('ul').length
         },
         linkDecorations,

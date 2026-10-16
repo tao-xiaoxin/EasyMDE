@@ -636,6 +636,28 @@ export function createBorrowedTaskCheckboxGeometryLease(
   };
 }
 
+// A task list item's contextual position comes from the flow of its preceding
+// siblings, and the visible measurement owner only shallow-clones ordinary
+// siblings. Every outermost `ul`/`ol` inside the source root that holds a task
+// scope is therefore cloned in full so sibling flow, nesting, and list-local
+// style context stay identical to the source. Roots are keyed by identity and
+// nested roots collapse into the retained outer root.
+function taskCheckboxMeasurementTargets(scopes: readonly Element[], sourceRoot: HTMLElement): Element[] {
+  const candidates: Element[] = [];
+  scopes.forEach((scope) => {
+    const listAncestors: Element[] = [];
+    let current: Element | null = scope;
+    while (current && current !== sourceRoot) {
+      if ('ul' === current.localName || 'ol' === current.localName) listAncestors.unshift(current);
+      current = current.parentElement;
+    }
+    const target = listAncestors[0] ?? scope;
+    if (candidates.includes(target)) return;
+    candidates.push(target);
+  });
+  return candidates.filter((target) => !candidates.some((outer) => outer !== target && outer.contains(target)));
+}
+
 export function createVisibleTaskCheckboxGeometryLease(
   sourceRoot: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
@@ -708,42 +730,47 @@ export function createVisibleTaskCheckboxGeometryLease(
       registerPair(sourceChild, cloneChild);
     });
   };
-  const mapDeepScope = (sourceScope: Element, cloneScope: Element): void => {
-    registerPair(sourceScope, cloneScope);
-    const sourceChildren = Array.from(sourceScope.children);
-    const cloneChildren = Array.from(cloneScope.children);
+  const registerDeepSubtree = (sourceSubtree: Element, cloneSubtree: Element): void => {
+    registerPair(sourceSubtree, cloneSubtree);
+    const sourceChildren = Array.from(sourceSubtree.children);
+    const cloneChildren = Array.from(cloneSubtree.children);
     if (sourceChildren.length !== cloneChildren.length) {
       throw new Error('wechat-task-checkbox-geometry-scope-alignment-failed');
     }
     sourceChildren.forEach((sourceChild, index) => {
       const cloneChild = cloneChildren[index];
       if (!cloneChild) throw new Error('wechat-task-checkbox-geometry-owner-missing');
-      mapDeepScope(sourceChild, cloneChild);
+      registerDeepSubtree(sourceChild, cloneChild);
     });
   };
-  scopes.forEach((scope) => {
+  const ensureShallowChainTo = (target: Element): Element => {
     const chain: Element[] = [];
-    let source: Element | null = scope;
+    let source: Element | null = target;
     while (source && source !== sourceRoot) {
       chain.unshift(source);
       source = source.parentElement;
     }
+    if (source !== sourceRoot) throw new Error('wechat-task-checkbox-geometry-owner-missing');
     let sourceParent: Element = sourceRoot;
-    let cloneParent = scopeRoot as Element;
+    let cloneParent: Element = scopeRoot as Element;
     ensureShallowChildren(sourceParent, cloneParent);
-    chain.forEach((chainElement) => {
+    for (const chainElement of chain) {
       const shallow = measurementBySource.get(chainElement);
       if (!shallow) throw new Error('wechat-task-checkbox-geometry-owner-missing');
+      if (chainElement === target) return shallow;
       sourceParent = chainElement;
       cloneParent = shallow;
       ensureShallowChildren(sourceParent, cloneParent);
-    });
-    const shallowScope = measurementBySource.get(scope);
-    if (!shallowScope) throw new Error('wechat-task-checkbox-geometry-owner-missing');
-    const deepScope = scope.cloneNode(true) as HTMLElement;
-    stripRawDimensionContextIdentityAttributes(deepScope);
-    shallowScope.replaceWith(deepScope);
-    mapDeepScope(scope, deepScope);
+    }
+    throw new Error('wechat-task-checkbox-geometry-owner-missing');
+  };
+  const measurementTargets = new Set(taskCheckboxMeasurementTargets(scopes, sourceRoot));
+  measurementTargets.forEach((target) => {
+    const shallowTarget = ensureShallowChainTo(target);
+    const deepTarget = target.cloneNode(true) as HTMLElement;
+    stripRawDimensionContextIdentityAttributes(deepTarget);
+    shallowTarget.replaceWith(deepTarget);
+    registerDeepSubtree(target, deepTarget);
   });
 
   const readiness = createPreviewMeasurementReadiness(

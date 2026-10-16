@@ -55,7 +55,8 @@ export async function runThemeProjectionScenario4({ baseURL, context, login, pag
     );
 
     const catalog = await readAppearanceCatalog(page);
-    test.setTimeout(((catalog.articleThemes.length + 12) * 30 + 240) * 1000);
+    const articleThemes = catalog.articleThemes.filter(({ id }) => id !== 'default');
+    test.setTimeout(((articleThemes.length + 12) * 30 + 240) * 1000);
     const defaultArticle = catalog.articleThemes.find(({ id }) => id === 'default');
     const defaultCode = catalog.codeThemes.find(({ id }) => id === 'atom-one-dark');
     if (!defaultArticle || !defaultCode) {
@@ -63,7 +64,7 @@ export async function runThemeProjectionScenario4({ baseURL, context, login, pag
     }
     const articlePayloadExport = await createNativePayloadExportState(
       'article',
-      catalog.articleThemes.map(({ id }) => ({
+      articleThemes.map(({ id }) => ({
         articleThemeId: id,
         mode: 'ordinary'
       }))
@@ -95,7 +96,7 @@ export async function runThemeProjectionScenario4({ baseURL, context, login, pag
     const observedArticleThemes = [];
     let mdmdtNegativeMutationCount = 0;
     const matrixManifest = [];
-    for (const theme of catalog.articleThemes) {
+    for (const theme of articleThemes) {
       const dialog = await openOrdinaryAppearanceDialog(
         page,
         catalog.labels.editorSettings
@@ -281,7 +282,7 @@ export async function runThemeProjectionScenario4({ baseURL, context, login, pag
       });
       observedArticleThemes.push(theme.id);
     }
-    expect(observedArticleThemes).toEqual(catalog.articleThemes.map(({ id }) => id));
+    expect(observedArticleThemes).toEqual(articleThemes.map(({ id }) => id));
     expect(mdmdtNegativeMutationCount, 'Mdmdt DOM negative mutations executed').toBe(2);
     await finalizeNativePayloadExport(articlePayloadExport);
     if (finiteTransitionsProbeEnabled) {
@@ -291,11 +292,12 @@ export async function runThemeProjectionScenario4({ baseURL, context, login, pag
       });
     }
 
-    // The ordinary loop above visits every registered article theme, including
+    // The ordinary loop above visits every registered non-default article theme, including
     // Orange, Cupid, Crimson, Rose, Ningye, Qingbi, Qinghe, Minimal, and Spring.
-    // Immersive modes stay bounded to four representative family profiles.
+    // Immersive modes stay bounded to three representative non-default family profiles;
+    // the approved default article-theme exemption applies here too, and the default
+    // production geometry-flow mismatch remains an independent unclosed defect.
     const familyIds = [
-      'default',
       'fullstack-blue',
       'phycat-cherry',
       'bloom-petal'

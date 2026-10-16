@@ -755,7 +755,8 @@ export function createPseudoMarker(
   const preserveRepeatingBackground = hasRepeatingBackground(computed);
   const appendedImageLayers = preserveRepeatingBackground ? [] : imageLayers;
   const portableDeclarations = removeDataImageBackgroundDeclarations(declarations, preserveRepeatingBackground);
-  if (!textContent) portableDeclarations.push('font-size:0');
+  const taskPaintOnlyPseudo = isTaskListCheckbox(source) && !textContent && !appendedImageLayers.length && !svgContent;
+  if (!textContent && !taskPaintOnlyPseudo) portableDeclarations.push('font-size:0');
   const generatedEmptyHeadingSuffix = isGeneratedEmptyHeadingAfter(
     source,
     pseudo,
@@ -774,9 +775,10 @@ export function createPseudoMarker(
   }
   // WeChat drops completely empty decoration spans during paste. A zero-size
   // whitespace marker keeps CSS-only decorations while remaining invisible.
-  // Keep the layout-time marker whitespace-only; finalizeMarkup replaces the
-  // task marker with ASCII `x` after static-flow geometry has been captured so the
-  // native WeChat Save path retains the paint span without changing allocation.
+  // Keep the layout-time marker whitespace-only; finalizeMarkup removes that
+  // text after static-flow geometry has been captured and adds an unstyled
+  // U+2060 sibling carrier so the native WeChat Save path retains the paint
+  // span without changing its allocation.
   marker.textContent = textContent || (appendedImageLayers.length || svgContent ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (headingEmptyPseudoFlow) {

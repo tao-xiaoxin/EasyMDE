@@ -51,6 +51,13 @@ describe('createBrowserWechatClipboard', () => {
     });
   });
 
+  it('keeps the 335px task paint allocation independent from its U+2060 transport carrier', async () => {
+    await expectTaskStaticAllocation({
+      assertPaintOnlyTransport: true,
+      width: 335
+    });
+  });
+
   it.each([false, true] as const)('preserves non-zero task line-height for text pseudo paint (%s path)', async (synchronousCopy) => {
     await expectTaskStaticAllocation({
       beforeContent: '"✓"',

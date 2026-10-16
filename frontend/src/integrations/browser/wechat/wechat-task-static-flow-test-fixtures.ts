@@ -47,6 +47,7 @@ export type TaskStaticAllocationOptions = Readonly<{
   taskFont?: string;
   taskLineHeight?: string;
   assertInlineCaption?: boolean;
+  assertPaintOnlyTransport?: boolean;
   expectedBeforeText?: string;
   synchronousCopy?: boolean;
   width: number;
@@ -90,6 +91,7 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
     taskFont,
     taskLineHeight,
     assertInlineCaption = false,
+    assertPaintOnlyTransport = false,
     expectedBeforeText,
     synchronousCopy = false,
     width,
@@ -469,8 +471,20 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
       if (undefined !== taskFont) {
         expect(declaredStyleValue(owner, 'font')).toBe(expectedTaskFont(false));
       }
-      const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+      const directHiddenSpans = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+      const markers = directHiddenSpans.filter((element) => Boolean(element.getAttribute('style')?.trim()));
+      const transportCarriers = directHiddenSpans.filter((element) => !element.getAttribute('style')?.trim());
       expect(markers).toHaveLength(expectedMarkers);
+      if (assertPaintOnlyTransport) {
+        expect(transportCarriers).toHaveLength(expectedMarkers);
+        markers.forEach((marker) => {
+          expect(marker.textContent).toBe('');
+        });
+        transportCarriers.forEach((carrier) => {
+          expect(carrier.getAttribute('style')).toBeNull();
+          expect(carrier.textContent).toBe('\u2060');
+        });
+      }
       const circle = markers[0] as HTMLElement;
       const tick = markers[1];
       if ('static' === beforePosition) {

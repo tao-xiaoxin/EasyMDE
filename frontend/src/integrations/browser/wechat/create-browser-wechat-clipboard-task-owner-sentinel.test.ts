@@ -327,11 +327,16 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       // The invisible transport glyph keeps the settled owner allocation
       // unchanged so it matches the captured geometry exactly.
       expectStaticAllocation(uncheckedOwner, { height: 20, left: -22, top: 3, width: 20 });
-      // The checked owner keeps its captured paint layers and receives no
-      // direct transport text of its own.
-      const checkedMarkers = [...checkedOwner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+      // The checked owner keeps its captured paint layers. Each empty paint
+      // layer has a separate unstyled U+2060 carrier after static allocation.
+      const checkedSpans = [...checkedOwner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+      const checkedMarkers = checkedSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
+      const checkedCarriers = checkedSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
       expect(checkedMarkers).toHaveLength(2);
-      expect(checkedMarkers.every((marker) => marker.childNodes.length === 1)).toBe(true);
+      expect(checkedCarriers).toHaveLength(2);
+      expect(checkedMarkers.every((marker) => marker.childNodes.length === 0)).toBe(true);
+      expect(checkedCarriers.every((carrier) => carrier.getAttribute('style') === null)).toBe(true);
+      expect(checkedCarriers.every((carrier) => carrier.textContent === '\u2060')).toBe(true);
       expect(Array.from(checkedOwner.childNodes).every((node) => node.nodeType === 1)).toBe(true);
       expectStaticAllocation(checkedOwner, { height: 20, left: -22, top: 3, width: 20 });
       expectStaticAllocation(checkedMarkers[0] as HTMLElement, { height: 16, left: 18, top: -2, width: 16 });
@@ -569,14 +574,22 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       holder.innerHTML = html;
       const owner = holder.querySelector<HTMLElement>('[role="checkbox"]');
       if (!owner) throw new Error('painted owner missing');
-      const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
-      // The captured paint layer is the owner's only child; no carrier is
-      // appended and the existing transport glyph is not duplicated.
+      const directSpans = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+      const markers = directSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
+      const carriers = directSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
+      // The captured paint layer remains independent from its unstyled
+      // transport carrier, so the carrier cannot change marker geometry.
       expect(markers).toHaveLength(1);
-      expect(owner.childElementCount).toBe(1);
-      expect(owner.childNodes).toHaveLength(1);
-      expect(markers[0]?.textContent).toBe('x');
-      expect(html.match(/>x</gu)).toHaveLength(1);
+      expect(carriers).toHaveLength(1);
+      expect(owner.childElementCount).toBe(2);
+      expect(owner.childNodes).toHaveLength(2);
+      expect(markers[0]?.textContent).toBe('');
+      expect(carriers[0]?.getAttribute('style')).toBeNull();
+      expect(carriers[0]?.textContent).toBe('\u2060');
+      const markerStyle = markers[0]?.getAttribute('style') ?? '';
+      expect(markerStyle).not.toMatch(/(?:^|;)font-size:0(?:;|$)/u);
+      expect(markerStyle).not.toMatch(/(?:^|;)line-height:0(?:;|$)/u);
+      expect(html.match(/>\u2060</gu)).toHaveLength(1);
       expect(await blobText(textBlob)).toBe('Painted open task');
       expect(preview.innerHTML).toBe(sourceMarkup);
 

@@ -624,9 +624,15 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
     if (!TASK_LIST_CHECKBOX_PSEUDO_CLONES.has(element)) return;
     const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
     if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
-    const textNode = textNodes[0];
-    textNode.nodeValue = 'x';
-    taskPaintNormalizations.set(textNode, { original: '', encoded: 'x' });
+    const owner = element.parentElement;
+    if (!owner) throw new Error('wechat-task-checkbox-pseudo-owner-missing');
+    element.removeChild(textNodes[0]);
+    const carrier = normalized.ownerDocument.createElement('span');
+    carrier.setAttribute('aria-hidden', 'true');
+    const textNode = normalized.ownerDocument.createTextNode('\u2060');
+    carrier.appendChild(textNode);
+    owner.insertBefore(carrier, element.nextSibling);
+    taskPaintNormalizations.set(textNode, { original: '', encoded: '\u2060' });
   });
   taskPaintNormalizations.forEach((value, textNode) => {
     exportTextNormalizations.set(textNode, value);

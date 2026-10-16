@@ -287,6 +287,14 @@ The focused Chromium copy regression spec is:
 npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs
 ```
 
+The task-marker pixel oracle also has a dependency-free Chromium regression
+that exercises the real PNG decoder and both payload and stripped-marker
+comparisons, including center-glyph loss and sub-region rounding negatives:
+
+```bash
+npx playwright test tests/e2e/wechat-task-marker-pixel.spec.mjs --project=chromium
+```
+
 The live cases in `wechat-copy-performance.spec.mjs` and
 `wechat-task-context.spec.mjs` are local diagnostics. They run only with
 `EASYMDE_E2E_WECHAT_LOCAL_DIAGNOSTICS=1`; regular CI retains the synthetic

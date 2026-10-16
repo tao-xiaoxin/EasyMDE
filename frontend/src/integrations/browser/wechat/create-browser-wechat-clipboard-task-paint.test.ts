@@ -301,7 +301,24 @@ describe('createBrowserWechatClipboard', () => {
       expect(owners.every((owner) => Boolean(owner.getAttribute('style')))).toBe(true);
       expect(owners.every((owner) => owner.parentElement?.tagName === 'SECTION')).toBe(true);
       const uncheckedOwner = owners.find((owner) => owner.getAttribute('aria-checked') === 'false');
-      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('x');
+      const taskPseudoSpans = owners.flatMap((owner) =>
+        [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')]
+      );
+      const taskPseudoMarkers = taskPseudoSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
+      const taskPaintCarriers = taskPseudoSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
+      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('');
+      expect(taskPseudoMarkers).toHaveLength(18 * 2);
+      expect(taskPaintCarriers).toHaveLength(18 * 2);
+      taskPseudoMarkers.forEach((marker) => {
+        expect(marker.textContent).toBe('');
+        const style = marker.getAttribute('style') ?? '';
+        expect(style).not.toMatch(/(?:^|;)font-size:0(?:;|$)/u);
+        expect(style).not.toMatch(/(?:^|;)line-height:0(?:;|$)/u);
+      });
+      taskPaintCarriers.forEach((carrier) => {
+        expect(carrier.getAttribute('style')).toBeNull();
+        expect(carrier.textContent).toBe('\u2060');
+      });
       // Destination-safe projection replaces the complete task list and every
       // task item with sections. The task structure is therefore the lowest
       // common section ancestor of all owners, and its section children are the
@@ -366,7 +383,7 @@ describe('createBrowserWechatClipboard', () => {
         expect(declaredStylePixels(element, 'margin-bottom')).toBeCloseTo(-(captured.top + captured.height), 6);
       };
       owners.forEach((owner, index) => {
-        const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
+        const markers = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')].filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
         if (relativeOwnerIndex === index) {
           // A relative owner stays in flow and only its absolute pseudo layers
           // are converted.
@@ -390,7 +407,7 @@ describe('createBrowserWechatClipboard', () => {
       ).toHaveLength(18);
       expect(owners[18]?.querySelectorAll(':scope > span[aria-hidden="true"]')).toHaveLength(0);
       expect(holder.querySelectorAll('li span[leaf]')).toHaveLength(0);
-      expect(modernHtml).toContain('x');
+      expect(modernHtml).toContain('\u2060');
       expect(modernHtml).not.toContain('✓');
       expect(preview.innerHTML).toBe(sourceMarkup);
 

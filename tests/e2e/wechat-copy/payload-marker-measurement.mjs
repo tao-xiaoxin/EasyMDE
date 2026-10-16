@@ -42,6 +42,30 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
         return [pixels[index], pixels[index + 1], pixels[index + 2], pixels[index + 3]];
       };
       const background = backgroundValues ? null : sample(values, 0, 0);
+      // Center-window evidence uses one specification for every capture: the
+      // central half of the marker's own CSS paint region, converted to whole
+      // device pixels. Source and payload captures measure the same CSS
+      // geometry even when their device regions round to adjacent pixel
+      // widths, so converting the CSS size (instead of a shared device maximum)
+      // keeps the window on the same marker and stops a large marker's window
+      // from covering a smaller marker completely. The clamp keeps the window a
+      // strict sub-region so it always samples the center glyph.
+      const centerWindowSize = (deviceSize, cssSize) => Math.max(1, Math.min(
+        Math.round(cssSize * scale / 2),
+        Math.max(1, deviceSize - 2)
+      ));
+      // The clamped center window is small by construction, so its ink mask
+      // travels as a compact row-major hex bit string next to the window
+      // dimensions. A comparer can then align two masks with a bounded
+      // translation search instead of relying on a hash or a single centroid.
+      const interiorMaskHex = (bits) => {
+        const padded = bits.padEnd(Math.ceil(bits.length / 4) * 4, '0');
+        let hex = '';
+        for (let index = 0; index < padded.length; index += 4) {
+          hex += Number.parseInt(padded.slice(index, index + 4), 2).toString(16);
+        }
+        return hex;
+      };
       const isInk = (x, y) => {
         const pixel = sample(values, x, y);
         const baseline = backgroundValues ? sample(backgroundValues, x, y) : background;
@@ -58,6 +82,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
         const top = Math.max(0, Math.floor(region.top * scale));
         const bottom = Math.min(bitmap.height, Math.ceil(region.bottom * scale));
         let hash = 2166136261;
+        let inkMaskHash = 2166136261;
         let inkPixels = 0;
         let minInkX = right;
         let minInkY = bottom;
@@ -71,32 +96,80 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
               hash = Math.imul(hash, 16777619);
             }
             if (isInk(x, y)) {
+              inkMaskHash ^= 1;
+              inkMaskHash = Math.imul(inkMaskHash, 16777619);
               inkPixels += 1;
               minInkX = Math.min(minInkX, x - left);
               minInkY = Math.min(minInkY, y - top);
               maxInkX = Math.max(maxInkX, x - left);
               maxInkY = Math.max(maxInkY, y - top);
+            } else {
+              inkMaskHash ^= 0;
+              inkMaskHash = Math.imul(inkMaskHash, 16777619);
             }
           }
         }
-        // Interior paint evidence: ink inside the central half of the marker's
-        // paint region. The window is anchored to the region geometry instead
-        // of the anti-aliased ink bounds so a half-pixel phase change cannot
-        // move the window itself, and the still-measured edge pixels around it
-        // are not part of the comparison. A marker that keeps its outer shape
-        // but loses its inner fill or glyph changes this count even when the
-        // outer ink count stays inside its own tolerance.
+        // The center window samples the marker's central glyph. It is clamped
+        // to the marker's own paint region so it can never cover the whole
+        // marker or sample neighbouring content, and its ink mask is recorded
+        // so the position-stripped comparison can keep checking the center
+        // raster shape instead of falling back to ink counts alone.
         let interiorInkPixels = 0;
+        let interiorInkMaskHash = 2166136261;
+        let interiorInkMask = '';
+        let interiorInkCentroid;
+        let interiorSumX = 0;
+        let interiorSumY = 0;
+        let interiorWindow;
         {
-          const regionWidth = right - left;
-          const regionHeight = bottom - top;
-          const insetX = Math.max(1, Math.floor(regionWidth / 4));
-          const insetY = Math.max(1, Math.floor(regionHeight / 4));
-          for (let y = top + insetY; y < bottom - insetY; y += 1) {
-            for (let x = left + insetX; x < right - insetX; x += 1) {
-              if (isInk(x, y)) interiorInkPixels += 1;
+          const interiorWidth = centerWindowSize(right - left, region.right - region.left);
+          const interiorHeight = centerWindowSize(bottom - top, region.bottom - region.top);
+          const interiorLeft = Math.max(
+            left,
+            Math.min(right - interiorWidth, Math.floor((left + right - interiorWidth) / 2))
+          );
+          const interiorTop = Math.max(
+            top,
+            Math.min(bottom - interiorHeight, Math.floor((top + bottom - interiorHeight) / 2))
+          );
+          const interiorRight = interiorLeft + interiorWidth;
+          const interiorBottom = interiorTop + interiorHeight;
+          let interiorMaskBits = '';
+          for (let y = interiorTop; y < interiorBottom; y += 1) {
+            for (let x = interiorLeft; x < interiorRight; x += 1) {
+              const ink = isInk(x, y);
+              if (ink) {
+                interiorInkPixels += 1;
+                interiorInkMaskHash ^= 1;
+                interiorSumX += x - interiorLeft;
+                interiorSumY += y - interiorTop;
+              } else {
+                interiorInkMaskHash ^= 0;
+              }
+              interiorInkMaskHash = Math.imul(interiorInkMaskHash, 16777619);
+              interiorMaskBits += ink ? '1' : '0';
             }
           }
+          interiorInkMask = interiorMaskHex(interiorMaskBits);
+          interiorWindow = {
+            height: interiorHeight,
+            left: interiorLeft - left,
+            top: interiorTop - top,
+            width: interiorWidth
+          };
+          // The center ink centroid is recorded relative to the center of the
+          // window, so the same marker measured in another capture is
+          // comparable without carrying that capture's absolute region offset.
+          // A one-device-pixel raster phase moves it by at most about one
+          // pixel; a moved glyph moves it by the drift distance and stays
+          // observable even when the total and center ink counts stay inside
+          // their tolerances.
+          interiorInkCentroid = 0 === interiorInkPixels
+            ? null
+            : {
+                x: interiorSumX / interiorInkPixels - (interiorWidth - 1) / 2,
+                y: interiorSumY / interiorInkPixels - (interiorHeight - 1) / 2
+              };
         }
         return {
           inkBounds: maxInkX < 0
@@ -110,8 +183,14 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
                 width: maxInkX - minInkX + 1
               },
           inkPixels,
+          interiorInkCentroid,
+          interiorInkMask,
+          interiorInkMaskHash: (interiorInkMaskHash >>> 0).toString(16).padStart(8, '0'),
           interiorInkPixels,
+          interiorWindow,
           markerIndex,
+          region: { bottom, left, right, top },
+          inkMaskHash: (inkMaskHash >>> 0).toString(16).padStart(8, '0'),
           pixelHash: (hash >>> 0).toString(16).padStart(8, '0')
         };
       });
@@ -190,6 +269,21 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
       if ('function' === typeof image.decode) await image.decode();
     }));
     await new Promise((resolve) => view.requestAnimationFrame(() => resolve()));
+    // The projected static-flow owner may extend left of the isolated document
+    // viewport because its preserved margin is relative to the source list slot.
+    // Translate the capture root by an integer buffer derived from the requested
+    // content width; integer translation preserves raster phase while keeping
+    // negative overflow inside the screenshot viewport. This is capture-only
+    // and never changes the payload HTML or its layout contract.
+    const captureShift = Math.ceil(destinationWidth / 4);
+    const existingTransform = root.style.getPropertyValue('transform').trim();
+    root.style.setProperty(
+      'transform',
+      existingTransform && existingTransform !== 'none'
+        ? `translateX(${captureShift}px) ${existingTransform}`
+        : `translateX(${captureShift}px)`
+    );
+    await new Promise((resolve) => view.requestAnimationFrame(() => resolve()));
     // The full fixture places task lists well below the first viewport. Keep the
     // isolated payload frame tall enough for every marker so pixel evidence covers
     // the complete rendered document instead of silently sampling only its top.
@@ -217,7 +311,14 @@ export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = 
       }
       const rootRect = root.getBoundingClientRect();
       const markerRects = [...root.querySelectorAll('[role="checkbox"]')].map((marker, index) => {
-        const paintElements = [marker, ...marker.querySelectorAll('[aria-hidden="true"]')];
+        // Unstyled aria-hidden spans carrying U+2060 keep task structure alive but
+        // do not paint. Exclude those transport carriers from the paint region so
+        // geometry evidence compares the owner and generated paint layers only.
+        const paintElements = [
+          marker,
+          ...[...marker.querySelectorAll('[aria-hidden="true"]')]
+            .filter((element) => Boolean(element.getAttribute('style')?.trim()))
+        ];
         const rects = paintElements.map((element) => element.getBoundingClientRect());
         if (!rects.length) throw new Error(`wechat-task-marker-pixel-marker-${index}-missing`);
         const markerRect = marker.getBoundingClientRect();
@@ -296,25 +397,44 @@ export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
     }
     const rootRect = root.getBoundingClientRect();
     const finite = (value) => Number.isFinite(value) ? value : null;
-    const transformBounds = (width, height, transform) => {
-      if (!transform || transform === 'none') return { height, width };
+    const transformBounds = (width, height, transform, transformOrigin) => {
+      const identity = { height, left: 0, top: 0, width };
+      if (!transform || transform === 'none') return identity;
       const matrixMatch = transform.match(/^matrix\(([^)]+)\)$/u);
       const matrix3dMatch = transform.match(/^matrix3d\(([^)]+)\)$/u);
       let values;
+      let translationX = 0;
+      let translationY = 0;
       if (matrixMatch) {
         values = matrixMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
+        translationX = values[4];
+        translationY = values[5];
       } else if (matrix3dMatch) {
         const matrix = matrix3dMatch[1].split(',').map((value) => Number.parseFloat(value.trim()));
         values = [matrix[0], matrix[1], matrix[4], matrix[5]];
+        translationX = matrix[12];
+        translationY = matrix[13];
       } else {
-        return { height, width };
+        return identity;
       }
       const [a, b, c, d] = values;
-      if (![a, b, c, d].every(Number.isFinite)) return { height, width };
-      return {
-        height: Math.abs(b) * width + Math.abs(d) * height,
-        width: Math.abs(a) * width + Math.abs(c) * height
-      };
+      if (![a, b, c, d, translationX, translationY].every(Number.isFinite)) return identity;
+      const origin = (transformOrigin ?? '').split(/\s+/u).map((value) => Number.parseFloat(value));
+      const originX = Number.isFinite(origin[0]) ? origin[0] : width / 2;
+      const originY = Number.isFinite(origin[1]) ? origin[1] : height / 2;
+      const offsetX = translationX + originX - a * originX - c * originY;
+      const offsetY = translationY + originY - b * originX - d * originY;
+      const corners = [
+        [0, 0],
+        [width, 0],
+        [0, height],
+        [width, height]
+      ].map(([x, y]) => [offsetX + a * x + c * y, offsetY + b * x + d * y]);
+      const left = Math.min(...corners.map(([x]) => x));
+      const right = Math.max(...corners.map(([x]) => x));
+      const top = Math.min(...corners.map(([, y]) => y));
+      const bottom = Math.max(...corners.map(([, y]) => y));
+      return { height: bottom - top, left, top, width: right - left };
     };
     const rectValue = (rect, origin) => ({
       bottom: rect.bottom - origin.top,
@@ -340,12 +460,19 @@ export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
           const left = finite(Number.parseFloat(style.left));
           const top = finite(Number.parseFloat(style.top));
           if (width === null || height === null || left === null || top === null) continue;
-          const paint = transformBounds(width, height, style.transform);
+          const borderWidth = style.boxSizing === 'border-box'
+            ? width
+            : width + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth);
+          const borderHeight = style.boxSizing === 'border-box'
+            ? height
+            : height + Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+          if (![borderWidth, borderHeight].every(Number.isFinite)) continue;
+          const paint = transformBounds(borderWidth, borderHeight, style.transform, style.transformOrigin);
           paintRects.push({
-            bottom: markerRect.top + top + paint.height,
-            left: markerRect.left + left,
-            right: markerRect.left + left + paint.width,
-            top: markerRect.top + top
+            bottom: markerRect.top + top + paint.top + paint.height,
+            left: markerRect.left + left + paint.left,
+            right: markerRect.left + left + paint.left + paint.width,
+            top: markerRect.top + top + paint.top
           });
         }
         return {
@@ -442,18 +569,25 @@ export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
         if (!(marker instanceof HTMLElement)) throw new Error('wechat-task-marker-source-pixel-marker-unavailable');
         const markerRect = marker.getBoundingClientRect();
         const rects = [markerRect];
-        const transformBounds = (width, height, transform) => {
-          if (!transform || transform === 'none') return { height, width };
+        const transformBounds = (width, height, transform, transformOrigin) => {
+          const identity = { height, left: 0, top: 0, width };
+          if (!transform || transform === 'none') return identity;
           const match = transform.match(/^matrix\(([^)]+)\)$/u);
           const values = match?.[1]?.split(',').map((value) => Number.parseFloat(value.trim()));
-          if (!values || values.length < 6 || !values.slice(0, 6).every(Number.isFinite)) {
-            return { height, width };
-          }
-          const [a, b, c, d] = values;
-          return {
-            height: Math.abs(b) * width + Math.abs(d) * height,
-            width: Math.abs(a) * width + Math.abs(c) * height
-          };
+          if (!values || values.length < 6 || !values.slice(0, 6).every(Number.isFinite)) return identity;
+          const [a, b, c, d, translationX, translationY] = values;
+          const origin = (transformOrigin ?? '').split(/\s+/u).map((value) => Number.parseFloat(value));
+          const originX = Number.isFinite(origin[0]) ? origin[0] : width / 2;
+          const originY = Number.isFinite(origin[1]) ? origin[1] : height / 2;
+          const offsetX = translationX + originX - a * originX - c * originY;
+          const offsetY = translationY + originY - b * originX - d * originY;
+          const corners = [[0, 0], [width, 0], [0, height], [width, height]]
+            .map(([x, y]) => [offsetX + a * x + c * y, offsetY + b * x + d * y]);
+          const left = Math.min(...corners.map(([x]) => x));
+          const right = Math.max(...corners.map(([x]) => x));
+          const top = Math.min(...corners.map(([, y]) => y));
+          const bottom = Math.max(...corners.map(([, y]) => y));
+          return { height: bottom - top, left, top, width: right - left };
         };
         for (const pseudo of ['::before', '::after']) {
           const style = getComputedStyle(marker, pseudo);
@@ -468,12 +602,19 @@ export async function readSourceTaskMarkerPixelEvidence(page, sourceSelector) {
           const left = Number.parseFloat(style.left);
           const top = Number.parseFloat(style.top);
           if (![width, height, left, top].every(Number.isFinite)) continue;
-          const paint = transformBounds(width, height, style.transform);
+          const borderWidth = style.boxSizing === 'border-box'
+            ? width
+            : width + Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.borderRightWidth);
+          const borderHeight = style.boxSizing === 'border-box'
+            ? height
+            : height + Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+          if (![borderWidth, borderHeight].every(Number.isFinite)) continue;
+          const paint = transformBounds(borderWidth, borderHeight, style.transform, style.transformOrigin);
           rects.push({
-            bottom: markerRect.top + top + paint.height,
-            left: markerRect.left + left,
-            right: markerRect.left + left + paint.width,
-            top: markerRect.top + top
+            bottom: markerRect.top + top + paint.top + paint.height,
+            left: markerRect.left + left + paint.left,
+            right: markerRect.left + left + paint.left + paint.width,
+            top: markerRect.top + top + paint.top
           });
         }
         const paint = {

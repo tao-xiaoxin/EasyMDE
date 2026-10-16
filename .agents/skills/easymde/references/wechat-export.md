@@ -754,7 +754,18 @@ plain-text restoration so it preserves native Save state without changing
 geometry or visible plain text. Do not use an ASCII sentinel, zero-font style,
 or explicit `line-height:0`: WeChat's structure checker reports those hidden
 transport variants as formatting problems. The word joiner keeps the owner
-non-empty while the carrier remains visually inert. Remove arbitrary form
+non-empty while the carrier remains visually inert. Empty task paint layers
+follow the same transport contract: a materialized task pseudo clone whose
+parsed content is empty keeps its captured paint span paint-only and receives
+one unstyled `aria-hidden` sibling carrier holding a single U+2060 immediately
+after that span. The carrier is never the paint layer and never carries a
+portable declaration; the paint span keeps its captured geometry, and the
+exporter registers the transport glyph for the same per-node plain-text
+restoration so the native Save path retains the paint without changing
+allocation, geometry, or visible plain text. A paint layer with authored text,
+image, or SVG content keeps its own content and receives no carrier. Verifiers
+must treat these carriers as transport structure rather than paint layers or
+pseudo markers. Remove arbitrary form
 controls. A marker that
 cannot be faithfully represented fails
 explicitly rather than silently losing state; native-appearance themes require

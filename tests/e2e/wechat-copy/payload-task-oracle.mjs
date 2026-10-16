@@ -4,6 +4,74 @@ import { fullCapabilityTaskStates } from "./markdown-fixtures.mjs";
 import { intrinsicGeometryTolerance } from "./environment.mjs";
 import { assertTaskMarkerPixelParityNegativeCases } from "./payload-pixel-oracle.mjs";
 
+// The shared serializer keeps an empty task paint layer or an element-painted
+// unchecked owner alive with a separate, unstyled `aria-hidden` carrier that
+// holds only the U+2060 word joiner after static-flow allocation. That carrier
+// is transport structure, never a visual pseudo marker: it receives no
+// portable declaration, so the reader evidence shows an inline span with
+// `auto` dimensions, zero painted width, and no background, border, transform,
+// or opacity paint. Partition marker children on exactly those facts so a
+// carrier can never satisfy a visual comparison, while a missing, extra, or
+// repainted carrier still fails the structural transport assertions.
+const carrierBackgrounds = new Set(['rgba(0, 0, 0, 0)', 'transparent']);
+const taskTransportCarrier = ({ box, style }) => (
+  0 === box.width
+  && 'auto' === style.width
+  && 'auto' === style.height
+  && 'inline' === style.display
+  && 'static' === style.position
+  && 'none' === style.transform
+  && 'content-box' === style.boxSizing
+  && 1 === Number.parseFloat(style.opacity)
+  && carrierBackgrounds.has(style.backgroundColor)
+  && ['borderBottomWidth', 'borderLeftWidth', 'borderRightWidth', 'borderTopWidth']
+    .every((property) => 0 === style[property])
+  && 'visible' === style.visibility
+);
+
+const partitionTaskPseudoMarkers = (pseudoMarkers) => {
+  const carriers = [];
+  const paintLayers = [];
+  pseudoMarkers.forEach((entry, index) => {
+    if (taskTransportCarrier(entry)) {
+      carriers.push({ ...entry, index });
+      return;
+    }
+    paintLayers.push(entry);
+  });
+  return { carriers, paintLayers };
+};
+
+// A paint-only `content: ""` pseudo is the only layer whose transport glyph
+// the serializer replaces with an unstyled U+2060 carrier; text, image, and SVG
+// pseudos keep their own content and receive none. An unchecked owner with no
+// materialized pseudo keeps one fallback carrier so the otherwise empty static
+// owner survives the native Save path.
+const expectedTaskTransportCarrierCount = (sourceItem) => {
+  const sourcePseudos = sourceItem.marker.pseudoMarkers;
+  if (!sourcePseudos.length) return sourceItem.checked ? 0 : 1;
+  return sourcePseudos
+    .filter(({ style }) => '""' === style.content || "''" === style.content)
+    .length;
+};
+
+const assertTaskTransportStructure = (sourceItem, targetItem, label) => {
+  const { carriers, paintLayers } = partitionTaskPseudoMarkers(targetItem.marker.pseudoMarkers);
+  expect(carriers.length, `${label} transport carrier count ${sourceItem.index}`)
+    .toBe(expectedTaskTransportCarrierCount(sourceItem));
+  for (const carrier of carriers) {
+    // A carrier is either the only child of a paint-less unchecked owner or an
+    // independent sibling directly after the paint layer it keeps alive.
+    if (0 === carrier.index) continue;
+    const previous = targetItem.marker.pseudoMarkers[carrier.index - 1];
+    expect(
+      Boolean(previous) && !taskTransportCarrier(previous),
+      `${label} transport carrier sibling ${sourceItem.index}/${carrier.index}`
+    ).toBe(true);
+  }
+  return paintLayers;
+};
+
 export function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, themeId) {
   const closeGeometry = (actual, expected, message) => {
     expect(
@@ -145,10 +213,11 @@ export function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, t
     );
     expect(targetItem.marker.style.boxSizing, `${label} marker box sizing ${sourceItem.index}`)
       .toBe(sourceItem.marker.style.boxSizing);
-    expect(targetItem.marker.pseudoMarkers, `${label} pseudo marker count ${sourceItem.index}`)
+    const paintLayers = assertTaskTransportStructure(sourceItem, targetItem, label);
+    expect(paintLayers, `${label} visual pseudo marker count ${sourceItem.index}`)
       .toHaveLength(sourceItem.marker.pseudoMarkers.length);
     for (const [pseudoIndex, sourcePseudo] of sourceItem.marker.pseudoMarkers.entries()) {
-      const targetPseudo = targetItem.marker.pseudoMarkers[pseudoIndex];
+      const targetPseudo = paintLayers[pseudoIndex];
       expect(targetPseudo, `${label} pseudo marker ${sourceItem.index}/${pseudoIndex}`)
         .toBeDefined();
       if (!targetPseudo) throw new Error(`wechat-native-${label}-pseudo-target-unavailable`);
@@ -264,7 +333,7 @@ export function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, t
       throw new Error(`wechat-native-${label}-checked-sky-task-unavailable`);
     }
     const sourceAfter = sourceChecked.marker.pseudoMarkers.find(({ pseudo }) => pseudo === '::after');
-    const targetAfter = targetChecked.marker.pseudoMarkers[1];
+    const targetAfter = partitionTaskPseudoMarkers(targetChecked.marker.pseudoMarkers).paintLayers[1];
     if (!sourceAfter || !targetAfter) {
       throw new Error(`wechat-native-${label}-sky-check-paint-unavailable`);
     }
@@ -324,10 +393,18 @@ export function assertTaskMarkerPositionStripped(normalEvidence, strippedEvidenc
       Math.abs(strippedItem.li.box.height - normalItem.li.box.height),
       `${label} stripped li height ${normalItem.index}`
     ).toBeLessThanOrEqual(intrinsicGeometryTolerance);
-    expect(strippedItem.marker.pseudoMarkers, `${label} stripped pseudo count ${normalItem.index}`)
-      .toHaveLength(normalItem.marker.pseudoMarkers.length);
-    for (const [pseudoIndex, normalPseudo] of normalItem.marker.pseudoMarkers.entries()) {
-      const strippedPseudo = strippedItem.marker.pseudoMarkers[pseudoIndex];
+    const normalPartition = partitionTaskPseudoMarkers(normalItem.marker.pseudoMarkers);
+    const strippedPartition = partitionTaskPseudoMarkers(strippedItem.marker.pseudoMarkers);
+    expect(
+      strippedPartition.carriers,
+      `${label} stripped transport carrier count ${normalItem.index}`
+    ).toHaveLength(normalPartition.carriers.length);
+    expect(
+      strippedPartition.paintLayers,
+      `${label} stripped visual pseudo count ${normalItem.index}`
+    ).toHaveLength(normalPartition.paintLayers.length);
+    for (const [pseudoIndex, normalPseudo] of normalPartition.paintLayers.entries()) {
+      const strippedPseudo = strippedPartition.paintLayers[pseudoIndex];
       expect(strippedPseudo, `${label} stripped pseudo ${normalItem.index}/${pseudoIndex}`)
         .toBeDefined();
       if (!strippedPseudo) throw new Error(`wechat-native-${label}-stripped-pseudo-unavailable`);

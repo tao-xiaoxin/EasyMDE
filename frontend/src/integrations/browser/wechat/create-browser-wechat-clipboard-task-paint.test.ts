@@ -304,20 +304,19 @@ describe('createBrowserWechatClipboard', () => {
       const taskPseudoSpans = owners.flatMap((owner) =>
         [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')]
       );
-      const taskPseudoMarkers = taskPseudoSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
-      const taskPaintCarriers = taskPseudoSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
-      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('');
-      expect(taskPseudoMarkers).toHaveLength(18 * 2);
-      expect(taskPaintCarriers).toHaveLength(18 * 2);
-      taskPseudoMarkers.forEach((marker) => {
-        expect(marker.textContent).toBe('');
+      // Every task pseudo paint layer carries its own U+2060 transport, so no
+      // style-less sibling carrier exists and no paint span reaches WeChat as
+      // an empty decoration span the native Save path would drop. The transport
+      // must stay visually inert and must not introduce a zero-font or
+      // zero-line-height declaration the structure checker reports.
+      expect(taskPseudoSpans).toHaveLength(18 * 2);
+      expect(uncheckedOwner?.querySelector(':scope > span[aria-hidden="true"]')?.textContent).toBe('\u2060');
+      taskPseudoSpans.forEach((marker) => {
+        expect(marker.getAttribute('style')?.trim()).toBeTruthy();
+        expect(marker.textContent).toBe('\u2060');
         const style = marker.getAttribute('style') ?? '';
         expect(style).not.toMatch(/(?:^|;)font-size:0(?:;|$)/u);
         expect(style).not.toMatch(/(?:^|;)line-height:0(?:;|$)/u);
-      });
-      taskPaintCarriers.forEach((carrier) => {
-        expect(carrier.getAttribute('style')).toBeNull();
-        expect(carrier.textContent).toBe('\u2060');
       });
       // Destination-safe projection replaces the complete task list and every
       // task item with sections. The task structure is therefore the lowest
@@ -704,7 +703,7 @@ describe('createBrowserWechatClipboard', () => {
     type Variant = 'positive' | 'drop-svg' | 'empty-path' | 'remove-paint';
     const cases: ReadonlyArray<Readonly<{ expectedError?: string; variant: Variant }>> = [
       { variant: 'positive' },
-      { expectedError: 'wechat-task-checkbox-static-owner-svg-paint-missing', variant: 'drop-svg' },
+      { expectedError: 'wechat-task-checkbox-paint-layer-empty', variant: 'drop-svg' },
       { expectedError: 'wechat-task-checkbox-static-owner-svg-paint-missing', variant: 'empty-path' },
       { expectedError: 'wechat-task-checkbox-static-owner-svg-paint-missing', variant: 'remove-paint' }
     ];

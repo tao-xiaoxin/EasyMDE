@@ -327,20 +327,17 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       // The invisible transport glyph keeps the settled owner allocation
       // unchanged so it matches the captured geometry exactly.
       expectStaticAllocation(uncheckedOwner, { height: 20, left: -22, top: 3, width: 20 });
-      // The checked owner keeps its captured paint layers. Each empty paint
-      // layer has a separate unstyled U+2060 carrier after static allocation.
+      // The checked owner keeps its captured paint layers, and each paint-only
+      // layer holds the U+2060 transport inside its own span instead of an
+      // empty paint span plus a sibling carrier.
       const checkedSpans = [...checkedOwner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
-      const checkedMarkers = checkedSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
-      const checkedCarriers = checkedSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
-      expect(checkedMarkers).toHaveLength(2);
-      expect(checkedCarriers).toHaveLength(2);
-      expect(checkedMarkers.every((marker) => marker.childNodes.length === 0)).toBe(true);
-      expect(checkedCarriers.every((carrier) => carrier.getAttribute('style') === null)).toBe(true);
-      expect(checkedCarriers.every((carrier) => carrier.textContent === '\u2060')).toBe(true);
+      expect(checkedSpans).toHaveLength(2);
+      expect(checkedSpans.every((marker) => Boolean(marker.getAttribute('style')?.trim()))).toBe(true);
+      expect(checkedSpans.every((marker) => marker.textContent === '\u2060')).toBe(true);
       expect(Array.from(checkedOwner.childNodes).every((node) => node.nodeType === 1)).toBe(true);
       expectStaticAllocation(checkedOwner, { height: 20, left: -22, top: 3, width: 20 });
-      expectStaticAllocation(checkedMarkers[0] as HTMLElement, { height: 16, left: 18, top: -2, width: 16 });
-      expectStaticAllocation(checkedMarkers[1] as HTMLElement, { height: 12, left: 27.6, top: 8, width: 8 });
+      expectStaticAllocation(checkedSpans[0] as HTMLElement, { height: 16, left: 18, top: -2, width: 16 });
+      expectStaticAllocation(checkedSpans[1] as HTMLElement, { height: 12, left: 27.6, top: 8, width: 8 });
       expect(firstHtml).toContain('<span aria-hidden="true">\u2060</span>');
       expect(firstHtml).not.toContain('<span aria-hidden="true">x</span>');
       expect(firstHtml).not.toContain('style="font-size:0"');
@@ -417,8 +414,9 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       expect(legacyOwners[0]?.textContent).toBe('\u2060');
       expect(legacyOwners[0]?.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
       expect(legacyOwners[0]?.firstElementChild?.getAttribute('style')).toBeNull();
-      // The checked owner keeps only its painted marker layers; the transport
-      // text lives in the unchecked owner alone.
+      // The checked owner keeps its painted marker layers and each paint-only
+      // layer owns its in-span U+2060 transport; the unchecked owner retains its
+      // separate owner-level carrier.
       expect(Array.from(legacyOwners[1]?.childNodes ?? []).every((node) => node.nodeType === 1)).toBe(true);
     } finally {
       restoreLayoutProbe();
@@ -577,15 +575,13 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       const directSpans = [...owner.querySelectorAll<HTMLElement>(':scope > span[aria-hidden="true"]')];
       const markers = directSpans.filter((marker) => Boolean(marker.getAttribute('style')?.trim()));
       const carriers = directSpans.filter((carrier) => !carrier.getAttribute('style')?.trim());
-      // The captured paint layer remains independent from its unstyled
-      // transport carrier, so the carrier cannot change marker geometry.
+      // The captured paint layer owns the transport glyph itself, so it stays
+      // non-empty without a second element that could change marker geometry.
       expect(markers).toHaveLength(1);
-      expect(carriers).toHaveLength(1);
-      expect(owner.childElementCount).toBe(2);
-      expect(owner.childNodes).toHaveLength(2);
-      expect(markers[0]?.textContent).toBe('');
-      expect(carriers[0]?.getAttribute('style')).toBeNull();
-      expect(carriers[0]?.textContent).toBe('\u2060');
+      expect(carriers).toHaveLength(0);
+      expect(owner.childElementCount).toBe(1);
+      expect(owner.childNodes).toHaveLength(1);
+      expect(markers[0]?.textContent).toBe('\u2060');
       const markerStyle = markers[0]?.getAttribute('style') ?? '';
       expect(markerStyle).not.toMatch(/(?:^|;)font-size:0(?:;|$)/u);
       expect(markerStyle).not.toMatch(/(?:^|;)line-height:0(?:;|$)/u);

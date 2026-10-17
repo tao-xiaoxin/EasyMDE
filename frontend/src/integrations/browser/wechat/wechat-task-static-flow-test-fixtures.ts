@@ -476,13 +476,11 @@ export async function expectTaskStaticAllocation(options: TaskStaticAllocationOp
       const transportCarriers = directHiddenSpans.filter((element) => !element.getAttribute('style')?.trim());
       expect(markers).toHaveLength(expectedMarkers);
       if (assertPaintOnlyTransport) {
-        expect(transportCarriers).toHaveLength(expectedMarkers);
+        // The transport glyph lives inside its own paint layer, so the layer is
+        // never empty and no style-less sibling carrier is emitted.
+        expect(transportCarriers).toHaveLength(0);
         markers.forEach((marker) => {
-          expect(marker.textContent).toBe('');
-        });
-        transportCarriers.forEach((carrier) => {
-          expect(carrier.getAttribute('style')).toBeNull();
-          expect(carrier.textContent).toBe('\u2060');
+          expect(marker.textContent).toBe('\u2060');
         });
       }
       const circle = markers[0] as HTMLElement;

@@ -557,14 +557,15 @@ for fixed decoration images. Generated image dimensions must not be overwritten
 by generic responsive media rules.
 
 An empty generated pseudo retains an invisible whitespace carrier only when no
-image child is actually materialized. A safe non-repeating raster child itself
-keeps the pseudo clone non-empty, so adding a preceding whitespace Text node is
-forbidden: a block materialized image would otherwise start after the inherited
-line box and paint outside the pseudo's fixed geometry. Repeating raster
-backgrounds, gradients, colors, shadows, filtered SVG/remote URLs, and other
-CSS-only empty decorations still retain the whitespace carrier because they do
-not append an image child. Textual pseudo content remains unchanged. The modern
-and synchronous serializers use the same actual-appended-layer decision.
+image child is actually materialized, except for the task checkbox paint path
+defined below. A safe non-repeating raster child itself keeps the pseudo clone
+non-empty, so adding a preceding whitespace Text node is forbidden: a block
+materialized image would otherwise start after the inherited line box and paint
+outside the pseudo's fixed geometry. Repeating raster backgrounds, gradients,
+colors, shadows, filtered SVG/remote URLs, and other CSS-only empty decorations
+still retain the whitespace carrier because they do not append an image child.
+Textual pseudo content remains unchanged. The modern and synchronous serializers
+use the same actual-appended-layer decision.
 
 Materialized overlays sit at an isolated negative stacking level behind copied
 text. Normalize percentage positions before centered-axis composition; follow
@@ -754,18 +755,19 @@ plain-text restoration so it preserves native Save state without changing
 geometry or visible plain text. Do not use an ASCII sentinel, zero-font style,
 or explicit `line-height:0`: WeChat's structure checker reports those hidden
 transport variants as formatting problems. The word joiner keeps the owner
-non-empty while the carrier remains visually inert. Empty task paint layers
-follow the same transport contract: a materialized task pseudo clone whose
-parsed content is empty keeps its captured paint span paint-only and receives
-one unstyled `aria-hidden` sibling carrier holding a single U+2060 immediately
-after that span. The carrier is never the paint layer and never carries a
-portable declaration; the paint span keeps its captured geometry, and the
-exporter registers the transport glyph for the same per-node plain-text
-restoration so the native Save path retains the paint without changing
-allocation, geometry, or visible plain text. A paint layer with authored text,
-image, or SVG content keeps its own content and receives no carrier. Verifiers
-must treat these carriers as transport structure rather than paint layers or
-pseudo markers. Remove arbitrary form
+non-empty while the carrier remains visually inert. Empty task paint layers use
+a separate in-span transport contract: a materialized task pseudo clone whose
+parsed content is empty replaces its layout-time ASCII space with one U+2060
+word joiner inside the captured styled paint span after static-flow allocation.
+The exporter registers that exact text node for per-node plain-text restoration,
+so the native Save path retains the styled paint span without a new sibling
+carrier, extra box, allocation change, or visible plain-text change. A paint
+layer with authored text, image, or SVG content keeps its own content and is
+left unchanged. If a registered task paint layer is childless at finalization,
+serialization fails explicitly instead of emitting a decoration span that the
+destination can silently drop. Verifiers must treat an owner's unstyled
+carrier as transport structure; the styled in-span U+2060 remains the paint
+layer. Remove arbitrary form
 controls. A marker that
 cannot be faithfully represented fails
 explicitly rather than silently losing state; native-appearance themes require

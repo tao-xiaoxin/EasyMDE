@@ -22,6 +22,7 @@ import {
   TABLE_HEADER_BACKGROUND_METADATA,
   TABLE_SCROLL_OWNER_METADATA,
   TASK_LIST_CHECKBOX_CLONES,
+  TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS,
   TASK_LIST_CHECKBOX_PSEUDO_CLONES,
   THEME_HEADING_SUFFIX_CLONES,
   THEME_IMAGE_CLONES,
@@ -619,23 +620,38 @@ export function finalizeMarkup(clone: HTMLElement, fragmentIds: Set<string>, mat
     EXPORT_TEXT_NORMALIZATIONS.get(normalized) ?? new Map<Text, Readonly<{ original: string; encoded: string }>>();
   registerTaskCheckboxCaptionNormalizations(normalized, exportTextNormalizations);
   EXPORT_TEXT_NORMALIZATIONS.set(normalized, exportTextNormalizations);
-  const taskPaintNormalizations = new Map<Text, Readonly<{ original: string; encoded: string }>>();
+  // A paint-only task pseudo clone carries one layout-time ASCII space and no
+  // authored content. The native WeChat Paste/Save path drops a completely
+  // empty decoration span, which silently removes the paint layer and its
+  // background/border, so the transport glyph replaces that sole ASCII space
+  // inside the paint span itself instead of a sibling carrier: one U+2060 word
+  // joiner after static-flow allocation and before remaining leaf wrapping.
+  // The glyph keeps the paint span non-empty without a visible character or
+  // an extra box, and without a style declaration that WeChat's structure
+  // checker can flag.
+  // The root-scoped record restores the empty original for connected plain-text
+  // measurement; a paint layer with authored text, image, or SVG content keeps
+  // its own content and is left untouched.
   normalized.querySelectorAll('span[aria-hidden="true"]').forEach((element) => {
-    if (!TASK_LIST_CHECKBOX_PSEUDO_CLONES.has(element)) return;
-    const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
-    if (1 !== textNodes.length || ' ' !== textNodes[0]?.nodeValue) return;
+    const pseudo = TASK_LIST_CHECKBOX_PSEUDO_CLONES.get(element);
+    if (!pseudo) return;
     const owner = element.parentElement;
-    if (!owner) throw new Error('wechat-task-checkbox-pseudo-owner-missing');
-    element.removeChild(textNodes[0]);
-    const carrier = normalized.ownerDocument.createElement('span');
-    carrier.setAttribute('aria-hidden', 'true');
-    const textNode = normalized.ownerDocument.createTextNode('\u2060');
-    carrier.appendChild(textNode);
-    owner.insertBefore(carrier, element.nextSibling);
-    taskPaintNormalizations.set(textNode, { original: '', encoded: '\u2060' });
-  });
-  taskPaintNormalizations.forEach((value, textNode) => {
-    exportTextNormalizations.set(textNode, value);
+    const expectation = owner ? TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS.get(owner)?.pseudos.get(pseudo) : undefined;
+    if (expectation?.requiresText) {
+      if (!element.childNodes.length) throw new Error('wechat-task-checkbox-paint-layer-empty');
+      return;
+    }
+    const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
+    const textNode = 1 === textNodes.length ? textNodes[0] : null;
+    if (textNode && ' ' === textNode.nodeValue) {
+      textNode.nodeValue = '\u2060';
+      exportTextNormalizations.set(textNode, { original: '', encoded: '\u2060' });
+      return;
+    }
+    // Every registered paint layer must still carry a node at emission time:
+    // an empty one is dropped by the destination, so an unprovable layer fails
+    // here instead of silently losing the checkbox paint.
+    if (!element.childNodes.length) throw new Error('wechat-task-checkbox-paint-layer-empty');
   });
   normalizePortableTables(normalized);
   normalizeCodeFrames(normalized);

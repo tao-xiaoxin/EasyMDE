@@ -18,6 +18,55 @@ function cssRule(source, selector) {
   return match.groups.body;
 }
 
+test('keeps the visual image selection hint as a soft shadow without a hard line', () => {
+  const rule = cssRule(css, '.easymde-visual-image-selection-feedback');
+  assert.match(rule, /position:\s*fixed;/);
+  assert.match(rule, /pointer-events:\s*none;/);
+  assert.match(rule, /border-radius:\s*3px;/);
+  assert.match(rule, /box-shadow:\s*0 0 0 3px rgba\(34, 113, 177, \.28\);/);
+  // The hard frame was removed on purpose: no border, outline, or opaque white
+  // ring may come back (border-radius itself stays).
+  assert.doesNotMatch(rule, /(?:^|[\s;])border\s*:/);
+  assert.doesNotMatch(
+    rule,
+    /(?:^|[\s;])border-(?:width|style|color|top|right|bottom|left)\s*:/
+  );
+  assert.doesNotMatch(rule, /outline/);
+  assert.doesNotMatch(rule, /rgba\(255,\s*255,\s*255/);
+});
+
+test('caps above-100 image scales at the container while keeping the marker', () => {
+  for (const percentage of [150, 200]) {
+    for (const prefix of ['.easymde-rendered-content', '.easymde-preview']) {
+      const pattern = new RegExp(
+        `${escapeRegExp(prefix)} img\\[data-easymde-image-scale="${percentage}"\\]`
+        + '[^}]*?\\{[^}]*?'
+        + `width:\\s*${percentage}% !important;[^}]*?`
+        + 'max-width:\\s*100% !important;',
+        's'
+      );
+      assert.match(
+        frontendCss,
+        pattern,
+        `Scale ${percentage} must render at most the container width for ${prefix}`
+      );
+    }
+  }
+  for (const percentage of [25, 33, 50, 67, 100]) {
+    const pattern = new RegExp(
+      `\\.easymde-preview img\\[data-easymde-image-scale="${percentage}"\\]`
+      + '[^}]*?\\{[^}]*?'
+      + 'max-width:\\s*none !important;',
+      's'
+    );
+    assert.match(
+      frontendCss,
+      pattern,
+      `Scale ${percentage} keeps its exact rendering`
+    );
+  }
+});
+
 function cssBlock(source, prelude, fromIndex = 0) {
   const preludeIndex = source.indexOf(prelude, fromIndex);
   assert.notEqual(preludeIndex, -1, `Missing CSS block: ${prelude}`);

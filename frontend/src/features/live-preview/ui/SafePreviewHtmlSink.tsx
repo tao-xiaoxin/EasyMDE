@@ -310,16 +310,15 @@ function startWindowChildrenCommit(
 			) {
 				throw new Error('preview-window-selection-restore-failed');
 			}
+			const first = Math.min(selection.anchorOffset, selection.focusOffset);
+			const last = Math.max(selection.anchorOffset, selection.focusOffset);
+			// A root-level selection is the contiguous run of direct children
+			// between its two boundaries. Those identities, not their numeric
+			// offsets, are what a later commit has to retain.
 			return {
-				anchor: {
-					node: surface.childNodes[selection.anchorOffset] ?? null,
-					offset: selection.anchorOffset,
-				},
-				focus: {
-					node: surface.childNodes[selection.focusOffset] ?? null,
-					offset: selection.focusOffset,
-				},
+				backward: selection.anchorOffset > selection.focusOffset,
 				childCount,
+				selectedNodes: Array.from(surface.childNodes).slice(first, last),
 			};
 		})();
     const fullRootSelection = (() => {
@@ -395,31 +394,33 @@ function startWindowChildrenCommit(
       );
     }
 		if (directRootSelection && selection && !fullRootSelection) {
-			const boundaryOffset = (boundary: {
-				node: Node | null;
-				offset: number;
-			}): number => {
-				if (!boundary.node) {
-					if (boundary.offset !== directRootSelection.childCount) {
-						throw new Error('preview-window-selection-restore-failed');
-					}
-					return surface.childNodes.length;
-				}
-				const offset = Array.prototype.indexOf.call(
-					surface.childNodes,
-					boundary.node,
-				);
-				if (offset < 0) {
-					throw new Error('preview-window-selection-restore-failed');
-				}
-				return offset;
-			};
-			selection.setBaseAndExtent(
-				surface,
-				boundaryOffset(directRootSelection.anchor),
-				surface,
-				boundaryOffset(directRootSelection.focus),
+			// A root-level selection survives a commit only when every selected
+			// child is still installed, contiguous and in the same order. The
+			// interval then yields its own before-first/after-last boundaries and
+			// direction; a replaced identity discards the presentation snapshot
+			// instead of fabricating a selection at a stale offset. Throwing here
+			// would reach the editor error boundary and destroy the whole surface.
+			const currentChildren: ReadonlyArray<Node> = Array.from(
+				surface.childNodes
 			);
+			const selectedNodes: ReadonlyArray<Node> =
+				directRootSelection.selectedNodes;
+			const firstIndex = selectedNodes.length
+				? currentChildren.indexOf(selectedNodes[0] as Node)
+				: -1;
+			const retained = firstIndex >= 0
+				&& selectedNodes.every(
+					(node, index) => currentChildren[firstIndex + index] === node,
+				);
+			if (retained) {
+				const lastIndex = firstIndex + selectedNodes.length;
+				selection.setBaseAndExtent(
+					surface,
+					directRootSelection.backward ? lastIndex : firstIndex,
+					surface,
+					directRootSelection.backward ? firstIndex : lastIndex,
+				);
+			}
 		}
     if (rootBoundary && selection) {
       const range = surface.ownerDocument.createRange();

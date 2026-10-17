@@ -230,24 +230,52 @@ async function assertPreviewImageScale(image, percentage, phase) {
   await expect.poll(
     () => image.getAttribute('data-easymde-image-scale')
   ).toBe(String(percentage));
+  // The canonical marker keeps the requested percentage; only the rendering is
+  // capped when the scale exceeds the container's content width.
   await expect.poll(
     () => image.getAttribute('width')
   ).toBe(`${percentage}%`);
   const geometry = await readPreviewImageGeometry(image);
-  const expectedWidth = geometry.contentWidth * percentage / 100;
+  const capped = percentage > 100;
+  const expectedWidth = geometry.contentWidth * Math.min(percentage, 100) / 100;
   const expectedHeight = geometry.naturalWidth > 0
     ? expectedWidth * geometry.naturalHeight / geometry.naturalWidth
     : NaN;
   const valid = geometry.contentWidth > 0
     && geometry.naturalWidth > 0
     && geometry.naturalHeight > 0
-    && geometry.maxWidth === 'none'
+    && (capped ? 'none' !== geometry.maxWidth : 'none' === geometry.maxWidth)
+    && geometry.renderedWidth <= geometry.contentWidth + 1.5
     && Math.abs(geometry.renderedWidth - expectedWidth) <= 1.5
     && Math.abs(geometry.renderedHeight - expectedHeight) <= 1.5;
   if (!valid) {
     throw new Error(
       `editor-context-menu-image-scale-geometry-failed:${phase}:${percentage}:` +
       `${JSON.stringify(geometry)}`
+    );
+  }
+  if (!capped) return;
+  // An enlarged image must not make the surface or its scroll container
+  // horizontally scrollable.
+  const overflow = await image.evaluate((element) => {
+    const canvas = element.closest('.easymde-immersive-preview-canvas');
+    const surface = element.closest('.easymde-preview');
+    return {
+      canvasScrollLeftMax: canvas
+        ? canvas.scrollWidth - canvas.clientWidth
+        : 0,
+      surfaceHorizontalOverflow: surface
+        ? surface.scrollWidth - surface.clientWidth
+        : 0
+    };
+  });
+  if (
+    overflow.canvasScrollLeftMax > 1
+    || overflow.surfaceHorizontalOverflow > 1
+  ) {
+    throw new Error(
+      `editor-context-menu-image-scale-overflow-failed:${phase}:${percentage}:` +
+      `${JSON.stringify(overflow)}`
     );
   }
 }
@@ -3511,6 +3539,234 @@ async function readVisualTargetMetadata(target) {
   }
 }
 
+async function scrollWindowedVisualToTop(page, visualEditor) {
+  const canvas = page.locator('.easymde-immersive-preview-canvas');
+  await canvas.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await expect.poll(
+    () => canvas.evaluate((element) => element.scrollTop)
+  ).toBe(0);
+  // The Windowed owner remounts its window asynchronously after a scroll, so
+  // wait until the document head — and with it the first fixture image pair —
+  // is the mounted window before a test addresses those images.
+  await expect.poll(
+    () => visualEditor.evaluate((surface) =>
+      Array.from(surface.querySelectorAll('img'))
+        .slice(0, 2)
+        .map((image) => image.getAttribute('alt'))
+    ),
+    { message: 'the fixture head should be the mounted window' }
+  ).toEqual(['占位测试图片', '风景占位图']);
+}
+
+async function visualImagePoint(image) {
+  await expect.poll(
+    () => image.evaluate((target) => {
+      const rect = target.getBoundingClientRect();
+      const view = target.ownerDocument.defaultView;
+      return rect.width > 0
+        && rect.height > 0
+        && rect.bottom > 0
+        && rect.top < (view?.innerHeight ?? 0);
+    })
+  ).toBe(true);
+  return image.evaluate((target) => {
+    const rect = target.getBoundingClientRect();
+    const view = target.ownerDocument.defaultView;
+    const candidates = [
+      [rect.left + 18, rect.bottom - 24],
+      [rect.right - 18, rect.bottom - 24],
+      [rect.left + 18, rect.top + 24],
+      [rect.right - 18, rect.top + 24],
+      [rect.left + 18, rect.top + rect.height / 2]
+    ];
+    for (const [x, y] of candidates) {
+      if (y < 4 || y > (view?.innerHeight ?? 0) - 4) continue;
+      // A point that is covered by an open menu or by the immersive header
+      // would retarget the wrong element, so only a point whose topmost hit is
+      // the image itself is usable.
+      if (target.ownerDocument.elementFromPoint(x, y) !== target) continue;
+      return {
+        block:
+          target
+            .closest('[data-easymde-visual-block-id]')
+            ?.getAttribute('data-easymde-visual-block-id') ?? null,
+        label: target.getAttribute('alt'),
+        x,
+        y
+      };
+    }
+    throw new Error('visual-image-pointer-point-unavailable');
+  });
+}
+
+async function readVisualTextPoint(visualEditor) {
+  return visualEditor.evaluate((surface) => {
+    const view = surface.ownerDocument.defaultView;
+    const paragraphs = Array.from(surface.querySelectorAll('p')).filter(
+      (paragraph) =>
+        !paragraph.querySelector('img')
+        && (paragraph.textContent ?? '').trim().length > 8
+    );
+    for (const paragraph of paragraphs) {
+      const rect = paragraph.getBoundingClientRect();
+      for (const y of [
+        rect.top + rect.height / 2,
+        rect.top + 6,
+        rect.bottom - 6
+      ]) {
+        // The immersive header owns the top of the viewport.
+        if (y < 80 || y > (view?.innerHeight ?? 0) - 8) continue;
+        for (let x = rect.left + 24; x < rect.right - 24; x += 40) {
+          const hit = surface.ownerDocument.elementFromPoint(x, y);
+          if (!hit || !surface.contains(hit) || hit.closest('img')) continue;
+          return {
+            block:
+              hit
+                .closest('[data-easymde-visual-block-id]')
+                ?.getAttribute('data-easymde-visual-block-id') ?? null,
+            x,
+            y
+          };
+        }
+      }
+    }
+    return null;
+  });
+}
+
+async function clickVisualTextPoint(page, visualEditor) {
+  const canvas = page.locator('.easymde-immersive-preview-canvas');
+  // The images can fill the visible window; the user would scroll to reach a
+  // passage, and no menu is open here, so a bounded scroll is safe.
+  for (const delta of [0, 220, -220, 440, -440, 660, -660]) {
+    if (0 !== delta) {
+      await canvas.evaluate((element, offset) => {
+        element.scrollTop += offset;
+        element.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }, delta);
+    }
+    const point = await readVisualTextPoint(visualEditor);
+    if (!point) continue;
+    await page.mouse.click(point.x, point.y);
+    return point;
+  }
+  throw new Error('visual-text-pointer-point-unavailable');
+}
+
+async function readVisibleBand(page) {
+  return page
+    .locator('.easymde-immersive-preview-canvas')
+    .evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        bottom: Math.min(rect.bottom, element.ownerDocument.defaultView?.innerHeight ?? 0),
+        top: Math.max(rect.top, 0)
+      };
+    });
+}
+
+async function readMountedVisualImages(visualEditor) {
+  return visualEditor.evaluate((surface) =>
+    Array.from(surface.querySelectorAll('img')).map((image) => ({
+      alt: image.getAttribute('alt'),
+      block:
+        image
+          .closest('[data-easymde-visual-block-id]')
+          ?.getAttribute('data-easymde-visual-block-id') ?? null
+    }))
+  );
+}
+
+async function readVisualImageTargetState(visualEditor) {
+  return visualEditor.evaluate((surface) => {
+    const selection = surface.ownerDocument.defaultView?.getSelection();
+    const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
+    const images = Array.from(surface.querySelectorAll('img'));
+    const blockOf = (node) => {
+      const element = node instanceof Element
+        ? node
+        : node?.parentElement ?? null;
+      return element
+        ?.closest('[data-easymde-visual-block-id]')
+        ?.getAttribute('data-easymde-visual-block-id') ?? null;
+    };
+    const marker = surface.ownerDocument.querySelector(
+      '.easymde-visual-image-selection-feedback'
+    );
+    const markerRect = marker?.getBoundingClientRect() ?? null;
+    const markerHit = markerRect
+      ? surface.ownerDocument.elementFromPoint(
+          markerRect.left + markerRect.width / 2,
+          markerRect.top + markerRect.height / 2
+        )
+      : null;
+    return {
+      anchorBlock: blockOf(selection?.anchorNode ?? null),
+      collapsed: Boolean(selection?.isCollapsed),
+      imageBlocks: images.map((image) => blockOf(image)),
+      markerBlock: markerHit?.closest?.('[data-easymde-visual-block-id]')
+        ?.getAttribute('data-easymde-visual-block-id') ?? null,
+      markerRect: markerRect
+        ? {
+            height: Math.round(markerRect.height),
+            left: Math.round(markerRect.left),
+            top: Math.round(markerRect.top),
+            width: Math.round(markerRect.width)
+          }
+        : null,
+      markerTop: markerRect ? Math.round(markerRect.top) : null,
+      overlaps: range ? images.map((image) => range.intersectsNode(image)) : [],
+      rangeCount: selection?.rangeCount ?? 0
+    };
+  });
+}
+
+async function readMenuRect(page) {
+  const menu = page.locator(menuSelector);
+  if (0 === await menu.count()) return null;
+  return menu.first().evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      height: Math.round(rect.height),
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width)
+    };
+  });
+}
+
+async function revealWindowedVisualBlock(page, blockId) {
+  await page
+    .locator('.easymde-immersive-preview-canvas')
+    .evaluate((canvas, id) => {
+      const block = canvas.querySelector(
+        `[data-easymde-visual-block-id="${id}"]`
+      );
+      if (!(block instanceof HTMLElement)) {
+        throw new Error(`windowed-visual-block-unmounted:${id}`);
+      }
+      const offset =
+        block.getBoundingClientRect().top - canvas.getBoundingClientRect().top;
+      canvas.scrollTop += offset - 12;
+      canvas.dispatchEvent(new Event('scroll', { bubbles: true }));
+    }, blockId);
+}
+
+async function openVisualImageMenu(page, image) {
+  // The point is computed immediately before the click and never scrolls the
+  // surface: an intervening scroll would dismiss an open menu, and a window
+  // commit would move the image out from under stored coordinates while the
+  // click stays where it was.
+  const point = await visualImagePoint(image);
+  await page.mouse.click(point.x, point.y, { button: 'right' });
+  await expect(page.locator(menuSelector)).toHaveCount(1);
+  await expect(rootMenu(page)).toBeVisible();
+  return point;
+}
+
 async function openVisualMenu(
   page,
   visualEditor,
@@ -5061,6 +5317,306 @@ test.describe('Editor context menu production surfaces', () => {
 
     await expectMenuItemState(page, 'image-scale', 'enabled');
     await expect(page.locator(menuSelector)).toBeVisible();
+  });
+
+  test('re-anchors Windowed Visual image menus and selection to the image under the pointer', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page, 2);
+    const { visualEditor } = await enterFullVisual(page);
+    await expect.poll(
+      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
+    ).toBeGreaterThan(0);
+    // The Windowed owner mounts the window that surrounds the caret, and the
+    // fixture editor leaves its caret at the document end. Scroll to the top
+    // so both fixture images of the first copy are mounted and clickable.
+    await scrollWindowedVisualToTop(page, visualEditor);
+    const mounted = await readMountedVisualImages(visualEditor);
+    const firstBlock = mounted[0]?.block ?? null;
+    const secondBlock = mounted[1]?.block ?? null;
+    if (!firstBlock || !secondBlock || firstBlock === secondBlock) {
+      throw new Error(
+        `image-pointer-blocks-unavailable:${JSON.stringify(mounted)}`
+      );
+    }
+    // Every demand below addresses its image by block identity, and both images
+    // stay mounted and visible so no gesture has to scroll the surface.
+    await revealWindowedVisualBlock(page, firstBlock);
+    const first = visualEditor.locator(
+      `[data-easymde-visual-block-id="${firstBlock}"] img`
+    );
+    const second = visualEditor.locator(
+      `[data-easymde-visual-block-id="${secondBlock}"] img`
+    );
+    await expect(first).toHaveCount(1);
+    await expect(second).toHaveCount(1);
+    await assertSourceExactValue(source, markdown, 'image-pointer-before');
+
+    // First image menu, dismissed with Escape. The native range and the DOM
+    // both survive exactly as the browser left them.
+    const firstPoint = await openVisualImageMenu(page, first);
+    await expectMenuItemState(page, 'image-scale', 'enabled');
+    let state = await readVisualImageTargetState(visualEditor);
+    if (
+      firstPoint.block !== firstBlock
+      || !state.overlaps[0]
+      || state.overlaps[1]
+      || state.anchorBlock !== firstBlock
+      || state.markerBlock !== firstBlock
+    ) {
+      throw new Error(`image-pointer-first-menu-invalid:${JSON.stringify(state)}`);
+    }
+    await page.keyboard.press('Escape');
+    await expect(page.locator(menuSelector)).toHaveCount(0);
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+
+    // A -> B -> A repeats without any range being cleared in between. Each
+    // demand keeps exactly one root menu and describes the pointed image.
+    for (const [index, block] of [
+      [1, secondBlock],
+      [0, firstBlock],
+      [1, secondBlock],
+      [0, firstBlock]
+    ]) {
+      const image = 0 === index ? first : second;
+      const stateBefore = await readVisualImageTargetState(visualEditor);
+      const menuBefore = await readMenuRect(page);
+      const point = await openVisualImageMenu(page, image);
+      await expectMenuItemState(page, 'image-scale', 'enabled');
+      state = await readVisualImageTargetState(visualEditor);
+      const other = 0 === index ? 1 : 0;
+      if (
+        point.block !== block
+        || !state.overlaps[index]
+        || state.overlaps[other]
+        || state.anchorBlock !== block
+        || state.markerBlock !== block
+      ) {
+        throw new Error(
+          `image-pointer-retarget-invalid:${index}:${JSON.stringify({
+            menuAfter: await readMenuRect(page),
+            menuBefore,
+            point,
+            state,
+            stateBefore
+          })}`
+        );
+      }
+      await expect(
+        page.locator(
+          `${menuViewportSelector} [data-easymde-context-menu-layer]`
+        )
+      ).toHaveCount(1);
+    }
+    await assertSourceExactValue(source, markdown, 'image-pointer-after');
+  });
+
+  test('keeps image ownership on the image a replacing pointer demand selected', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page, 2);
+    const { visualEditor } = await enterFullVisual(page);
+    await expect.poll(
+      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
+    ).toBeGreaterThan(0);
+    await scrollWindowedVisualToTop(page, visualEditor);
+    const mounted = await readMountedVisualImages(visualEditor);
+    const firstBlock = mounted[0]?.block ?? null;
+    const secondBlock = mounted[1]?.block ?? null;
+    if (
+      !firstBlock
+      || !secondBlock
+      || firstBlock === secondBlock
+      || mounted[0]?.alt !== '占位测试图片'
+      || mounted[1]?.alt !== '风景占位图'
+    ) {
+      throw new Error(
+        `image-pointer-blocks-unavailable:${JSON.stringify(mounted)}`
+      );
+    }
+    await revealWindowedVisualBlock(page, firstBlock);
+    const first = visualEditor.locator(
+      `[data-easymde-visual-block-id="${firstBlock}"] img`
+    );
+    const second = visualEditor.locator(
+      `[data-easymde-visual-block-id="${secondBlock}"] img`
+    );
+    await expect(first).toHaveCount(1);
+    await expect(second).toHaveCount(1);
+    const firstMarkdown = markdown.match(/!\[占位测试图片\]\([^\r\n]+\)/u)?.[0];
+    const secondMarkdown = markdown.match(/!\[风景占位图\]\([^\r\n]+\)/u)?.[0];
+    if (!firstMarkdown || !secondMarkdown) {
+      throw new Error('image-pointer-source-unavailable');
+    }
+    await assertSourceExactValue(source, markdown, 'image-pointer-scale-before');
+
+    // First image menu stays open; the second image demand replaces it, and
+    // the surface must not be scrolled to reach that image.
+    await openVisualImageMenu(page, first);
+    await expectMenuItemState(page, 'image-scale', 'enabled');
+    await openVisualImageMenu(page, second);
+    const state = await readVisualImageTargetState(visualEditor);
+    if (
+      !state.overlaps[1]
+      || state.overlaps[0]
+      || state.collapsed
+      || state.rangeCount !== 1
+    ) {
+      throw new Error(
+        `image-pointer-open-menu-retarget-invalid:${JSON.stringify(state)}`
+      );
+    }
+
+    await openRootSubmenu(page, 'image-scale');
+    await expectMenuItemState(page, 'image-scale-50', 'enabled');
+    await anyMenuItem(page, 'image-scale-50').click();
+    await expect(page.locator(menuSelector)).toHaveCount(0);
+    const expected = imageScaleSource(markdown, secondMarkdown, 50, 0);
+    await waitForSourceExactValue(source, expected, 'image-pointer-scale-applied');
+    const scaled = await source.inputValue();
+    // The first image keeps its source bytes: only the pointed image changed.
+    if (scaled.includes(imageScaleSource(markdown, firstMarkdown, 50, 0))) {
+      throw new Error('image-pointer-first-image-mutated');
+    }
+    if (!scaled.includes(firstMarkdown)) {
+      throw new Error('image-pointer-first-image-source-missing');
+    }
+    await assertPreviewImageScale(
+      visualEditor.getByAltText('风景占位图', { exact: true }).first(),
+      50,
+      'image-pointer-scale-applied'
+    );
+
+    await visualEditor.press('ControlOrMeta+z');
+    await waitForSourceExactValue(source, markdown, 'image-pointer-scale-undo');
+    await expect(
+      visualEditor.getByAltText('风景占位图', { exact: true }).first()
+    ).not.toHaveAttribute('data-easymde-image-scale');
+    await assertSourceExactValue(source, markdown, 'image-pointer-scale-after');
+  });
+
+  test('selects the left-clicked image and moves its visible target state', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page, 2);
+    const { visualEditor } = await enterFullVisual(page);
+    await expect.poll(
+      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
+    ).toBeGreaterThan(0);
+    await scrollWindowedVisualToTop(page, visualEditor);
+    const mounted = await readMountedVisualImages(visualEditor);
+    const firstBlock = mounted[0]?.block ?? null;
+    const secondBlock = mounted[1]?.block ?? null;
+    if (!firstBlock || !secondBlock || firstBlock === secondBlock) {
+      throw new Error(
+        `image-activation-blocks-unavailable:${JSON.stringify(mounted)}`
+      );
+    }
+    // Both images stay mounted and visible, so no gesture has to scroll the
+    // surface while it interacts with them.
+    await revealWindowedVisualBlock(page, firstBlock);
+    const first = visualEditor.locator(
+      `[data-easymde-visual-block-id="${firstBlock}"] img`
+    );
+    const second = visualEditor.locator(
+      `[data-easymde-visual-block-id="${secondBlock}"] img`
+    );
+    await expect(first).toHaveCount(1);
+    await expect(second).toHaveCount(1);
+    await assertSourceExactValue(source, markdown, 'image-activation-before');
+
+    // The primary button on an image selects that image and marks it.
+    let point = await visualImagePoint(first);
+    await page.mouse.click(point.x, point.y);
+    let state = await readVisualImageTargetState(visualEditor);
+    if (
+      state.collapsed
+      || state.rangeCount !== 1
+      || !state.overlaps[0]
+      || state.overlaps[1]
+      || state.anchorBlock !== firstBlock
+      || state.markerBlock !== firstBlock
+    ) {
+      throw new Error(`image-activation-first-invalid:${JSON.stringify(state)}`);
+    }
+
+    // Activating the next image moves both the selection and the marker.
+    point = await visualImagePoint(second);
+    await page.mouse.click(point.x, point.y);
+    state = await readVisualImageTargetState(visualEditor);
+    if (
+      state.collapsed
+      || state.rangeCount !== 1
+      || !state.overlaps[1]
+      || state.overlaps[0]
+      || state.anchorBlock !== secondBlock
+      || state.markerBlock !== secondBlock
+    ) {
+      throw new Error(`image-activation-second-invalid:${JSON.stringify(state)}`);
+    }
+
+    // A layout change the image itself caused — no scroll, no window resize —
+    // keeps the marker bound to the box it describes.
+    const resizedRect = await second.evaluate((image) => {
+      image.style.width = '60%';
+      const rect = image.getBoundingClientRect();
+      return {
+        height: Math.round(rect.height),
+        left: Math.round(rect.left),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width)
+      };
+    });
+    await expect
+      .poll(async () => (await readVisualImageTargetState(visualEditor)).markerRect)
+      .toEqual(resizedRect);
+
+    // Sliding the image out of the visible band must not paint the outline over
+    // page chrome: every step keeps the outline inside the band and viewport.
+    for (const step of [180, 180, 180, 180]) {
+      await page
+        .locator('.easymde-immersive-preview-canvas')
+        .evaluate((element, offset) => {
+          element.scrollTop += offset;
+          element.dispatchEvent(new Event('scroll', { bubbles: true }));
+        }, step);
+      await expect
+        .poll(async () => {
+          const band = await readVisibleBand(page);
+          const state = await readVisualImageTargetState(visualEditor);
+          if (!state.markerRect) return 'missing-outline';
+          const markerBottom =
+            state.markerRect.top + state.markerRect.height;
+          const inside =
+            state.markerRect.top >= band.top - 1
+            && markerBottom <= band.bottom + 1
+            && state.markerRect.top >= -1;
+          return inside ? 'inside' : JSON.stringify({ band, marker: state.markerRect });
+        })
+        .toBe('inside');
+    }
+
+    // Clicking text clears the marker and leaves a caret inside that block.
+    const text = await clickVisualTextPoint(page, visualEditor);
+    state = await readVisualImageTargetState(visualEditor);
+    if (
+      !state.collapsed
+      || state.rangeCount !== 1
+      || state.markerTop !== null
+      || state.markerBlock !== null
+      || !text.block
+      || state.anchorBlock !== text.block
+    ) {
+      throw new Error(
+        `image-activation-text-invalid:${JSON.stringify({ state, text })}`
+      );
+    }
+
+    // Selecting and marking an image never writes Markdown.
+    await assertSourceExactValue(source, markdown, 'image-activation-after');
   });
 
   test('keeps immersive split Source interactive without changing the canonical source on dismissal', async ({ page }) => {

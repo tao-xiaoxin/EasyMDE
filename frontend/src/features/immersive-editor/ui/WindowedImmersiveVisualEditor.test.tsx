@@ -719,6 +719,47 @@ describe("WindowedImmersiveVisualEditor", () => {
 			if (current.surface.isConnected) current.surface.remove();
 		}
 	});
+  it("normalizes a collapsed pointer HR target through the Windowed ledger", () => {
+    const blockIndex = 160;
+    const current = fixture({
+      blockOverrides: { [blockIndex]: "---" },
+      markupOverrides: {
+        [blockIndex]: `<hr data-easymde-visual-block-id="b${blockIndex}">`,
+      },
+      mounted: [blockIndex],
+    });
+    const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+      current: null,
+    };
+    const rendered = renderWindowEditor(current, {
+      onReady: (nextRuntime) => {
+        runtimeHolder.current = nextRuntime;
+      },
+    });
+    const thematicBreak = current.surface.querySelector("hr");
+    if (!(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error("windowed-hr-pointer-fixture-missing");
+    }
+    window.getSelection()?.removeAllRanges();
+    try {
+      expect(
+        runtimeHolder.current?.prepareContextMenuSelection?.(
+          thematicBreak,
+          { x: 2, y: 2 },
+          "pointer",
+        ),
+      ).toBe(true);
+      expect(current.documentSession.document.getSelection()).toMatchObject({
+        direction: "forward",
+        start: expect.any(Number),
+        end: expect.any(Number),
+      });
+      expect(current.applyTextChange).toHaveBeenCalledOnce();
+    } finally {
+      rendered.view.unmount();
+      if (current.surface.isConnected) current.surface.remove();
+    }
+  });
 
 	it("keeps a straddling selection and rejects the image context gesture", () => {
 		const blockIndex = 160;
@@ -999,6 +1040,273 @@ describe("WindowedImmersiveVisualEditor", () => {
 				runtimeHolder.current?.prepareContextMenuSelection?.(secondImage),
 			).toBe(true);
 			expect(failures).toEqual([]);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: secondStart + secondMarkdown.length,
+					start: secondStart,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("selects the left-clicked image and marks it without writing the document", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const current = fixture({
+			blockOverrides: {
+				[blockIndex]: imageMarkdown,
+				[blockIndex + 1]: "After",
+			},
+			markupOverrides: {
+				[blockIndex]:
+					`<p data-easymde-visual-block-id="b${blockIndex}">`
+					+ '<img alt="alt" src="https://example.test/image.png"></p>',
+				[blockIndex + 1]:
+					`<p data-easymde-visual-block-id="b${blockIndex + 1}">After</p>`,
+			},
+			mounted: [blockIndex, blockIndex + 1],
+		});
+		const rendered = renderWindowEditor(current);
+		const image = current.surface.querySelector("img");
+		const imageBlock = image?.parentElement ?? null;
+		const imageStart = current.canonical().indexOf(imageMarkdown);
+		if (
+			!(image instanceof HTMLImageElement)
+			|| !imageBlock
+			|| imageStart < 0
+		) {
+			throw new Error("windowed-image-activation-fixture-missing");
+		}
+		const marker = (): Element | null =>
+			document.querySelector(".easymde-visual-image-selection-feedback");
+
+		try {
+			expect(marker()).toBeNull();
+			image.dispatchEvent(
+				new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+			);
+			// The activation owns the selection and republishes the unchanged
+			// canonical value with the image's own source range.
+			expect(window.getSelection()?.anchorNode).toBe(imageBlock);
+			expect(window.getSelection()?.isCollapsed).toBe(false);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: imageStart + imageMarkdown.length,
+					start: imageStart,
+				},
+				value: current.canonical(),
+			});
+			// The marker lives outside the editable surface, so it cannot leak
+			// into serialization or the accepted-window comparison.
+			expect(marker()).toBeInstanceOf(HTMLElement);
+			expect(current.surface.contains(marker())).toBe(false);
+
+			// A primary press outside an image drops the remembered selection.
+			current.surface.dispatchEvent(
+				new MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+			);
+			expect(marker()).toBeNull();
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("re-anchors the retained image selection on a pointer demand after Escape", () => {
+		const firstIndex = 160;
+		const secondIndex = 161;
+		const firstMarkdown = "![first](https://example.test/first.png)";
+		const secondMarkdown = "![second](https://example.test/second.png)";
+		const current = fixture({
+			blockOverrides: {
+				[firstIndex]: firstMarkdown,
+				[secondIndex]: secondMarkdown,
+			},
+			markupOverrides: {
+				[firstIndex]:
+					`<p data-easymde-visual-block-id="b${firstIndex}">`
+					+ '<img alt="first" src="https://example.test/first.png"></p>',
+				[secondIndex]:
+					`<p data-easymde-visual-block-id="b${secondIndex}">`
+					+ '<img alt="second" src="https://example.test/second.png"></p>',
+			},
+			mounted: [firstIndex, secondIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => {
+				failures.push(code);
+			},
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const [firstImage, secondImage] = Array.from(
+			current.surface.querySelectorAll("img"),
+		);
+		const firstStart = current.canonical().indexOf(firstMarkdown);
+		const secondStart = current.canonical().indexOf(secondMarkdown);
+		if (
+			!(firstImage instanceof HTMLImageElement)
+			|| !(secondImage instanceof HTMLImageElement)
+			|| firstStart < 0
+			|| secondStart < 0
+		) {
+			throw new Error("windowed-retained-image-fixture-missing");
+		}
+
+		try {
+			// First image menu, dismissed with Escape. The image-node range the
+			// menu placed and the DOM both survive exactly as the browser left
+			// them: no range is cleared and no block is rebuilt.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(firstImage),
+			).toBe(true);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: firstStart + firstMarkdown.length,
+					start: firstStart,
+				},
+				value: current.canonical(),
+			});
+			expect(window.getSelection()?.rangeCount).toBe(1);
+			expect(window.getSelection()?.isCollapsed).toBe(false);
+
+			// The second image is already live, so the pointer demand has to
+			// rebind the retained range on its own.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(
+					secondImage,
+					{ x: 10, y: 10 },
+					"pointer",
+				),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(window.getSelection()?.anchorNode).toBe(
+				secondImage.parentElement,
+			);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: secondStart + secondMarkdown.length,
+					start: secondStart,
+				},
+				value: current.canonical(),
+			});
+
+			// A -> B -> A repeats with the same retained-range conditions.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(
+					firstImage,
+					{ x: 10, y: 10 },
+					"pointer",
+				),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(current.applyTextChange).toHaveBeenLastCalledWith({
+				selection: {
+					direction: "forward",
+					end: firstStart + firstMarkdown.length,
+					start: firstStart,
+				},
+				value: current.canonical(),
+			});
+		} finally {
+			rendered.view.unmount();
+			if (current.surface.isConnected) current.surface.remove();
+		}
+	});
+
+	it("re-anchors the retained image selection while the first menu is still open", () => {
+		const firstIndex = 160;
+		const secondIndex = 161;
+		const firstMarkdown = "![first](https://example.test/first.png)";
+		const secondMarkdown = "![second](https://example.test/second.png)";
+		const current = fixture({
+			blockOverrides: {
+				[firstIndex]: firstMarkdown,
+				[secondIndex]: secondMarkdown,
+			},
+			markupOverrides: {
+				[firstIndex]:
+					`<p data-easymde-visual-block-id="b${firstIndex}">`
+					+ '<img alt="first" src="https://example.test/first.png"></p>',
+				[secondIndex]:
+					`<p data-easymde-visual-block-id="b${secondIndex}">`
+					+ '<img alt="second" src="https://example.test/second.png"></p>',
+			},
+			mounted: [firstIndex, secondIndex],
+		});
+		const runtimeHolder: { current: ImmersiveVisualEditorRuntime | null } = {
+			current: null,
+		};
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => {
+				failures.push(code);
+			},
+			onReady: (nextRuntime) => {
+				runtimeHolder.current = nextRuntime;
+			},
+		});
+		const [firstImage, secondImage] = Array.from(
+			current.surface.querySelectorAll("img"),
+		);
+		const firstStart = current.canonical().indexOf(firstMarkdown);
+		const secondStart = current.canonical().indexOf(secondMarkdown);
+		if (
+			!(firstImage instanceof HTMLImageElement)
+			|| !(secondImage instanceof HTMLImageElement)
+			|| firstStart < 0
+			|| secondStart < 0
+		) {
+			throw new Error("windowed-open-menu-image-fixture-missing");
+		}
+
+		try {
+			// The first menu stays open: its demand owns the retained range.
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(firstImage),
+			).toBe(true);
+			expect(current.applyTextChange).toHaveBeenCalledTimes(1);
+
+			// The replacing right-click runs the real pointer gesture before
+			// the menu demand is prepared again. A secondary-button gesture
+			// must not disturb the range the open menu still owns.
+			for (const type of ["pointerdown", "mousedown"] as const) {
+				secondImage.dispatchEvent(
+					new MouseEvent(type, {
+						button: 2,
+						bubbles: true,
+						cancelable: true,
+						composed: true,
+					}),
+				);
+			}
+			expect(window.getSelection()?.isCollapsed).toBe(false);
+
+			expect(
+				runtimeHolder.current?.prepareContextMenuSelection?.(
+					secondImage,
+					{ x: 10, y: 10 },
+					"pointer",
+				),
+			).toBe(true);
+			expect(failures).toEqual([]);
+			expect(window.getSelection()?.anchorNode).toBe(
+				secondImage.parentElement,
+			);
+			expect(current.applyTextChange).toHaveBeenCalledTimes(2);
 			expect(current.applyTextChange).toHaveBeenLastCalledWith({
 				selection: {
 					direction: "forward",
@@ -3241,7 +3549,10 @@ describe("WindowedImmersiveVisualEditor", () => {
 			{ revision: 2, signature: "hidden-source-history" },
 		);
 
-		expect(onDiagnostic).toHaveBeenCalledWith(
+		// One report per event: the pinned document-end demand fails through
+		// the transfer owner, which is the single owner of this code, so the
+		// diagnostic channel stays silent for the same event.
+		expect(onDiagnostic).not.toHaveBeenCalledWith(
 			"visual-editor-window-history-selection-not-mounted",
 		);
 		expect(onFailure).toHaveBeenCalledWith(
@@ -4566,6 +4877,308 @@ describe("WindowedImmersiveVisualEditor", () => {
 			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
 			expect(readyRuntime.prepareToolbarFallback()).toBe(true);
 			expect(current.documentChanges).not.toHaveBeenCalled();
+		} finally {
+			view.unmount();
+		}
+	});
+
+	it("commits the following block boundary when a removal caret lands on the blank line it left", () => {
+		const current = fixture({
+			lineOverrides: { 160: "Remove me", 161: "After" },
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(_markdown: string, _selection?: Readonly<{ end: number; start: number }>) => ({
+				release: vi.fn(),
+				signature: "windowed",
+			}),
+		);
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const { rerenderPreview, view } = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+
+		try {
+			if (!runtime) throw new Error("windowed-removal-caret-runtime-missing");
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			const source = current.canonical();
+			const removed = "Remove me";
+			const from = source.indexOf(removed);
+			if (from < 0) throw new Error("windowed-removal-caret-target-missing");
+			// A canonical removal of a whole block keeps its trailing line
+			// terminator: the command removes the block's content only, so the
+			// block's ledger range survives as bare whitespace.
+			const to = from + removed.length;
+			const value = source.slice(0, from) + source.slice(to);
+			// The command collapses its caret where the removed block started.
+			// That offset is the empty line the removal left behind, which no
+			// editable block owns, so the following editable block owns the
+			// committed selection instead.
+			expect(
+				readyRuntime.applyCanonicalChange({
+					change: {
+						changes: { from, insert: "", to },
+						selection: { direction: "none", end: from, start: from },
+						value,
+					},
+					expected: {
+						revision: 0,
+						selection: { direction: "none", end: 0, start: 0 },
+						value: source,
+					},
+				}),
+			).toBe("handled");
+			const projected = value.indexOf("After");
+			if (projected <= 0) {
+				throw new Error("windowed-removal-caret-follower-missing");
+			}
+			expect(current.documentChanges).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					selection: { direction: "none", end: projected, start: projected },
+					value,
+				}),
+			);
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(value, {
+				direction: "none",
+				end: projected,
+				start: projected,
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			// The accepted Preview for that commit must reach the same
+			// position: the window replaces the removed block's DOM, so the
+			// delayed pending-history restore is the step that decides whether
+			// the surface keeps editing or is torn down.
+			current.surface
+				.querySelector('[data-easymde-visual-block-id="b160"]')
+				?.remove();
+			rerenderPreview(
+				{
+					blocks: current.editMap.blocks.filter(
+						(block) => "b160" !== block.id,
+					),
+					coordinate: "line",
+					signature: "windowed",
+					version: 1,
+				},
+				{ revision: 2, signature: "windowed" },
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const caret = window.getSelection();
+			expect(caret?.rangeCount).toBe(1);
+			expect(caret?.isCollapsed).toBe(true);
+			expect(caret?.anchorNode?.isConnected).toBe(true);
+			expect(current.surface.contains(caret?.anchorNode ?? null)).toBe(true);
+		} finally {
+			view.unmount();
+		}
+	});
+
+	it("commits the preceding block boundary when the removal has no following block", () => {
+		const current = fixture({
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: 161,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(_markdown: string, _selection?: Readonly<{ end: number; start: number }>) => ({
+				release: vi.fn(),
+				signature: "windowed",
+			}),
+		);
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const { rerenderPreview, view } = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+
+		try {
+			if (!runtime) {
+				throw new Error("windowed-trailing-removal-runtime-missing");
+			}
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			const source = current.canonical();
+			const removed = "Line 160";
+			const from = source.indexOf(removed);
+			if (from < 0) throw new Error("windowed-trailing-removal-target-missing");
+			// The last block ends the document, so it has no trailing newline.
+			const to = source.length;
+			const value = source.slice(0, from) + source.slice(to);
+			const result = readyRuntime.applyCanonicalChange({
+				change: {
+					changes: { from, insert: "", to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(result).toBe("handled");
+			const preceding = "Line 159";
+			// The committed caret belongs to the preceding block's own text end:
+			// its ledger range includes the trailing line terminators the
+			// removal left behind, which no caret can be restored onto.
+			const projected = value.indexOf(preceding) + preceding.length;
+			expect(current.documentChanges).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					selection: { direction: "none", end: projected, start: projected },
+					value,
+				}),
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			// The accepted Preview for the removal must not tear the surface
+			// down: the delayed pending-history restore has to reach the
+			// committed position inside the mounted window.
+			current.surface
+				.querySelector('[data-easymde-visual-block-id="b160"]')
+				?.remove();
+			rerenderPreview(
+				{
+					blocks: current.editMap.blocks.slice(0, 160),
+					coordinate: "line",
+					signature: "windowed",
+					version: 1,
+				},
+				{ revision: 2, signature: "windowed" },
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const caret = window.getSelection();
+			expect(caret?.rangeCount).toBe(1);
+			expect(caret?.isCollapsed).toBe(true);
+			expect(current.surface.contains(caret?.anchorNode ?? null)).toBe(true);
+		} finally {
+			view.unmount();
+		}
+	});
+
+	it("keeps the windowed surface editable when Undo restores a removed code block", () => {
+		const current = fixture({
+			lineOverrides: { 159: "Before", 160: "```text\ncode\n```" },
+			markupOverrides: {
+				159: '<p data-easymde-visual-block-id="b159">Before</p>',
+				160: '<pre data-easymde-visual-block-id="b160"><code>code</code></pre>',
+			},
+			mounted: [159, 160],
+			sourceBlockCount: 161,
+		});
+		const onDiagnostic = vi.fn();
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const { rerenderPreview, view } = renderWindowEditor(current, {
+			onDiagnostic,
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+			requestPreview: () => "windowed",
+			requestPreviewAtDocumentEnd: testDocumentEndPreviewRequest("windowed"),
+		});
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+
+		try {
+			if (!runtime) throw new Error("windowed-undo-runtime-missing");
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			const source = current.canonical();
+			// Block 160 is the last block, a fence with no trailing terminator:
+			// the command removes its content through the document end.
+			const fenceStart = source.indexOf("```text");
+			if (fenceStart < 0) throw new Error("windowed-undo-fence-missing");
+			const removed = source.slice(0, fenceStart);
+			expect(
+				readyRuntime.applyCanonicalChange({
+					change: {
+						changes: { from: fenceStart, insert: "", to: source.length },
+						selection: { direction: "none", end: fenceStart, start: fenceStart },
+						value: removed,
+					},
+					expected: {
+						revision: 0,
+						selection: { direction: "none", end: 0, start: 0 },
+						value: source,
+					},
+				}),
+			).toBe("handled");
+			expect(onFailure).not.toHaveBeenCalled();
+			// Complete that transfer the way an accepted Preview window commit
+			// does, so the history route is free again.
+			current.surface
+				.querySelector('[data-easymde-visual-block-id="b160"]')
+				?.remove();
+			const withoutFence = {
+				blocks: current.editMap.blocks.filter((block) => "b160" !== block.id),
+				coordinate: "line" as const,
+				signature: "windowed",
+				version: 1 as const,
+			};
+			rerenderPreview(withoutFence, { revision: 2, signature: "windowed" });
+			expect(onFailure).not.toHaveBeenCalled();
+
+			// Cmd+Z restores the removed fence and the non-collapsed source
+			// selection the command had replaced.
+			const fence = document.createElement("pre");
+			fence.setAttribute("data-easymde-visual-block-id", "b160");
+			const code = document.createElement("code");
+			code.textContent = "code";
+			fence.append(code);
+			current.surface.append(fence);
+			const restoredSelection = {
+				direction: "forward" as const,
+				end: source.length,
+				start: fenceStart,
+			};
+			Object.assign(current.documentSession.document, {
+				getSelection: () => restoredSelection,
+				undo: vi.fn(() => {
+					current.setCanonical(source);
+					return true;
+				}),
+			});
+			const historyUndo = new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				inputType: "historyUndo",
+			});
+			current.surface.dispatchEvent(historyUndo);
+			expect(historyUndo.defaultPrevented).toBe(true);
+			expect(current.canonical()).toBe(source);
+			rerenderPreview(
+				{ ...current.editMap, signature: "windowed" },
+				{ revision: 3, signature: "windowed" },
+			);
+
+			expect(onDiagnostic.mock.calls.flat()).toEqual([]);
+			expect(onFailure.mock.calls.flat()).toEqual([]);
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const caret = window.getSelection();
+			expect(caret?.anchorNode?.isConnected).toBe(true);
+			expect(current.surface.contains(caret?.anchorNode ?? null)).toBe(true);
 		} finally {
 			view.unmount();
 		}

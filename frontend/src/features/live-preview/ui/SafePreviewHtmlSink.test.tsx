@@ -683,4 +683,283 @@ describe('SafePreviewHtmlSink window commits', () => {
     expect(spacer.style.margin).toBe('0px');
     expect(Array.from(surfaceRef.current?.childNodes ?? [])).toEqual(windowNodes);
   });
+
+  it('drops a root selection whose selected child an identity commit replaced', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const witness = document.createElement('hr');
+    first.textContent = 'first';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [first, witness], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-identity-commit-surface-missing');
+    surface.focus();
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.setBaseAndExtent(surface, 1, surface, 2);
+    const replacement = document.createElement('p');
+    replacement.textContent = 'replacement';
+
+    expect(() => view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 2, nodes: [first, replacement], revision: 1 }}
+      />
+    )).not.toThrow();
+
+    expect(Array.from(surface.childNodes)).toEqual([first, replacement]);
+    // The selected identity is gone, so no offset is reused to invent a caret.
+    const selection = window.getSelection();
+    const stillSelectsReplacement = selection?.anchorNode === surface
+      && selection?.focusNode === surface
+      && Math.min(selection.anchorOffset, selection.focusOffset) === 1
+      && Math.max(selection.anchorOffset, selection.focusOffset) === 2;
+    expect(stillSelectsReplacement).toBe(false);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('reuses the recorded offset of an unrestorable root selection without failing the commit', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const first = document.createElement('p');
+    const witness = document.createElement('hr');
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 1, nodes: [first, witness], revision: 1 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-dropped-selection-surface-missing');
+    surface.focus();
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.setBaseAndExtent(surface, 1, surface, 2);
+    const replacement = document.createElement('p');
+    replacement.textContent = 'replacement';
+    const extra = document.createElement('p');
+    extra.textContent = 'extra';
+
+    // The commit changes the child count, so the recorded interval no longer
+    // names the same surface position. The commit still lands; only the
+    // unprovable caret is dropped.
+    expect(() => view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{ key: 2, nodes: [first, replacement, extra], revision: 1 }}
+      />
+    )).not.toThrow();
+
+    expect(Array.from(surface.childNodes)).toEqual([first, replacement, extra]);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('keeps a retained contiguous node interval at its new positions', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const head = document.createElement('p');
+    const selectedFirst = document.createElement('p');
+    const selectedLast = document.createElement('p');
+    const tail = document.createElement('p');
+    head.textContent = 'head';
+    selectedFirst.textContent = 'selected-first';
+    selectedLast.textContent = 'selected-last';
+    tail.textContent = 'tail';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 1,
+          nodes: [head, selectedFirst, selectedLast, tail],
+          revision: 1
+        }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-retained-interval-surface-missing');
+    surface.focus();
+    window.getSelection()?.removeAllRanges();
+    // Backward root selection covering the two middle children.
+    window.getSelection()?.setBaseAndExtent(surface, 3, surface, 1);
+    const prefix = document.createElement('p');
+    prefix.textContent = 'prefix';
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 2,
+          nodes: [prefix, head, selectedFirst, selectedLast, tail],
+          revision: 1
+        }}
+      />
+    );
+
+    const selection = window.getSelection();
+    expect(Array.from(surface.childNodes)).toEqual([
+      prefix, head, selectedFirst, selectedLast, tail
+    ]);
+    // The interval moved by one but still selects exactly the retained nodes,
+    // and its backward direction is preserved.
+    expect(selection?.anchorNode).toBe(surface);
+    expect(selection?.focusNode).toBe(surface);
+    expect(selection?.anchorOffset).toBe(4);
+    expect(selection?.focusOffset).toBe(2);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('does not select a fresh same-index node when the selected identity is replaced', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const previousFirst = document.createElement('p');
+    const selected = document.createElement('hr');
+    const previousLast = document.createElement('p');
+    previousFirst.textContent = 'previous-first';
+    previousLast.textContent = 'previous-last';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 1,
+          nodes: [previousFirst, selected, previousLast],
+          revision: 1
+        }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-same-index-surface-missing');
+    surface.focus();
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.setBaseAndExtent(surface, 1, surface, 2);
+    // Same child count as before, entirely fresh identities: the old index 1
+    // now names a different node, so no offset may be reused.
+    const freshFirst = document.createElement('p');
+    const freshSecond = document.createElement('p');
+    const freshHr = document.createElement('hr');
+    freshFirst.textContent = 'fresh-first';
+    freshSecond.textContent = 'fresh-second';
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 2,
+          nodes: [freshFirst, freshSecond, freshHr],
+          revision: 1
+        }}
+      />
+    );
+
+    expect(Array.from(surface.childNodes)).toEqual([freshFirst, freshSecond, freshHr]);
+    const selection = window.getSelection();
+    const selectsFreshNode = selection?.anchorNode === surface
+      && selection?.focusNode === surface
+      && Math.min(selection.anchorOffset, selection.focusOffset) === 1
+      && Math.max(selection.anchorOffset, selection.focusOffset) === 2;
+    expect(selectsFreshNode).toBe(false);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it('does not collapse a retained interval whose neighbours shifted', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const head = document.createElement('p');
+    const selected = document.createElement('hr');
+    const oldSpacer = document.createElement('div');
+    const tail = document.createElement('p');
+    oldSpacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    head.textContent = 'head';
+    tail.textContent = 'tail';
+    const onCommit = vi.fn();
+    const view = render(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 1,
+          nodes: [head, selected, oldSpacer, tail],
+          revision: 1
+        }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-shifted-neighbour-surface-missing');
+    surface.focus();
+    window.getSelection()?.removeAllRanges();
+    // The selection names the HR only, with the spacer and tail after it.
+    window.getSelection()?.setBaseAndExtent(surface, 1, surface, 2);
+    const prefix = document.createElement('p');
+    prefix.textContent = 'prefix';
+    const newSpacer = document.createElement('div');
+    newSpacer.setAttribute('data-easymde-preview-window-spacer', '1');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        contentEditable
+        html={'' as SafePreviewHtml}
+        htmlRevision={1}
+        onStagedCommit={onCommit}
+        surfaceRef={surfaceRef}
+        windowedCommit={{
+          key: 2,
+          nodes: [prefix, head, selected, newSpacer, tail],
+          revision: 1
+        }}
+      />
+    );
+
+    expect(Array.from(surface.childNodes)).toEqual([
+      prefix, head, selected, newSpacer, tail
+    ]);
+    const selection = window.getSelection();
+    // The retained HR is now at index 2; the interval must track the node, not
+    // the stale numeric offset.
+    expect(selection?.anchorNode).toBe(surface);
+    expect(selection?.focusNode).toBe(surface);
+    expect(selection?.anchorOffset).toBe(2);
+    expect(selection?.focusOffset).toBe(3);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
 });

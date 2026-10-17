@@ -111,16 +111,19 @@
   max-width: none !important;
 }
 
+/* A formally validated scale above 100% is capped at the containing block's
+   content width: the rendered image must never leave the editor, while the
+   canonical width marker itself stays untouched. */
 .easymde-rendered-content img[data-easymde-image-scale="150"],
 .easymde-preview img[data-easymde-image-scale="150"] {
   width: 150% !important;
-  max-width: none !important;
+  max-width: 100% !important;
 }
 
 .easymde-rendered-content img[data-easymde-image-scale="200"],
 .easymde-preview img[data-easymde-image-scale="200"] {
   width: 200% !important;
-  max-width: none !important;
+  max-width: 100% !important;
 }
 
 /* EasyMDE owns this scroll surface for outline/preview synchronization. */

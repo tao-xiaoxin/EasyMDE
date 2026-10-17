@@ -189,6 +189,7 @@ function previewSourceSelectionBlockIndices(
 		throw new PreviewWindowDomError("preview-window-selection-range-invalid");
 	}
 	const lineStarts = markdownLineStarts(markdown);
+	const collapsed = sourceSelection.start === sourceSelection.end;
 	const indices = [
 		previewSourceSelectionBlockIndex(
 			markdown,
@@ -197,6 +198,7 @@ function previewSourceSelectionBlockIndices(
 			lineStarts,
 			sourceSelection.start,
 			false,
+			collapsed,
 		),
 		...(range
 			? [
@@ -207,6 +209,7 @@ function previewSourceSelectionBlockIndices(
 						lineStarts,
 						sourceSelection.end,
 						true,
+						false,
 					),
 				]
 			: []),
@@ -223,6 +226,7 @@ function previewSourceSelectionBlockIndex(
 	lineStarts: ReadonlyArray<number>,
 	offset: number,
 	preferPrevious: boolean,
+	collapsed: boolean,
 ): number {
 	if (offset === markdown.length) {
 		return previewDocumentEndBlockIndex(markdown, editMap, signature);
@@ -242,7 +246,61 @@ function previewSourceSelectionBlockIndex(
 		);
 		if (blockIndex >= 0) return blockIndex;
 	}
+	// A canonical removal can leave a *collapsed* caret on the line terminators
+	// the removed block kept, and that position has no editable owner. The
+	// following editable block owns the pin then, otherwise the preceding one,
+	// but only while the source between the caret and that block is blank:
+	// nothing else is recoverable whitespace, and a non-collapsed endpoint
+	// keeps its explicit failure.
+	const nearest = collapsed
+		? blankLineEditableBlockIndex(markdown, editMap, lineStarts, lineIndex, offset)
+		: -1;
+	if (nearest >= 0) return nearest;
 	throw new PreviewWindowDomError("preview-window-selection-block-unavailable");
+}
+
+/**
+ * The editable block a collapsed caret with no editable owner on its own line
+ * can still pin, or `-1` when no block is reachable through blank source. The
+ * following block wins when every skipped line is blank, otherwise the
+ * preceding block when the source between its range end and the caret is blank.
+ */
+function blankLineEditableBlockIndex(
+	markdown: string,
+	editMap: PreviewEditMap,
+	lineStarts: ReadonlyArray<number>,
+	lineIndex: number,
+	offset: number,
+): number {
+	let previous = -1;
+	let previousStart = -1;
+	let next = -1;
+	let nextStart = -1;
+	editMap.blocks.forEach((block, index) => {
+		if (!block.editable || block.endLine <= block.startLine) return;
+		if (block.endLine <= lineIndex) {
+			previous = index;
+			previousStart = lineStarts[block.endLine] ?? -1;
+		} else if (-1 === next && block.startLine > lineIndex) {
+			next = index;
+			nextStart = lineStarts[block.startLine] ?? -1;
+		}
+	});
+	if (
+		-1 !== next &&
+		nextStart >= 0 &&
+		isMarkdownTerminalWhitespaceSuffix(markdown.slice(offset, nextStart))
+	) {
+		return next;
+	}
+	if (
+		-1 !== previous &&
+		previousStart >= 0 &&
+		isMarkdownTerminalWhitespaceSuffix(markdown.slice(previousStart, offset))
+	) {
+		return previous;
+	}
+	return -1;
 }
 
 function previewImageSelectionBlockIndices(
@@ -3661,7 +3719,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	}, [discardStaging]);
 
 	useLayoutEffect(() => {
-		if (props.windowed) return;
+		if (props.windowed) {
+			// Release the previous activation's full-surface hold before window setup.
+			// Do not release a consumer's hold on ordinary rerenders of this activation.
+			materializedOverrideRef.current = false;
+			return;
+		}
 		acceptedWindowSnapshotRef.current = null;
 		const documentEndPin = documentEndPinRef.current;
 		if (documentEndPin) clearDocumentEndPin(documentEndPin, false);
@@ -4144,6 +4207,16 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			void materializeRef.current(false);
 			return;
 		}
+		if (materializationPendingRef.current) {
+			// Sink completion clears readyHtml.materializeCommit and reruns this effect;
+			// failure publishes the failed phase, cancelling a queued Root unlock.
+			return;
+		}
+		if (materializedOverrideRef.current) {
+			// A consumer is using the full surface in this activation. A new windowed
+			// activation releases this hold above, before a new unlock can wait here.
+			return;
+		}
 		const surface = surfaceRef.current;
 		if (!surface || "html" !== state.kind || "ready" !== state.phase) {
 			return;
@@ -4351,13 +4424,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
 		const commitWindow = () => {
 			frame = null;
-			if (
-				disposed ||
-				windowCommitPendingRef.current ||
-				materializationPendingRef.current ||
-				materializedOverrideRef.current
-			)
+			if (disposed || windowCommitPendingRef.current) return;
+			if (materializationPendingRef.current || materializedOverrideRef.current) {
+				// Do not race the sink or replace a consumer's full surface. Pending sink
+				// completion restarts setup; a later activation releases a completed hold.
 				return;
+			}
 			try {
 				activeRepository.model.assertCurrent(activeRepository.context);
 				if (
@@ -4639,14 +4711,12 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		};
 
 		const scheduleWindow = () => {
-			if (
-				disposed ||
-				geometryPreparationRef.current ||
-				null !== frame ||
-				materializationPendingRef.current ||
-				materializedOverrideRef.current
-			)
+			if (disposed || geometryPreparationRef.current || null !== frame) return;
+			if (materializationPendingRef.current || materializedOverrideRef.current) {
+				// This is the same activation-scoped hold as commitWindow, not a dropped
+				// unlock: completion retries setup, failure publishes error, reentry releases.
 				return;
+			}
 			if (windowRef?.requestAnimationFrame) {
 				frame = windowRef.requestAnimationFrame(commitWindow);
 				return;
@@ -4866,6 +4936,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		state.kind,
 		state.generation,
 		readyHtml?.editMap,
+		readyHtml?.materializeCommit,
 		readyHtml?.phase,
 		readyHtml?.signature,
 		windowedEditing,

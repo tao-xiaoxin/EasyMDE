@@ -1893,6 +1893,289 @@ describe("PreviewSurfaceOwner", () => {
 		expect(current.runtime.getAcceptedWindowSnapshot()).toBeNull();
 	});
 
+	it("readmits the current request after a windowed unlock and mode round trip at a newer commit generation", async () => {
+		const first = windowedFixture(320, "1:round-trip");
+		const second = windowedFixture(320, "2:round-trip");
+		const onWindowReady = vi.fn();
+		const current = setup({
+			onWindowReady,
+			stagingScheduler: { yield: () => Promise.resolve() },
+			windowed: false,
+		});
+		await act(async () => {
+			for (let index = 0; index < 16; index += 1) await Promise.resolve();
+		});
+		act(() => current.session.schedule(request("article", first.editMap.signature), true));
+		await act(async () => {
+			current.responses[0]?.resolve({ ...first, features: {} });
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+		});
+		current.setWindowed(true);
+		await act(async () => flushAnimationFrames());
+		expect(current.runtime.getAcceptedWindowSnapshot()).toMatchObject({
+			revision: 2,
+			signature: first.editMap.signature,
+		});
+		expect(onWindowReady).toHaveBeenCalled();
+
+		// Leaving visual editing materializes before the source-mode refresh.
+		let materialization!: Promise<boolean>;
+		act(() => { materialization = current.runtime.materialize(); });
+		await act(async () => flushAnimationFrames());
+		await expect(materialization).resolves.toBe(true);
+		onWindowReady.mockClear();
+		current.setClassName("source-mode-handoff");
+		await act(async () => flushAnimationFrames());
+		expect(current.surface.children).toHaveLength(320);
+		expect(onWindowReady).not.toHaveBeenCalled();
+
+		// Hidden source mode keeps the windowed owner. Its second request
+		// commits generation 4: loading and success each advance that clock.
+		act(() => current.session.schedule(request("article", second.editMap.signature), true));
+		await act(async () => {
+			current.responses[1]?.resolve({ ...second, features: {} });
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+		});
+		await act(async () => flushAnimationFrames());
+		expect(current.session.isCurrent(2, second.editMap.signature)).toBe(true);
+		expect(current.runtime.getAcceptedWindowSnapshot()).toMatchObject({
+			revision: 4,
+			signature: second.editMap.signature,
+		});
+
+		// Returning to read-only Preview materializes that same generation.
+		current.setWindowed(false);
+		await act(async () => flushAnimationFrames());
+		expect(current.surface.children).toHaveLength(320);
+		expect(current.runtime.getAcceptedWindowSnapshot()).toBeNull();
+		onWindowReady.mockClear();
+		current.setWindowed(true);
+		await act(async () => flushAnimationFrames());
+
+		expect(current.onDiagnostic).not.toHaveBeenCalled();
+		expect(onWindowReady).toHaveBeenCalled();
+		expect(current.runtime.getAcceptedWindowSnapshot()).toMatchObject({
+			revision: 4,
+			signature: second.editMap.signature,
+		});
+		expect(current.surface.querySelectorAll("[data-easymde-visual-block-id]").length)
+			.toBeLessThanOrEqual(160);
+		current.unmount();
+	});
+
+	it.each(["complete", "fail"] as const)(
+		"settles windowed reentry when an in-flight materialization must %s",
+		async (outcome) => {
+			const fixture = windowedFixture(320, "pending-reentry");
+			const pending: Array<ReturnType<typeof deferred<void>>> = [];
+			const onWindowReady = vi.fn();
+			const statuses: PreviewSurfaceStatus[] = [];
+			const current = setup({
+				contentEditable: true,
+				initialEditMap: fixture.editMap,
+				initialHtml: fixture.html,
+				initialSignature: fixture.editMap.signature,
+				materializeScheduler: {
+					pending,
+					yield: vi.fn(() => {
+						const next = deferred<void>();
+						pending.push(next);
+						return next.promise;
+					}),
+				},
+				onStatusChange: (status) => statuses.push(status),
+				onWindowReady,
+				stagingScheduler: { yield: () => Promise.resolve() },
+				windowed: true,
+			});
+			await act(async () => {
+				for (let index = 0; index < 32; index += 1) await Promise.resolve();
+				await flushAnimationFrames();
+			});
+			expect(current.runtime.getAcceptedWindowSnapshot()).not.toBeNull();
+			current.setWindowed(false);
+			expect(pending.length).toBeGreaterThan(0);
+			onWindowReady.mockClear();
+			current.setWindowed(true);
+			await act(async () => flushAnimationFrames(2));
+			expect(onWindowReady).not.toHaveBeenCalled();
+			expect(current.runtime.getAcceptedWindowSnapshot()).toBeNull();
+
+			for (let index = 0; index < 32; index += 1) {
+				const next = pending.shift();
+				if (!next) break;
+				await act(async () => {
+					if (outcome === "fail") next.reject(new Error("synthetic-materialization-failure"));
+					else next.resolve();
+					for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
+				});
+			}
+			await act(async () => flushAnimationFrames());
+			expect(pending).toHaveLength(0);
+			if (outcome === "complete") {
+				expect(current.onDiagnostic).not.toHaveBeenCalled();
+				expect(onWindowReady).toHaveBeenCalled();
+				expect(current.runtime.getAcceptedWindowSnapshot()).not.toBeNull();
+				expect(current.surface.querySelectorAll("[data-easymde-visual-block-id]").length)
+					.toBeLessThanOrEqual(160);
+			} else {
+				expect(current.onDiagnostic).toHaveBeenCalledWith("preview-enhancement-failed");
+				expect(statuses.at(-1)).toBe("error");
+				expect(current.surface.getAttribute("contenteditable")).toBe("false");
+				expect(onWindowReady).not.toHaveBeenCalled();
+				expect(current.runtime.getAcceptedWindowSnapshot()).toBeNull();
+			}
+			current.unmount();
+		},
+	);
+
+	it("retains the current window repository across hidden mode materialization and reactivation", async () => {
+		const fixture = windowedFixture(640, "hidden-window-round-trip");
+		const refreshed = windowedFixture(640, "hidden-window-round-trip-current");
+		const statuses: PreviewSurfaceStatus[] = [];
+		const onWindowReady = vi.fn();
+		const pending: Array<ReturnType<typeof deferred<void>>> = [];
+		const current = setup({
+			initialEditMap: fixture.editMap,
+			initialHtml: fixture.html,
+			initialSignature: fixture.editMap.signature,
+			materializeScheduler: {
+				pending,
+				yield: vi.fn(() => {
+					const next = deferred<void>();
+					pending.push(next);
+					return next.promise;
+				}),
+			},
+			onStatusChange: (status) => statuses.push(status),
+			onWindowReady,
+			stagingScheduler: { yield: () => Promise.resolve() },
+			windowed: false,
+		});
+		const mountedIds = (): Array<string> =>
+			Array.from(
+				current.surface.querySelectorAll<HTMLElement>(
+					"[data-easymde-visual-block-id]",
+				),
+			).map((node) =>
+				node.getAttribute("data-easymde-visual-block-id") ?? "",
+			);
+		const spacers = (): number =>
+			current.surface.querySelectorAll("[data-easymde-preview-window-spacer]")
+				.length;
+		const spacerRange = (): Readonly<{ end: number; start: number }> => {
+			const spacer = current.surface.querySelector<HTMLElement>(
+				"[data-easymde-preview-window-spacer]",
+			);
+			if (!spacer) throw new Error("window-spacer-missing");
+			const start = Number.parseInt(
+				spacer.getAttribute("data-easymde-preview-window-start") ?? "",
+				10,
+			);
+			const end = Number.parseInt(
+				spacer.getAttribute("data-easymde-preview-window-end") ?? "",
+				10,
+			);
+			if (!Number.isInteger(start) || !Number.isInteger(end)) {
+				throw new Error("window-spacer-range-invalid");
+			}
+			return { end, start };
+		};
+		const lastMountedIndex = (): number => {
+			const last = mountedIds().at(-1);
+			const index = Number.parseInt(last?.replace(/^b/u, "") ?? "", 10);
+			if (!Number.isInteger(index)) {
+				throw new Error("window-mounted-index-invalid");
+			}
+			return index;
+		};
+		const drainMaterialization = async (): Promise<void> => {
+			for (let index = 0; index < 32; index += 1) {
+				const next = pending.shift();
+				if (!next) break;
+				await act(async () => {
+					next.resolve();
+					for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
+				});
+			}
+			await act(async () => flushAnimationFrames(8));
+		};
+		await act(async () => {
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+			await flushAnimationFrames(8);
+		});
+		// Read-only visible materialization: the complete accepted node set, no spacer.
+		expect(mountedIds()).toHaveLength(640);
+		expect(spacers()).toBe(0);
+		expect(current.runtime.getAcceptedWindowSnapshot()).toBeNull();
+
+		// Hidden activation (Root's source mode) installs one bounded window whose
+		// spacer declares the range it actually covers.
+		current.setWindowed(true);
+		await act(async () => flushAnimationFrames(12));
+		expect(spacers()).toBe(1);
+		expect(spacerRange()).toEqual({ end: 640, start: lastMountedIndex() + 1 });
+		const hiddenRange = spacerRange();
+		const hiddenIds = mountedIds();
+		expect(hiddenIds.length).toBeGreaterThan(0);
+		expect(hiddenIds.length).toBeLessThanOrEqual(160);
+
+		// Returning to the visible read-only Preview materializes the full document.
+		pending.length = 0;
+		current.setWindowed(false);
+		await act(async () => {
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+		});
+		await drainMaterialization();
+		expect(mountedIds()).toHaveLength(640);
+		expect(spacers()).toBe(0);
+		expect(current.onDiagnostic).not.toHaveBeenCalled();
+		expect(statuses.at(-1)).toBe("ready");
+
+		// Reactivating the hidden window must commit the same window again from
+		// the same repository, with the same declared range.
+		onWindowReady.mockClear();
+		current.setWindowed(true);
+		await act(async () => flushAnimationFrames(12));
+		expect(current.onDiagnostic).not.toHaveBeenCalled();
+		expect(statuses.at(-1)).toBe("ready");
+		expect(spacers()).toBe(1);
+		expect(spacerRange()).toEqual(hiddenRange);
+		expect(spacerRange().start).toBe(lastMountedIndex() + 1);
+		expect(mountedIds()).toEqual(hiddenIds);
+		expect(onWindowReady).toHaveBeenCalled();
+
+		// The reactivated window keeps the repository usable: the next visible
+		// materialization consumes its spacer and restores every mounted node.
+		pending.length = 0;
+		current.setWindowed(false);
+		await act(async () => {
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+		});
+		await drainMaterialization();
+		expect(current.onDiagnostic).not.toHaveBeenCalled();
+		expect(statuses.at(-1)).toBe("ready");
+		expect(spacers()).toBe(0);
+		expect(mountedIds()).toHaveLength(640);
+
+		// A newer legitimate refresh generation must still replace the repository.
+		act(() =>
+			current.session.schedule(
+				request("article", refreshed.editMap.signature),
+				true,
+			),
+		);
+		await act(async () => {
+			current.responses[0]?.resolve({ ...refreshed, features: {} });
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+		});
+		await act(async () => flushAnimationFrames(12));
+		expect(current.onDiagnostic).not.toHaveBeenCalled();
+		expect(statuses.at(-1)).toBe("ready");
+		expect(spacers()).toBeLessThanOrEqual(1);
+		current.unmount();
+	});
+
 	it("prepares a connected full surface in bounded slices before the first window commit", async () => {
 		const fixture = windowedFixture(320, "window-bootstrap");
 		const newlineSeparatedHtml = safeHtml(
@@ -3193,6 +3476,70 @@ describe("PreviewSurfaceOwner", () => {
 		);
 		expect(
 			current.surface.querySelector('[data-easymde-visual-block-id="b179"]'),
+		).not.toBeNull();
+		pin.release();
+		current.unmount();
+	});
+
+	it("mounts the following block for a collapsed pinned caret on an empty line", async () => {
+		const signature = "history-source-selection-collapsed-empty-line";
+		const lines = Array.from({ length: 220 }, (_, index) =>
+			index === 180 ? "" : `line-${index}`,
+		);
+		const markdown = lines.join("\n");
+		const blocks = lines.flatMap((line, index) =>
+			line
+				? [
+						{
+							editable: true as const,
+							endLine: index + 1,
+							id: `b${index}`,
+							startLine: index,
+						},
+					]
+				: [],
+		);
+		const html = blocks
+			.map(({ id }) => `<p data-easymde-visual-block-id="${id}">${id}</p>`)
+			.join("") as SafePreviewHtml;
+		const current = setup({
+			contentEditable: true,
+			initialHtml: "<p>Initial preview</p>",
+			stagingScheduler: { yield: () => Promise.resolve() },
+			windowed: true,
+		});
+		await act(async () => flushAnimationFrames());
+		// A removal collapses its caret where the removed block started, which
+		// can be the empty line its former line terminator left behind.
+		const gap = markdown.indexOf("\n\nline-181") + 1;
+		if (gap <= 0 || "\n" !== markdown[gap]) {
+			throw new Error("preview-test-empty-line-caret-missing");
+		}
+		const pin = current.runtime.prepareDocumentEndWindowPin(signature, {
+			end: gap,
+			start: gap,
+		});
+		act(() => current.session.schedule(request(markdown, signature), true));
+		await act(async () => {
+			current.responses[0]?.resolve({
+				editMap: {
+					version: 1,
+					coordinate: "line",
+					signature,
+					blocks,
+				},
+				features: {},
+				html,
+			});
+			for (let index = 0; index < 32; index += 1) await Promise.resolve();
+			await flushAnimationFrames(24);
+		});
+
+		expect(current.onDiagnostic).not.toHaveBeenCalledWith(
+			"preview-window-selection-block-unavailable",
+		);
+		expect(
+			current.surface.querySelector('[data-easymde-visual-block-id="b181"]'),
 		).not.toBeNull();
 		pin.release();
 		current.unmount();

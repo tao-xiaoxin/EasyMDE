@@ -2425,14 +2425,21 @@ export function EditorRoot(props: EditorRootProps) {
         cancelVisualPreviewWindowUnlock();
         cancelVisualUnlockPreparation();
       }
+      // The ref is the live value context-menu readiness reads, so it has to
+      // change with the callback rather than on the next render. A demand kept
+      // pending by the published status would otherwise never be woken when
+      // the status settles.
+      previewSurfaceStatusRef.current = status;
       setPreviewSurfaceStatus(status);
       if ('ready' === status) previewRefreshPendingRef.current = false;
       if ('empty' === status) setVisualPreviewSnapshot(null);
+      notifyContextMenuReadiness();
     },
     [
       cancelWechatBackgroundPreparation,
       cancelVisualPreviewWindowUnlock,
-      cancelVisualUnlockPreparation
+      cancelVisualUnlockPreparation,
+      notifyContextMenuReadiness
     ]
   );
   const handleVisualEditorReady = useCallback(
@@ -2573,8 +2580,13 @@ export function EditorRoot(props: EditorRootProps) {
       ) {
         setVisualWindowedHistoryBranchHeld(false);
       }
+      // A demand that arrived during the transfer is parked on readiness. The
+      // accept effect clears the transfer without a Preview status or snapshot
+      // change, so this settle notification is the only wake-up that rebuilds
+      // the parked demand against the newly accepted edit map.
+      if (!pending) notifyContextMenuReadiness();
     },
-    [documentSession]
+    [documentSession, notifyContextMenuReadiness]
   );
   const handleVisualPreviewRequest = useCallback(
     (markdown: string) => schedulePreviewMarkdown(markdown, true),
@@ -6844,6 +6856,24 @@ export function EditorRoot(props: EditorRootProps) {
         return baseContext({ generated });
       },
       getContextReadiness: (_target, snapshot, blockIndex) => {
+        // A visual Preview transfer invalidates the edit map the owner needs to
+        // prepare a thematic-break or block selection, so a demand that arrives
+        // mid-transfer is not ready yet. Two states describe that window: the
+        // owner's own transfer flag, and the published surface phase, which is
+        // `loading` until the accepted Preview for the pending source is
+        // installed. Both must keep the demand pending, because a demand can
+        // arrive while the surface is still `loading` and before the owner's
+        // transfer state is observable through this surface. This reads live
+        // owner state, not a render value: the demand is kept alive by the
+        // readiness subscription and rebuilt from the same target once the
+        // matching Preview is accepted, instead of throwing out of preparation
+        // and surfacing as a generic menu-open failure.
+        if (
+          runtime.isTransferPending()
+          || 'loading' === previewSurfaceStatusRef.current
+        ) {
+          return { status: 'pending' };
+        }
         if (props.editorBlockIndexPort) {
           if (undefined === snapshot.revision) {
             return {
@@ -6919,7 +6949,12 @@ export function EditorRoot(props: EditorRootProps) {
       isEditable: runtime.isEditable,
       kind: 'visual',
       generation: visualEditorGeneration,
-      prepare: (target, blockIndex, point) => {
+      prepare: (
+        target,
+        blockIndex,
+        point,
+        activation = 'keyboard'
+      ) => {
         const generated =
           generatedRootAtTarget(target ?? null, 'math')
           ?? generatedRootAtTarget(target ?? null, 'mermaid');
@@ -6948,7 +6983,7 @@ export function EditorRoot(props: EditorRootProps) {
               // root carries user intent the editable surface cannot
               // represent, so it is preserved instead of being rebound to the
               // generated root.
-              return runtime.prepareContextMenuSelection?.(target, point)
+              return runtime.prepareContextMenuSelection?.(target, point, activation)
                 ?? runtime.prepareMediaSelection();
             }
           }
@@ -6991,7 +7026,7 @@ export function EditorRoot(props: EditorRootProps) {
         }
         if (target?.closest('pre')) {
           if (
-            !(runtime.prepareContextMenuSelection?.(target, point)
+            !(runtime.prepareContextMenuSelection?.(target, point, activation)
               ?? runtime.prepareMediaSelection())
           ) return false;
           // The Visual owner maps a whole code fence onto its complete source
@@ -7030,7 +7065,7 @@ export function EditorRoot(props: EditorRootProps) {
           }
           return true;
         }
-        return runtime.prepareContextMenuSelection?.(target, point)
+        return runtime.prepareContextMenuSelection?.(target, point, activation)
           ?? runtime.prepareMediaSelection();
       },
       restoreFocus: () => {

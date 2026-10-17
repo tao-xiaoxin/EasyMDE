@@ -22,22 +22,29 @@ import type {
 } from '../../live-preview/ui/PreviewSurfaceOwner';
 import {
   type AcceptedPasteDocumentBoundary,
+  VISUAL_MARKDOWN_READ_ONLY_SELECTOR,
   applyVisualBlockShortcut,
+  applyVisualCodeFenceMetadataFromSource,
   applyVisualInlineShortcut,
   applyVisualMarkdownEditIntent,
   applyVisualToolbarCommand,
   assertVisualMarkdownReadOnlySnapshot,
   captureVisualThematicBreakSelection,
+  prepareVisualThematicBreakPointerSelection,
   captureVisualCodeInputSnapshot,
   captureVisualSelection,
   captureVisualMarkdownReadOnlySnapshot,
   classifyVisualSelectionProvenance,
+  createVisualImageInteraction,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
   createVisualMarkdownWindowChange,
   createVisualCodeBodyOrdinalsForPreviewBlocks,
   createVisualMarkdownDirectSourceIntervalMap,
+  createVisualCodeBodyIntervalForPreviewBlock,
   createVisualMarkdownSourceIntervalMap,
+  coversMarkdownUnits,
   expandVisualCodeFenceForBody,
+  mapTextBoundaryFromInterval,
   mergeVisualMarkdownChangeDetails,
   normalizeVisualCaretAtDocumentBoundary,
   normalizeVisualCodePlaceholders,
@@ -46,16 +53,17 @@ import {
   placeVisualCaretFromSourceOffset,
   prepareVisualTaskListMarkers,
   projectVisualCodeBodySelection,
+  projectVisualMarkdownRemovalSelection,
   protectVisualMarkdownReadOnlyRegions,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
   restoreVisualCodeFenceOpenEofMetadata,
-  selectVisualImageForContextMenu,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
   type VisualCodeInputSnapshot,
   type VisualMarkdownReadOnlySnapshot,
   type VisualMarkdownSourceIntervalMap,
+  type VisualThematicBreakPointerPreparation,
   visualCodeBlockCount,
   visualCodeBlockStructureSignature,
   visualCodeBodyDomOffset,
@@ -63,12 +71,15 @@ import {
   visualCodeBodyOrdinalForSourceRange,
   visualBoundarySourceOffset,
   visualCaretBoundaryFromSourceOffset,
+  visualCodeFenceRootSourceOffset,
   visualEmptyStructuralBodySelection,
   visualSelectionSourceRange,
   visualSelectionSourceRangeForBlocks,
   visualSelectionVisualOffset,
-  visualThematicBreakSourceSelection,
   visualStructuralBodyIsEmpty,
+  isVisualThematicBreakSource,
+  visualThematicBreakSourceSelection,
+  visualThematicBreakTarget,
   visualContextMenuCaretRangeAtPoint
 } from '../visual-markdown';
 
@@ -82,6 +93,15 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
   ) => VisualToolbarCommandResult;
   getGeneratedPreviewIdentity: () => PreviewGeneratedPreviewIdentity | null;
   isEditable: () => boolean;
+  /**
+   * Synchronous owner state: the accepted Preview no longer describes the
+   * canonical source, so its edit map may not be used to prepare a selection.
+   * This covers both an in-flight transfer and the window where the new
+   * canonical source is published but its accepted Preview is not installed
+   * yet. Context-menu readiness reads this directly instead of a React render
+   * value that can lag the owner.
+   */
+  isTransferPending: () => boolean;
   prepareImageTarget: (
     request: PreviewImageTargetRequest
   ) => PreviewImageTargetLease | null;
@@ -97,7 +117,8 @@ export type ImmersiveVisualEditorRuntime = Readonly<{
   prepareMediaSelection: () => boolean;
   prepareContextMenuSelection?: (
     target?: Element | null,
-    point?: Readonly<{ x: number; y: number }>
+    point?: Readonly<{ x: number; y: number }>,
+    activation?: 'keyboard' | 'pointer'
   ) => boolean;
   prepareSourceNavigation: (
     expected: Readonly<{ revision: number; value: string }>
@@ -316,6 +337,7 @@ function acceptedTopLevelVisualChildren(
       return false;
     })
   ) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   return children;
@@ -440,6 +462,7 @@ function acceptedBaselineBlocksById(
     if (!(child instanceof HTMLElement)) continue;
     const id = child.getAttribute('data-easymde-visual-block-id');
     if (!id || baselineById.has(id)) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     baselineById.set(id, child);
@@ -581,6 +604,7 @@ function acceptedTopLevelVisualSelection(
     'line' !== editMap.coordinate
   ) {
     if (thematicBreakSelection) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     return null;
@@ -596,6 +620,7 @@ function acceptedTopLevelVisualSelection(
       )
       || !block.editable
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
@@ -689,6 +714,7 @@ function acceptedTopLevelVisualSelection(
         'visual-editor-window-source-range-invalid'
       ].includes(error.message)
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     throw error;
@@ -789,6 +815,7 @@ function acceptedTopLevelVisualMerge(
     if (!(child instanceof HTMLElement)) continue;
     const id = child.getAttribute('data-easymde-visual-block-id');
     if (!id || baselineById.has(id)) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     baselineById.set(id, child);
@@ -802,6 +829,7 @@ function acceptedTopLevelVisualMerge(
       serializeVisualMarkdownBlockFragment([child]) !==
         serializeVisualMarkdownBlockFragment([baseline])
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
   }
@@ -818,6 +846,7 @@ function acceptedTopLevelVisualMerge(
       const id = block.getAttribute('data-easymde-visual-block-id');
       const baseline = id ? baselineById.get(id) : null;
       if (!baseline) {
+
         throw new Error('visual-editor-selection-map-failed');
       }
       return baseline;
@@ -856,6 +885,7 @@ function acceptedTopLevelVisualMerge(
         'visual-editor-markdown-merge-failed'
       ].includes(error.message)
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     throw error;
@@ -929,6 +959,17 @@ type VisualSelectionMemory = Readonly<{
   sourceFocus: number;
   visualAnchor: number;
   visualFocus: number;
+}>;
+
+/**
+ * The interval map of one exact source/baseline pair. A map may only be reused
+ * for the pair it was created from: a map built for an earlier pair still
+ * resolves offsets that the current pair means differently.
+ */
+type VisualSourceIntervalMapRecord = Readonly<{
+  map: VisualMarkdownSourceIntervalMap;
+  sourceMarkdown: string;
+  visualMarkdown: string;
 }>;
 
 type VisualHistorySelectionBoundary = Readonly<{
@@ -1153,6 +1194,240 @@ function placeSurfaceCaretAtEnd(surface: HTMLElement): boolean {
   return true;
 }
 
+/**
+ * The presentation-only projection for an accepted source caret that the
+ * accepted map cannot place: when the requested offset is on the opening
+ * delimiter/info line of an editable fenced block of this accepted source, the
+ * representable caret is that block's own code-body start. Ownership comes
+ * from the strict accepted ledger owner (`createVisualCodeBodyIntervalForPreviewBlock`,
+ * which validates the whole ledger and binds the whole fence), and the code
+ * surface is the native input shape (`captureVisualCodeInputSnapshot`) whose
+ * body `projectVisualCodeBodySelection` proves against that same interval.
+ * It never re-parses the surface or falls back to a different block.
+ */
+/**
+ * Whether a boundary's own ancestry from its element to the surface carries no
+ * protection marker: no read-only region, no `contenteditable="false"` and no
+ * Preview window spacer. The native input shape checks the block; this checks
+ * the exact returned boundary, including highlighted spans inside the code.
+ */
+function acceptedBoundaryAncestryIsEditable(
+  node: Node,
+  code: HTMLElement,
+  surface: HTMLElement
+): boolean {
+  let element = node instanceof HTMLElement ? node : node.parentElement;
+  while (element) {
+    if (
+      element.matches('[contenteditable="false"]')
+      || element.matches('[data-easymde-preview-window-spacer]')
+      || element.matches(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+    ) return false;
+    if (element === surface) return true;
+    if (element === code) {
+      element = element.parentElement;
+      continue;
+    }
+    element = element.parentElement;
+  }
+  return false;
+}
+
+function acceptedCodeBodyStartProjection(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  editMap: PreviewEditMap,
+  previewSignature: string,
+  sourceOffset: number
+): Readonly<{ node: Node; offset: number; sourceOffset: number }> | null {
+  if (
+    1 !== editMap.version
+    || 'line' !== editMap.coordinate
+    || editMap.signature !== previewSignature
+  ) return null;
+  const lineStarts = markdownLineStarts(sourceMarkdown);
+  let children: ReadonlyArray<HTMLElement>;
+  try {
+    children = acceptedTopLevelVisualChildren(surface, editMap);
+  } catch {
+    return null;
+  }
+  // Only the ledger row whose own source range holds the caret can own it.
+  // Row ranges are half-open: an offset on a shared boundary belongs to the row
+  // that starts there, so a preceding paragraph cannot veto the fence owner.
+  // The document end stays inclusive.
+  for (const [index, block] of editMap.blocks.entries()) {
+    if (!block.editable) continue;
+    const start = lineStarts[block.startLine];
+    const end = block.endLine === lineStarts.length
+      ? sourceMarkdown.length
+      : lineStarts[block.endLine];
+    if (
+      undefined === start
+      || undefined === end
+      || sourceOffset < start
+      || sourceOffset > end
+      || (sourceOffset === end && end !== sourceMarkdown.length)
+    ) continue;
+    const visualBlock = children[index];
+    if (!visualBlock) continue;
+    const pre = visualBlock.matches('pre')
+      ? visualBlock
+      : visualBlock.querySelector<HTMLElement>(':scope > pre');
+    // A row that carries no fence at all is not this lookup's owner; only a
+    // fence whose live `<pre>` is not its own block is a real mismatch.
+    if (!pre) continue;
+    if (pre !== visualBlock && pre.parentElement !== visualBlock) {
+      return null;
+    }
+    let interval: ReturnType<typeof createVisualCodeBodyIntervalForPreviewBlock>;
+    let input: ReturnType<typeof captureVisualCodeInputSnapshot>;
+    try {
+      interval = createVisualCodeBodyIntervalForPreviewBlock(
+        sourceMarkdown,
+        editMap,
+        block.id
+      );
+      input = captureVisualCodeInputSnapshot(pre);
+    } catch {
+      return null;
+    }
+    if (
+      !input
+      || input.code !== pre.querySelector(':scope > code')
+      || input.pre !== pre
+      || pre.closest(VISUAL_MARKDOWN_READ_ONLY_SELECTOR)
+      // `protectVisualMarkdownReadOnlyRegions` marks every protected region
+      // with this attribute, so it is the runtime protection marker too.
+      || pre.closest('[contenteditable="false"]')
+      || !surface.contains(input.code)
+    ) return null;
+    // The caret has to be on this fence's own opening delimiter/info line.
+    if (
+      sourceOffset < interval.sourceBlockStart
+      || sourceOffset >= interval.bodyStart
+      || !sourceMarkdown
+        .slice(interval.sourceBlockStart, interval.bodyStart)
+        .includes(interval.fence)
+    ) continue;
+    let projection: ReturnType<typeof projectVisualCodeBodySelection>;
+    try {
+      projection = projectVisualCodeBodySelection(
+        input.code,
+        sourceMarkdown,
+        sourceMarkdown,
+        interval.codeOrdinal,
+        {
+          end: { node: input.code, offset: 0 },
+          start: { node: input.code, offset: 0 }
+        }
+      );
+    } catch {
+      return null;
+    }
+    if (
+      projection.sourceSelection.start !== interval.bodyStart
+      || projection.sourceSelection.end !== interval.bodyStart
+      || projection.localSelection.start !== 0
+      || projection.localSelection.end !== 0
+    ) return null;
+    // The returned boundary's own ancestry is the final proof: the caret must
+    // not land inside protected markup, a read-only region or a spacer, even
+    // when the body text and markup themselves look supported.
+    const walker = input.code.ownerDocument.createTreeWalker(
+      input.code,
+      NodeFilter.SHOW_TEXT
+    );
+    const firstText = walker.nextNode();
+    const node = firstText instanceof Text ? firstText : input.code;
+    if (!acceptedBoundaryAncestryIsEditable(node, input.code, surface)) {
+      return null;
+    }
+    return {
+      node,
+      offset: 0,
+      sourceOffset: interval.bodyStart
+    };
+  }
+  return null;
+}
+
+/**
+ * The canonical offset of the caret the accepted placement actually installed.
+ * A fence's source range covers its closing delimiter, while the live DOM ends
+ * at the code element's content boundary, so a placement at that boundary
+ * yields a DOM caret whose own code-body projection is the body's last
+ * position, not the recorded end-of-fence offset. Reading the placed caret back
+ * through the same projection keeps the recorded canonical selection and the
+ * native caret describing one position. Anything unproved returns null.
+ */
+function codeBodyCaretSourceOffset(
+  surface: HTMLElement,
+  sourceMarkdown: string,
+  editMap: PreviewEditMap,
+  recordedSourceOffset: number
+): number | null {
+  const selection = surface.ownerDocument.defaultView?.getSelection();
+  if (
+    !selection?.isCollapsed
+    || !selection.anchorNode
+    || !surface.contains(selection.anchorNode)
+  ) return null;
+  let code: HTMLElement | null = null;
+  let node: Node | null = selection.anchorNode;
+  while (node && node !== surface) {
+    if (node instanceof HTMLElement && 'CODE' === node.tagName) {
+      code = node;
+      break;
+    }
+    node = node.parentNode;
+  }
+  if (!code) return null;
+  const pre = code.closest<HTMLElement>('pre');
+  if (!pre || !surface.contains(pre)) return null;
+  const blockId = visualBlockIdForPre(pre, surface);
+  if (!blockId) return null;
+  let interval: ReturnType<typeof createVisualCodeBodyIntervalForPreviewBlock>;
+  try {
+    interval = createVisualCodeBodyIntervalForPreviewBlock(
+      sourceMarkdown,
+      editMap,
+      blockId
+    );
+  } catch {
+    return null;
+  }
+  // A code body's DOM positions cover only its own text. The opening
+  // delimiter, the info line and the closing delimiter have no DOM text, so a
+  // recorded offset on any of them cannot be represented and the placement
+  // necessarily lands somewhere else. The projection is then the only truthful
+  // canonical position for the caret that was actually installed. A recorded
+  // offset the DOM does represent projects back to itself, so this only
+  // rewrites positions the DOM could not express.
+  if (
+    recordedSourceOffset >= interval.bodyStart
+    && recordedSourceOffset <= interval.bodyEnd
+  ) {
+    return null;
+  }
+  let projection: ReturnType<typeof projectVisualCodeBodySelection>;
+  try {
+    projection = projectVisualCodeBodySelection(
+      code,
+      sourceMarkdown,
+      sourceMarkdown,
+      interval.codeOrdinal,
+      {
+        end: { node: selection.anchorNode, offset: selection.anchorOffset },
+        start: { node: selection.anchorNode, offset: selection.anchorOffset }
+      }
+    );
+  } catch {
+    return null;
+  }
+  return projection.sourceSelection.start;
+}
+
 function placeVisualCaretAtAcceptedCodeBlockStart(
   surface: HTMLElement,
   sourceMarkdown: string,
@@ -1171,6 +1446,7 @@ function placeVisualCaretAtAcceptedCodeBlockStart(
       || block.endLine < block.startLine
       || block.endLine > lineStarts.length
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     previousEndLine = block.endLine;
@@ -1404,6 +1680,84 @@ function canUseIdentityVisualSelection(
   return element === surface;
 }
 
+type VisualBoundaryProjection = Readonly<{
+  sourceOffset: number;
+  visualOffset: number;
+}>;
+
+/**
+ * The canonical and baseline offset a boundary moves to from an already mapped
+ * boundary, or `null` unless the traversed raw text proves the move in both
+ * markdown spaces. Offsets move one to one only while the raw text between the
+ * two boundaries is the same text in canonical source and in the baseline, so
+ * a soft break, a collapsed run or an escape in between moves both with it.
+ */
+function provedLinearBoundary(
+  node: Text,
+  offset: number,
+  boundary: Readonly<{
+    offset: number;
+    sourceOffset: number;
+    visualOffset: number;
+  }>,
+  sourceMarkdown: string,
+  baselineVisualMarkdown: string
+): VisualBoundaryProjection | null {
+  if (!Number.isInteger(offset) || !Number.isInteger(boundary.offset)) {
+    return null;
+  }
+  const rawStart = Math.min(offset, boundary.offset);
+  const rawEnd = Math.max(offset, boundary.offset);
+  if (rawStart < 0 || rawEnd > node.data.length) return null;
+  const backward = offset < boundary.offset;
+  const sourceStart = backward
+    ? boundary.sourceOffset + offset - boundary.offset
+    : boundary.sourceOffset;
+  const visualStart = backward
+    ? boundary.visualOffset + offset - boundary.offset
+    : boundary.visualOffset;
+  const traversed = node.data.slice(rawStart, rawEnd);
+  if (
+    sourceStart < 0
+    || visualStart < 0
+    || sourceStart + traversed.length > sourceMarkdown.length
+    || visualStart + traversed.length > baselineVisualMarkdown.length
+  ) {
+    return null;
+  }
+  if (
+    sourceMarkdown.slice(sourceStart, sourceStart + traversed.length)
+      !== traversed
+    || baselineVisualMarkdown.slice(visualStart, visualStart + traversed.length)
+      !== traversed
+  ) {
+    return null;
+  }
+  // Equal text at equal distance is still not a linear move when a boundary of
+  // the traversed span sits inside a backslash escape or covers an escape
+  // introducer: the raw character there is not the source unit at that offset,
+  // so the arithmetic would split or swallow a unit. Those boundaries belong to
+  // the owning block's canonical projection instead.
+  if (
+    !coversMarkdownUnits(
+      sourceMarkdown,
+      sourceStart,
+      sourceStart + traversed.length
+    )
+    || !coversMarkdownUnits(
+      baselineVisualMarkdown,
+      visualStart,
+      visualStart + traversed.length
+    )
+  ) {
+    return null;
+  }
+  return {
+    sourceOffset: boundary.sourceOffset + offset - boundary.offset,
+    visualOffset: boundary.visualOffset + offset - boundary.offset
+  };
+}
+
 function mapSelectionFromMemory(
   memory: VisualSelectionMemory,
   current: Readonly<{
@@ -1412,8 +1766,9 @@ function mapSelectionFromMemory(
     focusNode: Text;
     focusOffset: number;
   }>,
-  sourceLength: number,
-  visualLength: number
+  visualLength: number,
+  sourceMarkdown: string | null,
+  baselineVisualMarkdown: string
 ): Readonly<{
   source: Readonly<{ end: number; start: number }>;
   visual: Readonly<{ end: number; start: number }>;
@@ -1424,19 +1779,39 @@ function mapSelectionFromMemory(
   ) {
     return null;
   }
-  const sourceAnchor =
-    memory.sourceAnchor + current.anchorOffset - memory.anchorOffset;
-  const sourceFocus =
-    memory.sourceFocus + current.focusOffset - memory.focusOffset;
-  const visualAnchor =
-    memory.visualAnchor + current.anchorOffset - memory.anchorOffset;
-  const visualFocus =
-    memory.visualFocus + current.focusOffset - memory.focusOffset;
+  if (null === sourceMarkdown) return null;
+  const anchor = provedLinearBoundary(
+    current.anchorNode,
+    current.anchorOffset,
+    {
+      offset: memory.anchorOffset,
+      sourceOffset: memory.sourceAnchor,
+      visualOffset: memory.visualAnchor
+    },
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  const focus = provedLinearBoundary(
+    current.focusNode,
+    current.focusOffset,
+    {
+      offset: memory.focusOffset,
+      sourceOffset: memory.sourceFocus,
+      visualOffset: memory.visualFocus
+    },
+    sourceMarkdown,
+    baselineVisualMarkdown
+  );
+  if (!anchor || !focus) return null;
+  const sourceAnchor = anchor.sourceOffset;
+  const sourceFocus = focus.sourceOffset;
+  const visualAnchor = anchor.visualOffset;
+  const visualFocus = focus.visualOffset;
   if (
     sourceAnchor < 0 ||
     sourceFocus < 0 ||
-    sourceAnchor > sourceLength ||
-    sourceFocus > sourceLength ||
+    sourceAnchor > sourceMarkdown.length ||
+    sourceFocus > sourceMarkdown.length ||
     visualAnchor < 0 ||
     visualFocus < 0 ||
     visualAnchor > visualLength ||
@@ -1450,32 +1825,8 @@ function mapSelectionFromMemory(
   };
 }
 
-function uniqueTextProjection(
-  node: Text,
-  baselineVisualMarkdown: string,
-  sourceIntervalMap: VisualMarkdownSourceIntervalMap
-): Readonly<{ sourceOffset: number; visualOffset: number }> | null {
-  if (!node.data) return null;
-  const visualOffset = baselineVisualMarkdown.indexOf(node.data);
-  if (
-    visualOffset < 0 ||
-    visualOffset !== baselineVisualMarkdown.lastIndexOf(node.data)
-  ) {
-    return null;
-  }
-  const sourceStart = sourceIntervalMap.resolve(visualOffset);
-  const sourceEnd = sourceIntervalMap.resolve(visualOffset + node.data.length);
-  if (
-    null === sourceStart ||
-    null === sourceEnd ||
-    sourceEnd - sourceStart !== node.data.length
-  ) {
-    return null;
-  }
-  return { sourceOffset: sourceStart, visualOffset };
-}
-
 function mapSelectionFromInterval(
+  surface: HTMLElement,
   current: Readonly<{
     anchorNode: Text;
     anchorOffset: number;
@@ -1483,32 +1834,32 @@ function mapSelectionFromInterval(
     focusOffset: number;
   }>,
   baselineVisualMarkdown: string,
-  sourceIntervalMap: VisualMarkdownSourceIntervalMap
+  sourceIntervalMap: VisualMarkdownSourceIntervalMap,
+  acceptedPrefixOnly: boolean
 ): Readonly<{
   source: Readonly<{ end: number; start: number }>;
   visual: Readonly<{ end: number; start: number }>;
 }> | null {
-  const anchor = uniqueTextProjection(
+  const anchor = mapTextBoundaryFromInterval(
+    surface,
     current.anchorNode,
+    current.anchorOffset,
     baselineVisualMarkdown,
-    sourceIntervalMap
+    sourceIntervalMap,
+    acceptedPrefixOnly
   );
-  const focus =
-    current.anchorNode === current.focusNode
-      ? anchor
-      : uniqueTextProjection(
-          current.focusNode,
-          baselineVisualMarkdown,
-          sourceIntervalMap
-        );
+  const focus = mapTextBoundaryFromInterval(
+    surface,
+    current.focusNode,
+    current.focusOffset,
+    baselineVisualMarkdown,
+    sourceIntervalMap,
+    acceptedPrefixOnly
+  );
   if (!anchor || !focus) return null;
-  const visualAnchor = anchor.visualOffset + current.anchorOffset;
-  const visualFocus = focus.visualOffset + current.focusOffset;
-  const sourceAnchor = anchor.sourceOffset + current.anchorOffset;
-  const sourceFocus = focus.sourceOffset + current.focusOffset;
   return {
-    source: selectionRange(sourceAnchor, sourceFocus),
-    visual: selectionRange(visualAnchor, visualFocus)
+    source: selectionRange(anchor.sourceOffset, focus.sourceOffset),
+    visual: selectionRange(anchor.visualOffset, focus.visualOffset)
   };
 }
 
@@ -1725,60 +2076,135 @@ function visualInputIntent(
   surface: HTMLElement,
   event: InputEvent,
   memory: VisualSelectionMemory | null,
-  sourceLength: number,
+  sourceMarkdown: string,
   visualLength: number,
   baselineVisualMarkdown: string,
-  sourceIntervalMap: VisualMarkdownSourceIntervalMap | null
+  // Built on first use: selection memory answers ordinary linear input without
+  // a whole-document alignment, and only a projection needs the map.
+  intervalMapFor: () => VisualMarkdownSourceIntervalMap,
+  acceptedPrefixOnly: boolean
 ): VisualInputIntent | null {
   const current = currentTextSelection(surface);
   if (!current) return null;
-  const mapped = memory
-    ? mapSelectionFromMemory(memory, current, sourceLength, visualLength)
-    : null;
-  const intervalMapped =
-    mapped ??
-    (sourceIntervalMap
-      ? mapSelectionFromInterval(
-          current,
+  /**
+   * Projects one raw boundary through the projection both caret owners share,
+   * under the provenance the baseline in hand actually proves.
+   */
+  const mapBoundary = (
+    node: Node,
+    offset: number
+  ): Readonly<{ sourceOffset: number; visualOffset: number }> | null =>
+    node instanceof Text
+      ? mapTextBoundaryFromInterval(
+          surface,
+          node,
+          offset,
           baselineVisualMarkdown,
-          sourceIntervalMap
+          intervalMapFor(),
+          acceptedPrefixOnly
         )
-      : null);
-  if (!intervalMapped) return null;
+      : null;
+  const targetRange = event.getTargetRanges?.()[0];
+  const currentCollapsed =
+    current.anchorNode === current.focusNode
+    && current.anchorOffset === current.focusOffset;
+  const targetRangeMatchesCurrent = Boolean(
+    targetRange
+    && targetRange.startContainer === current.anchorNode
+    && targetRange.endContainer === current.focusNode
+    && targetRange.startOffset === current.anchorOffset
+    && targetRange.endOffset === current.focusOffset
+  );
+  // The remembered boundary proves itself, so it is tried before the interval
+  // projection: an authenticated memory result needs neither a whole-document
+  // alignment nor a block-prefix serialization.
+  const memoryMapped = (
+    memory
+      && (
+        !currentCollapsed
+        || !event.inputType.startsWith('delete')
+        || intervalMapFor().source.indexOf(current.anchorNode.data) >= 0
+      )
+      ? mapSelectionFromMemory(
+          memory,
+          current,
+          visualLength,
+          sourceMarkdown,
+          baselineVisualMarkdown
+        )
+      : null
+  );
+  const intervalMapped = memoryMapped
+    ? null
+    : mapSelectionFromInterval(
+        surface,
+        current,
+        baselineVisualMarkdown,
+        intervalMapFor(),
+        acceptedPrefixOnly
+      );
+  if (
+    !intervalMapped
+    && !memoryMapped
+    && current.anchorNode instanceof Text
+    && current.focusNode instanceof Text
+    && event.inputType.startsWith('delete')
+    && intervalMapFor().source.indexOf(current.anchorNode.data) < 0
+  ) return null;
+  const mapped = memoryMapped ?? intervalMapped;
+  if (!mapped) return null;
 
-  const currentMapped = intervalMapped;
+  const currentMapped = mapped;
+  // The boundary every raw delta moves from: the earlier end of the mapped
+  // selection, which is where its canonical and its baseline start sit.
+  const mappedBoundary = {
+    offset: Math.min(current.anchorOffset, current.focusOffset),
+    sourceOffset: currentMapped.source.start,
+    visualOffset: currentMapped.visual.start
+  } as const;
+  /**
+   * Projects a raw boundary of this node through the same canonical owner as
+   * the caret, then through the proved delta from the mapped boundary: a raw
+   * distance is a projection only while both markdown spaces repeat the raw
+   * text it spans.
+   */
+  const projectBoundary = (
+    node: Text,
+    offset: number
+  ): Readonly<{ sourceOffset: number; visualOffset: number }> | null => {
+    const projected = mapBoundary(node, offset);
+    if (projected) return projected;
+    return provedLinearBoundary(
+      node,
+      offset,
+      mappedBoundary,
+      sourceMarkdown,
+      baselineVisualMarkdown
+    );
+  };
 
   let visualSelection = currentMapped.visual;
   let textSelection = selectionRange(current.anchorOffset, current.focusOffset);
-  const targetRange = event.getTargetRanges?.()[0];
   if (
     targetRange &&
     targetRange.startContainer instanceof Text &&
     targetRange.endContainer instanceof Text &&
-    sourceIntervalMap
+    !(currentCollapsed && targetRangeMatchesCurrent)
   ) {
-    const start = uniqueTextProjection(
+    const start = mapBoundary(
       targetRange.startContainer,
-      baselineVisualMarkdown,
-      sourceIntervalMap
+      targetRange.startOffset
     );
-    const end =
-      targetRange.startContainer === targetRange.endContainer
-        ? start
-        : uniqueTextProjection(
-            targetRange.endContainer,
-            baselineVisualMarkdown,
-            sourceIntervalMap
-          );
+    const end = mapBoundary(targetRange.endContainer, targetRange.endOffset);
     if (start && end) {
-      const sourceStart = start.sourceOffset + targetRange.startOffset;
-      const sourceEnd = end.sourceOffset + targetRange.endOffset;
-      const visualStart = start.visualOffset + targetRange.startOffset;
-      const visualEnd = end.visualOffset + targetRange.endOffset;
+      const sourceStart = start.sourceOffset;
+      const sourceEnd = end.sourceOffset;
+      const visualStart = start.visualOffset;
+      const visualEnd = end.visualOffset;
       if (
         sourceStart >= 0 &&
         sourceEnd >= sourceStart &&
-        sourceEnd <= sourceLength &&
+        sourceEnd <= sourceMarkdown.length &&
         visualStart >= 0 &&
         visualEnd >= visualStart &&
         visualEnd <= visualLength
@@ -1802,6 +2228,13 @@ function visualInputIntent(
       }
     }
   }
+  if (targetRange && !targetRangeMatchesCurrent) {
+    const targetStartNode = targetRange.startContainer;
+    const targetEndNode = targetRange.endContainer;
+    const targetStart = mapBoundary(targetStartNode, targetRange.startOffset);
+    const targetEnd = mapBoundary(targetEndNode, targetRange.endOffset);
+    if (!targetStart || !targetEnd) return null;
+  }
   if (
     targetRange &&
     targetRange.startContainer === current.anchorNode &&
@@ -1811,30 +2244,41 @@ function visualInputIntent(
       targetRange.startOffset,
       targetRange.endOffset
     );
-    const localSelectionStart = Math.min(
-      current.anchorOffset,
-      current.focusOffset
-    );
-    visualSelection = {
-      end: currentMapped.visual.start + textSelection.end - localSelectionStart,
-      start:
-        currentMapped.visual.start + textSelection.start - localSelectionStart
-    };
-    const sourceStart =
-      currentMapped.source.start + textSelection.start - localSelectionStart;
-    const sourceEnd =
-      currentMapped.source.start + textSelection.end - localSelectionStart;
-    if (sourceStart < 0 || sourceEnd < sourceStart || sourceEnd > sourceLength)
+    // A target identical to the collapsed boundary already mapped is that
+    // mapping: re-projecting it would serialize the owning block and its prefix
+    // for a boundary the intent already holds.
+    const targetIsMappedBoundary =
+      currentCollapsed && targetRangeMatchesCurrent;
+    const start = targetIsMappedBoundary
+      ? {
+          sourceOffset: currentMapped.source.start,
+          visualOffset: currentMapped.visual.start
+        }
+      : projectBoundary(current.anchorNode, textSelection.start);
+    const end = targetIsMappedBoundary
+      ? {
+          sourceOffset: currentMapped.source.end,
+          visualOffset: currentMapped.visual.end
+        }
+      : projectBoundary(current.anchorNode, textSelection.end);
+    if (!start || !end) return null;
+    if (
+      end.sourceOffset < start.sourceOffset
+      || end.sourceOffset > sourceMarkdown.length
+      || end.visualOffset < start.visualOffset
+      || end.visualOffset > visualLength
+    ) {
       return null;
+    }
     return {
       data: event.data,
       hasTargetRange: true,
       inputType: event.inputType,
-      sourceSelection: { end: sourceEnd, start: sourceStart },
+      sourceSelection: { end: end.sourceOffset, start: start.sourceOffset },
       textData: current.anchorNode.data,
       textNode: current.anchorNode,
       textSelection,
-      visualSelection
+      visualSelection: { end: end.visualOffset, start: start.visualOffset }
     };
   }
 
@@ -1862,11 +2306,28 @@ function visualInputIntent(
     [
       'deleteByCut',
       'insertFromComposition',
+      'insertLineBreak',
       'insertReplacementText',
       'insertText'
     ].includes(event.inputType)
   ) {
+    // The selection is the edit itself: both endpoints were mapped
+    // independently, so the canonical interval is theirs, not a raw length.
     textSelection = selectionRange(current.anchorOffset, current.focusOffset);
+    visualSelection = currentMapped.visual;
+    return {
+      data: event.data,
+      hasTargetRange: false,
+      inputType: event.inputType,
+      sourceSelection: {
+        end: currentMapped.source.end,
+        start: currentMapped.source.start
+      },
+      textData: current.anchorNode.data,
+      textNode: current.anchorNode,
+      textSelection,
+      visualSelection
+    };
   } else if (
     ['deleteWordBackward', 'deleteWordForward'].includes(event.inputType)
   ) {
@@ -1881,25 +2342,39 @@ function visualInputIntent(
             end: wordEndAfter(current.anchorNode, current.anchorOffset),
             start: current.anchorOffset
           };
-  } else if ('insertLineBreak' !== event.inputType) {
+  } else {
     return null;
   }
 
-  const localSelectionStart = Math.min(
-    current.anchorOffset,
-    current.focusOffset
-  );
-  visualSelection = {
-    end: currentMapped.visual.start + textSelection.end - localSelectionStart,
-    start:
-      currentMapped.visual.start + textSelection.start - localSelectionStart
-  };
-  const sourceStart =
-    currentMapped.source.start + textSelection.start - localSelectionStart;
-  const sourceEnd =
-    currentMapped.source.start + textSelection.end - localSelectionStart;
-  if (sourceStart < 0 || sourceEnd < sourceStart || sourceEnd > sourceLength)
+  // A computed endpoint is an offset in raw text, so it is projected through
+  // the same canonical owner as the caret: deleting the raw character behind
+  // an escape deletes the escape with it, and the caret endpoint keeps its own
+  // mapping.
+  const start = textSelection.start === mappedBoundary.offset
+    ? {
+        sourceOffset: currentMapped.source.start,
+        visualOffset: currentMapped.visual.start
+      }
+    : projectBoundary(current.anchorNode, textSelection.start);
+  const end = textSelection.end === mappedBoundary.offset
+    ? {
+        sourceOffset: currentMapped.source.start,
+        visualOffset: currentMapped.visual.start
+      }
+    : projectBoundary(current.anchorNode, textSelection.end);
+  if (!start || !end) return null;
+  visualSelection = { end: end.visualOffset, start: start.visualOffset };
+  const sourceStart = start.sourceOffset;
+  const sourceEnd = end.sourceOffset;
+  if (
+    sourceStart < 0
+    || sourceEnd < sourceStart
+    || sourceEnd > sourceMarkdown.length
+    || end.visualOffset < start.visualOffset
+    || end.visualOffset > visualLength
+  ) {
     return null;
+  }
   return {
     data: event.data,
     hasTargetRange: false,
@@ -2173,6 +2648,7 @@ function visualFragmentNodePath(root: Node, node: Node): ReadonlyArray<number> {
     current = parent;
   }
   if (current !== root) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   return path;
@@ -2373,6 +2849,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
       block.endLine < block.startLine ||
       block.endLine > lineStarts.length
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     const start = lineStarts[block.startLine];
@@ -2381,11 +2858,57 @@ function placeVisualSelectionFromAcceptedSourceRange(
         ? sourceMarkdown.length
         : lineStarts[block.endLine];
     if (start === undefined || end === undefined || end < start) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     previousEndLine = block.endLine;
     return { end, start };
   });
+  const thematicBreakIndex = sourceRanges.findIndex((range, index) => {
+    const block = children[index];
+    const mapBlock = editMap.blocks[index];
+    if (
+      !(block instanceof HTMLHRElement)
+      || mapBlock?.editable !== true
+      || mapBlock?.id !== block.getAttribute('data-easymde-visual-block-id')
+      || visualThematicBreakTarget(surface, block) !== block
+      || selectionRange.start !== range.start
+      || !isVisualThematicBreakSource(sourceMarkdown, range)
+      || 'none' === selectionRange.direction
+    ) return false;
+    const exact = visualThematicBreakSourceSelection(
+      sourceMarkdown,
+      range,
+      selectionRange.direction
+    );
+    return (
+      exact.start === selectionRange.start
+      && exact.end === selectionRange.end
+    );
+  });
+  if (thematicBreakIndex >= 0) {
+    const thematicBreak = children[thematicBreakIndex];
+    const selection = surface.ownerDocument.defaultView?.getSelection();
+    const surfaceIndex = thematicBreak
+      ? Array.from(surface.childNodes).indexOf(thematicBreak)
+      : -1;
+    if (!(thematicBreak instanceof HTMLHRElement) || !selection || surfaceIndex < 0) {
+      throw new Error('visual-editor-selection-map-failed');
+    }
+    const range = surface.ownerDocument.createRange();
+    range.selectNode(thematicBreak);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if ('backward' === selectionRange.direction) {
+      selection.setBaseAndExtent(
+        surface,
+        surfaceIndex + 1,
+        surface,
+        surfaceIndex
+      );
+    }
+    return;
+  }
   const firstIndex = sourceRanges.findIndex(
     (range) =>
       selectionRange.start <= range.end && selectionRange.end >= range.start
@@ -2417,18 +2940,38 @@ function placeVisualSelectionFromAcceptedSourceRange(
       sourceOffset < range.start ||
       sourceOffset > range.end
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     const clone = block.cloneNode(true) as HTMLElement;
     const endpointMarkdown = sourceMarkdown.slice(range.start, range.end);
+    // The formal renderer's fence markup carries no fence metadata: this owner
+    // restores it from the source during capture, and the accepted mapping runs
+    // before that restore. Restore it on the mapping clone from the same source
+    // so the clone serializes back to the endpoint Markdown it is mapped
+    // against.
+    applyVisualCodeFenceMetadataFromSource(clone, endpointMarkdown);
     const endpointBaseline = serializeVisualMarkdownBlockFragment([clone]);
+    // A fence block is mapped against the block itself, and that root's
+    // boundary space starts at the code body: the live surface keeps the
+    // opening delimiter line as fence metadata instead of DOM text, so its
+    // mapped offsets omit that line. Translate the source offset once here so
+    // the accepted mapper receives offsets in its own root space.
+    const rootOffset = visualCodeFenceRootSourceOffset(
+      clone,
+      endpointMarkdown,
+      sourceOffset - range.start
+    );
+    if (rootOffset < 0) {
+      throw new Error('visual-editor-selection-map-failed');
+    }
     let boundary: Readonly<{ node: Node; offset: number }>;
     try {
       boundary = acceptedVisualCaretBoundaryFromSourceOffset(
         clone,
         endpointMarkdown,
         endpointBaseline,
-        sourceOffset - range.start
+        rootOffset
       );
     } catch (error) {
       // A fenced code block's source endpoint includes the closing fence,
@@ -2452,6 +2995,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
       boundary = { node: endRange.startContainer, offset: endRange.startOffset };
     }
     if (boundary.node !== clone && !clone.contains(boundary.node)) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     return {
@@ -2532,6 +3076,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
       mapped !==
       canonicalReplacement.postSelection.start - canonicalReplacement.sourceRange.start
     ) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     let liveNode: Node = block;
@@ -2706,13 +3251,16 @@ function placeVisualSelectionFromAcceptedSourceRange(
       );
       return;
     }
+
     throw new Error('visual-editor-selection-map-failed');
   }
   if (firstIndex < 0 || lastIndex < firstIndex) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   const blocks = children.slice(firstIndex, lastIndex + 1);
   if (blocks.length !== lastIndex - firstIndex + 1) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   if (
@@ -2720,6 +3268,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
       .slice(firstIndex, lastIndex + 1)
       .some((block) => !block.editable)
   ) {
+
     throw new Error('visual-editor-selection-map-failed');
   }
   const locateEndpoint = (
@@ -2733,6 +3282,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
         (!preferPreviousBlock || sourceOffset !== range.start || 0 === index)
     );
     if (firstMatching < 0) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     const range = sourceRanges[firstMatching];
@@ -2748,6 +3298,7 @@ function placeVisualSelectionFromAcceptedSourceRange(
   ): AcceptedBoundary => {
     const endpoint = locateEndpoint(sourceOffset, preferPreviousBlock);
     if (endpoint.blockIndex < firstIndex || endpoint.blockIndex > lastIndex) {
+
       throw new Error('visual-editor-selection-map-failed');
     }
     return mapBoundaryOnBlock(endpoint.blockIndex, sourceOffset);
@@ -2825,7 +3376,7 @@ export function ImmersiveVisualEditor({
   > | null>(null);
   const visualSelectionMemoryRef = useRef<VisualSelectionMemory | null>(null);
   const visualSourceIntervalMapRef =
-    useRef<VisualMarkdownSourceIntervalMap | null>(null);
+    useRef<VisualSourceIntervalMapRecord | null>(null);
   const pendingVisualIntentRef = useRef<VisualInputIntent | null>(null);
   const pendingVisualEmptyStructuralInputRef =
     useRef<VisualEmptyStructuralInput | null>(null);
@@ -3338,9 +3889,7 @@ export function ImmersiveVisualEditor({
 
   const captureSnapshot = useCallback(
     (sourceMarkdown: string, options: CaptureSnapshotOptions = {}) => {
-      const previousSourceMarkdown = sourceMarkdownRef.current;
-      const previousVisualMarkdown = visualMarkdownRef.current;
-      const previousIntervalMap = visualSourceIntervalMapRef.current;
+      const previousIntervalRecord = visualSourceIntervalMapRef.current;
       if (options.acceptedPreviewSource) {
         clearVisualLocalCodeBodyProvenance();
         visualCodeBodyPreviewSourceRef.current = sourceMarkdown;
@@ -3374,16 +3923,20 @@ export function ImmersiveVisualEditor({
       }
       const visualMarkdown = serializeVisualMarkdown(surface);
       visualMarkdownRef.current = visualMarkdown;
-      visualSourceIntervalMapRef.current =
-        !options.cacheSourceIntervalMap &&
-        previousSourceMarkdown === sourceMarkdown &&
-        previousVisualMarkdown === visualMarkdown &&
-        previousIntervalMap
-          ? previousIntervalMap
-          : createVisualMarkdownSourceIntervalMap(
-              sourceMarkdown,
-              visualMarkdown
-            );
+      visualSourceIntervalMapRef.current = {
+        map:
+          !options.cacheSourceIntervalMap
+          && previousIntervalRecord
+          && previousIntervalRecord.sourceMarkdown === sourceMarkdown
+          && previousIntervalRecord.visualMarkdown === visualMarkdown
+            ? previousIntervalRecord.map
+            : createVisualMarkdownSourceIntervalMap(
+                sourceMarkdown,
+                visualMarkdown
+              ),
+        sourceMarkdown,
+        visualMarkdown
+      };
       const html = surface.innerHTML;
       const historySnapshot = captureVisualHistorySnapshot(
         sourceMarkdown,
@@ -3436,7 +3989,11 @@ export function ImmersiveVisualEditor({
       const directMap =
         createVisualMarkdownDirectSourceIntervalMap(sourceMarkdown);
       visualMarkdownRef.current = directMap.source;
-      visualSourceIntervalMapRef.current = directMap;
+      visualSourceIntervalMapRef.current = {
+        map: directMap,
+        sourceMarkdown,
+        visualMarkdown: directMap.source
+      };
       acceptedHtmlRef.current = null;
       acceptedCodeBodySnapshotsRef.current.clear();
       acceptedLocalCodeBodiesRef.current = [];
@@ -3641,24 +4198,89 @@ export function ImmersiveVisualEditor({
       visualCodeBodyDomOrderInvalidRef.current = true;
     }
     if (visualCodeBodyDomOrderInvalidRef.current) {
-      const currentBlockIds = Array.from(
-        surface.querySelectorAll('pre')
-      ).flatMap((pre) => {
+      // The live surface can mount only a slice of the document (the windowed
+      // owner), and that slice need not be one run: the window can keep a
+      // retained block alongside the visible chunk. Collect every mounted id,
+      // including ones the map does not know, so a foreign node cannot hide.
+      const mountedPres = Array.from(surface.querySelectorAll('pre'));
+      const mountedBlockIds = mountedPres.flatMap((pre) => {
         let root: HTMLElement | null = pre;
         while (root && root !== surface) {
           const id = root.getAttribute('data-easymde-visual-block-id');
-          if (id) return cached?.ordinals.has(id) ? [id] : [];
+          if (id) return [id];
           root = root.parentElement;
         }
         return [];
       });
+      // Indexes of mounted fences this owner created itself, which the
+      // accepted ordinal map deliberately does not contain.
+      const locallyCreatedCodeBodyPreIndexes = new Set(
+        mountedPres.flatMap((pre, index) =>
+          visualLocalCodeBodyProvenanceRef.current.has(pre) ? [index] : []
+        )
+      );
+      const mountedIdsAreOrderedSubsequence = (
+        ordinals: ReadonlyMap<string, number>,
+        orderedBlockIds: ReadonlyArray<string>
+      ): boolean => {
+        // A mounted `pre` the accepted map does not describe is legitimate
+        // only when this owner created it locally (an unpreviewed fence the
+        // user just typed): those carry local provenance and are intentionally
+        // outside the accepted ordinal map. Anything else is foreign.
+        const known = mountedBlockIds.filter(
+          (id, index) =>
+            ordinals.has(id)
+            || locallyCreatedCodeBodyPreIndexes.has(index)
+        );
+        if (known.length !== mountedBlockIds.length) return false;
+        // The mapped ids must appear in the map's own order, but need not be
+        // adjacent: an unmounted stretch between two mounted runs is normal,
+        // and so is a map that extends past the mounted window. Walking once
+        // with a forward-only cursor still rejects a reorder, because a
+        // swapped pair needs a step backwards.
+        let cursor = 0;
+        for (const id of mountedBlockIds) {
+          if (!ordinals.has(id)) continue;
+          while (
+            cursor < orderedBlockIds.length
+            && orderedBlockIds[cursor] !== id
+          ) {
+            cursor += 1;
+          }
+          if (cursor === orderedBlockIds.length) return false;
+          cursor += 1;
+        }
+        return true;
+      };
       if (
-        currentBlockIds.length !== cached.orderedBlockIds.length ||
-        currentBlockIds.some(
-          (id, index) => id !== cached.orderedBlockIds[index]
+        !mountedIdsAreOrderedSubsequence(
+          cached.ordinals,
+          cached.orderedBlockIds
         )
       ) {
-        throw new Error('visual-editor-code-body-map-stale');
+        // An accepted snapshot can introduce a fence the cached map predates: a
+        // paste that opens a code block turns an existing block into a new
+        // `pre`. The canonical source is already correct at that point, so
+        // rebuild once from the pair that is current now and re-check. A
+        // genuine reorder, a foreign node or a missing block still disagrees
+        // and stays an explicit failure.
+        const rebuiltOrdinals = createVisualCodeBodyOrdinalsForPreviewBlocks(
+          previewSourceMarkdown,
+          editMap
+        );
+        const rebuiltOrder = Array.from(rebuiltOrdinals.entries())
+          .sort((left, right) => left[1] - right[1])
+          .map(([id]) => id);
+        if (!mountedIdsAreOrderedSubsequence(rebuiltOrdinals, rebuiltOrder)) {
+          throw new Error('visual-editor-code-body-map-stale');
+        }
+        cached = {
+          ordinals: rebuiltOrdinals,
+          orderedBlockIds: rebuiltOrder,
+          previewSourceMarkdown,
+          signature: snapshot.signature
+        };
+        visualCodeBodyOrdinalsRef.current = cached;
       }
       visualCodeBodyDomOrderInvalidRef.current = false;
     }
@@ -3906,8 +4528,14 @@ export function ImmersiveVisualEditor({
         }
         sourceMarkdownRef.current = value;
         visualMarkdownRef.current = editedVisualMarkdown;
-        visualSourceIntervalMapRef.current =
-          createVisualMarkdownSourceIntervalMap(value, editedVisualMarkdown);
+        visualSourceIntervalMapRef.current = {
+          map: createVisualMarkdownSourceIntervalMap(
+            value,
+            editedVisualMarkdown
+          ),
+          sourceMarkdown: value,
+          visualMarkdown: editedVisualMarkdown
+        };
         acceptedHtmlRef.current = surface.innerHTML;
         acceptedCodeBodySnapshotsRef.current.clear();
         acceptedLocalCodeBodiesRef.current = visualLocalCodeBodyRecords();
@@ -4156,6 +4784,7 @@ export function ImmersiveVisualEditor({
       return;
     }
     let selectionDiagnostic: string | null = null;
+    let recoveredSourceSelection: VisualSelectionSourceRange | null = null;
     try {
       if (documentSession.document.getValue() !== pending.markdown) {
         throw new Error(
@@ -4275,6 +4904,57 @@ export function ImmersiveVisualEditor({
           }
           return;
         }
+        // An accepted-source caret the accepted map cannot place may still sit
+        // on the opening delimiter/info line of this source's own editable
+        // fenced block. Its representable position is that block's code-body
+        // start, proved from the same interval and code-body projection the
+        // native path uses. This is presentation only: the source bytes,
+        // revision, history and Preview request stay exactly as accepted, and
+        // only the presentation selection is corrected. Genuine stale,
+        // render, protection and history failures never reach this branch.
+        if (
+          pending.acceptedPreviewSource
+          && !pending.historyState
+          && !pending.acceptedDocumentBoundary
+          && !pending.canonicalReplacement
+          && 'none' === pending.selection.direction
+          && pending.selection.start === pending.selection.end
+          && error instanceof Error
+          && (
+            'visual-editor-selection-map-failed' === error.message
+            || 'visual-editor-selection-map-budget-exceeded' === error.message
+          )
+        ) {
+          const editMap = previewSnapshotRef.current.editMap;
+          let projection: ReturnType<typeof acceptedCodeBodyStartProjection> = null;
+          try {
+            projection = editMap
+              ? acceptedCodeBodyStartProjection(
+                  surface,
+                  pending.markdown,
+                  editMap,
+                  pending.signature,
+                  pending.selection.start
+                )
+              : null;
+          } catch {
+            projection = null;
+          }
+          if (projection) {
+            const owner = surface.ownerDocument.defaultView?.getSelection();
+            if (owner) {
+              surface.focus({ preventScroll: true });
+              owner.removeAllRanges();
+              owner.collapse(projection.node, projection.offset);
+              recoveredSourceSelection = {
+                direction: 'none',
+                end: projection.sourceOffset,
+                start: projection.sourceOffset
+              };
+              selectionDiagnostic = 'visual-editor-selection-restore-projection';
+            }
+          }
+        }
         const canUseSelectionFallback = Boolean(
           pending.acceptedPreviewSource
           && ('caret' === pending.selectionFallback
@@ -4282,7 +4962,7 @@ export function ImmersiveVisualEditor({
           && error instanceof Error
           && 'visual-editor-selection-map-failed' === error.message
         );
-        if (canUseSelectionFallback) {
+        if (canUseSelectionFallback && !recoveredSourceSelection) {
           const editMap = previewSnapshotRef.current.editMap;
           if (!editMap) throw error;
           let placed = false;
@@ -4308,7 +4988,7 @@ export function ImmersiveVisualEditor({
           }
           if (!placed) throw error;
           selectionDiagnostic = 'visual-editor-selection-restore-fallback';
-        } else {
+        } else if (!recoveredSourceSelection) {
           if (pending.historyState || pending.acceptedPreviewSource) throw error;
           selectionDiagnostic = visualEditorFailureCode(
             error,
@@ -4317,10 +4997,60 @@ export function ImmersiveVisualEditor({
           placeSurfaceCaretAtEnd(surface);
         }
       }
+      if (recoveredSourceSelection) {
+        // Presentation only: the accepted source bytes, revision, history
+        // depth and Preview request stay exactly as accepted, so this records
+        // the same value with the recovered presentation selection and
+        // creates no history entry.
+        applyDocumentChange({
+          selection: recoveredSourceSelection,
+          value: pending.markdown
+        });
+      }
       if (pending.acceptedPreviewSource) {
         captureSnapshot(pending.markdown, { acceptedPreviewSource: true });
       } else {
         captureAcceptedPasteSnapshot(pending.markdown);
+      }
+      // The accepted snapshot now describes the placed DOM, so the canonical
+      // caret can be read back from it. A document-end placement inside a
+      // trailing code block lands at the code element's content boundary,
+      // while the recorded canonical offset is the block end past the closing
+      // delimiter. Recording the offset the placement actually established
+      // keeps the native caret and the canonical selection describing one
+      // position, so a subsequent native edit commits instead of being judged
+      // against an offset the DOM cannot represent.
+      if (
+        !recoveredSourceSelection
+        && 'none' === pending.selection.direction
+        && pending.selection.start === pending.selection.end
+        && !pending.canonicalReplacement
+      ) {
+        const editMap = previewSnapshotRef.current.editMap;
+        const placed = editMap
+          ? codeBodyCaretSourceOffset(
+              surface,
+              pending.markdown,
+              editMap,
+              pending.selection.start
+            )
+          : null;
+        if (null !== placed && placed !== pending.selection.start) {
+          recoveredSourceSelection = {
+            direction: 'none',
+            end: placed,
+            start: placed
+          };
+          // This is a correctness alignment, not a recovery from a rejected
+          // projection, so it reports nothing: the accepted caret and the
+          // native caret now describe one position.
+          // The accepted snapshot now holds the accepted value, so this is a
+          // selection-only write: no source change, no history entry.
+          applyDocumentChange({
+            selection: recoveredSourceSelection,
+            value: pending.markdown
+          });
+        }
       }
       if (pending.historyState) {
         const adoptedSlot = visualHistorySnapshotsRef.current.get(
@@ -4341,7 +5071,7 @@ export function ImmersiveVisualEditor({
       pendingTransferRef.current = null;
       acceptedPasteDocumentBoundaryRef.current =
         pending.acceptedDocumentBoundary;
-      lastSelectionRef.current = pending.selection;
+      lastSelectionRef.current = recoveredSourceSelection ?? pending.selection;
       if (
         pending.acceptedDocumentBoundary &&
         visualMarkdownRef.current &&
@@ -4391,6 +5121,7 @@ export function ImmersiveVisualEditor({
       onDiagnostic(selectionDiagnostic);
     }
   }, [
+    applyDocumentChange,
     captureAcceptedPasteSnapshot,
     captureSnapshot,
     documentSession,
@@ -4415,6 +5146,17 @@ export function ImmersiveVisualEditor({
       throw new Error('visual-editor-code-block-observer-unavailable');
     }
     let active = true;
+    const imageInteraction = createVisualImageInteraction(surface, {
+      canActivate: () =>
+        active
+        && !composing
+        && !pendingTransferRef.current
+        && !externalChangeReportedRef.current
+        && !visualTransferFailureReportedRef.current,
+      focus: () => focusVisualSurface(surface),
+      report: failVisualSynchronization,
+      synchronizeSelection: () => runtime.prepareMediaSelection()
+    });
     const codeBlockOrderObserver = new MutationObserverConstructor(() => {
       visualCodeBodyDomOrderInvalidRef.current = true;
       if (active && pendingTransferRef.current?.acceptedPreviewSource) {
@@ -4839,10 +5581,14 @@ export function ImmersiveVisualEditor({
       // Markdown whose source contains hidden delimiters; materialize the
       // complete map before the next edit in a different node instead.
       visualSourceIntervalMapRef.current = emptyStructuralBody
-        ? createVisualMarkdownSourceIntervalMap(
-            committedResult.sourceMarkdown,
-            committedVisualMarkdown
-          )
+        ? {
+            map: createVisualMarkdownSourceIntervalMap(
+              committedResult.sourceMarkdown,
+              committedVisualMarkdown
+            ),
+            sourceMarkdown: committedResult.sourceMarkdown,
+            visualMarkdown: committedVisualMarkdown
+          }
         : null;
       visualBaselineMaterializedRef.current = emptyStructuralBody;
       if (emptyStructuralBody) {
@@ -4989,8 +5735,11 @@ export function ImmersiveVisualEditor({
         continuingUnmappedVisualInputRef.current = false;
         sourceMarkdownRef.current = '';
         visualMarkdownRef.current = '';
-        visualSourceIntervalMapRef.current =
-          createVisualMarkdownSourceIntervalMap('', '');
+        visualSourceIntervalMapRef.current = {
+          map: createVisualMarkdownSourceIntervalMap('', ''),
+          sourceMarkdown: '',
+          visualMarkdown: ''
+        };
         acceptedHtmlRef.current = surface.innerHTML;
         acceptedCodeBodySnapshotsRef.current.clear();
         acceptedLocalCodeBodiesRef.current = visualLocalCodeBodyRecords();
@@ -5687,7 +6436,18 @@ export function ImmersiveVisualEditor({
       const memory =
         pendingVisualIntentResultRef.current?.memory ??
         visualSelectionMemoryRef.current;
-      const sourceIntervalMap = visualSourceIntervalMapRef.current;
+      const base = pendingVisualIntentResultRef.current?.result;
+      const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
+      const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
+      const intervalMapRecord = visualSourceIntervalMapRef.current;
+      // A map only ever projects the pair it was created from: any other
+      // pending source or baseline means this boundary is unmapped.
+      const sourceIntervalMap =
+        intervalMapRecord
+        && intervalMapRecord.sourceMarkdown === sourceMarkdown
+        && intervalMapRecord.visualMarkdown === visualMarkdown
+          ? intervalMapRecord.map
+          : null;
       if (!memory && !sourceIntervalMap) {
         if (!visualBaselineMaterializedRef.current) {
           try {
@@ -5704,9 +6464,6 @@ export function ImmersiveVisualEditor({
         }
         return;
       }
-      const base = pendingVisualIntentResultRef.current?.result;
-      const sourceMarkdown = base?.sourceMarkdown ?? sourceMarkdownRef.current;
-      const visualMarkdown = base?.visualMarkdown ?? visualMarkdownRef.current;
       if (null === sourceMarkdown || null === visualMarkdown) return;
       try {
         const readOnlySnapshot = readOnlySnapshotRef.current;
@@ -5834,15 +6591,116 @@ export function ImmersiveVisualEditor({
           failVisualSynchronization(error);
           return;
         }
-        const genericIntent = visualInputIntent(
+        const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+        const nativeTargetRange = event.getTargetRanges?.()[0];
+        // The interval map aligns the whole document, so it is built only when
+        // a projection actually asks for it. Selection memory answers ordinary
+        // linear input on its own, which keeps consecutive typing free of the
+        // document-wide diff this owner must not run per keystroke.
+        let effectiveSourceIntervalMap = sourceIntervalMap;
+        const intervalMapFor = () => {
+          if (!effectiveSourceIntervalMap) {
+            effectiveSourceIntervalMap = createVisualMarkdownSourceIntervalMap(
+              sourceMarkdown,
+              visualMarkdown
+            );
+            visualSourceIntervalMapRef.current = {
+              map: effectiveSourceIntervalMap,
+              sourceMarkdown,
+              visualMarkdown
+            };
+          }
+          return effectiveSourceIntervalMap;
+        };
+        // A baseline that is not this surface's own serialization (the
+        // accepted-paste record) admits boundaries only behind the DOM prefix.
+        const acceptedPrefixOnly = !visualBaselineMaterializedRef.current;
+        let genericIntent = visualInputIntent(
           surface,
           event,
           memory,
-          sourceMarkdown.length,
+          sourceMarkdown,
           visualMarkdown.length,
           visualMarkdown,
-          sourceIntervalMap
+          intervalMapFor,
+          acceptedPrefixOnly
         );
+        const targetRangeMismatch = () =>
+          Boolean(
+            nativeTargetRange
+            && nativeSelection?.isCollapsed
+            && nativeSelection.anchorNode instanceof Text
+            && !visualInputBlock?.code.contains(nativeSelection.anchorNode)
+            && (
+              nativeTargetRange.startContainer !== nativeSelection.anchorNode
+              || nativeTargetRange.endContainer !== nativeSelection.focusNode
+              || nativeTargetRange.startOffset !== nativeSelection.anchorOffset
+              || nativeTargetRange.endOffset !== nativeSelection.focusOffset
+            )
+          );
+        if (
+          !genericIntent
+          && targetRangeMismatch()
+          && acceptedPrefixOnly
+          && !visualInputBlock
+          && nativeSelection?.isCollapsed
+          && nativeSelection.anchorNode instanceof Text
+          && !nativeSelection.anchorNode.parentElement?.closest('pre, code')
+        ) {
+          // The canonical baseline cannot prove this ordinary text block's
+          // position (the serializer spells the same rendered text
+          // differently). Commit whatever input is still pending first: a
+          // snapshot of the older committed source would clear that
+          // uncommitted result and erase its edit. Then serialize the surface
+          // once and map this same event against the real pair.
+          if (!flushVisualInput()) {
+            event.preventDefault();
+            return;
+          }
+          try {
+            materializeVisualBaseline();
+          } catch (error) {
+            event.preventDefault();
+            onFailure(
+              visualEditorFailureCode(
+                error,
+                'visual-editor-markdown-baseline-failed'
+              )
+            );
+            return;
+          }
+          const retriedSource = sourceMarkdownRef.current;
+          const retriedVisual = visualMarkdownRef.current;
+          const retriedRecord = visualSourceIntervalMapRef.current;
+          const retriedMap =
+            retriedRecord
+            && retriedRecord.sourceMarkdown === retriedSource
+            && retriedRecord.visualMarkdown === retriedVisual
+              ? retriedRecord.map
+              : null;
+          if (null !== retriedSource && null !== retriedVisual) {
+            genericIntent = visualInputIntent(
+              surface,
+              event,
+              visualSelectionMemoryRef.current,
+              retriedSource,
+              retriedVisual.length,
+              retriedVisual,
+              () =>
+                retriedMap
+                ?? createVisualMarkdownSourceIntervalMap(
+                  retriedSource,
+                  retriedVisual
+                ),
+              false
+            );
+          }
+        }
+        if (!genericIntent && targetRangeMismatch()) {
+          event.preventDefault();
+          failVisualSynchronization(new Error('visual-editor-selection-map-failed'));
+          return;
+        }
         const selection = surface.ownerDocument.defaultView?.getSelection();
         const collapsedCodeCaret = Boolean(
           visualInputBlock &&
@@ -6633,6 +7491,30 @@ export function ImmersiveVisualEditor({
             editMap,
             acceptedHtmlRef.current
           );
+          // A removal that takes whole blocks with it can report its caret on
+          // whitespace this surface cannot mount or restore, and an edit
+          // anchored there merges ambiguously. Commit the nearest surviving
+          // editable boundary instead, so the canonical history selection, the
+          // requested Preview transfer, and the native restoration all
+          // describe one representable position.
+          const committedSelection = projectVisualMarkdownRemovalSelection(
+            editMap.blocks.map((block, index) =>
+              block.editable
+                ? {
+                    ...createVisualMarkdownSourceRangeFromPreviewEditMap(
+                      currentValue,
+                      editMap,
+                      { end: index + 1, start: index }
+                    ),
+                    editable: true
+                  }
+                : null
+            ),
+            currentValue,
+            request.change.changes,
+            request.change.selection,
+            request.change.value
+          );
           const exactReplacement =
             request.expected.selection.start !== request.expected.selection.end &&
             request.change.changes.from === request.expected.selection.start &&
@@ -6640,7 +7522,10 @@ export function ImmersiveVisualEditor({
             request.change.selection.direction === 'none' &&
             request.change.selection.start ===
               request.change.changes.from + request.change.changes.insert.length &&
-            request.change.selection.end === request.change.selection.start;
+            request.change.selection.end === request.change.selection.start &&
+            committedSelection.direction === request.change.selection.direction &&
+            committedSelection.start === request.change.selection.start &&
+            committedSelection.end === request.change.selection.end;
           if (exactReplacement) {
             const children = acceptedTopLevelVisualChildren(surface, editMap);
             const blockCandidates = editMap.blocks
@@ -6712,7 +7597,8 @@ export function ImmersiveVisualEditor({
           applyDocumentChange(
             {
               changes: request.change.changes,
-              selection: request.change.selection,
+              recordHistorySelection: true,
+              selection: committedSelection,
               value: request.change.value
             },
             {
@@ -6731,7 +7617,7 @@ export function ImmersiveVisualEditor({
           }
           requestPreviewTransfer(
             request.change.value,
-            request.change.selection,
+            committedSelection,
             null,
             true,
             canonicalReplacement,
@@ -6910,6 +7796,10 @@ export function ImmersiveVisualEditor({
             !externalChangeReportedRef.current &&
             !visualTransferFailureReportedRef.current
         ),
+      isTransferPending: () =>
+        Boolean(pendingTransferRef.current) ||
+        visualCodeBodyPreviewSourceRef.current !==
+          documentSession.document.getValue(),
       prepareGeneratedContentTarget: (request) =>
         prepareGeneratedContentTarget?.(request) ?? null,
       prepareGeneratedContentTargetForSelection: (request) =>
@@ -6929,11 +7819,11 @@ export function ImmersiveVisualEditor({
           mapSelectionWhenUnchanged: true
         });
       },
-      prepareContextMenuSelection(target, point) {
+      prepareContextMenuSelection(target, point, activation = 'keyboard') {
         if (
-          pendingTransferRef.current ||
-          externalChangeReportedRef.current ||
-          visualTransferFailureReportedRef.current
+          pendingTransferRef.current
+          || externalChangeReportedRef.current
+          || visualTransferFailureReportedRef.current
         ) {
           // A pending transfer owns an unsettled document/Preview pair; no
           // selection may be mapped against it. Reject the gesture explicitly
@@ -6951,7 +7841,93 @@ export function ImmersiveVisualEditor({
           // rejected explicitly instead.
           return false;
         }
-        selectVisualImageForContextMenu(surface, target);
+        const pointerThematicBreak = target?.closest('hr');
+        const currentThematicBreak = captureVisualThematicBreakSelection(surface);
+        const selectionForThematic = surface.ownerDocument.defaultView?.getSelection();
+        const preservesOwnedSelection = Boolean(
+          'pointer' === activation
+          && pointerThematicBreak
+          && 'owned' === provenance
+          && selectionForThematic
+          && !selectionForThematic.isCollapsed
+          && (
+            !currentThematicBreak
+            || currentThematicBreak.block !== pointerThematicBreak
+          )
+        );
+        const preparesThematicBreak = Boolean(
+          ('keyboard' === activation && currentThematicBreak)
+          || ('pointer' === activation && pointerThematicBreak && !preservesOwnedSelection)
+        );
+        if (preparesThematicBreak) {
+          let pointerPreparation: VisualThematicBreakPointerPreparation | null = null;
+          try {
+            const source = sourceMarkdownRef.current;
+            const snapshot = previewSnapshotRef.current;
+            const editMap = snapshot.editMap;
+            if (
+              !source
+              || documentSession.document.getValue() !== source
+              || !editMap
+              || editMap.signature !== snapshot.signature
+              || capturedPreviewRevisionRef.current !== snapshot.revision
+              || visualCodeBodyPreviewSourceRef.current !== source
+              || 1 !== editMap.version
+              || 'line' !== editMap.coordinate
+            ) throw new Error('visual-editor-selection-map-failed');
+            const readOnlySnapshot = readOnlySnapshotRef.current;
+            if (!readOnlySnapshot) throw new Error('visual-editor-read-only-snapshot-missing');
+            assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+            assertAcceptedTopLevelVisualSurface(surface, editMap, acceptedHtmlRef.current);
+            const targetBlock = 'pointer' === activation
+              ? pointerThematicBreak
+              : currentThematicBreak?.block;
+            const children = acceptedTopLevelVisualChildren(surface, editMap);
+            const blockIndex = targetBlock ? children.indexOf(targetBlock) : -1;
+            const mapBlock = blockIndex >= 0 ? editMap.blocks[blockIndex] : undefined;
+            if (
+              !targetBlock
+              || !mapBlock
+              || mapBlock.id !== targetBlock.getAttribute('data-easymde-visual-block-id')
+              || !mapBlock.editable
+            ) throw new Error('visual-editor-selection-map-failed');
+            const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+              source,
+              editMap,
+              { end: blockIndex + 1, start: blockIndex }
+            );
+            if ('pointer' === activation) {
+              pointerPreparation = prepareVisualThematicBreakPointerSelection(
+                surface,
+                pointerThematicBreak
+              );
+              if (!pointerPreparation) throw new Error('visual-editor-selection-map-failed');
+            }
+            const thematicBreak = captureVisualThematicBreakSelection(surface);
+            if (!thematicBreak || thematicBreak.block !== targetBlock) {
+              throw new Error('visual-editor-selection-map-failed');
+            }
+            const preparedThematicSelection = captureVisualHistorySelection(surface);
+            contextMenuSelectionRef.current = null;
+            const finishThematicPreparation = (result: boolean): boolean => {
+              if (result) contextMenuSelectionRef.current = preparedThematicSelection;
+              return result;
+            };
+            applyDocumentChange({
+              selection: visualThematicBreakSourceSelection(
+                source,
+                sourceRange,
+                thematicBreak.direction
+              ),
+              value: source
+            });
+            return finishThematicPreparation(true);
+          } catch (error) {
+            pointerPreparation?.restore();
+            return failVisualSynchronization(error);
+          }
+        }
+        imageInteraction.select(target, activation);
         let preparedSelection: VisualHistorySelection | null = null;
         try {
           preparedSelection = captureVisualHistorySelection(surface);
@@ -7152,6 +8128,7 @@ export function ImmersiveVisualEditor({
     onReady(runtime);
     return () => {
       active = false;
+      imageInteraction.dispose();
       let cleanupError: unknown = null;
       try {
         flushVisualInput();

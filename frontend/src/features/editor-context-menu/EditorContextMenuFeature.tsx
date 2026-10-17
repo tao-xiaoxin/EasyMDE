@@ -133,7 +133,15 @@ export type EditorContextMenuSurface = Readonly<{
   prepare?: (
     target?: Element | null,
     blockIndex?: EditorMarkdownBlockIndex | null,
-    position?: Readonly<{ x: number; y: number }>
+    position?: Readonly<{ x: number; y: number }>,
+    /**
+     * Which gesture demanded the menu. `pointer` means a real pointer gesture
+     * preceded the `contextmenu` event, so a surface that owns pointer-driven
+     * selection may treat the pointed target as authoritative; `keyboard` means
+     * the Context Menu key or Shift+F10 asked for the menu and the current
+     * selection has to be kept.
+     */
+    activation?: 'keyboard' | 'pointer'
   ) => boolean;
   /**
    * Establish the selection a *pointer* activation must be captured with,
@@ -213,6 +221,7 @@ type OpenState = Readonly<{
   block: ReturnType<typeof findMarkdownBlock>;
   captured: EditorContextSnapshot;
   contextSelection: CapturedContextSelection | null;
+  activation: 'keyboard' | 'pointer';
   generation: number;
   getBlockIndex?: EditorContextMenuSurface['getBlockIndex'];
   heading: EditorContextMenuHeadingContext | null;
@@ -567,7 +576,8 @@ function contextSurface(
   direction: 'ltr' | 'rtl',
   position: Readonly<{ x: number; y: number }>,
   replayTarget: Element | null,
-  heading: EditorContextMenuFeatureProps['heading']
+  heading: EditorContextMenuFeatureProps['heading'],
+  activation: 'keyboard' | 'pointer'
 ): OpenState {
   if (!surface.element.isConnected) {
     throw new Error('editor-context-menu-surface-disconnected');
@@ -616,6 +626,7 @@ function contextSurface(
       value: snapshot.value
     });
     return {
+      activation,
       boundaryElement: surface.boundaryElement,
       block: null,
       captured,
@@ -644,7 +655,10 @@ function contextSurface(
         : 'editor-context-menu-source-read-only'
     );
   }
-  if (surface.prepare && !surface.prepare(target, blockIndex, position)) {
+  if (
+    surface.prepare
+    && !surface.prepare(target, blockIndex, position, activation)
+  ) {
     throw new Error('editor-context-menu-selection-map-failed');
   }
   snapshot = surface.getSnapshot();
@@ -681,6 +695,7 @@ function contextSurface(
     actionContext
   ) ?? { status: 'ready' as const };
   return {
+    activation,
     boundaryElement: surface.boundaryElement,
     block: blockContext.block,
     captured,
@@ -787,7 +802,8 @@ export function EditorContextMenuFeature({
           direction,
           current.captured.position,
           current.targetElement,
-          heading
+          heading,
+          current.activation
         ),
         generation: current.generation
       };
@@ -847,6 +863,19 @@ export function EditorContextMenuFeature({
             cancelPendingOpen();
             return;
           }
+          // A parked demand outlives the DOM it was anchored to. An accepted
+          // commit can retire that element without leaving a live element of
+          // the same document position, and a pointer re-hit-test from the old
+          // coordinates is unsound after a reflow. Drop the demand instead of
+          // reporting a failure for a target the user can no longer see.
+          if (
+            pending.target
+            && !pending.target.isConnected
+            && !surface.resolveTarget?.(pending.target)
+          ) {
+            cancelPendingOpen();
+            return;
+          }
           let next: OpenState;
           try {
             next = {
@@ -855,7 +884,8 @@ export function EditorContextMenuFeature({
                 direction,
                 pending.position,
                 pending.target,
-                heading
+                heading,
+                pending.state.activation
               ),
               generation: pending.state.generation
             };
@@ -1108,7 +1138,7 @@ export function EditorContextMenuFeature({
           );
         }
         next = {
-          ...contextSurface(surface, direction, position, target, heading),
+          ...contextSurface(surface, direction, position, target, heading, activation),
           generation
         };
       } catch (error) {

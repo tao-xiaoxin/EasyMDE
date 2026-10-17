@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { EditorClipboardPort } from '../../contracts/ports/editor-clipboard-port';
 import { parseMarkdownImageScale } from '../image-scale/image-scale-contract';
+import { createVisualImageInteraction } from '../immersive-editor/visual-markdown';
 import {
   EditorContextMenuFeature,
   type EditorContextMenuActionContext,
@@ -859,7 +860,14 @@ describe('EditorContextMenuFeature', () => {
 
     fireEvent.contextMenu(math, { clientX: 20, clientY: 30 });
     await screen.findByRole('menu');
-    expect(prepare).toHaveBeenCalledWith(math, undefined, { x: 20, y: 30 });
+    // A context-menu request without a preceding pointer gesture is a keyboard
+    // activation, and preparation receives that activation explicitly.
+    expect(prepare).toHaveBeenCalledWith(
+      math,
+      undefined,
+      { x: 20, y: 30 },
+      'keyboard'
+    );
     expect(onFailure).not.toHaveBeenCalled();
     view.unmount();
   });
@@ -2620,6 +2628,115 @@ describe('EditorContextMenuFeature', () => {
     );
   });
 
+  it('rebuilds a parked demand when readiness is notified after the transfer settles', async () => {
+    const source = document.createElement('div');
+    source.contentEditable = 'true';
+    layoutSurface(source);
+    document.body.append(source);
+    const readinessListeners = new Set<() => void>();
+    let ready = false;
+    const onFailure = vi.fn();
+    render(
+      <EditorContextMenuFeature
+        clipboard={clipboard()}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={onFailure}
+        source={{
+          boundaryElement: source,
+          element: source,
+          getContextReadiness: () =>
+            ready ? { status: 'ready' as const } : { status: 'pending' as const },
+          getSnapshot: () => ({
+            selection: { direction: 'none', end: 0, start: 0 },
+            value: 'alpha beta'
+          }),
+          isEditable: () => true,
+          kind: 'source',
+          subscribeReadiness: (listener) => {
+            readinessListeners.add(listener);
+            return () => readinessListeners.delete(listener);
+          }
+        }}
+        visual={null}
+      />
+    );
+
+    fireEvent.contextMenu(source, { clientX: 20, clientY: 30 });
+    // The demand parks because the surface is not ready yet.
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    // A settle notification alone must not open the menu while still pending.
+    for (const listener of readinessListeners) listener();
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(onFailure).not.toHaveBeenCalled();
+
+    // The transfer settles, the owner becomes ready and notifies: the parked
+    // demand is rebuilt against the newly accepted state.
+    ready = true;
+    for (const listener of readinessListeners) listener();
+    expect(await screen.findByRole('menu')).toBeTruthy();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it('drops a parked demand whose target was replaced and cannot be resolved', async () => {
+    const source = document.createElement('div');
+    source.contentEditable = 'true';
+    layoutSurface(source);
+    document.body.append(source);
+    const target = document.createElement('p');
+    target.textContent = 'target';
+    source.append(target);
+    const readinessListeners = new Set<() => void>();
+    let ready = false;
+    const onFailure = vi.fn();
+    const releasePending = vi.fn();
+    render(
+      <EditorContextMenuFeature
+        clipboard={clipboard()}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={onFailure}
+        source={{
+          boundaryElement: source,
+          element: source,
+          getContextReadiness: () =>
+            ready ? { status: 'ready' as const } : { status: 'pending' as const },
+          getSnapshot: () => ({
+            selection: { direction: 'none', end: 0, start: 0 },
+            value: 'alpha beta'
+          }),
+          isEditable: () => true,
+          kind: 'source',
+          releasePending,
+          // The owner has no way to re-anchor a retired target.
+          resolveTarget: () => null,
+          subscribeReadiness: (listener) => {
+            readinessListeners.add(listener);
+            return () => readinessListeners.delete(listener);
+          }
+        }}
+        visual={null}
+      />
+    );
+
+    fireEvent.contextMenu(target, { clientX: 20, clientY: 30 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    // The accepted commit retires the element the demand was anchored to.
+    target.remove();
+    ready = true;
+    for (const listener of readinessListeners) listener();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
+    // A rejection the user cannot act on is not a failure worth reporting.
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(releasePending).toHaveBeenCalledWith('cancelled');
+  });
+
   it('keeps keyboard activation from preparing a pointer selection', async () => {
     const source = document.createElement('div');
     source.contentEditable = 'true';
@@ -2969,5 +3086,95 @@ describe('EditorContextMenuFeature', () => {
     expect(outsideEvent.defaultPrevented).toBe(false);
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(restoreFocus).toHaveBeenCalledOnce();
+  });
+
+  it('retargets a visual image demand to the pointed image while the previous menu is open', async () => {
+    const surface = document.createElement('article');
+    surface.contentEditable = 'true';
+    layoutSurface(surface);
+    surface.innerHTML =
+      '<p><img alt="first" src="https://example.test/first.png"></p>'
+      + '<p><img alt="second" src="https://example.test/second.png"></p>';
+    document.body.append(surface);
+    const paragraphs = Array.from(surface.querySelectorAll('p'));
+    const images = Array.from(surface.querySelectorAll('img'));
+    const firstImage = images[0];
+    const secondImage = images[1];
+    const firstParagraph = paragraphs[0];
+    const secondParagraph = paragraphs[1];
+    if (!firstImage || !secondImage || !firstParagraph || !secondParagraph) {
+      throw new Error('context-menu-visual-image-fixture-missing');
+    }
+    window.getSelection()?.removeAllRanges();
+    const activations: Array<string | undefined> = [];
+    // The real visual owner hands every gesture to one image-interaction
+    // owner; this harness mirrors that wiring with an inert hook set.
+    const imageInteraction = createVisualImageInteraction(surface, {
+      canActivate: () => true,
+      focus: () => undefined,
+      report: () => undefined,
+      synchronizeSelection: () => true
+    });
+    let selection: {
+      direction: 'backward' | 'forward' | 'none';
+      end: number;
+      start: number;
+    } = { direction: 'none', end: 0, start: 0 };
+    render(
+      <EditorContextMenuFeature
+        clipboard={clipboard()}
+        direction="ltr"
+        labels={labels}
+        onAction={vi.fn()}
+        onFailure={vi.fn()}
+        source={null}
+        visual={{
+          boundaryElement: surface,
+          element: surface,
+          getSnapshot: () => ({ selection, value: 'markdown' }),
+          isEditable: () => true,
+          kind: 'visual',
+          prepare: (target, _blockIndex, _position, activation) => {
+            activations.push(activation);
+            // The interaction owner decides whether the gesture may rebind the
+            // selection, exactly as the real visual runtime does.
+            imageInteraction.select(target, activation ?? 'keyboard');
+            const live = window.getSelection();
+            if (!live?.anchorNode || !live.focusNode) return false;
+            selection = live.isCollapsed
+              ? { direction: 'none', end: 0, start: 0 }
+              : { direction: 'forward', end: 1, start: 0 };
+            return true;
+          }
+        }}
+      />
+    );
+
+    // Pointer activation on the first image describes that image.
+    fireEvent.mouseDown(firstImage, { button: 2, clientX: 40, clientY: 20 });
+    fireEvent.contextMenu(firstImage, { clientX: 40, clientY: 20 });
+    expect(await screen.findByRole('menu')).toBeTruthy();
+    expect(activations).toEqual(['pointer']);
+    expect(window.getSelection()?.anchorNode).toBe(firstParagraph);
+
+    // A second pointer demand replaces the open menu and rebinds the retained
+    // image range to the image under the pointer instead of reusing the range
+    // the first menu left behind.
+    fireEvent.mouseDown(secondImage, { button: 2, clientX: 40, clientY: 80 });
+    fireEvent.contextMenu(secondImage, { clientX: 40, clientY: 80 });
+    await waitFor(() =>
+      expect(activations).toEqual(['pointer', 'pointer'])
+    );
+    expect(screen.getAllByRole('menu')).toHaveLength(1);
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+    expect(window.getSelection()?.anchorNode).toBe(secondParagraph);
+
+    // Keyboard activation keeps the current selection and never re-anchors it.
+    fireEvent.keyDown(surface, { key: 'F10', shiftKey: true });
+    await waitFor(() =>
+      expect(activations).toEqual(['pointer', 'pointer', 'keyboard'])
+    );
+    expect(window.getSelection()?.anchorNode).toBe(secondParagraph);
+    imageInteraction.dispose();
   });
 });

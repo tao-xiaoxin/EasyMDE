@@ -288,6 +288,53 @@ owner before capturing context; foreign selections do not override clicked
 object activation, while straddling or enclosing ranges reject explicitly.
 These checks reuse the existing visual mapper and canonical selection owner.
 
+Image activation is gesture-owned rather than inferred from menu coordinates. The
+shared Feature decides whether a real pointer gesture preceded the `contextmenu`
+event and passes that activation through the surface preparation hook. One
+per-surface owner (`createVisualImageInteraction` in
+`frontend/src/features/immersive-editor/visual-markdown.ts`) then holds the whole
+image interaction: the gesture policy, the exact image-node range it placed
+itself, the primary-button activation, selection drift, and the visible marker.
+Each visual runtime contributes only its own readiness rule, focus operation,
+canonical selection publication, and failure reporting, so the two runtimes share
+no duplicated image handlers and no cross-owner feedback registry. A pointer
+demand may replace only the exact range that owner placed for an earlier image, a
+keyboard activation replaces no selection, and the primary button on the image
+itself replaces whatever the selection was. A deliberate mixed text/object range
+keeps its extent, and the Root still requires the hit image's block-id, image
+ordinal, source, revision, and live lease to agree before image commands are
+exposed. Replacing an already-open menu keeps the existing demand lifecycle: the
+previous demand is retired before the next pointer target is published, and a
+lease owned by an asynchronous action is never released early.
+
+A primary-button activation also focuses the visual surface, selects the image
+node, and publishes the corresponding source range through the existing
+same-value canonical selection update, so later commands and keyboard activation
+describe the image the user activated. The visible selected state is a transient
+fixed-position soft blue shadow rendered from the image's own box: it changes no
+Markdown, image attribute, geometry, or Clipboard/export payload, and it leaves
+the accepted-window registration, which compares captured and live surface
+content, untouched. The owner keeps that shadow bound to its box through the
+image and surface geometry observers, the surface structure observer, and
+scroll/resize, so a late resource load, a rewritten size attribute, a Windowed
+block replacement, another target, menu focus, lock/exit, drift, and disposal all
+rebind or clear it. The shadow is clamped to the preview's visible band, the
+viewport narrowed by the surface's clipping ancestors: while the image sits
+inside the band the shadow is exactly the image's box, the part that scrolled out
+of the pane is never drawn, and a fully scrolled-out image is hidden instead of
+painting over the toolbar, the header, another pane, or outside the viewport.
+
+Pointer activation of a thematic break is distinct from keyboard Context Menu
+activation. A live direct-child `hr` may normalize only an absent, collapsed, or
+wholly foreign native Selection to an exact node range; a deliberate owned,
+mixed, different-object, or straddling range is preserved. Full and Windowed
+owners authenticate source value, accepted signature/revision, edit map or
+mounted ledger, block identity, editability, protection, and direct-child
+ownership before that normalization, then delegate the resulting exact source
+range to the existing thematic-break owner. A stale, detached, protected,
+noneditable, spacer, or unmappable target restores the original Selection and
+fails explicitly without a source/history write; forward and backward HR ranges
+remain directional, and keyboard activation never retargets from its anchor.
 Thematic breaks are parser-owned editable blocks with a packed `thematic-break`
 kind appended to the block-index registry so existing numeric kinds remain
 stable. Source insertion above a rule uses two detected document line endings
@@ -438,6 +485,29 @@ paths return `false` with the stable diagnostics
 `preview-window-materialize-repository-stale`. Ready materialization is
 installed by the Safe HTML sink in bounded batches; completion, failure,
 supersession, empty replacement, and teardown resolve every pending result.
+Full-surface materialization holds the current activation against background
+window commits so mode handoff and export consumers can use the complete DOM.
+The `windowed` false-to-true layout transition releases the previous activation's
+hold before window setup, including an immersive Source/Split/Preview round trip;
+ordinary rerenders, scrolling, and resizing do not release a consumer's hold.
+This does not bypass an in-flight sink commit: window setup still waits for
+bounded materialization. Completion clears its commit key and reruns setup;
+failure publishes its stable diagnostic and error state, and the Root cancels
+the queued unlock and clears its busy control. Setup, scheduling, and committing
+retain these same hold guards rather than racing the Safe HTML sink. The next
+admitted unlock accepts a measured window before enabling and focusing the
+editable pane. Root snapshot revisions count accepted snapshots, whereas Preview
+window generations advance on each request state (loading and success); those
+clocks are not compared as if they were one revision sequence.
+Window spacers are repository-owned declarations of the unmounted range they
+cover. Full-surface materialization consumes a spacer batch by batch, advancing
+its declared start and scaling its block size in place before removing it, so a
+cached spacer can outlive the run it was created for. The repository re-declares
+that range, block size, and margin pair whenever it hands a cached spacer out
+again, which keeps every installed spacer's declaration equal to its mounted
+neighbors; a mismatch fails the window commit with
+`preview-window-flow-spacer-neighbor-invalid` instead of installing an
+inconsistent window.
 Fence shortcuts are a presentation command: a newly formed tilde or backtick
 opener that can be represented as valid backtick syntax is serialized as an
 equally wide backtick fence while its info string is retained. Accepted or
@@ -569,6 +639,65 @@ endpoints. A canonical EOF selection still uses the document-end form of the
 same lease. The lease releases after caret restoration or cancellation, error,
 or teardown; invalid range, map, generation, signature, and owner transitions
 remain explicit Preview failures.
+A canonical removal that takes whole blocks with it (a context-menu code-block
+or thematic-break deletion) reports its caret where the removed block started.
+An editable block's ledger range ends at the next block's first line, so it
+includes that block's own trailing line terminator while the removal keeps it:
+such a block counts as consumed when nothing but whitespace survives inside its
+range, not only when the removal covers the range end. Both owners commit the
+nearest surviving editable boundary instead of that whitespace, the following
+block while the document still has one and otherwise the preceding block, so
+the canonical history selection, the Preview selection pin or accepted transfer,
+and the native restoration all describe one mountable position. The Full owner
+computes that one committed selection from the accepted edit map through the
+shared `projectVisualMarkdownRemovalSelection` projection, records it in
+canonical history with the write, and binds the same selection into its Preview
+request, so Undo and Redo restore the accepted post-removal position rather than
+a re-mapped or unrepresentable one. Pinning still accepts a collapsed position
+no editable block covers, through the same source-whitespace owner the removal
+projection uses: the following editable block owns the pin, otherwise the
+preceding one, but only while the source between the caret and that block is
+blank. Native restoration stays strict: a selection the accepted window cannot
+mount remains an explicit failure reported once per event, and that recovery
+never applies to a non-collapsed selection, generated or unavailable content, or
+a stale map.
+The visual surface keeps code-fence delimiter lines as `data-easymde-visual-fence`
+metadata instead of DOM text, so a history selection whose endpoint sits on such
+a line has no visual boundary of its own. Source projection maps that endpoint
+to the block's code body instead: its start for an opening delimiter line and
+its last representable offset for a closing one, proven from the source block
+structure together with the live fence metadata. The Windowed owner maps each
+endpoint on a clone of that endpoint block, so the fence metadata may sit on the
+mapped root itself rather than on a descendant. When that root is the fence block
+itself, its boundary space starts at the code body and omits the opening
+delimiter line: `visualCodeFenceRootSourceOffset` translates the source offset
+into that root space before mapping, so an endpoint inside the code body resolves
+to its own boundary instead of an offset the root can never produce. The formal
+renderer publishes fence markup without fence metadata (this owner restores it
+from the source during capture, after the accepted mapping has run), so the
+mapping clone receives the fence metadata its endpoint Markdown proves through
+`applyVisualCodeFenceMetadataFromSource`; the clone then serializes back to that
+Markdown instead of its code body alone. Offsets
+without that proof keep the explicit selection-map failure. A candidate walk that
+exhausts its 32-attempt budget still reaches that proof: the budget error is
+caught at the walk, and the source-proven recovery is applied once. A mapped
+lower neighbour may advance only through a contiguous text run whose normalized
+source bytes equal the requested source slice; otherwise the block-end or
+same-owner upper-boundary proof is used only for a source-only region, and an
+offset no proof owns rethrows the original budget failure unchanged.
+An accepted-source caret can land on a fence's opening delimiter or info line
+after a paste, where the accepted map has no visual boundary for it. The
+accepted-caret recovery then projects that offset to the start of the same
+editable block's code body, proved from the source interval
+(`visualCodeBodyIntervalAtOrdinal`), the accepted ledger row that owns the body,
+and the code DOM's own body text; it never falls back to another block, the old
+Selection, or the document end. The correction is presentation only: the
+accepted source bytes, revision, Undo depth, and Preview request stay exactly as
+accepted, the same value is recorded with the recovered selection so no history
+entry is created, and the recovered position is reported through
+`onDiagnostic` (`visual-editor-selection-restore-projection`) rather than a
+failure. Stale, render, protection, history, and non-collapsed failures keep
+their existing explicit failure path.
 When that exact request resolves to a document at or below the Windowed
 threshold, the owner releases the matching lease and continues the normal full
 staged commit because the complete DOM already contains the editable EOF.
@@ -649,7 +778,11 @@ For a signature-matched visual paste accepted at canonical offset `0` or
 `source.length`, the paste transaction owns that known document-edge selection
 and restores it at the first or last safe editable DOM boundary without running
 the generic DOM search. Internal positions still use the bounded mapper and
-fail explicitly when they cannot be mapped.
+fail explicitly when they cannot be mapped, except for a collapsed caret that
+the source proves is on an editable fenced block's opening delimiter/info line:
+that one is presented at the block's code-body start without changing the
+accepted source, so a trusted native input then commits at the code body
+instead of a stale paragraph offset.
 
 `Ctrl/Cmd+A` is owned by the connected visual root in both non-windowed and
 windowed immersive editing. The whole-root deletion owner handles only

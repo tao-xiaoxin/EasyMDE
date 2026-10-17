@@ -19,30 +19,33 @@ import {
 	captureVisualCodeInputSnapshot,
 	captureVisualMarkdownReadOnlySnapshot,
 	captureVisualThematicBreakSelection,
+	prepareVisualThematicBreakPointerSelection,
 	classifyVisualSelectionProvenance,
+	createVisualImageInteraction,
 	mergeVisualMarkdownChangeDetails,
 	normalizeVisualCaretAtDocumentBoundary,
 	normalizeVisualCodePlaceholders,
 	projectVisualCodeBodySelection,
+	projectVisualMarkdownRemovalSelection,
 	protectVisualMarkdownReadOnlyRegions,
 	reconcileVisualCodeBodyDom,
 	restoreVisualCodeFenceFamilies,
 	restoreVisualSelection,
-	selectVisualImageForContextMenu,
 	serializeVisualMarkdownBlockFragment,
 	VISUAL_MARKDOWN_READ_ONLY_SELECTOR,
-	type VisualCodeInputSnapshot,
-	type VisualMarkdownReadOnlySnapshot,
-	type VisualSelectionSnapshot,
-	visualCaretBoundaryFromSourceOffset,
+  type VisualCodeInputSnapshot,
+  type VisualMarkdownReadOnlySnapshot,
+  type VisualSelectionSnapshot,
+  type VisualThematicBreakPointerPreparation,
 	visualBoundarySourceOffset,
+	visualCaretBoundaryFromSourceOffset,
 	visualCodeBodyDomOffset,
 	visualCodeBodyDomText,
 	visualCodeBodyIntervalAtOrdinal,
 	visualCodeBodyOrdinalForSourceRange,
+	visualContextMenuCaretRangeAtPoint,
 	visualSelectionSourceRangeForBlocks,
 	visualThematicBreakSourceSelection,
-	visualContextMenuCaretRangeAtPoint,
 } from "../visual-markdown";
 import type {
 	ImmersiveVisualEditorProps,
@@ -2630,12 +2633,18 @@ export function WindowedImmersiveVisualEditor({
 								)
 							: false);
 					if (!restored) {
-						onDiagnostic("visual-editor-window-history-selection-not-mounted");
+						// One report per event: a pinned demand fails through the
+						// transfer owner, and an unpinned one keeps the surface
+						// editable with a diagnostic instead of a second copy of
+						// the same code.
 						if (pendingHistorySelection.releaseDocumentEndPin) {
 							throw new Error(
 								"visual-editor-window-history-selection-not-mounted",
 							);
 						}
+						onDiagnostic(
+							"visual-editor-window-history-selection-not-mounted",
+						);
 					}
 					if (restored && pendingHistorySelection.releaseDocumentEndPin) {
 						const visualSelection =
@@ -2679,7 +2688,7 @@ export function WindowedImmersiveVisualEditor({
 					}
 				}
 			} catch (error) {
-				onFailure(
+onFailure(
 					error instanceof Error
 							? error.message
 						: "visual-editor-window-history-selection-restore-failed",
@@ -2716,13 +2725,24 @@ export function WindowedImmersiveVisualEditor({
 		let rejectedBeforeInput: ActiveRegion | null = null;
 
 		const report = (error: unknown): false => {
-			onFailure(
+onFailure(
 				error instanceof Error
 					? error.message
 					: "visual-editor-window-sync-failed",
 			);
 			return false;
 		};
+		const imageInteraction = createVisualImageInteraction(surface, {
+			canActivate: () =>
+				active &&
+				!composing &&
+				!pendingRef.current &&
+				!pendingPropRef.current &&
+				!externalChangeReportedRef.current,
+			focus: () => focusSurface(surface),
+			report: (error) => report(error),
+			synchronizeSelection: () => runtime.prepareMediaSelection(),
+		});
 		const applyDocumentChange = (
 			change: Parameters<typeof documentSession.document.applyTextChange>[0],
 		): void => {
@@ -2786,7 +2806,8 @@ export function WindowedImmersiveVisualEditor({
 					range.id !== blockId ||
 					thematicBreakSelection.block.parentElement !== surface
 				) {
-					throw new Error("visual-editor-selection-map-failed");
+
+					throw new Error('visual-editor-selection-map-failed');
 				}
 				const adjacentRange = (index: number): EffectiveBlockRange | null => {
 					const adjacent = editMapRef.current.blocks[index];
@@ -2804,6 +2825,39 @@ export function WindowedImmersiveVisualEditor({
 					source,
 				};
 			};
+    const validateThematicBreakTarget = (target: Element | null): void => {
+      if (!active || externalChangeReportedRef.current) {
+        throw new Error("visual-editor-window-stale");
+      }
+      if (pendingRef.current || pendingPropRef.current) {
+        throw new Error("visual-editor-window-pending");
+      }
+      const source = sourceRef.current;
+      if (documentSession.document.getValue() !== source) {
+        throw new Error("visual-editor-window-stale");
+      }
+      const readOnlySnapshot = readOnlySnapshotRef.current;
+      if (!readOnlySnapshot) {
+        throw new Error("visual-editor-window-read-only-snapshot-missing");
+      }
+      assertVisualMarkdownReadOnlySnapshot(surface, readOnlySnapshot);
+      assertMountedEditableBlocksMatchAccepted(
+        surface,
+        rangesRef.current,
+        acceptedBlockSerializationsRef.current,
+        acceptedWindowChildNodesRef.current,
+      );
+      const blockId = target?.getAttribute(VISUAL_BLOCK_ATTRIBUTE);
+      const range = blockId ? rangesRef.current.get(blockId) : null;
+      if (
+        !(target instanceof HTMLHRElement)
+        || target.parentElement !== surface
+        || !target.isConnected
+        || !blockId
+        || !range?.editable
+        || range.id !== blockId
+      ) throw new Error("visual-editor-selection-map-failed");
+    };
 		const syncVisibleSelection = (region: ActiveRegion): void => {
 			const source = sourceRef.current;
 			const sourceSlice = source.slice(region.sourceStart, region.sourceEnd);
@@ -3977,10 +4031,24 @@ export function WindowedImmersiveVisualEditor({
 						acceptedWindowChildNodesRef.current,
 					);
 					const restoreFocus = surface.ownerDocument.activeElement === surface;
+					// A removal that takes whole blocks with it can report its
+					// caret on whitespace this surface cannot mount or restore.
+					// Commit the nearest surviving editable boundary instead so
+					// the history selection, the window pin, and the native
+					// restoration all describe the same position.
+					const committedSelection = projectVisualMarkdownRemovalSelection(
+						editMapRef.current.blocks.map((block) =>
+							rangesRef.current.get(block.id),
+						),
+						currentValue,
+						request.change.changes,
+						request.change.selection,
+						request.change.value,
+					);
 					applyDocumentChange({
 						changes: request.change.changes,
 						recordHistorySelection: true,
-						selection: request.change.selection,
+						selection: committedSelection,
 						value: request.change.value,
 					});
 					canonicalApplied = true;
@@ -3991,7 +4059,7 @@ export function WindowedImmersiveVisualEditor({
 						{
 							historyState: documentSession.document.getHistoryState(),
 							restoreFocus,
-							selection: request.change.selection,
+							selection: committedSelection,
 						},
 						{ pinWindowSelection: true },
 					);
@@ -4079,6 +4147,12 @@ export function WindowedImmersiveVisualEditor({
 				}
 			},
 			isEditable: () => Boolean(active && !externalChangeReportedRef.current),
+			isTransferPending: () =>
+				Boolean(
+					pendingRef.current ||
+						pendingPropRef.current ||
+						externalChangeReportedRef.current,
+				),
 			getGeneratedPreviewIdentity: () =>
 				getGeneratedPreviewIdentity?.() ?? null,
 			prepareGeneratedContentTarget: (request) =>
@@ -4131,7 +4205,7 @@ export function WindowedImmersiveVisualEditor({
 					return report(error);
 				}
 			},
-			prepareContextMenuSelection(target, point) {
+			prepareContextMenuSelection(target, point, activation = "keyboard") {
 				const provenance = classifyVisualSelectionProvenance(
 					surface,
 					surface.ownerDocument.defaultView?.getSelection(),
@@ -4157,38 +4231,75 @@ export function WindowedImmersiveVisualEditor({
 					// surface-level caret or rebinding the action to the block.
 					return false;
 				}
-				selectVisualImageForContextMenu(surface, resolvedTarget);
-				let preparedSelection: VisualSelectionSnapshot | null = null;
-				try {
-					preparedSelection = captureVisualSelection(surface);
-				} catch {
-					preparedSelection = null;
-				}
-				contextMenuSelectionRef.current = null;
-				const finishPreparation = (result: boolean): boolean => {
-					if (result) contextMenuSelectionRef.current = preparedSelection;
-					return result;
-				};
-				const targetThematicBreak = resolvedTarget?.closest("hr");
-				if (
-					targetThematicBreak
-					&& surface.contains(targetThematicBreak)
-				) {
-					try {
-						const thematicBreak = prepareThematicBreakSelection();
-						if (!thematicBreak) {
-							throw new Error("visual-editor-selection-map-failed");
-						}
-						applyDocumentChange({
-							selection: thematicBreak.selection,
-							value: thematicBreak.source,
-						});
-						regionRef.current = null;
-						return finishPreparation(true);
-					} catch (error) {
-						return report(error);
-					}
-				}
+                const targetThematicBreak = resolvedTarget?.closest("hr");
+                const currentThematicBreak = captureVisualThematicBreakSelection(surface);
+                const selectionBeforePreparation =
+                    surface.ownerDocument.defaultView?.getSelection();
+                const preservesOwnedSelection = Boolean(
+                    "pointer" === activation
+                    && targetThematicBreak
+                    && "owned" === provenance
+                    && selectionBeforePreparation
+                    && !selectionBeforePreparation.isCollapsed
+                    && (
+                        !currentThematicBreak
+                        || currentThematicBreak.block !== targetThematicBreak
+                    )
+                );
+                const preparesThematicBreak = Boolean(
+                    ("keyboard" === activation && currentThematicBreak)
+                    || (
+                        "pointer" === activation
+                        && targetThematicBreak
+                        && !preservesOwnedSelection
+                    )
+                );
+                let pointerPreparation: VisualThematicBreakPointerPreparation | null = null;
+                if ("pointer" === activation && preparesThematicBreak) {
+                    validateThematicBreakTarget(resolvedTarget);
+                }
+                if ("pointer" === activation && preparesThematicBreak) {
+                    try {
+                        pointerPreparation = prepareVisualThematicBreakPointerSelection(
+                            surface,
+                            resolvedTarget,
+                        );
+                        if (!pointerPreparation) {
+                            throw new Error("visual-editor-selection-map-failed");
+                        }
+                    } catch (error) {
+                        return report(error);
+                    }
+                }
+                imageInteraction.select(resolvedTarget, activation);
+                let preparedSelection: VisualSelectionSnapshot | null = null;
+                try {
+                    preparedSelection = captureVisualSelection(surface);
+                } catch {
+                    preparedSelection = null;
+                }
+                contextMenuSelectionRef.current = null;
+                const finishPreparation = (result: boolean): boolean => {
+                    if (result) contextMenuSelectionRef.current = preparedSelection;
+                    return result;
+                };
+                if (preparesThematicBreak) {
+                    try {
+                        const thematicBreak = prepareThematicBreakSelection();
+                        if (!thematicBreak) {
+                            throw new Error("visual-editor-selection-map-failed");
+                        }
+                        applyDocumentChange({
+                            selection: thematicBreak.selection,
+                            value: thematicBreak.source,
+                        });
+                        regionRef.current = null;
+                        return finishPreparation(true);
+                    } catch (error) {
+                        pointerPreparation?.restore();
+                        return report(error);
+                    }
+                }
 				const pre = resolvedTarget?.closest("pre");
 				const preOwner = pre ? rootBlock(surface, pre) : null;
 				const isDirectPre = Boolean(pre && preOwner === pre);
@@ -4349,6 +4460,7 @@ export function WindowedImmersiveVisualEditor({
 		onReady(runtime);
 		return () => {
 			active = false;
+			imageInteraction.dispose();
 			thematicBreakDeletionHistoryRef.current = [];
 			releasePendingHistorySelection(pendingHistorySelectionRef);
 			cancelPendingPaste?.();

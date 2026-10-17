@@ -131,6 +131,26 @@ it does not expose that object's deletion, alignment or adjacent insertion.
 Selections crossing the editable visual surface boundary are rejected without
 changing Markdown.
 
+Clicking an image in unlocked Visual explicitly selects that image and shows a
+soft blue shadow around it. The shadow hugs the image's own box and follows it
+while the image loads, is resized by the layout, or when the surrounding window
+is rebuilt. Clicking another image moves the shadow; clicking text removes it.
+This selection-only action focuses Visual and updates only the canonical
+selection, so Markdown, image size, source attributes, history, and
+Clipboard/export output do not change. The shadow remains understandable while
+the context menu has focus and disappears when the selection drifts, the Preview
+window is replaced, Visual is locked or exited, or the editor is disposed. The
+shadow is clipped to the visible preview area: the part of the image that has
+scrolled out of the pane is not shadowed, and an image that is fully scrolled out
+shows no shadow at all.
+
+For pointer context menus the image under the pointer is authoritative on every
+right-click. After dismissing an image menu—or while one is open—a right-click on
+another image re-anchors the menu and its selection to that image, including
+duplicate URLs by block and image order. The Context Menu key and Shift+F10 use
+the current selection instead and never re-anchor it. Deliberate mixed text/image
+selections keep their extent and do not gain image mutation commands.
+
 Standalone Markdown thematic breaks (`---`, `***`, or `___`) use the same
 paragraph insertion actions as other editable blocks. Inserting above a rule
 keeps a blank line so later text remains a paragraph instead of becoming a

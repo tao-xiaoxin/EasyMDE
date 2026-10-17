@@ -15,10 +15,14 @@ import {
   applyVisualToolbarCommand,
   applyVisualMarkdownEditIntent,
   captureVisualThematicBreakSelection,
+  prepareVisualThematicBreakPointerSelection,
   captureVisualCodeInputSnapshot,
   classifyVisualSelectionProvenance,
+  createVisualImageInteraction,
   createVisualMarkdownSourceIntervalMap,
+  mapTextBoundaryFromInterval,
   expandVisualCodeFenceForBody,
+  foldVisualMarkdownSoftBreaks,
   createVisualMarkdownDirectSourceIntervalMap,
   createVisualMarkdownSourceRangeFromPreviewEditMap,
   createVisualCodeBodyIntervalForPreviewBlock,
@@ -33,13 +37,14 @@ import {
   placeVisualCaretAfterAcceptedCodeFenceAtDocumentEnd,
   placeVisualCaretFromSourceOffset,
   visualCaretBoundaryFromSourceOffset,
+  visualCodeFenceRootSourceOffset,
   visualBoundarySourceOffset,
   prepareVisualTaskListMarkers,
   protectVisualMarkdownReadOnlyRegions,
   projectVisualCodeBodySelection,
+  projectVisualMarkdownRemovalSelection,
   reconcileVisualCodeBodyDom,
   restoreVisualCodeFenceFamilies,
-  selectVisualImageForContextMenu,
   shouldNormalizeVisualImageContextMenuSelection,
   serializeVisualMarkdown,
   serializeVisualMarkdownBlockFragment,
@@ -66,6 +71,30 @@ function placeCaret(element: Node, offset: number): void {
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
+}
+
+/** One inert image-interaction owner for tests that drive it directly. */
+function imageInteraction(surface: HTMLElement) {
+  return createVisualImageInteraction(surface, {
+    canActivate: () => true,
+    focus: () => undefined,
+    report: () => undefined,
+    synchronizeSelection: () => true
+  });
+}
+
+/** Select once through a throwaway owner, as a single demand would. */
+function selectImage(
+  surface: HTMLElement,
+  target: Element | null | undefined,
+  gesture: 'activation' | 'keyboard' | 'pointer' = 'keyboard'
+): boolean {
+  const interaction = imageInteraction(surface);
+  try {
+    return interaction.select(target, gesture);
+  } finally {
+    interaction.dispose();
+  }
 }
 
 function previewEditMap(
@@ -1358,6 +1387,312 @@ A--&gt;B</code></pre>
     surface.remove();
   });
 
+  it('maps a code-fence delimiter line to its code body boundary', () => {
+    const source = 'Before\n\n```text\ncode\n```\n\nAfter';
+    const surface = editor(
+      '<p>Before</p><pre><code>code</code></pre><p>After</p>'
+    );
+    restoreVisualCodeFenceFamilies(surface, source);
+    const baseline = serializeVisualMarkdown(surface);
+    expect(baseline).toBe(source);
+    const surfaceBlock = surface.querySelector('pre');
+    if (!surfaceBlock) throw new Error('visual-fence-missing');
+    const openingOffset = source.indexOf('```text');
+    const closingOffset = source.indexOf('```', openingOffset + 3);
+    if (openingOffset < 0 || closingOffset <= openingOffset) {
+      throw new Error('visual-fence-delimiter-missing');
+    }
+
+    // The undo history selection spans the whole fence, so its end lands on the
+    // closing delimiter line, which the surface keeps as metadata instead of
+    // DOM text. The recovery has to map that offset into the code body instead
+    // of failing the restore.
+    const closing = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      closingOffset
+    );
+    expect(surfaceBlock.contains(closing.node)).toBe(true);
+
+    const opening = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      openingOffset
+    );
+    expect(surfaceBlock.contains(opening.node)).toBe(false);
+
+    const insideBody = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      source.indexOf('code') + 1
+    );
+    expect(insideBody.node.textContent).toBe('code');
+    expect(insideBody.offset).toBe(1);
+
+    // The recovery proves the delimiter from the fence metadata: without that
+    // metadata the offset keeps its explicit failure.
+    surfaceBlock.removeAttribute('data-easymde-visual-fence');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        closingOffset
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    surface.remove();
+  });
+
+  it('maps an escaped boundary on a detached endpoint-block clone', () => {
+    const source = 'ab\\`c';
+    const surface = editor('<p>ab`c</p>');
+    const block = surface.firstElementChild;
+    if (!(block instanceof HTMLElement)) {
+      throw new Error('detached-endpoint-block-missing');
+    }
+    const clone = block.cloneNode(true) as HTMLElement;
+    surface.remove();
+    const node = clone.firstChild;
+    if (!(node instanceof Text)) {
+      throw new Error('detached-endpoint-text-missing');
+    }
+    const baseline = serializeVisualMarkdownBlockFragment([clone]);
+    expect(baseline).toBe(source);
+    // The accepted-adoption path maps each endpoint on a clone of the
+    // endpoint block, so the root handed to the mapper is detached: the
+    // block-local literal-marker projection still owns its own boundaries.
+    const beforeEscape = visualCaretBoundaryFromSourceOffset(
+      clone,
+      source,
+      baseline,
+      source.indexOf('\\')
+    );
+    const afterEscape = visualCaretBoundaryFromSourceOffset(
+      clone,
+      source,
+      baseline,
+      source.length
+    );
+    expect(beforeEscape.node).toBe(node);
+    expect(beforeEscape.offset).toBe(2);
+    // The end of the block's own text is the boundary after its last child.
+    expect(afterEscape.node).toBe(clone);
+    expect(afterEscape.offset).toBe(clone.childNodes.length);
+
+    // The proven endpoint-block scope is what admits the detached root: the
+    // same boundaries project through the raw boundary mapper only while the
+    // root is the clone's own block.
+    const intervalMap = createVisualMarkdownSourceIntervalMap(source, baseline);
+    expect(
+      mapTextBoundaryFromInterval(clone, node, 2, baseline, intervalMap)
+    ).toEqual({ sourceOffset: 2, visualOffset: 2 });
+    expect(
+      mapTextBoundaryFromInterval(clone, node, 3, baseline, intervalMap)
+    ).toEqual({ sourceOffset: 4, visualOffset: 4 });
+  });
+
+  it('maps only the requested fence when two fences carry their own metadata', () => {
+    const source = [
+      'Before',
+      '',
+      '~~~',
+      'code',
+      '~~~',
+      '',
+      '~~~',
+      'second',
+      '~~~',
+      '',
+      'After'
+    ].join('\n');
+    const surface = editor(
+      '<p>Before</p><pre><code>code</code></pre>'
+        + '<pre><code>second</code></pre><p>After</p>'
+    );
+    restoreVisualCodeFenceFamilies(surface, source);
+    const baseline = serializeVisualMarkdown(surface);
+    expect(baseline).toBe(source);
+    const pres = Array.from(surface.querySelectorAll('pre'));
+    if (pres.length !== 2) throw new Error('visual-fences-missing');
+    const firstOpening = source.indexOf('~~~');
+    const firstClosing = source.indexOf('~~~', firstOpening + 3);
+    const secondOpening = source.indexOf('~~~', firstClosing + 3);
+    const secondClosing = source.indexOf('~~~', secondOpening + 3);
+
+    // Each valid delimiter offset stays inside its own fence block.
+    const fromFirst = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      firstClosing
+    );
+    expect(pres[0]?.contains(fromFirst.node)).toBe(true);
+    const fromSecond = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      secondClosing
+    );
+    expect(pres[1]?.contains(fromSecond.node)).toBe(true);
+
+    // One fence's metadata may not authorize another fence's delimiter: the
+    // requested first fence loses its metadata while the second keeps its own,
+    // so the recovery is closed and the requested delimiter may never land in
+    // the second fence's own block.
+    const mapsIntoSecondFence = (): boolean => {
+      try {
+        const boundary = visualCaretBoundaryFromSourceOffset(
+          surface,
+          source,
+          baseline,
+          firstClosing
+        );
+        return Boolean(pres[1]?.contains(boundary.node));
+      } catch {
+        return false;
+      }
+    };
+    const firstPre = pres[0];
+    if (!firstPre) throw new Error('visual-fence-missing');
+    firstPre.removeAttribute('data-easymde-visual-fence');
+    expect(mapsIntoSecondFence()).toBe(false);
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        firstClosing
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    restoreVisualCodeFenceFamilies(surface, source);
+
+    // An equal number of owners is not association either: a wrong family or a
+    // wrong info string on the requested fence keeps its recovery closed.
+    firstPre.setAttribute('data-easymde-visual-fence', '```');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        firstClosing
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    expect(mapsIntoSecondFence()).toBe(false);
+    restoreVisualCodeFenceFamilies(surface, source);
+    firstPre.setAttribute('data-easymde-visual-fence-info', 'other');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        firstClosing
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    expect(mapsIntoSecondFence()).toBe(false);
+    restoreVisualCodeFenceFamilies(surface, source);
+    // The intact pair keeps both delimiters mapped to their own fence.
+    expect(mapsIntoSecondFence()).toBe(false);
+    const restored = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      firstClosing
+    );
+    expect(pres[0]?.contains(restored.node)).toBe(true);
+    surface.remove();
+  });
+
+  it('maps a short fence body whose recovery offset overlaps the opening line', () => {
+    const blockSource = '~~~\nA\n~~~\n';
+    const surface = editor('<pre><code>A\n</code></pre>');
+    restoreVisualCodeFenceFamilies(surface, blockSource);
+    const block = surface.querySelector('pre');
+    if (!block) throw new Error('visual-short-fence-missing');
+    const blockBaseline = serializeVisualMarkdownBlockFragment([block]);
+    const code = block.querySelector('code');
+    if (!code) throw new Error('visual-short-code-missing');
+    const requested = blockSource.indexOf('~~~', blockSource.indexOf('~~~') + 3);
+    // The requested closing-delimiter offset recovers to this root's code-text
+    // length, which in the original Markdown is itself on the opening line, so
+    // the recovery's second, non-recursive step must still accept the owner's
+    // own metadata.
+    const closing = visualCaretBoundaryFromSourceOffset(
+      block,
+      blockSource,
+      blockBaseline,
+      requested
+    );
+    expect(closing.node).toBe(code);
+    expect(closing.offset).toBe(code.childNodes.length);
+    block.removeAttribute('data-easymde-visual-fence');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        block,
+        blockSource,
+        blockBaseline,
+        requested
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    surface.remove();
+  });
+
+  it('maps a closing delimiter offset when the mapped root is the fence block itself', () => {
+    const blockSource = [
+      '```bash',
+      '#!/usr/bin/env bash',
+      '',
+      'set -euo pipefail',
+      '',
+      'echo "Hello, Markdown!"',
+      'mkdir -p ./dist',
+      'npm install',
+      'npm run build',
+      '```',
+      ''
+    ].join('\n');
+    const surface = editor(
+      '<pre><code>#!/usr/bin/env bash\n\nset -euo pipefail\n\necho "Hello, Markdown!"\nmkdir -p ./dist\nnpm install\nnpm run build\n</code></pre>'
+    );
+    restoreVisualCodeFenceFamilies(surface, blockSource);
+    const block = surface.querySelector('pre');
+    if (!block) throw new Error('visual-fence-missing');
+    const blockBaseline = serializeVisualMarkdownBlockFragment([block]);
+    const code = block.querySelector('code');
+    if (!code) throw new Error('visual-code-missing');
+    // The windowed restore maps each endpoint on a clone of that endpoint
+    // block, so the root handed to the mapper is the fence `<pre>` itself. The
+    // history selection ends on the closing delimiter line terminator.
+    const opening = visualCaretBoundaryFromSourceOffset(
+      block,
+      blockSource,
+      blockBaseline,
+      0
+    );
+    expect(block.contains(opening.node)).toBe(true);
+    const closing = visualCaretBoundaryFromSourceOffset(
+      block,
+      blockSource,
+      blockBaseline,
+      blockSource.length - 1
+    );
+    expect(closing.node).toBe(code);
+    expect(closing.offset).toBe(code.childNodes.length);
+
+    block.removeAttribute('data-easymde-visual-fence');
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        block,
+        blockSource,
+        blockBaseline,
+        blockSource.length - 1
+      )
+    ).toThrow('visual-editor-selection-map-failed');
+    surface.remove();
+  });
+
   it('maps heading boundaries when each window block includes its source newline', () => {
     const blocks = [
       { source: '# 一级标题 Heading 1\n', html: '<h1>一级标题 Heading 1</h1>' },
@@ -1469,7 +1804,7 @@ A--&gt;B</code></pre>
     }
     placeCaret(image, 0);
 
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     const selection = window.getSelection();
     expect(selection?.anchorNode).toBe(surface.querySelector('p'));
     expect(selection?.focusNode).toBe(surface.querySelector('p'));
@@ -1621,7 +1956,7 @@ A--&gt;B</code></pre>
         selection.addRange(straddling);
       }
 
-      expect(selectVisualImageForContextMenu(surface, image)).toBe(expected);
+      expect(selectImage(surface, image)).toBe(expected);
       if (expected) {
         expect(selection.isCollapsed).toBe(false);
         expect(selection.anchorNode).toBe(paragraph);
@@ -1659,7 +1994,7 @@ A--&gt;B</code></pre>
     straddling.setEnd(outsideText, 3);
     selection.removeAllRanges();
     selection.addRange(straddling);
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selectImage(surface, image)).toBe(false);
     expect(selection.rangeCount).toBe(1);
     expect(selection.anchorNode).toBe(insideText);
     expect(selection.focusNode).toBe(outsideText);
@@ -1670,7 +2005,7 @@ A--&gt;B</code></pre>
     enclosing.selectNodeContents(document.body);
     selection.removeAllRanges();
     selection.addRange(enclosing);
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selectImage(surface, image)).toBe(false);
     expect(selection.rangeCount).toBe(1);
     expect(selection.getRangeAt(0).startContainer).toBe(document.body);
 
@@ -1680,14 +2015,14 @@ A--&gt;B</code></pre>
     foreign.selectNodeContents(outside);
     selection.removeAllRanges();
     selection.addRange(foreign);
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     const paragraph = surface.querySelector('p');
     expect(selection.anchorNode).toBe(paragraph);
     expect(selection.focusNode).toBe(paragraph);
     expect(selection.isCollapsed).toBe(false);
 
     selection.removeAllRanges();
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     expect(selection.isCollapsed).toBe(false);
   });
 
@@ -1743,7 +2078,7 @@ A--&gt;B</code></pre>
     }
     placeCaret(text, 0);
 
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     const selection = window.getSelection();
     expect(selection?.anchorNode).toBe(paragraph);
     expect(selection?.focusNode).toBe(paragraph);
@@ -1758,7 +2093,7 @@ A--&gt;B</code></pre>
     }
     window.getSelection()?.removeAllRanges();
 
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     expect(window.getSelection()?.isCollapsed).toBe(false);
   });
 
@@ -1785,7 +2120,7 @@ A--&gt;B</code></pre>
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(false);
+    expect(selectImage(surface, image)).toBe(false);
     expect(selection?.anchorNode).toBe(before);
     expect(selection?.anchorOffset).toBe(0);
     expect(selection?.focusNode).toBe(after);
@@ -1811,10 +2146,324 @@ A--&gt;B</code></pre>
     selection?.removeAllRanges();
     selection?.addRange(range);
 
-    expect(selectVisualImageForContextMenu(surface, image)).toBe(true);
+    expect(selectImage(surface, image)).toBe(true);
     expect(selection?.anchorNode).toBe(surface.querySelector('p'));
     expect(selection?.focusNode).toBe(surface.querySelector('p'));
     expect(selection?.isCollapsed).toBe(false);
+  });
+
+  it('rebinds the remembered image selection for a pointer demand on a second image', () => {
+    const surface = editor(
+      '<p><img alt="first" src="https://example.test/first.png"></p>'
+      + '<p><img alt="second" src="https://example.test/second.png"></p>'
+    );
+    const [firstParagraph, secondParagraph] = Array.from(
+      surface.querySelectorAll('p')
+    );
+    const [first, second] = Array.from(surface.querySelectorAll('img'));
+    const selection = window.getSelection();
+    if (
+      !(first instanceof HTMLImageElement)
+      || !(second instanceof HTMLImageElement)
+      || !selection
+    ) {
+      throw new Error('visual-image-rebind-fixture-missing');
+    }
+
+    // The first demand remembers the exact range it placed for the first
+    // image. Nothing replaces the DOM, clears a range, or refreshes the
+    // surface between the two gestures, and one owner owns that range.
+    const interaction = imageInteraction(surface);
+    try {
+      expect(interaction.select(first, 'keyboard')).toBe(true);
+      expect(selection.anchorNode).toBe(firstParagraph);
+      expect(interaction.select(second, 'pointer')).toBe(true);
+      expect(selection.anchorNode).toBe(secondParagraph);
+      expect(selection.focusNode).toBe(secondParagraph);
+      expect(selection.isCollapsed).toBe(false);
+      // The rebound range replaces the remembered one, so the next demand can
+      // move back to the first image.
+      expect(interaction.select(first, 'pointer')).toBe(true);
+      expect(selection.anchorNode).toBe(firstParagraph);
+      // Keyboard activation never rebinds: the retained image range stays.
+      expect(interaction.select(second, 'keyboard')).toBe(false);
+      expect(selection.anchorNode).toBe(firstParagraph);
+    } finally {
+      interaction.dispose();
+    }
+  });
+
+  it('keeps a deliberate selection that no image demand placed', () => {
+    const surface = editor(
+      '<p>Before <img alt="first" src="https://example.test/first.png"></p>'
+      + '<p>After <img alt="second" src="https://example.test/second.png"></p>'
+    );
+    const [firstParagraph, secondParagraph] = Array.from(
+      surface.querySelectorAll('p')
+    );
+    const [firstText, secondText] = [firstParagraph, secondParagraph].map(
+      (paragraph) => paragraph?.firstChild
+    );
+    const second = surface.querySelectorAll('img')[1];
+    const selection = window.getSelection();
+    if (
+      !(second instanceof HTMLImageElement)
+      || !(firstText instanceof Text)
+      || !(secondText instanceof Text)
+      || !selection
+    ) {
+      throw new Error('visual-image-deliberate-selection-fixture-missing');
+    }
+    const mixed = document.createRange();
+    mixed.setStart(firstText, 0);
+    mixed.setEnd(secondText, 5);
+    selection.removeAllRanges();
+    selection.addRange(mixed);
+
+    // A pointer demand cannot own a range this helper never placed.
+    expect(selectImage(surface, second, 'pointer')).toBe(false);
+    expect(selection.anchorNode).toBe(firstText);
+    expect(selection.focusNode).toBe(secondText);
+
+    // The primary button states that the image is the target the user chose,
+    // so that gesture does replace the deliberate selection.
+    expect(selectImage(surface, second, 'activation')).toBe(true);
+    expect(selection.anchorNode).toBe(secondParagraph);
+    expect(selection.isCollapsed).toBe(false);
+  });
+
+  it('marks the selected image outside the editable DOM and clears the marker on drift', () => {
+    const surface = editor(
+      '<p><img alt="first" src="https://example.test/first.png"></p>'
+      + '<p><img alt="second" src="https://example.test/second.png"></p>'
+    );
+    const [first, second] = Array.from(surface.querySelectorAll('img'));
+    if (
+      !(first instanceof HTMLImageElement)
+      || !(second instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-image-feedback-fixture-missing');
+    }
+    const interaction = imageInteraction(surface);
+    const marker = (): HTMLElement | null =>
+      document.querySelector('.easymde-visual-image-selection-feedback');
+    const editableMarkup = surface.innerHTML;
+
+    try {
+      expect(marker()).toBeNull();
+      expect(interaction.select(first, 'activation')).toBe(true);
+      const firstRect = first.getBoundingClientRect();
+      expect(marker()?.style.left).toBe(`${firstRect.left}px`);
+      expect(marker()?.style.top).toBe(`${firstRect.top}px`);
+      expect(marker()?.style.width).toBe(`${firstRect.width}px`);
+      // The marker lives outside the editable DOM, so serialization, export,
+      // and the accepted-window comparison never observe it.
+      expect(surface.contains(marker())).toBe(false);
+      expect(surface.innerHTML).toBe(editableMarkup);
+
+      expect(interaction.select(second, 'activation')).toBe(true);
+      expect(marker()?.style.top).toBe(
+        `${second.getBoundingClientRect().top}px`
+      );
+
+      // A drift drops the remembered range and the marker on the browser's own
+      // selectionchange event without touching the document.
+      window.getSelection()?.removeAllRanges();
+      document.dispatchEvent(new Event('selectionchange'));
+      expect(marker()).toBeNull();
+      expect(surface.innerHTML).toBe(editableMarkup);
+    } finally {
+      interaction.dispose();
+    }
+  });
+
+  it('drops image feedback on lock, replaced images, and disposal', () => {
+    const surface = editor(
+      '<p><img alt="first" src="https://example.test/first.png"></p>'
+    );
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-image-feedback-lifecycle-fixture-missing');
+    }
+    const interaction = imageInteraction(surface);
+    const marker = (): HTMLElement | null =>
+      document.querySelector('.easymde-visual-image-selection-feedback');
+
+    expect(interaction.select(image, 'activation')).toBe(true);
+    expect(marker()).not.toBeNull();
+
+    // Locking removes the editable state the marker describes.
+    surface.setAttribute('contenteditable', 'false');
+    window.dispatchEvent(new Event('resize'));
+    expect(marker()).toBeNull();
+
+    // A replaced image node detaches the remembered target.
+    surface.setAttribute('contenteditable', 'true');
+    expect(interaction.select(image, 'activation')).toBe(true);
+    expect(marker()).not.toBeNull();
+    image.outerHTML = '<img alt="first" src="https://example.test/first.png">';
+    window.dispatchEvent(new Event('resize'));
+    expect(marker()).toBeNull();
+
+    // Disposal drops this owner's marker and remembered range, and it owns no
+    // state another owner could inherit.
+    const replacement = surface.querySelector('img');
+    if (!(replacement instanceof HTMLImageElement)) {
+      throw new Error('visual-image-feedback-replacement-missing');
+    }
+    expect(interaction.select(replacement, 'activation')).toBe(true);
+    expect(marker()).not.toBeNull();
+    interaction.dispose();
+    expect(marker()).toBeNull();
+    const fresh = imageInteraction(surface);
+    try {
+      expect(fresh.select(replacement, 'activation')).toBe(true);
+      expect(marker()).not.toBeNull();
+    } finally {
+      fresh.dispose();
+    }
+    expect(marker()).toBeNull();
+  });
+
+  it('clamps the outline to the visible band instead of painting outside it', () => {
+    const wrapper = document.createElement('div');
+    wrapper.style.setProperty('overflow', 'hidden');
+    wrapper.style.setProperty('overflow-x', 'hidden');
+    wrapper.style.setProperty('overflow-y', 'hidden');
+    const surface = document.createElement('article');
+    surface.innerHTML =
+      '<p><img alt="first" src="https://example.test/first.png"></p>';
+    wrapper.append(surface);
+    document.body.append(wrapper);
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-image-clip-fixture-missing');
+    }
+    let bandTop = 100;
+    wrapper.getBoundingClientRect = (() => ({
+      bottom: bandTop + 200,
+      height: 200,
+      left: 40,
+      right: 640,
+      top: bandTop,
+      width: 600,
+      x: 40,
+      y: bandTop,
+      toJSON: () => ({})
+    })) as unknown as () => DOMRect;
+    let imageTop = 140;
+    image.getBoundingClientRect = (() => ({
+      bottom: imageTop + 80,
+      height: 80,
+      left: 100,
+      right: 500,
+      top: imageTop,
+      width: 400,
+      x: 100,
+      y: imageTop,
+      toJSON: () => ({})
+    })) as unknown as () => DOMRect;
+    const interaction = imageInteraction(surface);
+    const marker = (): HTMLElement | null =>
+      document.querySelector('.easymde-visual-image-selection-feedback');
+    try {
+      expect(interaction.select(image, 'activation')).toBe(true);
+      // The image sits inside the band: the outline is the image's own box, so
+      // the visible appearance is unchanged.
+      expect(marker()?.style.left).toBe('100px');
+      expect(marker()?.style.top).toBe('140px');
+      expect(marker()?.style.width).toBe('400px');
+      expect(marker()?.style.height).toBe('80px');
+      expect(marker()?.style.visibility).toBe('visible');
+
+      // Partly scrolled out: the outline stops at the band's edge and stays
+      // visible.
+      imageTop = 60;
+      window.dispatchEvent(new Event('resize'));
+      expect(marker()?.style.top).toBe('100px');
+      expect(marker()?.style.height).toBe('40px');
+      expect(marker()?.style.visibility).toBe('visible');
+
+      // Fully scrolled out: the empty intersection is hidden, because a
+      // zero-sized border box would still paint its 2 + 2 px of border.
+      imageTop = -40;
+      window.dispatchEvent(new Event('resize'));
+      expect(marker()?.style.height).toBe('0px');
+      expect(marker()?.style.visibility).toBe('hidden');
+
+      // A band change (a resized pane) is picked up as well, and the outline
+      // becomes visible again.
+      imageTop = 140;
+      bandTop = 160;
+      window.dispatchEvent(new Event('resize'));
+      expect(marker()?.style.top).toBe('160px');
+      expect(marker()?.style.height).toBe('60px');
+      expect(marker()?.style.visibility).toBe('visible');
+    } finally {
+      interaction.dispose();
+      wrapper.remove();
+    }
+  });
+
+  it('tracks image geometry through observed layout, not only scroll or resize', () => {
+    const surface = editor(
+      '<p><img alt="first" src="https://example.test/first.png"></p>'
+    );
+    const image = surface.querySelector('img');
+    if (!(image instanceof HTMLImageElement)) {
+      throw new Error('visual-image-tracking-fixture-missing');
+    }
+    const observed = new Set<Element>();
+    const observeCallbacks: Array<() => void> = [];
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+    // jsdom has no layout engine, so the geometry observation is stubbed: the
+    // test states which boxes the owner observes and that its callback moves
+    // the marker onto the box the image reports.
+    globalThis.ResizeObserver = class StubResizeObserver {
+      constructor(callback: () => void) {
+        observeCallbacks.push(callback);
+      }
+      public disconnect(): void {
+        observed.clear();
+      }
+      public observe(target: Element): void {
+        observed.add(target);
+      }
+      public unobserve(target: Element): void {
+        observed.delete(target);
+      }
+    } as unknown as typeof ResizeObserver;
+    try {
+      const interaction = imageInteraction(surface);
+      try {
+        expect(interaction.select(image, 'activation')).toBe(true);
+        expect(Array.from(observed)).toEqual([image, surface]);
+        image.getBoundingClientRect = (() => ({
+          bottom: 40,
+          height: 30,
+          left: 7,
+          right: 107,
+          top: 10,
+          width: 100,
+          x: 7,
+          y: 10,
+          toJSON: () => ({})
+        })) as unknown as () => DOMRect;
+        for (const callback of observeCallbacks) callback();
+        const marker = document.querySelector<HTMLElement>(
+          '.easymde-visual-image-selection-feedback'
+        );
+        expect(marker?.style.left).toBe('7px');
+        expect(marker?.style.top).toBe('10px');
+        expect(marker?.style.width).toBe('100px');
+        expect(marker?.style.height).toBe('30px');
+      } finally {
+        interaction.dispose();
+      }
+      expect(observed.size).toBe(0);
+    } finally {
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
   });
 
   it('serializes selected image scale while preserving alt, title, and URL', () => {
@@ -4082,6 +4731,199 @@ A--&gt;B</code></pre>
     ).toEqual({ direction: 'backward', end: 9, start: 6 });
     surface.remove();
   });
+  it.each([
+    { label: 'too few markers', markdown: '--\n', range: { end: 3, start: 0 } },
+    { label: 'mixed markers', markdown: '-*-\n', range: { end: 4, start: 0 } },
+    { label: 'partial CRLF', markdown: '---\r\n', range: { end: 4, start: 0 } }
+  ])('rejects a $label thematic-break source range', ({ markdown, range }) => {
+    expect(() =>
+      visualThematicBreakSourceSelection(markdown, range, 'forward')
+    ).toThrow('visual-editor-selection-map-failed');
+  });
+
+  it.each(['- - -', '_ _ _', '* * *'])(
+    'maps the spaced thematic-break token %s in both directions',
+    (marker) => {
+      const source = `Lead\n\n${marker}\n\nTail`;
+      const start = source.indexOf(marker);
+      expect(start).toBe('Lead\n\n'.length);
+      const range = { end: start + marker.length + 1, start };
+      expect(
+        visualThematicBreakSourceSelection(source, range, 'forward')
+      ).toEqual({ direction: 'forward', end: start + marker.length, start });
+      expect(
+        visualThematicBreakSourceSelection(source, range, 'backward')
+      ).toEqual({ direction: 'backward', end: start + marker.length, start });
+    }
+  );
+
+  it.each([
+    {
+      expected: 'one two',
+      label: 'a soft-wrapped paragraph',
+      markdown: 'one\ntwo'
+    },
+    {
+      expected: '- one\n- two',
+      label: 'populated list items',
+      markdown: '- one\n- two'
+    },
+    {
+      expected: '> one\n> two',
+      label: 'populated quote lines',
+      markdown: '> one\n> two'
+    },
+    {
+      expected: '```\nconst a = 1;\nconst b = 2;\n```',
+      label: 'a fenced code body',
+      markdown: '```\nconst a = 1;\nconst b = 2;\n```'
+    },
+    {
+      expected: 'one  \ntwo',
+      label: 'a hard break',
+      markdown: 'one  \ntwo'
+    },
+    {
+      expected: '普通```bash echo hi ```文本',
+      label: 'a renderer-joined fence-looking run',
+      markdown: '普通```bash\necho hi\n```文本'
+    }
+  ])('folds only rendered text runs for $label', ({ expected, markdown }) => {
+    expect(foldVisualMarkdownSoftBreaks(markdown)).toBe(expected);
+  });
+
+  it('does not renormalize a repeated pointer hit', () => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const thematicBreak = surface.querySelector('hr');
+    const text = surface.querySelector('p')?.firstChild;
+    if (!(thematicBreak instanceof HTMLHRElement) || !(text instanceof Text)) {
+      throw new Error('visual-repeated-thematic-break-fixture-missing');
+    }
+    placeCaret(text, 2);
+    const first = prepareVisualThematicBreakPointerSelection(
+      surface,
+      thematicBreak
+    );
+    expect(first?.normalized).toBe(true);
+    const second = prepareVisualThematicBreakPointerSelection(
+      surface,
+      thematicBreak
+    );
+    expect(second).toMatchObject({
+      block: thematicBreak,
+      direction: 'forward',
+      normalized: false
+    });
+    first?.restore();
+    surface.remove();
+  });
+
+  it('normalizes a collapsed pointer hit to the exact HR node and restores it', () => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    const thematicBreak = surface.querySelector('hr');
+    if (!(text instanceof Text) || !(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-pointer-fixture-missing');
+    }
+    placeCaret(text, 2);
+    const before = window.getSelection();
+    const beforeSnapshot = {
+      anchorNode: before?.anchorNode,
+      anchorOffset: before?.anchorOffset,
+      focusNode: before?.focusNode,
+      focusOffset: before?.focusOffset
+    };
+    const preparation = prepareVisualThematicBreakPointerSelection(
+      surface,
+      thematicBreak
+    );
+    expect(preparation).toMatchObject({
+      block: thematicBreak,
+      direction: 'forward',
+      normalized: true
+    });
+    expect(captureVisualThematicBreakSelection(surface)).toMatchObject({
+      block: thematicBreak,
+      direction: 'forward'
+    });
+    preparation?.restore();
+    const restored = window.getSelection();
+    expect(restored?.anchorNode).toBe(beforeSnapshot.anchorNode);
+    expect(restored?.anchorOffset).toBe(beforeSnapshot.anchorOffset);
+    expect(restored?.focusNode).toBe(beforeSnapshot.focusNode);
+    expect(restored?.focusOffset).toBe(beforeSnapshot.focusOffset);
+    surface.remove();
+  });
+
+  it('does not retarget a deliberate owned range or a foreign/stale HR', () => {
+    const surface = editor(
+      '<p>Lead text</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    const text = paragraph?.firstChild;
+    const thematicBreak = surface.querySelector('hr');
+    if (!(text instanceof Text) || !(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-pointer-negative-fixture-missing');
+    }
+    const selection = window.getSelection();
+    const deliberate = document.createRange();
+    deliberate.setStart(text, 0);
+    deliberate.setEnd(text, 4);
+    selection?.removeAllRanges();
+    selection?.addRange(deliberate);
+    expect(
+      prepareVisualThematicBreakPointerSelection(surface, thematicBreak)
+    ).toBeNull();
+    expect(selection?.toString()).toBe('Lead');
+    selection?.removeAllRanges();
+    selection?.collapse(text, 1);
+    thematicBreak.setAttribute('data-easymde-preview-window-spacer', '1');
+    expect(
+      prepareVisualThematicBreakPointerSelection(surface, thematicBreak)
+    ).toBeNull();
+    thematicBreak.remove();
+    expect(
+      prepareVisualThematicBreakPointerSelection(surface, thematicBreak)
+    ).toBeNull();
+    surface.remove();
+  });
+
+  it('preserves forward and backward native HR ranges', () => {
+    const surface = editor(
+      '<p>Lead</p><hr data-easymde-visual-block-id="hr"><p>Tail</p>'
+    );
+    const thematicBreak = surface.querySelector('hr');
+    if (!(thematicBreak instanceof HTMLHRElement)) {
+      throw new Error('visual-thematic-break-pointer-direction-fixture-missing');
+    }
+    const range = document.createRange();
+    range.selectNode(thematicBreak);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const forward = prepareVisualThematicBreakPointerSelection(
+      surface,
+      thematicBreak
+    );
+    expect(forward).toMatchObject({ direction: 'forward', normalized: false });
+    selection?.setBaseAndExtent(
+      surface,
+      range.endOffset,
+      surface,
+      range.startOffset
+    );
+    const backward = prepareVisualThematicBreakPointerSelection(
+      surface,
+      thematicBreak
+    );
+    expect(backward).toMatchObject({ direction: 'backward', normalized: false });
+    surface.remove();
+  });
 
   it.each([
     'mixed range',
@@ -5052,5 +5894,502 @@ A--&gt;B</code></pre>
       end: source.length,
       start: source.length
     });
+  });
+
+  it('projects only proved whole-block removal carets to surviving editable boundaries', () => {
+    const source = 'One\n\nTwo\n\nThree\n';
+    const sourceRanges = [
+      { editable: true, end: 4, start: 0 },
+      { editable: true, end: 9, start: 5 },
+      { editable: true, end: source.length, start: 10 }
+    ];
+    const caret = (offset: number): Readonly<{
+      direction: 'none';
+      end: number;
+      start: number;
+    }> => ({ direction: 'none', end: offset, start: offset });
+    // A removal in the middle commits the following editable owner's start.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 5, insert: '', to: 9 },
+        caret(5),
+        'One\n\n\nThree\n'
+      )
+    ).toEqual(caret(6));
+    // At the end only the preceding editable owner is left, and its trailing
+    // blank separator is not part of the caret's text.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 10, insert: '', to: source.length },
+        caret(10),
+        'One\n\nTwo\n\n'
+      )
+    ).toEqual(caret(8));
+    // At the start the following editable owner wins.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 0, insert: '', to: 4 },
+        caret(0),
+        '\nTwo\n\nThree\n'
+      )
+    ).toEqual(caret(1));
+    // Every other change keeps the requested selection exactly.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 5, insert: '', to: 9 },
+        { direction: 'forward', end: 8, start: 6 },
+        'One\n\n\nThree\n'
+      )
+    ).toEqual({ direction: 'forward', end: 8, start: 6 });
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 5, insert: 'x', to: 9 },
+        caret(5),
+        'One\n\nxThree\n'
+      )
+    ).toEqual(caret(5));
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 5, insert: '', to: 9 },
+        caret(99),
+        'One\n\n\nThree\n'
+      )
+    ).toEqual(caret(99));
+    // A caret the removal left inside a surviving range is committed as is.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        sourceRanges,
+        source,
+        { from: 5, insert: '', to: 9 },
+        caret(7),
+        'One\n\n\nThree\n'
+      )
+    ).toEqual(caret(7));
+    // A generated range that is not editable owns no projected boundary.
+    expect(
+      projectVisualMarkdownRemovalSelection(
+        [{ editable: false, end: 9, start: 5 }],
+        source,
+        { from: 5, insert: '', to: 9 },
+        caret(5),
+        'One\n\n\nThree\n'
+      )
+    ).toEqual(caret(5));
+  });
+
+  it('maps a fence block endpoint in the root space that omits its opening delimiter', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = [
+      '<pre data-easymde-visual-fence="~~~" ',
+      'data-easymde-visual-fence-info="js"><code>alpha\n</code></pre>'
+    ].join('');
+    const pre = surface.firstElementChild;
+    const paragraph = document.createElement('p');
+    if (!(pre instanceof HTMLElement)) {
+      throw new Error('fence-root-offset-fixture-missing');
+    }
+    const slice = '~~~js\nalpha\n~~~';
+    // The code body starts after the opening delimiter line, so the body's own
+    // first offset is the root offset 0 and body offset 5 is the root offset 5.
+    // The opening delimiter line and the closing one clamp to the body's edges.
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 6)).toBe(0);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 11)).toBe(5);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 2)).toBe(0);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 12)).toBe(6);
+    expect(visualCodeFenceRootSourceOffset(pre, slice, 15)).toBe(6);
+    expect(visualCodeFenceRootSourceOffset(paragraph, 'text', 3)).toBe(3);
+  });
+
+  it('maps an open fence endpoint through its body to EOF', () => {
+    const surface = document.createElement('article');
+    surface.innerHTML = '<pre data-easymde-visual-fence="~~~"><code></code></pre>';
+    const pre = surface.firstElementChild;
+    if (!(pre instanceof HTMLElement)) {
+      throw new Error('open-fence-root-offset-fixture-missing');
+    }
+    // A legal unclosed fence has no closing delimiter: its body runs to EOF,
+    // so every in-body offset keeps its own distance from the body start and
+    // nothing clamps to a phantom last line.
+    expect(visualCodeFenceRootSourceOffset(pre, '~~~\n', 4)).toBe(0);
+    const withBody = '```js\nAlpha\nBeta';
+    const bodyStart = 6;
+    expect(visualCodeFenceRootSourceOffset(pre, withBody, bodyStart)).toBe(0);
+    expect(
+      visualCodeFenceRootSourceOffset(pre, withBody, bodyStart + 1)
+    ).toBe(1);
+    // The caret on the internal final line is inside the body, not clamped.
+    const betaStart = withBody.indexOf('Beta');
+    expect(
+      visualCodeFenceRootSourceOffset(pre, withBody, betaStart + 2)
+    ).toBe(betaStart + 2 - bodyStart);
+    // Past EOF clamps to the body's end.
+    expect(
+      visualCodeFenceRootSourceOffset(pre, withBody, withBody.length)
+    ).toBe(withBody.length - bodyStart);
+  });
+
+  it('resolves a post-fence paragraph caret without exhausting the candidate budget', () => {
+    const surface = document.createElement('article');
+    // The accepted placement maps one block: this paragraph holds inline
+    // Markdown, so its rendered text is not a prefix of its source, and the
+    // pasted fence stays plain paragraph text — the post-paste caret lands on
+    // source the paragraph DOM cannot represent.
+    surface.innerHTML =
+      '<p data-easymde-visual-block-id="b13">普通文本、粗体文本、普通```bash\necho hi</p>';
+    const block = surface.firstElementChild;
+    if (!(block instanceof HTMLElement)) {
+      throw new Error('post-fence-paragraph-missing');
+    }
+    const source =
+      '普通文本、**粗体文本**、普通```bash\necho hi\n```后续文本、粗体文本、普通文本、粗体文本';
+    const baseline = serializeVisualMarkdownBlockFragment([block]);
+    // Right after the pasted fence's closing delimiter.
+    const requestedOffset =
+      source.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      block,
+      source,
+      baseline,
+      requestedOffset
+    );
+    const text = block.firstChild;
+    if (!(text instanceof Text)) {
+      throw new Error('post-fence-paragraph-text-missing');
+    }
+    expect(boundary).toEqual({ node: text, offset: text.data.length });
+  });
+
+  it('resolves a post-fence paragraph caret owned by its block when the whole surface is the root', () => {
+    const surface = document.createElement('article');
+    const before = Array.from(
+      { length: 13 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="b${index}">第${index}段<b>加粗</b>正文，普通文本。</p>`
+    ).join('');
+    const target =
+      '<p data-easymde-visual-block-id="b13">普通文本、粗体文本、普通```bash\necho hi</p>';
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="a${index}">第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b13"]'
+    );
+    if (!paragraph) throw new Error('post-fence-paragraph-missing');
+    const beforeSource = Array.from(
+      { length: 13 },
+      (_value, index) => `第${index}段**加粗**正文，普通文本。`
+    ).join('\n\n');
+    const targetSource =
+      '普通文本、**粗体文本**、普通```bash\necho hi\n```后续文本、粗体文本、普通文本、粗体文本';
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `第${index}段*斜体*后续正文，普通文本。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${afterSource}`;
+    // The restored caret sits right after the pasted fence text, inside the
+    // source-only run the paragraph DOM cannot represent. The whole-surface
+    // root cannot map it, so the owning block has to be proved from source.
+    const requestedOffset =
+      source.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      serializeVisualMarkdown(surface),
+      requestedOffset
+    );
+    expect(boundary).toEqual({
+      node: paragraph.firstChild,
+      offset: (paragraph.firstChild as Text).data.length
+    });
+  });
+
+  it('keeps the budget failure for an offset no source proof owns', () => {
+    const surface = document.createElement('article');
+    const before = Array.from(
+      { length: 40 },
+      (_value, index) => `<p data-easymde-visual-block-id="b${index}">第${index}段正文。</p>`
+    ).join('');
+    const paragraphText = `${'普通文本、粗体文本、'.repeat(6)}普通\`\`\`bash\necho hi`;
+    surface.innerHTML =
+      `${before}<p data-easymde-visual-block-id="b13">${paragraphText}</p>`;
+    // The hidden region sits before the root's visible text instead of after it,
+    // so no proved boundary owns it and the walk's own failure must survive.
+    const source = `\`\`\`中间文本\n${surface.textContent}`;
+    const baseline = serializeVisualMarkdownBlockFragment(
+      Array.from(surface.children).filter(
+        (child): child is HTMLElement => child instanceof HTMLElement
+      )
+    );
+    const requestedOffset = source.indexOf('中间文本') + 2;
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(
+        surface,
+        source,
+        baseline,
+        requestedOffset
+      )
+    ).toThrowError('visual-editor-selection-map-budget-exceeded');
+  });
+  it('resolves a mid-paragraph pasted fence caret with rich trailing content', () => {
+    const surface = document.createElement('article');
+    const before = Array.from(
+      { length: 13 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="b${index}">第${index}段<b>加粗</b>正文，普通文本。</p>`
+    ).join('');
+    const target = [
+      '<p data-easymde-visual-block-id="b13">',
+      '普通文本、<strong>粗体文本</strong>、普通```bash\necho hi\n```后续文本、',
+      '<em>斜体文本</em>、<strong><em>粗斜体文本</em></strong>。</p>'
+    ].join('');
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="a${index}">第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b13"]'
+    );
+    if (!paragraph) throw new Error('mid-fence-paragraph-missing');
+    const beforeSource = Array.from(
+      { length: 13 },
+      (_value, index) => `第${index}段**加粗**正文，普通文本。`
+    ).join('\n\n');
+    const targetSource =
+      '普通文本、**粗体文本**、普通```bash\necho hi\n```后续文本、*斜体文本*、***粗斜体文本***。';
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `第${index}段*斜体*后续正文，普通文本。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${afterSource}`;
+    const requestedOffset =
+      source.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      serializeVisualMarkdown(surface),
+      requestedOffset
+    );
+    expect(paragraph.contains(boundary.node)).toBe(true);
+  });
+
+  it('keeps a post-paste caret in its paragraph when the surface carries fence metadata', () => {
+    const surface = document.createElement('article');
+    const before = Array.from(
+      { length: 13 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="b${index}">第${index}段<b>加粗</b>正文，普通文本。</p>`
+    ).join('');
+    const target = [
+      '<p data-easymde-visual-block-id="b13">',
+      '普通文本、<strong>粗体文本</strong>、普通```bash\necho hi\n```后续文本、',
+      '<em>斜体文本</em>、<strong><em>粗斜体文本</em></strong>。</p>'
+    ].join('');
+    const fence =
+      '<pre data-easymde-visual-block-id="f0" data-easymde-visual-fence="~~~" '
+      + 'data-easymde-visual-fence-info="js"><code>alpha\n</code></pre>';
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="a${index}">第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${fence}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b13"]'
+    );
+    if (!paragraph) throw new Error('fence-metadata-paragraph-missing');
+    const beforeSource = Array.from(
+      { length: 13 },
+      (_value, index) => `第${index}段**加粗**正文，普通文本。`
+    ).join('\n\n');
+    const targetSource =
+      '普通文本、**粗体文本**、普通```bash\necho hi\n```后续文本、*斜体文本*、***粗斜体文本***。';
+    const fenceSource = '~~~js\nalpha\n~~~';
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `第${index}段*斜体*后续正文，普通文本。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${fenceSource}\n\n${afterSource}`;
+    const requestedOffset =
+      source.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      serializeVisualMarkdown(surface),
+      requestedOffset
+    );
+    expect(paragraph.contains(boundary.node)).toBe(true);
+  });
+  it.each([1, 2])('maps the full-capability browser paste at local caret %i', (localCaret) => {
+    const surface = document.createElement('article');
+    const before = [
+      '<h1 data-easymde-visual-block-id="b0">Markdown 全量能力测试文档</h1>',
+      '<blockquote data-easymde-visual-block-id="b1"><p>用于测试标题、排版、表格、代码、数学公式、Mermaid 图表、HTML、脚注、任务列表等 Markdown 渲染能力。</p></blockquote>',
+      '<hr data-easymde-visual-block-id="b2">',
+      '<h2 data-easymde-visual-block-id="b3">1. 标题层级</h2>',
+      '<h1 data-easymde-visual-block-id="b4">一级标题 Heading 1</h1>',
+      '<h2 data-easymde-visual-block-id="b5">二级标题 Heading 2</h2>',
+      '<h3 data-easymde-visual-block-id="b6">三级标题 Heading 3</h3>',
+      '<h4 data-easymde-visual-block-id="b7">四级标题 Heading 4</h4>',
+      '<h5 data-easymde-visual-block-id="b8">五级标题 Heading 5</h5>',
+      '<h6 data-easymde-visual-block-id="b9">六级标题 Heading 6</h6>',
+      '<h2 data-easymde-visual-block-id="b10">超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes</h2>',
+      '<hr data-easymde-visual-block-id="b11">',
+      '<h2 data-easymde-visual-block-id="b12">2. 文本样式</h2>'
+    ].join('');
+    const visiblePrefix = '普通文本、';
+    const pasted = '```bash\necho hi\n```';
+    const targetSource =
+      `${visiblePrefix.slice(0, localCaret)}${pasted}`
+      + `${visiblePrefix.slice(localCaret)}**粗体文本**、*斜体文本*、***粗斜体文本***。`;
+    const target = [
+      '<p data-easymde-visual-block-id="b13">',
+      `${visiblePrefix.slice(0, localCaret)}${pasted}${visiblePrefix.slice(localCaret)}<strong>粗体文本</strong>、`,
+      '<em>斜体文本</em>、<strong><em>粗斜体文本</em></strong>。</p>'
+    ].join('');
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="a${index}">第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b13"]'
+    );
+    if (!paragraph) throw new Error('browser-shaped-paragraph-missing');
+    const beforeSource = [
+      '# Markdown 全量能力测试文档',
+      '> 用于测试标题、排版、表格、代码、数学公式、Mermaid 图表、HTML、脚注、任务列表等 Markdown 渲染能力。',
+      '---',
+      '## 1. 标题层级',
+      '# 一级标题 Heading 1',
+      '## 二级标题 Heading 2',
+      '### 三级标题 Heading 3',
+      '#### 四级标题 Heading 4',
+      '##### 五级标题 Heading 5',
+      '###### 六级标题 Heading 6',
+      '## 超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes',
+      '---',
+      '## 2. 文本样式'
+    ].join('\n\n');
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `第${index}段*斜体*后续正文，普通文本。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${afterSource}`;
+    const requestedOffset =
+      source.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const boundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      serializeVisualMarkdown(surface),
+      requestedOffset
+    );
+    const firstText = paragraph.firstChild;
+    if (!(firstText instanceof Text)) {
+      throw new Error('browser-shaped-first-text-missing');
+    }
+    const localOffset =
+      targetSource.indexOf('echo hi') + 'echo hi'.length + '\n```'.length;
+    const localBoundary = visualCaretBoundaryFromSourceOffset(
+      paragraph,
+      targetSource,
+      serializeVisualMarkdownBlockFragment([paragraph]),
+      localOffset
+    );
+    expect(localBoundary).toEqual({
+      node: firstText,
+      offset: firstText.data.indexOf(visiblePrefix.slice(localCaret))
+    });
+    expect(boundary).toEqual({
+      node: firstText,
+      offset: firstText.data.indexOf(visiblePrefix.slice(localCaret))
+    });
+    const crlfSource = source.replace(/\n/gu, '\r\n');
+    const crlfOffset =
+      crlfSource.indexOf('echo hi') + 'echo hi'.length + '\r\n```'.length;
+    const crlfBoundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      crlfSource,
+      serializeVisualMarkdown(surface),
+      crlfOffset
+    );
+    expect(crlfBoundary).toEqual({
+      node: firstText,
+      offset: firstText.data.indexOf(visiblePrefix.slice(localCaret))
+    });
+  });
+  it.each([1, 2])('maps block-local CRLF fence caret at local offset %i', (localCaret) => {
+    const surface = document.createElement('article');
+    const visiblePrefix = '普通文本、';
+    const pasted = '```bash\necho hi\n```';
+    const targetSource = `${visiblePrefix.slice(0, localCaret)}${pasted}`
+      + `${visiblePrefix.slice(localCaret)}**粗体文本**、*斜体文本*、***粗斜体文本***。`;
+    const target = [
+      '<p data-easymde-visual-block-id="b13">',
+      `${visiblePrefix.slice(0, localCaret)}${pasted}${visiblePrefix.slice(localCaret)}<strong>粗体文本</strong>、`,
+      '<em>斜体文本</em>、<strong><em>粗斜体文本</em></strong>。</p>'
+    ].join('');
+    const before = Array.from(
+      { length: 13 },
+      (_value, index) => `<p data-easymde-visual-block-id="b${index}">前${index}段<b>加粗</b>正文。</p>`
+    ).join('');
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) => `<p data-easymde-visual-block-id="a${index}">后${index}段<i>斜体</i>正文。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>('[data-easymde-visual-block-id="b13"]');
+    const firstText = paragraph?.firstChild;
+    if (!(paragraph instanceof HTMLElement) || !(firstText instanceof Text)) {
+      throw new Error('block-local-crlf-fence-fixture-missing');
+    }
+    const beforeSource = Array.from(
+      { length: 13 },
+      (_value, index) => `前${index}段**加粗**正文。`
+    ).join('\n\n');
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `后${index}段*斜体*正文。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${afterSource}`;
+    const crlfSource = source.replace(/\n/gu, '\r\n');
+    const crlfTarget = targetSource.replace(/\n/gu, '\r\n');
+    const crlfOffset = crlfSource.indexOf('echo hi')
+      + 'echo hi'.length + '\r\n```'.length;
+    const localOffset = crlfTarget.indexOf('echo hi')
+      + 'echo hi'.length + '\r\n```'.length;
+    const baseline = serializeVisualMarkdownBlockFragment([paragraph]);
+    const localBoundary = visualCaretBoundaryFromSourceOffset(
+      paragraph,
+      crlfTarget,
+      baseline,
+      localOffset
+    );
+    const rootBoundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      crlfSource,
+      serializeVisualMarkdown(surface),
+      crlfOffset
+    );
+    const expectedOffset = firstText.data.indexOf(visiblePrefix.slice(localCaret));
+    expect(localBoundary).toEqual({ node: firstText, offset: expectedOffset });
+    expect(rootBoundary).toEqual({ node: firstText, offset: expectedOffset });
   });
 });

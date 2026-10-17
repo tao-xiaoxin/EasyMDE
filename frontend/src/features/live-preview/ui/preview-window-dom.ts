@@ -903,16 +903,32 @@ function createSpacer(
 ): HTMLElement {
 	const spacer = documentRef.createElement("div");
 	spacer.setAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE, "1");
-	spacer.setAttribute("data-easymde-preview-window-start", String(range.start));
-	spacer.setAttribute("data-easymde-preview-window-end", String(range.end));
 	spacer.setAttribute("aria-hidden", "true");
 	spacer.contentEditable = "false";
+	spacer.style.padding = "0";
+	spacer.style.border = "0";
+	declareSpacerFlow(spacer, range, height, marginBefore, marginAfter);
+	return spacer;
+}
+
+/**
+ * Declares the range and flow height a spacer currently stands for. Consuming a
+ * spacer while it materializes shrinks these declarations in place, so a cached
+ * spacer can outlive the run it was created for; re-declaring it before reuse is
+ * what keeps an installed spacer's declared range equal to its mounted neighbors.
+ */
+function declareSpacerFlow(
+	spacer: HTMLElement,
+	range: PreviewWindowResult["layoutRuns"][number]["range"],
+	height: number,
+	marginBefore: number,
+	marginAfter: number,
+): void {
+	spacer.setAttribute("data-easymde-preview-window-start", String(range.start));
+	spacer.setAttribute("data-easymde-preview-window-end", String(range.end));
 	spacer.style.blockSize = `${height}px`;
 	spacer.style.marginBlockStart = `${marginBefore}px`;
 	spacer.style.marginBlockEnd = `${marginAfter}px`;
-	spacer.style.padding = "0";
-	spacer.style.border = "0";
-	return spacer;
 }
 
 function spacerFor(
@@ -924,7 +940,10 @@ function spacerFor(
 ): HTMLElement {
 	const key = spacerKey(range, height, marginBefore, marginAfter);
 	const existing = repository.spacers.get(key);
-	if (existing) return existing;
+	if (existing) {
+		declareSpacerFlow(existing, range, height, marginBefore, marginAfter);
+		return existing;
+	}
 	const documentRef = repository.nodes[0]?.ownerDocument;
 	if (!documentRef) fail("preview-window-repository-empty");
 	const spacer = createSpacer(

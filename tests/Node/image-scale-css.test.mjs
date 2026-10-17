@@ -18,7 +18,7 @@ test('shared image scale CSS applies only the validated renderer provenance valu
 
     assert.ok(match, `missing scoped image-scale rule for ${scale}%`);
     assert.match(match[0], new RegExp(`width:\\s*${scale}%\\s*!important;`, 'u'));
-    assert.match(match[0], /max-width:\s*none\s*!important;/u);
+    assert.match(match[0], new RegExp(`max-width:\\s*${scale > 100 ? '100%' : 'none'}\\s*!important;`, 'u'));
   }
 
   assert.doesNotMatch(

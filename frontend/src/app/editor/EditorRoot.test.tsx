@@ -55,6 +55,7 @@ import type { GeneratedContentExportSession } from '../../features/generated-con
 import * as generatedImageTarget from '../../features/generated-content-export/generated-image-target';
 import * as imageScaleContract from '../../features/image-scale/image-scale-contract';
 import * as observedSourceAdapter from '../../features/document-source/adapters/code-mirror-document-session';
+import type { CodeMirrorDocumentSession } from '../../features/document-source/adapters/code-mirror-document-session';
 import {
   createEditorMarkdownBlockIndex as observedBlockIndex,
   findEditorCodeContentTarget as observedCodeContentTarget
@@ -3194,6 +3195,846 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('keeps the Full visual owner unlocked after menu code deletion typing Undo Redo Undo', async () => {
+    const props = fixture();
+    const fenceMarkdown = 'Above\n\n```js\nconst value = 1;\n```';
+    const codeStart = fenceMarkdown.indexOf('```js');
+    const remainderMarkdown = 'Above\n\n';
+    const typedMarkdown = 'AboveZZ\n\n';
+    props.submissionField.value = fenceMarkdown;
+    props.submissionField.defaultValue = fenceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    // The formal renderer's fence markup carries no fence metadata; this owner
+    // restores it from the source, so the accepted mapping must not depend on
+    // the markup arriving with it.
+    const fenceHtml =
+      '<p data-easymde-visual-block-id="b0">Above</p>'
+      + '<pre data-easymde-visual-block-id="b1"><code>const value = 1;\n</code></pre>';
+    const fenceEditMap = () => ({
+      blocks: [
+        { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+        { editable: true, endLine: 5, id: 'b1', startLine: 2 }
+      ],
+      coordinate: 'line' as const,
+      version: 1 as const
+    });
+    const simpleEditMap = () => ({
+      blocks: [{ editable: true, endLine: 1, id: 'b0', startLine: 0 }],
+      coordinate: 'line' as const,
+      version: 1 as const
+    });
+    const scopedFenceMarkdown = fenceMarkdown.slice(codeStart);
+    const codeResponse = (request: PreviewRequest): PreviewResponse => {
+      const scoped = request.markdown === scopedFenceMarkdown;
+      if (!scoped && request.markdown !== fenceMarkdown) {
+        throw new Error(`unexpected-code-preview-request:${request.markdown}`);
+      }
+      const source = request.markdown;
+      const contentStart = source.indexOf('const');
+      if (contentStart < 0) {
+        throw new Error('code-content-source-missing');
+      }
+      const base = createCodeContentPreviewResponse(
+        request,
+        source,
+        contentStart,
+        'const value = 1;\n'
+      );
+      const editMap = scoped
+        ? {
+            blocks: [{ editable: true, endLine: 3, id: 'b0', startLine: 0 }],
+            coordinate: 'line' as const,
+            signature: request.signature,
+            version: 1 as const
+          }
+        : { ...fenceEditMap(), signature: request.signature };
+      const codeProjection = {
+        coordinate: 'line' as const,
+        entries: [{
+          endLine: scoped ? 3 : 5,
+          fenceOffset: 0,
+          info: 'js',
+          kind: 'fenced' as const,
+          rows: [{
+            contentLine: 0,
+            literalFrom: 0,
+            literalLeadingSpaces: 0,
+            prefixEnd: 0,
+            prefixTabColumns: 0,
+            sourceLine: scoped ? 1 : 3
+          }],
+          startLine: scoped ? 0 : 2,
+          status: 'available' as const
+        }],
+        offsetUnit: 'utf16' as const,
+        signature: request.signature,
+        status: 'available' as const,
+        version: 1 as const
+      };
+      return {
+        ...base,
+        codeProjection,
+        editMap,
+        html: (scoped
+          ? '<pre><code>const value = 1;\n</code></pre>'
+          : fenceHtml) as SafePreviewHtml
+      };
+    };
+    const tailResponse = (request: PreviewRequest): PreviewResponse => {
+      const tailHtml = request.markdown === typedMarkdown
+        ? '<p data-easymde-visual-block-id="b0">AboveZZ</p>'
+        : '<p data-easymde-visual-block-id="b0">Above</p>';
+      return {
+        ...createPreviewResponse(request, tailHtml as SafePreviewHtml, {}),
+        editMap: { ...simpleEditMap(), signature: request.signature }
+      };
+    };
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (request.markdown === remainderMarkdown || request.markdown === typedMarkdown) {
+        return Promise.resolve(tailResponse(request));
+      }
+      if (request.markdown === fenceMarkdown || request.markdown === scopedFenceMarkdown) {
+        return Promise.resolve(codeResponse(request));
+      }
+      return Promise.reject(new Error(`unexpected-preview-request:${request.markdown}`));
+    });
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={sourceLinkBlockIndexPort()}
+      />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const codeBlock = visual.querySelector('pre');
+    const codeText = codeBlock?.querySelector('code')?.firstChild;
+    if (!(codeBlock instanceof HTMLElement) || !(codeText instanceof Text)) {
+      throw new Error('full-history-menu-code-missing');
+    }
+    // A real drag inside the code body, not a collapse on the PRE element.
+    const range = document.createRange();
+    range.setStart(codeText, 0);
+    range.setEnd(codeText, 5);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(codeBlock, { clientX: 24, clientY: 30 });
+    const menu = await within(document.body).findByRole('menu');
+    const trigger = within(menu).getByRole('menuitem', { name: 'Code block' });
+    fireEvent.pointerDown(trigger, { button: 0 });
+    fireEvent.click(trigger);
+    const submenu = await within(document.body).findByRole('menu', {
+      name: 'Code block'
+    });
+    const deleteItem = within(submenu).getByRole('menuitem', {
+      name: 'Delete code block'
+    });
+    fireEvent.pointerDown(deleteItem, { button: 0 });
+    fireEvent.click(deleteItem);
+    await waitFor(() => expect(props.submissionField.value).toBe(remainderMarkdown));
+    expect(props.submissionField.value.slice(0, codeStart)).toBe('Above\n\n');
+    expect(
+      vi.mocked(props.onFailure).mock.calls.map(([code]) => code),
+      JSON.stringify({ editable: visual.getAttribute('contenteditable') })
+    ).toEqual([]);
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+
+    const failureCodes = (): ReadonlyArray<string> =>
+      vi.mocked(props.onFailure).mock.calls.map(([code]) => code);
+    const surfaceText = (): Text => {
+      const text = visual.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) {
+        throw new Error('full-history-menu-survived-text-missing');
+      }
+      return text;
+    };
+    for (const character of ['Z', 'Z']) {
+      const target = surfaceText();
+      visual.dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        })
+      );
+      target.insertData(target.length, character);
+      const caret = document.createRange();
+      caret.setStart(target, target.length);
+      caret.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: character,
+          inputType: 'insertText'
+        })
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+    await waitFor(() => expect(props.submissionField.value).toBe(typedMarkdown));
+
+    const press = (shift: boolean): void => {
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: shift
+      });
+    };
+    // Undo the typing, undo the removal, redo it and undo it again, all
+    // through the real Root/Preview/Sink pair.
+    press(false);
+    await waitFor(() => expect(props.submissionField.value).toBe(remainderMarkdown));
+    press(false);
+    await waitFor(() => expect(props.submissionField.value).toBe(fenceMarkdown));
+    expect(failureCodes(), JSON.stringify({ step: 'undo-removal' })).toEqual([]);
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    press(true);
+    await waitFor(() => expect(props.submissionField.value).toBe(remainderMarkdown));
+    expect(failureCodes(), JSON.stringify({ step: 'redo-removal' })).toEqual([]);
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    press(false);
+    await waitFor(() => expect(props.submissionField.value).toBe(fenceMarkdown));
+    expect(failureCodes(), JSON.stringify({ step: 'undo-again' })).toEqual([]);
+    expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).not.toBeNull();
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    view.unmount();
+  });
+
+  it.each([1, 2])('completes the rich 160-block Full menu Paste transaction at local caret %i', async (localCaret) => {
+    const props = fixture();
+    const pasted = '```bash\necho hi\n```';
+    const targetIndex = 13;
+    const protectedIndex = targetIndex + 1 + 40;
+    const beforeSourceBlocks = [
+      '# Markdown 全量能力测试文档',
+      '> 用于测试标题、排版、表格、代码、数学公式、Mermaid 图表、HTML、脚注、任务列表等 Markdown 渲染能力。',
+      '---',
+      '## 1. 标题层级',
+      '# 一级标题 Heading 1',
+      '## 二级标题 Heading 2',
+      '### 三级标题 Heading 3',
+      '#### 四级标题 Heading 4',
+      '##### 五级标题 Heading 5',
+      '###### 六级标题 Heading 6',
+      '## 超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes',
+      '---',
+      '## 2. 文本样式'
+    ];
+    const beforeHtmlBlocks = [
+      '<h1>Markdown 全量能力测试文档</h1>',
+      '<blockquote><p>用于测试标题、排版、表格、代码、数学公式、Mermaid 图表、HTML、脚注、任务列表等 Markdown 渲染能力。</p></blockquote>',
+      '<hr>',
+      '<h2>1. 标题层级</h2>',
+      '<h1>一级标题 Heading 1</h1>',
+      '<h2>二级标题 Heading 2</h2>',
+      '<h3>三级标题 Heading 3</h3>',
+      '<h4>四级标题 Heading 4</h4>',
+      '<h5>五级标题 Heading 5</h5>',
+      '<h6>六级标题 Heading 6</h6>',
+      '<h2>超长中英文标题用于验证狭窄预览容器中的正常换行、完整可读性以及主题前后缀装饰仍然保持可见 This intentionally long bilingual heading verifies wrapping and complete readability without clipping in narrow preview panes</h2>',
+      '<hr>',
+      '<h2>2. 文本样式</h2>'
+    ];
+    const visiblePrefix = '普通文本、';
+    const suffixMarkup = '**粗体文本**、*斜体文本*、***粗斜体文本***。';
+    const targetSource = `${visiblePrefix}${suffixMarkup}`;
+    const suffixSourceBlocks = Array.from(
+      { length: 146 },
+      (_, index) => `第${index}段*斜体*后续正文，普通文本。`
+    );
+    const suffixHtmlBlocks = suffixSourceBlocks.map(
+      (_, index) => `<p>第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    );
+    const sourceBlocks = [...beforeSourceBlocks, targetSource, ...suffixSourceBlocks];
+    expect(sourceBlocks).toHaveLength(160);
+    const source = sourceBlocks.join('\n\n');
+    const targetStart = source.indexOf(targetSource);
+    if (targetStart < 0) throw new Error('root-r5-rich-target-source-missing');
+    const insertionStart = targetStart + localCaret;
+    const nextSource = source.slice(0, insertionStart)
+      + pasted
+      + source.slice(insertionStart);
+    const insertionEnd = insertionStart + pasted.length;
+    const typedSource = nextSource.slice(0, insertionEnd)
+      + 'Z'
+      + nextSource.slice(insertionEnd);
+    const escapeHtml = (value: string): string => value
+      .replace(/&/gu, '&amp;')
+      .replace(/</gu, '&lt;')
+      .replace(/>/gu, '&gt;');
+    const targetHtml = (block: string): string => {
+      const inline = block.slice(0, -suffixMarkup.length);
+      if (!block.endsWith(suffixMarkup)) {
+        throw new Error('root-r5-rich-target-markup-missing');
+      }
+      return '<p data-easymde-visual-block-id="b13">'
+        + `${escapeHtml(inline)}<strong>粗体文本</strong>、`
+        + '<em>斜体文本</em>、<strong><em>粗斜体文本</em></strong>。</p>';
+    };
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const blocks = request.markdown.split('\n\n');
+      if (blocks.length !== sourceBlocks.length) {
+        throw new Error(`root-r5-rich-block-count:${blocks.length}`);
+      }
+      let nextLine = 0;
+      const editBlocks = blocks.map((block, index) => {
+        const startLine = nextLine;
+        const endLine = startLine + block.split('\n').length;
+        nextLine = endLine + (index + 1 < blocks.length ? 1 : 0);
+        return {
+          editable: index !== protectedIndex,
+          endLine,
+          id: `b${index}`,
+          startLine
+        };
+      });
+      if (nextLine !== request.markdown.split('\n').length) {
+        throw new Error('root-r5-rich-line-map-bounds');
+      }
+      const html = blocks.map((block, index) => {
+        const marker = `data-easymde-visual-block-id="b${index}"`;
+        if (index === targetIndex) return targetHtml(block);
+        const protectedAttribute = index === protectedIndex
+          ? ' contenteditable="false"'
+          : '';
+        const content = index < beforeHtmlBlocks.length
+          ? beforeHtmlBlocks[index]
+          : suffixHtmlBlocks[index - targetIndex - 1];
+        if (!content) throw new Error('root-r5-rich-html-block-missing');
+        return `<${content.slice(1, content.indexOf('>'))} ${marker}${protectedAttribute}>`
+          + content.slice(content.indexOf('>') + 1);
+      }).join('');
+      return {
+        editMap: {
+          blocks: editBlocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: html as SafePreviewHtml
+      };
+    };
+    props.submissionField.value = source;
+    props.submissionField.defaultValue = source;
+    props.submissionField.setSelectionRange(0, 0);
+    if (!props.editorClipboardPort) throw new Error('root-r5-clipboard-port-missing');
+    // The paste's formal Preview response is held so canonical publication and
+    // accepted visual completion are independently observable.
+    const pasteResponse = deferred<PreviewResponse>();
+    let pasteDeferredPending = true;
+    // The real CodeMirror document owner, not a mock history: every value,
+    // revision and history assertion below reads the owner Root actually uses.
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      request.markdown === nextSource && pasteDeferredPending
+        ? pasteResponse.promise
+        : Promise.resolve(responseFor(request))
+    );
+    vi.mocked(props.editorClipboardPort.read).mockResolvedValue({
+      status: 'available',
+      text: pasted
+    });
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={sourceLinkBlockIndexPort()}
+      />
+    );
+    let visual: HTMLElement;
+    let acceptedSink: HTMLElement | null = null;
+    let acceptedSignature: string | null = null;
+    const acceptedRequestFor = (value: string): PreviewRequest => {
+      const request = [...vi.mocked(props.previewPort.render).mock.calls]
+        .reverse()
+        .map(([candidate]) => candidate)
+        .find((candidate) => candidate.markdown === value);
+      if (!request) throw new Error('root-r5-rich-accepted-request-missing');
+      return request;
+    };
+    const waitAccepted = async (value: string): Promise<void> => {
+      const expectedTarget = value.split('\n\n')[targetIndex];
+      if (undefined === expectedTarget) throw new Error('root-r5-target-block-missing');
+      await waitFor(() => {
+        expect(props.submissionField.value).toBe(value);
+        if (value === typedSource) {
+          expect(acceptedSignature).not.toBeNull();
+          expect(visual.easymdePreviewSignature).toBe(acceptedSignature);
+        } else {
+          const request = acceptedRequestFor(value);
+          acceptedSignature = request.signature;
+          expect(visual.easymdePreviewSignature).toBe(request.signature);
+        }
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready');
+        expect(visual.getAttribute('contenteditable')).toBe('true');
+        expect(visual.querySelector<HTMLElement>(
+          `[data-easymde-visual-block-id="b${targetIndex}"]`
+        )?.textContent).toBe(expectedTarget.replace(suffixMarkup, '粗体文本、斜体文本、粗斜体文本。'));
+        if (acceptedSink) expect(
+          view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+        ).toBe(acceptedSink);
+      });
+    };
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      acceptedSink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink="1"]'
+      );
+      if (!acceptedSink) throw new Error('root-r5-rich-sink-missing');
+      await waitAccepted(source);
+      const target = visual.querySelector<HTMLElement>(
+        `[data-easymde-visual-block-id="b${targetIndex}"]`
+      );
+      const targetText = target?.firstChild;
+      if (!(target instanceof HTMLElement) || !(targetText instanceof Text)) {
+        throw new Error('root-r5-rich-target-missing');
+      }
+      const initialRange = document.createRange();
+      initialRange.setStart(targetText, localCaret);
+      initialRange.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(initialRange);
+      fireEvent.pointerDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.mouseDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(target, { clientX: 20, clientY: 20 });
+      const menu = await within(document.body).findByRole('menu');
+      const pasteItem = within(menu).getAllByRole('menuitem', { name: /paste/i })[0];
+      if (!pasteItem) throw new Error('root-r5-rich-paste-item-missing');
+      fireEvent.pointerDown(pasteItem, { button: 0 });
+      fireEvent.click(pasteItem);
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('root-r5-rich-document-owner-missing');
+      // Source publication and accepted visual completion are separate owners:
+      // the canonical document must already carry the paste while the formal
+      // Preview response is still outstanding.
+      await waitFor(() => expect(owner.getValue()).toBe(nextSource));
+      expect(props.submissionField.value).toBe(nextSource);
+      expect(pasteDeferredPending).toBe(true);
+      expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready');
+      pasteDeferredPending = false;
+      const pasteRequest = acceptedRequestFor(nextSource);
+      pasteResponse.resolve(responseFor(pasteRequest));
+      await waitAccepted(nextSource);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const acceptedTarget = visual.querySelector<HTMLElement>(
+        `[data-easymde-visual-block-id="b${targetIndex}"]`
+      );
+      const acceptedSelection = window.getSelection();
+      const acceptedNode = acceptedSelection?.anchorNode;
+      if (
+        !(acceptedTarget instanceof HTMLElement)
+        || !(acceptedNode instanceof Text)
+        || !acceptedTarget.contains(acceptedNode)
+        || acceptedSelection?.rangeCount !== 1
+        || !acceptedSelection.isCollapsed
+      ) {
+        throw new Error('root-r5-rich-adopted-caret-missing');
+      }
+      if (!(acceptedNode instanceof Text)) throw new Error('root-r5-adopted-text-missing');
+      if (!acceptedSelection) throw new Error('root-r5-adopted-selection-missing');
+      const acceptedTargetSource = nextSource.split('\n\n')[targetIndex];
+      if (undefined === acceptedTargetSource) throw new Error('root-r5-accepted-source-block-missing');
+      expect(acceptedNode.textContent).toBe(
+        acceptedTargetSource.slice(0, -suffixMarkup.length)
+      );
+      expect(acceptedSelection.anchorOffset).toBe(localCaret + pasted.length);
+      expect(acceptedSelection.focusNode).toBe(acceptedNode);
+      expect(acceptedSelection.focusOffset).toBe(localCaret + pasted.length);
+
+      visual.focus();
+      if (window.getSelection()?.anchorNode !== acceptedNode) {
+        throw new Error('root-r5-rich-focus-lost-adopted-selection');
+      }
+      const adoptedOffset = acceptedSelection.anchorOffset;
+      const targetRange = document.createRange();
+      targetRange.setStart(acceptedNode, adoptedOffset);
+      targetRange.collapse(true);
+      const beforeInput = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'Z',
+        inputType: 'insertText'
+      });
+      Object.defineProperty(beforeInput, 'getTargetRanges', {
+        configurable: true,
+        value: () => [targetRange]
+      });
+      visual.dispatchEvent(beforeInput);
+      expect(beforeInput.defaultPrevented).toBe(false);
+      if (!acceptedNode.isConnected || acceptedSelection.anchorNode !== acceptedNode) {
+        throw new Error('root-r5-rich-node-replaced-before-typing');
+      }
+      acceptedNode.insertData(adoptedOffset, 'Z');
+      if (!acceptedNode.data.includes('Z')) {
+        throw new Error('root-r5-rich-dom-insert-missing');
+      }
+      const afterTyping = document.createRange();
+      afterTyping.setStart(acceptedNode, adoptedOffset + 1);
+      afterTyping.collapse(true);
+      acceptedSelection.removeAllRanges();
+      acceptedSelection.addRange(afterTyping);
+      visual.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        data: 'Z',
+        inputType: 'insertText'
+      }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await waitAccepted(typedSource);
+
+      // The typed character reached the real CodeMirror document, not only the
+      // textarea mirror, and it is one history step on top of the paste.
+      expect(owner.getValue()).toBe(typedSource);
+      expect(owner.getHistoryState().undoDepth).toBeGreaterThan(0);
+      const typedHistory = owner.getHistoryState();
+
+      const pressUndo = (shiftKey = false): void => {
+        fireEvent.keyDown(visual, {
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z',
+          shiftKey
+        });
+      };
+      pressUndo();
+      await waitAccepted(nextSource);
+      expect(owner.getValue()).toBe(nextSource);
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth - 1);
+      pressUndo();
+      await waitAccepted(source);
+      expect(owner.getValue()).toBe(source);
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth - 2);
+      pressUndo(true);
+      await waitAccepted(nextSource);
+      expect(owner.getValue()).toBe(nextSource);
+      pressUndo();
+      await waitAccepted(source);
+      expect(owner.getValue()).toBe(source);
+      expect(owner.getHistoryState()).toEqual({
+        redoDepth: typedHistory.redoDepth + 2,
+        undoDepth: typedHistory.undoDepth - 2
+      });
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { direction: 'forward' as const, marker: '---' },
+    { direction: 'forward' as const, marker: '- - -' },
+    { direction: 'forward' as const, marker: '_ _ _' },
+    { direction: 'forward' as const, marker: '* * *' },
+    { direction: 'backward' as const, marker: '_ _ _' }
+  ])('deletes a Full HR through pointerdown mousedown contextmenu and restores it with Undo for $marker $direction', async ({ direction, marker }) => {
+    const props = fixture();
+    const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const initial = `before\n\n${marker}\nafter`;
+    const expected = 'before\n\n\nafter';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      const deleted = request.markdown === expected;
+      return Promise.resolve({
+        editMap: {
+          blocks: deleted
+            ? [
+                { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+                { editable: true, endLine: 4, id: 'b2', startLine: 3 }
+              ]
+            : [
+                { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+                { editable: true, endLine: 3, id: 'b1', startLine: 2 },
+                { editable: true, endLine: 4, id: 'b2', startLine: 3 }
+              ],
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: (deleted
+          ? '<p data-easymde-visual-block-id="b0">before</p>'
+            + '<p data-easymde-visual-block-id="b2">after</p>'
+          : '<p data-easymde-visual-block-id="b0">before</p>'
+            + '<hr data-easymde-visual-block-id="b1">'
+            + '<p data-easymde-visual-block-id="b2">after</p>') as SafePreviewHtml
+      });
+    });
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('root-r14-hr-missing');
+      }
+      if ('backward' === direction) {
+        // A backward native selection of the HR token: the pointer path keeps
+        // that direction for the canonical selection the Undo restores.
+        const tokenIndex = Array.from(visual.childNodes).indexOf(thematicBreak);
+        const nativeRange = document.createRange();
+        nativeRange.selectNode(thematicBreak);
+        const nativeSelection = window.getSelection();
+        nativeSelection?.removeAllRanges();
+        nativeSelection?.addRange(nativeRange);
+        nativeSelection?.setBaseAndExtent(
+          visual,
+          tokenIndex + 1,
+          visual,
+          tokenIndex
+        );
+      }
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('root-r14-document-owner-missing');
+      const openingValue = owner.getValue();
+      const openingRevision = owner.getRevision?.();
+      const openingHistory = owner.getHistoryState();
+      const openingHtml = visual.innerHTML;
+      const canonicalInput = vi.fn();
+      props.submissionField.addEventListener('input', canonicalInput);
+      fireEvent.pointerDown(thematicBreak, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.mouseDown(thematicBreak, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(thematicBreak, { clientX: 20, clientY: 20 });
+      const menus = await within(document.body).findAllByRole('menu');
+      expect(menus).toHaveLength(1);
+      const menu = menus[0];
+      if (!menu) throw new Error('root-r14-menu-missing');
+      expect(owner.getValue()).toBe(openingValue);
+      expect(owner.getRevision?.()).toBe(openingRevision);
+      expect(owner.getHistoryState()).toEqual(openingHistory);
+      expect(visual.innerHTML).toBe(openingHtml);
+      expect(canonicalInput).not.toHaveBeenCalled();
+      props.submissionField.removeEventListener('input', canonicalInput);
+      const deleteItem = within(menu).getByRole('menuitem', {
+        name: 'Delete horizontal rule'
+      });
+      expect(deleteItem.getAttribute('aria-disabled')).toBe('false');
+      fireEvent.pointerDown(deleteItem, { button: 0 });
+      fireEvent.click(deleteItem);
+      await waitFor(() => expect(props.submissionField.value).toBe(expected));
+      expect(owner.getValue()).toBe(expected);
+      expect(owner.getHistoryState().undoDepth).toBe(openingHistory.undoDepth + 1);
+      expect(visual.querySelector('hr')).toBeNull();
+      expect(props.onFailure).not.toHaveBeenCalled();
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(props.submissionField.value).toBe(initial));
+      expect(owner.getValue()).toBe(initial);
+      expect(owner.getHistoryState()).toEqual({
+        redoDepth: openingHistory.redoDepth + 1,
+        undoDepth: openingHistory.undoDepth
+      });
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      const restoredHr = visual.querySelector('hr');
+      if (!(restoredHr instanceof HTMLHRElement)) {
+        throw new Error('root-r14-restored-hr-missing');
+      }
+      const restoredIndex = Array.from(visual.childNodes).indexOf(restoredHr);
+      const restoredSelection = window.getSelection();
+      expect(restoredSelection?.anchorNode).toBe(visual);
+      expect(restoredSelection?.focusNode).toBe(visual);
+      expect(restoredSelection?.anchorOffset).toBe(
+        'backward' === direction ? restoredIndex + 1 : restoredIndex
+      );
+      expect(restoredSelection?.focusOffset).toBe(
+        'backward' === direction ? restoredIndex : restoredIndex + 1
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps the full surface menu usable on the next HR right after an HR deletion', async () => {
+    const props = fixture();
+    const initial = 'before\n\n---\n\nmid\n\n---\n\nafter';
+    // Deleting the first HR removes only its three marker bytes.
+    const hrStart = initial.indexOf('---');
+    const expected = initial.slice(0, hrStart) + initial.slice(hrStart + 3);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    // Every blank-line separated block becomes one rendered element, and its
+    // line span is measured from the actual source rather than assumed.
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const markdown = request.markdown;
+      const blocks: Array<{
+        editable: true;
+        endLine: number;
+        id: string;
+        startLine: number;
+      }> = [];
+      const html: string[] = [];
+      let offset = 0;
+      while (offset <= markdown.length) {
+        const separator = markdown.indexOf('\n\n', offset);
+        const end = separator < 0 ? markdown.length : separator;
+        const block = markdown.slice(offset, end);
+        if (block.length > 0) {
+          const id = `b${blocks.length}`;
+          const startLine = markdown.slice(0, offset).split('\n').length - 1;
+          blocks.push({
+            editable: true,
+            endLine: startLine + block.split('\n').length,
+            id,
+            startLine
+          });
+          const marker = ` data-easymde-visual-block-id="${id}"`;
+          html.push(
+            '---' === block ? `<hr${marker}>` : `<p${marker}>${block}</p>`
+          );
+        }
+        if (separator < 0) break;
+        offset = end + 2;
+      }
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: html.join('') as SafePreviewHtml
+      };
+    };
+    // The post-deletion response is held so the second gesture arrives while
+    // that transfer is still outstanding, which is the browser's race window.
+    const heldResponse = deferred<PreviewResponse>();
+    let holdResponse = true;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      request.markdown === expected && holdResponse
+        ? heldResponse.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    // A real pointer gesture on the HR: the surface maps the pointed element
+    // itself, exactly like the passing single-delete Full regression.
+    const demandOn = (target: HTMLElement): void => {
+      layoutContextMenuSurface(target);
+      fireEvent.pointerDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.mouseDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(target, { clientX: 20, clientY: 20 });
+    };
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const hrs = (): Element[] => Array.from(visual.querySelectorAll('hr'));
+      expect(hrs()).toHaveLength(2);
+      demandOn(hrs()[0] as HTMLElement);
+      const menu = await within(document.body).findByRole('menu');
+      expect(
+        vi.mocked(props.onFailure).mock.calls,
+        'failures after the first HR demand'
+      ).toEqual([]);
+      fireEvent.click(
+        within(menu).getByRole('menuitem', { name: 'Delete horizontal rule' })
+      );
+      await waitFor(() => expect(props.submissionField.value).toBe(expected));
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // The structural index for the deleted source is a separate readiness
+      // input; wait for it, then assert the published status is the loading
+      // window. In jsdom the owner's own transfer flag is also set here, so
+      // this fixture exercises the transfer arm; the phase arm covers demands
+      // that arrive while a render is outstanding without a transfer.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('loading')
+      );
+      // Immediately point at the remaining HR, without waiting for the
+      // accepted Preview of the deletion to land. The surface still shows the
+      // pre-deletion DOM here, so the second HR is the last one on screen.
+      const remaining = hrs();
+      expect(remaining.length).toBeGreaterThan(0);
+      demandOn(remaining[remaining.length - 1] as HTMLElement);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      holdResponse = false;
+      heldResponse.resolve(responseFor(
+        [...vi.mocked(props.previewPort.render).mock.calls]
+          .map(([request]) => request)
+          .find((request) => request.markdown === expected)
+          ?? (() => { throw new Error('full-owner-held-request-missing'); })()
+      ));
+      await act(async () => {
+        await heldResponse.promise;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      });
+      // Either a usable menu or a fail-closed rejection is acceptable, but the
+      // gesture must never surface a selection-map failure.
+      expect(
+        vi.mocked(props.onFailure).mock.calls,
+        'failures after the second HR demand'
+      ).toEqual([]);
+      expect(view.queryByRole('alert')).toBeNull();
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(props.submissionField.value).toBe(expected);
+      expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('exposes the generated context for a visual Preview formula', async () => {
     const props = fixture();
     const sourceMarkdown = 'Before\n$x$\nAfter';
@@ -4357,6 +5198,289 @@ describe('EditorRoot', () => {
       expect(props.onFailure).not.toHaveBeenCalled();
       expectImageTargetSelected('100%');
       view.unmount();
+    }
+  );
+
+  it.each(['response-pending', 'enhancing'] as const)(
+    'keeps the windowed surface after a second HR demand while the first transfer is %s',
+    async (pendingWindow) => {
+    const props = fixture();
+    // 320 parser-valid blocks joined by blank lines keeps the Windowed owner
+    // installed before and after one deletion (319 > 160).
+    const openingBlocks = [
+      'alpha',
+      '---',
+      'beta',
+      '---',
+      ...Array.from({ length: 316 }, (_, index) => `suffix ${index}`)
+    ];
+    expect(openingBlocks).toHaveLength(320);
+    const sourceMarkdown = openingBlocks.join('\n\n');
+    const blockStarts: number[] = [];
+    let cursor = 0;
+    for (const block of openingBlocks) {
+      blockStarts.push(cursor);
+      cursor += block.length + 2;
+    }
+    const firstHrOffset = blockStarts[1];
+    if (undefined === firstHrOffset) throw new Error('windowed-race-hr-offset-missing');
+    // A thematic-break delete removes only the three marker bytes; both
+    // surrounding newlines stay, so every later line keeps its index.
+    const deletedMarkdown =
+      sourceMarkdown.slice(0, firstHrOffset)
+      + sourceMarkdown.slice(firstHrOffset + 3);
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const deleted = request.markdown === deletedMarkdown;
+      // Block ids are positional in the rendered response, so removing HR1
+      // renumbers every later block: the id HR2 used to carry now names the
+      // block that shifted into its place.
+      const renderedIndices = openingBlocks
+        .map((_, index) => index)
+        .filter((index) => !(deleted && 1 === index));
+      const blocks = renderedIndices.map((sourceIndex, renderedIndex) => ({
+        editable: true,
+        endLine: 2 * sourceIndex + 1,
+        id: `b${renderedIndex}`,
+        startLine: 2 * sourceIndex
+      }));
+      const html = renderedIndices
+        .map((sourceIndex, renderedIndex) => {
+          const marker = ` data-easymde-visual-block-id="b${renderedIndex}"`;
+          return '---' === openingBlocks[sourceIndex]
+            ? `<hr${marker}>`
+            : `<p${marker}>${openingBlocks[sourceIndex]}</p>`;
+        })
+        .join('');
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: html as SafePreviewHtml
+      };
+    };
+    // Demand 2 must arrive while the windowed owner is still enhancing the
+    // first transfer, so the real enhancement is held rather than the response.
+    // Two distinct pending windows are exercised: the formal response has not
+    // arrived yet, and the response arrived but its real enhancement is still
+    // running (`phase=enhancing`, which is what the browser shows after a
+    // Windowed delete).
+    const heldEnhancement = deferred<void>();
+    let holdEnhancement = 'enhancing' === pendingWindow;
+    vi.mocked(props.enhancementPort.enhance).mockImplementation(
+      async () => {
+        // Only the post-delete transfer is held; the initial load must finish
+        // so the surface reaches ready before demand 1.
+        if (!holdEnhancement || documentOwnerRef.current?.getValue() !== deletedMarkdown) {
+          return;
+        }
+        await heldEnhancement.promise;
+      }
+    );
+    const heldResponse = deferred<PreviewResponse>();
+    let holdResponse = 'response-pending' === pendingWindow;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      request.markdown === deletedMarkdown && holdResponse
+        ? heldResponse.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    const view = render(
+      <EditorRootErrorBoundary
+        failureMessage="The editor could not start."
+        onFailure={props.onFailure}
+      >
+        <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+      </EditorRootErrorBoundary>
+    );
+    // The browser right-click selects the HR token at the root, so the demand
+    // starts from a root-level interval over that exact child.
+    const demandOn = (target: HTMLElement): void => {
+      const range = document.createRange();
+      range.selectNode(target);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      layoutContextMenuSurface(target);
+      fireEvent.pointerDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.mouseDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(target, { clientX: 20, clientY: 20 });
+    };
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      const unlock = await view.findByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const editor = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(editor.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('windowed-race-document-owner-missing');
+      const sink = view.container.querySelector<HTMLElement>(
+        '[data-easymde-preview-html-sink="1"]'
+      );
+      if (!sink) throw new Error('windowed-race-sink-missing');
+      expect(editor.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull();
+      const hrs = (): Element[] => Array.from(editor.querySelectorAll('hr'));
+      expect(hrs()).toHaveLength(2);
+      const openingHistory = owner.getHistoryState();
+
+      // Demand 1: delete the first HR. Its formal response is still held.
+      demandOn(hrs()[0] as HTMLElement);
+      const firstMenu = await within(document.body).findByRole('menu');
+      fireEvent.click(
+        within(firstMenu).getByRole('menuitem', { name: 'Delete horizontal rule' })
+      );
+      await waitFor(() => expect(owner.getValue()).toBe(deletedMarkdown));
+      expect(props.submissionField.value).toBe(deletedMarkdown);
+      expect(owner.getHistoryState().undoDepth).toBe(openingHistory.undoDepth + 1);
+      expect(
+        vi.mocked(props.onFailure).mock.calls,
+        'failures after demand 1'
+      ).toEqual([]);
+      if ('enhancing' === pendingWindow) {
+        // The accepted Preview is installed but its enhancement is still held,
+        // which is the browser's `phase=enhancing` window.
+        await waitFor(() =>
+          expect(editor.getAttribute('data-easymde-preview-phase')).toBe('enhancing')
+        );
+      }
+
+      // Demand 2 arrives with transfer 1 still pending. It is fired without
+      // waiting for a menu, because a pending demand legitimately produces no
+      // menu. It must not write canonical source or history, and must not
+      // cancel or replace transfer 1.
+      const beforeSecond = owner.getValue();
+      const beforeSecondHistory = owner.getHistoryState();
+      // HR1 carried b1. After the positional renumbering that id now names the
+      // block that shifted up, which is not the HR the user pointed at. A
+      // replayed demand must never be allowed to act on that fresh element.
+      const renumberedOwner = editor.querySelector<HTMLElement>(
+        '[data-easymde-visual-block-id="b1"]'
+      );
+      if (!renumberedOwner) throw new Error('windowed-race-b1-missing');
+      const remaining = hrs();
+      expect(remaining.length).toBeGreaterThan(0);
+      const secondTarget = remaining[remaining.length - 1] as HTMLElement;
+      // This is the falsifier: the live HR2 identity differs from whatever
+      // now answers to the old b1 id.
+      expect(renumberedOwner).not.toBe(secondTarget);
+      demandOn(secondTarget);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const secondItem = within(document.body).queryByRole('menuitem', {
+        name: 'Delete horizontal rule'
+      });
+      // The demand is a rejection, not a crash: no menu is installed while the
+      // transfer is pending, and nothing has been written or reported.
+      expect(secondItem).toBeNull();
+      expect(vi.mocked(props.onFailure).mock.calls).toEqual([]);
+      // The rejected demand must not have written anything.
+      expect(owner.getValue()).toBe(beforeSecond);
+      expect(owner.getHistoryState()).toEqual(beforeSecondHistory);
+      if (secondItem && 'true' !== secondItem.getAttribute('aria-disabled')) {
+        fireEvent.click(secondItem);
+        await act(async () => {
+          await Promise.resolve();
+        });
+      }
+      expect(owner.getValue()).toBe(beforeSecond);
+      expect(owner.getHistoryState()).toEqual(beforeSecondHistory);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // Release whichever stage of transfer 1 is being held.
+      if ('response-pending' === pendingWindow) {
+        holdResponse = false;
+        heldResponse.resolve(
+          responseFor(
+            [...vi.mocked(props.previewPort.render).mock.calls]
+              .map(([request]) => request)
+              .find((request) => request.markdown === deletedMarkdown)
+              ?? (() => { throw new Error('windowed-race-first-request-missing'); })()
+          )
+        );
+      }
+      holdEnhancement = false;
+      heldEnhancement.resolve();
+      await act(async () => {
+        await heldEnhancement.promise;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      });
+
+      // Exactly one deletion landed; the surface is still the same live sink.
+      await waitFor(() =>
+        expect(editor.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(
+        vi.mocked(props.onFailure).mock.calls,
+        'failures after transfer 1'
+      ).toEqual([]);
+      expect(view.queryByRole('alert')).toBeNull();
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(editor.isConnected).toBe(true);
+      expect(editor.getAttribute('contenteditable')).toBe('true');
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).toBe(sink);
+      expect(editor.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull();
+      expect(owner.getValue()).toBe(deletedMarkdown);
+      expect(hrs()).toHaveLength(1);
+      // The parked demand is rebuilt against the newly accepted state once the
+      // transfer settles, so a fresh gesture on the surviving HR now gets a
+      // usable menu. Without the settle notification the parked demand is
+      // never revisited.
+      demandOn(hrs()[0] as HTMLElement);
+      const settledMenu = await within(document.body).findByRole('menu');
+      expect(
+        within(settledMenu).getByRole('menuitem', {
+          name: 'Delete horizontal rule'
+        }).getAttribute('aria-disabled')
+      ).toBe('false');
+      expect(vi.mocked(props.onFailure).mock.calls).toEqual([]);
+      fireEvent.keyDown(settledMenu, { cancelable: true, key: 'Escape' });
+
+      // One Undo restores the exact baseline and the original accepted Preview.
+      fireEvent.keyDown(editor, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(sourceMarkdown));
+      await waitFor(() =>
+        expect(editor.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(props.submissionField.value).toBe(sourceMarkdown);
+      expect(hrs()).toHaveLength(2);
+      expect(owner.getHistoryState()).toEqual({
+        redoDepth: openingHistory.redoDepth + 1,
+        undoDepth: openingHistory.undoDepth
+      });
+      expect(editor.isConnected).toBe(true);
+      expect(editor.getAttribute('contenteditable')).toBe('true');
+      expect(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      ).toBe(sink);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(view.queryByRole('alert')).toBeNull();
+    } finally {
+      view.unmount();
+    }
     }
   );
 
@@ -6143,6 +7267,7 @@ describe('EditorRoot', () => {
       executeCommand: () => 'blocked',
       getGeneratedPreviewIdentity: () => null,
       isEditable: () => true,
+      isTransferPending: () => false,
       prepareGeneratedContentTarget: () => null,
       prepareGeneratedContentTargetForSelection: () => null,
       prepareImageTarget: () => null,
@@ -6157,6 +7282,7 @@ describe('EditorRoot', () => {
       executeCommand: () => 'blocked',
       getGeneratedPreviewIdentity: () => null,
       isEditable: () => true,
+      isTransferPending: () => false,
       prepareGeneratedContentTarget: () => null,
       prepareGeneratedContentTargetForSelection: () => null,
       prepareImageTarget: () => null,
@@ -6224,6 +7350,365 @@ describe('EditorRoot', () => {
     expect(
       isVisualPreviewWindowRequestCurrent(queued, null, 'ready', true)
     ).toBe(false);
+  });
+
+  it.each([
+    ['编辑', '预览', 'source', 'ready'],
+    ['编辑模式', '预览模式', 'source', 'ready'],
+    ['分屏', '预览', 'split', 'ready'],
+    ['分屏模式', '预览模式', 'split', 'ready'],
+    ['编辑', '预览', 'source', 'complete'],
+    ['编辑', '预览', 'source', 'fail']
+  ] as const)(
+    'settles a second windowed unlock after %s → %s (%s, %s materialization)',
+    async (modeControl, previewControl, mode, materialization) => {
+      const props = fixture();
+      const lines = Array.from({ length: 200 }, (_, index) => `Paragraph ${index}`);
+      const markdown = lines.join('\n');
+      props.submissionField.value = markdown;
+      props.submissionField.defaultValue = markdown;
+      props.submissionField.setSelectionRange(0, 0);
+      vi.mocked(props.previewPort.render).mockImplementation((request) =>
+        Promise.resolve(createPreviewResponse(
+          request,
+          lines.map((line) => `<p>${line}</p>`).join('') as SafePreviewHtml,
+          {}
+        ))
+      );
+      const realPreviewOwner = observedPreviewOwner.PreviewSurfaceOwner;
+      const previewRuntimeRef: {
+        current: observedPreviewOwner.PreviewSurfaceRuntime | null;
+      } = { current: null };
+      let windowed = false;
+      const acceptedWindows: Array<{ revision: number; signature: string }> = [];
+      const stagingScheduler = { now: () => 0, yield: () => Promise.resolve() };
+      let pauseMaterialization = false;
+      const materializationSteps: Array<{
+        resolve: () => void;
+        reject: (reason: Error) => void;
+      }> = [];
+      const materializeScheduler = {
+        yield: () => {
+          if (!pauseMaterialization) return Promise.resolve();
+          const next = deferred<void>();
+          materializationSteps.push(next);
+          return next.promise;
+        }
+      };
+      vi.spyOn(observedPreviewOwner, 'PreviewSurfaceOwner').mockImplementation(
+        (componentProps) => {
+          windowed = Boolean(componentProps.windowed);
+          const onReady = observedCallback(
+            (runtime: observedPreviewOwner.PreviewSurfaceRuntime) => {
+              previewRuntimeRef.current = runtime;
+              componentProps.onReady(runtime);
+            },
+            [componentProps.onReady]
+          );
+          const onWindowReady = observedCallback(() => {
+            const accepted = previewRuntimeRef.current?.getAcceptedWindowSnapshot();
+            if (accepted) acceptedWindows.push(accepted);
+            componentProps.onWindowReady?.();
+          }, [componentProps.onWindowReady]);
+          return realPreviewOwner({
+            ...componentProps, onReady, onWindowReady, stagingScheduler,
+            materializeScheduler
+          });
+        }
+      );
+      const view = render(<EditorRoot {...props} />);
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: previewControl }));
+      const unlock = view.getByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+      layoutPreviewSurface(view.container);
+      fireEvent.click(unlock);
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() => expect(document.activeElement).toBe(visual));
+      expect(unlock.getAttribute('aria-busy')).toBeNull();
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(visual.querySelector('[data-easymde-preview-window-spacer]')).not.toBeNull();
+      expect(visual.querySelectorAll('[data-easymde-visual-block-id]').length)
+        .toBeLessThanOrEqual(DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED);
+      expect(acceptedWindows.at(-1)).toMatchObject({ revision: 2 });
+
+      fireEvent.click(view.getByRole('button', { name: modeControl }));
+      await waitFor(() => expect(view.container.querySelector('.easymde-editor')
+        ?.classList.contains(`is-immersive-${mode}`)).toBe(true));
+      await waitFor(() => expect(props.previewPort.render).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(visual.easymdePreviewSignature)
+        .toBe(vi.mocked(props.previewPort.render).mock.calls[1]?.[0].signature));
+      expect(visual.getAttribute('contenteditable')).toBeNull();
+      pauseMaterialization = 'ready' !== materialization;
+      fireEvent.click(view.getByRole('button', { name: previewControl }));
+      const secondUnlock = view.getByRole('button', { name: '解除锁定并编辑' });
+      await waitFor(() => expect(secondUnlock.hasAttribute('disabled')).toBe(false));
+      if ('ready' === materialization) {
+        await waitFor(() => expect(visual.querySelectorAll('[data-easymde-visual-block-id]'))
+          .toHaveLength(lines.length));
+      } else {
+        await waitFor(() => expect(materializationSteps.length).toBeGreaterThan(0));
+      }
+      expect(windowed).toBe(false);
+      expect(previewRuntimeRef.current?.getAcceptedWindowSnapshot()).toBeNull();
+      const windowReadyCount = acceptedWindows.length;
+      expect(secondUnlock.getAttribute('aria-busy')).toBeNull();
+
+      fireEvent.click(secondUnlock);
+      // Prove the click was admitted, rather than swallowed by a stale busy guard.
+      expect(secondUnlock.getAttribute('aria-busy')).toBe('true');
+      // The Root's async preparation must also admit the window request.
+      await waitFor(() => expect(windowed).toBe(true));
+      if ('ready' !== materialization) {
+        expect(secondUnlock.getAttribute('aria-busy')).toBe('true');
+        expect(visual.getAttribute('contenteditable')).not.toBe('true');
+        expect(acceptedWindows).toHaveLength(windowReadyCount);
+        for (let index = 0; index < 32; index += 1) {
+          const next = materializationSteps.shift();
+          if (!next) break;
+          await act(async () => {
+            if ('fail' === materialization) {
+              next.reject(new Error('synthetic-materialization-failure'));
+            } else {
+              next.resolve();
+            }
+            for (let turn = 0; turn < 16; turn += 1) await Promise.resolve();
+          });
+        }
+        expect(materializationSteps).toHaveLength(0);
+      }
+      await waitFor(() => expect(secondUnlock.getAttribute('aria-busy')).toBeNull());
+      if ('fail' === materialization) {
+        expect(props.onFailure).toHaveBeenCalledWith('preview-enhancement-failed');
+        expect(view.getByText('Failed', { selector: '[role="alert"]' })).toBeTruthy();
+        expect(visual.getAttribute('contenteditable')).not.toBe('true');
+        expect(previewRuntimeRef.current?.getAcceptedWindowSnapshot()).toBeNull();
+        expect(acceptedWindows).toHaveLength(windowReadyCount);
+        expect(view.getByRole('button', { name: modeControl }).hasAttribute('disabled'))
+          .toBe(false);
+        fireEvent.click(view.getByRole('button', { name: modeControl }));
+        await waitFor(() => expect(view.container.querySelector('.easymde-editor')
+          ?.classList.contains('is-immersive-source')).toBe(true));
+        expect(props.submissionField.value).toBe(markdown);
+        view.unmount();
+        return;
+      }
+      expect(view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(visual);
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      await waitFor(() => expect(document.activeElement).toBe(visual));
+      expect(visual.querySelectorAll('[data-easymde-visual-block-id]').length)
+        .toBeLessThanOrEqual(DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED);
+      expect(acceptedWindows.length).toBeGreaterThan(windowReadyCount);
+      expect(acceptedWindows.at(-1)).toMatchObject({
+        revision: 4,
+        signature: vi.mocked(props.previewPort.render).mock.calls[1]?.[0].signature
+      });
+      expect(props.submissionField.value).toBe(markdown);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      view.unmount();
+    }
+  );
+
+  it('keeps a large Preview ready through text and icon mode round trips before first unlock', { timeout: 20_000 }, async () => {
+    const props = fixture();
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const blockCount = 640;
+    const sourceBlocks = Array.from({ length: blockCount }, (_, index) => {
+      if (3 === index) {
+        return {
+          markdown: ['![Pic](https://img.test/pic.png)'],
+          html: '<p><img src="https://img.test/pic.png" alt="Pic"></p>'
+        };
+      }
+      if (5 === index) {
+        return {
+          markdown: ['```js', 'const value = 1;', '```'],
+          html: '<pre><code>const value = 1;</code></pre>'
+        };
+      }
+      if (7 === index) {
+        return {
+          markdown: ['Inline $x$ math'],
+          html:
+            '<p>Inline <span class="easymde-math easymde-math-inline">' +
+            '<span>2</span></span> math</p>'
+        };
+      }
+      return {
+        markdown: [`Paragraph ${index}`],
+        html: `<p>Paragraph ${index}</p>`
+      };
+    });
+    const markdown = sourceBlocks.flatMap(({ markdown: lines }) => lines).join('\n');
+    const rendered = sourceBlocks.map(({ html }) => html).join('');
+    props.submissionField.value = markdown;
+    props.submissionField.defaultValue = markdown;
+    props.submissionField.setSelectionRange(0, 0);
+    const cumulativePreviewResponse = (request: PreviewRequest): PreviewResponse => {
+      const response = createPreviewResponse(request, rendered as SafePreviewHtml, {});
+      if (!response.editMap) throw new Error('large-preview-edit-map-missing');
+      let startLine = 0;
+      const blocks = response.editMap.blocks.map((block, index) => {
+        const lineCount = sourceBlocks[index]?.markdown.length ?? 1;
+        const endLine = startLine + lineCount;
+        const mapped = { ...block, endLine, startLine };
+        startLine = endLine;
+        return mapped;
+      });
+      if (startLine !== request.markdown.split(/\r\n|\r|\n/).length) {
+        throw new Error('large-preview-edit-map-line-span-invalid');
+      }
+      return { ...response, editMap: { ...response.editMap, blocks } };
+    };
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(cumulativePreviewResponse(request))
+    );
+    const realPreviewOwner = observedPreviewOwner.PreviewSurfaceOwner;
+    const stagingScheduler = { now: () => 0, yield: () => Promise.resolve() };
+    const materializeScheduler = { yield: () => Promise.resolve() };
+    vi.spyOn(observedPreviewOwner, 'PreviewSurfaceOwner').mockImplementation(
+      (componentProps) => {
+        return realPreviewOwner({
+          ...componentProps,
+          stagingScheduler,
+          materializeScheduler
+        });
+      }
+    );
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    const sink = view.container.querySelector<HTMLElement>(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!sink) throw new Error('large-preview-sink-missing');
+    await waitFor(
+      () => {
+        const phase = sink.getAttribute('data-easymde-preview-phase');
+        if ('ready' !== phase) {
+          throw new Error(
+            `large-preview-phase=${phase} failures=${JSON.stringify(
+              vi.mocked(props.onFailure).mock.calls
+            )}`
+          );
+        }
+      },
+      { timeout: 8000 }
+    );
+    layoutPreviewSurface(view.container);
+    const owner = documentOwnerRef.current;
+    if (!owner) throw new Error('large-preview-owner-missing');
+    const baselineSource = owner.getValue();
+    const baselineRevision = owner.getRevision?.();
+    const baselineHistory = owner.getHistoryState();
+    const baselineRenderCalls = vi.mocked(props.previewPort.render).mock.calls.length;
+    const blocks = (): number =>
+      sink.querySelectorAll('[data-easymde-visual-block-id]').length;
+    const spacers = (): number =>
+      sink.querySelectorAll('[data-easymde-preview-window-spacer]').length;
+    const mountedIds = (): Array<string> =>
+      Array.from(
+        sink.querySelectorAll<HTMLElement>('[data-easymde-visual-block-id]')
+      ).map((node) => node.getAttribute('data-easymde-visual-block-id') ?? '');
+    const spacerRange = (): Readonly<{ end: number; start: number }> => {
+      const spacer = sink.querySelector<HTMLElement>(
+        '[data-easymde-preview-window-spacer]'
+      );
+      if (!spacer) throw new Error('preview-window-spacer-missing');
+      const start = Number.parseInt(
+        spacer.getAttribute('data-easymde-preview-window-start') ?? '',
+        10
+      );
+      const end = Number.parseInt(
+        spacer.getAttribute('data-easymde-preview-window-end') ?? '',
+        10
+      );
+      if (!Number.isInteger(start) || !Number.isInteger(end)) {
+        throw new Error('preview-window-spacer-range-invalid');
+      }
+      return { end, start };
+    };
+    const lastMountedIndex = (): number => {
+      const index = Number.parseInt(
+        mountedIds().at(-1)?.replace(/^b/u, '') ?? '',
+        10
+      );
+      if (!Number.isInteger(index)) {
+        throw new Error('preview-window-mounted-index-invalid');
+      }
+      return index;
+    };
+    const settled = (): Readonly<{ failures: unknown; phase: string | null }> => ({
+      failures: vi.mocked(props.onFailure).mock.calls,
+      phase: sink.getAttribute('data-easymde-preview-phase')
+    });
+    const settleVisible = async (): Promise<void> => {
+      await waitFor(
+        () => {
+          expect(spacers()).toBe(0);
+          expect(blocks()).toBe(blockCount);
+        },
+        { timeout: 8000 }
+      );
+      expect(settled()).toEqual({ failures: [], phase: 'ready' });
+      expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    };
+    const settleHiddenWindow = async (): Promise<void> => {
+      await waitFor(() => expect(spacers()).toBeGreaterThan(0), {
+        timeout: 8000
+      });
+      expect(blocks()).toBeLessThanOrEqual(DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED);
+      // The installed window's spacer must declare exactly the range it covers.
+      expect(spacerRange()).toEqual({
+        end: blockCount,
+        start: lastMountedIndex() + 1
+      });
+      expect(settled()).toEqual({ failures: [], phase: 'ready' });
+      expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    };
+    const clickMode = async (
+      name: string,
+      settle: () => Promise<void>
+    ): Promise<void> => {
+      fireEvent.click(view.getByRole('button', { name }));
+      await settle();
+      expect(sink).toBe(
+        view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      );
+      expect(owner.getValue()).toBe(baselineSource);
+      expect(owner.getRevision?.()).toBe(baselineRevision);
+      expect(owner.getHistoryState()).toEqual(baselineHistory);
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        baselineRenderCalls
+      );
+    };
+
+    await settleVisible();
+    // The exact browser round trip: text 编辑 → 预览, icon 预览模式 → 编辑模式
+    // → 分屏模式, text 分屏 → 编辑 → 预览, icon 预览模式.
+    await clickMode('编辑', settleHiddenWindow);
+    await clickMode('预览', settleVisible);
+    await clickMode('预览模式', settleVisible);
+    await clickMode('编辑模式', settleHiddenWindow);
+    await clickMode('分屏模式', settleVisible);
+    await clickMode('分屏', settleVisible);
+    await clickMode('编辑', settleHiddenWindow);
+    await clickMode('预览', settleVisible);
+    await clickMode('预览模式', settleVisible);
+
+    expect(props.onFailure).not.toHaveBeenCalled();
+    expect(view.getByRole('button', { name: '解除锁定并编辑' })
+      .hasAttribute('disabled')).toBe(false);
+    view.unmount();
   });
 
   it('focuses new editable posts by default without stealing focus for existing posts', async () => {

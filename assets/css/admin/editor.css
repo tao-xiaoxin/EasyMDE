@@ -2591,6 +2591,13 @@ body:has(.easymde-editor.is-immersive) .wrap {
     max-width: 100%;
     height: auto;
 }
+.easymde-visual-image-selection-feedback {
+    position: fixed;
+    z-index: 100200;
+    pointer-events: none;
+    border-radius: 3px;
+    box-shadow: 0 0 0 3px rgba(34, 113, 177, .28);
+}
 
 .easymde-preview-empty,
 .easymde-preview-pending,

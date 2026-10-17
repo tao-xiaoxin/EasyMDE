@@ -773,12 +773,11 @@ export function createPseudoMarker(
   if (isTaskListCheckbox(source)) {
     TASK_LIST_CHECKBOX_PSEUDO_CLONES.set(marker, pseudo);
   }
-  // WeChat drops completely empty decoration spans during paste. A zero-size
-  // whitespace marker keeps CSS-only decorations while remaining invisible.
-  // Keep the layout-time marker whitespace-only. finalizeMarkup replaces that
-  // text inside task paint-only markers with an in-span U+2060 after static-flow
-  // geometry has been captured; other empty decorations keep their own transport
-  // policy without changing the captured allocation.
+  // WeChat drops completely empty decoration spans during paste. A layout-time
+  // whitespace marker keeps CSS-only decorations measurable and present.
+  // finalizeMarkup replaces that text inside task paint-only markers with an
+  // in-span U+2060 after static-flow geometry is captured; other empty
+  // decorations keep their own transport policy without changing that allocation.
   marker.textContent = textContent || (appendedImageLayers.length || svgContent ? '' : ' ');
   if (portableDeclarations.length) marker.setAttribute('style', portableDeclarations.join(';'));
   if (headingEmptyPseudoFlow) {

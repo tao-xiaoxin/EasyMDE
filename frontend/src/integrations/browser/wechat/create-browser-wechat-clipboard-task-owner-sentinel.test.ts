@@ -416,7 +416,7 @@ describe('createBrowserWechatClipboard task owner sentinel', () => {
       expect(legacyOwners[0]?.firstElementChild?.getAttribute('style')).toBeNull();
       // The checked owner keeps its painted marker layers and each paint-only
       // layer owns its in-span U+2060 transport; the unchecked owner retains its
-      // separate owner-level carrier.
+      // separate owner-level carrier when it has no painted layer.
       expect(Array.from(legacyOwners[1]?.childNodes ?? []).every((node) => node.nodeType === 1)).toBe(true);
     } finally {
       restoreLayoutProbe();

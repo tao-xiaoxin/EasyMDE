@@ -37,20 +37,25 @@ export function assertTaskMarkerPixelPaint(pixels, label) {
 // round to adjacent pixel widths, and clamped so the window stays a strict
 // sub-region of that marker. A whole-marker window would accept a payload that
 // lost its center glyph while keeping the outer ink, so the center evidence is
-// compared for the payload and for its position-stripped copy instead of being
-// skipped when total ink drifts. The position-stripped comparison keeps a
-// one-device-pixel raster phase allowance by searching the best alignment of
-// the two center-window masks over dx/dy in -1..1 on one zero-filled union
-// plane, where every ink pixel of both windows is counted; the minimum Hamming delta
-// then has to stay inside the mask tolerance, so a shape deformation is
-// rejected even when the total ink, the center ink, the outer bounds and the
-// window-relative centroid all stay inside their own tolerances.
+// compared for both edges of the pipeline: source -> payload and payload ->
+// position-stripped copy. Both comparisons keep a one-device-pixel raster phase
+// allowance by searching the best alignment of the two center-window masks over
+// dx/dy in -1..1 on one zero-filled union plane, where every ink pixel of both
+// windows is counted, and both bound the window-relative centroid offset by the
+// measured center allowance. The minimum Hamming delta then has to stay inside
+// the mask tolerance, so a shape deformation -- including a glyph that slides
+// or flattens horizontally while every count-based tolerance still holds -- is
+// rejected instead of being absorbed by the ink counts, the outer bounds, or
+// the centroid.
 const taskMarkerPixelInkTolerance = 21;
 const taskMarkerPixelBoundsTolerance = 2;
 const taskMarkerPixelInteriorTolerance = 17;
 // The center ink centroid and the center-window mask delta are reported for
-// every record; 1.5 device pixels is the measured allowance for the one-pixel
-// raster phase.
+// every record and enforced on both comparisons below; 1.5 device pixels is the
+// measured allowance for the one-pixel raster phase. A glyph that slides
+// horizontally moves the window-relative centroid by the drift distance while
+// every ink and bounds tolerance can still hold, so the offset must be a
+// failure condition instead of a reported value.
 const taskMarkerPixelCenterOffsetTolerance = 1.5;
 // A one-device-pixel raster phase is absorbed by searching the best mask
 // alignment over dx/dy in -1..1. The residual differences are anti-aliased
@@ -88,13 +93,17 @@ function taskMarkerPixelInteriorMask(evidence, markerIndex) {
     || !window
     || !Number.isInteger(window.height)
     || !Number.isInteger(window.width)
+    || !Number.isInteger(window.left)
+    || !Number.isInteger(window.top)
+    || window.left < 0
+    || window.top < 0
     || window.height < 1
     || window.width < 1
     || mask.length !== Math.ceil((window.height * window.width) / 4)
   ) {
     throw new Error(`wechat-task-marker-pixel-interiorInkMask-unavailable-${markerIndex}`);
   }
-  return { height: window.height, mask, width: window.width };
+  return { height: window.height, left: window.left, mask, top: window.top, width: window.width };
 }
 
 function taskMarkerPixelInteriorMaskBit({ height, mask, width }, x, y) {
@@ -103,6 +112,31 @@ function taskMarkerPixelInteriorMaskBit({ height, mask, width }, x, y) {
   const nibbleAt = mask[index >> 2];
   if (!nibbleAt) return 0;
   return (Number.parseInt(nibbleAt, 16) >> (3 - (index & 3))) & 1;
+}
+
+function taskMarkerPixelInteriorCoverage(evidence, markerIndex) {
+  const coverage = evidence?.interiorInkCoverage;
+  const window = evidence?.interiorWindow;
+  if ('undefined' === typeof coverage) return null;
+  if (
+    'string' !== typeof coverage
+    || !/^[0-9a-f]*$/u.test(coverage)
+    || !window
+    || !Number.isInteger(window.height)
+    || !Number.isInteger(window.width)
+    || window.height < 1
+    || window.width < 1
+    || coverage.length !== window.height * window.width
+  ) {
+    throw new Error(`wechat-task-marker-pixel-interiorInkCoverage-unavailable-${markerIndex}`);
+  }
+  return { height: window.height, left: window.left, coverage, top: window.top, width: window.width };
+}
+
+function taskMarkerPixelInteriorCoverageLevel({ coverage, height, width }, x, y) {
+  if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+  const level = Number.parseInt(coverage[y * width + x], 16);
+  return Number.isInteger(level) ? level : 0;
 }
 
 // Position stripping may move the raster phase by one device pixel. Search
@@ -144,6 +178,406 @@ function taskMarkerPixelInteriorMaskDelta(payloadMask, strippedMask) {
   return best;
 }
 
+// Source and payload captures can round the same CSS center window to adjacent
+// device-pixel sizes (for example 8x8 versus 9x9). Binary masks therefore use a
+// centered logical plane for source -> payload, while position-stripped copies
+// deliberately keep the physical zero-filled union above because they share one
+// payload window and must catch edge loss.
+function taskMarkerPixelMaskIsBoundary(mask, x, y) {
+  if (!taskMarkerPixelInteriorMaskBit(mask, x, y)) return false;
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (offsetX === 0 && offsetY === 0) continue;
+      if (!taskMarkerPixelInteriorMaskBit(mask, x + offsetX, y + offsetY)) return true;
+    }
+  }
+  return false;
+}
+
+function taskMarkerPixelMaskHasNearbyInk(mask, x, y) {
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (offsetX === 0 && offsetY === 0) continue;
+      if (taskMarkerPixelInteriorMaskBit(mask, x + offsetX, y + offsetY)) return true;
+    }
+  }
+  return false;
+}
+
+function taskMarkerPixelMaskAtWindowEdge(mask, x, y) {
+  return x === 0
+    || y === 0
+    || x === mask.width - 1
+    || y === mask.height - 1;
+}
+
+// Compare the original-resolution shape after the bounded one-pixel alignment.
+// Antialiasing may flip a boundary pixel, so a differing boundary pixel is
+// tolerated when the other shape still has ink in its one-pixel neighborhood.
+// Interior pixels and isolated additions remain evidence of a real geometry
+// change. This keeps the tolerance local to the raster boundary instead of
+// widening a whole-window Hamming threshold.
+function taskMarkerPixelInteriorShapeDelta(leftMask, rightMask) {
+  const width = Math.max(leftMask.width, rightMask.width) + 2;
+  const height = Math.max(leftMask.height, rightMask.height) + 2;
+  const leftOffsetX = Math.floor((width - leftMask.width) / 2);
+  const leftOffsetY = Math.floor((height - leftMask.height) / 2);
+  const rightOffsetX = Math.floor((width - rightMask.width) / 2);
+  const rightOffsetY = Math.floor((height - rightMask.height) / 2);
+  let best = null;
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      let boundaryDelta = 0;
+      let interiorDelta = 0;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const leftX = x - leftOffsetX + offsetX;
+          const leftY = y - leftOffsetY + offsetY;
+          const rightX = x - rightOffsetX;
+          const rightY = y - rightOffsetY;
+          const leftBit = taskMarkerPixelInteriorMaskBit(leftMask, leftX, leftY);
+          const rightBit = taskMarkerPixelInteriorMaskBit(rightMask, rightX, rightY);
+          if (leftBit === rightBit) continue;
+          const changedMask = leftBit ? leftMask : rightMask;
+          const changedX = leftBit ? leftX : rightX;
+          const changedY = leftBit ? leftY : rightY;
+          const otherMask = leftBit ? rightMask : leftMask;
+          const otherX = leftBit ? rightX : leftX;
+          const otherY = leftBit ? rightY : leftY;
+          const changedAtWindowEdge = taskMarkerPixelMaskAtWindowEdge(
+            changedMask,
+            changedX,
+            changedY
+          );
+          const isWindowAllocationEdge = changedAtWindowEdge;
+          const isPaintBoundary = taskMarkerPixelMaskIsBoundary(changedMask, changedX, changedY)
+            && taskMarkerPixelMaskHasNearbyInk(otherMask, otherX, otherY);
+          if (isWindowAllocationEdge || isPaintBoundary) {
+            // A rounded center window can include one new antialiased outer-ring
+            // pixel when the same marker shifts by a fractional device phase.
+            // It is a sampling-edge change, not a glyph deformation; center
+            // changes remain interior evidence and still fail below.
+            boundaryDelta += 1;
+          } else {
+            interiorDelta += 1;
+          }
+        }
+      }
+      const candidate = {
+        boundary: boundaryDelta,
+        boundaryTolerance: Math.max(leftMask.width, leftMask.height, rightMask.width, rightMask.height),
+        delta: boundaryDelta + interiorDelta,
+        interior: interiorDelta
+      };
+      if (
+        !best
+        || candidate.interior < best.interior
+        || (candidate.interior === best.interior && candidate.boundary < best.boundary)
+      ) {
+        best = candidate;
+      }
+    }
+  }
+  if (!best) throw new Error('wechat-task-marker-pixel-shape-unavailable');
+  return best;
+}
+
+function taskMarkerPixelCenteredMask(mask, width, height) {
+  const bits = Array.from({ length: width * height }, () => '0');
+  const centerX = mask.left + mask.width / 2;
+  const centerY = mask.top + mask.height / 2;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const normalizedX = (x + 0.5) / width - 0.5;
+      const normalizedY = (y + 0.5) / height - 0.5;
+      const sourceX = Math.floor(centerX + normalizedX * mask.width - mask.left);
+      const sourceY = Math.floor(centerY + normalizedY * mask.height - mask.top);
+      bits[y * width + x] = taskMarkerPixelInteriorMaskBit(mask, sourceX, sourceY) ? '1' : '0';
+    }
+  }
+  let encoded = '';
+  for (let index = 0; index < bits.length; index += 4) {
+    const nibble = bits.slice(index, index + 4).join('').padEnd(4, '0');
+    encoded += Number.parseInt(nibble, 2).toString(16);
+  }
+  return { height, left: 0, mask: encoded, top: 0, width };
+}
+
+function taskMarkerPixelAreaCoverage(mask, width, height) {
+  const sample = (x, y) => taskMarkerPixelInteriorCoverageLevel(mask, x, y);
+  const average = (x, y) => {
+    const sourceLeft = x * mask.width / width;
+    const sourceRight = (x + 1) * mask.width / width;
+    const sourceTop = y * mask.height / height;
+    const sourceBottom = (y + 1) * mask.height / height;
+    let weighted = 0;
+    let area = 0;
+    for (let sourceY = Math.floor(sourceTop); sourceY < Math.ceil(sourceBottom); sourceY += 1) {
+      const rowWeight = Math.max(0, Math.min(sourceBottom, sourceY + 1) - Math.max(sourceTop, sourceY));
+      if (rowWeight <= 0) continue;
+      for (let sourceX = Math.floor(sourceLeft); sourceX < Math.ceil(sourceRight); sourceX += 1) {
+        const columnWeight = Math.max(0, Math.min(sourceRight, sourceX + 1) - Math.max(sourceLeft, sourceX));
+        if (columnWeight <= 0) continue;
+        const weight = rowWeight * columnWeight;
+        weighted += sample(sourceX, sourceY) * weight;
+        area += weight;
+      }
+    }
+    return 0 === area ? 0 : Math.round(weighted / area);
+  };
+  let coverage = '';
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      coverage += Math.max(0, Math.min(15, average(x, y))).toString(16);
+    }
+  }
+  return { coverage, height, left: 0, top: 0, width };
+}
+
+// Coverage levels absorb antialiasing phase noise without widening the global
+// pixel-count tolerance. A two-level difference is still treated as the same
+// edge coverage; a full-coverage level moving or changing shape remains a
+// mismatch. Source -> payload uses an area-averaged center grid without a
+// phase-shift search because the area projection already absorbs allocation
+// rounding; position-stripped copies continue to use the binary bounded search.
+function taskMarkerPixelCoverageDelta(leftCoverage, rightCoverage, allowPhaseShift = true) {
+  const width = Math.max(leftCoverage.width, rightCoverage.width) + 2;
+  const height = Math.max(leftCoverage.height, rightCoverage.height) + 2;
+  const leftOffsetX = Math.floor((width - leftCoverage.width) / 2);
+  const leftOffsetY = Math.floor((height - leftCoverage.height) / 2);
+  const rightOffsetX = Math.floor((width - rightCoverage.width) / 2);
+  const rightOffsetY = Math.floor((height - rightCoverage.height) / 2);
+  let best = Number.POSITIVE_INFINITY;
+  const offsets = allowPhaseShift ? [-1, 0, 1] : [0];
+  for (const offsetY of offsets) {
+    for (const offsetX of offsets) {
+      let delta = 0;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const leftLevel = taskMarkerPixelInteriorCoverageLevel(
+            leftCoverage,
+            x - leftOffsetX + offsetX,
+            y - leftOffsetY + offsetY
+          );
+          const rightLevel = taskMarkerPixelInteriorCoverageLevel(
+            rightCoverage,
+            x - rightOffsetX,
+            y - rightOffsetY
+          );
+          if (Math.abs(leftLevel - rightLevel) > 2) delta += 1;
+        }
+      }
+      best = Math.min(best, delta);
+    }
+  }
+  return best;
+}
+
+function taskMarkerPixelCoverageHasNearbyInk(coverage, x, y) {
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (offsetX === 0 && offsetY === 0) continue;
+      if (taskMarkerPixelInteriorCoverageLevel(coverage, x + offsetX, y + offsetY) > 0) return true;
+    }
+  }
+  return false;
+}
+
+function taskMarkerPixelCoverageBounds(coverage) {
+  let minX = coverage.width;
+  let minY = coverage.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < coverage.height; y += 1) {
+    for (let x = 0; x < coverage.width; x += 1) {
+      if (taskMarkerPixelInteriorCoverageLevel(coverage, x, y) <= 0) continue;
+      // A fractional layout phase can expose one isolated antialiased outer
+      // pixel at the strict center-window edge. Treat it as allocation noise in
+      // the same way as the shape comparator; contiguous edge paint remains a
+      // real bound and continues to detect clipping/deformation.
+      if (
+        (x === 0 || y === 0 || x === coverage.width - 1 || y === coverage.height - 1)
+        && !taskMarkerPixelCoverageHasNearbyInk(coverage, x, y)
+      ) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  return maxX < 0
+    ? null
+    : { bottom: maxY + 1, height: maxY - minY + 1, left: minX, right: maxX + 1, top: minY, width: maxX - minX + 1 };
+}
+
+function taskMarkerPixelCoverageBoundsDelta(leftCoverage, rightCoverage) {
+  const leftBounds = taskMarkerPixelCoverageBounds(leftCoverage);
+  const rightBounds = taskMarkerPixelCoverageBounds(rightCoverage);
+  if (!leftBounds || !rightBounds) {
+    return leftBounds === rightBounds
+      ? { edge: 0, size: 0 }
+      : { edge: Number.POSITIVE_INFINITY, size: Number.POSITIVE_INFINITY };
+  }
+  return {
+    edge: Math.max(...['left', 'right', 'top', 'bottom'].map((edge) => Math.abs(leftBounds[edge] - rightBounds[edge]))),
+    size: Math.max(
+      Math.abs(leftBounds.width - rightBounds.width),
+      Math.abs(leftBounds.height - rightBounds.height)
+    )
+  };
+}
+
+function taskMarkerPixelCoverageCore(coverage, x, y) {
+  if (taskMarkerPixelInteriorCoverageLevel(coverage, x, y) <= 0) return false;
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      if (taskMarkerPixelInteriorCoverageLevel(coverage, x + offsetX, y + offsetY) <= 0) return false;
+    }
+  }
+  return true;
+}
+
+function taskMarkerPixelCoverageEnergyDelta(leftCoverage, rightCoverage) {
+  // Keep the full-resolution coverage plane. The four-cell projection used to
+  // hide antialiasing also hides a centered 4x4 glyph when it is flattened to
+  // an 8x2 bar. Area resampling is used only to reconcile an 8x8/9x9 allocation;
+  // it never discards the original center-window geometry.
+  const width = Math.max(leftCoverage.width, rightCoverage.width);
+  const height = Math.max(leftCoverage.height, rightCoverage.height);
+  const normalizedLeft = taskMarkerPixelAreaCoverage(leftCoverage, width, height);
+  const normalizedRight = taskMarkerPixelAreaCoverage(rightCoverage, width, height);
+  const unionWidth = width + 2;
+  const unionHeight = height + 2;
+  const leftOffsetX = 1;
+  const leftOffsetY = 1;
+  const rightOffsetX = 1;
+  const rightOffsetY = 1;
+  let best = null;
+  for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      let energy = 0;
+      let coreEnergy = 0;
+      let coreLossEnergy = 0;
+      let edgeEnergy = 0;
+      for (let y = 0; y < unionHeight; y += 1) {
+        for (let x = 0; x < unionWidth; x += 1) {
+          const leftX = x - leftOffsetX + offsetX;
+          const leftY = y - leftOffsetY + offsetY;
+          const rightX = x - rightOffsetX;
+          const rightY = y - rightOffsetY;
+          const leftLevel = taskMarkerPixelInteriorCoverageLevel(normalizedLeft, leftX, leftY);
+          const rightLevel = taskMarkerPixelInteriorCoverageLevel(normalizedRight, rightX, rightY);
+          const difference = Math.abs(leftLevel - rightLevel);
+          energy += difference;
+          const leftInside = leftX >= 0 && leftY >= 0
+            && leftX < normalizedLeft.width && leftY < normalizedLeft.height;
+          const rightInside = rightX >= 0 && rightY >= 0
+            && rightX < normalizedRight.width && rightY < normalizedRight.height;
+          const leftCore = taskMarkerPixelCoverageCore(normalizedLeft, leftX, leftY);
+          const rightCore = taskMarkerPixelCoverageCore(normalizedRight, rightX, rightY);
+          if (leftCore && rightCore) {
+            // Core coverage is already away from the antialiased boundary. Keep
+            // every level of a solid-paint change (including e -> f) in the
+            // same area-energy unit; subtracting a boundary allowance here
+            // would erase a small but real center change.
+            coreEnergy += difference;
+          } else if (
+            leftInside && rightInside
+            && (leftCore || rightCore)
+            && (leftLevel === 0 || rightLevel === 0)
+          ) {
+            // A core disappearing into the background is tracked separately so
+            // a pale glyph remains observable even when only one side has a
+            // positive coverage core. Coordinates outside either rounded
+            // window are allocation edges, not center-paint loss.
+            coreLossEnergy += Math.max(leftLevel, rightLevel);
+          } else {
+            edgeEnergy += Math.max(0, difference - 2);
+          }
+        }
+      }
+      const candidate = { coreEnergy, coreLossEnergy, edgeEnergy, energy };
+      if (
+        !best
+        || candidate.coreEnergy + candidate.coreLossEnergy + candidate.edgeEnergy
+          < best.coreEnergy + best.coreLossEnergy + best.edgeEnergy
+      ) {
+        best = candidate;
+      }
+    }
+  }
+  if (!best) throw new Error('wechat-task-marker-pixel-coverage-energy-unavailable');
+  return {
+    coreEnergy: best.coreEnergy,
+    coreEnergyTolerance: 2,
+    coreLossEnergy: best.coreLossEnergy,
+    coreLossEnergyTolerance: 2,
+    edgeEnergy: best.edgeEnergy,
+    energy: best.energy,
+    // This is a sum of 0..15 coverage levels over the full-resolution window.
+    // A one-pixel allocation phase can expose one full-coverage edge row or
+    // column, so the residual edge bound is expressed in the same level-sum
+    // unit and scales with the captured boundary. Local core energy retains the
+    // center-paint contract instead of being absorbed by this edge allowance.
+    energyTolerance: Math.max(8, 15 * Math.max(width, height))
+  };
+}
+
+function taskMarkerPixelNormalizedCoverageDelta(leftCoverage, rightCoverage) {
+  const width = Math.max(leftCoverage.width, rightCoverage.width);
+  const height = Math.max(leftCoverage.height, rightCoverage.height);
+  const normalizedLeft = taskMarkerPixelAreaCoverage(leftCoverage, width, height);
+  const normalizedRight = taskMarkerPixelAreaCoverage(rightCoverage, width, height);
+  const boundsDelta = taskMarkerPixelCoverageBoundsDelta(normalizedLeft, normalizedRight);
+  const energyDelta = taskMarkerPixelCoverageEnergyDelta(leftCoverage, rightCoverage);
+  // A one-pixel allocation difference is a raster-phase change, so compare its
+  // coverage mask on a small common grid. Equal-sized captures retain their
+  // original resolution so high-frequency equal-area deformations cannot be
+  // erased by projection.
+  const maskWidth = leftCoverage.width === rightCoverage.width
+    ? width
+    : Math.min(4, leftCoverage.width, rightCoverage.width);
+  const maskHeight = leftCoverage.height === rightCoverage.height
+    ? height
+    : Math.min(4, leftCoverage.height, rightCoverage.height);
+  const maskLeft = leftCoverage.width === maskWidth && leftCoverage.height === maskHeight
+    ? leftCoverage
+    : taskMarkerPixelAreaCoverage(leftCoverage, maskWidth, maskHeight);
+  const maskRight = rightCoverage.width === maskWidth && rightCoverage.height === maskHeight
+    ? rightCoverage
+    : taskMarkerPixelAreaCoverage(rightCoverage, maskWidth, maskHeight);
+  return {
+    bounds: boundsDelta.edge,
+    coreEnergy: energyDelta.coreEnergy,
+    coreEnergyTolerance: energyDelta.coreEnergyTolerance,
+    coreLossEnergy: energyDelta.coreLossEnergy,
+    coreLossEnergyTolerance: energyDelta.coreLossEnergyTolerance,
+    edgeEnergy: energyDelta.edgeEnergy,
+    energy: energyDelta.energy,
+    energyTolerance: energyDelta.energyTolerance,
+    mask: taskMarkerPixelCoverageDelta(maskLeft, maskRight, true),
+    shape: boundsDelta.size
+  };
+}
+
+function taskMarkerPixelNormalizedMaskDelta(leftMask, rightMask) {
+  const width = Math.max(leftMask.width, rightMask.width);
+  const height = Math.max(leftMask.height, rightMask.height);
+  return taskMarkerPixelInteriorMaskDelta(
+    taskMarkerPixelCenteredMask(leftMask, width, height),
+    taskMarkerPixelCenteredMask(rightMask, width, height)
+  );
+}
+
+function taskMarkerPixelNormalizedShapeDelta(leftMask, rightMask) {
+  const width = Math.max(leftMask.width, rightMask.width);
+  const height = Math.max(leftMask.height, rightMask.height);
+  return taskMarkerPixelInteriorShapeDelta(
+    taskMarkerPixelCenteredMask(leftMask, width, height),
+    taskMarkerPixelCenteredMask(rightMask, width, height)
+  );
+}
+
 function taskMarkerPixelCentroid(evidence, markerIndex) {
   const centroid = evidence?.interiorInkCentroid;
   if (null === centroid) return null;
@@ -173,7 +607,7 @@ function taskMarkerPixelBounds(evidence, markerIndex) {
   return bounds;
 }
 
-function taskMarkerPixelParityRecord(source, payload, stripped) {
+export function taskMarkerPixelParityRecord(source, payload, stripped) {
   const markerIndex = source.markerIndex;
   const sourceBounds = taskMarkerPixelBounds(source, markerIndex);
   const payloadBounds = taskMarkerPixelBounds(payload, markerIndex);
@@ -188,23 +622,73 @@ function taskMarkerPixelParityRecord(source, payload, stripped) {
   const strippedInkMaskHash = taskMarkerPixelMaskHash(stripped, 'inkMaskHash', markerIndex);
   const payloadInteriorMaskHash = taskMarkerPixelMaskHash(payload, 'interiorInkMaskHash', markerIndex);
   const strippedInteriorMaskHash = taskMarkerPixelMaskHash(stripped, 'interiorInkMaskHash', markerIndex);
+  const sourceCentroid = taskMarkerPixelCentroid(source, markerIndex);
   const payloadCentroid = taskMarkerPixelCentroid(payload, markerIndex);
   const strippedCentroid = taskMarkerPixelCentroid(stripped, markerIndex);
+  const sourceInteriorMask = taskMarkerPixelInteriorMask(source, markerIndex);
   const payloadInteriorMask = taskMarkerPixelInteriorMask(payload, markerIndex);
   const strippedInteriorMask = taskMarkerPixelInteriorMask(stripped, markerIndex);
+  const sourceInteriorCoverage = taskMarkerPixelInteriorCoverage(source, markerIndex);
+  const payloadInteriorCoverage = taskMarkerPixelInteriorCoverage(payload, markerIndex);
+  const strippedInteriorCoverage = taskMarkerPixelInteriorCoverage(stripped, markerIndex);
   const boundsDelta = Object.fromEntries(
     ['left', 'right', 'top', 'bottom'].map((edge) => (
       [edge, Math.abs(payloadBounds[edge] - sourceBounds[edge])]
     ))
   );
+  const sourcePayloadBinaryMask = taskMarkerPixelNormalizedMaskDelta(sourceInteriorMask, payloadInteriorMask);
+  const sourcePayloadShape = taskMarkerPixelNormalizedShapeDelta(sourceInteriorMask, payloadInteriorMask);
+  const sourcePayloadCoverage = sourceInteriorCoverage && payloadInteriorCoverage
+    ? taskMarkerPixelNormalizedCoverageDelta(payloadInteriorCoverage, sourceInteriorCoverage)
+    : null;
   const record = {
     boundsDelta,
     inkDelta: Math.abs(payloadInk - sourceInk),
     inkPixels: { payload: payloadInk, source: sourceInk, stripped: strippedInk },
     interiorDelta: Math.abs(payloadInterior - sourceInterior),
     interiorInkMaskHash: { payload: payloadInteriorMaskHash, stripped: strippedInteriorMaskHash },
+    // Full center-window masks travel with a failing record so a mask mismatch
+    // can be diagnosed from the report itself instead of a re-run; they carry
+    // only thresholded generated paint bits, never article content.
+    interiorMasks: { payload: payloadInteriorMask, source: sourceInteriorMask, stripped: strippedInteriorMask },
     interiorInkPixels: { payload: payloadInterior, source: sourceInterior, stripped: strippedInterior },
+    ...(process.env.EASYMDE_DEBUG_TASK_MARKER_COVERAGE === '1' ? {
+      interiorCoverage: {
+        payload: payloadInteriorCoverage,
+        source: sourceInteriorCoverage,
+        stripped: strippedInteriorCoverage
+      }
+    } : {}),
     markerIndex,
+    payloadDelta: {
+      center: sourceCentroid && payloadCentroid
+        ? Math.max(
+            Math.abs(payloadCentroid.x - sourceCentroid.x),
+            Math.abs(payloadCentroid.y - sourceCentroid.y)
+          )
+        : null,
+      bounds: sourcePayloadCoverage?.bounds ?? 0,
+      coreEnergy: sourcePayloadCoverage?.coreEnergy ?? 0,
+      coreEnergyTolerance: sourcePayloadCoverage?.coreEnergyTolerance ?? 0,
+      coreLossEnergy: sourcePayloadCoverage?.coreLossEnergy ?? 0,
+      coreLossEnergyTolerance: sourcePayloadCoverage?.coreLossEnergyTolerance ?? 0,
+      edgeEnergy: sourcePayloadCoverage?.edgeEnergy ?? 0,
+      energy: sourcePayloadCoverage?.energy ?? 0,
+      energyTolerance: sourcePayloadCoverage?.energyTolerance ?? 0,
+      // Keep the binary plane at its original resolution even when coverage
+      // is available. Coverage absorbs edge antialiasing; this mask preserves
+      // narrow bars, holes, and high-frequency arrangements that have equal
+      // area or energy after downsampling. A rounded 8x8/9x9 allocation uses
+      // coverage for the coarse mask result; the local shape fields below keep
+      // the original-resolution binary evidence without treating every edge
+      // flip as a geometry failure.
+      mask: sourcePayloadCoverage?.mask ?? sourcePayloadBinaryMask,
+      shape: sourcePayloadCoverage?.shape ?? 0,
+      geometry: sourcePayloadShape.delta,
+      geometryBoundary: sourcePayloadShape.boundary,
+      geometryBoundaryTolerance: sourcePayloadShape.boundaryTolerance,
+      geometryInterior: sourcePayloadShape.interior
+    },
     strippedDelta: {
       bounds: Math.max(
         ...['left', 'right', 'top', 'bottom']
@@ -243,6 +727,32 @@ function taskMarkerPixelParityRecord(source, payload, stripped) {
   ) {
     record.violations.push('wechat-task-marker-pixel-interior-glyph-missing');
   }
+  // Counts alone cannot witness a glyph that slides or deforms horizontally
+  // inside the marker: the total ink, the outer bounds, and the center ink
+  // count can all stay inside their tolerances while the rendered glyph has
+  // moved or changed shape. Compare the clamped source and payload center
+  // windows with the coverage-stable area projection, and keep the
+  // window-relative centroid offset inside its measured allowance.
+  if (
+    (Number.isFinite(record.payloadDelta.shape) && record.payloadDelta.shape > 1)
+    || (Number.isFinite(record.payloadDelta.geometryInterior) && record.payloadDelta.geometryInterior > 0)
+    || (
+      Number.isFinite(record.payloadDelta.geometryBoundary)
+      && record.payloadDelta.geometryBoundary > record.payloadDelta.geometryBoundaryTolerance
+    )
+    || (Number.isFinite(record.payloadDelta.coreEnergy) && record.payloadDelta.coreEnergy > record.payloadDelta.coreEnergyTolerance)
+    || (Number.isFinite(record.payloadDelta.coreLossEnergy) && record.payloadDelta.coreLossEnergy > record.payloadDelta.coreLossEnergyTolerance)
+    || (Number.isFinite(record.payloadDelta.edgeEnergy) && record.payloadDelta.edgeEnergy > record.payloadDelta.energyTolerance)
+    || !Number.isFinite(record.payloadDelta.bounds ?? 0)
+  ) {
+    record.violations.push('wechat-task-marker-pixel-mask-mismatch');
+  }
+  if (
+    null !== record.payloadDelta.center
+    && record.payloadDelta.center > taskMarkerPixelCenterOffsetTolerance
+  ) {
+    record.violations.push('wechat-task-marker-pixel-center-mismatch');
+  }
   // Position stripping can change a fractional raster phase by a bounded
   // number of coverage pixels while preserving the marker geometry. That
   // bounded drift must not skip the center evidence: a stripped copy that
@@ -262,6 +772,15 @@ function taskMarkerPixelParityRecord(source, payload, stripped) {
   // one device pixel of raster phase stays allowed while a deformation fails.
   if (record.strippedDelta.mask > taskMarkerPixelInteriorMaskTolerance) {
     record.violations.push('wechat-task-marker-pixel-stripped-mask-mismatch');
+  }
+  // The center offset is part of the failure contract, not reported evidence
+  // only: a glyph that slides inside the stripped copy keeps the stripped mask
+  // deformation bounded only until it also moves the window-relative centroid.
+  if (
+    null !== record.strippedDelta.center
+    && record.strippedDelta.center > taskMarkerPixelCenterOffsetTolerance
+  ) {
+    record.violations.push('wechat-task-marker-pixel-stripped-center-mismatch');
   }
   if (
     record.strippedDelta.ink > taskMarkerPixelInkTolerance
@@ -299,205 +818,4 @@ export function assertTaskMarkerPixelParity(sourcePixels, payloadPixels, strippe
       }
     });
   }
-}
-
-// Negative oracle: prove this module rejects a payload whose paint moved in
-// space without changing its ink count, a payload whose interior paint is
-// missing while the outer marker shape survives, a position-stripped copy
-// whose center glyph disappears while its total ink drifts inside the raster
-// tolerance, a position-stripped copy whose center glyph moves three device
-// pixels while every count-based tolerance still holds, and both directions of
-// a stripped 5x5 edge glyph narrowing to 3x5 at the same start, where only the
-// zero-filled union plane keeps the lost edge ink inside the comparison. Every
-// mutation
-// must fail with its own stable code, so a future edit cannot quietly weaken
-// the contract into an outer-edge-only comparison.
-export function assertTaskMarkerPixelParityNegativeCases(label) {
-  // Sample magnitudes follow the measured PHYcat Sky markers (442 ink pixels,
-  // 112 of them interior ink) inside a representative 18x18 paint region, so
-  // the negative evidence stays at the real scale.
-  const bounds = { bottom: 18, height: 18, left: 0, right: 18, top: 0, width: 18 };
-  const shift = 3;
-  const sourceInk = 442;
-  const sourceInterior = 112;
-  // Center-window masks for the synthetic cases: one 4x4 square inside an 8x8
-  // window, either kept, shifted by one device pixel (the allowed raster
-  // phase) or moved by three (the rejected deformation).
-  const bitsToHex = (bits) => {
-    let hex = '';
-    for (let index = 0; index < bits.length; index += 4) {
-      hex += Number.parseInt(bits.slice(index, index + 4).join(''), 2).toString(16);
-    }
-    return hex;
-  };
-  const centerMask = (squareLeft) => {
-    const bits = Array.from({ length: 64 }, () => '0');
-    for (let y = 2; y < 6; y += 1) {
-      for (let x = squareLeft; x < squareLeft + 4; x += 1) bits[y * 8 + x] = '1';
-    }
-    return bitsToHex(bits);
-  };
-  // A 5x5 glyph that touches the left edge of the 8x8 window. Narrowing it to
-  // 3x5 at the same start keeps every count tolerance inside its allowance.
-  const edgeMask = (edgeWidth) => {
-    const bits = Array.from({ length: 64 }, () => '0');
-    for (let y = 1; y < 6; y += 1) {
-      for (let x = 0; x < edgeWidth; x += 1) bits[y * 8 + x] = '1';
-    }
-    return bitsToHex(bits);
-  };
-  const evidence = (overrides = {}) => ({
-    inkBounds: { ...bounds },
-    inkPixels: sourceInk,
-    interiorInkCentroid: { x: 0, y: 0 },
-    interiorInkMask: centerMask(2),
-    interiorInkMaskHash: 'deadbeef',
-    interiorInkPixels: sourceInterior,
-    interiorWindow: { height: 8, left: 0, top: 0, width: 8 },
-    markerIndex: 0,
-    inkMaskHash: 'deadbeef',
-    pixelHash: 'deadbeef',
-    ...overrides
-  });
-  // The position-stripped payload must stay raster-identical to the payload it
-  // is derived from, so a payload mutation mirrors into the stripped evidence
-  // unless a case deliberately drifts the stripped copy instead.
-  const violationsFor = (payload, stripped = payload, source = evidence()) => taskMarkerPixelParityRecord(
-    source,
-    payload,
-    stripped
-  ).violations;
-  const expectViolations = (suffix, actual, expected) => {
-    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-      taskMarkerPixelFail('wechat-task-marker-pixel-negative-mismatch', {
-        actual,
-        expected,
-        label,
-        suffix
-      });
-    }
-  };
-  expectViolations('baseline', violationsFor(evidence()), []);
-  // A paint that moves in space by more than the measured edge bound while
-  // keeping its ink count and interior ink must be rejected as a spatial
-  // difference, not absorbed by an ink-count tolerance.
-  expectViolations('spatial-shift-3', violationsFor(evidence({
-    inkBounds: {
-      bottom: bounds.bottom + shift,
-      height: bounds.height,
-      left: bounds.left + shift,
-      right: bounds.right + shift,
-      top: bounds.top + shift,
-      width: bounds.width
-    }
-  })), ['wechat-task-marker-pixel-bounds-mismatch']);
-  // An interior paint that disappears while the outer marker shape stays in
-  // place must be rejected even when the total ink count is compensated, so
-  // the interior evidence keeps its own stable code.
-  expectViolations('missing-interior', violationsFor(evidence({
-    interiorInkPixels: 0
-  })), ['wechat-task-marker-pixel-interior-mismatch']);
-  // The realistic missing-interior regression loses the interior pixels from
-  // the total ink count as well and must report both violations.
-  expectViolations('missing-interior-ink-drop', violationsFor(evidence({
-    inkPixels: sourceInk - sourceInterior,
-    interiorInkPixels: 0
-  })), [
-    'wechat-task-marker-pixel-ink-mismatch',
-    'wechat-task-marker-pixel-interior-mismatch'
-  ]);
-  // The reported P2 hole: a small checked glyph loses every interior pixel
-  // while the outer marker keeps most of its ink, so both absolute tolerances
-  // would have accepted the loss.
-  const smallGlyphSource = evidence({ inkPixels: 100, interiorInkPixels: 10 });
-  const smallGlyphPayload = evidence({ inkPixels: 90, interiorInkPixels: 0 });
-  expectViolations('glyph-gone-small', violationsFor(
-    smallGlyphPayload,
-    smallGlyphPayload,
-    smallGlyphSource
-  ), ['wechat-task-marker-pixel-interior-glyph-missing']);
-  expectViolations('missing-ink', violationsFor(evidence({
-    inkPixels: 0
-  })), ['wechat-task-marker-pixel-ink-mismatch']);
-  expectViolations('stripped-drift', violationsFor(
-    evidence(),
-    evidence({ inkMaskHash: 'cafebabe' })
-  ), ['wechat-task-marker-pixel-stripped-mismatch']);
-  // The reported P2 hole: a stripped copy whose total ink drifts inside the
-  // raster tolerance loses its whole center glyph. The drift must not skip the
-  // center-window check that is the only evidence able to witness the loss.
-  const strippedGlyphPayload = evidence({ inkPixels: 100, interiorInkPixels: 10 });
-  expectViolations('stripped-glyph-gone', violationsFor(
-    strippedGlyphPayload,
-    evidence({
-      inkPixels: 92,
-      interiorInkMask: '0000000000000000',
-      interiorInkMaskHash: 'cafebabe',
-      interiorInkPixels: 0
-    }),
-    strippedGlyphPayload
-  ), [
-    'wechat-task-marker-pixel-stripped-interior-glyph-missing',
-    'wechat-task-marker-pixel-stripped-mask-mismatch'
-  ]);
-  // A stripped center window that rearranges its ink while the total ink
-  // drifts must still fail, so the mask check cannot be skipped merely because
-  // the stripped ink count differs from the payload's.
-  expectViolations('stripped-interior-mask-drift', violationsFor(
-    evidence(),
-    evidence({
-      inkPixels: sourceInk - 8,
-      interiorInkMask: centerMask(5),
-      interiorInkMaskHash: 'cafebabe'
-    })
-  ), ['wechat-task-marker-pixel-stripped-mask-mismatch']);
-  // The reported P2 hole: the center glyph moves three device pixels while the
-  // total ink, the outer bounds and the center ink stay inside their raster
-  // tolerances (a 6-pixel center-ink drop). The bounded mask alignment can
-  // only absorb one device pixel of phase, so the drift must fail with its own
-  // stable code instead of being absorbed by the count tolerances.
-  expectViolations('stripped-center-mask-drift', violationsFor(
-    evidence(),
-    evidence({
-      interiorInkCentroid: { x: 2.5, y: 0 },
-      interiorInkMask: centerMask(5),
-      interiorInkMaskHash: 'cafebabe',
-      interiorInkPixels: sourceInterior - 6
-    })
-  ), ['wechat-task-marker-pixel-stripped-mask-mismatch']);
-  // The reported P2: a 5x5 edge glyph narrows to 3x5 at the same start (total
-  // ink 169 -> 159, center ink 25 -> 15) while every count tolerance and the
-  // centroid allowance still hold. The union-plane comparison counts all ink
-  // of both windows, so the same structural drift must be rejected in both
-  // payload/stripped directions; the clipped minimum intersection used to
-  // hide the lost ink in one direction and reject only the reverse.
-  const edgeWide = evidence({
-    inkPixels: 169,
-    interiorInkMask: edgeMask(5),
-    interiorInkMaskHash: 'cafebabe',
-    interiorInkPixels: 25
-  });
-  const edgeNarrow = evidence({
-    inkPixels: 159,
-    interiorInkMask: edgeMask(3),
-    interiorInkMaskHash: '0dd0c0de',
-    interiorInkPixels: 15
-  });
-  expectViolations('stripped-edge-glyph-narrow', violationsFor(
-    edgeWide,
-    edgeNarrow,
-    edgeWide
-  ), ['wechat-task-marker-pixel-stripped-mask-mismatch']);
-  expectViolations('stripped-edge-glyph-wide', violationsFor(
-    edgeNarrow,
-    edgeWide,
-    edgeNarrow
-  ), ['wechat-task-marker-pixel-stripped-mask-mismatch']);
-  // A rigid one-device-pixel raster phase is inside the measured allowance and
-  // must stay accepted, so the mask comparison cannot regress into an exact
-  // comparison that reports phase noise.
-  expectViolations('stripped-center-mask-phase', violationsFor(
-    evidence(),
-    evidence({ interiorInkMask: centerMask(3) })
-  ), []);
 }

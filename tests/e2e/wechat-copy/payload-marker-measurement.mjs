@@ -4,7 +4,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
   if (!Number.isFinite(cssWidth) || cssWidth <= 0) {
     throw new Error('wechat-task-marker-pixel-css-width-invalid');
   }
-  return page.evaluate(async ({ encodedPng, encodedBackgroundPng, markerRegions, sourceCssWidth }) => {
+  const evidence = await page.evaluate(async ({ encodedPng, encodedBackgroundPng, markerRegions, sourceCssWidth }) => {
     const decode = async (encoded) => {
       const binary = atob(encoded);
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
@@ -66,21 +66,34 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
         }
         return hex;
       };
-      const isInk = (x, y) => {
+      const interiorCoverageHex = (levels) => levels
+        .map((level) => level.toString(16))
+        .join('');
+      // Screenshots preserve fractional SVG/CSS coverage as a small RGB
+      // distance from the same-pixel background. Treating every non-zero
+      // distance as a whole ink pixel makes a one-device-pixel raster phase
+      // look like a shape change: a barely covered edge can cross the binary
+      // boundary in one capture while remaining below it in the other. Use a
+      // fixed low contrast floor so a real light center paint remains visible;
+      // the absolute coverage levels below absorb the remaining antialiasing
+      // phase noise without relying on the strongest (often black) outer paint.
+      const colorDistanceAt = (x, y) => {
         const pixel = sample(values, x, y);
         const baseline = backgroundValues ? sample(backgroundValues, x, y) : background;
-        return pixel[3] > 0
-          && (
-            pixel[0] !== baseline[0]
-            || pixel[1] !== baseline[1]
-            || pixel[2] !== baseline[2]
-          );
+        if (pixel[3] <= 0) return 0;
+        return Math.max(
+          Math.abs(pixel[0] - baseline[0]),
+          Math.abs(pixel[1] - baseline[1]),
+          Math.abs(pixel[2] - baseline[2])
+        );
       };
       const results = markerRegions.map((region, markerIndex) => {
         const left = Math.max(0, Math.floor(region.left * scale));
         const right = Math.min(bitmap.width, Math.ceil(region.right * scale));
         const top = Math.max(0, Math.floor(region.top * scale));
         const bottom = Math.min(bitmap.height, Math.ceil(region.bottom * scale));
+        const inkCoverageThreshold = 8;
+        const isInk = (x, y) => colorDistanceAt(x, y) >= inkCoverageThreshold;
         let hash = 2166136261;
         let inkMaskHash = 2166136261;
         let inkPixels = 0;
@@ -117,6 +130,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
         let interiorInkPixels = 0;
         let interiorInkMaskHash = 2166136261;
         let interiorInkMask = '';
+        let interiorInkCoverage = '';
         let interiorInkCentroid;
         let interiorSumX = 0;
         let interiorSumY = 0;
@@ -135,9 +149,12 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
           const interiorRight = interiorLeft + interiorWidth;
           const interiorBottom = interiorTop + interiorHeight;
           let interiorMaskBits = '';
+          const interiorCoverageLevels = [];
+          const coverageScale = 0.2;
           for (let y = interiorTop; y < interiorBottom; y += 1) {
             for (let x = interiorLeft; x < interiorRight; x += 1) {
               const ink = isInk(x, y);
+              interiorCoverageLevels.push(Math.min(15, Math.round(colorDistanceAt(x, y) * coverageScale)));
               if (ink) {
                 interiorInkPixels += 1;
                 interiorInkMaskHash ^= 1;
@@ -151,6 +168,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
             }
           }
           interiorInkMask = interiorMaskHex(interiorMaskBits);
+          interiorInkCoverage = interiorCoverageHex(interiorCoverageLevels);
           interiorWindow = {
             height: interiorHeight,
             left: interiorLeft - left,
@@ -184,6 +202,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
               },
           inkPixels,
           interiorInkCentroid,
+          interiorInkCoverage,
           interiorInkMask,
           interiorInkMaskHash: (interiorInkMaskHash >>> 0).toString(16).padStart(8, '0'),
           interiorInkPixels,
@@ -206,6 +225,7 @@ export async function decodeTaskMarkerPixelEvidence(page, screenshot, markerRect
     markerRegions: markerRects,
     sourceCssWidth: cssWidth
   });
+  return evidence;
 }
 
 export async function readTaskMarkerPixelEvidence(page, html, { stripPosition = false, width }) {

@@ -2,17 +2,22 @@
 import { expect } from '@playwright/test';
 import { fullCapabilityTaskStates } from "./markdown-fixtures.mjs";
 import { intrinsicGeometryTolerance } from "./environment.mjs";
-import { assertTaskMarkerPixelParityNegativeCases } from "./payload-pixel-oracle.mjs";
+import { assertTaskMarkerPixelParityNegativeCases } from "./payload-pixel-negative-cases.mjs";
 
-// The shared serializer keeps an empty task paint layer or an element-painted
-// unchecked owner alive with a separate, unstyled `aria-hidden` carrier that
-// holds only the U+2060 word joiner after static-flow allocation. That carrier
-// is transport structure, never a visual pseudo marker: it receives no
-// portable declaration, so the reader evidence shows an inline span with
-// `auto` dimensions, zero painted width, and no background, border, transform,
-// or opacity paint. Partition marker children on exactly those facts so a
-// carrier can never satisfy a visual comparison, while a missing, extra, or
-// repainted carrier still fails the structural transport assertions.
+// Transport contract of the shared serializer, measured on the payload DOM:
+// a task paint-only `content: ""` pseudo keeps its own styled span non-empty by
+// carrying one in-span U+2060 word joiner after static-flow allocation; a
+// pseudo with authored text, image, or SVG content keeps that content instead.
+// The only separate carrier left is the owner-level fallback: an unstyled
+// `aria-hidden` span holding exactly one U+2060, appended to an unchecked task
+// owner that has no materialized pseudo at all so the otherwise empty static
+// owner survives the native Save path. That carrier is transport structure,
+// never a visual pseudo marker: it receives no portable declaration, so the
+// reader evidence shows an inline span with `auto` dimensions, zero painted
+// width, and no background, border, transform, or opacity paint. Partition
+// marker children on exactly those facts so a carrier can never satisfy a
+// visual comparison, while a missing, extra, repainted, or glyph-less child
+// still fails the structural transport assertions.
 const carrierBackgrounds = new Set(['rgba(0, 0, 0, 0)', 'transparent']);
 const taskTransportCarrier = ({ box, style }) => (
   0 === box.width
@@ -42,35 +47,228 @@ const partitionTaskPseudoMarkers = (pseudoMarkers) => {
   return { carriers, paintLayers };
 };
 
-// A paint-only `content: ""` pseudo is the only layer whose transport glyph
-// the serializer replaces with an unstyled U+2060 carrier; text, image, and SVG
-// pseudos keep their own content and receive none. An unchecked owner with no
-// materialized pseudo keeps one fallback carrier so the otherwise empty static
-// owner survives the native Save path.
-const expectedTaskTransportCarrierCount = (sourceItem) => {
-  const sourcePseudos = sourceItem.marker.pseudoMarkers;
-  if (!sourcePseudos.length) return sourceItem.checked ? 0 : 1;
-  return sourcePseudos
-    .filter(({ style }) => '""' === style.content || "''" === style.content)
-    .length;
-};
+// A paint-only `content: ""` pseudo is transported inside its own styled span,
+// so materializing any pseudo removes the owner-level fallback carrier. Only an
+// empty unchecked owner without a materialized pseudo keeps exactly one.
+const expectedTaskTransportCarrierCount = (sourceItem) => (
+  sourceItem.marker.pseudoMarkers.length ? 0 : (sourceItem.checked ? 0 : 1)
+);
+
+const taskPaintOnlyPseudoContent = (style) => '""' === style.content || "''" === style.content;
+
+function taskMarkerTransportFail(code, details) {
+  throw new Error(`${code} ${JSON.stringify(details)}`);
+}
 
 const assertTaskTransportStructure = (sourceItem, targetItem, label) => {
   const { carriers, paintLayers } = partitionTaskPseudoMarkers(targetItem.marker.pseudoMarkers);
-  expect(carriers.length, `${label} transport carrier count ${sourceItem.index}`)
-    .toBe(expectedTaskTransportCarrierCount(sourceItem));
+  const sourcePseudos = sourceItem.marker.pseudoMarkers;
+  const expectedCarriers = expectedTaskTransportCarrierCount(sourceItem);
+  if (carriers.length !== expectedCarriers) {
+    taskMarkerTransportFail('wechat-task-marker-transport-carrier-count-mismatch', {
+      expected: expectedCarriers,
+      index: sourceItem.index,
+      label,
+      observed: carriers.length
+    });
+  }
   for (const carrier of carriers) {
-    // A carrier is either the only child of a paint-less unchecked owner or an
-    // independent sibling directly after the paint layer it keeps alive.
-    if (0 === carrier.index) continue;
-    const previous = targetItem.marker.pseudoMarkers[carrier.index - 1];
-    expect(
-      Boolean(previous) && !taskTransportCarrier(previous),
-      `${label} transport carrier sibling ${sourceItem.index}/${carrier.index}`
-    ).toBe(true);
+    // The owner-level fallback is the first child of a pseudo-less unchecked
+    // owner. A carrier anywhere else is the stale sibling layout that lost the
+    // in-span glyph of the paint layer it followed.
+    if (0 !== carrier.index) {
+      taskMarkerTransportFail('wechat-task-marker-transport-carrier-sibling-mismatch', {
+        carrierIndex: carrier.index,
+        index: sourceItem.index,
+        label
+      });
+    }
+    if (true !== carrier.wordJoinerOnly) {
+      taskMarkerTransportFail('wechat-task-marker-transport-carrier-glyph-missing', {
+        carrierIndex: carrier.index,
+        index: sourceItem.index,
+        label
+      });
+    }
+  }
+  if (paintLayers.length !== sourcePseudos.length) {
+    taskMarkerTransportFail('wechat-task-marker-transport-paint-count-mismatch', {
+      index: sourceItem.index,
+      label,
+      observed: paintLayers.length,
+      source: sourcePseudos.length
+    });
+  }
+  for (const [pseudoIndex, targetPseudo] of paintLayers.entries()) {
+    const sourcePseudo = sourcePseudos[pseudoIndex];
+    if (!sourcePseudo) {
+      taskMarkerTransportFail('wechat-task-marker-transport-paint-source-unavailable', {
+        index: sourceItem.index,
+        label,
+        pseudoIndex
+      });
+    }
+    // The destination drops a completely empty decoration span, so every paint
+    // layer must still carry content at payload time.
+    if (true === targetPseudo.empty) {
+      taskMarkerTransportFail('wechat-task-marker-transport-paint-layer-empty', {
+        index: sourceItem.index,
+        label,
+        pseudoIndex
+      });
+    }
+    // A paint-only pseudo keeps its own stylized span alive with one in-span
+    // U+2060; a pseudo with authored text, image, or SVG content keeps that
+    // content instead and must not be forced to carry a transport glyph.
+    if (taskPaintOnlyPseudoContent(sourcePseudo.style) && true !== targetPseudo.wordJoinerOnly) {
+      taskMarkerTransportFail('wechat-task-marker-transport-paint-glyph-missing', {
+        index: sourceItem.index,
+        label,
+        pseudoIndex
+      });
+    }
   }
   return paintLayers;
 };
+
+// Synthetic negative oracle for the transport contract above: prove the
+// assertion accepts legal in-span, authored-content, and owner-carrier payloads
+// and rejects the stale sibling layout, an empty paint layer, a glyph-less
+// paint layer, a missing or glyph-less owner carrier, a stale carrier after a
+// paint layer, a checked-owner carrier, and duplicated paint. Every rejection
+// must carry its own stable code so a future edit cannot quietly weaken the
+// transport contract into paint geometry alone.
+export function assertTaskMarkerTransportNegativeCases(label) {
+  const ownerCarrier = (overrides = {}) => ({
+    box: { bottom: 18, height: 18, left: 0, right: 0, top: 0, width: 0 },
+    empty: false,
+    pseudo: 'static-0',
+    style: {
+      backgroundColor: 'rgba(0, 0, 0, 0)',
+      borderBottomWidth: 0,
+      borderLeftWidth: 0,
+      borderRightWidth: 0,
+      borderTopWidth: 0,
+      boxSizing: 'content-box',
+      display: 'inline',
+      height: 'auto',
+      opacity: '1',
+      position: 'static',
+      transform: 'none',
+      visibility: 'visible',
+      width: 'auto'
+    },
+    wordJoinerOnly: true,
+    ...overrides
+  });
+  const paintLayer = (overrides = {}) => ({
+    box: { bottom: 16, height: 16, left: 0, right: 16, top: 0, width: 16 },
+    empty: false,
+    pseudo: 'static-0',
+    style: {
+      backgroundColor: 'rgb(255, 255, 255)',
+      borderBottomWidth: 1,
+      borderLeftWidth: 1,
+      borderRightWidth: 1,
+      borderTopWidth: 1,
+      boxSizing: 'border-box',
+      display: 'block',
+      height: '16px',
+      opacity: '1',
+      position: 'absolute',
+      transform: 'none',
+      visibility: 'visible',
+      width: '16px'
+    },
+    wordJoinerOnly: true,
+    ...overrides
+  });
+  const sourceItem = ({ checked = false, pseudos } = {}) => ({
+    checked,
+    index: 0,
+    marker: {
+      pseudoMarkers: pseudos ?? [{ pseudo: '::before', style: { content: '""' } }]
+    }
+  });
+  const targetItem = (pseudoMarkers) => ({ marker: { pseudoMarkers } });
+  const rejectionCode = (source, target) => {
+    try {
+      assertTaskTransportStructure(source, target, label);
+    } catch (error) {
+      return `${error?.message ?? ''}`.split(' ', 1)[0] || null;
+    }
+    return null;
+  };
+  const reportMismatch = (suffix, actual, expected) => {
+    taskMarkerTransportFail('wechat-task-marker-transport-negative-mismatch', {
+      actual,
+      expected,
+      label,
+      suffix
+    });
+  };
+  const expectAccepted = (suffix, source, target) => {
+    const actual = rejectionCode(source, target);
+    if (null !== actual) reportMismatch(suffix, actual, null);
+  };
+  const expectRejected = (suffix, source, target, expected) => {
+    const actual = rejectionCode(source, target);
+    if (actual !== expected) reportMismatch(suffix, actual, expected);
+  };
+  const paintOnlySource = sourceItem();
+  const emptyOwnerSource = sourceItem({ pseudos: [] });
+  const checkedOwnerSource = sourceItem({ checked: true, pseudos: [] });
+  const authoredSvgSource = sourceItem({
+    pseudos: [{
+      pseudo: '::before',
+      style: { content: 'url("data:image/svg+xml;base64,PHN2Zy8+")' }
+    }]
+  });
+
+  // Legal payload shapes.
+  expectAccepted('in-span', paintOnlySource, targetItem([paintLayer()]));
+  expectAccepted('authored-content', authoredSvgSource, targetItem([
+    paintLayer({ wordJoinerOnly: false })
+  ]));
+  expectAccepted('owner-carrier', emptyOwnerSource, targetItem([ownerCarrier()]));
+
+  // Stale sibling transport: the paint span keeps its layout space and a
+  // sibling carrier holds the glyph, so the styled span that must survive the
+  // destination no longer owns the transport.
+  expectRejected('stale-sibling', paintOnlySource, targetItem([
+    paintLayer({ wordJoinerOnly: false }),
+    ownerCarrier({ pseudo: 'static-1' })
+  ]), 'wechat-task-marker-transport-carrier-count-mismatch');
+
+  // A paint-only pseudo whose own span is empty is dropped by the destination.
+  expectRejected('empty-paint-layer', paintOnlySource, targetItem([
+    paintLayer({ empty: true, wordJoinerOnly: false })
+  ]), 'wechat-task-marker-transport-paint-layer-empty');
+
+  // A paint-only pseudo whose own span holds foreign content lost the glyph.
+  expectRejected('paint-glyph-missing', paintOnlySource, targetItem([
+    paintLayer({ wordJoinerOnly: false })
+  ]), 'wechat-task-marker-transport-paint-glyph-missing');
+
+  // The owner-level fallback carrier is required, must hold the glyph, and may
+  // only be the first child of a pseudo-less unchecked owner.
+  expectRejected('owner-carrier-missing', emptyOwnerSource, targetItem([]),
+    'wechat-task-marker-transport-carrier-count-mismatch');
+  expectRejected('owner-carrier-glyph-missing', emptyOwnerSource, targetItem([
+    ownerCarrier({ wordJoinerOnly: false })
+  ]), 'wechat-task-marker-transport-carrier-glyph-missing');
+  expectRejected('owner-carrier-late', emptyOwnerSource, targetItem([
+    paintLayer(),
+    ownerCarrier({ pseudo: 'static-1' })
+  ]), 'wechat-task-marker-transport-carrier-sibling-mismatch');
+  expectRejected('checked-owner-carrier', checkedOwnerSource, targetItem([
+    ownerCarrier()
+  ]), 'wechat-task-marker-transport-carrier-count-mismatch');
+  expectRejected('extra-paint-layer', paintOnlySource, targetItem([
+    paintLayer(),
+    paintLayer({ pseudo: 'static-1' })
+  ]), 'wechat-task-marker-transport-paint-count-mismatch');
+}
 
 export function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, themeId) {
   const closeGeometry = (actual, expected, message) => {
@@ -214,8 +412,6 @@ export function assertTaskMarkerSurface(sourceEvidence, targetEvidence, label, t
     expect(targetItem.marker.style.boxSizing, `${label} marker box sizing ${sourceItem.index}`)
       .toBe(sourceItem.marker.style.boxSizing);
     const paintLayers = assertTaskTransportStructure(sourceItem, targetItem, label);
-    expect(paintLayers, `${label} visual pseudo marker count ${sourceItem.index}`)
-      .toHaveLength(sourceItem.marker.pseudoMarkers.length);
     for (const [pseudoIndex, sourcePseudo] of sourceItem.marker.pseudoMarkers.entries()) {
       const targetPseudo = paintLayers[pseudoIndex];
       expect(targetPseudo, `${label} pseudo marker ${sourceItem.index}/${pseudoIndex}`)
@@ -533,6 +729,7 @@ export function assertTaskMarkerGeometryProjection(sourceEvidence, targetEvidenc
 
 export function assertTaskMarkerOracleNegativeCases(sourceEvidence, targetEvidence, label, themeId) {
   assertTaskMarkerPixelParityNegativeCases(`${label}/pixel`);
+  assertTaskMarkerTransportNegativeCases(`${label}/transport`);
   assertTaskMarkerGeometryProjection(sourceEvidence, targetEvidence, `${label}/baseline`, themeId);
   const expectRejected = (mutation, suffix, expectedError) => {
     const invalidTarget = structuredClone(targetEvidence);

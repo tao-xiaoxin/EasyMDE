@@ -13,9 +13,9 @@ export {
 } from "./payload-task-oracle.mjs";
 export {
   assertTaskMarkerPixelPaint,
-  assertTaskMarkerPixelParity,
-  assertTaskMarkerPixelParityNegativeCases
+  assertTaskMarkerPixelParity
 } from "./payload-pixel-oracle.mjs";
+export { assertTaskMarkerPixelParityNegativeCases } from "./payload-pixel-negative-cases.mjs";
 export {
   assertNativeArticleSurface,
   assertMdmdtLinkDecorationEvidence,

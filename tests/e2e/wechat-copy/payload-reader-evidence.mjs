@@ -434,8 +434,17 @@ export async function readNativeCodeSurfaceEvidence(
                 element.getBoundingClientRect(),
                 `${label}-task-static-marker-${index}-${markerIndex}`
               ),
+              // WeChat drops a completely empty decoration span, so the payload
+              // contract needs to know whether a marker child still carries
+              // content, and whether that content is exactly the single U+2060
+              // transport glyph the serializer guarantees for a paint-only task
+              // pseudo or for the owner-level fallback carrier. Record only the
+              // two booleans: the generated decoration text never leaves this
+              // measurement.
+              empty: '' === element.textContent && 0 === element.childElementCount,
               pseudo: `static-${markerIndex}`,
-              style: taskMarkerStyle(element, view)
+              style: taskMarkerStyle(element, view),
+              wordJoinerOnly: '\u2060' === element.textContent && 0 === element.childElementCount
             }));
         const markerContentBox = contentBox(
           marker,

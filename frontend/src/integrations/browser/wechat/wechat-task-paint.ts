@@ -3,6 +3,7 @@ import {
   isTaskListCheckbox,
   TASK_LIST_CHECKBOX_CLONES,
   TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS,
+  TASK_LIST_CHECKBOX_PSEUDO_CLONES,
   TASK_LIST_CHECKBOX_STATES,
   TASK_LIST_CHECKBOX_SVG_PAINT,
   taskCheckboxOutputMarkers,
@@ -552,4 +553,45 @@ export function assertTaskCheckboxStaticOwners(sourceInputs: readonly HTMLInputE
       }
     });
   });
+}
+
+/**
+ * Keeps task paint layers and empty unchecked owners alive through native
+ * WeChat Paste/Save without introducing a sibling carrier for painted pseudos.
+ * The caller owns the root-scoped text normalization map used by text/plain.
+ */
+export function normalizeTaskCheckboxTransport(
+  normalized: HTMLElement,
+  exportTextNormalizations: Map<Text, Readonly<{ original: string; encoded: string }>>
+): void {
+  normalized.querySelectorAll('span[aria-hidden="true"]').forEach((element) => {
+    const pseudo = TASK_LIST_CHECKBOX_PSEUDO_CLONES.get(element);
+    if (!pseudo) return;
+    const owner = element.parentElement;
+    const expectation = owner ? TASK_LIST_CHECKBOX_PAINT_EXPECTATIONS.get(owner)?.pseudos.get(pseudo) : undefined;
+    if (expectation?.requiresText) {
+      if (!element.childNodes.length) throw new Error('wechat-task-checkbox-paint-layer-empty');
+      return;
+    }
+    const textNodes = Array.from(element.childNodes).filter((node): node is Text => node.nodeType === 3);
+    const textNode = 1 === textNodes.length ? textNodes[0] : null;
+    if (textNode && ' ' === textNode.nodeValue) {
+      textNode.nodeValue = '\u2060';
+      exportTextNormalizations.set(textNode, { original: '', encoded: '\u2060' });
+      return;
+    }
+    if (!element.childNodes.length) throw new Error('wechat-task-checkbox-paint-layer-empty');
+  });
+
+  normalized
+    .querySelectorAll<HTMLElement>('[role="checkbox"][aria-checked="false"][aria-disabled="true"]')
+    .forEach((owner) => {
+      if (owner.childElementCount || owner.textContent?.trim()) return;
+      const carrier = normalized.ownerDocument.createElement('span');
+      carrier.setAttribute('aria-hidden', 'true');
+      const textNode = normalized.ownerDocument.createTextNode('\u2060');
+      carrier.appendChild(textNode);
+      owner.appendChild(carrier);
+      exportTextNormalizations.set(textNode, { encoded: '\u2060', original: '' });
+    });
 }

@@ -9,8 +9,11 @@
 //   1. the shared center window must stay a strict, centered sub-region of the
 //      marker so a disappearing center glyph is sampled even when the outer
 //      marker keeps the total ink count inside the measured raster tolerance;
-//   2. the position-stripped comparison must keep checking the center window
-//      and its mask when the stripped ink count drifts inside that tolerance.
+//   2. the source -> payload comparison must reject a center glyph that slides
+//      or deforms horizontally while every count-based tolerance still holds;
+//   3. the position-stripped comparison must keep checking the center window,
+//      its mask, and its centroid when the stripped ink count drifts inside
+//      that tolerance.
 import { expect, test } from '@playwright/test';
 import { decodeTaskMarkerPixelEvidence } from './wechat-copy/payload-marker-measurement.mjs';
 import { assertTaskMarkerPixelParity } from './wechat-copy/payload-pixel-oracle.mjs';
@@ -34,7 +37,12 @@ function fixtureHtml({
   glyph,
   glyphBox = null,
   glyphOffsetX = 0,
-  glyphSize = 4
+  glyphSize = 4,
+  glyphColor = '#000',
+  markerRadius = '0px',
+  markerOffsetX = 0,
+  markerOffsetY = 0,
+  markerContainerPadding = '10px 14px'
 }) {
   const glyphLeft = null === glyphBox ? 6 + glyphOffsetX - (glyphSize - 4) / 2 : glyphBox.left;
   const glyphTopValue = null === glyphBox ? 6 - (glyphSize - 4) / 2 : glyphBox.top;
@@ -47,15 +55,23 @@ function fixtureHtml({
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     * { box-sizing: border-box; }
     html, body { margin: 0; background: #fff; }
-    .markers { display: flex; flex-direction: column; gap: 20px; padding: 10px 14px; width: ${VIEWPORT.width}px; }
-    .marker { position: relative; width: 20px; height: 20px; border: 2px solid #000; background: #fff; }
+    .markers { display: flex; flex-direction: column; gap: 20px; padding: ${markerContainerPadding}; width: ${VIEWPORT.width}px; }
+    .marker {
+      position: relative;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #000;
+      border-radius: ${markerRadius};
+      background: #fff;
+      transform: translate(${markerOffsetX}px, ${markerOffsetY}px);
+    }
     .marker .center-glyph {
       position: absolute;
       left: ${glyphLeft}px;
       top: ${glyphTopValue}px;
       width: ${glyphWidth}px;
       height: ${glyphHeight}px;
-      background: #000;
+      background: ${glyphColor};
     }
     .marker .ink-keep { display: none; }
     ${glyph ? '' : '.marker .center-glyph { display: none; }'}
@@ -120,7 +136,8 @@ test('rejects a payload that loses the center glyph while preserving total ink',
   const report = parityReport(source, payload, payload);
   expect(report, 'missing center glyph must fail pixel parity').not.toBeNull();
   expect(report.records[0].violations).toEqual([
-    'wechat-task-marker-pixel-interior-glyph-missing'
+    'wechat-task-marker-pixel-interior-glyph-missing',
+    'wechat-task-marker-pixel-mask-mismatch'
   ]);
   expect(report.records[0].inkDelta, 'center glyph loss keeps the ink contract').toBe(0);
   for (const result of source.results) {
@@ -131,6 +148,56 @@ test('rejects a payload that loses the center glyph while preserving total ink',
     expect(result.inkPixels, 'payload marker ink').toBe(RING_INK + GLYPH_INK);
     expect(result.interiorInkPixels, 'payload center ink').toBe(0);
   }
+});
+
+test('rejects a payload that loses a low-contrast center glyph', async ({ page }) => {
+  const sourceCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    glyphColor: '#efefef'
+  });
+  const source = await decodeRegions(page, sourceCapture, sourceCapture.regions);
+  const payloadCapture = await renderMarkers(page, {
+    compensatorHeight: PAYLOAD_COMPENSATOR_HEIGHT,
+    glyph: false
+  });
+  const payload = await decodeRegions(page, payloadCapture, payloadCapture.regions);
+  const report = parityReport(source, payload, payload);
+  expect(report, 'low-contrast center glyph loss must fail pixel parity').not.toBeNull();
+  expect(report.records[0].violations).toEqual(expect.arrayContaining([
+    'wechat-task-marker-pixel-mask-mismatch'
+  ]));
+  expect(report.records[0].interiorDelta, 'the light glyph remains measured before deletion').toBeGreaterThan(0);
+});
+
+test('rejects a payload whose center glyph slides horizontally inside the marker', async ({ page }) => {
+  const sourceCapture = await renderMarkers(page, { compensatorHeight: 0, glyph: true });
+  const source = await decodeRegions(page, sourceCapture, sourceCapture.regions);
+  // The same 4x4 glyph renders three device pixels further right inside the
+  // ring. The total ink, the outer bounds, and the center ink count stay
+  // identical, so only the bounded center-window mask and the enforced
+  // window-relative centroid offset can witness the horizontal move.
+  const movedCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    glyphOffsetX: 3
+  });
+  const moved = await decodeRegions(page, movedCapture, movedCapture.regions);
+  const report = parityReport(source, moved, moved);
+  expect(report, 'horizontally moved center glyph must fail pixel parity').not.toBeNull();
+  expect(report.records[0].violations).toEqual(expect.arrayContaining([
+    'wechat-task-marker-pixel-center-mismatch'
+  ]));
+  expect(report.records[0].inkDelta, 'moved glyph keeps total ink').toBe(0);
+  expect(report.records[0].interiorDelta, 'moved glyph keeps center ink').toBe(0);
+  expect(
+    report.records[0].payloadDelta.center,
+    'moved glyph centroid drift exceeds the raster phase allowance'
+  ).toBeGreaterThan(1.5);
+  expect(
+    report.records[0].payloadDelta.mask,
+    'moved glyph still changes the center mask'
+  ).toBeGreaterThan(0);
 });
 
 test('rejects a stripped copy whose ink drifts while the center glyph disappears', async ({ page }) => {
@@ -181,6 +248,47 @@ test('keeps one-pixel region rounding inside the center-window contract', async 
   expect(parityReport(source, rounded, rounded), 'one-pixel region rounding must pass').toBeNull();
 });
 
+test('accepts a half-pixel phase shift of a rounded task marker', async ({ page }) => {
+  const sourceCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    markerRadius: '50%'
+  });
+  const source = await decodeRegions(page, sourceCapture, sourceCapture.regions);
+  const shiftedCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    markerOffsetX: 0.5,
+    markerOffsetY: 0.5,
+    markerRadius: '50%'
+  });
+  const shifted = await decodeRegions(page, shiftedCapture, shiftedCapture.regions);
+  expect(
+    parityReport(source, shifted, shifted),
+    'a fractional raster phase of the same rounded marker must pass'
+  ).toBeNull();
+});
+
+test('accepts a half-pixel layout-padding phase shift of a rounded task marker', async ({ page }) => {
+  const sourceCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    markerRadius: '50%'
+  });
+  const source = await decodeRegions(page, sourceCapture, sourceCapture.regions);
+  const shiftedCapture = await renderMarkers(page, {
+    compensatorHeight: 0,
+    glyph: true,
+    markerContainerPadding: '10.5px 14.5px',
+    markerRadius: '50%'
+  });
+  const shifted = await decodeRegions(page, shiftedCapture, shiftedCapture.regions);
+  expect(
+    parityReport(source, shifted, shifted),
+    'fractional layout padding must not look like marker deformation'
+  ).toBeNull();
+});
+
 test('rejects a stripped copy whose center glyph drifts three device pixels', async ({ page }) => {
   const payloadCapture = await renderMarkers(page, { compensatorHeight: 0, glyph: true, glyphSize: 6 });
   const payload = await decodeRegions(page, payloadCapture, payloadCapture.regions);
@@ -200,7 +308,8 @@ test('rejects a stripped copy whose center glyph drifts three device pixels', as
   const report = parityReport(payload, payload, stripped);
   expect(report, 'three-pixel center drift must fail pixel parity').not.toBeNull();
   expect(report.records[0].violations).toEqual([
-    'wechat-task-marker-pixel-stripped-mask-mismatch'
+    'wechat-task-marker-pixel-stripped-mask-mismatch',
+    'wechat-task-marker-pixel-stripped-center-mismatch'
   ]);
   // Every count-based tolerance still holds: the total ink and the outer
   // bounds are unchanged, the center ink drops by less than the interior

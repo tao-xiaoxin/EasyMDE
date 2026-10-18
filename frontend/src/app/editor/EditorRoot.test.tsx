@@ -1,4 +1,4 @@
-import { createElement } from '@wordpress/element';
+import { createElement, useLayoutEffect } from '@wordpress/element';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EditorSelection } from '@codemirror/state';
@@ -29,7 +29,10 @@ import {
 } from '../../test/fixtures/appearance-bootstrap';
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
-import type { ImmersiveVisualEditorRuntime } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
+import type {
+  ImmersiveVisualEditorProps,
+  ImmersiveVisualEditorRuntime
+} from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import {
   focusVisualPreviewRuntime,
   EditorRoot,
@@ -44,6 +47,49 @@ import {
 import { EditorRootErrorBoundary } from './EditorRootErrorBoundary';
 
 const mountedFields: Array<HTMLElement> = [];
+
+const staleVisualEditor = vi.hoisted(() => ({
+  // Only the stale-visual-runtime regression enables the injected visual
+  // editor; every other test in this file uses the real component.
+  enabled: false,
+  surfaces: [] as HTMLElement[]
+}));
+
+vi.mock(
+  '../../features/immersive-editor/ui/ImmersiveVisualEditor',
+  async (importOriginal) => {
+    const actual = await importOriginal<
+      typeof import('../../features/immersive-editor/ui/ImmersiveVisualEditor')
+    >();
+    return {
+      ...actual,
+      ImmersiveVisualEditor: (props: ImmersiveVisualEditorProps) =>
+        staleVisualEditor.enabled
+          ? createElement(StaleVisualEditorSurface, props)
+          : createElement(actual.ImmersiveVisualEditor, props)
+    };
+  }
+);
+
+/**
+ * Reproduces the stale immersive visual owner: the runtime registers a surface
+ * that is not the current stable Preview sink and deliberately survives the end
+ * of visual editing without a dispose, which is exactly the stale visual
+ * runtime surface the Copy sink selection must ignore.
+ */
+function StaleVisualEditorSurface(props: ImmersiveVisualEditorProps) {
+  useLayoutEffect(() => {
+    const surface = props.surface.cloneNode(false) as HTMLElement;
+    staleVisualEditor.surfaces.push(surface);
+    props.onReady({
+      executeCommand: () => false,
+      prepareMediaSelection: () => false,
+      prepareToolbarFallback: () => true,
+      surface
+    });
+  }, []);
+  return null;
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -7614,19 +7660,52 @@ describe('EditorRoot', () => {
     );
   });
 
-  it('uses the stable Preview sink for immersive Preview Copy after the visual runtime exists', async () => {
+  it('uses the stable Preview sink for immersive Preview Copy after the visual runtime surface goes stale', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
 
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '预览' }));
     await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    const stableSink = view.container.querySelector(
+      '[data-easymde-preview-html-sink="1"]'
+    );
+    if (!stableSink) throw new Error('stable-preview-sink-unavailable');
 
-    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
-    await waitFor(() => expect(props.wechatClipboard.copy).toHaveBeenCalledOnce());
+    staleVisualEditor.surfaces.length = 0;
+    staleVisualEditor.enabled = true;
+    try {
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const staleSurface =
+        staleVisualEditor.surfaces[staleVisualEditor.surfaces.length - 1]
+        ?? null;
+      // The registered visual runtime exists and its surface is not the stable
+      // Preview sink.
+      expect(staleSurface).not.toBeNull();
+      expect(staleSurface).not.toBe(stableSink);
+      expect(staleSurface?.isConnected).toBe(false);
 
+      fireEvent.click(view.getByRole('button', { name: '锁定为只读' }));
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      // Visual editing has ended while the stale visual runtime stays registered.
+      expect(staleVisualEditor.surfaces).toHaveLength(1);
+
+      fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+      await waitFor(() =>
+        expect(props.wechatClipboard.copy).toHaveBeenCalledOnce()
+      );
+    } finally {
+      staleVisualEditor.enabled = false;
+    }
+
+    expect(stableSink.isConnected).toBe(true);
     expect(vi.mocked(props.wechatClipboard.copy).mock.calls[0]?.[0]).toBe(
-      view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+      stableSink
     );
   });
 

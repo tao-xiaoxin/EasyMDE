@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard, MAX_WECHAT_PNG_DIMENSION } from './create-browser-wechat-clipboard';
+import type { WechatVisualRasterizationRequest } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
 import {
   blobText,
@@ -16,18 +17,21 @@ describe('createBrowserWechatClipboard', () => {
   it('builds a native root capture clone without exporter markers or unsafe SVG URLs', async () => {
     const writes: unknown[] = [];
     let captured: Element | null = null;
+    let captureMode: string | undefined;
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = readyPreview();
     preview.innerHTML =
-      '<div class="easymde-math-block"><span class="katex"><span class="vlist" data-source="native"><span class="pstrut">A\u2060B</span><svg><a href="javascript:bad"><rect width="10" height="10"></rect></a></svg></span><span class="katex-mathml"><math><annotation>fallback</annotation></math></span></span></div>';
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="vlist" data-source="native"><span class="pstrut">A\u2060B</span><svg><a href="javascript:bad"><rect width="10" height="10"></rect></a></span></span><span class="katex-mathml"><math><annotation>fallback</annotation></math></span></span></span></div>';
     const root = preview.querySelector('.easymde-math-block');
     if (!root) throw new Error('math root missing');
     Object.defineProperty(root, 'getBoundingClientRect', {
       configurable: true,
       value: () => ({ height: 30, width: 180 })
     });
-    const rasterize = vi.fn(async ({ source }: { source: Element }) => {
-      captured = source;
+    const rasterize = vi.fn(async (request: WechatVisualRasterizationRequest) => {
+      if ('math' !== request.kind) throw new Error('unexpected mermaid request');
+      captureMode = request.mathCapture;
+      captured = request.source;
       return {
         file: new File(['native'], 'native.png', { type: 'image/png' }),
         height: 30,
@@ -49,6 +53,19 @@ describe('createBrowserWechatClipboard', () => {
         if (pseudoElement) return declaration({});
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({ display: 'block', height: '30px', overflow: 'auto', width: '180px' });
+        }
+        if (element.classList.contains('katex-display')) {
+          return declaration({
+            display: 'block',
+            height: '30px',
+            opacity: '0.7',
+            overflow: 'hidden',
+            'text-align': 'center',
+            width: '416px'
+          });
+        }
+        if (element.classList.contains('katex') || element.classList.contains('katex-html')) {
+          return declaration({ display: 'block', height: '30px', overflow: 'visible', width: '416px' });
         }
         if ('SPAN' === element.tagName && element.classList.contains('vlist')) {
           return declaration({ display: 'table', 'table-layout': 'fixed' });
@@ -74,7 +91,13 @@ describe('createBrowserWechatClipboard', () => {
       status: 'copied'
     });
     const capture = captured as unknown as Element;
+    expect(captureMode).toBe('full-root');
     expect(capture.classList.contains('easymde-math-block')).toBe(true);
+    expect(capture.querySelector('.katex-display')?.getAttribute('style')).toContain('width:416px');
+    expect(capture.querySelector('.katex')?.getAttribute('style')).toContain('width:416px');
+    expect(capture.querySelector('.katex-html')?.getAttribute('style')).toContain('width:416px');
+    expect(capture.querySelector('.katex-display')?.getAttribute('style')).toContain('opacity:0.7');
+    expect(capture.querySelector('.katex-display')?.getAttribute('style')).toContain('overflow:hidden');
     expect(capture.querySelector('.katex-mathml')).toBeNull();
     expect(capture.querySelector('.pstrut')).not.toBeNull();
     expect(capture.querySelector('.pstrut')?.getAttribute('style')).toContain('display:table-cell');

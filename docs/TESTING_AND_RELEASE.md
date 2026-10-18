@@ -363,10 +363,12 @@ line-aware source fallback for non-layout DOM environments, compare the
 captured HTML bytes and derived text for parity,
 and verify host removal in
 `finally`. Table coverage must retain authored/computed table `min-width` while
-the generated wrapper owns `min-width:0`, exercise the Crimson intrinsic-width
-regression that must not compress 520 to 412, and preserve source and table
-RGBA colors without theme hardcoding. This remains a verification requirement; no
-new native acceptance result is claimed.
+the generated wrapper owns `min-width:0`, keep ordinary filled tables intrinsic
+with a `min-width:100%` lower bound, retain `width:100%` for existing
+`display:block` theme shims, exercise the Crimson intrinsic-width regression
+that must not compress 520 to 412, and preserve source and table RGBA colors
+without theme hardcoding. This remains a verification requirement; no new
+native acceptance result is claimed.
 Font-readiness coverage must attach clone image listeners before host attachment,
 force one initial layout after attachment, and read the current
 `document.fonts.ready`. A cold source case must hold that readiness and verify
@@ -472,6 +474,13 @@ These portable-payload projections do not prove WeChat importer or reader
 fidelity. Record actual WeChat desktop/phone checks separately, including loaded
 images and the themes and editor modes actually exercised. Keep any opt-in
 payload captures private and outside the repository and public artifacts.
+
+Block-math PNG checks compare intrinsic content bounds for multiple short
+formulas in the same source column. Keep the original decorated math-block
+once; verify short formulas center without unnecessary horizontal scrolling
+and long formulas retain reachable ends. Inspect the saved, refreshed QR Reader
+at narrow widths independently of the native editor's intermediate DOM.
+Inline math baseline and overflow remain separate regression requirements.
 
 For authorized browser verification, run the synthetic full-capability fixture in a local authenticated WordPress and WeChat session.
 Capture source Preview and pasted WeChat output at the same viewport, inspect the sanitized payload and pasted DOM, and measure horizontal overflow owners for long code, tables, and display formulas. For PNG conversion, inspect the generated images at DPR 1 and 2, compare ordinary and immersive results, verify table HTML remains selectable, and record the selected upload owner and request count without publishing provider credentials or article content.

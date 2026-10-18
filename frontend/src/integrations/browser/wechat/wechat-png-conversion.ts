@@ -70,7 +70,9 @@ import {
   createCapturePlan,
   mermaidIntrinsicScrollDimensions,
   recordMermaidCaptureSnapshot,
+  snapshotMathCaptureNode,
   type CompletedUpload,
+  type WechatMathCaptureSnapshot,
   type VisualCandidate,
   type WechatCapturePlan,
 } from './wechat-capture-plan';
@@ -116,12 +118,20 @@ export async function createNativeVisualCaptureClone(
   cache: BackgroundAssetCache,
   yieldToBrowser: SerializationYield | null,
   context: WechatPngConversionContext
-): Promise<Readonly<{ cleanup: () => void; element: Element }>> {
+): Promise<Readonly<{ cleanup: () => void; element: Element; mathCaptureSnapshot: WechatMathCaptureSnapshot | null }>> {
   const clone = source.cloneNode(true) as Element;
+  const mathOwner = source.matches('.easymde-math-block') ? source : null;
+  const mathNodes = mathOwner
+    ? new Set<Element>([mathOwner, ...Array.from(mathOwner.querySelectorAll('.katex-display, .katex, .katex-html'))])
+    : null;
+  const mathSnapshots = new Map<Element, ReturnType<typeof snapshotMathCaptureNode>>();
   const walk = async (sourceNode: Node, cloneNode: Node): Promise<void> => {
     assertPngConversionCurrent(context);
     if (!(sourceNode instanceof Element) || !(cloneNode instanceof Element)) return;
     const computed = runtime.getComputedStyle(sourceNode);
+    if (mathNodes?.has(sourceNode)) {
+      mathSnapshots.set(sourceNode, snapshotMathCaptureNode(sourceNode, computed));
+    }
     const declarations = await nativeVisualStyleDeclarations(sourceNode, computed, runtime, cache, yieldToBrowser);
     if (declarations.length) cloneNode.setAttribute('style', declarations.join(';'));
     else cloneNode.removeAttribute('style');
@@ -144,7 +154,18 @@ export async function createNativeVisualCaptureClone(
     removeTransientAttributes(element);
   });
   assertPngConversionCurrent(context);
-  return { cleanup: () => undefined, element: clone };
+  const mathCaptureSnapshot: WechatMathCaptureSnapshot | null = mathOwner
+    ? {
+      owner: mathSnapshots.get(mathOwner) ?? (() => {
+        throw new WechatPngConversionError('wechat-png-rasterization-failed');
+      })(),
+      shells: Array.from(mathNodes ?? []).slice(1).flatMap((node) => {
+        const snapshot = mathSnapshots.get(node);
+        return snapshot ? [snapshot] : [];
+      }),
+    }
+    : null;
+  return { cleanup: () => undefined, element: clone, mathCaptureSnapshot };
 }
 
 export function restoreVerifiedMermaidCaptureIdentity(clone: Element, role: WechatVisualRasterizationMermaidLayoutRole): void {
@@ -165,9 +186,8 @@ function createRasterizationRequest(
   context: WechatPngConversionContext,
   yieldToBrowser: WechatVisualRasterizationYield | undefined
 ): WechatVisualRasterizationRequest {
-  const request = {
+  const requestBase = {
     height: plan.captureSize.height,
-    kind: plan.kind,
     maxPixels: MAX_WECHAT_PNG_PIXELS,
     scale: context.scale,
     signal: context.signal,
@@ -177,15 +197,20 @@ function createRasterizationRequest(
   };
   switch (plan.mode) {
     case 'math-block':
-      return request;
+      return { ...requestBase, kind: 'math', mathCapture: plan.mathCapture };
     case 'math-inline':
-      return plan.inlineParent ? { ...request, inlineParent: plan.inlineParent } : request;
+      return {
+        ...requestBase,
+        ...(plan.inlineParent ? { inlineParent: plan.inlineParent } : {}),
+        kind: 'math',
+        mathCapture: plan.mathCapture,
+      };
     case 'mermaid-root':
-      return { ...request, layoutMagnification: plan.layoutMagnification };
+      return { ...requestBase, kind: 'mermaid', layoutMagnification: plan.layoutMagnification };
     case 'mermaid-intrinsic':
-      return { ...request, layoutMagnification: plan.layoutMagnification, mermaidCapture: 'intrinsic-viewport' };
+      return { ...requestBase, kind: 'mermaid', layoutMagnification: plan.layoutMagnification, mermaidCapture: 'intrinsic-viewport' };
     case 'mermaid-responsive':
-      return { ...request, layoutMagnification: plan.layoutMagnification, mermaidCapture: 'responsive-viewport' };
+      return { ...requestBase, kind: 'mermaid', layoutMagnification: plan.layoutMagnification, mermaidCapture: 'responsive-viewport' };
   }
 }
 
@@ -443,6 +468,7 @@ export async function replaceVisualObjects(
         }
         plan = createCapturePlan(
           candidate,
+          capture.mathCaptureSnapshot,
           sourceRect,
           inlineVisual,
           geometryParent,

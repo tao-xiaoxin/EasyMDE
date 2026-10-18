@@ -16,6 +16,7 @@ import {
   type CaptureGeometry,
   applyCaptureTypography,
   captureBounds,
+  createMathBlockContentRoot,
   inlineOverflowScrolls,
   normalizeCaptureRoot,
   removeMathMlFallback,
@@ -88,6 +89,8 @@ function assertRequest(
     || !Number.isFinite(layoutMagnification)
     || layoutMagnification < 1
     || 'math' === request.kind && 1 !== layoutMagnification
+    || 'math' === request.kind && !['content', 'full-root'].includes(request.mathCapture)
+    || 'mermaid' === request.kind && undefined !== request.mathCapture
     || 'responsive-viewport' === request.mermaidCapture
       && ('mermaid' !== request.kind || 1 !== layoutMagnification)
     || !Number.isSafeInteger(request.maxPixels)
@@ -221,7 +224,10 @@ async function serializedSvg(
       `width:${dimensionsValue.width}px;height:${dimensionsValue.height}px;`
         + 'margin:0;position:relative;overflow:visible;box-sizing:border-box;',
     );
-    const rootClone = request.source.cloneNode(true) as Element;
+    const mathBlockContent = request.kind === 'math' && 'content' === request.mathCapture;
+    const rootClone = mathBlockContent
+      ? createMathBlockContentRoot(request.source, document, request.mathCapture)
+      : request.source.cloneNode(true) as Element;
     removeMathMlFallback(rootClone);
     normalizeCaptureRoot(rootClone);
     if ('intrinsic-viewport' === request.mermaidCapture) {
@@ -232,22 +238,26 @@ async function serializedSvg(
       rootStyle?.setProperty('transform', `scale(${layoutMagnification})`, 'important');
       rootStyle?.setProperty('transform-origin', '0 0', 'important');
     }
-    if ('math' === request.kind && geometry.requiresBaseline) {
+    if ('math' === request.kind && (geometry.requiresBaseline || mathBlockContent)) {
       const rootStyle = (rootClone as Element & { style?: CSSStyleDeclaration }).style;
-      if (!geometry.preservesInlineConstraints) {
-        rootStyle?.setProperty('width', 'max-content', 'important');
-        rootStyle?.setProperty('max-width', 'none', 'important');
-        rootStyle?.setProperty('height', 'max-content', 'important');
-        rootStyle?.setProperty('max-height', 'none', 'important');
-        rootStyle?.setProperty('overflow', 'visible', 'important');
-      } else if (
-        geometry.inlineOverflow
-        && (
-          inlineOverflowScrolls(geometry.inlineOverflow.x)
-          || inlineOverflowScrolls(geometry.inlineOverflow.y)
-        )
-      ) {
-        rootStyle?.setProperty('overflow', 'visible', 'important');
+      if (geometry.requiresBaseline) {
+        if (!geometry.preservesInlineConstraints) {
+          rootStyle?.setProperty('width', 'max-content', 'important');
+          rootStyle?.setProperty('max-width', 'none', 'important');
+          rootStyle?.setProperty('height', 'max-content', 'important');
+          rootStyle?.setProperty('max-height', 'none', 'important');
+          rootStyle?.setProperty('overflow', 'visible', 'important');
+        } else if (
+          geometry.inlineOverflow
+          && (
+            inlineOverflowScrolls(geometry.inlineOverflow.x)
+            || inlineOverflowScrolls(geometry.inlineOverflow.y)
+          )
+        ) {
+          rootStyle?.setProperty('overflow', 'visible', 'important');
+        }
+      } else {
+        sizeCaptureRoot(rootClone, geometry, true);
       }
       const layoutHost = document.createElementNS(XHTML_NAMESPACE, 'div');
       layoutHost.setAttribute('xmlns', XHTML_NAMESPACE);

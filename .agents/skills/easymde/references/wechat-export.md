@@ -497,12 +497,27 @@ For fraction and table-like KaTeX geometry, the native clone retains every safe
 computed dimension and normal default, including computed `table-layout`; used
 table bounds remain measurable so the browser can recompute intrinsic layout.
 
-Block math keeps an intrinsic centered wrapper with local horizontal overflow:
-the wrapper is block-level, width-constrained to the destination, centered with
-auto margins, and scrolls horizontally while hiding vertical overflow. Its PNG
-is block-level and centered by that wrapper. Source padding, borders,
-background, and capture geometry are baked into the PNG once; they are not
-copied again onto the wrapper or generated image.
+Eligible math-block roots capture complete KaTeX visual wrapper trees at their
+intrinsic bounds, including negative paint overflow, without MathML fallback or exterior
+source-column allocation. Geometry measurement and SVG serialization use the
+same content root. Source column width is not a lower bound for the PNG.
+The sanitized original math-block remains the single decoration and local
+horizontal-scroll owner: padding, borders, background, radius and opacity stay
+on that owner once, rather than being baked into the PNG. Only its contents are
+replaced. The block-level PNG uses auto side margins to center short formulas;
+genuinely wide formulas retain reachable ends within the bounded owner.
+Inline math retains its separate allocation, paint and baseline contract.
+The native computed-style snapshot freezes one `content` or `full-root` math
+capture plan, carried unchanged through the rasterization request and completed
+upload to geometry, SVG serialization and replacement. Content capture requires
+effective block display, proven auto/unbounded dimensions for every released
+axis, and no inner shell clip/scroll/paint constraints. Typed OM supplies only
+dimension semantics; the same computed-style traversal supplies paint values.
+Unknown dimensions or supported paint constraints retain full-root semantics;
+unsupported paint properties are not mandatory proofs. Authored inline displays
+retain the inline contract; flex, grid and table roots retain full-root capture.
+Missing or zero content geometry is an explicit size failure, never a fallback
+to the source column width.
 
 Upload each generated PNG through the Editor's already selected
 `ImageUploadPort`: Image Hosting when `imageHostingEnabled` is true, or the
@@ -717,12 +732,17 @@ local owner when intrinsic capture requires it. Do not apply these rules to ordi
 KaTeX geometry.
 
 Tables and long display formulas own horizontal overflow; no exporter wrapper
-may impose whole-article height or vertical scrolling. Tables keep intrinsic
-`max-content` sizing inside a real block scroll owner, so short tables remain
-centered and wide rows scroll. Geometry-derived full-width classification is
-cached per source table while immersive source mode hides Preview and replaced
-on a later visible refresh. Preserve theme table shims (`display:contents`,
-`container-type`, and `100cqi` pseudo-element geometry). Task-list state must
+may impose whole-article height or vertical scrolling. Ordinary Markdown tables
+keep intrinsic `max-content` sizing inside a real block scroll owner, so short
+tables fill the bounded column and wide rows scroll. A geometry-derived
+full-width classification means only the table's `min-width:100%` fill-column
+lower bound; it must not force `width:100%` or `max-width:100%` over intrinsic
+content. Any explicit source table `min-width` remains authoritative, and a
+source `display:block` table shim retains its block-sized responsive owner.
+The classification is cached per source table while immersive source mode hides
+Preview and replaced on a later visible refresh. Preserve theme table shims
+(`display:contents`, `container-type`, and `100cqi` pseudo-element geometry).
+Task-list state must
 survive the native importer's removal of form controls. Materialize recognized
 task markers from the current settled Preview paint into safe static Clipboard
 output; preserve checked state, effective opacity, geometry and text alignment.

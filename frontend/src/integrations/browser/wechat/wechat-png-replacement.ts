@@ -55,6 +55,75 @@ export function positiveDimensionOrFallback(value: number, fallback: number): nu
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function replaceMathBlockContent(
+  owner: Element,
+  image: HTMLImageElement,
+  timingPerformance: Performance | undefined,
+  timingMetadata: WechatTimingMetadata,
+): void {
+  // Keep the sanitized math-block as the single decoration and horizontal
+  // overflow owner. Only its content is replaced, so padding, border, radius,
+  // background and opacity are not baked into or duplicated on the PNG.
+  const ownerStyle = (owner as Element & { style?: CSSStyleDeclaration }).style;
+  const decorationProperties = [
+    'padding-top',
+    'padding-right',
+    'padding-bottom',
+    'padding-left',
+    'border-top-width',
+    'border-right-width',
+    'border-bottom-width',
+    'border-left-width',
+    'border-top-style',
+    'border-right-style',
+    'border-bottom-style',
+    'border-left-style',
+    'border-top-color',
+    'border-right-color',
+    'border-bottom-color',
+    'border-left-color',
+    'border-radius',
+    'background',
+    'background-color',
+    'background-image',
+    'background-position',
+    'background-repeat',
+    'background-size',
+    'opacity',
+  ];
+  replaceDeclarations(
+    owner,
+    decorationProperties.flatMap((property) => {
+      const value = ownerStyle?.getPropertyValue(property).trim() ?? '';
+      return value ? [`${property}:${value}`] : [];
+    }),
+  );
+  replaceDeclarations(
+    owner,
+    [
+      'width:100%',
+      'min-width:0',
+      'max-width:100%',
+      'height:auto',
+      'max-height:none',
+      'box-sizing:border-box',
+    ],
+    true,
+  );
+  appendDeclarations(
+    image,
+    ['display:block', 'margin-left:auto', 'margin-right:auto'],
+    true,
+  );
+  WECHAT_PNG_GENERATED_IMAGES.add(image);
+  runWechatSyncTiming(
+    timingPerformance,
+    WECHAT_COPY_TIMING_NAMES.replacement,
+    timingMetadata,
+    () => owner.replaceChildren(image),
+  );
+}
+
 export function inlineVerticalAlignValue(sourceStyle: CSSStyleDeclaration | undefined, measuredValue: number): string {
   const sourceValue = sourceStyle?.getPropertyValue('vertical-align').trim().toLowerCase();
   if ('top' === sourceValue || 'bottom' === sourceValue) return sourceValue;
@@ -94,6 +163,15 @@ export function replaceCompletedVisuals(
         const sourceStyle = (completed.candidate.element as Element & { style?: CSSStyleDeclaration }).style;
         const sourceDisplay = sourceStyle?.getPropertyValue('display').trim().toLowerCase() ?? '';
         const inlineLayout = completed.rasterized.inlineLayout;
+        if ('math-block' === completed.mode && 'content' === completed.mathCapture) {
+          replaceMathBlockContent(
+            completed.candidate.element,
+            image,
+            timingPerformance,
+            timingMetadata(completedIndex, completed.candidate.kind, 'sync'),
+          );
+          continue;
+        }
         const responsiveMermaid =
           'mermaid-intrinsic' === completed.mode ||
           ('mermaid-root' === completed.mode && completed.layoutMagnification > 1 + 1e-6);

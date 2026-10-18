@@ -135,6 +135,32 @@
   border-collapse: collapse;
 }
 
+/* The generated table section is the bounded horizontal overflow owner. A
+ * direct content-sized table fills short rows while allowing wide rows to
+ * scroll locally. Only the generated owner is affected; nested/custom tables
+ * keep their existing contract. */
+.easymde-rendered-content :is(.table-container.easymde-table-container) {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Keep this lower-specificity baseline so an authored/theme/inline table
+ * minimum remains authoritative when it is explicitly larger or different. */
+.easymde-rendered-content :where(.table-container.easymde-table-container) > table {
+  min-width: 100%;
+}
+
+.easymde-rendered-content :is(.table-container.easymde-table-container) > table {
+  width: max-content;
+  max-width: none;
+}
+
 .easymde-rendered-content th,
 .easymde-rendered-content td {
   padding: 8px 10px;

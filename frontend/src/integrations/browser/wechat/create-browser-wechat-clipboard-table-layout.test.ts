@@ -5,9 +5,10 @@ import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard'
 import {
   blobText,
   declaration,
+  declaredStyleValue,
+  dispatchSuccessfulLegacyCopy,
   installClipboardTestEnvironment,
-  prepareClipboard,
-  dispatchSuccessfulLegacyCopy
+  prepareClipboard
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -210,15 +211,15 @@ describe('createBrowserWechatClipboard', () => {
     expect(scrollOwnerStyle).toContain('overflow-x:auto!important');
     expect(scrollOwnerStyle).toContain('overflow-y:hidden!important');
     expect(tableStyle).toContain('display:block!important');
-    expect(tableStyle).toContain('width:100%!important');
-    expect(tableStyle).toContain('max-width:100%!important');
+    expect(declaredStyleValue(table as Element, 'width')).toBe('100%');
+    expect(declaredStyleValue(table as Element, 'max-width')).toBe('100%');
     expect(tableStyle).toContain('overflow-x:visible!important');
     expect(tableStyle).toContain('overflow-y:visible!important');
     expect(tableStyle).not.toContain('display:table!important');
     expect(tableStyle).toContain('margin-left:0!important');
   });
 
-  it('keeps full-width table sizing while moving overflow to its wrapper', async () => {
+  it('keeps filled tables intrinsic while moving overflow to their wrapper', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
     const preview = document.createElement('article');
@@ -262,11 +263,12 @@ describe('createBrowserWechatClipboard', () => {
     const tableStyle = table?.getAttribute('style') ?? '';
     expect(table?.parentElement?.tagName).toBe('SECTION');
     expect(tableStyle).toContain('display:table!important');
-    expect(tableStyle).toContain('width:100%!important');
-    expect(tableStyle).toContain('max-width:100%!important');
+    expect(tableStyle).toContain('width:max-content!important');
+    expect(tableStyle).toContain('min-width:100%!important');
+    expect(tableStyle).toContain('max-width:none!important');
     expect(tableStyle).toContain('margin-left:0!important');
     expect(tableStyle).toContain('margin-right:0!important');
-    expect(tableStyle).not.toContain('width:max-content!important');
+    expect(declaredStyleValue(table as Element, 'width')).toBe('max-content');
     expect(table?.parentElement?.getAttribute('style')).toContain('overflow-x:auto!important');
   });
 
@@ -354,6 +356,9 @@ describe('createBrowserWechatClipboard', () => {
     const tableStyle = outputTable?.getAttribute('style') ?? '';
     const wrapperStyle = outputWrapper?.getAttribute('style') ?? '';
     expect(outputWrapper?.tagName).toBe('SECTION');
+    expect(tableStyle).toContain('width:max-content!important');
+    expect(tableStyle).toContain('max-width:none!important');
+    expect(declaredStyleValue(outputTable as Element, 'width')).toBe('max-content');
     expect(tableStyle).toContain('min-width:520px');
     expect(tableStyle).not.toContain('min-width:0!important');
     expect(tableStyle).toContain('overflow-x:visible!important');

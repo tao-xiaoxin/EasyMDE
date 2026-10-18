@@ -2084,16 +2084,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
   float: none;
 }
 
-.easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container) {
-    display: block;
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-}
-
 .easymde-editor:not(.is-immersive) .easymde-rendered-content :is(p, li, blockquote, figcaption, h1, h2, h3, h4, h5, h6, a) {
     overflow-wrap: anywhere;
 }

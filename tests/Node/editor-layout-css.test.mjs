@@ -950,8 +950,8 @@ test('all preview modes use one canvas without an additional paper wrapper', () 
 
 test('all preview table surfaces use one shared horizontal scroll owner', () => {
   const wrapperRule = cssRule(
-    css,
-    '.easymde-editor .easymde-rendered-content :is(.table-container, .easymde-table-container)'
+    frontendCss,
+    '.easymde-rendered-content :is(.table-container.easymde-table-container)'
   );
   assertDeclaration(wrapperRule, 'display', 'block');
   assertDeclaration(wrapperRule, 'box-sizing', 'border-box');
@@ -963,6 +963,23 @@ test('all preview table surfaces use one shared horizontal scroll owner', () => 
 
   const tableRule = cssRule(frontendCss, '.easymde-rendered-content table');
   assertDeclaration(tableRule, 'width', '100%');
+  const filledMinimumRule = cssRule(
+    frontendCss,
+    '.easymde-rendered-content :where(.table-container.easymde-table-container) > table'
+  );
+  assertDeclaration(filledMinimumRule, 'min-width', '100%');
+  assert.doesNotMatch(filledMinimumRule, /!important/s, 'explicit table minimums must be able to override the fill baseline');
+  const intrinsicTableRule = cssRule(
+    frontendCss,
+    '.easymde-rendered-content :is(.table-container.easymde-table-container) > table'
+  );
+  assertDeclaration(intrinsicTableRule, 'width', 'max-content');
+  assertDeclaration(intrinsicTableRule, 'max-width', 'none');
+  assert.doesNotMatch(
+    frontendCss,
+    /:is\(\.table-container\.easymde-table-container\)\s+table\s*\{/s,
+    'the table owner must not rewrite nested tables such as KaTeX internals'
+  );
   assert.doesNotMatch(
     css,
     /\.easymde-editor[^{}]*\.easymde-rendered-content[^{}]*table\s*\{[^}]*table-layout\s*:/s,

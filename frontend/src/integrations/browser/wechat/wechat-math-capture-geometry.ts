@@ -1,6 +1,8 @@
-import type {
-  WechatVisualInlineLayout,
-  WechatVisualRasterizationRequest,
+import {
+  WechatVisualRasterizationError,
+  type WechatVisualInlineLayout,
+  type WechatVisualRasterizationMathCapture,
+  type WechatVisualRasterizationRequest,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
@@ -39,6 +41,76 @@ export type CaptureGeometry = Readonly<{
   typography: CaptureTypography;
   width: number;
 }>;
+
+function topLevelKaTeXVisualRoots(source: Element): Element[] {
+  const displayRoots = Array.from(source.querySelectorAll('.katex-display')).filter((element) => {
+    return !element.parentElement?.closest('.katex-display');
+  });
+  if (displayRoots.length) return displayRoots;
+  return Array.from(source.querySelectorAll('.katex')).filter((element) => {
+    return !element.parentElement?.closest('.katex');
+  });
+}
+
+function neutralizeMathShellLayout(root: Element): void {
+  root.querySelectorAll('.katex-display, .katex, .katex-html').forEach((element) => {
+    const style = (element as Element & { style?: CSSStyleDeclaration }).style;
+    if (!style) return;
+    style.setProperty('width', 'max-content', 'important');
+    style.setProperty('min-width', '0', 'important');
+    style.setProperty('max-width', 'none', 'important');
+    style.setProperty('inline-size', 'max-content', 'important');
+    style.setProperty('min-inline-size', '0', 'important');
+    style.setProperty('max-inline-size', 'none', 'important');
+    const isOuterMathShell = element.matches('.katex-display')
+      || element.matches('.katex') && !element.parentElement?.closest('.katex-display');
+    if (isOuterMathShell) {
+      style.setProperty('margin', '0', 'important');
+      style.setProperty('margin-inline', '0', 'important');
+      style.setProperty('text-align', 'start', 'important');
+    }
+  });
+}
+
+/**
+ * Build the content-only root used by both geometry measurement and SVG
+ * serialization. The source math-block owns its decoration and scroll frame;
+ * this detached root retains the complete KaTeX visual wrapper tree while
+ * neutralizing only its column-sized outer allocation.
+ */
+export function createMathBlockContentRoot(
+  source: Element,
+  document: Document,
+  mathCapture: WechatVisualRasterizationMathCapture,
+): Element {
+  if ('content' !== mathCapture) {
+    throw new WechatVisualRasterizationError('wechat-png-image-failed');
+  }
+  const root = document.createElement('div');
+  root.setAttribute(
+    'style',
+    'display:block;width:max-content;height:max-content;max-width:none;max-height:none;'
+      + 'margin:0!important;padding:0!important;border:0!important;position:static!important;'
+      + 'inset:auto!important;overflow:visible!important;box-sizing:border-box;'
+      + 'text-align:start!important;white-space:normal!important;',
+  );
+  const visualRoots = topLevelKaTeXVisualRoots(source);
+  const nodes = visualRoots.length
+    ? visualRoots
+    : Array.from(source.childNodes).filter((node) => {
+      return !(node instanceof Element) || !node.matches('.katex-mathml, math');
+    });
+  nodes.forEach((node) => {
+    root.appendChild(node.cloneNode(true));
+  });
+  removeMathMlFallback(root);
+  neutralizeMathShellLayout(root);
+  if (!root.childNodes.length) {
+    throw new WechatVisualRasterizationError('wechat-png-image-failed');
+  }
+  applyCaptureTypography(root, captureTypography(document.defaultView?.getComputedStyle(source)));
+  return root;
+}
 
 export function normalizeCaptureRoot(element: Element): void {
   const style = (element as Element & { style?: CSSStyleDeclaration }).style;
@@ -206,6 +278,53 @@ function clippedDescendantRect(
   };
 }
 
+type PaintUnion = Readonly<{
+  height: number;
+  originX: number;
+  originY: number;
+  width: number;
+}>;
+
+function paintUnion(
+  clone: Element,
+  hostRect: DOMRect,
+  rootRect: DOMRect,
+  document: Document,
+  clipCache: WeakMap<Element, CaptureClipAncestor>,
+  includeOverflowX: boolean,
+  includeOverflowY: boolean,
+): PaintUnion {
+  const minX = { value: rootRect.left - hostRect.left };
+  const minY = { value: rootRect.top - hostRect.top };
+  const maxX = { value: rootRect.right - hostRect.left };
+  const maxY = { value: rootRect.bottom - hostRect.top };
+  if (includeOverflowX || includeOverflowY) {
+    for (const descendant of Array.from(clone.querySelectorAll('*'))) {
+      if (isMathMlFallback(descendant)) continue;
+      const descendantRect = clippedDescendantRect(descendant, clone, document, clipCache);
+      if (!descendantRect || descendantRect.width <= 0 || descendantRect.height <= 0) continue;
+      if (includeOverflowX) {
+        minX.value = Math.min(minX.value, descendantRect.left - hostRect.left);
+        maxX.value = Math.max(maxX.value, descendantRect.right - hostRect.left);
+      }
+      if (includeOverflowY) {
+        minY.value = Math.min(minY.value, descendantRect.top - hostRect.top);
+        maxY.value = Math.max(maxY.value, descendantRect.bottom - hostRect.top);
+      }
+    }
+  }
+  const minCaptureX = Math.floor(minX.value);
+  const minCaptureY = Math.floor(minY.value);
+  const maxCaptureX = Math.ceil(maxX.value);
+  const maxCaptureY = Math.ceil(maxY.value);
+  return {
+    height: maxCaptureY - minCaptureY,
+    originX: minCaptureX,
+    originY: minCaptureY,
+    width: maxCaptureX - minCaptureX,
+  };
+}
+
 export function removeMathMlFallback(root: Element): void {
   root.querySelectorAll('.katex-mathml, math').forEach((element) => {
     element.remove();
@@ -354,6 +473,7 @@ export function captureBounds(
     };
   }
 
+  const mathBlockContent = 'math' === request.kind && 'content' === request.mathCapture;
   const inlineOverflow = inlineOverflowValues(request.source, document);
   const preservesInlineConstraints = Boolean(inlineOverflow);
   const clipsInlineX = Boolean(inlineOverflow && inlineOverflowClips(inlineOverflow.x));
@@ -364,20 +484,24 @@ export function captureBounds(
   );
   const scrollsInlineX = Boolean(inlineOverflow && inlineOverflowScrolls(inlineOverflow.x));
   const scrollsInlineY = Boolean(inlineOverflow && inlineOverflowScrolls(inlineOverflow.y));
-  let width = clipsInlineX || !scrollsInlineX && preservesInlineConstraints
-    ? request.width
-    : Math.max(
-      request.width,
-      elementLayoutDimension(request.source, 'scrollWidth') ?? request.width,
-    );
-  let height = clipsInlineY || !scrollsInlineY && preservesInlineConstraints
-    ? request.height
-    : Math.max(
-      request.height,
-      elementLayoutDimension(request.source, 'scrollHeight') ?? request.height,
-    );
-  let hasWidthBound = width > request.width;
-  let hasHeightBound = height > request.height;
+  let width = mathBlockContent
+    ? 0
+    : clipsInlineX || !scrollsInlineX && preservesInlineConstraints
+      ? request.width
+      : Math.max(
+        request.width,
+        elementLayoutDimension(request.source, 'scrollWidth') ?? request.width,
+      );
+  let height = mathBlockContent
+    ? 0
+    : clipsInlineY || !scrollsInlineY && preservesInlineConstraints
+      ? request.height
+      : Math.max(
+        request.height,
+        elementLayoutDimension(request.source, 'scrollHeight') ?? request.height,
+      );
+  let hasWidthBound = !mathBlockContent && width > request.width;
+  let hasHeightBound = !mathBlockContent && height > request.height;
   const inlineLayout = measureInlineAllocation(request.source, document, request.inlineParent);
   let originX = 0;
   let originY = 0;
@@ -388,6 +512,9 @@ export function captureBounds(
   const requiresBaseline = isInlineMathRoot(request.source, document);
   const body = document.body;
   if (!body) {
+    if (mathBlockContent) {
+      throw new WechatVisualRasterizationError('wechat-png-size-invalid');
+    }
     return {
       height,
       inlineOverflow,
@@ -403,7 +530,9 @@ export function captureBounds(
 
   // Measure an isolated clone so full scroll content is captured without mutating Preview.
   const host = document.createElement('div');
-  const clone = request.source.cloneNode(true) as Element;
+  const clone = mathBlockContent
+    ? createMathBlockContentRoot(request.source, document, request.mathCapture)
+    : request.source.cloneNode(true) as Element;
   removeMathMlFallback(clone);
   normalizeCaptureRoot(clone);
   const cloneStyle = (clone as Element & { style?: CSSStyleDeclaration }).style;
@@ -437,38 +566,34 @@ export function captureBounds(
     const rect = clone.getBoundingClientRect();
     captureRootOffsetX = rect.left - hostRect.left;
     captureRootOffsetY = rect.top - hostRect.top;
-    const minX = { value: rect.left - hostRect.left };
-    const minY = { value: rect.top - hostRect.top };
-    const maxX = { value: rect.right - hostRect.left };
-    const maxY = { value: rect.bottom - hostRect.top };
     if (inline) {
-      const includeOverflowX = !clipsInlineX;
-      const includeOverflowY = !clipsInlineY;
-      if (includeOverflowX || includeOverflowY) {
-        for (const descendant of Array.from(clone.querySelectorAll('*'))) {
-          if (isMathMlFallback(descendant)) continue;
-          const descendantRect = clippedDescendantRect(descendant, clone, document, clipCache);
-          if (!descendantRect || descendantRect.width <= 0 || descendantRect.height <= 0) continue;
-          if (includeOverflowX) {
-            minX.value = Math.min(minX.value, descendantRect.left - hostRect.left);
-            maxX.value = Math.max(maxX.value, descendantRect.right - hostRect.left);
-          }
-          if (includeOverflowY) {
-            minY.value = Math.min(minY.value, descendantRect.top - hostRect.top);
-            maxY.value = Math.max(maxY.value, descendantRect.bottom - hostRect.top);
-          }
-        }
-      }
-      const minCaptureX = Math.floor(minX.value);
-      const minCaptureY = Math.floor(minY.value);
-      const maxCaptureX = Math.ceil(maxX.value);
-      const maxCaptureY = Math.ceil(maxY.value);
-      originX = minCaptureX;
-      originY = minCaptureY;
-      const visualWidth = maxCaptureX - minCaptureX;
-      const visualHeight = maxCaptureY - minCaptureY;
-      if (Number.isFinite(visualWidth)) width = Math.max(width, visualWidth);
-      if (Number.isFinite(visualHeight)) height = Math.max(height, visualHeight);
+      const union = paintUnion(
+        clone,
+        hostRect,
+        rect,
+        document,
+        clipCache,
+        !clipsInlineX,
+        !clipsInlineY,
+      );
+      originX = union.originX;
+      originY = union.originY;
+      width = Math.max(width, union.width);
+      height = Math.max(height, union.height);
+    } else if (mathBlockContent) {
+      const rectWidth = finiteLayoutDimension(rect.width);
+      const rectHeight = finiteLayoutDimension(rect.height);
+      if (rectWidth) width = Math.max(width, rectWidth);
+      if (rectHeight) height = Math.max(height, rectHeight);
+      const cloneWidth = elementLayoutDimension(clone, 'scrollWidth') ?? 0;
+      const cloneHeight = elementLayoutDimension(clone, 'scrollHeight') ?? 0;
+      width = Math.max(width, cloneWidth);
+      height = Math.max(height, cloneHeight);
+      const union = paintUnion(clone, hostRect, rect, document, clipCache, true, true);
+      originX = union.originX;
+      originY = union.originY;
+      width = Math.max(width, union.width);
+      height = Math.max(height, union.height);
     } else {
       const rectWidth = finiteLayoutDimension(rect.width);
       const rectHeight = finiteLayoutDimension(rect.height);
@@ -500,11 +625,17 @@ export function captureBounds(
         }
       }
     }
+
   } finally {
     host.remove();
   }
+  if (mathBlockContent && (!finiteLayoutDimension(width) || !finiteLayoutDimension(height))) {
+    throw new WechatVisualRasterizationError('wechat-png-size-invalid');
+  }
   return {
-    height: Math.max(request.height, Math.ceil(height)),
+    height: mathBlockContent
+      ? Math.ceil(height)
+      : Math.max(request.height, Math.ceil(height)),
     inlineLayout: inlineLayout
       ? {
         ...inlineLayout,
@@ -526,7 +657,9 @@ export function captureBounds(
     preservesInlineConstraints,
     requiresBaseline,
     typography,
-    width: Math.max(request.width, Math.ceil(width)),
+    width: mathBlockContent
+      ? Math.ceil(width)
+      : Math.max(request.width, Math.ceil(width)),
   };
 }
 

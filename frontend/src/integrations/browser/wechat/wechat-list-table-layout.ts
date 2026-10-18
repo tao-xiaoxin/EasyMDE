@@ -512,6 +512,15 @@ export function tableScrollOwnerDeclarations(metadata: TableScrollOwnerMetadata)
   ];
 }
 
+function tableIntrinsicSizingDeclarations(element: Element, filled: boolean): string[] {
+  const declarations = ['width:max-content', 'max-width:none'];
+  if (!filled) return declarations;
+
+  const minWidth = (element as HTMLElement).style.getPropertyValue('min-width').trim().toLowerCase();
+  if (!minWidth || ['0', '0%', '0px', 'auto'].includes(minWidth)) declarations.push('min-width:100%');
+  return declarations;
+}
+
 export function wrapTableScrollOwners(root: HTMLElement): void {
   const document = root.ownerDocument;
   root.querySelectorAll('table').forEach((table) => {
@@ -538,27 +547,19 @@ export function wrapTableScrollOwners(root: HTMLElement): void {
     markWechatOwnedScrollOwner(wrapper);
     parent.insertBefore(wrapper, table);
     wrapper.appendChild(table);
+    const preservesBlockScroll = 'block' === (table as HTMLElement).style.display;
+    const preservesFullWidth = FULL_WIDTH_TABLE_CLONES.has(table);
     appendDeclarations(
       table,
-      FULL_WIDTH_TABLE_CLONES.has(table)
-        ? [
-            'width:100%',
-            'max-width:100%',
-            'margin-left:0',
-            'margin-right:0',
-            'overflow:visible',
-            'overflow-x:visible',
-            'overflow-y:visible'
-          ]
-        : [
-            'width:max-content',
-            'max-width:none',
-            'margin-left:auto',
-            'margin-right:auto',
-            'overflow:visible',
-            'overflow-x:visible',
-            'overflow-y:visible'
-          ],
+      [
+        ...(preservesFullWidth && preservesBlockScroll
+          ? ['width:100%', 'max-width:100%']
+          : tableIntrinsicSizingDeclarations(table, preservesFullWidth)),
+        ...(preservesFullWidth ? ['margin-left:0', 'margin-right:0'] : ['margin-left:auto', 'margin-right:auto']),
+        'overflow:visible',
+        'overflow-x:visible',
+        'overflow-y:visible'
+      ],
       true
     );
     const metadata = TABLE_SCROLL_OWNER_METADATA.get(table);
@@ -578,8 +579,9 @@ export function normalizePortableTables(normalized: HTMLElement): void {
       preservesFullWidth
         ? [
             preservesBlockScroll ? 'display:block' : 'display:table',
-            'width:100%',
-            'max-width:100%',
+            ...(preservesBlockScroll
+              ? ['width:100%', 'max-width:100%']
+              : tableIntrinsicSizingDeclarations(element, true)),
             'margin-left:0',
             'margin-right:0',
             ...(preservesBlockScroll ? [] : ['table-layout:auto', 'border-collapse:collapse']),
@@ -591,8 +593,7 @@ export function normalizePortableTables(normalized: HTMLElement): void {
         : preservesBlockScroll
           ? [
               'display:block',
-              'width:max-content',
-              'max-width:none',
+              ...tableIntrinsicSizingDeclarations(element, false),
               'margin-left:auto',
               'margin-right:auto',
               'overflow:visible',
@@ -602,8 +603,7 @@ export function normalizePortableTables(normalized: HTMLElement): void {
             ]
           : [
               'display:table',
-              'width:max-content',
-              'max-width:none',
+              ...tableIntrinsicSizingDeclarations(element, false),
               'margin-left:auto',
               'margin-right:auto',
               'table-layout:auto',

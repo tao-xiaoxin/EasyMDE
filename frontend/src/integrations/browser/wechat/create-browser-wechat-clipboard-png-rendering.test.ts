@@ -11,6 +11,44 @@ import {
   readyPreview
 } from './wechat-clipboard-test-fixtures';
 
+const MATH_CAPTURE_SIZE_VALUES: Readonly<Record<string, string>> = {
+  'block-size': 'auto',
+  height: 'auto',
+  'inline-size': 'auto',
+  'max-block-size': 'none',
+  'max-height': 'none',
+  'max-inline-size': 'none',
+  'max-width': 'none',
+  'min-block-size': '0px',
+  'min-height': '0px',
+  'min-inline-size': '0px',
+  'min-width': '0px',
+  width: 'auto'
+};
+const MATH_CAPTURE_SIZE_PROPERTIES = new Set(Object.keys(MATH_CAPTURE_SIZE_VALUES));
+const MATH_CAPTURE_SAFE_PAINT_VALUES: Readonly<Record<string, string>> = {
+  clip: 'auto',
+  'clip-path': 'none',
+  contain: 'none',
+  'content-visibility': 'visible',
+  'mask-image': 'none',
+  overflow: 'visible',
+  'overflow-x': 'visible',
+  'overflow-y': 'visible',
+  'writing-mode': 'horizontal-tb'
+};
+function setMathCaptureSizeProof(element: Element): void {
+  Object.defineProperty(element, 'computedStyleMap', {
+    configurable: true,
+    value: () => ({
+      get: (property: string) => {
+        if (!MATH_CAPTURE_SIZE_PROPERTIES.has(property)) throw new TypeError(`unsupported size property: ${property}`);
+        return { value: MATH_CAPTURE_SIZE_VALUES[property] };
+      }
+    })
+  });
+}
+
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
 
@@ -212,7 +250,7 @@ describe('createBrowserWechatClipboard', () => {
       async ({ height, kind, source, width }: { height: number; kind: string; source: Element; width: number }) => {
         const inline = source.classList.contains('easymde-math-inline');
         requests.push({ height, inline, kind, width });
-        const outputWidth = inline ? 40 : 'math' === kind ? 547 : width;
+        const outputWidth = inline ? 40 : 'math' === kind ? 134 : width;
         if ('math' === kind) {
           expect(source.querySelector('.katex-mathml')).toBeNull();
         }
@@ -243,6 +281,8 @@ describe('createBrowserWechatClipboard', () => {
     const mermaid = preview.querySelector('.easymde-mermaid');
     const inlineMath = preview.querySelector('.easymde-math-inline');
     if (!math || !mermaid || !inlineMath) throw new Error('visual roots missing');
+    setMathCaptureSizeProof(math);
+    math.querySelectorAll('.katex-display, .katex, .katex-html').forEach(setMathCaptureSizeProof);
     Object.defineProperties(math, {
       getBoundingClientRect: { configurable: true, value: () => ({ height: 30, width: 180 }) },
       scrollHeight: { configurable: true, value: 30 },
@@ -264,6 +304,7 @@ describe('createBrowserWechatClipboard', () => {
         if (pseudoElement) return declaration({});
         if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
           return declaration({
+            ...MATH_CAPTURE_SAFE_PAINT_VALUES,
             display: 'block',
             height: '30px',
             'margin-left': '12px',
@@ -303,7 +344,7 @@ describe('createBrowserWechatClipboard', () => {
             'vertical-align': 'baseline'
           });
         }
-        if (element.closest('.katex')) return declaration({ display: 'inline', 'white-space': 'nowrap' });
+        if (element.closest('.katex')) return declaration({ ...MATH_CAPTURE_SAFE_PAINT_VALUES, display: 'inline', 'white-space': 'nowrap' });
         return declaration({ display: 'block' });
       },
       getSelection: window.getSelection.bind(window),
@@ -330,7 +371,7 @@ describe('createBrowserWechatClipboard', () => {
     holder.innerHTML = await blobText(htmlBlob);
     const images = [...holder.querySelectorAll('img[src^="https://example.test/"]')];
     expect(images).toHaveLength(3);
-    expect(images[0]?.getAttribute('style')).toContain('width:547px!important');
+    expect(images[0]?.getAttribute('style')).toContain('width:134px!important');
     expect(images[0]?.getAttribute('style')).toContain('max-width:none!important');
     expect(images[0]?.getAttribute('style')).toContain('display:block');
     expect(images[0]?.getAttribute('style')).toContain('margin-left:auto!important');
@@ -350,9 +391,14 @@ describe('createBrowserWechatClipboard', () => {
     expect(mathWrapperStyle).toContain('vertical-align:middle');
     expect(mathWrapperStyle.match(/margin-left:12px/g)).toHaveLength(1);
     expect(mathWrapperStyle.match(/margin-right:14px/g)).toHaveLength(1);
-    expect(mathWrapperStyle).not.toMatch(/(?:^|;)padding-/);
-    expect(mathWrapperStyle).not.toMatch(/(?:^|;)border-/);
-    expect(mathWrapperStyle).not.toMatch(/(?:^|;)background/);
+    expect(mathWrapperStyle).toContain('padding-top:8px');
+    expect(mathWrapperStyle).toContain('padding-right:8px');
+    expect(mathWrapperStyle).toContain('padding-bottom:8px');
+    expect(mathWrapperStyle).toContain('padding-left:8px');
+    expect(mathWrapperStyle).toContain('background:blue');
+    expect(mathWrapperStyle.match(/padding-top:8px/g)).toHaveLength(1);
+    expect(mathWrapperStyle.match(/background:blue/g)).toHaveLength(1);
+    expect(mathWrapperStyle.match(/border-top-width:2px/g)).toHaveLength(1);
     expect(images[1]?.getAttribute('style')).toContain('width:80px!important');
     expect(images[1]?.getAttribute('style')).toContain('display:inline-block');
     expect(images[1]?.getAttribute('style')).toContain('margin-left:7px');

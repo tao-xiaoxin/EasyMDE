@@ -18,6 +18,17 @@ installWechatRasterizerTestHooks();
 describe('createBrowserWechatVisualRasterizer', () => {
   it('wraps math clones in SVG foreignObject without changing the source', async () => {
     const canvasContext = { drawImage: vi.fn() };
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const width = this.classList.contains('easymde-math-block') ? 80 : 80;
+      return {
+        bottom: 30,
+        height: 30,
+        left: -100000,
+        right: -100000 + width,
+        top: 0,
+        width,
+      } as DOMRect;
+    });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(canvasContext as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation((callback) => {
@@ -39,6 +50,16 @@ describe('createBrowserWechatVisualRasterizer', () => {
 
   it('removes outer math margin and position offsets only from the capture clone', async () => {
     stubCanvas();
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      return {
+        bottom: 30,
+        height: 30,
+        left: -100000,
+        right: -99920,
+        top: 0,
+        width: 80,
+      } as DOMRect;
+    });
     const source = document.createElement('div');
     source.className = 'easymde-math-block';
     source.setAttribute(
@@ -530,25 +551,6 @@ describe('createBrowserWechatVisualRasterizer', () => {
 
     expect(result.width).toBe(288);
     expect(result.height).toBe(61);
-  });
-
-  it('uses full math scroll bounds while retaining the requested minimum size', async () => {
-    stubCanvas();
-    const source = document.createElement('div');
-    source.className = 'easymde-math-block';
-    source.innerHTML = '<span class="katex"><span class="katex-html">wide formula</span></span>';
-    Object.defineProperty(source, 'scrollWidth', { configurable: true, value: 547 });
-    Object.defineProperty(source, 'scrollHeight', { configurable: true, value: 25 });
-
-    const result = await createBrowserWechatVisualRasterizer(runtime()).rasterize(
-      request(source, 'math', 1, 180, 24),
-    );
-
-    expect(result.width).toBe(547);
-    expect(result.height).toBe(25);
-    expect(result.pixelCount).toBe(547 * 25);
-    expect(serializedImage()).toContain('width="547"');
-    expect(serializedImage()).toContain('height="25"');
   });
 
   it('ignores nonvisual accessibility descendants when measuring detached math', async () => {

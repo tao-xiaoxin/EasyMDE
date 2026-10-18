@@ -38,6 +38,61 @@ function conversionContext(root: HTMLElement): WechatPngConversionContext {
 }
 
 describe('replaceCompletedVisuals', () => {
+  it('keeps one decorated block owner and replaces only its formula content', () => {
+    const root = document.createElement('article');
+    root.setAttribute('data-easymde-preview-html-sink', 'true');
+    root.innerHTML = '<div class="easymde-math-block" style="display:block;width:547px;height:106px;'
+      + 'margin:12px auto;padding-top:12px;padding-right:12px;padding-bottom:12px;padding-left:12px;'
+      + 'border-top-width:1px;border-right-width:1px;border-bottom-width:1px;border-left-width:1px;'
+      + 'border-top-style:solid;border-right-style:solid;border-bottom-style:solid;border-left-style:solid;'
+      + 'border-top-color:#dcdcde;border-right-color:#dcdcde;border-bottom-color:#dcdcde;border-left-color:#dcdcde;'
+      + 'border-radius:8px;background:#fbfbfc;text-align:center;overflow-x:auto;overflow-y:hidden;opacity:.5">'
+      + '<span class="katex"><span class="katex-html"><span class="base">old</span></span></span></div>';
+    const candidate = root.querySelector<HTMLElement>('.easymde-math-block');
+    if (!candidate) throw new Error('wechat-png-replacement-test-math-root-missing');
+    const completed: CompletedUpload = {
+      candidate: { element: candidate, kind: 'math', source: candidate },
+      captureSize: { height: 106, width: 547 },
+      kind: 'math',
+      mathCapture: 'content',
+      mode: 'math-block',
+      rasterized: {
+        file: new File(['png'], 'math.png', { type: 'image/png' }),
+        height: 32,
+        pixelCount: 134 * 32,
+        width: 134,
+      },
+      url: 'https://example.test/math.png',
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = candidate.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-math-image-missing');
+    expect(candidate).toBe(root.querySelector('.easymde-math-block'));
+    expect(candidate.children).toHaveLength(1);
+    expect(candidate.querySelector('.katex')).toBeNull();
+    expect(candidate.getAttribute('style')).toContain('padding-top:12px');
+    expect(candidate.getAttribute('style')).toContain('border-top-width:1px');
+    expect(candidate.getAttribute('style')).toContain('border-radius:8px');
+    expect(candidate.getAttribute('style')).toContain('background:rgb(251, 251, 252)');
+    expect(candidate.getAttribute('style')).toContain('opacity:0.5');
+    expect(candidate.getAttribute('style')).toContain('width:100%!important');
+    expect(candidate.getAttribute('style')).toContain('height:auto!important');
+    expect(candidate.getAttribute('style')?.match(/padding-top:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/background:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/opacity:/g)).toHaveLength(1);
+    expect(candidate.getAttribute('style')?.match(/overflow-x:auto/g)).toHaveLength(1);
+    expect(image.getAttribute('style')).toContain('width:134px!important');
+    expect(image.getAttribute('style')).toContain('height:32px!important');
+    expect(image.getAttribute('style')).toContain('margin-left:auto!important');
+    expect(image.getAttribute('style')).toContain('margin-right:auto!important');
+    expect(image.getAttribute('style')).not.toMatch(/(?:^|;)padding/);
+    expect(image.getAttribute('style')).not.toMatch(/(?:^|;)border/);
+    expect(image.getAttribute('style')).not.toContain('background');
+    expect(image.getAttribute('style')).not.toContain('opacity');
+    expect(image.getAttribute('style')).not.toContain('left:-');
+  });
   it('serializes one decisive width, max-width, and height declaration for a responsive Mermaid frame', () => {
     const { candidate, root, svg } = mermaidFixture();
     const completed: CompletedUpload = {

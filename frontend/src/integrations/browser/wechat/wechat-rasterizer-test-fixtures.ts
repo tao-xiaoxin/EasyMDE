@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 import type { BrowserWechatVisualRasterizerRuntime } from './create-browser-wechat-visual-rasterizer';
+import type {
+  WechatVisualRasterizationMathCapture,
+  WechatVisualRasterizationRequest,
+} from '../../../contracts/ports/wechat-visual-rasterization-port';
 
 export class ImageStub {
   crossOrigin = '';
@@ -177,19 +181,26 @@ export function request(
   inlineParent?: Element,
   layoutMagnification?: number,
   mermaidCapture?: 'intrinsic-viewport' | 'responsive-viewport',
+  mathCapture?: WechatVisualRasterizationMathCapture,
 ) {
+  const defaultMathCapture: WechatVisualRasterizationMathCapture = kind === 'math'
+    && source.matches('.easymde-math-block')
+    && 'block' === document.defaultView?.getComputedStyle(source).display
+    ? 'content'
+    : 'full-root';
   return {
     height,
     ...(inlineParent ? { inlineParent } : {}),
     kind,
     ...(layoutMagnification !== undefined ? { layoutMagnification } : {}),
     ...(mermaidCapture ? { mermaidCapture } : {}),
+    ...(kind === 'math' ? { mathCapture: mathCapture ?? defaultMathCapture } : {}),
     maxPixels: 16_777_216,
     scale,
     signal: new AbortController().signal,
     source,
     width,
-  } as const;
+  } as WechatVisualRasterizationRequest;
 }
 
 export function installWechatRasterizerTestHooks(): void {

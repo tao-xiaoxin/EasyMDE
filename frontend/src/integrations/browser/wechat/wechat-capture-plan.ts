@@ -28,12 +28,14 @@ import {
   mermaidResponsiveSourceOverflowIsSafe,
   mermaidRootPaintIsSafe,
   mermaidSourceUsesAutoBlockMargins,
+  mermaidTypedCssUnitText,
   mermaidViewBox,
   mermaidWideViewportIsSafe,
   unsafeMermaidDimensionRules,
 } from './wechat-mermaid-geometry';
 import type {
   WechatVisualRasterizationKind,
+  WechatVisualRasterizationMathCapture,
   WechatVisualRasterizationMermaidLayoutRole,
   WechatVisualRasterizationResult,
 } from '../../../contracts/ports/wechat-visual-rasterization-port';
@@ -63,6 +65,202 @@ export type VisualCandidate = Readonly<{
   source: Element;
 }>;
 
+export type WechatMathCaptureNodeSnapshot = Readonly<{
+  paintValues: Readonly<Record<string, string | null>>;
+  usedHeight: number | null;
+  usedWidth: number | null;
+  values: Readonly<Record<string, string | null>>;
+}>;
+
+export type WechatMathCaptureSnapshot = Readonly<{
+  owner: WechatMathCaptureNodeSnapshot;
+  shells: ReadonlyArray<WechatMathCaptureNodeSnapshot>;
+}>;
+
+const MATH_CAPTURE_TYPED_SIZE_PROPERTIES = [
+  'block-size',
+  'height',
+  'inline-size',
+  'max-block-size',
+  'max-height',
+  'max-inline-size',
+  'max-width',
+  'min-block-size',
+  'min-height',
+  'min-inline-size',
+  'min-width',
+  'width',
+] as const;
+
+const MATH_CAPTURE_PAINT_PROPERTIES = [
+  'clip',
+  'clip-path',
+  'contain',
+  'content-visibility',
+  'display',
+  'mask-image',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'writing-mode',
+] as const;
+
+const MATH_SHELL_OVERFLOW_VALUES = new Set(['auto', 'clip', 'hidden', 'scroll']);
+const MATH_SHELL_CLIP_PROPERTIES = [
+  'clip',
+  'clip-path',
+  'contain',
+  'content-visibility',
+  'mask-image',
+] as const;
+
+const MATH_AUTO_MIN_VALUES = new Set(['0px', 'auto']);
+const MATH_AUTO_MAX_VALUES = new Set(['none']);
+
+type ComputedStyleMapLike = Readonly<{
+  get: (property: string) => unknown;
+}>;
+
+
+
+function typedCssText(styleMap: ComputedStyleMapLike, property: string): string | null {
+  const candidate = styleMap.get(property);
+  if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return null;
+  const value = (candidate as { value?: unknown }).value;
+  if ('string' === typeof value) return value.trim().toLowerCase() || null;
+  const unit = mermaidTypedCssUnitText((candidate as { unit?: unknown }).unit);
+  if ('number' !== typeof value || !Number.isFinite(value) || !unit) return null;
+  if ('percent' === unit) return `${value}%`;
+  return `${value}${unit}`.toLowerCase();
+}
+
+function usedCssPixel(computed: CSSStyleDeclaration, property: string): number | null {
+  const value = computed.getPropertyValue(property).trim();
+  const match = /^(-?\d+(?:\.\d+)?)px$/u.exec(value);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Read each math capture node's semantic Typed OM values exactly once while
+ * the native clone walker already owns the accepted computed-style snapshot.
+ * Missing or unknown Typed OM values remain unproven and therefore cannot
+ * authorize content capture; a throwing API remains an explicit failure.
+ */
+export function snapshotMathCaptureNode(
+  element: Element,
+  computed: CSSStyleDeclaration,
+): WechatMathCaptureNodeSnapshot {
+  const factory = (element as Element & { computedStyleMap?: () => ComputedStyleMapLike }).computedStyleMap;
+  const styleMap = 'function' === typeof factory ? factory.call(element) : null;
+  const values = Object.fromEntries(
+    MATH_CAPTURE_TYPED_SIZE_PROPERTIES.map((property) => [
+      property,
+      styleMap ? typedCssText(styleMap, property) : null,
+    ])
+  );
+  const paintValues = Object.fromEntries(
+    MATH_CAPTURE_PAINT_PROPERTIES.map((property) => [
+      property,
+      computed.getPropertyValue(property).trim().toLowerCase() || null,
+    ])
+  );
+  return {
+    paintValues,
+    usedHeight: usedCssPixel(computed, 'height'),
+    usedWidth: usedCssPixel(computed, 'width'),
+    values,
+  };
+}
+
+function value(snapshot: WechatMathCaptureNodeSnapshot, property: string): string | null {
+  return snapshot.values[property] ?? null;
+}
+
+function paintValue(snapshot: WechatMathCaptureNodeSnapshot, property: string): string | null {
+  return snapshot.paintValues[property] ?? null;
+}
+
+function writingModeIsHorizontal(valueText: string | null): boolean {
+  return 'horizontal-tb' === valueText;
+}
+
+function writingModeIsVertical(valueText: string | null): boolean {
+  return ['sideways-lr', 'sideways-rl', 'vertical-lr', 'vertical-rl'].includes(valueText ?? '');
+}
+
+function axisProperty(
+  snapshot: WechatMathCaptureNodeSnapshot,
+  axis: 'block' | 'inline',
+  dimension: 'max' | 'min' | 'size',
+): string | null {
+  const horizontal = writingModeIsHorizontal(paintValue(snapshot, 'writing-mode'));
+  const vertical = writingModeIsVertical(paintValue(snapshot, 'writing-mode'));
+  if (!horizontal && !vertical) return null;
+  const logicalBase = 'inline' === axis ? 'inline-size' : 'block-size';
+  const physicalBase = horizontal
+    ? ('inline' === axis ? 'width' : 'height')
+    : ('inline' === axis ? 'height' : 'width');
+  const logicalProperty = 'size' === dimension ? logicalBase : `${dimension}-${logicalBase}`;
+  const physicalProperty = 'size' === dimension ? physicalBase : `${dimension}-${physicalBase}`;
+  const logicalValue = value(snapshot, logicalProperty);
+  return logicalValue ?? value(snapshot, physicalProperty);
+}
+
+function axisIsAutoUnbounded(
+  snapshot: WechatMathCaptureNodeSnapshot,
+  axis: 'block' | 'inline',
+): boolean {
+  const size = axisProperty(snapshot, axis, 'size');
+  const min = axisProperty(snapshot, axis, 'min');
+  const max = axisProperty(snapshot, axis, 'max');
+  return 'auto' === size
+    && MATH_AUTO_MIN_VALUES.has(min ?? '')
+    && MATH_AUTO_MAX_VALUES.has(max ?? '');
+}
+
+function mathShellHasPaintConstraint(snapshot: WechatMathCaptureNodeSnapshot): boolean {
+  const overflow = paintValue(snapshot, 'overflow');
+  const overflowX = paintValue(snapshot, 'overflow-x');
+  const overflowY = paintValue(snapshot, 'overflow-y');
+  if (
+    !overflow
+    || !overflowX
+    || !overflowY
+    || MATH_SHELL_OVERFLOW_VALUES.has(overflow)
+    || MATH_SHELL_OVERFLOW_VALUES.has(overflowX)
+    || MATH_SHELL_OVERFLOW_VALUES.has(overflowY)
+  ) {
+    return true;
+  }
+  return MATH_SHELL_CLIP_PROPERTIES.some((property) => {
+    const propertyValue = paintValue(snapshot, property);
+    if (!propertyValue) return true;
+    if ('clip' === property) return 'auto' !== propertyValue;
+    if ('clip-path' === property || 'mask-image' === property) return 'none' !== propertyValue;
+    return !['none', 'normal', 'visible'].includes(propertyValue);
+  });
+}
+
+/**
+ * Consume only the frozen native snapshot. Content capture releases the
+ * horizontal shell allocation and the owner's replaced vertical dimensions
+ * only after both axes are proven auto-unbounded and every shell is free of a
+ * paint/overflow constraint.
+ */
+export function isMathBlockContentCaptureSnapshot(snapshot: WechatMathCaptureSnapshot): boolean {
+  return 'block' === paintValue(snapshot.owner, 'display')
+    && axisIsAutoUnbounded(snapshot.owner, 'inline')
+    && axisIsAutoUnbounded(snapshot.owner, 'block')
+    && snapshot.shells.length > 0
+    && snapshot.shells.every((shell) => {
+      return axisIsAutoUnbounded(shell, 'inline')
+        && axisIsAutoUnbounded(shell, 'block')
+        && !mathShellHasPaintConstraint(shell);
+    });
+}
+
 /**
  * Mermaid modes describe the source geometry sent to the rasterizer. Intrinsic
  * captures retain a pixel cap for fidelity, while the replacement owner applies
@@ -72,11 +270,13 @@ export type WechatCapturePlan =
   | Readonly<{
       mode: 'math-block';
       kind: 'math';
+      mathCapture: WechatVisualRasterizationMathCapture;
       captureSize: CaptureSize;
     }>
   | Readonly<{
       mode: 'math-inline';
       kind: 'math';
+      mathCapture: 'full-root';
       captureSize: CaptureSize;
       sourceRect: CaptureSize;
       inlineParent: Element | null;
@@ -126,15 +326,20 @@ export function capturePlanMode(
 
 export function createCapturePlan(
   candidate: VisualCandidate,
+  mathCaptureSnapshot: WechatMathCaptureSnapshot | null,
   sourceRect: CaptureSize,
   inlineVisual: boolean,
   inlineParent: Element | null,
   admission: CaptureAdmission | null
 ): WechatCapturePlan {
   if ('math' === candidate.kind) {
+    const mathCapture: WechatVisualRasterizationMathCapture = !inlineVisual
+      && null !== mathCaptureSnapshot && isMathBlockContentCaptureSnapshot(mathCaptureSnapshot)
+      ? 'content'
+      : 'full-root';
     return inlineVisual
-      ? { captureSize: sourceRect, inlineParent, kind: 'math', mode: 'math-inline', sourceRect }
-      : { captureSize: sourceRect, kind: 'math', mode: 'math-block' };
+      ? { captureSize: sourceRect, inlineParent, kind: 'math', mathCapture: 'full-root', mode: 'math-inline', sourceRect }
+      : { captureSize: sourceRect, kind: 'math', mathCapture, mode: 'math-block' };
   }
   if (!admission) throw new WechatPngConversionError('wechat-png-rasterization-failed');
   const { autoMargins, dimensions, layoutMagnification } = admission;

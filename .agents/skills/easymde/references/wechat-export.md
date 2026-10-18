@@ -414,9 +414,9 @@ the capture choice, selected SVG identity, root-relative bounds, dimension
 semantics and centering before asynchronous cloning; keep that initial state
 immutable and revalidate it at final freshness. Native aspect and pixel evidence
 at DPR1/2 are required; geometry thresholds do not change. Math keeps its
-established local overflow owner. Mermaid intrinsic and compensated captures
-keep their capture geometry while their generated images use responsive
-destination bounds inside the existing local wrapper owner.
+established local overflow owner. Mermaid intrinsic captures retain their captured CSS width inside a bounded
+local horizontal-scroll owner. Compensated captures retain responsive image
+bounds inside that owner.
 
 Responsive Mermaid roots may scale a larger SVG viewport into the Preview.
 Compensate that downscale only for a connected, paint-bearing, auto-height
@@ -432,8 +432,9 @@ Mermaid wrapper owner; the image itself never carries a fixed pixel width. Merma
 Gantt layout uses `useWidth:1200` with
 `useMaxWidth:true`, so narrow Preview width cannot become the time-axis layout
 width. Rendered Gantt, Sequence and Timeline roots use their single direct
-SVG's validated role and final viewBox to retain intrinsic capture dimensions,
-then scale the generated PNG to the destination article column. Sequence and
+SVG's validated role and final viewBox to retain intrinsic capture dimensions
+and readable CSS scale, with local horizontal scrolling when wider than the
+destination article column. Sequence and
 Timeline widths are renderer output, not fixed plugin constants. The marker and
 SVG role must agree; sanitized capture clones restore only that verified role.
 Other diagram roles retain their existing responsive capture path. Code and
@@ -448,10 +449,10 @@ intrinsic viewBox plus validated padding and solid-border edges, preserving
 finite non-overlapping rounded solid root paint once. The generated image keeps
 that capture's aspect ratio while its destination wrapper remains the bounded
 local owner. For `mermaid-intrinsic`, it uses
-`width:<capture width>px`, `max-width:100%`, and `height:auto`, so the effective
-bound is the smaller of the capture width and the wrapper's article-column
-width; a 200px capture is not upscaled to a 586px column, while an 850px
-capture can shrink on mobile. Compensated `mermaid-root` output keeps its
+`width:<capture width>px`, `max-width:none`, and `height:auto`. A 200px
+capture is not upscaled in a wider column; an 850px capture retains readable
+scale and reachable local scroll endpoints on mobile. Only the wrapper is
+bounded by the article column. Compensated `mermaid-root` output keeps its
 responsive owner bound. Invalid marked intrinsic geometry fails explicitly
 without a narrow fallback.
 
@@ -725,10 +726,10 @@ Mermaid roots and label containers visible overflow, use non-wrapping semantic
 `nobr` structure with zero-width word-joiner markers, intrinsic `max-content`
 sizing, and expand numeric label boxes around their original center by at least
 32px or 1.5x. The markers are removed from modern plain text. Once the Mermaid
-scene is rasterized, the generated PNG uses responsive destination bounds, so a
-long label scales with the image instead of relying on an overflowing child or
-an article-level width exemption; the bounded Mermaid wrapper remains the only
-local owner when intrinsic capture requires it. Do not apply these rules to ordinary SVG or
+scene is rasterized, intrinsic output preserves its captured CSS scale and
+uses the bounded Mermaid wrapper for local horizontal scrolling. Responsive
+and compensated output retain their responsive image bounds. No overflowing
+label child may expand the article width. Do not apply these rules to ordinary SVG or
 KaTeX geometry.
 
 Tables and long display formulas own horizontal overflow; no exporter wrapper

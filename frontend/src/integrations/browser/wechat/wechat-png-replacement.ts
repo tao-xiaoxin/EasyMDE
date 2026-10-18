@@ -172,7 +172,7 @@ export function replaceCompletedVisuals(
           );
           continue;
         }
-        const responsiveMermaid =
+        const usesMermaidBoundedScrollWrapper =
           'mermaid-intrinsic' === completed.mode ||
           ('mermaid-root' === completed.mode && completed.layoutMagnification > 1 + 1e-6);
         if ('mermaid-responsive' === completed.mode) {
@@ -195,14 +195,16 @@ export function replaceCompletedVisuals(
           );
           continue;
         }
-        if (responsiveMermaid) {
+        if (usesMermaidBoundedScrollWrapper) {
           let imageWidth = '100%';
+          let imageMaxWidth = '100%';
           if ('mermaid-intrinsic' === completed.mode) {
             const intrinsicCaptureWidth = Math.min(completed.captureSize.width, completed.rasterized.width);
             if (!Number.isFinite(intrinsicCaptureWidth) || intrinsicCaptureWidth <= 0) {
               throw new WechatPngConversionError('wechat-png-rasterization-failed');
             }
             imageWidth = `${intrinsicCaptureWidth}px`;
+            imageMaxWidth = 'none';
           }
           const flowDeclarations = [
             'margin-top',
@@ -238,7 +240,7 @@ export function replaceCompletedVisuals(
           );
           markWechatOwnedScrollOwner(completed.candidate.element);
           appendDeclarations(image, ['display:block'], true);
-          replaceDeclarations(image, [`width:${imageWidth}`, 'max-width:100%', 'height:auto'], true);
+          replaceDeclarations(image, [`width:${imageWidth}`, `max-width:${imageMaxWidth}`, 'height:auto'], true);
           centerMermaidGeneratedBlock(image, completed.autoMargins);
           runWechatSyncTiming(
             timingPerformance,

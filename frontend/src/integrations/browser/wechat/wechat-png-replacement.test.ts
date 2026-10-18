@@ -154,7 +154,49 @@ describe('replaceCompletedVisuals', () => {
     expect(image.getAttribute('height')).toBe('1200');
   });
 
-  it.each([200, 586, 900])('caps an intrinsic Mermaid capture at %dpx while following its owner width', (captureWidth) => {
+  it('keeps a compensated Mermaid root responsive inside its bounded scroll wrapper', () => {
+    const { candidate, root, svg } = mermaidFixture();
+    const completed: CompletedUpload = {
+      autoMargins: false,
+      candidate: { element: candidate, kind: 'mermaid', source: svg },
+      captureSize: { height: 1200, width: 586 },
+      kind: 'mermaid',
+      layoutMagnification: 2,
+      mode: 'mermaid-root',
+      rasterized: {
+        file: new File(['png'], 'mermaid-compensated.png', { type: 'image/png' }),
+        height: 2400,
+        pixelCount: 1172 * 2400,
+        width: 1172
+      },
+      url: 'https://example.test/mermaid-compensated.png'
+    };
+
+    replaceCompletedVisuals(root, conversionContext(root), [completed]);
+
+    const image = root.querySelector('img');
+    if (!image) throw new Error('wechat-png-replacement-test-compensated-image-missing');
+    expect(image.getAttribute('style')).toBe(
+      'display:block!important;width:100%!important;max-width:100%!important;height:auto!important'
+    );
+    expect(declaredStyleDeclarations(candidate, 'width')).toEqual([
+      { important: true, property: 'width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'height')).toEqual([
+      { important: true, property: 'height', value: 'auto' }
+    ]);
+    expect(candidate.getAttribute('style')).toContain('overflow-x:auto!important');
+    expect(candidate.hasAttribute('data-ignore-width')).toBe(true);
+  });
+
+  it.each([
+    { captureWidth: 200, rasterWidth: 240, expectedWidth: 200 },
+    { captureWidth: 850, rasterWidth: 800, expectedWidth: 800 },
+    { captureWidth: 1220, rasterWidth: 1220, expectedWidth: 1220 }
+  ])('keeps an intrinsic Mermaid capture at its measured width without an upper cap', ({ captureWidth, rasterWidth, expectedWidth }) => {
     const { candidate, root, svg } = mermaidFixture();
     const completed: CompletedUpload = {
       autoMargins: false,
@@ -166,8 +208,8 @@ describe('replaceCompletedVisuals', () => {
       rasterized: {
         file: new File(['png'], 'mermaid-intrinsic.png', { type: 'image/png' }),
         height: 100,
-        pixelCount: captureWidth * 100,
-        width: captureWidth
+        pixelCount: rasterWidth * 100,
+        width: rasterWidth
       },
       url: 'https://example.test/mermaid-intrinsic.png'
     };
@@ -176,12 +218,23 @@ describe('replaceCompletedVisuals', () => {
 
     const image = root.querySelector('img');
     if (!image) throw new Error('wechat-png-replacement-test-image-missing');
-    expect(singleDeclarationValue(image, 'width')).toBe(`${captureWidth}px`);
-    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+    expect(singleDeclarationValue(image, 'width')).toBe(`${expectedWidth}px`);
+    expect(declaredStyleDeclarations(image, 'width')).toHaveLength(1);
     expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: 'none' }
+    ]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toHaveLength(1);
+    expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
+    expect(declaredStyleDeclarations(image, 'height')).toHaveLength(1);
+    expect(image.getAttribute('style')).toContain(`width:${expectedWidth}px!important`);
+    expect(image.getAttribute('style')).not.toContain('max-width:100%');
+    expect(declaredStyleDeclarations(candidate, 'width')).toEqual([
+      { important: true, property: 'width', value: '100%' }
+    ]);
+    expect(declaredStyleDeclarations(candidate, 'max-width')).toEqual([
       { important: true, property: 'max-width', value: '100%' }
     ]);
-    expect(image.getAttribute('style')).toContain(`width:${captureWidth}px!important`);
+    expect(declaredStyleDeclarations(candidate, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
     expect(candidate.getAttribute('style')).toContain('overflow-x:auto!important');
     expect(candidate.hasAttribute('data-ignore-width')).toBe(true);
   });

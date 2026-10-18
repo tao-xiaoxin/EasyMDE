@@ -6,6 +6,7 @@ import {
   blobText,
   computedStyle,
   declaration,
+  declaredStyleDeclarations,
   installClipboardTestEnvironment,
   pngOptions,
   readyPreview,
@@ -16,7 +17,7 @@ describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
 
   it.each([
-    ['gantt', '0 0 1200 268', 1200, 268],
+    ['gantt', '0 0 1220 288', 1220, 288],
     ['sequence', '-40.5 8.25 640.5 268.25', 640.5, 268.25],
     ['timeline', '12.5 -6.75 900.25 320.5', 900.25, 320.5]
   ] as const)(
@@ -196,8 +197,37 @@ describe('createBrowserWechatClipboard', () => {
         const firstHolder = document.createElement('div');
         firstHolder.innerHTML = await blobText(firstHtml);
         const firstImage = firstHolder.querySelector('img');
-        expect(firstImage?.getAttribute('style')).toContain('margin-left:auto!important');
-        expect(firstImage?.getAttribute('style')).toContain('margin-right:auto!important');
+        if (!firstImage) throw new Error('intrinsic Mermaid image missing');
+        expect(firstImage.getAttribute('style')).toContain('margin-left:auto!important');
+        expect(firstImage.getAttribute('style')).toContain('margin-right:auto!important');
+        expect(declaredStyleDeclarations(firstImage, 'width')).toEqual([
+          { important: true, property: 'width', value: `${viewportWidth}px` }
+        ]);
+        expect(declaredStyleDeclarations(firstImage, 'max-width')).toEqual([
+          { important: true, property: 'max-width', value: 'none' }
+        ]);
+        expect(declaredStyleDeclarations(firstImage, 'height')).toEqual([
+          { important: true, property: 'height', value: 'auto' }
+        ]);
+        expect(declaredStyleDeclarations(firstImage, 'width')).toHaveLength(1);
+        expect(declaredStyleDeclarations(firstImage, 'max-width')).toHaveLength(1);
+        expect(declaredStyleDeclarations(firstImage, 'height')).toHaveLength(1);
+        expect(firstImage.getAttribute('style')).not.toContain('max-width:100%');
+        const firstOwner = firstImage?.parentElement;
+        if (!firstOwner) throw new Error('intrinsic Mermaid owner missing');
+        expect(firstOwner.hasAttribute('data-ignore-width')).toBe(true);
+        expect(declaredStyleDeclarations(firstOwner, 'width')).toEqual([
+          { important: true, property: 'width', value: '100%' }
+        ]);
+        expect(declaredStyleDeclarations(firstOwner, 'max-width')).toEqual([
+          { important: true, property: 'max-width', value: '100%' }
+        ]);
+        expect(declaredStyleDeclarations(firstOwner, 'height')).toEqual([
+          { important: true, property: 'height', value: 'auto' }
+        ]);
+        expect(declaredStyleDeclarations(firstOwner, 'width')).toHaveLength(1);
+        expect(declaredStyleDeclarations(firstOwner, 'max-width')).toHaveLength(1);
+        expect(declaredStyleDeclarations(firstOwner, 'height')).toHaveLength(1);
         direction = 'ltr';
         scrollLeft = viewportWidth - 335;
         await expect(clipboard.copy(preview, pngOptions({ rasterize }, { upload } as never))).resolves.toEqual({

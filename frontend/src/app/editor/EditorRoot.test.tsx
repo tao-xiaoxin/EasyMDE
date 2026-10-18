@@ -7614,6 +7614,22 @@ describe('EditorRoot', () => {
     );
   });
 
+  it('uses the stable Preview sink for immersive Preview Copy after the visual runtime exists', async () => {
+    const props = fixture();
+    const view = render(<EditorRoot {...props} />);
+
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+
+    fireEvent.click(view.getByRole('button', { name: '复制到公众号' }));
+    await waitFor(() => expect(props.wechatClipboard.copy).toHaveBeenCalledOnce());
+
+    expect(vi.mocked(props.wechatClipboard.copy).mock.calls[0]?.[0]).toBe(
+      view.container.querySelector('[data-easymde-preview-html-sink="1"]')
+    );
+  });
+
   it('keeps ordinary and immersive Copy glyphs static while exposing pending ARIA and blocking duplicates', async () => {
     const props = fixture();
     type ClipboardResult = Awaited<

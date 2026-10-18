@@ -1968,10 +1968,18 @@ export function EditorRoot(props: EditorRootProps) {
         clipboard: props.wechatClipboard,
         copyOptions,
         enabled: props.wechatExport.enabled,
-        getPreview: () =>
-          visualEditorRuntimeRef.current?.surface
-          ?? previewRuntimeRef.current?.surface
-          ?? null,
+        getPreview: () => {
+          const visualPreviewIsAuthoritative =
+            visualPreviewEditingRef.current
+            || visualPreviewWindowRequestedRef.current;
+          return visualPreviewIsAuthoritative
+            ? visualEditorRuntimeRef.current?.surface
+              ?? previewRuntimeRef.current?.surface
+              ?? null
+            : previewRuntimeRef.current?.surface
+              ?? visualEditorRuntimeRef.current?.surface
+              ?? null;
+        },
         onDiagnostic: props.onFailure,
         onStatus: setWechatStatus,
         strings: props.wechatExport.strings

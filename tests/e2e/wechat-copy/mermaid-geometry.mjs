@@ -13,7 +13,7 @@ export {
   readIntrinsicMermaidSourceOwnerEvidence,
   readGanttSourceOwnerEvidence,
   assertIntrinsicMermaidCtm,
-  responsiveImageMaxWidth,
+  responsiveImageWidthContract,
   assertResponsiveMermaidEvidence,
   readMermaidGeometryDiagnostics
 } from "./mermaid-geometry-layout.mjs";

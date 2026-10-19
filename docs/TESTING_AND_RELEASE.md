@@ -309,8 +309,11 @@ The neutral `phycat-sky` full-example DPR1/2 case verifies responsive SVG
 capture separately from decorated Bloom coverage. It derives eligible roles
 from each live layout, decodes the actual uploaded PNG bytes, checks integer
 dimensions and aspect, and inspects preserved root layout and capped image
-placement across narrow, immersive and wide destinations. Run it with the
-configured isolated WordPress E2E environment:
+placement across 280, 335, 390, and 677 CSS-pixel destination columns, plus
+the immersive Split and wide Copy surfaces. The browser layout check subtracts
+applied inline padding from the owner content width before validating the IMG's
+explicit source cap and `max-width:100%` mobile bound. Run it with the configured
+isolated WordPress E2E environment:
 
 ```bash
 npm run test:e2e -- tests/e2e/wechat-copy.spec.mjs --project=chromium --grep "copies neutral phycat-sky full-fixture responsive Mermaid roles at DPR1/2"

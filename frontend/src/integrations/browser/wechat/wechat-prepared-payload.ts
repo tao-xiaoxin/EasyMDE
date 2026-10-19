@@ -33,6 +33,7 @@ import {
 import { beginWechatTiming, runWechatSyncTiming } from "./wechat-timing";
 import {
 	preparedDimensionGeometrySignature,
+	preparedDimensionGeometrySignatureWithYield,
 	preparedDimensionSemanticsSignature,
 	preparedLayoutSignature,
 	preparedLayoutSignatureWithYield,
@@ -212,11 +213,19 @@ export function createPreparedClipboardPayload(
 			dimensionSemantics?.refresh();
 			initialDimensionGeometrySignature =
 				hasWechatMathStaticFlowCandidate(serializationPreview) || !background
-					? preparedDimensionGeometrySignature(
-							serializationPreview,
-							runtime,
-							dimensionSemantics,
-						)
+					? (background && yieldToBrowser
+						? await preparedDimensionGeometrySignatureWithYield(
+								serializationPreview,
+								runtime,
+								yieldToBrowser,
+								signal,
+								dimensionSemantics,
+							)
+						: preparedDimensionGeometrySignature(
+								serializationPreview,
+								runtime,
+								dimensionSemantics,
+							))
 					: "";
 			if (!background && layoutSignature) return layoutSignature;
 			if (background) {
@@ -326,11 +335,19 @@ export function createPreparedClipboardPayload(
 				const finalDimensionSignature = finalDimensionSignatureSink.value;
 				const finalDimensionGeometrySignature =
 					hasWechatMathStaticFlowCandidate(serializationPreview) || !background
-						? preparedDimensionGeometrySignature(
-								serializationPreview,
-								runtime,
-								dimensionSemantics,
-							)
+						? (background && yieldToBrowser
+							? await preparedDimensionGeometrySignatureWithYield(
+									serializationPreview,
+									runtime,
+									yieldToBrowser,
+									signal,
+									dimensionSemantics,
+								)
+							: preparedDimensionGeometrySignature(
+									serializationPreview,
+									runtime,
+									dimensionSemantics,
+								))
 						: "";
 				let finalMathSourceCaptureResult = mathSourceCaptureResult;
 				if (hasWechatMathStaticFlowCandidate(serializationPreview)) {
@@ -379,12 +396,11 @@ export function createPreparedClipboardPayload(
 					sourceAdmission: null,
 					sourceFingerprint: "",
 				};
+				throwIfBackgroundPreparationAborted(signal);
 				prepared.dimensionSignature = finalDimensionSignature;
 				prepared.layoutSignature = finalSignature;
 				prepared.payload = payload;
 				const current = preparedPayloads.get(preview);
-				throwIfBackgroundPreparationAborted(signal);
-				prepared.payload = payload;
 				if (
 					current &&
 					current !== prepared &&
@@ -500,7 +516,7 @@ export function preparedClipboardPayload(
 			(!transition || transition.isReady());
 		const taskGeometryReady = !taskGeometryLease || taskGeometryLease.isReady();
 		const currentDimensionSignature =
-			readinessReady && taskGeometryReady
+			!background && !replace && readinessReady && taskGeometryReady
 				? (() => {
 						dimensionSemantics?.refresh();
 						return preparedDimensionSemanticsSignature(
@@ -510,7 +526,13 @@ export function preparedClipboardPayload(
 						);
 					})()
 				: "";
-		if (readinessReady && taskGeometryReady && !mathSourceCaptureResult) {
+		if (
+			!background &&
+			!replace &&
+			readinessReady &&
+			taskGeometryReady &&
+			!mathSourceCaptureResult
+		) {
 			mathSourceCaptureResult = captureWechatMathSourceAdmissionSynchronously(
 				serializationPreview,
 				runtime,
@@ -698,9 +720,11 @@ export async function preparedClipboardPayloadAfterWrite(
 			isCurrent,
 			true,
 			hasWechatMathStaticFlowCandidate(serializationPreview)
-				? preparedDimensionGeometrySignature(
+				? await preparedDimensionGeometrySignatureWithYield(
 						serializationPreview,
 						runtime,
+						yieldToBrowser,
+						guard.signal,
 						dimensionSemantics,
 					)
 				: "",

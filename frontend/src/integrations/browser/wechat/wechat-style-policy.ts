@@ -355,6 +355,50 @@ function compareSpecificity(
 	return 0;
 }
 
+function styleAffectsPadding(
+	style: CSSStyleDeclaration,
+	property: string,
+): boolean {
+	if (style.getPropertyValue(property)?.trim()) return true;
+	return Array.from(PORTABLE_PADDING_CASCADE_PROPERTIES).some((candidate) => {
+		return (
+			relevantPaddingRuleProperty(candidate) &&
+			Boolean(style.getPropertyValue(candidate)?.trim()) &&
+			("padding" === candidate ||
+				candidate === property ||
+				candidate.startsWith("padding-inline"))
+		);
+	});
+}
+
+function subtreeAffectsPadding(
+	rules: CSSRuleList,
+	property: string,
+): boolean {
+	try {
+		for (const rule of Array.from(rules)) {
+			if (
+				"style" in rule &&
+				rule.style &&
+				typeof (rule.style as CSSStyleDeclaration).getPropertyValue === "function"
+			) {
+				if (styleAffectsPadding(rule.style as CSSStyleDeclaration, property)) {
+					return true;
+				}
+			}
+			if ("cssRules" in rule && (rule as { cssRules?: CSSRuleList }).cssRules) {
+				const childRules = (rule as { cssRules: CSSRuleList }).cssRules;
+				if (childRules.length > 0 && subtreeAffectsPadding(childRules, property)) {
+					return true;
+				}
+			}
+		}
+	} catch {
+		return true;
+	}
+	return false;
+}
+
 function relevantPaddingRuleProperty(property: string): boolean {
 	return PORTABLE_PADDING_CASCADE_PROPERTIES.has(property);
 }
@@ -401,30 +445,103 @@ function portablePaddingTransportDecision(
 	const competitors: Array<
 		Readonly<{
 			important: boolean;
+			inLayer: boolean;
 			order: number;
 			specificity: readonly [number, number, number];
 		}>
 	> = [];
 	let order = 0;
 	let unreadableStyleSheet = false;
-	const walk = (rules: CSSRuleList, active: boolean): void => {
+	const walk = (rules: CSSRuleList, active: boolean, inLayer = false): void => {
 		for (const rule of Array.from(rules)) {
 			const currentOrder = order;
 			order += 1;
 			if (!active) continue;
-			if (rule instanceof CSSMediaRule) {
+			const defaultView = document.defaultView;
+			if (
+				(defaultView?.CSSMediaRule && rule instanceof defaultView.CSSMediaRule) ||
+				rule instanceof CSSMediaRule
+			) {
 				const matches =
-					document.defaultView?.matchMedia(rule.conditionText).matches ?? true;
-				walk(rule.cssRules, matches);
+					defaultView?.matchMedia(rule.conditionText).matches ?? true;
+				walk(rule.cssRules, matches, inLayer);
 				continue;
 			}
-			if (rule instanceof CSSSupportsRule) {
+			if (
+				(defaultView?.CSSSupportsRule &&
+					rule instanceof defaultView.CSSSupportsRule) ||
+				rule instanceof CSSSupportsRule
+			) {
 				const supports =
-					document.defaultView?.CSS?.supports(rule.conditionText) ?? true;
-				walk(rule.cssRules, supports);
+					defaultView?.CSS?.supports(rule.conditionText) ?? true;
+				walk(rule.cssRules, supports, inLayer);
 				continue;
 			}
-			if (!(rule instanceof CSSStyleRule)) continue;
+			const isLayerRule =
+				(defaultView?.CSSLayerBlockRule &&
+					rule instanceof defaultView.CSSLayerBlockRule) ||
+				("name" in rule && "cssRules" in rule && !("conditionText" in rule));
+			if (isLayerRule) {
+				walk((rule as CSSGroupingRule).cssRules, active, true);
+				continue;
+			}
+			const isConditionalGroupRule =
+				(defaultView?.CSSConditionRule &&
+					rule instanceof defaultView.CSSConditionRule) ||
+				"conditionText" in rule;
+			if (isConditionalGroupRule && "cssRules" in rule) {
+				unreadableStyleSheet = true;
+				continue;
+			}
+			const isImportRule =
+				(defaultView?.CSSImportRule &&
+					rule instanceof defaultView.CSSImportRule) ||
+				("styleSheet" in rule && "href" in rule);
+			if (isImportRule) {
+				try {
+					const importRule = rule as CSSImportRule & {
+						layerName?: string | null;
+						supportsText?: string | null;
+					};
+					const importedSheet = importRule.styleSheet;
+					if (!importedSheet || (importRule.href && importedSheet.cssRules.length === 0)) {
+						unreadableStyleSheet = true;
+						continue;
+					}
+					const isLayeredImport = typeof importRule.layerName === "string";
+					const supportsText = importRule.supportsText?.trim() ?? "";
+					if (supportsText) {
+						unreadableStyleSheet = true;
+						continue;
+					}
+					let importMatches = true;
+					if (importRule.media?.mediaText) {
+						importMatches =
+							defaultView?.matchMedia(importRule.media.mediaText).matches ??
+							true;
+					}
+					if (importMatches) {
+						walk(importedSheet.cssRules, active, inLayer || isLayeredImport);
+					}
+				} catch {
+					unreadableStyleSheet = true;
+				}
+				continue;
+			}
+			if (!(rule instanceof CSSStyleRule)) {
+				if ("cssRules" in rule && (rule as { cssRules?: unknown }).cssRules) {
+					unreadableStyleSheet = true;
+				}
+				if (
+					"style" in rule &&
+					rule.style &&
+					typeof (rule.style as CSSStyleDeclaration).getPropertyValue === "function" &&
+					styleAffectsPadding(rule.style as CSSStyleDeclaration, property)
+				) {
+					unreadableStyleSheet = true;
+				}
+				continue;
+			}
 			const selectors = splitSelectorList(rule.selectorText);
 			if (!selectors) {
 				unreadableStyleSheet = true;
@@ -453,31 +570,33 @@ function portablePaddingTransportDecision(
 				unreadableStyleSheet = true;
 				continue;
 			}
+			if (rule.cssRules && rule.cssRules.length > 0) {
+				if (subtreeAffectsPadding(rule.cssRules, property)) {
+					unreadableStyleSheet = true;
+				}
+			}
+
 			if (!matchingSelector) continue;
 			const specificity = selectorSpecificity(matchingSelector);
 			const value = rule.style.getPropertyValue(property).trim();
-			const affectsSide =
-				Boolean(value) ||
-				Array.from(PORTABLE_PADDING_CASCADE_PROPERTIES).some((candidate) => {
-					return (
-						relevantPaddingRuleProperty(candidate) &&
-						Boolean(rule.style.getPropertyValue(candidate).trim()) &&
-						("padding" === candidate ||
-							candidate === property ||
-							candidate.startsWith("padding-inline"))
-					);
-				});
+			const affectsSide = styleAffectsPadding(rule.style, property);
 			if (!affectsSide) continue;
-			const isPortable = value.includes(`var(${tokenName})`);
+			if (inLayer && value.includes(`var(${tokenName})`)) {
+				unreadableStyleSheet = true;
+				continue;
+			}
+			const isPortable = !inLayer && value.includes(`var(${tokenName})`);
 			if (isPortable) {
 				baseCandidates.push({ order: currentOrder, specificity });
 			} else {
+				const isImportant =
+					Boolean(rule.style.getPropertyPriority(property)) ||
+					Array.from(PORTABLE_PADDING_CASCADE_PROPERTIES).some((candidate) =>
+						Boolean(rule.style.getPropertyPriority(candidate)),
+					);
 				competitors.push({
-					important:
-						Boolean(rule.style.getPropertyPriority(property)) ||
-						Array.from(PORTABLE_PADDING_CASCADE_PROPERTIES).some((candidate) =>
-							Boolean(rule.style.getPropertyPriority(candidate)),
-						),
+					important: isImportant,
+					inLayer,
 					order: currentOrder,
 					specificity,
 				});
@@ -506,6 +625,7 @@ function portablePaddingTransportDecision(
 	})[0];
 	const outranked = competitors.some((candidate) => {
 		if (candidate.important) return true;
+		if (candidate.inLayer) return false;
 		const specificityOrder = compareSpecificity(
 			candidate.specificity,
 			base?.specificity ?? [0, 0, 0],

@@ -6,7 +6,8 @@ import {
   blobText,
   computedStyle,
   declaration,
-  installClipboardTestEnvironment
+  installClipboardTestEnvironment,
+  prepareClipboard
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -562,6 +563,161 @@ describe('createBrowserWechatClipboard', () => {
     expect(suffixStyle).toContain('flex-basis:15px');
     expect(suffixStyle).toContain('float:right');
     expect(suffixStyle).toContain('box-sizing:border-box');
+  });
+
+  it('yields before background math geometry scans and stops reads after cancellation', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex"><span class="katex-html"><span class="base">Math</span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Math' });
+    const math = preview.querySelector('.easymde-math-block');
+    if (!math) throw new Error('background math fixture missing');
+    const controller = new AbortController();
+    const originalRect = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect');
+    let yields = 0;
+    let readsBeforeYield = 0;
+    let readsAfterYield = 0;
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation(((handler: TimerHandler) => {
+      return originalSetTimeout(() => {
+        yields += 1;
+        if (2 === yields) controller.abort();
+        if ('function' === typeof handler) handler();
+      }, 0);
+    }) as typeof window.setTimeout);
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        if (math.contains(this)) {
+          if (yields > 0) readsAfterYield += 1;
+          else readsBeforeYield += 1;
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    });
+    try {
+      const preparation = prepareClipboard(clipboard, preview, {
+        background: true,
+        signal: controller.signal
+      });
+      const outcome = preparation.then(
+        () => 'resolved',
+        (error: unknown) => error
+      );
+      await vi.waitFor(() => expect(yields).toBeGreaterThanOrEqual(2));
+      const error = await outcome;
+      expect(error).toMatchObject({
+        message: 'wechat-background-preparation-cancelled',
+        name: 'AbortError'
+      });
+      expect(readsBeforeYield).toBe(0);
+      expect(readsAfterYield).toBe(0);
+    } finally {
+      setTimeout.mockRestore();
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+    }
+  });
+
+  it('yields and respects cancellation during modern copy math geometry preparation', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex"><span class="katex-html"><span class="base">Math</span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Math' });
+    const math = preview.querySelector('.easymde-math-block');
+    if (!math) throw new Error('copy math fixture missing');
+    const controller = new AbortController();
+    const originalRect = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getBoundingClientRect');
+    let taskCount = 0;
+    let readsBeforeSecondTask = 0;
+    let readsAfterSecondTask = 0;
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const setTimeout = vi.spyOn(window, 'setTimeout').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number,
+      ...args: unknown[]
+    ) => {
+      const delay = Number(timeout ?? 0);
+      if (0 === delay) {
+        return originalSetTimeout(() => {
+          taskCount += 1;
+          if (taskCount >= 2) controller.abort();
+          if ('function' === typeof handler) handler(...args);
+        }, 0);
+      }
+      return originalSetTimeout(handler, timeout, ...args);
+    }) as typeof window.setTimeout);
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: function (this: HTMLElement) {
+        if (math.contains(this)) {
+          if (taskCount < 2) {
+            readsBeforeSecondTask += 1;
+          } else {
+            readsAfterSecondTask += 1;
+          }
+        }
+        return originalRect?.value?.call(this) ?? {
+          bottom: 0,
+          height: 0,
+          left: 0,
+          right: 0,
+          top: 0,
+          width: 0,
+          x: 0,
+          y: 0
+        };
+      }
+    });
+    class ClipboardItemStub {
+      constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: computedStyle,
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: vi.fn(async () => undefined)
+    });
+    try {
+      const copyPromise = clipboard.copy(preview, {
+        signal: controller.signal
+      });
+      await expect(copyPromise).resolves.toEqual({
+        code: 'wechat-copy-failed',
+        status: 'failed'
+      });
+      expect(readsBeforeSecondTask).toBe(0);
+      expect(readsAfterSecondTask).toBe(0);
+    } finally {
+      setTimeout.mockRestore();
+      if (originalRect) Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', originalRect);
+      else delete (HTMLElement.prototype as unknown as { getBoundingClientRect?: unknown }).getBoundingClientRect;
+    }
   });
 
 });

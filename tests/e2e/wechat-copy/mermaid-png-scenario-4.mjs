@@ -48,11 +48,13 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
       'stateDiagram',
       'er'
     ];
+    const destinationWidths = [280, 335, 390, 677];
     const responsiveRoles = canonicalMermaidRoles.filter(
       (role) => !['gantt', 'sequence', 'timeline'].includes(role)
     );
     expect(responsiveRoles).toHaveLength(7);
     const wideResponsiveRolesByDpr = new Map();
+    const responsiveDestinationEvidence = [];
     const oracleEvidence = [];
     await login(page, testInfo.wechatUser, baseURL);
     const origin = new URL(page.url()).origin;
@@ -259,6 +261,113 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
           expect(await page.locator('#easymde-source').inputValue()).toBe(sourceBefore);
           expect(await preview.evaluate((root) => root.easymdePreviewSignature ?? ''))
             .toBe(previewSignatureBefore);
+          const destinationWidthsForMode = 'ordinary-wide' === mode
+            ? destinationWidths
+            : [];
+          for (const destinationWidth of destinationWidthsForMode) {
+            const ownerPaddingCases = 280 === destinationWidth
+              ? [0, 10]
+              : [0];
+            for (const ownerPaddingInline of ownerPaddingCases) {
+              const destinationPlacements = await readPayloadPngPlacements(
+                page,
+                payload.html,
+                destinationWidth,
+                { ownerPaddingInline, recordedPngs: uploadRoute.pngs }
+              );
+              expect(destinationPlacements).toHaveLength(candidateOrder.length);
+              const destinationEvidence = [];
+              const destinationRoles = mode === 'ordinary-wide'
+                ? requiredResponsiveRoles
+                : selectedControlledRoles;
+              expect(destinationRoles, `${mode} DPR${dpr} non-empty responsive roles`)
+                .not.toHaveLength(0);
+              expect(destinationRoles, `${mode} DPR${dpr} required flowchart`)
+                .toContain('flowchart-v2');
+              expect(destinationRoles, `${mode} DPR${dpr} responsive roles`)
+                .toEqual(expectedResponsiveRoles);
+              for (const role of destinationRoles) {
+                const live = liveResponsiveEvidence.get(role);
+                const uploadIndex = roleUploadIndexes.get(role);
+                const placement = destinationPlacements.find(
+                  ({ uploadIndex: index }) => index === uploadStart + uploadIndex
+                );
+                if (!live || !placement) {
+                  throw new Error(
+                    `wechat-phycat-sky-${role}-${destinationWidth}-${ownerPaddingInline}-destination-evidence-unavailable`
+                  );
+                }
+                const imageWidth = Number.parseFloat(
+                  placement.imageDeclarations.width?.value ?? ''
+                );
+                expect(placement.imageDeclarations.width?.value,
+                  `${role} ${destinationWidth} numeric image cap`).toMatch(/^\d+(?:\.\d+)?px$/u);
+                const sourceMaxWidth = Number.parseFloat(live.svg.semanticStyle.maxWidth ?? '');
+                const ownerBorderLeftWidth = Number.parseFloat(placement.ownerBorderLeftWidth);
+                const ownerPaddingLeft = Number.parseFloat(placement.ownerPaddingLeft);
+                const ownerPaddingRight = Number.parseFloat(placement.ownerPaddingRight);
+                expect(Number.isFinite(imageWidth), `${role} ${destinationWidth} image cap finite`)
+                  .toBe(true);
+                expect(Number.isFinite(sourceMaxWidth), `${role} ${destinationWidth} source cap finite`)
+                  .toBe(true);
+                expect(Number.isFinite(ownerBorderLeftWidth),
+                  `${role} ${destinationWidth} owner left border finite`).toBe(true);
+                expect(Math.abs(imageWidth - sourceMaxWidth),
+                  `${role} ${destinationWidth} image cap matches source SVG cap`)
+                  .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+                expect(placement.imageDeclarations['max-width'], `${role} ${destinationWidth} mobile bound`)
+                  .toEqual({ priority: 'important', value: '100%' });
+                const ownerContentWidth = placement.ownerClientWidth
+                  - ownerPaddingLeft
+                  - ownerPaddingRight;
+                const expectedOwnerContentWidth = destinationWidth - ownerPaddingInline * 2;
+                expect(ownerContentWidth, `${role} ${destinationWidth} owner content width`)
+                  .toBeGreaterThan(0);
+                expect(Math.abs(ownerContentWidth - expectedOwnerContentWidth),
+                  `${role} ${destinationWidth} padded owner content width`)
+                  .toBeLessThanOrEqual(1.5);
+                if (ownerPaddingInline > 0) {
+                  expect(placement.ownerBoxSizing, `${role} ${destinationWidth} padded border-box`)
+                    .toBe('border-box');
+                  expect(placement.ownerPaddingLeft, `${role} ${destinationWidth} left owner padding`)
+                    .toBe(`${ownerPaddingInline}px`);
+                  expect(placement.ownerPaddingRight, `${role} ${destinationWidth} right owner padding`)
+                    .toBe(`${ownerPaddingInline}px`);
+                  expect(Math.abs(ownerContentWidth - 260),
+                    `${role} ${destinationWidth} padded owner 260px content`)
+                    .toBeLessThanOrEqual(1.5);
+                }
+                const expectedRenderedWidth = Math.min(ownerContentWidth, imageWidth);
+                expect(Math.abs(placement.width - expectedRenderedWidth),
+                  `${role} ${destinationWidth} browser display width`).toBeLessThanOrEqual(1.5);
+                expect(placement.width, `${role} ${destinationWidth} mobile clipping`)
+                  .toBeLessThanOrEqual(ownerContentWidth + 1.5);
+                const ownerInlineStart = ownerBorderLeftWidth + ownerPaddingLeft;
+                expect(Number.isFinite(ownerInlineStart),
+                  `${role} ${destinationWidth} owner inline start finite`).toBe(true);
+                const expectedImageLeft = ownerInlineStart
+                  + (ownerContentWidth - placement.width) / 2;
+                expect(Math.abs(placement.left - expectedImageLeft),
+                  `${role} ${destinationWidth} padded-owner centering`).toBeLessThanOrEqual(1.5);
+                destinationEvidence.push({
+                  destinationWidth,
+                  expectedRenderedWidth,
+                  imageWidth,
+                  ownerInlineStart,
+                  ownerContentWidth,
+                  ownerPaddingInline,
+                  renderedWidth: placement.width,
+                  role
+                });
+              }
+              responsiveDestinationEvidence.push({
+                dpr,
+                evidence: destinationEvidence,
+                mode,
+                ownerPaddingInline
+              });
+            }
+          }
           oracleEvidence.push({
             dpr,
             expectedResponsiveRoles,
@@ -281,8 +390,18 @@ export async function runMermaidPngScenario4({ baseURL, context, login, page, te
       expect(wideResponsiveRolesByDpr.get(dpr), `ordinary-wide DPR${dpr} coverage`)
         .toEqual(requiredResponsiveRoles);
     }
+    expect(responsiveDestinationEvidence, 'responsive destination browser evidence')
+      .not.toHaveLength(0);
+    expect(
+      responsiveDestinationEvidence.filter(({ mode }) => 'ordinary-wide' === mode),
+      'ordinary-wide responsive destination evidence'
+    ).not.toHaveLength(0);
     await testInfo.attach('wechat-phycat-sky-responsive-mermaid-oracle.json', {
-      body: JSON.stringify({ dprs: dprsToRun, evidence: oracleEvidence }, null, 2),
+      body: JSON.stringify({
+        dprs: dprsToRun,
+        destinationEvidence: responsiveDestinationEvidence,
+        evidence: oracleEvidence
+      }, null, 2),
       contentType: 'application/json'
     });
 }

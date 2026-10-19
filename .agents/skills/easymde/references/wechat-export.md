@@ -410,8 +410,8 @@ padding; never crop by painted pixels. Clear only the private capture clone's
 external margins. This mode uses `ceil(svgWidth * DPR)` pixel width and
 `round(pixelWidth * svgHeight / svgWidth)` pixel height; validate the actual
 integer dimensions and all existing limits. Its retained-root IMG uses
-percentage width, the source SVG cap, automatic height and the existing
-centering semantics. Preserve the serialized outer-root layout declarations;
+the source SVG cap as an explicit pixel width, `max-width:100%`, automatic
+height and the existing centering semantics. Preserve the serialized outer-root layout declarations;
 this mode does not add an intentional-scroll width-check exemption. Record
 the capture choice, selected SVG identity, root-relative bounds, dimension
 semantics and centering before asynchronous cloning; keep that initial state

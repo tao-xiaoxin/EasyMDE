@@ -93,7 +93,7 @@ describe('replaceCompletedVisuals', () => {
     expect(image.getAttribute('style')).not.toContain('opacity');
     expect(image.getAttribute('style')).not.toContain('left:-');
   });
-  it('serializes one decisive width, max-width, and height declaration for a responsive Mermaid frame', () => {
+  it('serializes one decisive source-cap width, responsive bound, and height for a responsive Mermaid frame', () => {
     const { candidate, root, svg } = mermaidFixture();
     const completed: CompletedUpload = {
       autoMargins: false,
@@ -117,28 +117,35 @@ describe('replaceCompletedVisuals', () => {
     const image = root.querySelector('img');
     if (!image) throw new Error('wechat-png-replacement-test-image-missing');
     expect(image.getAttribute('style')).toBe(
-      'display:block!important;width:100%!important;max-width:586px!important;height:auto!important'
+      'display:block!important;width:586px!important;max-width:100%!important;height:auto!important'
     );
-    expect(declaredStyleDeclarations(image, 'width')).toEqual([{ important: true, property: 'width', value: '100%' }]);
-    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([{ important: true, property: 'max-width', value: '586px' }]);
+    expect(declaredStyleDeclarations(image, 'width')).toEqual([{ important: true, property: 'width', value: '586px' }]);
+    expect(declaredStyleDeclarations(image, 'max-width')).toEqual([
+      { important: true, property: 'max-width', value: '100%' }
+    ]);
     expect(declaredStyleDeclarations(image, 'height')).toEqual([{ important: true, property: 'height', value: 'auto' }]);
   });
 
-  it('keeps the authored cap while the responsive frame follows 586, 375, and 320 pixel destinations', () => {
+  it.each([
+    { destinationWidth: 280, expectedRenderedWidth: 280 },
+    { destinationWidth: 335, expectedRenderedWidth: 335 },
+    { destinationWidth: 390, expectedRenderedWidth: 350.3125 },
+    { destinationWidth: 677, expectedRenderedWidth: 350.3125 }
+  ])('keeps the validated SVG cap at a $destinationWidth pixel destination', ({ destinationWidth, expectedRenderedWidth }) => {
     const { candidate, root, svg } = mermaidFixture();
     const completed: CompletedUpload = {
       autoMargins: false,
       candidate: { element: candidate, kind: 'mermaid', source: svg },
-      captureSize: { height: 1200, width: 586 },
+      captureSize: { height: 725.734375, width: 350.3125 },
       kind: 'mermaid',
       layoutMagnification: 1,
-      maxWidth: 586,
+      maxWidth: 350.3125,
       mode: 'mermaid-responsive',
       rasterized: {
         file: new File(['png'], 'mermaid.png', { type: 'image/png' }),
-        height: 1200,
-        pixelCount: 586 * 1200,
-        width: 586
+        height: 1452,
+        pixelCount: 701 * 1452,
+        width: 701
       },
       url: 'https://example.test/mermaid.png'
     };
@@ -147,11 +154,17 @@ describe('replaceCompletedVisuals', () => {
 
     const image = root.querySelector('img');
     if (!image) throw new Error('wechat-png-replacement-test-image-missing');
-    expect(singleDeclarationValue(image, 'width')).toBe('100%');
-    expect(singleDeclarationValue(image, 'max-width')).toBe('586px');
+    // The validated source SVG cap is the desktop width, while max-width:100%
+    // keeps narrower destination columns from clipping.
+    expect(singleDeclarationValue(image, 'width')).toBe('350.3125px');
+    expect(singleDeclarationValue(image, 'max-width')).toBe('100%');
     expect(singleDeclarationValue(image, 'height')).toBe('auto');
-    expect(image.getAttribute('width')).toBe('586');
-    expect(image.getAttribute('height')).toBe('1200');
+    expect(Math.min(destinationWidth, Number.parseFloat(singleDeclarationValue(image, 'width')))).toBe(
+      expectedRenderedWidth
+    );
+    // Raster DPR only changes the uploaded pixels, never the destination CSS size.
+    expect(image.getAttribute('width')).toBe('701');
+    expect(image.getAttribute('height')).toBe('1452');
   });
 
   it('keeps a compensated Mermaid root responsive inside its bounded scroll wrapper', () => {

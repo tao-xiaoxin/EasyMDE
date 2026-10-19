@@ -270,17 +270,17 @@ export function assertIntrinsicMermaidCtm(label, geometry) {
   return { expectedScale, projectedDiagResidual };
 }
 
-export function responsiveImageMaxWidth(imageStyle) {
-  const match = /(?:^|;)max-width:([0-9]+(?:\.[0-9]+)?)px!important(?:;|$)/u.exec(imageStyle);
-  return match ? Number(match[1]) : null;
+export function responsiveImageWidthContract(imageStyle) {
+  const width = /(?:^|;)width:([0-9]+(?:\.[0-9]+)?)(?:px)?!important(?:;|$)/u.exec(imageStyle);
+  const maxWidth = /(?:^|;)max-width:100%!important(?:;|$)/u.test(imageStyle);
+  return width && maxWidth ? Number(width[1]) : null;
 }
 
 export function assertResponsiveMermaidEvidence({ dpr, live, placement, pngEvidence, role }) {
   const imageStyle = placement.imageStyle ?? '';
-  const imageMaxWidth = responsiveImageMaxWidth(imageStyle);
+  const imageWidth = responsiveImageWidthContract(imageStyle);
   const responsive = Boolean(
-    imageMaxWidth !== null
-    && /(?:^|;)width:100%!important(?:;|$)/u.test(imageStyle)
+    imageWidth !== null
     && /(?:^|;)height:auto!important(?:;|$)/u.test(imageStyle)
   );
   if (!responsive) return null;
@@ -304,8 +304,10 @@ export function assertResponsiveMermaidEvidence({ dpr, live, placement, pngEvide
   expect(sourceMaxWidth, `${role} responsive source cap positive`).toBeGreaterThan(0);
   expect(Math.abs(sourceMaxWidth - live.svg.width), `${role} responsive cap reached`)
     .toBeLessThanOrEqual(intrinsicGeometryTolerance);
-  expect(Math.abs(imageMaxWidth - sourceMaxWidth), `${role} responsive cap retained`)
+  expect(Math.abs(imageWidth - sourceMaxWidth), `${role} responsive image width cap retained`)
     .toBeLessThanOrEqual(intrinsicGeometryTolerance);
+  expect(placement.imageDeclarations['max-width']?.value, `${role} responsive image mobile bound`)
+    .toBe('100%');
 
   const expectedPixelWidth = Math.ceil(live.svg.width * dpr);
   const expectedPixelHeight = Math.round(
@@ -327,11 +329,14 @@ export function assertResponsiveMermaidEvidence({ dpr, live, placement, pngEvide
   expect(placement.display, `${role} responsive image display`).toBe('block');
   expect(placement.position, `${role} responsive image position`).toBe('static');
   expect(placement.float, `${role} responsive image float`).toBe('none');
-  expect(placement.imageDeclarations['display']?.value, `${role} responsive image display declaration`)
+  expect(placement.imageDeclarations.display?.value, `${role} responsive image display declaration`)
     .toBe('block');
-  expect(placement.imageDeclarations['width']?.value, `${role} responsive image width declaration`)
-    .toBe('100%');
-  expect(placement.imageDeclarations['height']?.value, `${role} responsive image height declaration`)
+  expect(placement.imageDeclarations.width?.value, `${role} responsive image width declaration`)
+    .toMatch(/^\d+(?:\.\d+)?(?:px)?$/u);
+  expect(Math.abs(
+    Number.parseFloat(placement.imageDeclarations.width?.value ?? '') - imageWidth
+  ), `${role} responsive image width declaration cap`).toBeLessThanOrEqual(0.001);
+  expect(placement.imageDeclarations.height?.value, `${role} responsive image height declaration`)
     .toBe('auto');
   expect(placement.imageDeclarations['margin-left']?.value, `${role} responsive image left margin declaration`)
     .toBe('auto');
@@ -405,19 +410,32 @@ export function assertResponsiveMermaidEvidence({ dpr, live, placement, pngEvide
     expect(ownerDeclarations[property]?.priority, `${role} responsive root ${property} priority`)
       .toBe('');
   }
-  const expectedDisplayWidth = Math.min(placement.ownerClientWidth, sourceMaxWidth);
+  const ownerPaddingLeft = Number.parseFloat(placement.ownerPaddingLeft);
+  const ownerPaddingRight = Number.parseFloat(placement.ownerPaddingRight);
+  const ownerBorderLeftWidth = Number.parseFloat(placement.ownerBorderLeftWidth);
+  expect(Number.isFinite(ownerPaddingLeft), `${role} responsive root left padding finite`).toBe(true);
+  expect(Number.isFinite(ownerPaddingRight), `${role} responsive root right padding finite`).toBe(true);
+  expect(Number.isFinite(ownerBorderLeftWidth), `${role} responsive root left border finite`).toBe(true);
+  const ownerContentWidth = placement.ownerClientWidth
+    - ownerPaddingLeft
+    - ownerPaddingRight;
+  expect(ownerContentWidth, `${role} responsive root content width positive`).toBeGreaterThan(0);
+  const expectedDisplayWidth = Math.min(ownerContentWidth, sourceMaxWidth);
   expect(Math.abs(placement.width - expectedDisplayWidth), `${role} responsive display width`)
     .toBeLessThanOrEqual(1.5);
   expect(Math.abs(placement.height - placement.width * live.svg.height / live.svg.width),
     `${role} responsive display aspect`).toBeLessThanOrEqual(1.5);
-  expect(Math.abs(
-    placement.left - (placement.ownerClientWidth - placement.width) / 2
-  ), `${role} responsive centering`).toBeLessThanOrEqual(1.5);
+  const ownerInlineStart = ownerBorderLeftWidth + ownerPaddingLeft;
+  expect(Number.isFinite(ownerInlineStart), `${role} responsive root inline start finite`).toBe(true);
+  const expectedImageLeft = ownerInlineStart + (ownerContentWidth - placement.width) / 2;
+  expect(Math.abs(placement.left - expectedImageLeft), `${role} responsive centering`)
+    .toBeLessThanOrEqual(1.5);
   return {
     capture: 'responsive-viewport',
     expectedPixelHeight,
     expectedPixelWidth,
-    imageMaxWidth,
+    imageWidth,
+    ownerContentWidth,
     pixelAspectResidual,
     sourceMaxWidth
   };

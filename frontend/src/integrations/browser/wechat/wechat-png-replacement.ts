@@ -182,9 +182,9 @@ export function replaceCompletedVisuals(
           }
           appendDeclarations(image, ['display:block'], true);
           // The responsive frame replaces the fixed intrinsic dimensions written
-          // above: a destination that strips declaration priority must never see
-          // the stale `max-width:none`/fixed `width` competing with the cap.
-          replaceDeclarations(image, ['width:100%', `max-width:${maxWidth}px`, 'height:auto'], true);
+          // above. The validated source SVG cap is the explicit desktop width;
+          // max-width:100% keeps narrower destination columns bounded.
+          replaceDeclarations(image, [`width:${maxWidth}px`, 'max-width:100%', 'height:auto'], true);
           WECHAT_PNG_GENERATED_IMAGES.add(image);
           centerMermaidGeneratedBlock(image, completed.autoMargins);
           runWechatSyncTiming(

@@ -315,7 +315,12 @@ export async function readBloomDecoratedMermaidPngEvidence(
   });
 }
 
-export async function readPayloadPngPlacements(page, html, width = 677, { recordedPngs = null } = {}) {
+export async function readPayloadPngPlacements(
+  page,
+  html,
+  width = 677,
+  { ownerPaddingInline = 0, recordedPngs = null } = {}
+) {
   const recordedPngMatcher = recordedPngs
     ? (url) => /\/e2e\/source-png-\d+\.png$/u.test(new URL(url).pathname)
     : null;
@@ -336,7 +341,12 @@ export async function readPayloadPngPlacements(page, html, width = 677, { record
     });
   }
   try {
-    return await page.evaluate(async ({ sourceHtml, hostWidth, waitForRecordedPngs }) => {
+    return await page.evaluate(async ({
+      hostWidth,
+      ownerPaddingInline,
+      sourceHtml,
+      waitForRecordedPngs
+    }) => {
     const parsed = new DOMParser().parseFromString(sourceHtml, 'text/html');
     const root = parsed.body.firstElementChild;
     if (!(root instanceof HTMLElement)) throw new Error('wechat-png-placement-root-unavailable');
@@ -373,15 +383,19 @@ export async function readPayloadPngPlacements(page, html, width = 677, { record
           const source = image.getAttribute('src') ?? '';
           const match = /(?:^|-)png-(\d+)\.png$/u.exec(source);
           if (!match) return null;
-          const rect = image.getBoundingClientRect();
-          const owner = image.parentElement?.getBoundingClientRect();
-          const style = getComputedStyle(image);
           const ownerElement = image.parentElement;
           const ownerStyle = image.parentElement?.getAttribute('style') ?? '';
-          if (!owner) throw new Error('wechat-png-placement-owner-unavailable');
           if (!(ownerElement instanceof HTMLElement)) {
             throw new Error('wechat-png-placement-owner-element-unavailable');
           }
+          if (ownerPaddingInline > 0) {
+            ownerElement.style.setProperty('box-sizing', 'border-box', 'important');
+            ownerElement.style.setProperty('padding-left', `${ownerPaddingInline}px`, 'important');
+            ownerElement.style.setProperty('padding-right', `${ownerPaddingInline}px`, 'important');
+          }
+          const rect = image.getBoundingClientRect();
+          const owner = ownerElement.getBoundingClientRect();
+          const style = getComputedStyle(image);
           const ownerComputed = getComputedStyle(ownerElement);
           const typedStyleValue = (element, property) => {
             if ('function' !== typeof element.computedStyleMap) return null;
@@ -534,6 +548,7 @@ export async function readPayloadPngPlacements(page, html, width = 677, { record
     }
     }, {
       hostWidth: width,
+      ownerPaddingInline,
       sourceHtml: html,
       waitForRecordedPngs: Boolean(recordedPngs)
     });

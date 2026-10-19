@@ -1,6 +1,7 @@
 // Complete mermaid png scenario owner.
 import { expect } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { canonicalMermaidRoles } from "./markdown-fixtures.mjs";
 import { fillMarkdownAndWaitForPreview } from "./editor-session.mjs";
 import { fullCapabilityImage } from "./markdown-fixtures.mjs";
@@ -433,10 +434,19 @@ export async function runMermaidPngScenario2({ baseURL, context, login, page, te
     });
     expect(wideGanttPlacement.width).toBeCloseTo(1200, 0);
     expect(wideGanttPlacement.height).toBeCloseTo(268, 0);
-    expect(wideGanttPlacement.ownerScrollWidth).toBeGreaterThanOrEqual(
-      wideGanttPlacement.ownerClientWidth
+    const wideExpectedGanttLeft = Math.max(
+      0,
+      (wideGanttPlacement.ownerClientWidth - wideGanttPlacement.width) / 2
     );
-    expect(Math.abs(wideGanttPlacement.left)).toBeLessThanOrEqual(1);
+    expect(wideGanttPlacement.marginLeft).toBe(`${wideExpectedGanttLeft}px`);
+    expect(wideGanttPlacement.marginRight).toBe(`${wideExpectedGanttLeft}px`);
+    expect(wideGanttPlacement.ownerScrollRange).toBe(0);
+    expect(wideGanttPlacement.ownerScrollLeftStart).toBe(0);
+    expect(wideGanttPlacement.ownerScrollLeftEnd).toBe(0);
+    expect(wideGanttPlacement.left).toBeCloseTo(wideExpectedGanttLeft, 0);
+    expect(wideGanttPlacement.ownerClientWidth
+      - wideGanttPlacement.left
+      - wideGanttPlacement.width).toBeCloseTo(wideExpectedGanttLeft, 0);
     expect(Math.abs(wideGanttPlacement.top)).toBeLessThanOrEqual(1);
     expect(await page.locator('#easymde-source').inputValue()).toBe(fullMarkdown);
     expect(await widePreview.evaluate((root) => root.easymdePreviewSignature ?? ''))

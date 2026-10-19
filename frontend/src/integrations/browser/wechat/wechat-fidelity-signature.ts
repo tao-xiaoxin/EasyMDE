@@ -31,6 +31,16 @@ import type { WechatDimensionSemanticsContext } from './wechat-dimension-semanti
 import { inlineTextMarkerFreshnessSignature } from './wechat-pseudo-elements';
 import { taskListCheckboxFreshnessSignature } from './wechat-task-geometry';
 import { isTaskSvgPseudoContent } from './wechat-task-paint';
+export function normalizeSignatureStyleValue(property: string, raw: string): string {
+  if ("text-indent" === property) {
+    const trimmed = raw.trim().toLowerCase();
+    if (/^-?0(?:\.0+)?(?:px)?$/u.test(trimmed)) {
+      return "0px";
+    }
+  }
+  return raw;
+}
+
 export function preparedPseudoStyleSignature(
   element: Element,
   pseudoElement: (typeof PREPARED_PSEUDO_ELEMENTS)[number],
@@ -56,10 +66,11 @@ export function preparedPseudoStyleSignature(
   const signature = `${pseudoElement}:${signatureStyleProperties(element, root, true)
     .map(
       (property) =>
-        `${property}=${
+        `${property}=${normalizeSignatureStyleValue(
+          property,
           semanticMarginValue(property, element, computed, dimensionSemantics, pseudoElement, semanticComputed) ??
-          exported.getPropertyValue(property)
-        }`
+            exported.getPropertyValue(property)
+        )}`
     )
     .join(';')}`;
   const generatedHeadingVisibility =
@@ -94,10 +105,11 @@ export function preparedRootExportStyleSignature(
   const semanticComputed = dimensionSemantics && semanticMarginSource(element, computed) ? computed : null;
   const styles = COPY_STYLE_PROPERTIES.map(
     (property) =>
-      `${property}=${
+      `${property}=${normalizeSignatureStyleValue(
+        property,
         semanticMarginValue(property, element, computed, dimensionSemantics, undefined, semanticComputed) ??
-        computed.getPropertyValue(property)
-      }`
+          computed.getPropertyValue(property)
+      )}`
   ).join(';');
   const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
     preparedPseudoStyleSignature(element, pseudoElement, runtime, true, dimensionSemantics, true)
@@ -330,7 +342,7 @@ export function preparedLayoutSignature(
       const computed = runtime.getComputedStyle(element);
       const root = 0 === index;
       const styles = signatureStyleProperties(element, root)
-        .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+        .map((property) => `${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`)
         .join(';');
       const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>
         preparedPseudoStyleSignature(element, pseudoElement, runtime, root, dimensionSemantics, root)
@@ -393,7 +405,7 @@ export async function preparedLayoutSignatureWithYield(
     const root = 0 === index;
     const styles: string[] = [];
     for (const property of signatureStyleProperties(element, root)) {
-      styles.push(`${property}=${computed.getPropertyValue(property)}`);
+      styles.push(`${property}=${normalizeSignatureStyleValue(property, computed.getPropertyValue(property))}`);
       if (yieldToBrowser.shouldYield()) await yieldToBrowser();
     }
     const pseudoStyles = PREPARED_PSEUDO_ELEMENTS.map((pseudoElement) =>

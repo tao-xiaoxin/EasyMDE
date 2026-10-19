@@ -420,6 +420,491 @@ describe("responsive portable padding semantics", () => {
 		}
 	});
 
+	it("falls back to effective padding when a nonmatching parent rule owns a nested important override", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote blockquote {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("keeps matching parent declarations when the same rule also owns nested rules", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "parent-with-child";
+		const override = document.createElement("style");
+		override.textContent = `
+			#parent-with-child {
+				padding-left: 18px !important;
+				& .never {
+					color: red;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("walks nested child and grandchild rules before falling back", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote {
+					& blockquote {
+						padding-left: 18px !important;
+					}
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("uses the maximum specificity from the full nesting parent selector list", () => {
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra, #never {
+				& blockquote blockquote {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			root.classList.remove("extra");
+			fixture.cleanup();
+			override.remove();
+		}
+	});
+
+	it("conservatively rejects a nested rule whose intermediate selector does not match but descendant does", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& .intermediate-never {
+					& blockquote {
+						padding-left: 18px !important;
+					}
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects nested source-order ambiguity", () => {
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra {
+				& blockquote blockquote {
+					padding-left: var(--easymde-portable-padding-left);
+				}
+				& blockquote blockquote {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			root.classList.remove("extra");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects alternative-specificity ambiguity in nested child selectors", () => {
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content.easymde-markdown-theme-phycat-sky.extra {
+				& :is(.never, #highly-specific) {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		const fixture = portableQuoteFixture();
+		const root = fixture.source.closest(".easymde-rendered-content") as HTMLElement;
+		root.classList.add("extra");
+		try {
+			const measured = style({ padding: "18px 20px 18px 48px", position: "static" });
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			root.classList.remove("extra");
+			fixture.cleanup();
+			override.remove();
+		}
+	});
+
+	it("keeps base transport when a normal declaration is inside a cascade layer", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "normal-layer-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@layer override {
+				#normal-layer-target {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBe("9%");
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects CSSNestedDeclarations rules appearing after a nested child rule", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "nested-decl-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			#nested-decl-target {
+				& p {
+					color: red;
+				}
+				padding-left: 18px !important;
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively rejects CSSNestedDeclarations rules nested inside descendant rules", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& p {
+					color: red;
+				}
+				& blockquote blockquote {
+					& span {
+						color: blue;
+					}
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("emits the effective pixel padding through synchronous and asynchronous declaration serializers", async () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `
+			.easymde-rendered-content {
+				& blockquote blockquote {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				display: "block",
+				padding: "18px 20px 18px 18px",
+				"padding-left": "18px",
+				"padding-right": "20px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			const modern = await styleDeclarations(
+				fixture.source,
+				measured,
+				false,
+				false,
+				runtime(measured),
+				new Map(),
+				null,
+				undefined,
+				semantics,
+			);
+			const legacy = styleDeclarationsSynchronously(
+				fixture.source,
+				measured,
+				false,
+				false,
+				runtime(measured),
+				semantics,
+			);
+			if (!legacy) throw new Error("synchronous style serialization failed");
+			expect(modern).toContain("padding-left:18px");
+			expect(modern).not.toContain("padding-left:9%");
+			expect(legacy).toContain("padding-left:18px");
+			expect(legacy).not.toContain("padding-left:9%");
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
+	it("falls back to effective padding when an @layer rule with !important overrides base transport", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@layer override {
+				#target {
+					padding-left: 18px !important;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively uses computed padding for an unknown nested grouping rule", () => {
+		const fixture = portableQuoteFixture();
+		fixture.source.id = "unknown-group-target";
+		const override = document.createElement("style");
+		override.textContent = `
+			@container (min-width: 1px) {
+				#unknown-group-target {
+					padding-left: 18px;
+				}
+			}
+		`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.source.removeAttribute("id");
+			fixture.cleanup();
+		}
+	});
+
+	it("conservatively uses computed padding when an import rule cannot be resolved", () => {
+		const fixture = portableQuoteFixture();
+		const override = document.createElement("style");
+		override.textContent = `@import url("https://example.invalid/unavailable-cascade.css");`;
+		document.head.append(override);
+		try {
+			const measured = style({
+				padding: "18px 20px 18px 48px",
+				position: "static",
+			});
+			const semantics = paddingSemantics("9%", "5%");
+			expect(
+				semanticPaddingValue(
+					"padding-left",
+					fixture.source,
+					measured,
+					semantics,
+					semantics.getComputedStyle(fixture.source),
+				),
+			).toBeNull();
+		} finally {
+			override.remove();
+			fixture.cleanup();
+		}
+	});
+
 	it("changes dimension freshness when token and effective semantics differ at equal used pixels", () => {
 		const fixture = portableQuoteFixture();
 		try {

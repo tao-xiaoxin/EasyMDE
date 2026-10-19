@@ -1,4 +1,12 @@
-import { isSvgElement } from './wechat-clone-metadata';
+import {
+  hasVisualRasterizationAncestor,
+  isSvgElement,
+  mathCloneRole,
+  mathOuterAllocationDecision,
+  visualRasterizationKind
+} from './wechat-clone-metadata';
+import { mermaidAdmissionSignature } from './wechat-mermaid-geometry';
+import { WechatPngConversionError } from './wechat-png-conversion-policy';
 import {
   COPY_STYLE_PROPERTIES,
   ORDINARY_DIMENSION_PROPERTIES,
@@ -7,6 +15,7 @@ import {
   semanticMarginSignature,
   semanticMarginSource,
   semanticMarginValue,
+  semanticPaddingSignature,
   semanticTransformOriginSignature,
   signatureStyleProperties,
   supportsSpecialLayout
@@ -22,7 +31,6 @@ import type { WechatDimensionSemanticsContext } from './wechat-dimension-semanti
 import { inlineTextMarkerFreshnessSignature } from './wechat-pseudo-elements';
 import { taskListCheckboxFreshnessSignature } from './wechat-task-geometry';
 import { isTaskSvgPseudoContent } from './wechat-task-paint';
-
 export function preparedPseudoStyleSignature(
   element: Element,
   pseudoElement: (typeof PREPARED_PSEUDO_ELEMENTS)[number],
@@ -97,6 +105,48 @@ export function preparedRootExportStyleSignature(
   return `${styles}|${pseudoStyles}`;
 }
 
+type MathTypedStyleMap = Readonly<{
+  get: (property: string) => unknown;
+}>;
+
+const MATH_TYPED_DIMENSION_PROPERTIES = [
+  'inline-size',
+  'min-inline-size',
+  'max-inline-size',
+  'width',
+  'min-width',
+  'max-width'
+] as const;
+
+function mathTypedDimensionValue(styleMap: MathTypedStyleMap, property: string): string {
+  const candidate = styleMap.get(property);
+  if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return 'unknown';
+  const value = (candidate as { value?: unknown }).value;
+  if ('string' === typeof value) return value.trim().toLowerCase() || 'unknown';
+  const unit = (candidate as { unit?: unknown }).unit;
+  if ('number' !== typeof value || !Number.isFinite(value) || 'string' !== typeof unit) return 'unknown';
+  if ('number' === unit) return String(value);
+  if ('percent' === unit) return `${value}%`;
+  return `${value}${unit}`.toLowerCase();
+}
+
+function mathShellDimensionSignature(element: Element, computed: CSSStyleDeclaration): string {
+  if (!element.matches('.katex, .katex-html, .katex-display, .easymde-math-block, .easymde-math-inline')) return '';
+  const factory = (element as Element & { computedStyleMap?: () => MathTypedStyleMap }).computedStyleMap;
+  const typed = 'function' === typeof factory
+    ? (() => {
+        const styleMap = factory.call(element);
+        return MATH_TYPED_DIMENSION_PROPERTIES.map(
+          (property) => `${property}=${mathTypedDimensionValue(styleMap, property)}`
+        ).join(';');
+      })()
+    : 'typed-om=unavailable';
+  const used = ['box-sizing', ...ORDINARY_DIMENSION_PROPERTIES, ...MATH_TYPED_DIMENSION_PROPERTIES]
+    .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+    .join(';');
+  return `math-used=${used};math-typed=${typed}`;
+}
+
 export function ordinaryDimensionSemanticsSignature(
   element: Element,
   dimensionSemantics: WechatDimensionSemanticsContext | null
@@ -104,30 +154,104 @@ export function ordinaryDimensionSemanticsSignature(
   if (!dimensionSemantics) return '';
   const computed = dimensionSemantics.getComputedStyle(element);
   if (!computed) return '';
-  const dimensions =
-    !supportsSpecialLayout(element) && !isSvgElement(element)
-      ? ['box-sizing', ...ORDINARY_DIMENSION_PROPERTIES]
-          .map((property) => `${property}=${computed.getPropertyValue(property)}`)
-          .join(';')
+  const role = mathCloneRole(element);
+  const dimensions = isSvgElement(element)
+    ? ''
+    : 'katex' === role
+      ? mathShellDimensionSignature(element, computed)
+      : role
+        ? ''
+        : !supportsSpecialLayout(element)
+          ? ['box-sizing', ...ORDINARY_DIMENSION_PROPERTIES]
+              .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+              .join(';')
+          : '';
+  const outerAllocation =
+    'html' === role && dimensionSemantics
+      ? `math-outer-allocation=${mathOuterAllocationDecision(
+          element,
+          dimensionSemantics.getSourceComputedStyle(element),
+          dimensionSemantics.getSourceComputedStyle,
+          dimensionSemantics.getFormattingOwnerDisplay(element),
+          dimensionSemantics.rasterizesVisualRoots
+        ).signature}`
       : '';
   const margins = semanticMarginSignature(element, computed, dimensionSemantics, undefined, computed);
+  const padding = semanticPaddingSignature(element, computed, dimensionSemantics, computed);
   // The portable payload transports the raw `transform-origin` semantics, so a
   // source semantic change with identical resolved pixels must still invalidate
   // a prepared payload instead of reusing the previous declaration.
   const transformOrigin = semanticTransformOriginSignature(element, computed);
-  return [dimensions, margins, transformOrigin].filter(Boolean).join(';');
+  return [dimensions, outerAllocation, margins, padding, transformOrigin].filter(Boolean).join(';');
 }
 function layoutViewportSignature(layoutPreview: HTMLElement): string {
   const viewport = layoutPreview.ownerDocument.defaultView;
   return viewport ? `${viewport.innerWidth}x${viewport.innerHeight}@${viewport.devicePixelRatio}` : '';
 }
 
+function mermaidAdmissionFreshnessSignature(element: Element, runtime: BrowserWechatClipboardRuntime): string {
+  try {
+    return mermaidAdmissionSignature(element, runtime);
+  } catch (error: unknown) {
+    if (error instanceof WechatPngConversionError) throw error;
+    throw new WechatPngConversionError('wechat-png-rasterization-failed');
+  }
+}
+
+function svgMarkerDecisionSignature(
+  element: Element,
+  computed: CSSStyleDeclaration
+): string {
+  if (!isSvgElement(element)) return '';
+  return [
+    'display',
+    'visibility',
+    'overflow',
+    'color',
+    'fill',
+    'fill-opacity',
+    'fill-rule',
+    'opacity',
+    'stroke',
+    'stroke-dasharray',
+    'stroke-dashoffset',
+    'stroke-linecap',
+    'stroke-linejoin',
+    'stroke-miterlimit',
+    'stroke-opacity',
+    'stroke-width',
+    'shape-rendering',
+    'paint-order',
+    'marker-start',
+    'marker-mid',
+    'marker-end',
+    'transform',
+    'transform-origin',
+    'transform-box',
+    'clip-path',
+    'mask',
+    'filter',
+    'mix-blend-mode',
+    'vector-effect'
+  ]
+    .map((property) => `${property}=${computed.getPropertyValue(property)}`)
+    .join(';');
+}
+
 function auxiliaryFidelitySignature(
   element: Element,
   runtime: BrowserWechatClipboardRuntime,
   dimensionSemantics: WechatDimensionSemanticsContext | null,
+  conversionActive = false,
   computed?: CSSStyleDeclaration
 ): string {
+  const activeConversion = conversionActive || Boolean(dimensionSemantics?.rasterizesVisualRoots);
+  if (
+    activeConversion &&
+    (visualRasterizationKind(element) || hasVisualRasterizationAncestor(element))
+  ) {
+    return '';
+  }
   const markerSignature = ['OL', 'UL'].includes(element.tagName)
     ? listMarkerSignature(element, computed ?? runtime.getComputedStyle(element), runtime)
     : '';
@@ -135,7 +259,13 @@ function auxiliaryFidelitySignature(
   const taskCheckboxSignature = taskListCheckboxFreshnessSignature(element, runtime, dimensionSemantics);
   const tableHeaderSignature = tableHeaderPaintFreshnessSignature(element, runtime);
   const tableScrollSignature = tableScrollOwnerFreshnessSignature(element, runtime);
-  return `${markerSignature}:${inlineMarkerSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}`;
+  const mermaidAdmission = dimensionSemantics?.rasterizesVisualRoots
+    ? ''
+    : mermaidAdmissionFreshnessSignature(element, runtime);
+  const markerDecisions = isSvgElement(element)
+    ? svgMarkerDecisionSignature(element, computed ?? runtime.getComputedStyle(element))
+    : '';
+  return `${markerSignature}:${inlineMarkerSignature}:${taskCheckboxSignature}:${tableHeaderSignature}:${tableScrollSignature}:${mermaidAdmission}:${markerDecisions}`;
 }
 
 function layoutDimensionEntrySignature(
@@ -206,7 +336,7 @@ export function preparedLayoutSignature(
         preparedPseudoStyleSignature(element, pseudoElement, runtime, root, dimensionSemantics, root)
       ).join('|');
       const dimensionSemanticsSignature = ordinaryDimensionSemanticsSignature(element, dimensionSemantics);
-      const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics, computed);
+      const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics, false, computed);
       const childPseudoMarginSignature = root
         ? ''
         : preparedChildPseudoMarginSignature(element, runtime, dimensionSemantics);
@@ -270,7 +400,7 @@ export async function preparedLayoutSignatureWithYield(
       preparedPseudoStyleSignature(element, pseudoElement, runtime, root, dimensionSemantics, root)
     ).join('|');
     const dimensionSemanticsSignature = ordinaryDimensionSemanticsSignature(element, dimensionSemantics);
-    const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics, computed);
+    const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics, false, computed);
     const childPseudoMarginSignature = root
       ? ''
       : preparedChildPseudoMarginSignature(element, runtime, dimensionSemantics);
@@ -311,7 +441,8 @@ export async function preparedDimensionGeometrySignatureWithYield(
   runtime: BrowserWechatClipboardRuntime,
   yieldToBrowser: SerializationYield,
   signal: AbortSignal | undefined,
-  dimensionSemantics: WechatDimensionSemanticsContext | null
+  dimensionSemantics: WechatDimensionSemanticsContext | null,
+  conversionActive = false
 ): Promise<string> {
   throwIfBackgroundPreparationAborted(signal);
   const viewportSignature = layoutViewportSignature(layoutPreview);
@@ -319,9 +450,15 @@ export async function preparedDimensionGeometrySignatureWithYield(
   const elements = [layoutPreview, ...Array.from(layoutPreview.querySelectorAll('*'))];
   for (const [index, element] of elements.entries()) {
     throwIfBackgroundPreparationAborted(signal);
+    if (conversionActive && hasVisualRasterizationAncestor(element)) continue;
     const rect = element.getBoundingClientRect?.();
     const dimensions = ordinaryDimensionSemanticsSignature(element, dimensionSemantics);
-    const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics);
+    const auxiliarySignature = auxiliaryFidelitySignature(
+      element,
+      runtime,
+      dimensionSemantics,
+      conversionActive
+    );
     const childPseudoMarginSignature =
       0 === index ? '' : preparedChildPseudoMarginSignature(element, runtime, dimensionSemantics);
     const rootExportStyleSignature =
@@ -346,26 +483,36 @@ export async function preparedDimensionGeometrySignatureWithYield(
 export function preparedDimensionGeometrySignature(
   layoutPreview: HTMLElement,
   runtime: BrowserWechatClipboardRuntime,
-  dimensionSemantics: WechatDimensionSemanticsContext | null
+  dimensionSemantics: WechatDimensionSemanticsContext | null,
+  conversionActive = false
 ): string {
   const viewportSignature = layoutViewportSignature(layoutPreview);
   const elements = [layoutPreview, ...Array.from(layoutPreview.querySelectorAll('*'))];
-  const entries = elements.map((element, index) => {
+  const entries: string[] = [];
+  elements.forEach((element, index) => {
+    if (conversionActive && hasVisualRasterizationAncestor(element)) return;
     const rect = element.getBoundingClientRect?.();
     const dimensions = ordinaryDimensionSemanticsSignature(element, dimensionSemantics);
-    const auxiliarySignature = auxiliaryFidelitySignature(element, runtime, dimensionSemantics);
+    const auxiliarySignature = auxiliaryFidelitySignature(
+      element,
+      runtime,
+      dimensionSemantics,
+      conversionActive
+    );
     const childPseudoMarginSignature =
       0 === index ? '' : preparedChildPseudoMarginSignature(element, runtime, dimensionSemantics);
     const rootExportStyleSignature =
       0 === index ? preparedRootExportStyleSignature(element, runtime, dimensionSemantics) : '';
-    return dimensionGeometryEntrySignature(
-      index,
-      rect?.width ?? 0,
-      rect?.height ?? 0,
-      dimensions,
-      childPseudoMarginSignature,
-      rootExportStyleSignature,
-      auxiliarySignature
+    entries.push(
+      dimensionGeometryEntrySignature(
+        index,
+        rect?.width ?? 0,
+        rect?.height ?? 0,
+        dimensions,
+        childPseudoMarginSignature,
+        rootExportStyleSignature,
+        auxiliarySignature
+      )
     );
   });
   return [viewportSignature, ...entries].join('\u0001');

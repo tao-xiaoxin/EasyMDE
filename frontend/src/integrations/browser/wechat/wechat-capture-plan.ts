@@ -22,9 +22,9 @@ import {
   mermaidHasUnsafeBorder,
   mermaidHasUnsafePositioning,
   mermaidLayoutMagnification,
-  mermaidRadiusCorners,
   mermaidResponsiveAncestorLayoutIsSafe,
   mermaidResponsiveCssText,
+  mermaidResponsiveOwnerPaintIsSafe,
   mermaidResponsiveSourceOverflowIsSafe,
   mermaidRootPaintIsSafe,
   mermaidSourceUsesAutoBlockMargins,
@@ -471,6 +471,16 @@ export function mermaidResponsiveViewportDimensions(
   if (sourceHeight && !['auto', 'none'].includes(sourceHeight)) return null;
   const sourceRect = source.getBoundingClientRect();
   const svgRect = svg.getBoundingClientRect();
+  const computed = runtime.getComputedStyle(source);
+  const sourceEdges = mermaidEdgeValues(computed);
+  if (!sourceEdges) return null;
+  const [paddingTop, paddingRight, paddingBottom, paddingLeft, borderTop, borderRight, borderBottom, borderLeft] =
+    sourceEdges as [number, number, number, number, number, number, number, number];
+  const sourceContentWidth = sourceRect.width - paddingRight - paddingLeft - borderRight - borderLeft;
+  const sourceContentHeight = sourceRect.height - paddingTop - paddingBottom - borderTop - borderBottom;
+  const sourceContentLeft = sourceRect.left + paddingLeft + borderLeft;
+  const sourceContentRight = sourceRect.right - paddingRight - borderRight;
+  const sourceContentTop = sourceRect.top + paddingTop + borderTop;
   if (
     ![
       sourceRect.width,
@@ -492,21 +502,24 @@ export function mermaidResponsiveViewportDimensions(
     svgRect.height <= 0 ||
     svgRect.width < 1 ||
     svgRect.height < 1 ||
-    sourceRect.width <= svgRect.width + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    Math.abs(sourceRect.height - svgRect.height) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    Math.abs(svgRect.width - maxWidth) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE
+    !Number.isFinite(sourceContentWidth) ||
+    !Number.isFinite(sourceContentHeight) ||
+    sourceContentWidth <= 0 ||
+    sourceContentHeight <= 0 ||
+    Math.abs(sourceContentHeight - svgRect.height) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    svgRect.width > sourceContentWidth + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    svgRect.width > maxWidth + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE
   )
     return null;
-  const computed = runtime.getComputedStyle(source);
   const svgComputed = runtime.getComputedStyle(svg);
   const sourceDisplay = computed.getPropertyValue('display').trim().toLowerCase();
-  const backgroundColor = computed.getPropertyValue('background-color').trim().toLowerCase();
   const sourceOpacity = computed.getPropertyValue('opacity').trim().toLowerCase();
   const sourceFloat = computed.getPropertyValue('float').trim().toLowerCase();
   const svgFloat = svgComputed.getPropertyValue('float').trim().toLowerCase();
   const svgMarginTop = mermaidCssPixelValue(svgComputed.getPropertyValue('margin-top'));
   const svgMarginBottom = mermaidCssPixelValue(svgComputed.getPropertyValue('margin-bottom'));
-  const sourceRadii = mermaidRadiusCorners(computed);
+  const boxSizing = computed.getPropertyValue('box-sizing').trim().toLowerCase();
+  const sourceMaxWidth = mermaidResponsiveCssText(source, runtime, 'max-width');
   const formattingOwnerDisplay = source.parentElement
     ? runtime.getComputedStyle(source.parentElement).getPropertyValue('display').trim().toLowerCase()
     : '';
@@ -516,19 +529,21 @@ export function mermaidResponsiveViewportDimensions(
   const svgEffects = ['box-shadow', 'clip-path', 'filter', 'mask', 'mask-image'].map((property) =>
     svgComputed.getPropertyValue(property).trim().toLowerCase()
   );
-  const sourceEdges = mermaidEdgeValues(computed);
   const svgEdges = mermaidEdgeValues(svgComputed);
   const preserveAspectRatio = svg.getAttribute('preserveAspectRatio')?.trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
   const expectedHeight = (svgRect.width * viewBox.height) / viewBox.width;
-  const freeWidth = sourceRect.width - svgRect.width;
-  const centeredLeft = svgRect.left - sourceRect.left;
-  const centeredRight = sourceRect.right - svgRect.right;
+  const freeWidth = sourceContentWidth - svgRect.width;
+  const centeredLeft = svgRect.left - sourceContentLeft;
+  const centeredRight = sourceContentRight - svgRect.right;
   if (
     !mermaidResponsiveSourceOverflowIsSafe(source, runtime) ||
     unsafeMermaidDimensionRules(source, source.ownerDocument) ||
     mermaidHasUnsafeAncestorGeometry(source, runtime, boundary) ||
     !mermaidResponsiveAncestorLayoutIsSafe(source, runtime, boundary) ||
     (sourceDisplay && 'block' !== sourceDisplay) ||
+    (boxSizing && !['border-box', 'content-box'].includes(boxSizing)) ||
+    ('content-box' === boxSizing && sourceEdges.some((value) => value > 0)) ||
+    (sourceMaxWidth && !['auto', '100%'].includes(sourceMaxWidth)) ||
     '1' !== sourceOpacity ||
     !['', 'none'].includes(sourceFloat) ||
     !['', 'none'].includes(svgFloat) ||
@@ -536,21 +551,14 @@ export function mermaidResponsiveViewportDimensions(
     svgMarginBottom === null ||
     svgMarginTop > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     svgMarginBottom > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    !sourceRadii ||
-    sourceRadii.some((radius) => radius.horizontal > 0 || radius.vertical > 0) ||
     !['block', 'flow-root', 'list-item'].includes(formattingOwnerDisplay) ||
-    (backgroundColor && !['transparent', 'rgba(0, 0, 0, 0)', 'rgba(0,0,0,0)'].includes(backgroundColor)) ||
     mermaidHasUnsafePositioning(source, runtime.getComputedStyle) ||
     mermaidHasUnsafePositioning(svg, runtime.getComputedStyle) ||
     svg.hasAttribute('transform') ||
     (preserveAspectRatio && 'xmidymid meet' !== preserveAspectRatio) ||
-    !sourceEdges ||
     !svgEdges ||
-    sourceEdges.some((value) => value > 0) ||
     svgEdges.some((value) => value > 0) ||
-    mermaidHasUnsafeBorder(computed) ||
     mermaidHasUnsafeBorder(svgComputed) ||
-    mermaidHasNonZeroBorderWidth(computed) ||
     mermaidHasNonZeroBorderWidth(svgComputed) ||
     svgEffects.some((value) => value && 'none' !== value) ||
     !matrix ||
@@ -567,14 +575,14 @@ export function mermaidResponsiveViewportDimensions(
     Math.abs(svgRect.height - expectedHeight) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     svgRect.left < sourceRect.left - MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     svgRect.right > sourceRect.right + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    svgRect.top < sourceRect.top - MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    svgRect.bottom > sourceRect.bottom + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    svgRect.top < sourceContentTop - MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    svgRect.bottom > sourceContentTop + sourceContentHeight + MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     !Number.isFinite(freeWidth) ||
     freeWidth < 0 ||
     Math.abs(centeredLeft - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
     Math.abs(centeredRight - freeWidth / 2) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    Math.abs(svgRect.top - sourceRect.top) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
-    !mermaidRootPaintIsSafe(source, runtime, sourceRect.width, sourceRect.height, svgRect.width, svgRect.height) ||
+    Math.abs(svgRect.top - sourceContentTop) > MERMAID_INTRINSIC_GEOMETRY_TOLERANCE ||
+    !mermaidResponsiveOwnerPaintIsSafe(source, runtime, sourceRect.width, sourceRect.height) ||
     !mermaidRootPaintIsSafe(svg, runtime, svgRect.width, svgRect.height, svgRect.width, svgRect.height)
   )
     return null;

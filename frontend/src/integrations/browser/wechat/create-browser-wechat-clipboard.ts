@@ -20,6 +20,7 @@ import {
 } from './wechat-clipboard-runtime';
 import { createDimensionSemanticsContext, type WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
 import {
+  preparedDimensionGeometrySignature,
   preparedDimensionGeometrySignatureWithYield,
   preparedDimensionSemanticsSignature,
   preparedLayoutSignature
@@ -36,6 +37,8 @@ import {
   type WechatPngConversionState
 } from './wechat-png-conversion-policy';
 import {
+  captureWechatMathSourceAdmissionSynchronously,
+  hasWechatMathStaticFlowCandidate,
   type SerializedClipboardPayload,
   serializeClipboardPayload,
   serializeClipboardPayloadSynchronously
@@ -453,7 +456,8 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                           const dimensionSemantics = createDimensionSemanticsContext(
                             serializationPreview,
                             resolvedPreview,
-                            runtime
+                            runtime,
+                            true
                           );
                           try {
                             dimensionSemantics.refresh();
@@ -462,7 +466,8 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                               runtime,
                               yieldToBrowser,
                               conversionSignal,
-                              dimensionSemantics
+                              dimensionSemantics,
+                              true
                             );
                             assertPngConversionCurrent(conversionContext);
                             const serialized = await serializeClipboardPayload(
@@ -498,7 +503,8 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                                 runtime,
                                 yieldToBrowser,
                                 conversionSignal,
-                                dimensionSemantics
+                                dimensionSemantics,
+                                true
                               );
                               finalGeometryTiming.finish('success');
                             } catch (error: unknown) {
@@ -605,6 +611,7 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
                 promise: Promise.resolve(recovery.payload),
                 sequence: owned.prepared.sequence,
                 sourceMarkup: recovery.sourceMarkup,
+                mathSourceAdmission: recovery.mathSourceAdmission,
                 recoveredAtLayoutSignature: owned.prepared.layoutSignature
               });
             } else {
@@ -824,12 +831,24 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
               dimensionSemantics
             );
             const prepared = preparedPayloads.get(preview);
+            const mathSourceCapture = hasWechatMathStaticFlowCandidate(serializationPreview)
+              ? captureWechatMathSourceAdmissionSynchronously(
+                  serializationPreview,
+                  runtime,
+                  true,
+                  undefined,
+                  undefined,
+                  preparedDimensionGeometrySignature(serializationPreview, runtime, dimensionSemantics)
+                )
+              : null;
             const preparedFallback = reusablePreparedClipboardPayload(
               prepared,
               currentMarkup,
               currentDimensionSignature,
               currentLayoutSignature,
-              pendingFallback
+              pendingFallback,
+              mathSourceCapture?.sourceFingerprint ?? '',
+              mathSourceCapture?.rawDimensionGeometrySignature ?? ''
             );
             // If no background payload has completed yet, the compatibility
             // path gets one synchronous attempt in the click task. A remote
@@ -954,11 +973,24 @@ export function createBrowserWechatClipboard(runtime: BrowserWechatClipboardRunt
           runtime,
           dimensionSemantics
         );
+        const mathSourceCapture = hasWechatMathStaticFlowCandidate(serializationPreview)
+          ? captureWechatMathSourceAdmissionSynchronously(
+              serializationPreview,
+              runtime,
+              true,
+              undefined,
+              undefined,
+              preparedDimensionGeometrySignature(serializationPreview, runtime, dimensionSemantics)
+            )
+          : null;
         const payload = reusablePreparedClipboardPayload(
           prepared,
           currentMarkup,
           currentDimensionSignature,
-          currentLayoutSignature
+          currentLayoutSignature,
+          null,
+          mathSourceCapture?.sourceFingerprint ?? '',
+          mathSourceCapture?.rawDimensionGeometrySignature ?? ''
         );
         if (!payload) {
           const current = preparedPayloads.get(preview);

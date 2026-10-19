@@ -6,6 +6,8 @@ export type WechatDimensionSemanticsContext = Readonly<{
   getComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
   getFormattingOwnerDisplay: (source: Element) => string | null;
   getRootComputedStyle: (source: Element, pseudoElement?: string) => CSSStyleDeclaration | null;
+  getSourceComputedStyle: (source: Element) => CSSStyleDeclaration;
+  rasterizesVisualRoots: boolean;
   refresh: () => void;
 }>;
 
@@ -109,7 +111,8 @@ export function snapshotComputedStyle(computed: CSSStyleDeclaration): CSSStyleDe
 export function createDimensionSemanticsContext(
   layoutRoot: HTMLElement,
   sourceRoot: HTMLElement,
-  runtime: BrowserWechatClipboardRuntime
+  runtime: BrowserWechatClipboardRuntime,
+  rasterizesVisualRoots = false
 ): WechatDimensionSemanticsContext {
   const rawMirror = layoutRoot === sourceRoot ? createRawDimensionContextMirror(sourceRoot) : null;
   const rawRoot = rawMirror?.root ?? sourceRoot;
@@ -160,6 +163,8 @@ export function createDimensionSemanticsContext(
       return rawElement ? runtime.getComputedStyle(rawElement, pseudoElement) : null;
     },
     getFormattingOwnerDisplay,
+    getSourceComputedStyle: (source) => runtime.getComputedStyle(source),
+    rasterizesVisualRoots,
     getRootComputedStyle: (source, pseudoElement) => {
       const rawElement = rawElementByLayout.get(source);
       if (rawMirror && rawElement) return runtime.getComputedStyle(rawElement, pseudoElement);

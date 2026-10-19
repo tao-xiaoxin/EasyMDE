@@ -395,16 +395,19 @@ Default PNG pixel dimensions round each captured CSS dimension upward after
 multiplication by the clamped device pixel ratio. Default pasted display
 dimensions preserve the captured geometry.
 
-The explicit `responsive-viewport` Mermaid mode is a narrow exception. A
-proven neutral, auto-height root with one direct, untransformed SVG may capture
-that SVG rather than the editor row's transparent layout space. Require
-effective percentage width, automatic height, a finite renderer cap already
-reached, default meet behavior, and proven horizontal auto margins. Reject
-outer-root paint, decoration, pseudo content, padding, borders, radius, extra
-children, animations, effects and ambiguous layout from this regime. Reject
-unsafe external SVG decoration, while preserving the SVG scene and all SVG
-viewBox padding; never crop by painted pixels. Clear only the private capture
-clone's external margins. This mode uses `ceil(svgWidth * DPR)` pixel width and
+The explicit `responsive-viewport` Mermaid mode is a narrow exception. An
+auto-height owner with one direct, untransformed SVG may capture that SVG while
+retaining the serialized owner. Require effective percentage SVG width,
+automatic height, a finite renderer cap bounding the SVG, default meet behavior,
+and proven horizontal auto margins. Validate the SVG against the owner's
+content box, including centering and aspect ratio. A border-box owner may retain
+its validated padding, solid background, borders and radius; a content-box owner
+must have zero padding and border widths. Reject extra children, pseudo content,
+background images, gradients, shadows, masks, filters, outlines, border images,
+animations and ambiguous positioning or ancestor geometry. Reject unsafe
+external SVG decoration, while preserving the SVG scene and all SVG viewBox
+padding; never crop by painted pixels. Clear only the private capture clone's
+external margins. This mode uses `ceil(svgWidth * DPR)` pixel width and
 `round(pixelWidth * svgHeight / svgWidth)` pixel height; validate the actual
 integer dimensions and all existing limits. Its retained-root IMG uses
 percentage width, the source SVG cap, automatic height and the existing
@@ -609,8 +612,19 @@ its width declaration and emit `max-width:100%!important` and
 `height:auto!important`. After safe computed styles and
 pseudo-elements are captured, normalize copied article, div, and blockquote roots to portable
 sections. Preserve blockquote borders, backgrounds, spacing, nested children,
-and plain-text order; leave the source Preview unchanged. Wrap text leaves and
-encode code-line breaks while keeping each source line non-wrapping.
+and plain-text order; leave the source Preview unchanged. The shared Phycat
+nested-quote rule uses authored percentage padding tokens
+(`--easymde-portable-padding-left` and `--easymde-portable-padding-right`).
+The serializer validates those tokens and emits ordinary
+`padding-left`/`padding-right` declarations so saved articles remain
+container-relative only while the authored portable rule still wins the CSS
+cascade. It records the qualification and effective padding in freshness; an
+inline, logical, shorthand, higher-specificity, or `!important` override
+falls back to the effective source padding instead of silently replacing the
+Preview semantics. Viewport functions such as `clamp()` and `calc()` are not
+portable through the WeChat editor because its Save path removes them. Wrap
+text leaves and encode code-line breaks while keeping each source line
+non-wrapping.
 Consume exactly one terminal LF or CRLF inside the copied `pre > code` before
 materializing breaks: the source preformatted terminator does not paint an
 extra row, while a terminal `br` plus empty `nobr` would. Preserve additional

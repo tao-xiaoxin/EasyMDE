@@ -2092,19 +2092,6 @@ body:has(.easymde-editor.is-immersive) .wrap {
     overflow-wrap: anywhere;
 }
 
-@media (max-width: 760px) {
-    /* Phycat's decorative 48px quote inset is attractive on a paper page but
-     * consumes the entire content box when three quotes are nested in a
-     * narrow split pane. Keep the decoration while making nested levels
-     * shrink with the available article width. */
-    .easymde-editor .easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
-        box-sizing: border-box;
-        max-width: 100%;
-        margin-inline: 0;
-        padding-inline: 12px;
-    }
-}
-
 .easymde-preview-react-root {
     display: flex;
 }

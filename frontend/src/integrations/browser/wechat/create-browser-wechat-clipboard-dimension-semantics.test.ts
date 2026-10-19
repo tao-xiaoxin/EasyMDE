@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import { createDimensionSemanticsContext } from './wechat-dimension-semantics';
 
 import {
   blobText,
   declaration,
+  declaredStyleDeclarations,
+  declaredStyleValue,
   deferred,
   installClipboardTestEnvironment,
   prepareClipboard,
@@ -594,6 +597,720 @@ describe('createBrowserWechatClipboard', () => {
       if (originalExecCommand) Object.defineProperty(document, 'execCommand', originalExecCommand);
       else delete (document as unknown as { execCommand?: unknown }).execCommand;
     }
+  });
+
+  it.each([
+    ['writing-mode', 'vertical-rl'],
+    ['float', 'left'],
+    ['clear', 'both'],
+    ['clip', 'rect(0px, 416px, 32px, 0px)'],
+    ['clip-path', 'inset(0px)'],
+    ['contain', 'layout'],
+    ['container-type', 'inline-size']
+  ] as const)('regenerates a warm math payload when %s changes with identical geometry', async (property, changedValue) => {
+    let guardValue = {
+      'clip': 'auto',
+      'clip-path': 'none',
+      'clear': 'none',
+      'contain': 'none',
+      'container-type': 'normal',
+      'float': 'none',
+      'writing-mode': 'horizontal-tb'
+    }[property] ?? '';
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">warm guard</span></span></span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'warm guard' });
+    const htmlShell = preview.querySelector('.katex-html');
+    if (!htmlShell) throw new Error('warm guard math shell missing');
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'inline-size': 'auto',
+            'max-inline-size': 'none',
+            'max-width': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+            'min-inline-size': 'auto',
+            'min-width': 'auto',
+            width: 'auto'
+          }[property] ?? 'auto'
+        })
+      })
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          const exportedGuard = {
+            'clip': 'auto',
+            'clip-path': 'none',
+            'clear': 'none',
+            'contain': 'none',
+            'container-type': 'normal',
+            'float': 'none',
+            'writing-mode': 'horizontal-tb'
+          };
+          return declaration({
+            ...exportedGuard,
+            [property]: guardValue,
+            display: 'block',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            transform: 'none'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('warm guard math HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copyAndReadHtmlShell = async (): Promise<{ holder: HTMLDivElement; shell: Element }> => {
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const html = writes.at(-1);
+      if (!html) throw new Error('warm guard math HTML missing');
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const shells = holder.querySelectorAll('section > span > nobr > span > span');
+      expect(shells, 'warm guard html shell').toHaveLength(1);
+      const shell = shells[0];
+      if (!shell) throw new Error('warm guard html shell missing');
+      return { holder, shell };
+    };
+
+    await prepareClipboard(clipboard, preview);
+    const beforeChange = await copyAndReadHtmlShell();
+    expect(declaredStyleValue(beforeChange.shell, 'width'), 'warm guard initial width').toBe('max-content');
+
+    guardValue = changedValue;
+    const afterChange = await copyAndReadHtmlShell();
+    expect(writes).toHaveLength(2);
+    expect(afterChange.holder.querySelectorAll('section > span > nobr'), 'warm guard formula wrapper').toHaveLength(1);
+    expect(declaredStyleValue(afterChange.shell, 'width'), 'warm guard changed width').toBe('416px');
+    expect(
+      declaredStyleDeclarations(afterChange.shell, 'width').map(({ value }) => value),
+      'warm guard changed width declarations'
+    ).toEqual(['416px']);
+  });
+
+  it('rejects an in-flight math outer-allocation change before final commit', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/math-outer-allocation-race.png', document.baseURI).href;
+    let writingMode = 'horizontal-tb';
+    const writeCalls: unknown[] = [];
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">in-flight guard</span></span></span></span></span></div><p class="delay-image">Delay image</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'in-flight guard\nDelay image' });
+    const htmlShell = preview.querySelector('.katex-html');
+    if (!htmlShell) throw new Error('in-flight guard math shell missing');
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'inline-size': 'auto',
+            'max-inline-size': 'none',
+            'max-width': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+            'min-inline-size': 'auto',
+            'min-width': 'auto',
+            width: 'auto'
+          }[property] ?? 'auto'
+        })
+      })
+    });
+    const fetch = vi.fn(() => {
+      writingMode = 'vertical-rl';
+      return pendingImage.promise;
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          return declaration({
+            clip: 'auto',
+            'clip-path': 'none',
+            clear: 'none',
+            contain: 'none',
+            'container-type': 'normal',
+            display: 'block',
+            float: 'none',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            transform: 'none',
+            'writing-mode': writingMode
+          });
+        }
+        if ('P' === element.tagName && element.classList.contains('delay-image')) {
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            display: 'block'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writeCalls.push(items);
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('in-flight guard HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(writingMode).toBe('vertical-rl');
+    pendingImage.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writeCalls).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+    expect(preview.querySelector('.katex-html')?.getAttribute('style')).toBeNull();
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    expect(writeCalls).toHaveLength(2);
+    expect(writes).toHaveLength(1);
+    const finalHolder = document.createElement('div');
+    const finalHtml = writes[0];
+    if (!finalHtml) throw new Error('in-flight guard final HTML missing');
+    finalHolder.innerHTML = finalHtml;
+    const finalShell = finalHolder.querySelector('section > span > nobr > span > span');
+    if (!finalShell) throw new Error('in-flight guard final shell missing');
+    expect(declaredStyleValue(finalShell, 'width')).toBe('416px');
+  });
+
+  it('keeps live-source admission separate from identity-stripped raw context styles', () => {
+    const style = document.createElement('style');
+    style.textContent = '.katex-html{contain:none} [data-easymde-preview-html-sink] .katex-html{contain:layout}';
+    document.head.append(style);
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML = '<span class="katex-html">synthetic</span>';
+    document.body.append(preview);
+    const source = preview.firstElementChild;
+    if (!source) throw new Error('source/raw context fixture missing');
+    const context = createDimensionSemanticsContext(preview, preview, {
+      getComputedStyle: window.getComputedStyle.bind(window)
+    } as never);
+    try {
+      expect(context.getSourceComputedStyle(source).getPropertyValue('contain')).toBe('layout');
+      expect(context.getComputedStyle(source)?.getPropertyValue('contain')).toBe('none');
+    } finally {
+      context.cleanup();
+      preview.remove();
+      style.remove();
+    }
+  });
+
+  it.each([
+    ['writing-mode', 'vertical-rl'],
+    ['float', 'left'],
+    ['clear', 'both'],
+    ['clip', 'rect(0px, 416px, 32px, 0px)'],
+    ['clip-path', 'inset(0px)'],
+    ['contain', 'layout'],
+    ['container-type', 'inline-size']
+  ] as const)('regenerates when live-source %s changes while the raw style context stays fixed', async (property, changedValue) => {
+    const baseGuard = {
+      'clip': 'auto',
+      'clip-path': 'none',
+      'clear': 'none',
+      'contain': 'none',
+      'container-type': 'normal',
+      'float': 'none',
+      'writing-mode': 'horizontal-tb'
+    };
+    let sourceGuardValue = baseGuard[property];
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">source raw guard</span></span></span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'source raw guard' });
+    const htmlShell = preview.querySelector('.katex-html');
+    if (!htmlShell) throw new Error('source raw guard math shell missing');
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'inline-size': 'auto',
+            'max-inline-size': 'none',
+            'max-width': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+            'min-inline-size': 'auto',
+            'min-width': 'auto',
+            width: 'auto'
+          }[property] ?? 'auto'
+        })
+      })
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+          return declaration({
+            ...baseGuard,
+            [property]: raw ? baseGuard[property] : sourceGuardValue,
+            display: 'block',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            transform: 'none'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('source raw guard HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const readShell = async (): Promise<Element> => {
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const html = writes.at(-1);
+      if (!html) throw new Error('source raw guard HTML missing');
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const shell = holder.querySelector('section > span > nobr > span > span');
+      if (!shell) throw new Error('source raw guard shell missing');
+      return shell;
+    };
+
+    await prepareClipboard(clipboard, preview);
+    expect(declaredStyleValue(await readShell(), 'width')).toBe('max-content');
+    sourceGuardValue = changedValue;
+    expect(declaredStyleValue(await readShell(), 'width')).toBe('416px');
+    expect(writes).toHaveLength(2);
+  });
+
+  it('rejects an in-flight live-source admission change while raw style remains fixed', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/math-source-context-race.png', document.baseURI).href;
+    let contain = 'none';
+    const writeCalls: unknown[] = [];
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">source raw race</span></span></span></span></span></div><p class="delay-image">Delay image</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'source raw race\nDelay image' });
+    const htmlShell = preview.querySelector('.katex-html');
+    if (!htmlShell) throw new Error('source raw race math shell missing');
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'inline-size': 'auto',
+            'max-inline-size': 'none',
+            'max-width': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+            'min-inline-size': 'auto',
+            'min-width': 'auto',
+            width: 'auto'
+          }[property] ?? 'auto'
+        })
+      })
+    });
+    const fetch = vi.fn(() => {
+      contain = 'layout';
+      return pendingImage.promise;
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          const raw = Boolean(element.closest('.easymde-wechat-raw-dimension-context'));
+          return declaration({
+            clip: 'auto',
+            'clip-path': 'none',
+            clear: 'none',
+            contain: raw ? 'none' : contain,
+            'container-type': 'normal',
+            display: 'block',
+            float: 'none',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            transform: 'none',
+            'writing-mode': 'horizontal-tb'
+          });
+        }
+        if ('P' === element.tagName && element.classList.contains('delay-image')) {
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            display: 'block'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writeCalls.push(items);
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('source raw race HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(contain).toBe('layout');
+    pendingImage.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writeCalls).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+    expect(document.querySelector('.easymde-wechat-raw-dimension-context')).toBeNull();
+  });
+
+  it('invalidates a warm math payload when the HTML shell Typed OM width becomes bounded', async () => {
+    let typedWidthAuto = true;
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">warm matrix</span></span></span></span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'warm matrix' });
+    const htmlShell = preview.querySelector('.katex-html');
+    const katex = preview.querySelector('.katex');
+    if (!htmlShell || !katex) throw new Error('warm math shell fixture missing');
+    Object.defineProperty(katex, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({ get: () => ({ value: 'auto' }) })
+    });
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: typedWidthAuto
+            ? {
+                'block-size': 'auto',
+                height: 'auto',
+                'inline-size': 'auto',
+                'max-inline-size': 'none',
+                'max-width': 'none',
+                'min-block-size': 'auto',
+                'min-height': 'auto',
+                'min-inline-size': 'auto',
+                'min-width': 'auto',
+                width: 'auto'
+              }[property] ?? 'auto'
+            : {
+                'block-size': 'auto',
+                height: 'auto',
+                'inline-size': '416px',
+                'max-inline-size': 'none',
+                'max-width': 'none',
+                'min-block-size': 'auto',
+                'min-height': 'auto',
+                'min-inline-size': '0px',
+                'min-width': '0px',
+                width: '416px'
+              }[property] ?? 'auto'
+        })
+      })
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          return declaration({
+            display: 'block',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            'writing-mode': 'horizontal-tb',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            clip: 'auto',
+            'clip-path': 'none',
+            transform: 'none',
+            float: 'none',
+            clear: 'none',
+            contain: 'none',
+            'container-type': 'normal'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('warm math HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const readShell = async (): Promise<Element> => {
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const html = writes.at(-1);
+      if (!html) throw new Error('warm math HTML missing');
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const shell = holder.querySelector('section > span > nobr > span > span');
+      if (!shell) throw new Error('warm math html shell missing');
+      return shell;
+    };
+
+    await prepareClipboard(clipboard, preview);
+    expect(declaredStyleValue(await readShell(), 'width')).toBe('max-content');
+    typedWidthAuto = false;
+    expect(declaredStyleValue(await readShell(), 'width')).toBe('416px');
+    expect(writes).toHaveLength(2);
+  });
+
+  it('rejects an in-flight HTML shell Typed OM width change before commit', async () => {
+    const pendingImage = deferred<Response>();
+    const imageUrl = new URL('/assets/images/math-shell-typed-width-race.png', document.baseURI).href;
+    let typedWidthAuto = true;
+    const writeCalls: unknown[] = [];
+    const writes: string[] = [];
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord">typed shell race</span></span></span></span></span></span></div><p class="delay-image">Delay image</p>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'typed shell race\nDelay image' });
+    const htmlShell = preview.querySelector('.katex-html');
+    const katex = preview.querySelector('.katex');
+    if (!htmlShell || !katex) throw new Error('typed shell race fixture missing');
+    Object.defineProperty(katex, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({ get: () => ({ value: 'auto' }) })
+    });
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: typedWidthAuto
+            ? {
+                'block-size': 'auto',
+                height: 'auto',
+                'inline-size': 'auto',
+                'max-inline-size': 'none',
+                'max-width': 'none',
+                'min-block-size': 'auto',
+                'min-height': 'auto',
+                'min-inline-size': 'auto',
+                'min-width': 'auto',
+                width: 'auto'
+              }[property] ?? 'auto'
+            : {
+                'block-size': 'auto',
+                height: 'auto',
+                'inline-size': '416px',
+                'max-inline-size': 'none',
+                'max-width': 'none',
+                'min-block-size': 'auto',
+                'min-height': 'auto',
+                'min-inline-size': '0px',
+                'min-width': '0px',
+                width: '416px'
+              }[property] ?? 'auto'
+        })
+      })
+    });
+    const fetch = vi.fn(() => {
+      typedWidthAuto = false;
+      return pendingImage.promise;
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: class ClipboardItemStub {
+        constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {}
+      },
+      document,
+      fetch,
+      getComputedStyle: (element, pseudoElement) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          return declaration({
+            clip: 'auto',
+            'clip-path': 'none',
+            clear: 'none',
+            contain: 'none',
+            'container-type': 'normal',
+            display: 'block',
+            float: 'none',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            transform: 'none',
+            'writing-mode': 'horizontal-tb'
+          });
+        }
+        if ('P' === element.tagName && element.classList.contains('delay-image')) {
+          return declaration({
+            background: `url("${imageUrl}")`,
+            'background-image': `url("${imageUrl}")`,
+            display: 'block'
+          });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writeCalls.push(items);
+        const html = (items[0] as { payload: Record<string, Blob | PromiseLike<Blob>> }).payload['text/html'];
+        if (!html) throw new Error('typed shell race HTML missing');
+        writes.push(await blobText(html));
+      }
+    });
+
+    const copy = clipboard.copy(preview);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(typedWidthAuto).toBe(false);
+    pendingImage.resolve({
+      blob: async () => new Blob(['theme'], { type: 'image/png' }),
+      ok: true,
+      url: imageUrl
+    } as unknown as Response);
+    await expect(copy).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
+    expect(writeCalls).toHaveLength(1);
+    expect(writes).toHaveLength(0);
+    expect(document.querySelector('.easymde-wechat-raw-dimension-context')).toBeNull();
   });
 
   it('invalidates prepared auto-margin payloads when raw semantics change', async () => {

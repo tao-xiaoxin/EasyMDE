@@ -1,13 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import { MATH_CLONE_ROLES, registerMathCloneRole } from './wechat-clone-metadata';
+import { createDimensionSemanticsContext, type WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
+import {
+  ordinaryDimensionSemanticsSignature,
+  preparedDimensionGeometrySignature,
+  preparedDimensionGeometrySignatureWithYield,
+  preparedDimensionSemanticsSignature,
+  preparedLayoutSignature,
+  preparedLayoutSignatureWithYield
+} from './wechat-fidelity-signature';
 
 import {
   blobText,
   declaration,
+  declaredStyleValue,
+  dispatchSuccessfulLegacyCopy,
   installClipboardTestEnvironment,
   prepareClipboard,
-  dispatchSuccessfulLegacyCopy
+  readyPreview,
+  setMermaidComputedStyleMap
 } from './wechat-clipboard-test-fixtures';
 
 describe('createBrowserWechatClipboard', () => {
@@ -105,6 +118,731 @@ describe('createBrowserWechatClipboard', () => {
     expect(formulaStyle).toContain('margin-right:auto!important');
     expect(formulaStyle).toContain('text-align:center!important');
     expect(holder.querySelectorAll('[style*="overflow-x:auto!important"]').length).toBe(1);
+  });
+
+  it('includes Mermaid admission semantics in ordinary and yielded layout signatures at equal geometry', async () => {
+    const preview = readyPreview();
+    preview.innerHTML =
+      '<div class="easymde-mermaid"><svg width="100%" height="auto" viewBox="0 0 350 726">' +
+      '<rect width="350" height="726"></rect></svg></div>';
+    const root = preview.querySelector('.easymde-mermaid');
+    const svg = preview.querySelector('svg');
+    if (!root || !svg) throw new Error('Mermaid signature fixture missing');
+    const rootRect = { bottom: 746, height: 746, left: 0, right: 940, top: 0, width: 940 };
+    const svgRect = { bottom: 736, height: 726, left: 295, right: 645, top: 10, width: 350 };
+    Object.defineProperty(root, 'getBoundingClientRect', { configurable: true, value: () => rootRect });
+    Object.defineProperty(svg, 'getBoundingClientRect', { configurable: true, value: () => svgRect });
+    setMermaidComputedStyleMap(root, { 'max-width': '100%' });
+    setMermaidComputedStyleMap(svg, {
+      height: 'auto',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      'max-width': '350px',
+      width: '100%'
+    });
+    const sourceStyle: Record<string, string> = {
+      background: 'none',
+      'background-color': 'transparent',
+      'background-image': 'none',
+      'border-image-source': 'none',
+      'box-sizing': 'border-box',
+      display: 'block',
+      filter: 'none',
+      float: 'none',
+      height: 'auto',
+      'max-width': '100%',
+      outline: 'none',
+      'outline-style': 'none',
+      overflow: 'auto',
+      'overflow-x': 'auto',
+      'overflow-y': 'auto',
+      position: 'static',
+      transform: 'none',
+      width: '940px'
+    };
+    const svgStyle: Record<string, string> = {
+      display: 'block',
+      height: 'auto',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      'max-width': '350px',
+      width: '350px'
+    };
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if (element === root) return declaration(sourceStyle);
+        if (element === svg) return declaration(svgStyle);
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    const yieldToBrowser = Object.assign(async () => undefined, { shouldYield: () => false });
+    for (const [property, value] of [
+      ['outline-style', 'solid'],
+      ['border-image-source', 'url(#paint)']
+    ] as const) {
+      const ordinaryBefore = preparedLayoutSignature(preview, runtime);
+      const yieldedBefore = await preparedLayoutSignatureWithYield(
+        preview,
+        runtime,
+        yieldToBrowser
+      );
+      const previous = sourceStyle[property] ?? '';
+      sourceStyle[property] = value;
+      expect(preparedLayoutSignature(preview, runtime), `ordinary ${property}`).not.toBe(ordinaryBefore);
+      expect(await preparedLayoutSignatureWithYield(preview, runtime, yieldToBrowser), `yielded ${property}`).not.toBe(
+        yieldedBefore
+      );
+      sourceStyle[property] = previous;
+    }
+  });
+
+  it('skips Mermaid live-SVG reads in all PNG dimension freshness sinks', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-mermaid"><svg width="100%" height="auto" viewBox="0 0 350 726">' +
+      '<rect width="350" height="726"></rect></svg></div>';
+    const root = preview.querySelector('.easymde-mermaid');
+    const svg = preview.querySelector('svg');
+    if (!root || !svg) throw new Error('Mermaid PNG read-count fixture missing');
+    let svgReads = 0;
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (!pseudoElement && element === svg) svgReads += 1;
+        if (pseudoElement) return declaration({ content: 'none' });
+        if (element === root) {
+          return declaration({ display: 'block', height: 'auto', 'max-width': '100%', width: '940px' });
+        }
+        if (element === svg) {
+          return declaration({
+            display: 'block',
+            height: 'auto',
+            'margin-left': 'auto',
+            'margin-right': 'auto',
+            'max-height': 'none',
+            'max-width': '350px',
+            width: '350px'
+          });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    const dimensionSemantics = createDimensionSemanticsContext(preview, preview, runtime, true);
+    const yieldToBrowser = Object.assign(async () => undefined, { shouldYield: () => false });
+    try {
+      dimensionSemantics.refresh();
+      svgReads = 0;
+      await preparedDimensionGeometrySignatureWithYield(
+        preview,
+        runtime,
+        yieldToBrowser,
+        undefined,
+        dimensionSemantics
+      );
+      expect(svgReads, 'yielded geometry').toBe(0);
+      preparedDimensionGeometrySignature(preview, runtime, dimensionSemantics);
+      expect(svgReads, 'sync geometry').toBe(0);
+      preparedDimensionSemanticsSignature(preview, runtime, dimensionSemantics);
+      expect(svgReads, 'semantics').toBe(0);
+    } finally {
+      dimensionSemantics.cleanup();
+    }
+  });
+
+  it('keeps Mermaid admission invalidation in all ordinary dimension sinks', async () => {
+    const preview = readyPreview();
+    preview.innerHTML =
+      '<div class="easymde-mermaid"><svg width="100%" height="auto" viewBox="0 0 350 726">' +
+      '<rect width="350" height="726"></rect></svg></div>';
+    const root = preview.querySelector('.easymde-mermaid');
+    const svg = preview.querySelector('svg');
+    if (!root || !svg) throw new Error('Mermaid ordinary sink fixture missing');
+    setMermaidComputedStyleMap(root, { 'max-width': '100%' });
+    setMermaidComputedStyleMap(svg, {
+      height: 'auto',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      'max-width': '350px',
+      width: '100%'
+    });
+    const sourceStyle: Record<string, string> = {
+      background: 'none',
+      'background-color': 'transparent',
+      'background-image': 'none',
+      'border-image-source': 'none',
+      'box-sizing': 'border-box',
+      display: 'block',
+      filter: 'none',
+      float: 'none',
+      height: 'auto',
+      'max-width': '100%',
+      'outline-style': 'none',
+      overflow: 'auto',
+      'overflow-x': 'auto',
+      'overflow-y': 'auto',
+      position: 'static',
+      transform: 'none',
+      width: '940px'
+    };
+    const svgStyle: Record<string, string> = {
+      display: 'block',
+      height: 'auto',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      'max-width': '350px',
+      width: '350px'
+    };
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (pseudoElement) return declaration({ content: 'none' });
+        if (element === root) return declaration(sourceStyle);
+        if (element === svg) return declaration(svgStyle);
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    const dimensionSemantics = {
+      cleanup: vi.fn(),
+      getComputedStyle: runtime.getComputedStyle,
+      getFormattingOwnerDisplay: () => 'block',
+      getRootComputedStyle: runtime.getComputedStyle,
+      getSourceComputedStyle: runtime.getComputedStyle,
+      rasterizesVisualRoots: false,
+      refresh: vi.fn()
+    } satisfies WechatDimensionSemanticsContext;
+    const yieldToBrowser = Object.assign(async () => undefined, { shouldYield: () => false });
+    const sinks = [
+      ['yielded geometry', async () =>
+        preparedDimensionGeometrySignatureWithYield(preview, runtime, yieldToBrowser, undefined, dimensionSemantics)],
+      ['sync geometry', async () => preparedDimensionGeometrySignature(preview, runtime, dimensionSemantics)],
+      ['semantics', async () => preparedDimensionSemanticsSignature(preview, runtime, dimensionSemantics)]
+    ] as const;
+    for (const [property, value] of [
+      ['outline-style', 'solid'],
+      ['border-image-source', 'url(#paint)']
+    ] as const) {
+      const before = await Promise.all(sinks.map(async ([, read]) => read()));
+      sourceStyle[property] = value;
+      const after = await Promise.all(sinks.map(async ([, read]) => read()));
+      after.forEach((signature, index) => {
+        expect(signature, `${sinks[index]?.[0] ?? 'unknown'} ${property}`).not.toBe(before[index]);
+      });
+      sourceStyle[property] = property === 'outline-style' ? 'none' : 'none';
+    }
+  });
+
+  it('releases only a proven auto-unbounded KaTeX HTML shell allocation', async () => {
+    const writes: unknown[] = [];
+    class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"><span class="base"><span class="mord"><span class="pstrut"></span>134px matrix</span></span></span></span></span></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: '134px matrix' });
+    const htmlShell = preview.querySelector('.katex-html');
+    const pstrut = preview.querySelector('.pstrut');
+    if (!htmlShell || !pstrut) throw new Error('math html shell fixture missing');
+    Object.defineProperty(htmlShell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: {
+            'block-size': 'auto',
+            height: 'auto',
+            'inline-size': 'auto',
+            'max-block-size': 'none',
+            'max-height': 'none',
+            'max-inline-size': 'none',
+            'max-width': 'none',
+            'min-block-size': 'auto',
+            'min-height': 'auto',
+            'min-inline-size': 'auto',
+            'min-width': 'auto',
+            width: 'auto'
+          }[property] ?? 'auto'
+        })
+      })
+    });
+    const clipboard = createBrowserWechatClipboard({
+      blob: Blob,
+      clipboardItem: ClipboardItemStub,
+      document,
+      getComputedStyle: (element) => {
+        if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+          return declaration({ display: 'block', overflow: 'auto', 'overflow-x': 'auto', 'overflow-y': 'auto' });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('katex-html')) {
+          return declaration({
+            display: 'block',
+            position: 'relative',
+            width: '416px',
+            'inline-size': '416px',
+            'min-width': '0px',
+            'max-width': 'none',
+            'writing-mode': 'horizontal-tb',
+            overflow: 'visible',
+            'overflow-x': 'visible',
+            'overflow-y': 'visible',
+            clip: 'auto',
+            'clip-path': 'none',
+            transform: 'none',
+            float: 'none',
+            clear: 'none',
+            contain: 'none',
+            'container-type': 'normal'
+          });
+        }
+        if ('SPAN' === element.tagName && element.classList.contains('pstrut')) {
+          return declaration({ display: 'inline-block', width: '0px', height: '45.7344px', 'white-space': 'nowrap' });
+        }
+        if ('SPAN' === element.tagName && element.closest('.katex')) {
+          return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+        }
+        return declaration({ display: 'block' });
+      },
+      getSelection: window.getSelection.bind(window),
+      scrollTo: vi.fn(),
+      write: async (items) => {
+        writes.push(items);
+      },
+      pageOffset: () => ({ x: 0, y: 0 })
+    });
+
+    await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+    const item = (writes[0] as ClipboardItemStub[])[0];
+    const htmlBlob = item?.payload['text/html'];
+    if (!htmlBlob) throw new Error('clipboard html missing');
+    const holder = document.createElement('div');
+    holder.innerHTML = await blobText(htmlBlob);
+    const htmlShellStyle = holder.querySelector('section > span > nobr > span > span')?.getAttribute('style') ?? '';
+    const internalPstrutStyles = Array.from(holder.querySelectorAll('[style*="height:45.7344px"]')).map(
+      (element) => element.getAttribute('style') ?? ''
+    );
+    expect(htmlShellStyle).toContain('width:max-content!important');
+    expect(htmlShellStyle).toContain('inline-size:max-content!important');
+    expect(htmlShellStyle).not.toContain('width:416px');
+    expect(htmlShellStyle).not.toContain('inline-size:416px');
+    expect(internalPstrutStyles.length).toBeGreaterThan(0);
+    expect(internalPstrutStyles.some((style) => style.includes('width:0px'))).toBe(true);
+  });
+
+  it('keeps the html shell allocation when author dimensions or Typed OM proof are unavailable', () => {
+    const makeSource = (): { clone: Element; source: Element } => {
+      const source = document.createElement('span');
+      source.className = 'katex-html';
+      const clone = source.cloneNode(true) as Element;
+      return { clone, source };
+    };
+    const safeComputed = declaration({
+      display: 'block',
+      position: 'relative',
+      width: '416px',
+      'inline-size': '416px',
+      'min-width': '0px',
+      'max-width': 'none',
+      'writing-mode': 'horizontal-tb',
+      overflow: 'visible',
+      'overflow-x': 'visible',
+      'overflow-y': 'visible',
+      clip: 'auto',
+      'clip-path': 'none',
+      transform: 'none',
+      float: 'none',
+      clear: 'none',
+      contain: 'none',
+      'container-type': 'normal'
+    });
+    const authored = makeSource();
+    authored.source.setAttribute('style', 'width:240px');
+    registerMathCloneRole(authored.source, authored.clone, safeComputed, () => declaration({ display: 'block' }));
+    authored.clone.removeAttribute('class');
+    expect(MATH_CLONE_ROLES.get(authored.clone)).toMatchObject({ role: 'html', canReleaseOuterAllocation: false });
+
+    const unknown = makeSource();
+    registerMathCloneRole(unknown.source, unknown.clone, safeComputed, () => declaration({ display: 'block' }));
+    unknown.clone.removeAttribute('class');
+    expect(MATH_CLONE_ROLES.get(unknown.clone)).toMatchObject({ role: 'html', canReleaseOuterAllocation: false });
+  });
+
+  it('includes every outer-allocation guard in the math shell freshness signature', () => {
+    const parent = document.createElement('div');
+    parent.className = 'formatting-owner';
+    const source = document.createElement('span');
+    source.className = 'katex-html';
+    parent.append(source);
+    let formattingOwnerDisplay = 'block';
+    const sourceStyle = {
+      'clip': 'auto',
+      'clip-path': 'none',
+      'clear': 'none',
+      'contain': 'none',
+      'container-type': 'normal',
+      'display': 'block',
+      'float': 'none',
+      'overflow': 'visible',
+      'overflow-x': 'visible',
+      'overflow-y': 'visible',
+      'position': 'relative',
+      'transform': 'none',
+      'writing-mode': 'horizontal-tb'
+    };
+    const dimensionSemantics = {
+      getComputedStyle: () => declaration(sourceStyle),
+      getFormattingOwnerDisplay: () => formattingOwnerDisplay,
+      getRootComputedStyle: () => declaration(sourceStyle),
+      getSourceComputedStyle: () => declaration(sourceStyle),
+      rasterizesVisualRoots: false,
+      refresh: vi.fn(),
+      cleanup: vi.fn()
+    } as unknown as WechatDimensionSemanticsContext;
+    const initialSignature = ordinaryDimensionSemanticsSignature(source, dimensionSemantics);
+    const guardChanges: ReadonlyArray<readonly [keyof typeof sourceStyle, string]> = [
+      ['writing-mode', 'vertical-rl'],
+      ['float', 'left'],
+      ['clear', 'both'],
+      ['clip', 'rect(0px, 10px, 10px, 0px)'],
+      ['clip-path', 'inset(0px)'],
+      ['contain', 'layout'],
+      ['container-type', 'inline-size']
+    ];
+    for (const [property, value] of guardChanges) {
+      const previous = sourceStyle[property];
+      sourceStyle[property] = value;
+      expect(ordinaryDimensionSemanticsSignature(source, dimensionSemantics), property).not.toBe(initialSignature);
+      sourceStyle[property] = previous;
+    }
+    formattingOwnerDisplay = 'flex';
+    expect(ordinaryDimensionSemanticsSignature(source, dimensionSemantics)).not.toBe(initialSignature);
+  });
+
+  it('invalidates freshness when the KaTeX width owner changes Typed OM semantics with the same used width', () => {
+    const parent = document.createElement('span');
+    parent.className = 'katex';
+    const source = document.createElement('span');
+    source.className = 'katex-html';
+    parent.append(source);
+    const usedStyle = declaration({
+      'box-sizing': 'border-box',
+      width: '416px',
+      'min-width': '0px',
+      'max-width': 'none',
+      'margin-left': '0px',
+      'margin-right': '0px',
+      'margin-top': '0px',
+      'margin-bottom': '0px',
+      'transform-origin': '50% 50%'
+    });
+    const dimensionSemantics = {
+      getComputedStyle: () => usedStyle,
+      getFormattingOwnerDisplay: () => 'block',
+      getRootComputedStyle: () => usedStyle,
+      refresh: vi.fn(),
+      cleanup: vi.fn()
+    } as unknown as WechatDimensionSemanticsContext;
+    const setTypedDimensions = (values: Readonly<Record<string, string>>): void => {
+      Object.defineProperty(parent, 'computedStyleMap', {
+        configurable: true,
+        value: () => ({ get: (property: string) => ({ value: values[property] ?? 'auto' }) })
+      });
+    };
+    setTypedDimensions({
+      width: 'auto',
+      'inline-size': 'auto',
+      'min-width': 'auto',
+      'min-inline-size': 'auto',
+      'max-width': 'none',
+      'max-inline-size': 'none'
+    });
+    const autoSignature = ordinaryDimensionSemanticsSignature(parent, dimensionSemantics);
+    setTypedDimensions({
+      width: '416px',
+      'inline-size': '416px',
+      'min-width': '0px',
+      'min-inline-size': '0px',
+      'max-width': 'none',
+      'max-inline-size': 'none'
+    });
+    const usedSignature = ordinaryDimensionSemanticsSignature(parent, dimensionSemantics);
+    expect(autoSignature).not.toBe(usedSignature);
+  });
+
+  function productionMathShellFixture(): Readonly<{
+    block: Element;
+    display: Element;
+    katex: Element;
+    shell: Element;
+  }> {
+    const preview = document.createElement('div');
+    preview.innerHTML =
+      '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html"></span></span></span></div>';
+    const block = preview.querySelector('.easymde-math-block');
+    const display = preview.querySelector('.katex-display');
+    const katex = preview.querySelector('.katex');
+    const shell = preview.querySelector('.katex-html');
+    if (!block || !display || !katex || !shell) throw new Error('production math shell fixture missing');
+    return { block, display, katex, shell };
+  }
+
+  function registerProductionMathShell(
+    fixture: ReturnType<typeof productionMathShellFixture>,
+    getComputedStyle: (element: Element) => CSSStyleDeclaration
+  ): Element {
+    Object.defineProperty(fixture.shell, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({
+          value: property.startsWith('max-') ? 'none' : 'auto'
+        })
+      })
+    });
+    const clone = fixture.shell.cloneNode(true) as Element;
+    const computed = declaration({
+      display: 'block',
+      position: 'relative',
+      'writing-mode': 'horizontal-tb',
+      overflow: 'visible',
+      'overflow-x': 'visible',
+      'overflow-y': 'visible',
+      clip: 'auto',
+      'clip-path': 'none',
+      transform: 'none',
+      float: 'none',
+      clear: 'none',
+      contain: 'none',
+      'container-type': 'normal'
+    });
+    registerMathCloneRole(fixture.shell, clone, computed, getComputedStyle, 'block');
+    clone.removeAttribute('class');
+    return clone;
+  }
+
+  it('keeps the html shell allocation for an absolute child in the production math wrapper hierarchy', () => {
+    const fixture = productionMathShellFixture();
+    const absoluteChild = document.createElement('span');
+    fixture.shell.append(absoluteChild);
+    const clone = registerProductionMathShell(fixture, (element) =>
+      element === absoluteChild
+        ? declaration({ position: 'absolute' })
+        : declaration({ display: 'block', position: 'relative', transform: 'none' })
+    );
+    expect(MATH_CLONE_ROLES.get(clone)).toMatchObject({
+      role: 'html',
+      canReleaseOuterAllocation: false,
+      outerAllocationDecision: { absoluteContainingBlockDependent: true }
+    });
+  });
+
+  it.each([
+    ['direct absolute child', false, '416px'],
+    ['nested containing block', true, 'max-content']
+  ] as const)(
+    'uses the production math wrapper hierarchy for %s admission',
+    async (_label, nestedContainingBlock, expectedWidth) => {
+      const writes: unknown[] = [];
+      class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
+      const preview = document.createElement('article');
+      preview.setAttribute('data-easymde-preview-html-sink', '1');
+      preview.innerHTML =
+        '<div class="easymde-math-block"><span class="katex-display"><span class="katex"><span class="katex-html">' +
+        (nestedContainingBlock
+          ? '<span class="fixture-nested-containing-block"><span class="fixture-absolute-child">x</span></span>'
+          : '<span class="fixture-absolute-child">x</span>') +
+        '</span></span></span></div>';
+      Object.defineProperty(preview, 'innerText', { configurable: true, value: 'wrapper admission' });
+      const htmlShell = preview.querySelector('.katex-html');
+      const absoluteChild = preview.querySelector('.fixture-absolute-child');
+      const nested = preview.querySelector('.fixture-nested-containing-block');
+      if (!htmlShell || !absoluteChild) throw new Error('production math wrapper fixture missing');
+      Object.defineProperty(htmlShell, 'computedStyleMap', {
+        configurable: true,
+        value: () => ({
+          get: (property: string) => ({
+            value: property.startsWith('max-') ? 'none' : 'auto'
+          })
+        })
+      });
+      const clipboard = createBrowserWechatClipboard({
+        blob: Blob,
+        clipboardItem: ClipboardItemStub,
+        document,
+        getComputedStyle: (element, pseudoElement) => {
+          if (pseudoElement) return declaration({ content: 'none' });
+          if (element === absoluteChild) return declaration({ display: 'inline', position: 'absolute' });
+          if (element === nested) return declaration({ position: 'relative', transform: 'none' });
+          if (element === htmlShell) {
+            return declaration({
+              clip: 'auto',
+              'clip-path': 'none',
+              clear: 'none',
+              contain: 'none',
+              'container-type': 'normal',
+              display: 'block',
+              float: 'none',
+              overflow: 'visible',
+              'overflow-x': 'visible',
+              'overflow-y': 'visible',
+              position: 'relative',
+              transform: 'none',
+              width: '416px',
+              'writing-mode': 'horizontal-tb'
+            });
+          }
+          if ('DIV' === element.tagName && element.classList.contains('easymde-math-block')) {
+            return declaration({ display: 'block', height: '32px', width: '416px', 'max-width': 'none' });
+          }
+          if ('SPAN' === element.tagName && element.closest('.katex')) {
+            return declaration({ display: 'inline', position: 'relative', 'white-space': 'nowrap' });
+          }
+          return declaration({ display: 'block' });
+        },
+        getSelection: window.getSelection.bind(window),
+        pageOffset: () => ({ x: 0, y: 0 }),
+        scrollTo: vi.fn(),
+        write: async (items) => {
+          writes.push(items);
+        }
+      });
+
+      await expect(clipboard.copy(preview)).resolves.toEqual({ method: 'clipboard', status: 'copied' });
+      const item = (writes[0] as ClipboardItemStub[])[0];
+      const htmlBlob = item?.payload['text/html'];
+      if (!htmlBlob) throw new Error('wrapper admission html missing');
+      const html = await blobText(htmlBlob);
+      const holder = document.createElement('div');
+      holder.innerHTML = html;
+      const visualRoot = holder.querySelector('section > span > nobr > span');
+      const shell = holder.querySelector('section > span > nobr > span > span');
+      if (!visualRoot || !shell) throw new Error(`wrapper admission shell missing: ${html}`);
+      expect(declaredStyleValue(visualRoot, 'width')).toBe('max-content');
+      expect(declaredStyleValue(shell, 'width')).toBe(expectedWidth);
+    }
+  );
+
+  it('invalidates freshness when absolute-descendant containing-block dependence changes', () => {
+    const fixture = productionMathShellFixture();
+    const nestedContainingBlock = document.createElement('span');
+    const absoluteChild = document.createElement('span');
+    nestedContainingBlock.append(absoluteChild);
+    fixture.shell.append(nestedContainingBlock);
+    let nestedPosition = 'relative';
+    const liveStyle = (element: Element): CSSStyleDeclaration => {
+      if (element === absoluteChild) return declaration({ position: 'absolute' });
+      if (element === nestedContainingBlock) return declaration({ position: nestedPosition, transform: 'none' });
+      if (element === fixture.shell) {
+        return declaration({
+          clip: 'auto',
+          'clip-path': 'none',
+          clear: 'none',
+          contain: 'none',
+          'container-type': 'normal',
+          display: 'block',
+          float: 'none',
+          overflow: 'visible',
+          'overflow-x': 'visible',
+          'overflow-y': 'visible',
+          position: 'relative',
+          transform: 'none',
+          'writing-mode': 'horizontal-tb'
+        });
+      }
+      return declaration({ display: 'block', position: 'relative', transform: 'none' });
+    };
+    const dimensionSemantics = {
+      getComputedStyle: () => declaration({}),
+      getFormattingOwnerDisplay: () => 'block',
+      getRootComputedStyle: () => declaration({}),
+      getSourceComputedStyle: liveStyle,
+      rasterizesVisualRoots: false,
+      refresh: vi.fn(),
+      cleanup: vi.fn()
+    } as unknown as WechatDimensionSemanticsContext;
+    const before = ordinaryDimensionSemanticsSignature(fixture.shell, dimensionSemantics);
+    nestedPosition = 'static';
+    const after = ordinaryDimensionSemanticsSignature(fixture.shell, dimensionSemantics);
+    expect(after).not.toBe(before);
+    expect(after).toContain('absolute-containing-block-dependent=true');
+  });
+
+  it('releases the html shell when a nested containing block contains its absolute child', () => {
+    const fixture = productionMathShellFixture();
+    const nestedContainingBlock = document.createElement('span');
+    const absoluteChild = document.createElement('span');
+    nestedContainingBlock.append(absoluteChild);
+    fixture.shell.append(nestedContainingBlock);
+    const clone = registerProductionMathShell(fixture, (element) => {
+      if (element === absoluteChild) return declaration({ position: 'absolute' });
+      if (element === nestedContainingBlock) return declaration({ position: 'relative', transform: 'none' });
+      return declaration({ display: 'block', position: 'relative', transform: 'none' });
+    });
+    expect(MATH_CLONE_ROLES.get(clone)).toMatchObject({
+      role: 'html',
+      canReleaseOuterAllocation: true,
+      outerAllocationDecision: { absoluteContainingBlockDependent: false }
+    });
+  });
+
+  it('rejects a contents parent when its formatting owner is a flex container', () => {
+    const flexOwner = document.createElement('div');
+    const contentsParent = document.createElement('span');
+    const source = document.createElement('span');
+    source.className = 'katex-html';
+    contentsParent.append(source);
+    flexOwner.append(contentsParent);
+    Object.defineProperty(source, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => ({ value: property.startsWith('max-') ? 'none' : 'auto' })
+      })
+    });
+    const clone = source.cloneNode(true) as Element;
+    const sourceComputed = declaration({
+      display: 'block',
+      position: 'relative',
+      'writing-mode': 'horizontal-tb',
+      overflow: 'visible',
+      'overflow-x': 'visible',
+      'overflow-y': 'visible',
+      clip: 'auto',
+      'clip-path': 'none',
+      transform: 'none',
+      float: 'none',
+      clear: 'none',
+      contain: 'none',
+      'container-type': 'normal'
+    });
+    const getComputedStyle = (element: Element): CSSStyleDeclaration => {
+      if (element === contentsParent) return declaration({ display: 'contents', position: 'static', transform: 'none' });
+      if (element === flexOwner) return declaration({ display: 'flex', position: 'static', transform: 'none' });
+      return sourceComputed;
+    };
+    registerMathCloneRole(source, clone, sourceComputed, getComputedStyle, 'flex');
+    clone.removeAttribute('class');
+    expect(MATH_CLONE_ROLES.get(clone)).toMatchObject({ role: 'html', canReleaseOuterAllocation: false });
   });
 
   it('preserves KaTeX SVG geometry while normalizing non-math SVG media', async () => {
@@ -333,11 +1071,19 @@ describe('createBrowserWechatClipboard', () => {
           });
         }
         if ('path' === element.tagName.toLowerCase()) {
+          if ('path' === element.id) {
+            return declaration({
+              display: 'inline',
+              fill: 'url(#gradient)',
+              stroke: 'none',
+              'marker-end': 'url("#arrowhead")'
+            });
+          }
           return declaration({
             display: 'inline',
-            fill: 'url(#gradient)',
+            fill: 'rgb(0, 0, 0)',
             stroke: 'none',
-            'marker-end': 'url("#arrowhead")'
+            'marker-end': 'none'
           });
         }
         return declaration({ display: 'block' });
@@ -364,9 +1110,10 @@ describe('createBrowserWechatClipboard', () => {
     expect(holder.querySelector('#discard-me')).toBeNull();
     expect(holder.querySelector('svg#diagram')).not.toBeNull();
     expect(holder.querySelector('svg #gradient')).not.toBeNull();
-    expect(holder.querySelector('svg #arrowhead')).not.toBeNull();
     expect(holder.querySelector('svg #path')?.getAttribute('style')).toContain('fill:url(#gradient)');
-    expect(holder.querySelector('svg #path')?.getAttribute('style')).toContain('marker-end:url("#arrowhead")');
+    expect(holder.querySelector('svg#diagram > path#path')?.getAttribute('marker-end')).toBe('none');
+    expect(holder.querySelector('svg#diagram > svg path[d="M0 0l4 2-4 2z"]')).not.toBeNull();
+    expect(holder.querySelector('marker#arrowhead')).toBeNull();
     expect(holder.querySelector('.katex')).toBeNull();
     expect(holder.querySelector('math')).toBeNull();
     expect(holder.querySelector('nobr')).not.toBeNull();

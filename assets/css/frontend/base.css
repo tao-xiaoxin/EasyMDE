@@ -176,3 +176,26 @@
 .easymde-rendered-content.easymde-table-align-center :is(th, td) {
   text-align: center !important;
 }
+
+/*
+ * Nested Phycat quotes need a portable, container-relative inset. WeChat
+ * strips viewport functions such as clamp()/calc() from saved article HTML,
+ * while percentage padding is retained and adapts to its containing quote.
+ * The custom properties are authored transport hints only; the serializer
+ * validates and emits their percentage values as ordinary padding declarations.
+ */
+.easymde-rendered-content,
+.easymde-rendered-content :where(*) {
+  --easymde-portable-padding-left: initial;
+  --easymde-portable-padding-right: initial;
+}
+
+.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote {
+  --easymde-portable-padding-left: 9%;
+  --easymde-portable-padding-right: 5%;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin-inline: 0;
+  padding-left: var(--easymde-portable-padding-left);
+  padding-right: var(--easymde-portable-padding-right);
+}

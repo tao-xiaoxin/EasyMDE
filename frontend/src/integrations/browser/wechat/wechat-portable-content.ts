@@ -3,12 +3,14 @@ import {
   CODE_FRAME_PSEUDO_CLONES,
   EXPORT_TEXT_NORMALIZATIONS,
   MATH_BLOCK_ROOTS,
+  MATH_CLONE_ROLES,
   MERMAID_FOREIGN_OBJECTS,
   WECHAT_PNG_GENERATED_IMAGES
 } from './wechat-clone-metadata';
 import { markWechatOwnedScrollOwner } from './wechat-list-table-layout';
 import { finiteCssPixelValue } from './wechat-preview-measurement';
 import { appendDeclarations, generatedBlockImageAlignment } from './wechat-style-policy';
+import { replaceDeclarations } from './wechat-style-declarations';
 
 export const KATEX_VISUAL_LAYOUT_DECLARATIONS = [
   'white-space:nowrap',
@@ -260,26 +262,24 @@ export function normalizeMathBlocks(root: HTMLElement): void {
         generatedBlockImageAlignment(layoutRoot, element);
         return;
       }
-      appendDeclarations(
-        layoutRoot,
-        ['inline-size:100%', 'max-inline-size:100%', 'width:auto', 'box-sizing:border-box', 'text-align:center'],
-        true
-      );
+      replaceDeclarations(layoutRoot, ['inline-size:100%', 'max-inline-size:100%', 'width:auto'], true);
+      appendDeclarations(layoutRoot, ['box-sizing:border-box', 'text-align:center'], true);
 
-      const intrinsicDeclarations = [
+      const intrinsicWidthDeclarations = [
         'inline-size:max-content',
+        'min-inline-size:max-content',
         'max-inline-size:none',
         'width:max-content',
         'min-width:max-content',
-        'max-width:none',
-        'box-sizing:border-box'
+        'max-width:none'
       ];
       const visualWrapper = layoutRoot.firstElementChild;
       if (visualWrapper?.matches('nobr')) {
+        replaceDeclarations(visualWrapper, intrinsicWidthDeclarations, true);
         appendDeclarations(
           visualWrapper,
           [
-            ...intrinsicDeclarations,
+            'box-sizing:border-box',
             // Auto margins center the intrinsic visual box while it fits and
             // resolve to zero once it overflows, so a long formula stays
             // reachable from either end of the outer scroll owner instead of
@@ -291,7 +291,19 @@ export function normalizeMathBlocks(root: HTMLElement): void {
           true
         );
         const visualRoot = visualWrapper.firstElementChild;
-        if (visualRoot) appendDeclarations(visualRoot, [...intrinsicDeclarations, 'text-align:center'], true);
+        if (visualRoot) {
+          replaceDeclarations(visualRoot, intrinsicWidthDeclarations, true);
+          appendDeclarations(visualRoot, ['box-sizing:border-box', 'text-align:center'], true);
+          const htmlShells = Array.from(visualRoot.children).filter(
+            (candidate) => 'html' === MATH_CLONE_ROLES.get(candidate)?.role
+          );
+          const [htmlShell] = htmlShells;
+          if (1 === htmlShells.length && htmlShell && MATH_CLONE_ROLES.get(htmlShell)?.canReleaseOuterAllocation) {
+            // Only the proven outer HTML shell may release the stale source
+            // column width. Inner KaTeX dimensions remain untouched.
+            replaceDeclarations(htmlShell, intrinsicWidthDeclarations, true);
+          }
+        }
       }
     });
 }

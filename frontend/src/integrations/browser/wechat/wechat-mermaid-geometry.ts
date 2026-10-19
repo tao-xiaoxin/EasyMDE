@@ -465,6 +465,35 @@ export function mermaidRootPaintIsSafe(
   );
 }
 
+export function mermaidResponsiveOwnerPaintIsSafe(
+  source: Element,
+  runtime: BrowserWechatClipboardRuntime,
+  sourceWidth: number,
+  sourceHeight: number
+): boolean {
+  const computed = runtime.getComputedStyle(source);
+  const background = computed.getPropertyValue('background').trim().toLowerCase();
+  const backgroundImage = computed.getPropertyValue('background-image').trim().toLowerCase();
+  if (
+    (backgroundImage && 'none' !== backgroundImage) ||
+    /(?:url\(|gradient\(|image\(|paint\(|cross-fade\()/u.test(background) ||
+    !['', 'none'].includes(computed.getPropertyValue('box-shadow').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('filter').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('clip-path').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('mask').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('mask-image').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('outline-style').trim().toLowerCase()) ||
+    !['', 'none'].includes(computed.getPropertyValue('border-image-source').trim().toLowerCase()) ||
+    mermaidHasUnsafeBorder(computed, true) ||
+    !mermaidRadiusIsSafe(computed, sourceWidth, sourceHeight, sourceWidth, sourceHeight)
+  )
+    return false;
+  return ['::before', '::after'].every(
+    (pseudoElement) =>
+      null === pseudoContent(runtime.getComputedStyle(source, pseudoElement).getPropertyValue('content'))
+  );
+}
+
 export function mermaidWideViewportIsSafe(
   svg: SVGSVGElement,
   sourceContentLeft: number,
@@ -612,4 +641,410 @@ export function assertResponsiveTypedStyleMapReadable(svg: SVGSVGElement): boole
   } catch {
     return false;
   }
+}
+
+const MERMAID_ADMISSION_SOURCE_COMPUTED_PROPERTIES = [
+  'background',
+  'background-color',
+  'background-image',
+  'block-size',
+  'border-image-source',
+  'border-top-style',
+  'border-right-style',
+  'border-bottom-style',
+  'border-left-style',
+  'border-top-width',
+  'border-right-width',
+  'border-bottom-width',
+  'border-left-width',
+  'box-shadow',
+  'box-sizing',
+  'clip-path',
+  'display',
+  'filter',
+  'float',
+  'height',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'mask',
+  'mask-image',
+  'max-block-size',
+  'max-height',
+  'max-width',
+  'min-block-size',
+  'min-height',
+  'min-width',
+  'opacity',
+  'outline-style',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'transform',
+  'width'
+] as const;
+
+const MERMAID_ADMISSION_SVG_COMPUTED_PROPERTIES = [
+  ...MERMAID_ADMISSION_SOURCE_COMPUTED_PROPERTIES,
+  'margin-bottom',
+  'margin-top'
+] as const;
+
+const MERMAID_ADMISSION_TYPED_SOURCE_PROPERTIES = [
+  'block-size',
+  'height',
+  'max-block-size',
+  'max-height',
+  'max-width',
+  'min-block-size',
+  'min-height'
+] as const;
+const MERMAID_ADMISSION_TYPED_SVG_PROPERTIES = [
+  'height',
+  'margin-left',
+  'margin-right',
+  'max-height',
+  'max-width',
+  'width'
+] as const;
+const MERMAID_ADMISSION_SOURCE_INLINE_PROPERTIES = [
+  'height',
+  'max-height',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'transform'
+] as const;
+const MERMAID_ADMISSION_SVG_INLINE_PROPERTIES = [
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'transform'
+] as const;
+const MERMAID_ADMISSION_SOURCE_ATTRIBUTES = ['data-easymde-mermaid-layout', 'height'] as const;
+const MERMAID_ADMISSION_SVG_ATTRIBUTES = [
+  'aria-roledescription',
+  'height',
+  'preserveAspectRatio',
+  'transform',
+  'viewBox',
+  'width'
+] as const;
+const MERMAID_ADMISSION_ANCESTOR_PROPERTIES = [
+  'display',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'transform'
+] as const;
+
+function mermaidAdmissionCssValue(value: string | null | undefined): string {
+  return value?.trim().replace(/\s+/gu, ' ').toLowerCase() ?? '';
+}
+
+function mermaidAdmissionStyleSignature(
+  computed: CSSStyleDeclaration,
+  properties: readonly string[]
+): string {
+  return properties
+    .map((property) => `${property}=${mermaidAdmissionCssValue(computed.getPropertyValue(property))}`)
+    .join(',');
+}
+
+function mermaidAdmissionInlineSignature(
+  element: Element,
+  properties: readonly string[]
+): string {
+  const inline = (element as Element & { style?: CSSStyleDeclaration }).style;
+  return properties
+    .map((property) => `${property}=${mermaidAdmissionCssValue(inline?.getPropertyValue(property))}`)
+    .join(',');
+}
+
+function mermaidAdmissionAttributeSignature(
+  element: Element,
+  attributes: readonly string[]
+): string {
+  return attributes
+    .map((attribute) => `${attribute}=${mermaidAdmissionCssValue(element.getAttribute(attribute))}`)
+    .join(',');
+}
+
+function mermaidAdmissionTypedCandidate(candidate: unknown): string {
+  if (!candidate || 'object' !== typeof candidate || !('value' in candidate)) return 'unknown';
+  const value = (candidate as { value?: unknown; unit?: unknown }).value;
+  if ('string' === typeof value) return mermaidAdmissionCssValue(value) || 'unknown';
+  const unit = mermaidTypedCssUnitText((candidate as { unit?: unknown }).unit);
+  if ('number' !== typeof value || !Number.isFinite(value) || !unit) return 'unknown';
+  return `${value}${'percent' === unit ? '%' : unit}`.toLowerCase();
+}
+
+function mermaidAdmissionTypedSignature(
+  element: Element,
+  properties: readonly string[]
+): string {
+  let factory: (() => MermaidStyleMap) | undefined;
+  try {
+    factory = (element as Element & { computedStyleMap?: () => MermaidStyleMap }).computedStyleMap;
+  } catch {
+    return 'factory=unreadable';
+  }
+  if ('function' !== typeof factory) return 'factory=unavailable';
+  let styleMap: MermaidStyleMap;
+  try {
+    styleMap = factory.call(element);
+  } catch {
+    return 'factory=unreadable';
+  }
+  return [
+    'factory=readable',
+    ...properties.map((property) => {
+      try {
+        return `${property}=${mermaidAdmissionTypedCandidate(styleMap.get(property))}`;
+      } catch {
+        return `${property}=unreadable`;
+      }
+    })
+  ].join(',');
+}
+
+function mermaidAdmissionRadiusSignature(computed: CSSStyleDeclaration): string {
+  const raw = ['border-radius', ...MERMAID_RADIUS_PROPERTIES]
+    .map((property) => `${property}=${mermaidAdmissionCssValue(computed.getPropertyValue(property))}`)
+    .join(',');
+  const corners = mermaidRadiusCorners(computed);
+  const parsed = corners
+    ? corners.map(({ horizontal, vertical }) => `${horizontal}px/${vertical}px`).join(',')
+    : 'unknown';
+  return `raw=${raw};parsed=${parsed}`;
+}
+
+function mermaidAdmissionPseudoSignature(source: Element, runtime: BrowserWechatClipboardRuntime): string {
+  return ['::before', '::after'].map((pseudoElement) => {
+    const raw = mermaidAdmissionCssValue(
+      runtime.getComputedStyle(source, pseudoElement).getPropertyValue('content')
+    );
+    const parsed = pseudoContent(raw);
+    return `${pseudoElement}=raw:${raw},parsed:${null === parsed ? 'none' : JSON.stringify(parsed)}`;
+  }).join(',');
+}
+
+const RELATIVE_COORDINATE_GRID = 1e-6;
+const RELATIVE_COORDINATE_STEPS_PER_PIXEL = 1 / RELATIVE_COORDINATE_GRID;
+
+export function canonicalRelativeCoordinate(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  const snapped = Math.round(value * RELATIVE_COORDINATE_STEPS_PER_PIXEL) / RELATIVE_COORDINATE_STEPS_PER_PIXEL;
+  return 0 === snapped ? 0 : snapped;
+}
+
+function mermaidAdmissionAncestorSignature(
+  source: Element,
+  runtime: BrowserWechatClipboardRuntime,
+  sourceRect: DOMRect
+): string {
+  const entries: string[] = [];
+  let current = source.parentElement;
+  while (current && current !== source.ownerDocument.body) {
+    const rect = current.getBoundingClientRect();
+    const relative = [
+      sourceRect.left - rect.left,
+      rect.right - sourceRect.right,
+      sourceRect.top - rect.top,
+      rect.bottom - sourceRect.bottom
+    ].map((value) => (Number.isFinite(value) ? canonicalRelativeCoordinate(value) : "non-finite"));
+    entries.push(
+      [
+        current.localName.toLowerCase(),
+        mermaidAdmissionStyleSignature(
+          runtime.getComputedStyle(current),
+          MERMAID_ADMISSION_ANCESTOR_PROPERTIES
+        ),
+        mermaidAdmissionInlineSignature(current, MERMAID_ADMISSION_ANCESTOR_PROPERTIES),
+        `rect=${Number.isFinite(rect.width) ? rect.width : "non-finite"},${Number.isFinite(rect.height) ? rect.height : "non-finite"}`,
+        `relative=${relative.join(",")}`
+      ].join(":")
+    );
+    if (current.matches("[data-easymde-preview-html-sink], .easymde-rendered-content")) break;
+    current = current.parentElement;
+  }
+  return entries.join("|");
+}
+
+function mermaidAdmissionGeometrySignature(
+  source: Element,
+  svg: SVGSVGElement,
+  runtime: BrowserWechatClipboardRuntime
+): string {
+  const sourceRect = source.getBoundingClientRect();
+  const svgRect = svg.getBoundingClientRect();
+  const sourceEdges = mermaidEdgeValues(runtime.getComputedStyle(source));
+  const svgEdges = mermaidEdgeValues(runtime.getComputedStyle(svg));
+  const sourceContent = sourceEdges
+    ? {
+        height:
+          sourceRect.height -
+          (sourceEdges[0] ?? Number.NaN) -
+          (sourceEdges[2] ?? Number.NaN) -
+          (sourceEdges[4] ?? Number.NaN) -
+          (sourceEdges[6] ?? Number.NaN),
+        width:
+          sourceRect.width -
+          (sourceEdges[1] ?? Number.NaN) -
+          (sourceEdges[3] ?? Number.NaN) -
+          (sourceEdges[5] ?? Number.NaN) -
+          (sourceEdges[7] ?? Number.NaN)
+      }
+    : { height: Number.NaN, width: Number.NaN };
+  const getScreenCTM = (svg as SVGSVGElement & { getScreenCTM?: () => MermaidScreenCtm | null }).getScreenCTM;
+  let matrix: MermaidScreenCtm | null = null;
+  if ("function" === typeof getScreenCTM) {
+    try {
+      matrix = getScreenCTM.call(svg);
+    } catch {
+      matrix = null;
+    }
+  }
+  const viewBox = mermaidViewBox(svg);
+  const layoutMagnification = mermaidLayoutMagnification(source, runtime);
+  const centeredLeft = canonicalRelativeCoordinate(
+    svgRect.left - sourceRect.left - (sourceEdges?.[1] ?? 0) - (sourceEdges?.[5] ?? 0)
+  );
+  const centeredRight = canonicalRelativeCoordinate(
+    sourceRect.right - svgRect.right - (sourceEdges?.[3] ?? 0) - (sourceEdges?.[7] ?? 0)
+  );
+  const topDelta = canonicalRelativeCoordinate(
+    svgRect.top - sourceRect.top - (sourceEdges?.[0] ?? 0) - (sourceEdges?.[4] ?? 0)
+  );
+  return [
+    `source=${sourceRect.width},${sourceRect.height}`,
+    `svg=${svgRect.width},${svgRect.height}`,
+    `content=${sourceContent.width},${sourceContent.height}`,
+    `centered=${centeredLeft},${centeredRight}`,
+    `top=${topDelta}`,
+    `finite=${[
+      sourceRect.width,
+      sourceRect.height,
+      svgRect.width,
+      svgRect.height,
+      sourceRect.left,
+      sourceRect.right,
+      sourceRect.top,
+      sourceRect.bottom,
+      svgRect.left,
+      svgRect.right,
+      svgRect.top,
+      svgRect.bottom
+    ].every(Number.isFinite)}`,
+    `viewBox=${viewBox ? `${viewBox.minX},${viewBox.minY},${viewBox.width},${viewBox.height}` : "invalid"}`,
+    `matrix=${matrix ? `${matrix.a},${matrix.b},${matrix.c},${matrix.d},${Number.isFinite(matrix.e) ? "finite" : "non-finite"},${Number.isFinite(matrix.f) ? "finite" : "non-finite"}` : "missing"}`,
+    `magnification=${layoutMagnification}`,
+    `svgEdges=${svgEdges ? svgEdges.join(",") : "invalid"}`
+  ].join(";");
+}
+
+/**
+ * Complete source-side freshness signature for responsive Mermaid admission.
+ * Every value read by the responsive capture decision is represented here or by
+ * the shared DOM/markup key. The shared fidelity walk calls this for each
+ * Mermaid owner so warm and yielded in-flight checks cannot reuse a decision
+ * made from stale styles, Typed OM constraints, paint, animation, or geometry.
+ */
+export function mermaidAdmissionSignature(source: Element, runtime: BrowserWechatClipboardRuntime): string {
+  if (!source.matches('.easymde-mermaid')) return '';
+  const computed = runtime.getComputedStyle(source);
+  const svg = mermaidDirectSvg(source);
+  if (!svg) {
+    return [
+      'admission=missing-svg',
+      `source=${mermaidAdmissionStyleSignature(computed, MERMAID_ADMISSION_SOURCE_COMPUTED_PROPERTIES)}`,
+      `source-inline=${mermaidAdmissionInlineSignature(source, MERMAID_ADMISSION_SOURCE_INLINE_PROPERTIES)}`,
+      `source-typed=${mermaidAdmissionTypedSignature(source, MERMAID_ADMISSION_TYPED_SOURCE_PROPERTIES)}`,
+      `source-radius=${mermaidAdmissionRadiusSignature(computed)}`,
+      `source-pseudos=${mermaidAdmissionPseudoSignature(source, runtime)}`,
+      `source-attrs=${mermaidAdmissionAttributeSignature(source, MERMAID_ADMISSION_SOURCE_ATTRIBUTES)}`
+    ].join(';');
+  }
+  const svgComputed = runtime.getComputedStyle(svg);
+  const sourceRect = source.getBoundingClientRect();
+  const svgRect = svg.getBoundingClientRect();
+  const sourceEdges = mermaidEdgeValues(computed);
+  const svgEdges = mermaidEdgeValues(svgComputed);
+  const formattingOwnerDisplay = source.parentElement
+    ? mermaidAdmissionCssValue(runtime.getComputedStyle(source.parentElement).getPropertyValue('display'))
+    : '';
+  const directChildren = Array.from(source.childNodes)
+    .map((child) =>
+      child.nodeType === Node.TEXT_NODE
+        ? `text:${/^[\s]*$/u.test(child.textContent ?? '') ? 'whitespace' : 'content'}`
+        : child.nodeType === Node.ELEMENT_NODE
+          ? `element:${child.nodeName.toLowerCase()}`
+          : `node:${child.nodeType}`
+    )
+    .join(',');
+  const decisions = {
+    ancestorContained: source.ownerDocument.documentElement?.contains(source) ?? false,
+    autoMargins: mermaidSourceUsesAutoBlockMargins(source, runtime),
+    hasPaint: mermaidHasPaint(svg),
+    ownerPaintSafe: mermaidResponsiveOwnerPaintIsSafe(
+      source,
+      runtime,
+      sourceRect.width,
+      sourceRect.height
+    ),
+    sourceBorderUnsafe: mermaidHasUnsafeBorder(computed, true),
+    sourceBorderWidthNonZero: mermaidHasNonZeroBorderWidth(computed),
+    sourceEdgesValid: Boolean(sourceEdges),
+    sourceOverflowSafe: mermaidResponsiveSourceOverflowIsSafe(source, runtime),
+    sourcePositioningUnsafe: mermaidHasUnsafePositioning(source, runtime.getComputedStyle),
+    svgBorderUnsafe: mermaidHasUnsafeBorder(svgComputed),
+    svgBorderWidthNonZero: mermaidHasNonZeroBorderWidth(svgComputed),
+    svgEdgesValid: Boolean(svgEdges),
+    svgPaintSafe: mermaidRootPaintIsSafe(svg, runtime, svgRect.width, svgRect.height, svgRect.width, svgRect.height),
+    svgPositioningUnsafe: mermaidHasUnsafePositioning(svg, runtime.getComputedStyle),
+    typedSvgReadable: assertResponsiveTypedStyleMapReadable(svg),
+    unsafeDimensions: unsafeMermaidDimensionRules(source, source.ownerDocument)
+  };
+  return [
+    'admission=responsive',
+    `children=${directChildren}`,
+    `source=${mermaidAdmissionStyleSignature(computed, MERMAID_ADMISSION_SOURCE_COMPUTED_PROPERTIES)}`,
+    `source-inline=${mermaidAdmissionInlineSignature(source, MERMAID_ADMISSION_SOURCE_INLINE_PROPERTIES)}`,
+    `source-typed=${mermaidAdmissionTypedSignature(source, MERMAID_ADMISSION_TYPED_SOURCE_PROPERTIES)}`,
+    `source-radius=${mermaidAdmissionRadiusSignature(computed)}`,
+    `source-pseudos=${mermaidAdmissionPseudoSignature(source, runtime)}`,
+    `source-attrs=${mermaidAdmissionAttributeSignature(source, MERMAID_ADMISSION_SOURCE_ATTRIBUTES)}`,
+    `svg=${mermaidAdmissionStyleSignature(svgComputed, MERMAID_ADMISSION_SVG_COMPUTED_PROPERTIES)}`,
+    `svg-inline=${mermaidAdmissionInlineSignature(svg, MERMAID_ADMISSION_SVG_INLINE_PROPERTIES)}`,
+    `svg-typed=${mermaidAdmissionTypedSignature(svg, MERMAID_ADMISSION_TYPED_SVG_PROPERTIES)}`,
+    `svg-radius=${mermaidAdmissionRadiusSignature(svgComputed)}`,
+    `svg-pseudos=${mermaidAdmissionPseudoSignature(svg, runtime)}`,
+    `svg-attrs=${mermaidAdmissionAttributeSignature(svg, MERMAID_ADMISSION_SVG_ATTRIBUTES)}`,
+    `formatting-owner=${formattingOwnerDisplay}`,
+    `ancestors=${mermaidAdmissionAncestorSignature(source, runtime, sourceRect)}`,
+    `geometry=${mermaidAdmissionGeometrySignature(source, svg, runtime)}`,
+    `decisions=${Object.entries(decisions).map(([key, value]) => `${key}=${value}`).join(',')}`
+  ].join(';');
 }

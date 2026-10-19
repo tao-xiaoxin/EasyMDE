@@ -96,6 +96,27 @@
   height: auto;
 }
 
+/* WordPress admin resets every UL to no marker. Restore the native Markdown
+ * marker depth inside the shared article root with minimum-specificity rules;
+ * explicit theme, task, and Custom CSS list rules remain authoritative. */
+.easymde-rendered-content :where(ul) {
+  list-style-type: disc;
+}
+
+.easymde-rendered-content :where(:is(ul, ol) ul) {
+  list-style-type: circle;
+}
+
+.easymde-rendered-content :where(:is(ul, ol) :is(ul, ol) ul) {
+  list-style-type: square;
+}
+
+/* A task item owns its checkbox; suppress only the inherited marker so
+ * higher-specificity theme and Custom CSS task paint remains authoritative. */
+.easymde-rendered-content :where(li.task-list-item) {
+  list-style-type: none;
+}
+
 /* EasyMDE owns this scroll surface for outline/preview synchronization. */
 .easymde-rendered-content.easymde-markdown-theme-mdmdt {
   scroll-behavior: auto !important;

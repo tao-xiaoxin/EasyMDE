@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
 
 const css = readFileSync(new URL('../../assets/css/admin/editor.css', import.meta.url), 'utf8');
 const messageAlertCss = readFileSync(new URL('../../assets/css/admin/message-alert.css', import.meta.url), 'utf8');
@@ -332,6 +333,167 @@ test('shared Preview task markers override WordPress checkbox geometry', () => {
   assertDeclaration(pseudoRule, 'height', '1rem');
   assertDeclaration(pseudoRule, 'margin', '0');
   assertDeclaration(pseudoRule, 'float', 'none');
+});
+
+test('shared rendered list baselines survive the WordPress admin reset without overriding list owners', () => {
+  const wordpressReset = `
+ul { list-style-type: none; }
+ol { list-style-type: decimal; margin-left: 2em; }
+`;
+  const articleThemeCss = (id) => readFileSync(
+    new URL(`../../assets/themes/article/${id}.css`, import.meta.url),
+    'utf8'
+  );
+  const nestedListMarkup = (tag, level = 1) => {
+    const child = level < 6 ? nestedListMarkup(tag, level + 1) : '';
+    return `<${tag} id="${tag}-level-${level}"><li>Level ${level}${child}</li></${tag}>`;
+  };
+  const createListCase = ({
+    theme = 'default',
+    themeCss = '',
+    customCss = '',
+    customTheme = false
+  } = {}) => {
+    const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+      pretendToBeVisual: true
+    });
+    const document = dom.window.document;
+    const appendStyle = (source) => {
+      const style = document.createElement('style');
+      style.textContent = source;
+      document.head.append(style);
+    };
+
+    appendStyle(wordpressReset);
+    appendStyle(frontendCss);
+    if (themeCss) appendStyle(themeCss);
+    if (customCss) appendStyle(customCss);
+    document.body.innerHTML = `
+      <article id="article" class="easymde-rendered-content easymde-markdown-theme-${theme}${customTheme ? ' easymde-custom-css-active' : ''}">
+        ${nestedListMarkup('ul')}
+        ${nestedListMarkup('ol')}
+        <ol id="mixed"><li id="mixed-item"><ul id="mixed-child"><li>Mixed</li></ul></li></ol>
+        <ul><li><ol><li><ul id="third-nested"><li>Third nested</li></ul></li></ol></li></ul>
+        <ul class="task-list" id="task-list">
+          <li class="task-list-item" id="task-checked">
+            <input id="task-checked-input" type="checkbox" checked>Checked task
+            <ul id="task-nested"><li id="task-nested-item">Nested ordinary</li></ul>
+          </li>
+          <li class="task-list-item" id="task-unchecked"><p><input id="task-unchecked-input" type="checkbox">Unchecked task</p></li>
+        </ul>
+        <ol class="task-list" id="ordered-task-list">
+          <li class="task-list-item" id="ordered-task-item"><input id="ordered-task-input" type="checkbox" checked>Ordered task</li>
+        </ol>
+      </article>`;
+    const styleOf = (id) => dom.window.getComputedStyle(document.getElementById(id)).listStyleType;
+    const customMarkerRule = customCss
+      ? [...document.styleSheets]
+          .flatMap((styleSheet) => [...styleSheet.cssRules])
+          .find((rule) => rule.selectorText === '.easymde-rendered-content.easymde-custom-css-active ul li::marker')
+      : null;
+    const result = {
+      ulLevels: [1, 2, 3, 4, 5, 6].map((level) => styleOf(`ul-level-${level}`)),
+      olLevels: [1, 2, 3, 4, 5, 6].map((level) => styleOf(`ol-level-${level}`)),
+      mixed: styleOf('mixed-child'),
+      thirdNested: styleOf('third-nested'),
+      taskList: styleOf('task-list'),
+      taskItems: ['task-checked', 'task-unchecked', 'ordered-task-item'].map(styleOf),
+      taskNested: styleOf('task-nested'),
+      taskNestedItem: styleOf('task-nested-item'),
+      checkedStates: [
+        document.getElementById('task-checked-input').checked,
+        document.getElementById('task-unchecked-input').checked,
+        document.getElementById('ordered-task-input').checked
+      ],
+      customMarkerColor: customMarkerRule?.style.color ?? null
+    };
+    dom.window.close();
+    return result;
+  };
+
+  const baseline = createListCase();
+  assert.deepEqual(baseline.ulLevels, ['disc', 'circle', 'square', 'square', 'square', 'square']);
+  assert.equal(baseline.mixed, 'circle');
+  assert.equal(baseline.thirdNested, 'square');
+  assert.deepEqual(baseline.taskItems, ['none', 'none', 'none']);
+  assert.equal(baseline.taskNested, 'circle');
+  assert.equal(baseline.taskNestedItem, 'circle');
+  assert.deepEqual(baseline.checkedStates, [true, false, true]);
+
+  const bloomInk = createListCase({
+    theme: 'bloom-ink',
+    themeCss: articleThemeCss('bloom-ink')
+  });
+  assert.equal(bloomInk.ulLevels[0], 'disc');
+  assert.equal(bloomInk.ulLevels[1], 'circle');
+  assert.equal(bloomInk.mixed, 'circle');
+  assert.deepEqual(bloomInk.taskItems, ['none', 'none', 'none']);
+
+  const phycat = createListCase({
+    theme: 'phycat-sky',
+    themeCss: articleThemeCss('phycat-sky')
+  });
+  assert.deepEqual(phycat.ulLevels, ['disc', 'circle', 'square', 'square', 'square', 'square']);
+  assert.deepEqual(phycat.olLevels, ['decimal', 'lower-alpha', 'lower-roman', 'lower-roman', 'lower-roman', 'lower-roman']);
+  assert.deepEqual(phycat.taskItems, ['none', 'none', 'none']);
+  assert.equal(phycat.taskNested, 'circle');
+  assert.equal(phycat.taskNestedItem, 'circle');
+  assert.deepEqual(phycat.checkedStates, [true, false, true]);
+
+  const crimsonFocus = createListCase({
+    theme: 'crimson-focus',
+    themeCss: articleThemeCss('crimson-focus')
+  });
+  assert.equal(crimsonFocus.ulLevels[0], '"—  "');
+  assert.deepEqual(crimsonFocus.taskItems, ['none', 'none', 'none']);
+
+  const mdmdt = createListCase({
+    theme: 'mdmdt',
+    themeCss: articleThemeCss('mdmdt')
+  });
+  assert.equal(mdmdt.taskList, 'none');
+  assert.deepEqual(mdmdt.taskItems, ['none', 'none', 'none']);
+
+  const ningyePurple = createListCase({
+    theme: 'ningye-purple',
+    themeCss: articleThemeCss('ningye-purple')
+  });
+  assert.equal(ningyePurple.ulLevels[0], 'circle');
+  assert.deepEqual(ningyePurple.taskItems, ['none', 'none', 'none']);
+  assert.equal(ningyePurple.taskNested, 'circle');
+  assert.equal(ningyePurple.taskNestedItem, 'circle');
+
+  const minimalBlack = createListCase({
+    theme: 'minimal-black',
+    themeCss: articleThemeCss('minimal-black')
+  });
+  assert.equal(minimalBlack.ulLevels[0], 'square');
+  assert.deepEqual(minimalBlack.taskItems, ['none', 'none', 'none']);
+  assert.equal(minimalBlack.taskNested, 'square');
+  assert.equal(minimalBlack.taskNestedItem, 'circle');
+
+  const custom = createListCase({
+    customTheme: true,
+    customCss: `
+      .easymde-rendered-content.easymde-custom-css-active ul {
+        list-style-type: none;
+      }
+
+      .easymde-rendered-content.easymde-custom-css-active ul ul {
+        list-style-type: square;
+      }
+
+      .easymde-rendered-content.easymde-custom-css-active ul li::marker {
+        color: rgb(1, 2, 3);
+      }
+    `
+  });
+  assert.deepEqual(custom.ulLevels, ['none', 'square', 'square', 'square', 'square', 'square']);
+  assert.deepEqual(custom.taskItems, ['none', 'none', 'none']);
+  assert.equal(custom.taskNested, 'square');
+  assert.equal(custom.taskNestedItem, 'square');
+  assert.deepEqual(custom.checkedStates, [true, false, true]);
+  assert.equal(custom.customMarkerColor, 'rgb(1, 2, 3)');
 });
 
 test('ordinary CodeMirror shows a stable scroll-synchronized line-number gutter', () => {
@@ -990,10 +1152,29 @@ test('all preview table surfaces use one shared horizontal scroll owner', () => 
     /\.easymde-editor[^{}]*\.easymde-rendered-content[^{}]*:is\(th, td\)\s*\{[^}]*overflow-wrap\s*:/s,
     'editor containment must not force theme-specific cell reflow'
   );
+});
 
-  assert.match(
+test('shared Phycat nested quotes stay portable and Custom CSS scoped', () => {
+  const selector = '.easymde-rendered-content[class*="easymde-markdown-theme-phycat-"]:not(.easymde-custom-css-active) blockquote blockquote';
+  const quoteRule = cssRule(frontendCss, selector);
+
+  assertDeclaration(quoteRule, 'box-sizing', 'border-box');
+  assertDeclaration(quoteRule, 'max-width', '100%');
+  assertDeclaration(quoteRule, 'margin-inline', '0');
+  assertDeclaration(quoteRule, '--easymde-portable-padding-left', '9%');
+  assertDeclaration(quoteRule, '--easymde-portable-padding-right', '5%');
+  assertDeclaration(quoteRule, 'padding-left', 'var(--easymde-portable-padding-left)');
+  assertDeclaration(quoteRule, 'padding-right', 'var(--easymde-portable-padding-right)');
+  assert.match(selector, /:not\(\.easymde-custom-css-active\)/);
+  assert.doesNotMatch(
     css,
-    /@media \(max-width:\s*760px\)[\s\S]*?\.easymde-editor \.easymde-rendered-content\[class\*="easymde-markdown-theme-phycat-"\]:not\(\.easymde-custom-css-active\) blockquote blockquote\s*\{[^}]*max-width:\s*100%;[^}]*margin-inline:\s*0;[^}]*padding-inline:\s*12px;/s
+    /\.easymde-editor[^{}]*phycat-[^{}]*blockquote\s+blockquote[^{}]*\{[^}]*padding-inline:\s*12px;/s,
+    'the removed WordPress admin quote geometry must not return'
+  );
+  assert.doesNotMatch(
+    quoteRule,
+    /padding-inline:\s*12px/,
+    'the portable base quote owner must not reintroduce the old fixed runtime padding'
   );
 });
 

@@ -1136,7 +1136,7 @@ function createMathOmissionIndex(
 	visit(preview, false);
 	const prefix = [0];
 	for (const omitted of omittedFlags) {
-		prefix.push((prefix.at(-1) ?? 0) + (omitted ? 1 : 0));
+		prefix.push((prefix[prefix.length - 1] ?? 0) + (omitted ? 1 : 0));
 	}
 	return { ends, prefix, starts };
 }

@@ -43,6 +43,12 @@ const committedOutputRoot = join(repoRoot, 'assets/build');
 const sourceEntry = 'frontend/src/entrypoints/admin-editor.tsx';
 const wechatPngEncoderWorkerSource = 'frontend/src/integrations/browser/wechat/wechat-png-encoder.worker.ts';
 const wechatPngEncoderWorkerPattern = /^assets\/wechat-png-encoder-[a-zA-Z0-9_-]+\.js$/;
+const embeddedNamespaceUrls = new Set([
+  'http://www.w3.org/2000/svg',
+  'http://www.w3.org/1999/xhtml'
+]);
+const httpUrlPattern = /https?:\/\/[A-Za-z0-9._~:/?#\x5B\x5D@!$&'*+,;=%-]+/gi;
+const localDevelopmentTokenPattern = /localhost|127\.0\.0\.1/gi;
 const adminEditorLoaderOutputRoot = join(repoRoot, '.cache/easymde-admin-editor-loader-production-check');
 const committedAdminEditorLoaderOutputRoot = join(repoRoot, 'assets/build/admin-editor-loader');
 const adminEditorLoaderSourceEntry = 'frontend/src/entrypoints/admin-editor-loader.ts';
@@ -64,11 +70,44 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+function findUnexpectedHttpUrls(source) {
+  return (source.match(httpUrlPattern) ?? []).filter((url) => !embeddedNamespaceUrls.has(url));
+}
+
+function findUnexpectedLocalDevelopmentTokens(source) {
+  return source.match(localDevelopmentTokenPattern) ?? [];
+}
+
 before(() => {
   buildResult = spawnSync('npm', ['run', 'check:frontend-production'], {
     cwd: repoRoot,
     encoding: 'utf8'
   });
+});
+
+test('URL policy allows only exact embedded SVG and XHTML namespaces', () => {
+  assert.deepEqual(
+    findUnexpectedHttpUrls(
+      `${[...embeddedNamespaceUrls].join(' ')} http://www.w3.org/2000/svg`,
+    ),
+    [],
+  );
+
+  for (const [label, url] of [
+    ['unapproved HTTPS remote', 'https://cdn.example.test/runtime.js'],
+    ['localhost development URL', 'http://localhost:5173/@vite/client'],
+    ['SVG namespace with suffix', 'http://www.w3.org/2000/svg#suffix'],
+    ['XHTML namespace with query', 'http://www.w3.org/1999/xhtml?query=1'],
+  ]) {
+    assert.deepEqual(findUnexpectedHttpUrls(url), [url], label);
+  }
+
+  for (const [label, token] of [
+    ['bare localhost development token', 'localhost'],
+    ['bare loopback development token', '127.0.0.1'],
+  ]) {
+    assert.deepEqual(findUnexpectedLocalDevelopmentTokens(token), [token], label);
+  }
 });
 
 test('root package exposes the production frontend build and includes it in the frontend gate', () => {
@@ -211,12 +250,10 @@ test('production build emits one self-contained WordPress editor React entry', (
   assert.doesNotMatch(script, /EasyMDEReactToolbar|EasyMDEReactDocumentSource/);
   assert.match(script, /cm-editor/);
   assert.doesNotMatch(script, /__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED/);
-  assert.doesNotMatch(
-    script.replaceAll('http://www.w3.org/2000/svg', ''),
-    /localhost|127\.0\.0\.1|https?:\/\/[A-Za-z0-9]/i
-  );
+  assert.deepEqual(findUnexpectedHttpUrls(script), []);
+  assert.deepEqual(findUnexpectedLocalDevelopmentTokens(script), []);
   assert.doesNotMatch(script, /frontend\/src|sourceMappingURL=/);
-  assert.doesNotMatch(script, /\.at\(/);
+  assert.equal(script.includes('.at('), false, 'production editor bundle must not contain Array.prototype.at');
   assert.doesNotMatch(script, /Object\.hasOwn\(/);
   assert.match(css, /\.easymde-react-toolbar-contents\s*\{[^}]*display:\s*contents;/s);
   for (const dependency of [

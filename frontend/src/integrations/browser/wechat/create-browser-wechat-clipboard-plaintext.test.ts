@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
+import { connectedPlainText } from './wechat-portable-serialization';
 
 import {
   blobText,
@@ -10,6 +11,85 @@ import {
   prepareClipboard,
   dispatchSuccessfulLegacyCopy
 } from './wechat-clipboard-test-fixtures';
+
+const PLAIN_TEXT_MEDIA_ATTRIBUTES = ['src', 'srcset', 'poster'] as const;
+type PlainTextMediaAttribute = (typeof PLAIN_TEXT_MEDIA_ATTRIBUTES)[number];
+type MediaAttributeSnapshot = {
+  element: Element;
+  values: Record<PlainTextMediaAttribute, string | null>;
+};
+
+function snapshotMediaAttributes(root: ParentNode): MediaAttributeSnapshot[] {
+  return Array.from(root.querySelectorAll('img, video, source')).map((element) => ({
+    element,
+    values: {
+      src: element.getAttribute('src'),
+      srcset: element.getAttribute('srcset'),
+      poster: element.getAttribute('poster')
+    }
+  }));
+}
+
+function expectMediaAttributes(root: ParentNode, snapshots: readonly MediaAttributeSnapshot[]): void {
+  const elements = Array.from(root.querySelectorAll('img, video, source'));
+  expect(elements).toHaveLength(snapshots.length);
+  snapshots.forEach((snapshot, index) => {
+    const element = elements[index];
+    expect(element).toBe(snapshot.element);
+    PLAIN_TEXT_MEDIA_ATTRIBUTES.forEach((attribute) => {
+      expect(element?.getAttribute(attribute)).toBe(snapshot.values[attribute]);
+    });
+  });
+}
+
+function expectMediaAttributeValues(root: ParentNode, snapshots: readonly MediaAttributeSnapshot[]): void {
+  const elements = Array.from(root.querySelectorAll('img, video, source'));
+  expect(elements).toHaveLength(snapshots.length);
+  snapshots.forEach((snapshot, index) => {
+    const element = elements[index];
+    PLAIN_TEXT_MEDIA_ATTRIBUTES.forEach((attribute) => {
+      expect(element?.getAttribute(attribute)).toBe(snapshot.values[attribute]);
+    });
+  });
+}
+
+function mediaAttributesAreRemoved(root: ParentNode): boolean {
+  return Array.from(root.querySelectorAll('img, video, source')).every((element) =>
+    PLAIN_TEXT_MEDIA_ATTRIBUTES.every((attribute) => !element.hasAttribute(attribute))
+  );
+}
+
+function createMediaPlainTextFixture(): Readonly<{
+  bodyChildren: readonly Element[];
+  root: HTMLElement;
+  rootMedia: MediaAttributeSnapshot[];
+  source: HTMLElement;
+  sourceMedia: MediaAttributeSnapshot[];
+}> {
+  const markup = [
+    '<p>Before <img src="https://example.test/inline.png" srcset="" alt="inline">',
+    '<video src="" poster="https://example.test/poster.jpg">',
+    '<source src="https://example.test/movie.mp4" srcset="" poster="">',
+    '</video> after</p>'
+  ].join('');
+  const root = document.createElement('article');
+  root.innerHTML = markup;
+  const source = document.createElement('article');
+  source.setAttribute('data-easymde-preview-html-sink', '1');
+  source.innerHTML = markup;
+  Object.defineProperty(source, 'innerText', { configurable: true, value: 'Before  after' });
+  Object.defineProperty(source, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({ width: 320 })
+  });
+  return {
+    bodyChildren: Array.from(document.body.children),
+    root,
+    rootMedia: snapshotMediaAttributes(root),
+    source,
+    sourceMedia: snapshotMediaAttributes(source)
+  };
+}
 
 describe('createBrowserWechatClipboard', () => {
   installClipboardTestEnvironment();
@@ -141,6 +221,70 @@ describe('createBrowserWechatClipboard', () => {
     }
   });
 
+  it('restores raw media attributes after connected plaintext measurement and repeat', () => {
+    const { bodyChildren, root, rootMedia, source, sourceMedia } = createMediaPlainTextFixture();
+    const measurementConnected: boolean[] = [];
+    const measurementMediaRemoved: boolean[] = [];
+    Object.defineProperty(root, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        measurementConnected.push(this.parentElement?.style.position === 'fixed');
+        measurementMediaRemoved.push(mediaAttributesAreRemoved(this));
+        return 'Before  after';
+      }
+    });
+
+    expect(connectedPlainText(root, source)).toBe('Before  after');
+    expect(connectedPlainText(root, source)).toBe('Before  after');
+
+    expect(measurementConnected).toEqual([true, true]);
+    expect(measurementMediaRemoved).toEqual([true, true]);
+    expectMediaAttributes(root, rootMedia);
+    expectMediaAttributes(source, sourceMedia);
+    expect(root.parentElement).not.toBeNull();
+    expect(root.parentElement?.parentNode).toBeNull();
+    expect(Array.from(document.body.children)).toEqual(bodyChildren);
+  });
+
+  it('restores media attributes and removes the host when innerText throws', () => {
+    const { bodyChildren, root, rootMedia, source, sourceMedia } = createMediaPlainTextFixture();
+    let measurementConnected = false;
+    let measurementMediaRemoved = false;
+    Object.defineProperty(root, 'innerText', {
+      configurable: true,
+      get(this: HTMLElement) {
+        measurementConnected = this.parentElement?.style.position === 'fixed';
+        measurementMediaRemoved = mediaAttributesAreRemoved(this);
+        throw new Error('plain-text-inner-text-failed');
+      }
+    });
+
+    expect(() => connectedPlainText(root, source)).toThrow('plain-text-inner-text-failed');
+    expect(measurementConnected).toBe(true);
+    expect(measurementMediaRemoved).toBe(true);
+    expectMediaAttributes(root, rootMedia);
+    expectMediaAttributes(source, sourceMedia);
+    expect(root.parentElement).not.toBeNull();
+    expect(root.parentElement?.parentNode).toBeNull();
+    expect(Array.from(document.body.children)).toEqual(bodyChildren);
+  });
+
+  it('restores media attributes and rethrows a preconnect width failure', () => {
+    const { bodyChildren, root, rootMedia, source, sourceMedia } = createMediaPlainTextFixture();
+    Object.defineProperty(source, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => {
+        throw new Error('plain-text-width-read-failed');
+      }
+    });
+
+    expect(() => connectedPlainText(root, source)).toThrow('plain-text-width-read-failed');
+    expectMediaAttributes(root, rootMedia);
+    expectMediaAttributes(source, sourceMedia);
+    expect(root.parentNode).toBeNull();
+    expect(Array.from(document.body.children)).toEqual(bodyChildren);
+  });
+
   it('preserves inline media layout and width with responsive bounds', async () => {
     const writes: unknown[] = [];
     class ClipboardItemStub { constructor(public payload: Record<string, Blob | PromiseLike<Blob>>) {  }  }
@@ -259,9 +403,11 @@ describe('createBrowserWechatClipboard', () => {
     preview.innerHTML = [
       '<h2><span class="prefix"></span><span class="content">Heading</span><span class="suffix"></span></h2>',
       '<p>Body \uFEFF authored</p>',
+      '<p><img src="https://example.test/rollback.png" alt="rollback"><video src="https://example.test/rollback.mp4" poster="https://example.test/rollback.jpg"><source src="https://example.test/rollback-source.mp4" srcset="https://example.test/rollback-source-2.mp4 2x" poster="https://example.test/rollback-poster.jpg"></video></p>',
       '<pre><code><span>#</span><span>336699</span>\n#\uFEFFauthored</code></pre>'
     ].join('');
     const sourceMarkup = preview.innerHTML;
+    const sourceMedia = snapshotMediaAttributes(preview);
     const sourceText = 'Heading\nBody \uFEFF authored\n#336699\n#\uFEFFauthored';
     Object.defineProperty(preview, 'innerText', { configurable: true, value: sourceText });
     const suffix = preview.querySelector<HTMLElement>('.suffix');
@@ -315,6 +461,7 @@ describe('createBrowserWechatClipboard', () => {
     expect(await blobText(modernTextBlob)).toBe(sourceText);
     const modernHolder = document.createElement('div');
     modernHolder.innerHTML = modernHtml;
+    expectMediaAttributeValues(modernHolder, sourceMedia);
     expect(modernHolder.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
     expect(modernHolder.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
     expect(modernHolder.querySelector('pre > code')?.textContent).toContain('#\uFEFFauthored');
@@ -356,6 +503,8 @@ describe('createBrowserWechatClipboard', () => {
       const throwing = createRuntime(ClipboardItemStub, async () => undefined);
       await expect(throwing.copy(preview)).resolves.toEqual({ code: 'wechat-copy-failed', status: 'failed' });
       const cloneAfterThrow = measuredClone as HTMLElement | null;
+      expect(cloneAfterThrow).not.toBeNull();
+      expectMediaAttributeValues(cloneAfterThrow as HTMLElement, sourceMedia);
       expect(cloneAfterThrow?.querySelector('h2 > span:nth-child(3)')?.textContent).toBe('\u2060');
       expect(cloneAfterThrow?.querySelector('pre > code')?.textContent).toContain('#\uFEFF336699');
       expect(cloneAfterThrow?.textContent).toContain('Body \uFEFF authored');

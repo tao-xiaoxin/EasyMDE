@@ -968,6 +968,52 @@ export function normalizedPlainText(value: string): string {
 	return value.replaceAll("\u2060", "").replaceAll("\u00a0", " ");
 }
 
+const PLAIN_TEXT_MEDIA_ATTRIBUTES = ["src", "srcset", "poster"] as const;
+type PlainTextMediaAttribute = (typeof PLAIN_TEXT_MEDIA_ATTRIBUTES)[number];
+type PlainTextMediaAttributeSnapshot = Readonly<{
+	element: Element;
+	values: Readonly<Record<PlainTextMediaAttribute, string | null>>;
+}>;
+
+function snapshotPlainTextMediaAttributes(
+	root: HTMLElement,
+): PlainTextMediaAttributeSnapshot[] {
+	const elements = [
+		...(root.matches("img, video, source") ? [root] : []),
+		...Array.from(root.querySelectorAll("img, video, source")),
+	];
+	return elements.map((element) => ({
+		element,
+		values: {
+			src: element.getAttribute("src"),
+			srcset: element.getAttribute("srcset"),
+			poster: element.getAttribute("poster"),
+		},
+	}));
+}
+
+function stripPlainTextMediaAttributes(
+	snapshots: readonly PlainTextMediaAttributeSnapshot[],
+): void {
+	snapshots.forEach(({ element }) => {
+		PLAIN_TEXT_MEDIA_ATTRIBUTES.forEach((attribute) => {
+			element.removeAttribute(attribute);
+		});
+	});
+}
+
+function restorePlainTextMediaAttributes(
+	snapshots: readonly PlainTextMediaAttributeSnapshot[],
+): void {
+	snapshots.forEach(({ element, values }) => {
+		PLAIN_TEXT_MEDIA_ATTRIBUTES.forEach((attribute) => {
+			const value = values[attribute];
+			if (value === null) element.removeAttribute(attribute);
+			else element.setAttribute(attribute, value);
+		});
+	});
+}
+
 export function connectedPlainText(
 	root: HTMLElement,
 	source: HTMLElement,
@@ -978,6 +1024,7 @@ export function connectedPlainText(
 	const detachedCodeFrameHeaders: Array<
 		Readonly<{ element: Element; parent: Node; nextSibling: ChildNode | null }>
 	> = [];
+	const mediaAttributeSnapshots = snapshotPlainTextMediaAttributes(root);
 	const normalizations = EXPORT_TEXT_NORMALIZATIONS.get(root) ?? new Map();
 	const restoreCodeText = (property: "original" | "encoded"): void => {
 		normalizations?.forEach((value, textNode) => {
@@ -994,11 +1041,7 @@ export function connectedPlainText(
 		// Plain text does not need media resources. Remove their fetchable
 		// attributes from the temporary measurement tree while leaving the HTML
 		// payload untouched.
-		root.querySelectorAll("img, video, source").forEach((element) => {
-			element.removeAttribute("src");
-			element.removeAttribute("srcset");
-			element.removeAttribute("poster");
-		});
+		stripPlainTextMediaAttributes(mediaAttributeSnapshots);
 		// A generated code-frame header is paint-only. Keeping it in the HTML
 		// payload is required for layout, but its block boundary must not become
 		// a line in the separate plain-text clipboard payload.
@@ -1052,6 +1095,7 @@ export function connectedPlainText(
 		return connectedText;
 	} finally {
 		host?.remove();
+		restorePlainTextMediaAttributes(mediaAttributeSnapshots);
 		detachedCodeFrameHeaders
 			.reverse()
 			.forEach(({ element, parent, nextSibling }) => {

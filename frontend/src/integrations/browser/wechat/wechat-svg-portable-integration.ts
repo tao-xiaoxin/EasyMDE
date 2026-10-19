@@ -1,7 +1,8 @@
 import {
   isTaskListCheckbox,
   TASK_LIST_CHECKBOX_STATES,
-  WECHAT_PNG_VISUAL_CLONES
+  WECHAT_PNG_VISUAL_CLONES,
+  WECHAT_STRUCTURE_REPLACEMENTS
 } from './wechat-clone-metadata';
 import type { BrowserWechatClipboardRuntime } from './wechat-clipboard-runtime';
 import {
@@ -15,6 +16,17 @@ import {
   type WechatSvgCloneIdentity,
   type WechatSvgMarkerProjectionPlan
 } from './wechat-svg-marker-projection';
+import {
+  mermaidCssPixelValue,
+  mermaidDirectSvg,
+  mermaidLayoutMagnification,
+  mermaidResponsiveCssText
+} from './wechat-mermaid-geometry';
+import {
+  mermaidIntrinsicScrollDimensions
+} from './wechat-capture-plan';
+import { replaceDeclarations } from './wechat-style-declarations';
+import { markWechatOwnedScrollOwner } from './wechat-list-table-layout';
 
 type WechatSvgIdentityWiring = {
   registrations: Map<Element, WechatSvgCloneIdentity>;
@@ -23,7 +35,7 @@ type WechatSvgIdentityWiring = {
 };
 
 export type WechatSvgPortableIntegration = Readonly<{
-  applyPlan: () => void;
+  applyPlan: (finalizedRoot: HTMLElement) => void;
   freezePlan: (conversion: WechatPngConversionContext | null) => void;
   omitSubtree: (source: Element, clone: Element) => void;
   reconcileTaskCheckboxes: (layoutRoot: HTMLElement, cloneRoot: HTMLElement) => void;
@@ -216,6 +228,89 @@ function verifyPlannedSvgMarkers(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Frozen intrinsic Mermaid scroll plan for OFF (conversion === null)
+// ---------------------------------------------------------------------------
+
+type FrozenMermaidIntrinsicScrollEntry = Readonly<{
+  cloneSvg: SVGSVGElement;
+  frozenOwner: Element;
+  maxWidthCss: string;
+}>;
+
+function freezeMermaidIntrinsicScrollPlans(
+  wiring: WechatSvgIdentityWiring,
+  runtime: BrowserWechatClipboardRuntime,
+  sourceRoot: HTMLElement,
+  cloneRoot: HTMLElement
+): readonly FrozenMermaidIntrinsicScrollEntry[] {
+  const entries: FrozenMermaidIntrinsicScrollEntry[] = [];
+  for (const [source, identity] of wiring.registrations) {
+    if ('present' !== identity.state) continue;
+    if (!source.matches('.easymde-mermaid')) continue;
+    // Unmarked roots stay on the existing responsive path.
+    if (!source.hasAttribute('data-easymde-mermaid-layout')) continue;
+    // Existing admission owns role/viewBox/paint/CTM/overflow/ancestor safety.
+    const layoutMagnification = mermaidLayoutMagnification(source, runtime);
+    const dimensions = mermaidIntrinsicScrollDimensions(source, runtime, layoutMagnification, sourceRoot);
+    if ('intrinsic-viewport' !== dimensions?.capture) continue;
+    // Freeze the Source cap now; applyPlan must not read Source again.
+    const sourceSvg = mermaidDirectSvg(source);
+    if (!sourceSvg) throw new WechatPngConversionError('wechat-png-rasterization-failed');
+    const maxWidthText = mermaidResponsiveCssText(sourceSvg, runtime, 'max-width');
+    const maxWidthPixels = mermaidCssPixelValue(maxWidthText);
+    if (null === maxWidthPixels || maxWidthPixels <= 0 || !Number.isFinite(maxWidthPixels)) {
+      throw new WechatPngConversionError('wechat-png-rasterization-failed');
+    }
+    // The direct clone SVG is the stable identity that survives normalization.
+    const cloneOwner = identity.clone;
+    if (cloneOwner === cloneRoot) throw new Error('wechat-mermaid-intrinsic-owner-root');
+    const cloneSvg = mermaidDirectSvg(cloneOwner);
+    if (!cloneSvg) throw new Error('wechat-mermaid-intrinsic-clone-svg-missing');
+    entries.push({
+      cloneSvg,
+      frozenOwner: cloneOwner,
+      maxWidthCss: `${maxWidthPixels}px`
+    });
+  }
+  return entries;
+}
+
+function resolvedStructureOwner(frozenOwner: Element): Element {
+  let current = frozenOwner;
+  const visited = new Set<Element>();
+  while (true) {
+    if (visited.has(current)) throw new Error('wechat-mermaid-intrinsic-owner-cycle');
+    visited.add(current);
+    const replacement = WECHAT_STRUCTURE_REPLACEMENTS.get(current);
+    if (!replacement) return current;
+    current = replacement;
+  }
+}
+
+function applyMermaidIntrinsicScrollPlans(
+  entries: readonly FrozenMermaidIntrinsicScrollEntry[],
+  finalizedRoot: HTMLElement
+): void {
+  for (const entry of entries) {
+    const owner = resolvedStructureOwner(entry.frozenOwner);
+    if (owner === finalizedRoot) throw new Error('wechat-mermaid-intrinsic-scroll-owner-root');
+    if (!finalizedRoot.contains(owner)) {
+      throw new Error('wechat-mermaid-intrinsic-scroll-owner-detached');
+    }
+    if (entry.cloneSvg.parentElement !== owner) {
+      throw new Error('wechat-mermaid-intrinsic-scroll-owner-mismatch');
+    }
+    // Replace only the generic serializer rewrite; preserve the frozen Source
+    // width/height declarations and cap.
+    replaceDeclarations(entry.cloneSvg, [`max-width:${entry.maxWidthCss}`], true);
+    markWechatOwnedScrollOwner(owner);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+
 export function createWechatSvgPortableIntegration(
   sourceRoot: HTMLElement,
   cloneRoot: HTMLElement,
@@ -223,17 +318,26 @@ export function createWechatSvgPortableIntegration(
 ): WechatSvgPortableIntegration {
   const wiring = createWechatSvgIdentityWiring(sourceRoot, cloneRoot, runtime);
   let frozenPlans: Map<Element, WechatSvgMarkerProjectionPlan> | null = null;
+  let frozenIntrinsicScrollEntries: readonly FrozenMermaidIntrinsicScrollEntry[] = [];
 
   return {
-    applyPlan(): void {
-      if (!frozenPlans) return;
-      verifyPlannedSvgMarkers(frozenPlans);
-      for (const plan of frozenPlans.values()) {
-        applySvgMarkerProjection(plan);
+    applyPlan(finalizedRoot: HTMLElement): void {
+      if (frozenPlans) {
+        verifyPlannedSvgMarkers(frozenPlans);
+        for (const plan of frozenPlans.values()) {
+          applySvgMarkerProjection(plan);
+        }
+      }
+      if (frozenIntrinsicScrollEntries.length) {
+        applyMermaidIntrinsicScrollPlans(frozenIntrinsicScrollEntries, finalizedRoot);
       }
     },
     freezePlan(conversion: WechatPngConversionContext | null): void {
       frozenPlans = planSvgMarkersBeforeFinalization(cloneRoot, wiring, runtime, conversion);
+      // Only build the OFF intrinsic scroll plan when there is no PNG conversion.
+      frozenIntrinsicScrollEntries = conversion
+        ? []
+        : freezeMermaidIntrinsicScrollPlans(wiring, runtime, sourceRoot, cloneRoot);
     },
     omitSubtree(source: Element, clone: Element): void {
       omitWechatSvgIdentitySubtree(wiring, source, clone);

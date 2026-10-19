@@ -1,4 +1,5 @@
 import { replaceDeclarations } from "./wechat-style-declarations";
+import { WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS } from "./wechat-clone-metadata";
 
 /**
  * Bounded KaTeX vertical-list normalization for the WeChat serializer.
@@ -9,14 +10,18 @@ import { replaceDeclarations } from "./wechat-style-declarations";
  *
  * The only admitted row transition is the measured KaTeX pattern:
  *
- *   relative row + zero height + negative top:t + zero offsets
+ *   relative row + zero height + negative authored Typed OM and computed top:t
+ *   + authored Typed OM bottom:auto (its computed used CSSOM bottom may be +t)
+ *   + zero vertical margins, padding, and borders
+ *   + finite horizontal margins preserved exactly
  *   + a direct positive inflow `.pstrut`
  *   -> static row + margin-top:t + margin-bottom:-t
  *
  * A group is all-or-nothing. A row-owned absolute SVG is admitted only through
- * an explicit inline-block holder with finite width/height, automatic insets,
- * and equal source SVG/holder geometry. The SVG transition is applied before
- * any row transition, and the Source tree is never mutated.
+ * an explicit inline-block holder with finite width/height, authored Typed OM
+ * physical and logical insets equal to auto, and equal source SVG/holder
+ * geometry. The SVG transition is applied before any row transition, and the
+ * Source tree is never mutated.
  */
 
 const XHTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
@@ -51,6 +56,34 @@ const ROW_EDGE_PROPERTIES = [
 	"bottom",
 	"left",
 ] as const;
+const ROW_NON_HORIZONTAL_EDGE_PROPERTIES = [
+	"margin-top",
+	"margin-bottom",
+	"padding-top",
+	"padding-right",
+	"padding-bottom",
+	"padding-left",
+	"border-top-width",
+	"border-right-width",
+	"border-bottom-width",
+	"border-left-width",
+] as const;
+const ROW_HORIZONTAL_MARGIN_PROPERTIES = [
+	"margin-left",
+	"margin-right",
+] as const;
+const BORDER_STYLE_PROPERTIES = [
+	"border-top-style",
+	"border-right-style",
+	"border-bottom-style",
+	"border-left-style",
+] as const;
+const BORDER_COLOR_PROPERTIES = [
+	"border-top-color",
+	"border-right-color",
+	"border-bottom-color",
+	"border-left-color",
+] as const;
 const LAYOUT_SAFETY_PROPERTIES = [
 	"float",
 	"clear",
@@ -84,6 +117,8 @@ export const CAPTURE_STYLE_PROPERTIES = [
 	"vertical-align",
 	"box-sizing",
 	"writing-mode",
+	...BORDER_STYLE_PROPERTIES,
+	...BORDER_COLOR_PROPERTIES,
 	"z-index",
 	"animation-name",
 	"animation-duration",
@@ -186,6 +221,7 @@ export type WechatMathFrozenNode = Readonly<{
 	namespaceURI: string;
 	orderedChildren: readonly Element[];
 	parent: Element | null;
+	hasChildNodes: boolean;
 	pseudos: Readonly<
 		Record<
 			(typeof PSEUDO_ELEMENTS)[number],
@@ -219,10 +255,16 @@ export type WechatMathSourceSvgAdmission = Readonly<{
 	sourceSvg: SVGSVGElement;
 }>;
 
+export type WechatMathSourceEmptyTransportAdmission = Readonly<{
+	source: Element;
+	sourceBoxSizing: "border-box" | "content-box";
+}>;
+
 export type WechatMathSourceGroupAdmission = Readonly<{
 	evidence: string;
 	reason: string | null;
 	rows: readonly WechatMathSourceRowAdmission[];
+	emptyTransport: readonly WechatMathSourceEmptyTransportAdmission[];
 	source: Element;
 	svgTransitions: readonly WechatMathSourceSvgAdmission[];
 }>;
@@ -275,11 +317,19 @@ type CapturedSvgTransition = Readonly<{
 	sourceSvg: SVGSVGElement;
 }>;
 
+type CapturedEmptyTransport = Readonly<{
+	clone: Element;
+	cloneParent: Element;
+	source: Element;
+	sourceBoxSizing: "border-box" | "content-box";
+}>;
+
 type CapturedGroup = Readonly<{
 	clone: Element;
 	evidence: string;
 	reason: string | null;
 	rows: readonly CapturedRow[];
+	emptyTransport: readonly CapturedEmptyTransport[];
 	source: Element;
 	svgTransitions: readonly CapturedSvgTransition[];
 }>;
@@ -320,10 +370,18 @@ export type WechatMathStaticFlowRejectedGroup = Readonly<{
 
 export type WechatMathStaticFlowPlan = Readonly<{
 	cloneRoot: Element;
+	emptyTransportTransitions: readonly WechatMathStaticFlowEmptyTransportTransition[];
 	rejectedGroups: readonly WechatMathStaticFlowRejectedGroup[];
 	rowTransitions: readonly WechatMathStaticFlowRowTransition[];
 	snapshotSignature: string;
 	svgTransitions: readonly WechatMathStaticFlowSvgTransition[];
+}>;
+
+export type WechatMathStaticFlowEmptyTransportTransition = Readonly<{
+	clone: Element;
+	cloneParent: Element;
+	source: Element;
+	sourceBoxSizing: "border-box" | "content-box";
 }>;
 
 export type WechatMathStaticFlowCaptureOptions = Readonly<{
@@ -659,6 +717,13 @@ function nodeTypedPercent(
 	return typedPercent(node.typedTokens[property]);
 }
 
+function nodeTypedKeywordAuto(
+	node: WechatMathFrozenNode,
+	property: string,
+): boolean {
+	return "keyword:auto" === node.typedTokens[property];
+}
+
 function nodeSafeLayoutAndPaint(node: WechatMathFrozenNode): boolean {
 	if (
 		!nodeStyleIn(node, "float", ["none"]) ||
@@ -703,6 +768,65 @@ function nodeVisibleOverflow(node: WechatMathFrozenNode): boolean {
 		nodeStyleIs(node, "overflow-x", "visible") &&
 		nodeStyleIs(node, "overflow-y", "visible")
 	);
+}
+
+function nodeBorderColorIsTransparent(value: string): boolean {
+	const normalized = value.trim().toLowerCase();
+	if (!normalized || normalized === "transparent") return true;
+	const rgba = normalized.match(
+		/^rgba\(\s*[^,]+\s*,\s*[^,]+\s*,\s*[^,]+\s*,\s*([\d.]+)\s*\)$/u,
+	);
+	return Boolean(rgba && Number.parseFloat(rgba[1] ?? "1") <= 0);
+}
+
+function nodeHasPaintedBorder(node: WechatMathFrozenNode): boolean {
+	return HOLDER_EDGE_PROPERTIES.some((property) => {
+		if (!property.startsWith("border-") || !property.endsWith("-width"))
+			return false;
+		const side = property.slice("border-".length, -"-width".length);
+		const width = nodeStylePixels(node, property);
+		return (
+			null !== width &&
+			width > 0 &&
+			!['none', 'hidden'].includes(nodeStyleValue(node, `border-${side}-style`)) &&
+			!nodeBorderColorIsTransparent(nodeStyleValue(node, `border-${side}-color`))
+		);
+	});
+}
+
+function evaluateSourceEmptyTransport(
+	node: WechatMathFrozenNode,
+): WechatMathSourceEmptyTransportAdmission | null {
+	if (
+		node.namespaceURI !== XHTML_NAMESPACE ||
+		node.localName !== "span" ||
+		node.orderedChildren.length !== 0 ||
+		node.hasChildNodes ||
+		node.animationIntersects ||
+		!nodeSafePseudo(node) ||
+		!nodeSafeLayoutAndPaint(node) ||
+		!nodeVisibleOverflow(node) ||
+		!nodeHasPaintedBorder(node) ||
+		!nodeStyleIs(node, "display", "inline-block") ||
+		!nodeStyleIs(node, "position", "static") ||
+		!nodeStyleIs(node, "vertical-align", "baseline") ||
+		!nodeStyleIs(node, "writing-mode", "horizontal-tb")
+	)
+		return null;
+	const sourceBoxSizing = nodeStyleValue(node, "box-sizing");
+	if (sourceBoxSizing !== "content-box" && sourceBoxSizing !== "border-box")
+		return null;
+	const width = nodeStylePixels(node, "width");
+	const height = nodeStylePixels(node, "height");
+	if (
+		null === width ||
+		null === height ||
+		width < 0 ||
+		height < 0 ||
+		!rectIsFinite(node.rectEvidence.rawRect)
+	)
+		return null;
+	return Object.freeze({ source: node.element, sourceBoxSizing });
 }
 
 function nodeSvgOverflowIsSafe(node: WechatMathFrozenNode): boolean {
@@ -752,6 +876,7 @@ function nodeEstablishesACB(node: WechatMathFrozenNode): boolean {
 function nodeEvidenceSignature(node: WechatMathFrozenNode): string {
 	return JSON.stringify({
 		animation: node.animationIntersects,
+		hasChildNodes: node.hasChildNodes,
 		pseudo: Object.fromEntries(
 			PSEUDO_ELEMENTS.map((pseudo) => [
 				pseudo,
@@ -777,6 +902,7 @@ type TopologyIndex = Readonly<{
 	absoluteByACB: ReadonlyMap<Element, readonly Element[]>;
 	intervals: ReadonlyMap<Element, TopologyInterval>;
 	nodes: ReadonlyMap<Element, WechatMathFrozenNode>;
+	rowMembers: ReadonlyMap<Element, readonly Element[]>;
 	safety: ReadonlyMap<Element, TopologySafetySummary>;
 }>;
 
@@ -797,6 +923,7 @@ function indexTopology(context: WechatMathTopologyContext): TopologyIndex {
 	let timer = 0;
 	const intervals = new Map<Element, TopologyInterval>();
 	const nodes = new Map<Element, WechatMathFrozenNode>();
+	const rowMembers = new Map<Element, Element[]>();
 	const safety = new Map<Element, TopologySafetySummary>();
 	const absoluteByACB = new Map<Element, Element[]>();
 	const visited = new Set<Element>();
@@ -821,6 +948,11 @@ function indexTopology(context: WechatMathTopologyContext): TopologyIndex {
 				nodeStyleIs(node, "position", "relative"),
 		);
 		const row = isRowRoot ? element : inheritedRow;
+		if (row) {
+			const members = rowMembers.get(row) ?? [];
+			members.push(element);
+			rowMembers.set(row, members);
+		}
 		const nearestACB = isRowRoot ? element : inheritedACB;
 		const ownEvent: SafetyEvent = { element, nearestACB };
 		if ("absolute" === node.styles.position && nearestACB) {
@@ -866,6 +998,7 @@ function indexTopology(context: WechatMathTopologyContext): TopologyIndex {
 		absoluteByACB,
 		intervals,
 		nodes,
+		rowMembers,
 		safety,
 	};
 }
@@ -996,12 +1129,9 @@ function evaluateSourceSvgTransition(
 		return { evidence: serialized, reason: "svg-holder", transition: null };
 	}
 	if (
-		!PHYSICAL_INSETS.every((property) => nodeStyleIs(svgNode, property, "auto"))
-	) {
-		return { evidence: serialized, reason: "svg-inset", transition: null };
-	}
-	if (
-		!LOGICAL_INSETS.every((property) => nodeStyleIs(svgNode, property, "auto"))
+		![...PHYSICAL_INSETS, ...LOGICAL_INSETS].every((property) =>
+			nodeTypedKeywordAuto(svgNode, property),
+		)
 	) {
 		return { evidence: serialized, reason: "svg-inset", transition: null };
 	}
@@ -1125,6 +1255,30 @@ function bindSvgTransitionToClone(
 	};
 }
 
+function bindEmptyTransportToClone(
+	transition: WechatMathSourceEmptyTransportAdmission,
+	options: WechatMathStaticFlowCaptureOptions,
+): CapturedEmptyTransport | null {
+	const pair = pairElement(transition.source, options);
+	const carrier = WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.get(pair.clone);
+	if (!carrier || carrier.source !== transition.source) return null;
+	const childNodes = Array.from(pair.clone.childNodes);
+	if (
+		childNodes.length !== 1 ||
+		childNodes[0]?.nodeType !== Node.TEXT_NODE ||
+		childNodes[0].nodeValue !== "\u2060"
+	)
+		return null;
+	const cloneParent = pair.clone.parentElement;
+	if (!cloneParent) return null;
+	return Object.freeze({
+		clone: pair.clone,
+		cloneParent,
+		source: transition.source,
+		sourceBoxSizing: transition.sourceBoxSizing,
+	});
+}
+
 function evaluateSourceRow(
 	rowEl: Element,
 	groupEl: Element,
@@ -1156,14 +1310,19 @@ function evaluateSourceRow(
 		!nodeStyleIs(rowNode, "display", "block") ||
 		!nodeStyleIs(rowNode, "position", "relative") ||
 		!["auto", "0px"].includes(nodeStyleValue(rowNode, "left")) ||
-		!["auto", "0px"].includes(nodeStyleValue(rowNode, "right")) ||
-		!nodeStyleIs(rowNode, "bottom", "auto")
+		!["auto", "0px"].includes(nodeStyleValue(rowNode, "right"))
 	) {
+		return { evidence: serialized, reason: "row-layout", row: null };
+	}
+	if (!nodeTypedKeywordAuto(rowNode, "bottom")) {
 		return { evidence: serialized, reason: "row-layout", row: null };
 	}
 	if (
 		!nodeStyleZero(rowNode, "height") ||
-		!nodeStyleAllZero(rowNode, HOLDER_EDGE_PROPERTIES)
+		!nodeStyleAllZero(rowNode, ROW_NON_HORIZONTAL_EDGE_PROPERTIES) ||
+		!ROW_HORIZONTAL_MARGIN_PROPERTIES.every(
+			(property) => null !== nodeStylePixels(rowNode, property),
+		)
 	) {
 		return { evidence: serialized, reason: "row-layout", row: null };
 	}
@@ -1271,6 +1430,7 @@ function evaluateSourceGroup(
 			evidence: "group-missing",
 			reason: "group-layout",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1301,6 +1461,7 @@ function evaluateSourceGroup(
 			evidence: "group-shape",
 			reason: "group-layout",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1315,6 +1476,7 @@ function evaluateSourceGroup(
 			evidence: groupSerialized,
 			reason: "group-layout",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1324,6 +1486,7 @@ function evaluateSourceGroup(
 			evidence: groupSerialized,
 			reason: "group-animation",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1333,6 +1496,7 @@ function evaluateSourceGroup(
 			evidence: groupSerialized,
 			reason: "group-pseudo",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1342,6 +1506,7 @@ function evaluateSourceGroup(
 			evidence: groupSerialized,
 			reason: "group-safety",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1358,6 +1523,7 @@ function evaluateSourceGroup(
 			evidence: groupSerialized,
 			reason: "group-shape",
 			rows: [],
+			emptyTransport: [],
 			source: groupEl,
 			svgTransitions: [],
 		};
@@ -1373,6 +1539,7 @@ function evaluateSourceGroup(
 				evidence: [groupSerialized, ...rowEvidence].join("|"),
 				reason: captured.reason ?? "row-shape",
 				rows: [],
+				emptyTransport: [],
 				source: groupEl,
 				svgTransitions: [],
 			};
@@ -1380,15 +1547,40 @@ function evaluateSourceGroup(
 		rows.push(captured.row);
 	}
 
+	const emptyTransport = rows.flatMap((row) =>
+		(index.rowMembers.get(row.source) ?? [])
+			.map((element) => {
+				const node = index.nodes.get(element);
+				return node ? evaluateSourceEmptyTransport(node) : null;
+			})
+			.filter(
+				(
+					admission,
+				): admission is WechatMathSourceEmptyTransportAdmission =>
+					Boolean(admission),
+			),
+	);
+	const emptyTransportEvidence = emptyTransport
+		.map(({ source }) => {
+			const node = index.nodes.get(source);
+			return node ? nodeEvidenceSignature(node) : "empty-transport-missing";
+		})
+		.join("|");
 	const svgTransitions: WechatMathSourceSvgAdmission[] = [];
 	const svgEvidence: string[] = [];
 	const seenSvg = new Set<Element>();
 	const evidence = (): string =>
-		[groupSerialized, ...rowEvidence, ...svgEvidence].join("|");
+		[
+			groupSerialized,
+			...rowEvidence,
+			emptyTransportEvidence,
+			...svgEvidence,
+		].join("|");
 	const reject = (reason: string): WechatMathSourceGroupAdmission => ({
 		evidence: evidence(),
 		reason,
 		rows: [],
+		emptyTransport: [],
 		source: groupEl,
 		svgTransitions: [],
 	});
@@ -1463,6 +1655,7 @@ function evaluateSourceGroup(
 		evidence: evidence(),
 		reason: null,
 		rows: Object.freeze(rows),
+		emptyTransport: Object.freeze(emptyTransport),
 		source: groupEl,
 		svgTransitions: Object.freeze(svgTransitions),
 	};
@@ -1479,6 +1672,7 @@ function bindSourceGroupToClone(
 			evidence: group.evidence,
 			reason: group.reason,
 			rows: [],
+			emptyTransport: [],
 			source: group.source,
 			svgTransitions: [],
 		};
@@ -1493,6 +1687,7 @@ function bindSourceGroupToClone(
 				evidence: group.evidence,
 				reason: boundRow.reason ?? "row-shape",
 				rows: [],
+				emptyTransport: [],
 				source: group.source,
 				svgTransitions: [],
 			};
@@ -1513,17 +1708,24 @@ function bindSourceGroupToClone(
 				evidence: group.evidence,
 				reason: boundSvg.reason ?? "svg-identity",
 				rows: [],
+				emptyTransport: [],
 				source: group.source,
 				svgTransitions: [],
 			};
 		}
 		svgTransitions.push(boundSvg.transition);
 	}
+	const emptyTransport: CapturedEmptyTransport[] = [];
+	for (const transition of group.emptyTransport) {
+		const bound = bindEmptyTransportToClone(transition, options);
+		if (bound) emptyTransport.push(bound);
+	}
 	return {
 		clone: pair.clone,
 		evidence: group.evidence,
 		reason: null,
 		rows: Object.freeze(rows),
+		emptyTransport: Object.freeze(emptyTransport),
 		source: group.source,
 		svgTransitions: Object.freeze(svgTransitions),
 	};
@@ -1611,6 +1813,7 @@ export function collectWechatMathLiveTopology(
 			(node) =>
 				node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim()),
 		);
+		const hasChildNodes = element.childNodes.length !== 0;
 
 		const orderedChildren = Object.freeze(Array.from(element.children));
 		const classList = Object.freeze(
@@ -1622,6 +1825,7 @@ export function collectWechatMathLiveTopology(
 			key: elementKey(element),
 			classList,
 			element,
+			hasChildNodes,
 			holderTextFlag,
 			localName: element.localName.toLowerCase(),
 			namespaceURI: element.namespaceURI ?? "",
@@ -1802,6 +2006,12 @@ export function captureWechatMathStaticFlowSnapshot(
 				top,
 			})),
 			source: sourceKeyFor(group.source),
+			emptyTransport: group.emptyTransport.map(
+				({ source, sourceBoxSizing }) => ({
+					source: sourceKeyFor(source),
+					sourceBoxSizing,
+				}),
+			),
 			svg: group.svgTransitions.map(({ sourceHolder, sourceSvg }) => ({
 				holder: sourceKeyFor(sourceHolder),
 				svg: sourceKeyFor(sourceSvg),
@@ -1833,6 +2043,16 @@ export function planWechatMathStaticFlow(
 	const accepted = snapshot.groups.filter((group) => null === group.reason);
 	const plan: WechatMathStaticFlowPlan = deepFreezePlainRecord({
 		cloneRoot: snapshot.cloneRoot,
+		emptyTransportTransitions: accepted.flatMap((group) =>
+			group.emptyTransport.map(
+				({ clone, cloneParent, source, sourceBoxSizing }) => ({
+					clone,
+					cloneParent,
+					source,
+					sourceBoxSizing,
+				}),
+			),
+		),
 		rejectedGroups: snapshot.groups
 			.filter(
 				(group): group is CapturedGroup & { reason: string } =>
@@ -1886,6 +2106,17 @@ function declarationsForRow(rawTop: string): readonly string[] {
 	];
 }
 
+function declarationsForEmptyTransport(
+	sourceBoxSizing: "border-box" | "content-box",
+): readonly string[] {
+	return [
+		"overflow:hidden",
+		"overflow-x:hidden",
+		"overflow-y:hidden",
+		`box-sizing:${sourceBoxSizing}`,
+	];
+}
+
 function applyDeclarations(
 	element: Element,
 	declarations: readonly string[],
@@ -1927,6 +2158,7 @@ export function applyWechatMathStaticFlow(
 			transition.cloneSvg,
 			transition.cloneHolder,
 		]),
+		...plan.emptyTransportTransitions.map((transition) => transition.clone),
 		...plan.rowTransitions.flatMap((transition) => [
 			transition.clone,
 			transition.pstrutClone,
@@ -1984,6 +2216,24 @@ export function applyWechatMathStaticFlow(
 			throw flowError("apply-parent-mismatch");
 		}
 	}
+	for (const transition of plan.emptyTransportTransitions) {
+		if (
+			transition.clone.parentElement !== transition.cloneParent ||
+			!cloneRoot.contains(transition.cloneParent) ||
+			WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.get(transition.clone)?.source !==
+				transition.source
+		) {
+			throw flowError("apply-parent-mismatch");
+		}
+		const childNodes = Array.from(transition.clone.childNodes);
+		if (
+			childNodes.length !== 1 ||
+			childNodes[0]?.nodeType !== Node.TEXT_NODE ||
+			childNodes[0].nodeValue !== "\u2060"
+		) {
+			throw flowError("apply-parent-mismatch");
+		}
+	}
 
 	const applied: AppliedStyle[] = targets.map((element) => ({
 		element,
@@ -1993,6 +2243,12 @@ export function applyWechatMathStaticFlow(
 		assertGate(options.gate);
 		for (const transition of plan.svgTransitions) {
 			applyDeclarations(transition.cloneSvg, declarationsForSvg());
+		}
+		for (const transition of plan.emptyTransportTransitions) {
+			applyDeclarations(
+				transition.clone,
+				declarationsForEmptyTransport(transition.sourceBoxSizing),
+			);
 		}
 		assertGate(options.gate);
 		for (const transition of plan.rowTransitions) {

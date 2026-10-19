@@ -94,6 +94,27 @@ export type WechatMathCloneRole = Readonly<{
 
 export const MATH_CLONE_ROLES = new WeakMap<Element, WechatMathCloneRole>();
 
+export type WechatMathEmptyTransportCarrier = Readonly<{
+  source: Element;
+}>;
+
+/**
+ * Provenance for the U+2060 carrier inserted by the portable serializer into
+ * an originally empty KaTeX visual span. The static-flow owner binds only the
+ * exact registered clone element and never infers carriers from clone text.
+ */
+export const WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS = new WeakMap<
+  Element,
+  WechatMathEmptyTransportCarrier
+>();
+
+export function registerMathEmptyTransportCarrier(
+  source: Element,
+  clone: Element,
+): void {
+  WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.set(clone, { source });
+}
+
 function styleValue(style: CSSStyleDeclaration, property: string): string {
   return style.getPropertyValue(property).trim().toLowerCase();
 }
@@ -318,6 +339,15 @@ export const EXPORT_TEXT_NORMALIZATIONS = new WeakMap<
   HTMLElement,
   Map<Text, Readonly<{ original: string; encoded: string }>>
 >();
+
+/**
+ * Canonical map from a serialization-clone structure element to the SECTION
+ * created by `normalizeStructure` in its place. Only actual root/nested
+ * DIV/BLOCKQUOTE replacements are recorded; elements that keep their identity
+ * have no entry. This is the single identity handoff for consumers that must
+ * follow a pre-finalization owner into the finalized tree.
+ */
+export const WECHAT_STRUCTURE_REPLACEMENTS = new WeakMap<Element, Element>();
 
 export const WECHAT_PNG_VISUAL_CLONES = new WeakMap<
   Element,

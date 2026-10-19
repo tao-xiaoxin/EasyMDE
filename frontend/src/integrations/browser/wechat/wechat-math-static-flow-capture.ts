@@ -394,12 +394,14 @@ export function createWechatMathStaticFlowSourceCapture(
     const holderTextFlag = Array.from(source.childNodes).some(
       (node) => node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())
     );
+    const hasChildNodes = source.childNodes.length !== 0;
 
     const node: WechatMathFrozenNode = Object.freeze({
       animationIntersects: hasAnimation,
       key: elementKey(source),
       classList: Object.freeze(new Set(Array.from(source.classList ?? []))),
       element: source,
+      hasChildNodes,
       holderTextFlag,
       localName: source.localName.toLowerCase(),
       namespaceURI: source.namespaceURI ?? '',
@@ -448,6 +450,7 @@ export function createWechatMathStaticFlowSourceCapture(
 
       return {
         animation: data.animationIntersects,
+        hasChildNodes: data.hasChildNodes,
         index,
         localName: data.localName,
         namespaceURI: data.namespaceURI,

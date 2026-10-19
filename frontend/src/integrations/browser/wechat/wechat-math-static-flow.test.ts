@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { declaration } from './wechat-clipboard-test-fixtures';
+import { registerMathEmptyTransportCarrier } from './wechat-clone-metadata';
 import {
   applyWechatMathStaticFlow,
   captureWechatMathStaticFlowSnapshot,
@@ -12,6 +13,16 @@ import {
 } from './wechat-math-static-flow';
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const PHYSICAL_AND_LOGICAL_INSET_PROPERTIES = [
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'inset-block-start',
+  'inset-block-end',
+  'inset-inline-start',
+  'inset-inline-end'
+] as const;
 
 type TypedValue = Readonly<Record<string, unknown>>;
 type Rect = Readonly<{ bottom: number; height: number; left: number; right: number; top: number; width: number }>;
@@ -97,6 +108,7 @@ type MathFixture = Readonly<{
   setRect: (element: Element, rect: Rect) => void;
   setStyle: (element: Element, values: Readonly<Record<string, string>>) => void;
   setTyped: (element: Element, values: Readonly<Record<string, TypedValue>>) => void;
+  setRawStyle: (element: Element, value: string | null) => void;
   sourceHolder: HTMLElement | null;
   sourceRoot: HTMLElement;
   sourceSvg: SVGSVGElement | null;
@@ -181,7 +193,10 @@ function mathFixture(rowTops: readonly (number | string)[] = [-7], withSvg = fal
   };
   const setTyped = (element: Element, values: Readonly<Record<string, TypedValue>>): void => {
     typed.set(element, {
-      get: (property) => values[property] ?? keyword('auto')
+      get: (property) =>
+        Object.hasOwn(values, property)
+          ? (values[property] as TypedValue)
+          : keyword('auto')
     });
   };
   const setRect = (element: Element, rect: Rect): void => {
@@ -304,10 +319,57 @@ function mathFixture(rowTops: readonly (number | string)[] = [-7], withSvg = fal
     setRect,
     setStyle,
     setTyped,
+    setRawStyle: (element, value) => {
+      if (null === value) element.removeAttribute('style');
+      else element.setAttribute('style', value);
+    },
     sourceHolder,
     sourceRoot,
     sourceSvg
   };
+}
+
+type EmptyTransportPair = Readonly<{
+  clone: HTMLElement;
+  source: HTMLElement;
+}>;
+
+function addEmptyTransport(
+  fixture: MathFixture,
+  sourceBoxSizing: 'border-box' | 'content-box' = 'content-box',
+  registerCarrier = true
+): EmptyTransportPair {
+  const row = fixture.rows[0];
+  if (!row) throw new Error('row missing');
+  const source = document.createElement('span');
+  source.className = 'frac-line';
+  const clone = source.cloneNode(true) as HTMLElement;
+  row.source.append(source);
+  row.clone.append(clone);
+  fixture.identities.set(source, clone);
+  fixture.setStyle(source, {
+    ...SAFE_STYLE,
+    'border-top-color': 'rgb(0, 0, 0)',
+    'border-top-style': 'solid',
+    'border-top-width': '1px',
+    'box-sizing': sourceBoxSizing,
+    display: 'inline-block',
+    height: '2px',
+    position: 'static',
+    'vertical-align': 'baseline',
+    width: '1px',
+    'writing-mode': 'horizontal-tb'
+  });
+  fixture.setTyped(source, {
+    blockSize: px(2),
+    height: px(2),
+    inlineSize: px(1),
+    width: px(1)
+  });
+  fixture.setRect(source, { bottom: 2, height: 2, left: 0, right: 1, top: 0, width: 1 });
+  clone.textContent = '\u2060';
+  if (registerCarrier) registerMathEmptyTransportCarrier(source, clone);
+  return { clone, source };
 }
 
 function gateOf(fixture: MathFixture): WechatMathStaticFlowGate {
@@ -328,6 +390,409 @@ function snapshotOf(fixture: MathFixture, sourceSignature = 'live-r2', rawSignat
     sourceRoot: fixture.sourceRoot
   });
 }
+
+describe('wechat math empty transport carrier baseline', () => {
+  it.each(['content-box', 'border-box'] as const)(
+    'preserves the captured %s source box sizing and clips the carrier overflow',
+    (sourceBoxSizing) => {
+      const fixture = mathFixture([-7]);
+      const pair = addEmptyTransport(fixture, sourceBoxSizing);
+      const sourceBefore = fixture.sourceRoot.outerHTML;
+      fixture.setRawStyle(
+        pair.clone,
+        'overflow:visible;overflow-x:scroll;overflow-y:scroll;box-sizing:border-box;color:red'
+      );
+
+      const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+      expect(plan.rejectedGroups).toEqual([]);
+      expect(plan.emptyTransportTransitions).toEqual([
+        expect.objectContaining({ source: pair.source, sourceBoxSizing })
+      ]);
+
+      applyWechatMathStaticFlow(plan, { gate: gateOf(fixture) });
+
+      const style = pair.clone.getAttribute('style') ?? '';
+      expect(style).toContain('overflow:hidden!important');
+      expect(style).toContain('overflow-x:hidden!important');
+      expect(style).toContain('overflow-y:hidden!important');
+      expect(style).toContain(`box-sizing:${sourceBoxSizing}!important`);
+      expect(style).toContain('color:red');
+      expect(style.match(/(?:^|;)overflow:/gu)).toHaveLength(1);
+      expect(style.match(/(?:^|;)overflow-x:/gu)).toHaveLength(1);
+      expect(style.match(/(?:^|;)overflow-y:/gu)).toHaveLength(1);
+      expect(style.match(/(?:^|;)box-sizing:/gu)).toHaveLength(1);
+      expect(fixture.sourceRoot.outerHTML).toBe(sourceBefore);
+    }
+  );
+
+  it('bypasses the empty transition when carrier provenance is missing', () => {
+    const fixture = mathFixture([-7]);
+    addEmptyTransport(fixture, 'content-box', false);
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([]);
+    expect(plan.emptyTransportTransitions).toEqual([]);
+  });
+
+  it.each([
+    ['carrier source identity mismatch', (_fixture: MathFixture, pair: EmptyTransportPair): void => {
+      registerMathEmptyTransportCarrier(document.createElement('span'), pair.clone);
+    }],
+    ['carrier extra text', (_fixture: MathFixture, pair: EmptyTransportPair): void => {
+      pair.clone.append(document.createTextNode('extra'));
+    }]
+  ] as const)('bypasses the empty transition for %s', (_label, mutate) => {
+    const fixture = mathFixture([-7]);
+    const pair = addEmptyTransport(fixture);
+    mutate(fixture, pair);
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([]);
+    expect(plan.emptyTransportTransitions).toEqual([]);
+    expect(pair.clone.getAttribute('style')).toBeNull();
+  });
+
+  it.each([
+    ['source text content', (_fixture: MathFixture, pair: EmptyTransportPair): void => {
+      pair.source.textContent = 'source';
+    }],
+    ['painted border missing', (fixture: MathFixture, pair: EmptyTransportPair): void => {
+      fixture.setStyle(pair.source, { 'border-top-width': '0px' });
+    }],
+    ['non-visible overflow', (fixture: MathFixture, pair: EmptyTransportPair): void => {
+      fixture.setStyle(pair.source, { 'overflow-x': 'hidden' });
+    }],
+    ['unknown source box sizing', (fixture: MathFixture, pair: EmptyTransportPair): void => {
+      fixture.setStyle(pair.source, { 'box-sizing': 'inherit' });
+    }]
+  ] as const)('admits the row but rejects empty transport for %s', (_label, mutate) => {
+    const fixture = mathFixture([-7]);
+    const pair = addEmptyTransport(fixture);
+    mutate(fixture, pair);
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([]);
+    expect(plan.rowTransitions).toHaveLength(1);
+    expect(plan.emptyTransportTransitions).toEqual([]);
+  });
+
+  it.each([
+    ['pseudo content', (fixture: MathFixture, pair: EmptyTransportPair): void => {
+      fixture.setIlluminatingPseudo(pair.source, '::before', '"x"');
+    }, 'row-pseudo'],
+    ['animation', (fixture: MathFixture, pair: EmptyTransportPair): void => {
+      fixture.animations.push({ effect: { target: pair.source } } as unknown as Animation);
+    }, 'group-animation']
+  ] as const)('keeps existing safety admission for %s', (_label, mutate, reason) => {
+    const fixture = mathFixture([-7]);
+    const pair = addEmptyTransport(fixture);
+    mutate(fixture, pair);
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason })]);
+    expect(plan.rowTransitions).toEqual([]);
+    expect(plan.emptyTransportTransitions).toEqual([]);
+  });
+
+  it('rejects a stale carrier plan before mutation', () => {
+    const fixture = mathFixture([-7]);
+    const pair = addEmptyTransport(fixture);
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    const before = pair.clone.getAttribute('style');
+    fixture.gate.isCurrent = false;
+
+    expect(() => applyWechatMathStaticFlow(plan, { gate: gateOf(fixture) })).toThrowError(
+      'wechat-math-static-flow-stale'
+    );
+    expect(pair.clone.getAttribute('style')).toBe(before);
+  });
+
+  it('rolls back carrier declarations when cancellation arrives before row transition', () => {
+    const fixture = mathFixture([-7]);
+    const pair = addEmptyTransport(fixture);
+    fixture.setRawStyle(pair.clone, 'overflow:scroll;box-sizing:border-box;color:red');
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    const before = pair.clone.getAttribute('style');
+    const rowBefore = row.clone.getAttribute('style');
+    const cloneBefore = fixture.cloneRoot.outerHTML;
+    let checks = 0;
+    const gate: WechatMathStaticFlowGate = {
+      isCancelled: () => {
+        checks += 1;
+        if (checks === 3) {
+          const carrierStyle = pair.clone.getAttribute('style') ?? '';
+          expect(carrierStyle).toContain('overflow:hidden!important');
+          expect(carrierStyle).toContain('overflow-x:hidden!important');
+          expect(carrierStyle).toContain('overflow-y:hidden!important');
+          expect(carrierStyle).toContain('box-sizing:content-box!important');
+          expect(row.clone.getAttribute('style')).toBe(rowBefore);
+        }
+        return checks >= 3;
+      },
+      isCurrent: () => true
+    };
+
+    expect(() => applyWechatMathStaticFlow(plan, { gate })).toThrowError(
+      'wechat-math-static-flow-cancelled'
+    );
+    expect(checks).toBe(3);
+    expect(pair.clone.getAttribute('style')).toBe(before);
+    expect(row.clone.getAttribute('style')).toBe(rowBefore);
+    expect(fixture.cloneRoot.outerHTML).toBe(cloneBefore);
+  });
+});
+
+describe('wechat math static-flow cumulative OFF admission', () => {
+  it('uses frozen Typed OM bottom auto while preserving exact positive scriptspace and used geometry', () => {
+    const fixture = mathFixture(['-48.181px']);
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    fixture.setStyle(row.source, {
+      bottom: '48.181px',
+      display: 'block',
+      height: '0px',
+      left: 'auto',
+      'margin-right': '0.7865px',
+      position: 'relative',
+      right: 'auto',
+      top: '-48.181px'
+    });
+    fixture.setRawStyle(row.source, 'top: -48.181px; margin-right: 0.7865px;');
+    fixture.setRawStyle(row.clone, 'top: -48.181px; margin-right: 0.7865px;');
+    fixture.setTyped(row.source, {
+      blockSize: px(0),
+      bottom: keyword('auto'),
+      height: px(0),
+      inlineSize: px(0),
+      top: px(-48.18098831176758, '-48.181px'),
+      width: px(0)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([]);
+    expect(plan.rowTransitions).toHaveLength(1);
+
+    applyWechatMathStaticFlow(plan, { gate: gateOf(fixture) });
+    const style = row.clone.getAttribute('style') ?? '';
+    expect(style).toMatch(/margin-right:\s*0\.7865px/gu);
+    expect(style.match(/margin-right\s*:\s*0\.7865px/gu)).toHaveLength(1);
+    expect(style).toContain('margin-top:-48.181px!important');
+    expect(style).toContain('margin-bottom:48.181px!important');
+  });
+
+  it.each([
+    ['large negative alignment margin', '-8.60552px', '0.968px'],
+    ['small negative alignment margin', '-0.30976px', '0.968px'],
+    ['positive-only scriptspace', '0px', '0.968px']
+  ] as const)('preserves exact horizontal margins for %s', (_label, marginLeft, marginRight) => {
+    const fixture = mathFixture(['-49.368px']);
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    fixture.setStyle(row.source, {
+      bottom: '49.368px',
+      display: 'block',
+      height: '0px',
+      left: 'auto',
+      'margin-left': marginLeft,
+      'margin-right': marginRight,
+      position: 'relative',
+      right: 'auto',
+      top: '-49.368px'
+    });
+    fixture.setRawStyle(row.source, `top:-49.368px;margin-left:${marginLeft};margin-right:${marginRight}`);
+    fixture.setRawStyle(row.clone, `top:-49.368px;margin-left:${marginLeft};margin-right:${marginRight}`);
+    fixture.setTyped(row.source, {
+      blockSize: px(0),
+      bottom: keyword('auto'),
+      height: px(0),
+      inlineSize: px(0),
+      top: px(-49.368),
+      width: px(0)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([]);
+    expect(plan.rowTransitions).toHaveLength(1);
+
+    applyWechatMathStaticFlow(plan, { gate: gateOf(fixture) });
+    const style = row.clone.getAttribute('style') ?? '';
+    expect(style).toContain(`margin-left:${marginLeft}`);
+    expect(style).toContain(`margin-right:${marginRight}`);
+    expect(style).toContain('margin-top:-49.368px!important');
+    expect(style).toContain('margin-bottom:49.368px!important');
+  });
+
+  it.each([
+    ['missing bottom', undefined as unknown as TypedValue],
+    ['empty bottom', {}],
+    ['zero px bottom', px(0)],
+    ['percent bottom', { unit: 'percent', value: 0 }],
+    ['unknown bottom', { unit: 'em', value: 0 }]
+  ] as const)('rejects %s even when the computed used bottom is finite', (_label, bottom) => {
+    const fixture = mathFixture(['-7px']);
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    fixture.setStyle(row.source, { bottom: '7px' });
+    fixture.setTyped(row.source, {
+      blockSize: px(0),
+      bottom,
+      height: px(0),
+      inlineSize: px(0),
+      top: px(-7),
+      width: px(0)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason: 'row-layout' })]);
+  });
+
+  it.each([
+    ['top margin', { 'margin-top': '1px' }],
+    ['bottom margin', { 'margin-bottom': '1px' }],
+    ['padding', { 'padding-left': '1px' }],
+    ['border', { 'border-right-width': '1px' }],
+    ['non-finite horizontal margin', { 'margin-left': 'calc(1px + 1%)' }],
+    ['percentage horizontal margin', { 'margin-right': '2%' }]
+  ] as const)('still rejects %s on an otherwise real offset row', (_label, override) => {
+    const fixture = mathFixture(['-7px']);
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    fixture.setStyle(row.source, {
+      bottom: '7px',
+      'margin-right': '0.7865px',
+      ...override
+    });
+    fixture.setTyped(row.source, {
+      blockSize: px(0),
+      bottom: keyword('auto'),
+      height: px(0),
+      inlineSize: px(0),
+      top: px(-7),
+      width: px(0)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason: 'row-layout' })]);
+  });
+
+  it('keeps neutral Typed OM top auto rows rejected as row-top', () => {
+    const fixture = mathFixture(['0px']);
+    const row = fixture.rows[0];
+    if (!row) throw new Error('row missing');
+    fixture.setStyle(row.source, {
+      bottom: '0px',
+      display: 'block',
+      height: '0px',
+      left: 'auto',
+      position: 'relative',
+      right: 'auto',
+      top: '0px'
+    });
+    fixture.setTyped(row.source, {
+      blockSize: px(0),
+      bottom: keyword('auto'),
+      height: px(0),
+      inlineSize: px(0),
+      top: keyword('auto'),
+      width: px(0)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason: 'row-top' })]);
+  });
+
+  it.each(PHYSICAL_AND_LOGICAL_INSET_PROPERTIES)(
+    'admits an SVG with exact Typed OM auto for %s despite finite computed used insets',
+    (property) => {
+      const fixture = mathFixture([-7], true);
+      if (!fixture.sourceSvg) throw new Error('svg missing');
+      const insetTyped = Object.fromEntries(
+        PHYSICAL_AND_LOGICAL_INSET_PROPERTIES.map((inset) => [inset, keyword('auto')])
+      );
+      fixture.setStyle(fixture.sourceSvg, {
+        bottom: '12px',
+        display: 'block',
+        height: '20px',
+        left: '0px',
+        position: 'absolute',
+        right: '0px',
+        top: '0px',
+        width: '10px'
+      });
+      fixture.setTyped(fixture.sourceSvg, {
+        blockSize: px(20),
+        height: px(20),
+        inlineSize: px(10),
+        width: px(10),
+        ...insetTyped
+      });
+
+      const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+      expect(plan.rejectedGroups, property).toEqual([]);
+      expect(plan.svgTransitions, property).toHaveLength(1);
+    }
+  );
+
+  it.each([
+    ['missing', undefined as unknown as TypedValue],
+    ['empty', {}],
+    ['zero px', px(0)],
+    ['percent', { unit: 'percent', value: 0 }],
+    ['unknown', { unit: 'em', value: 0 }]
+  ] as const)('rejects SVG %s Typed OM physical inset instead of accepting computed auto', (_label, inset) => {
+    const fixture = mathFixture([-7], true);
+    if (!fixture.sourceSvg) throw new Error('svg missing');
+    fixture.setTyped(fixture.sourceSvg, {
+      blockSize: px(20),
+      bottom: inset,
+      height: px(20),
+      'inset-block-end': keyword('auto'),
+      'inset-block-start': keyword('auto'),
+      'inset-inline-end': keyword('auto'),
+      'inset-inline-start': keyword('auto'),
+      inlineSize: px(10),
+      left: keyword('auto'),
+      right: keyword('auto'),
+      top: keyword('auto'),
+      width: px(10)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason: 'svg-inset' })]);
+    expect(plan.svgTransitions).toEqual([]);
+  });
+
+  it.each([
+    ['missing', undefined as unknown as TypedValue],
+    ['empty', {}],
+    ['zero px', px(0)],
+    ['percent', { unit: 'percent', value: 0 }],
+    ['unknown', { unit: 'em', value: 0 }]
+  ] as const)('rejects SVG %s Typed OM logical inset instead of accepting computed auto', (_label, inset) => {
+    const fixture = mathFixture([-7], true);
+    if (!fixture.sourceSvg) throw new Error('svg missing');
+    fixture.setTyped(fixture.sourceSvg, {
+      blockSize: px(20),
+      bottom: keyword('auto'),
+      height: px(20),
+      'inset-block-end': inset,
+      'inset-block-start': keyword('auto'),
+      'inset-inline-end': keyword('auto'),
+      'inset-inline-start': keyword('auto'),
+      inlineSize: px(10),
+      left: keyword('auto'),
+      right: keyword('auto'),
+      top: keyword('auto'),
+      width: px(10)
+    });
+
+    const plan = planWechatMathStaticFlow(snapshotOf(fixture), { gate: gateOf(fixture) });
+    expect(plan.rejectedGroups).toEqual([expect.objectContaining({ reason: 'svg-inset' })]);
+    expect(plan.svgTransitions).toEqual([]);
+  });
+});
 
 describe('wechat math static-flow group admission', () => {
   it('admits a negative-top zero-height row and applies paired row margins in the clone only', () => {

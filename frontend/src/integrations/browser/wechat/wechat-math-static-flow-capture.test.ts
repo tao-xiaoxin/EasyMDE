@@ -228,6 +228,237 @@ function setupSvgTypedOm(fixture: ReturnType<typeof createSvgFixture>): void {
   });
 }
 
+describe('wechat math static-flow cumulative source capture', () => {
+  it('captures the Typed OM bottom and exact raw horizontal margins used by cumulative admission', () => {
+    const root = document.createElement('div');
+    root.className = 'katex-html';
+    const row = document.createElement('span');
+    row.className = 'base';
+    row.setAttribute('style', 'top:-49.368px;margin-left:-0.30976px;margin-right:0.968px');
+    root.append(row);
+
+    const runtime: WechatMathStaticFlowBaseRuntime = {
+      getAnimations: () => [],
+      getComputedStyle: (_element, pseudo) => {
+        if (pseudo) return declaration({ content: 'none' });
+        return declaration({
+          ...SAFE_STYLE,
+          bottom: '49.368px',
+          display: 'block',
+          height: '0px',
+          'margin-left': '-0.30976px',
+          'margin-right': '0.968px',
+          position: 'relative',
+          top: '-49.368px'
+        });
+      }
+    };
+    Object.defineProperty(row, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'top') return { unit: 'px', value: -49.368 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 0 };
+          return { value: 'auto' };
+        }
+      })
+    });
+
+    const capture = createWechatMathStaticFlowSourceCapture({
+      enabled: true,
+      runtime,
+      sourceRoot: root
+    });
+    capture.observe(root, undefined, rect(0, 0, 100, 100));
+    capture.observe(row, undefined, rect(0, 10, 50, 0));
+    const sealed = capture.seal();
+    if (!sealed) throw new Error('seal failed');
+
+    expect(sealed.sourceFingerprint).toContain('margin-left');
+    expect(sealed.sourceFingerprint).toContain('-0.30976px');
+    expect(sealed.sourceFingerprint).toContain('margin-right');
+    expect(sealed.sourceFingerprint).toContain('0.968px');
+    expect(sealed.sourceFingerprint).toContain('keyword:auto');
+  });
+
+  it('keeps frozen Typed OM semantics separate from a lease-derived computed used bottom', () => {
+    const root = document.createElement('div');
+    root.className = 'katex-html';
+    const row = document.createElement('span');
+    row.className = 'base';
+    root.append(row);
+
+    const runtime: WechatMathStaticFlowBaseRuntime = {
+      getAnimations: () => [],
+      getComputedStyle: (_element, pseudo) => {
+        if (pseudo) return declaration({ content: 'none' });
+        return declaration({
+          ...SAFE_STYLE,
+          bottom: '48.181px',
+          display: 'block',
+          height: '0px',
+          left: 'auto',
+          position: 'relative',
+          right: 'auto',
+          top: '-48.181px'
+        });
+      }
+    };
+    Object.defineProperty(row, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'top') return { unit: 'px', value: -48.18098831176758 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 0 };
+          if (property === 'bottom') return { value: 'auto' };
+          return { value: 'auto' };
+        }
+      })
+    });
+
+    const capture = createWechatMathStaticFlowSourceCapture({
+      enabled: true,
+      runtime,
+      sourceRoot: root
+    });
+    capture.observe(root, undefined, rect(0, 0, 100, 100));
+    capture.observe(row, undefined, rect(0, 10, 50, 0));
+    const sealed = capture.seal();
+    if (!sealed) throw new Error('seal failed');
+    const capturedNode = sealed.sourceAdmission.sourceNodes.get(row);
+    if (!capturedNode) throw new Error('row missing');
+
+    expect(capturedNode.styles.bottom).toBe('48.181px');
+    expect(capturedNode.typedTokens.bottom).toBe('keyword:auto');
+  });
+
+  it('invalidates sourceFingerprint when raw horizontal margins change at equal used geometry', () => {
+    const root = document.createElement('div');
+    root.className = 'katex-html';
+    const row = document.createElement('span');
+    row.className = 'base';
+    root.append(row);
+
+    let marginLeft = '-0.30976px';
+    const runtime: WechatMathStaticFlowBaseRuntime = {
+      getAnimations: () => [],
+      getComputedStyle: (_element, pseudo) => {
+        if (pseudo) return declaration({ content: 'none' });
+        return declaration({
+          ...SAFE_STYLE,
+          bottom: '7px',
+          display: 'block',
+          height: '0px',
+          'margin-left': marginLeft,
+          position: 'relative',
+          top: '-7px'
+        });
+      }
+    };
+    Object.defineProperty(row, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'top') return { unit: 'px', value: -7 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 0 };
+          return { value: 'auto' };
+        }
+      })
+    });
+    const fingerprint = (): string => {
+      const capture = createWechatMathStaticFlowSourceCapture({
+        enabled: true,
+        runtime,
+        sourceRoot: root
+      });
+      capture.observe(root, undefined, rect(0, 0, 100, 100));
+      capture.observe(row, undefined, rect(0, 10, 50, 0));
+      const sealed = capture.seal();
+      if (!sealed) throw new Error('seal failed');
+      return sealed.sourceFingerprint;
+    };
+
+    const baseline = fingerprint();
+    marginLeft = '-0.31px';
+    expect(fingerprint()).not.toBe(baseline);
+  });
+
+  it('invalidates sourceFingerprint when Typed OM bottom or SVG inset semantics change at equal geometry', () => {
+    const fixture = createSvgFixture();
+    let bottom = { value: 'auto' } as Readonly<Record<string, unknown>>;
+    let inset = { value: 'auto' } as Readonly<Record<string, unknown>>;
+    Object.defineProperty(fixture.row, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'top') return { unit: 'px', value: -7 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 0 };
+          if (property === 'bottom') return bottom;
+          return { value: 'auto' };
+        }
+      })
+    });
+    Object.defineProperty(fixture.pstrut, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => (property === 'height' ? { unit: 'px', value: 7 } : { value: 'auto' })
+      })
+    });
+    Object.defineProperty(fixture.holder, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'width' || property === 'inline-size') return { unit: 'px', value: 12 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 12 };
+          return { value: 'auto' };
+        }
+      })
+    });
+    Object.defineProperty(fixture.svg, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'width' || property === 'inline-size') return { unit: 'px', value: 12 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 12 };
+          if (property === 'inset-block-start') return inset;
+          return { value: 'auto' };
+        }
+      })
+    });
+    const runtime = svgRuntime(fixture);
+    const fingerprint = (): string => {
+      const capture = createWechatMathStaticFlowSourceCapture({
+        enabled: true,
+        runtime,
+        sourceRoot: fixture.sourceRoot
+      });
+      [
+        fixture.sourceRoot,
+        fixture.table,
+        fixture.tableRow,
+        fixture.group,
+        fixture.row,
+        fixture.pstrut,
+        fixture.holder,
+        fixture.svg
+      ].forEach((element) => {
+        capture.observe(element, undefined, rect(0, 0, element === fixture.pstrut ? 0 : 12, element === fixture.row ? 0 : 12));
+      });
+      const sealed = capture.seal();
+      if (!sealed) throw new Error('seal failed');
+      return sealed.sourceFingerprint;
+    };
+
+    const baseline = fingerprint();
+    bottom = { unit: 'px', value: 0 };
+    expect(fingerprint()).not.toBe(baseline);
+
+    bottom = { value: 'auto' };
+    inset = { unit: 'px', value: 0 };
+    expect(fingerprint()).not.toBe(baseline);
+  });
+});
+
 describe('wechat math static-flow source capture', () => {
   it('freezes captured values against subsequent live DOM and style mutations', () => {
     const root = document.createElement('div');
@@ -484,6 +715,36 @@ describe('wechat math static-flow source capture', () => {
     expect(withTypedMutation).not.toBe(baseline);
   });
 
+  it('invalidates sourceFingerprint when captured empty carrier content changes', () => {
+    const root = document.createElement('div');
+    root.className = 'katex-html';
+    const row = document.createElement('span');
+    row.className = 'base';
+    root.append(row);
+
+    const runtime: WechatMathStaticFlowBaseRuntime = {
+      getAnimations: () => [],
+      getComputedStyle: () => declaration({ display: 'block', top: '-7px' })
+    };
+
+    const runCapture = (): string => {
+      const capture = createWechatMathStaticFlowSourceCapture({
+        enabled: true,
+        runtime,
+        sourceRoot: root
+      });
+      capture.observe(root, undefined, rect(0, 0, 100, 100));
+      capture.observe(row, undefined, rect(0, 10, 50, 0));
+      const sealed = capture.seal();
+      if (!sealed) throw new Error('seal failed');
+      return sealed.sourceFingerprint;
+    };
+
+    const baseline = runCapture();
+    row.textContent = 'carrier';
+    expect(runCapture()).not.toBe(baseline);
+  });
+
   it('performs zero R1 reads when disabled (ON path)', () => {
     const root = document.createElement('div');
     root.className = 'katex-html';
@@ -703,6 +964,17 @@ describe('wechat math static-flow source capture', () => {
   it('rejects an SVG whose logical insets are not auto with svg-inset reason', () => {
     const fixture = createSvgFixture();
     setupSvgTypedOm(fixture);
+    Object.defineProperty(fixture.svg, 'computedStyleMap', {
+      configurable: true,
+      value: () => ({
+        get: (property: string) => {
+          if (property === 'width' || property === 'inline-size') return { unit: 'px', value: 12 };
+          if (property === 'height' || property === 'block-size') return { unit: 'px', value: 12 };
+          if (property === 'inset-block-start') return { unit: 'px', value: 10 };
+          return { value: 'auto' };
+        }
+      })
+    });
     const runtime = svgRuntime(fixture, { 'inset-block-start': '10px' });
 
     const capture = createWechatMathStaticFlowSourceCapture({

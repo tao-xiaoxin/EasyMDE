@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBrowserWechatClipboard } from './create-browser-wechat-clipboard';
-import { MATH_CLONE_ROLES, registerMathCloneRole } from './wechat-clone-metadata';
+import { WechatPngConversionError } from './wechat-png-conversion-policy';
+import { createWechatSvgPortableIntegration } from './wechat-svg-portable-integration';
+import {
+  createMarkup,
+  createMarkupSynchronously,
+  finalizeMarkup,
+  referencedFragmentIds
+} from './wechat-portable-serialization';
+import {
+  MATH_CLONE_ROLES,
+  registerMathCloneRole,
+  WECHAT_STRUCTURE_REPLACEMENTS
+} from './wechat-clone-metadata';
 import { createDimensionSemanticsContext, type WechatDimensionSemanticsContext } from './wechat-dimension-semantics';
 import {
   ordinaryDimensionSemanticsSignature,
@@ -15,6 +27,7 @@ import {
 import {
   blobText,
   declaration,
+  declaredStyleDeclarations,
   declaredStyleValue,
   dispatchSuccessfulLegacyCopy,
   installClipboardTestEnvironment,
@@ -204,6 +217,22 @@ describe('createBrowserWechatClipboard', () => {
       );
       sourceStyle[property] = previous;
     }
+
+    const capBefore = preparedLayoutSignature(preview, runtime);
+    setMermaidComputedStyleMap(svg, {
+      height: 'auto',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      'max-width': '1200px',
+      width: '100%'
+    });
+    svgStyle['max-width'] = '1200px';
+    expect(preparedLayoutSignature(preview, runtime)).not.toBe(capBefore);
+
+    const roleBefore = preparedLayoutSignature(preview, runtime);
+    svg.setAttribute('aria-roledescription', 'gantt');
+    expect(preparedLayoutSignature(preview, runtime)).not.toBe(roleBefore);
   });
 
   it('skips Mermaid live-SVG reads in all PNG dimension freshness sinks', async () => {
@@ -1339,6 +1368,499 @@ describe('createBrowserWechatClipboard', () => {
     expect(visualText).toContain('142536');
     expect(visualText).toContain('x + y = 10');
     expect(visualText).toContain('2x - y = 5');
+  });
+
+
+  function intrinsicMermaidRuntime(
+    preview: HTMLElement
+  ): {
+    runtime: Parameters<typeof createMarkup>[1];
+    owner: HTMLElement;
+    svg: SVGSVGElement;
+  } {
+    const rect = (width: number, height: number): DOMRect => ({
+      bottom: height,
+      height,
+      left: 0,
+      right: width,
+      top: 0,
+      width,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    });
+    const owners = [...preview.querySelectorAll<HTMLElement>('.easymde-mermaid')];
+    const owner = owners[0];
+    const svg = owner?.querySelector(':scope > svg');
+    if (!(owner instanceof HTMLElement) || !(svg instanceof SVGSVGElement)) {
+      throw new Error('intrinsic-mermaid-fixture-missing');
+    }
+    owners.forEach((candidate) => {
+      const candidateSvg = candidate.querySelector(':scope > svg');
+      if (!(candidateSvg instanceof SVGSVGElement)) return;
+      const candidateWidth = Number.parseFloat(candidateSvg.getAttribute('width') ?? '1200');
+      setMermaidComputedStyleMap(candidate);
+      setMermaidComputedStyleMap(candidateSvg, {
+        'max-width': `${candidateWidth}px`,
+        width: `${candidateWidth}px`
+      });
+      Object.defineProperties(candidate, {
+        clientWidth: { configurable: true, value: 335 },
+        scrollLeft: { configurable: true, value: 0 },
+        scrollWidth: { configurable: true, value: candidateWidth + 20 }
+      });
+      Object.defineProperty(candidate, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(335, Number.parseFloat(candidateSvg.getAttribute('height') ?? '268'))
+      });
+      Object.defineProperty(candidateSvg, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(
+          candidateWidth,
+          Number.parseFloat(candidateSvg.getAttribute('height') ?? '268')
+        )
+      });
+      Object.defineProperty(candidateSvg, 'getScreenCTM', {
+        configurable: true,
+        value: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })
+      });
+    });
+    Object.defineProperty(preview, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(335, 268)
+    });
+    const safe = declaration({
+      background: 'rgb(240, 238, 234)',
+      'background-color': 'rgb(240, 238, 234)',
+      'background-image': 'none',
+      'border-bottom-style': 'none',
+      'border-bottom-width': '0px',
+      'border-left-style': 'none',
+      'border-left-width': '0px',
+      'border-right-style': 'none',
+      'border-right-width': '0px',
+      'border-top-style': 'none',
+      'border-top-width': '0px',
+      'border-radius': '0px',
+      'box-shadow': 'none',
+      'box-sizing': 'border-box',
+      display: 'block',
+      filter: 'none',
+      height: '268px',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      opacity: '1',
+      overflow: 'auto',
+      'overflow-x': 'auto',
+      'overflow-y': 'auto',
+      padding: '0px',
+      'padding-bottom': '0px',
+      'padding-left': '0px',
+      'padding-right': '0px',
+      'padding-top': '0px',
+      position: 'static',
+      transform: 'none',
+      'transform-origin': '0px 0px',
+      width: '335px'
+    });
+    const svgStyle = declaration({
+      ...Object.fromEntries(
+        [
+          'background',
+          'background-color',
+          'background-image',
+          'border-bottom-style',
+          'border-bottom-width',
+          'border-left-style',
+          'border-left-width',
+          'border-right-style',
+          'border-right-width',
+          'border-top-style',
+          'border-top-width',
+          'box-shadow',
+          'filter',
+          'mask',
+          'clip-path',
+          'opacity',
+          'transform',
+          'transform-origin'
+        ].map((property) => [property, property.endsWith('-width') ? '0px' : property.endsWith('-style') ? 'none' : property === 'opacity' ? '1' : property === 'transform' || property === 'filter' || property === 'mask' || property === 'clip-path' ? 'none' : property === 'transform-origin' ? '0px 0px' : property === 'background' || property === 'background-color' ? 'rgba(0, 0, 0, 0)' : 'none'])
+      ),
+      display: 'block',
+      height: '268px',
+      'margin-left': 'auto',
+      'margin-right': 'auto',
+      'max-height': 'none',
+      overflow: 'hidden',
+      'overflow-x': 'hidden',
+      'overflow-y': 'hidden',
+      padding: '0px',
+      'padding-bottom': '0px',
+      'padding-left': '0px',
+      'padding-right': '0px',
+      'padding-top': '0px',
+      position: 'static',
+      width: '1200px',
+      'max-width': '1200px'
+    });
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (pseudoElement) return declaration({ content: 'none', display: 'none' });
+        if (element === owner) return safe;
+        if (element === svg) return svgStyle;
+        return declaration({
+          display: 'block',
+          height: '268px',
+          'margin-bottom': '0px',
+          'margin-left': '0px',
+          'margin-right': '0px',
+          'margin-top': '0px',
+          opacity: '1',
+          overflow: 'visible',
+          'overflow-x': 'visible',
+          'overflow-y': 'visible',
+          position: 'static',
+          transform: 'none',
+          width: '335px'
+        });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    return { runtime, owner, svg };
+  }
+
+  function attachIntrinsicPreview(preview: HTMLElement): () => void {
+    const shell = document.createElement('div');
+    shell.style.overflowX = 'hidden';
+    shell.style.overflowY = 'auto';
+    shell.append(preview);
+    document.body.append(shell);
+    return () => shell.remove();
+  }
+
+  function intrinsicMermaidPreview(role = 'gantt'): HTMLElement {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      `<div class="easymde-mermaid" data-easymde-mermaid-layout="${role}" ` +
+      'style="display:block;overflow:auto;overflow-x:auto;overflow-y:auto;width:335px;height:auto;padding:0;border:0">' +
+      `<svg aria-roledescription="${role}" width="1200" height="268" viewBox="0 0 1200 268" ` +
+      'style="display:block;width:1200px;max-width:1200px;height:268px">' +
+      '<rect width="1200" height="268"></rect></svg></div>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Gantt' });
+    return preview;
+  }
+
+  it('preserves a frozen intrinsic Mermaid source cap and marks only the final direct owner in async and sync OFF paths', async () => {
+    for (const create of [
+      async (preview: HTMLElement, runtime: Parameters<typeof createMarkup>[1]) =>
+        createMarkup(preview, runtime, new Map()),
+      (preview: HTMLElement, runtime: Parameters<typeof createMarkup>[1]) =>
+        createMarkupSynchronously(preview, runtime)
+    ]) {
+      const preview = intrinsicMermaidPreview();
+      const sourceMarkup = preview.innerHTML;
+      const cleanup = attachIntrinsicPreview(preview);
+      const { runtime } = intrinsicMermaidRuntime(preview);
+      try {
+        const clone = await create(preview, runtime);
+        if (!clone) throw new Error('intrinsic-mermaid-clone-missing');
+        const cloneSvg = clone.querySelector('svg');
+        if (!(cloneSvg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-clone-svg-missing');
+        const owner = cloneSvg.parentElement;
+        expect(owner).not.toBeNull();
+        expect(owner).not.toBe(clone);
+        expect(owner?.localName.toLowerCase()).toBe('section');
+        expect(owner?.getAttribute('data-ignore-width')).toBe('');
+        expect(declaredStyleDeclarations(cloneSvg, 'max-width')).toEqual([
+          { important: true, property: 'max-width', value: '1200px' }
+        ]);
+        expect(declaredStyleDeclarations(cloneSvg, 'max-width')).not.toContainEqual({
+          important: true,
+          property: 'max-width',
+          value: '100%'
+        });
+        expect(declaredStyleValue(cloneSvg, 'width')).toBe('1200px');
+        expect(declaredStyleValue(cloneSvg, 'height')).toBe('auto');
+        expect(preview.innerHTML).toBe(sourceMarkup);
+      } finally {
+        cleanup();
+      }
+    }
+  });
+
+  it.each([
+    ['root', 'root'],
+    ['owner', 'owner']
+  ] as const)(
+    'keeps an unreferenced source %s id while marking the final intrinsic owner in async and sync OFF paths',
+    async (_target, idTarget) => {
+      for (const create of [
+        async (preview: HTMLElement, runtime: Parameters<typeof createMarkup>[1]) =>
+          createMarkup(preview, runtime, new Map()),
+        (preview: HTMLElement, runtime: Parameters<typeof createMarkup>[1]) =>
+          createMarkupSynchronously(preview, runtime)
+      ]) {
+        const preview = intrinsicMermaidPreview();
+        const owner = preview.querySelector('.easymde-mermaid');
+        if (!(owner instanceof HTMLElement)) throw new Error('intrinsic-mermaid-owner-missing');
+        (idTarget === 'root' ? preview : owner).setAttribute('id', `unreferenced-${idTarget}`);
+        const cleanup = attachIntrinsicPreview(preview);
+        const { runtime } = intrinsicMermaidRuntime(preview);
+        try {
+          const clone = await create(preview, runtime);
+          if (!clone) throw new Error('intrinsic-mermaid-clone-missing');
+          const cloneSvg = clone.querySelector('svg');
+          if (!(cloneSvg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-clone-svg-missing');
+          const finalOwner = cloneSvg.parentElement;
+          expect(finalOwner).not.toBeNull();
+          expect(finalOwner).not.toBe(clone);
+          expect(finalOwner?.getAttribute('data-ignore-width')).toBe('');
+          expect(finalOwner?.hasAttribute('id')).toBe(false);
+          expect(declaredStyleValue(cloneSvg, 'max-width')).toBe('1200px');
+        } finally {
+          cleanup();
+        }
+      }
+    }
+  );
+
+  it.each([
+    ['root', 'root'],
+    ['owner', 'owner']
+  ] as const)(
+    'keeps a referenced source %s id while marking the final intrinsic owner',
+    async (_target, idTarget) => {
+      const preview = intrinsicMermaidPreview();
+      const owner = preview.querySelector('.easymde-mermaid');
+      if (!(owner instanceof HTMLElement)) throw new Error('intrinsic-mermaid-owner-missing');
+      const id = `referenced-${idTarget}`;
+      (idTarget === 'root' ? preview : owner).setAttribute('id', id);
+      const reference = document.createElement('a');
+      reference.setAttribute('href', `#${id}`);
+      preview.append(reference);
+      const cleanup = attachIntrinsicPreview(preview);
+      const { runtime } = intrinsicMermaidRuntime(preview);
+      try {
+        const clone = await createMarkup(preview, runtime, new Map());
+        const cloneSvg = clone.querySelector('svg');
+        if (!(cloneSvg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-clone-svg-missing');
+        const finalOwner = cloneSvg.parentElement;
+        expect(finalOwner?.getAttribute('data-ignore-width')).toBe('');
+        expect((idTarget === 'root' ? clone : finalOwner)?.getAttribute('id')).toBe(id);
+        expect(declaredStyleValue(cloneSvg, 'max-width')).toBe('1200px');
+      } finally {
+        cleanup();
+      }
+    }
+  );
+
+  it('keeps unmarked responsive Mermaid and ordinary SVG on the generic max-width path', async () => {
+    const preview = document.createElement('article');
+    preview.setAttribute('data-easymde-preview-html-sink', '1');
+    preview.innerHTML =
+      '<div class="easymde-mermaid"><svg width="200" height="100" viewBox="0 0 200 100">' +
+      '<rect width="200" height="100"></rect></svg></div>' +
+      '<svg id="ordinary" width="100" height="40"></svg>';
+    Object.defineProperty(preview, 'innerText', { configurable: true, value: 'Responsive' });
+    const runtime = {
+      blob: Blob,
+      clipboardItem: null,
+      document,
+      getComputedStyle: (element: Element, pseudoElement?: string) => {
+        if (pseudoElement) return declaration({ content: 'none', display: 'none' });
+        if ('svg' === element.localName) {
+          return declaration({
+            display: 'block',
+            height: '100px',
+            'max-width': '200px',
+            overflow: 'hidden',
+            'overflow-x': 'hidden',
+            'overflow-y': 'hidden',
+            width: '200px'
+          });
+        }
+        return declaration({ display: 'block', overflow: 'visible', width: '335px' });
+      },
+      getSelection: window.getSelection.bind(window),
+      pageOffset: () => ({ x: 0, y: 0 }),
+      scrollTo: vi.fn(),
+      write: null
+    };
+    const clone = await createMarkup(preview, runtime, new Map());
+    const mermaidOwner = clone.querySelector('.easymde-mermaid') ?? clone.querySelector('section');
+    const mermaidSvg = mermaidOwner?.querySelector('svg');
+    const ordinarySvg = clone.querySelector('#ordinary');
+    expect(mermaidOwner?.hasAttribute('data-ignore-width')).toBe(false);
+    expect(mermaidSvg?.getAttribute('style')).toContain('max-width:100%!important');
+    expect(ordinarySvg?.getAttribute('style')).toContain('max-width:100%!important');
+  });
+
+  it.each([
+    ['missing', ''],
+    ['none', 'none'],
+    ['percentage', '100%'],
+    ['zero', '0px'],
+    ['infinite', 'Infinitypx']
+  ])('fails closed when an admitted intrinsic root has a %s source cap', async (_label, cap) => {
+    const preview = intrinsicMermaidPreview();
+    const cleanup = attachIntrinsicPreview(preview);
+    const { runtime, svg } = intrinsicMermaidRuntime(preview);
+    try {
+      setMermaidComputedStyleMap(svg, cap
+        ? { 'max-width': cap, width: '1200px' }
+        : { width: '1200px' });
+      const clone = preview.cloneNode(true) as HTMLElement;
+      const integration = createWechatSvgPortableIntegration(preview, clone, runtime);
+      expect(() => integration.freezePlan(null)).toThrow(WechatPngConversionError);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('does not build an OFF intrinsic scroll plan during PNG conversion', async () => {
+    const preview = intrinsicMermaidPreview();
+    const cleanup = attachIntrinsicPreview(preview);
+    const { runtime } = intrinsicMermaidRuntime(preview);
+    try {
+      const clone = preview.cloneNode(true) as HTMLElement;
+      const integration = createWechatSvgPortableIntegration(preview, clone, runtime);
+      integration.freezePlan({ signal: new AbortController().signal } as never);
+      const cloneSvg = clone.querySelector('svg');
+      if (!(cloneSvg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-clone-svg-missing');
+      expect(cloneSvg.parentElement?.hasAttribute('data-ignore-width')).toBe(false);
+      expect(cloneSvg.getAttribute('style')).toContain('max-width:1200px');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it.each([
+    [
+      'detached',
+      (_clone: HTMLElement, svg: SVGSVGElement) => svg.remove(),
+      'wechat-mermaid-intrinsic-scroll-owner-mismatch'
+    ],
+    [
+      'moved to the article root',
+      (clone: HTMLElement, svg: SVGSVGElement) => clone.append(svg),
+      'wechat-mermaid-intrinsic-scroll-owner-mismatch'
+    ]
+  ] as const)('fails closed when the frozen clone SVG is %s', async (_label, move, message) => {
+    const preview = intrinsicMermaidPreview();
+    const cleanup = attachIntrinsicPreview(preview);
+    const { runtime } = intrinsicMermaidRuntime(preview);
+    try {
+      const clone = preview.cloneNode(true) as HTMLElement;
+      const integration = createWechatSvgPortableIntegration(preview, clone, runtime);
+      integration.freezePlan(null);
+      const svg = clone.querySelector('svg');
+      if (!(svg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-svg-missing');
+      const finalized = finalizeMarkup(clone, referencedFragmentIds(preview));
+      move(finalized, svg);
+      expect(() => integration.applyPlan(finalized)).toThrow(message);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('resolves the final owner through a nested DIV replacement and marks the real nested container', async () => {
+    const preview = intrinsicMermaidPreview();
+    const wrapper = document.createElement('div');
+    const outer = preview.querySelector('.easymde-mermaid');
+    if (!(outer instanceof HTMLElement)) throw new Error('intrinsic-mermaid-owner-missing');
+    preview.append(wrapper);
+    wrapper.append(outer);
+    const cleanup = attachIntrinsicPreview(preview);
+    const { runtime } = intrinsicMermaidRuntime(preview);
+    try {
+      const clone = await createMarkup(preview, runtime, new Map());
+      const cloneSvg = clone.querySelector('svg');
+      if (!(cloneSvg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-clone-svg-missing');
+      const owner = cloneSvg.parentElement;
+      expect(owner).not.toBeNull();
+      expect(owner?.localName.toLowerCase()).toBe('section');
+      expect(owner?.getAttribute('data-ignore-width')).toBe('');
+      expect(owner?.parentElement?.localName.toLowerCase()).toBe('section');
+      expect(declaredStyleValue(cloneSvg, 'max-width')).toBe('1200px');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('records only actual normalizeStructure replacements and keeps unchanged identities unregistered', () => {
+    const source = document.createElement('article');
+    source.innerHTML = '<div id="nested"><p>Text</p></div><section id="unchanged"><div id="nested-two"></div></section>';
+    const nested = source.querySelector('#nested');
+    const nestedTwo = source.querySelector('#nested-two');
+    const unchanged = source.querySelector('#unchanged');
+    if (!(nested instanceof Element) || !(nestedTwo instanceof Element) || !(unchanged instanceof Element)) {
+      throw new Error('structure replacement fixture missing');
+    }
+    const finalized = finalizeMarkup(source, new Set());
+    expect(finalized).not.toBe(source);
+    expect(WECHAT_STRUCTURE_REPLACEMENTS.get(source)?.tagName).toBe('SECTION');
+    expect(WECHAT_STRUCTURE_REPLACEMENTS.get(nested)?.tagName).toBe('SECTION');
+    expect(WECHAT_STRUCTURE_REPLACEMENTS.get(nestedTwo)?.tagName).toBe('SECTION');
+    expect(WECHAT_STRUCTURE_REPLACEMENTS.get(unchanged)).toBeUndefined();
+  });
+
+  it('uses the attached clone final root rather than the detached pre-finalization root', async () => {
+    const preview = intrinsicMermaidPreview();
+    const host = document.createElement('main');
+    host.append(preview);
+    document.body.append(host);
+    const { runtime } = intrinsicMermaidRuntime(preview);
+    try {
+      const clone = preview.cloneNode(true) as HTMLElement;
+      host.append(clone);
+      const integration = createWechatSvgPortableIntegration(preview, clone, runtime);
+      integration.freezePlan(null);
+      const finalized = finalizeMarkup(clone, referencedFragmentIds(preview));
+      host.append(finalized);
+      expect(host.contains(finalized)).toBe(true);
+      expect(finalized).not.toBe(clone);
+      integration.applyPlan(finalized);
+      const svg = finalized.querySelector('svg');
+      if (!(svg instanceof SVGSVGElement)) throw new Error('intrinsic-mermaid-finalized-svg-missing');
+      expect(svg.parentElement?.getAttribute('data-ignore-width')).toBe('');
+      expect(declaredStyleValue(svg, 'max-width')).toBe('1200px');
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('fails closed when the frozen clone SVG is moved to a peer Mermaid owner', async () => {
+    const preview = intrinsicMermaidPreview();
+    const peerOwner = document.createElement('div');
+    peerOwner.className = 'easymde-mermaid';
+    peerOwner.innerHTML = '<svg width="640" height="268" viewBox="0 0 640 268"><rect width="640" height="268"></rect></svg>';
+    preview.append(peerOwner);
+    const cleanup = attachIntrinsicPreview(preview);
+    const { runtime } = intrinsicMermaidRuntime(preview);
+    try {
+      const clone = preview.cloneNode(true) as HTMLElement;
+      const integration = createWechatSvgPortableIntegration(preview, clone, runtime);
+      integration.freezePlan(null);
+      const finalized = finalizeMarkup(clone, referencedFragmentIds(preview));
+      const finalizedFirstSvg = finalized.querySelector('svg');
+      const finalizedPeer = finalized.querySelectorAll('.easymde-mermaid')[1];
+      if (!(finalizedFirstSvg instanceof SVGSVGElement) || !(finalizedPeer instanceof Element)) {
+        throw new Error('intrinsic-mermaid-finalized-peer-fixture-missing');
+      }
+      finalizedPeer.querySelector('svg')?.remove();
+      finalizedPeer.append(finalizedFirstSvg);
+      expect(() => integration.applyPlan(finalized)).toThrow(/wechat-mermaid-intrinsic/);
+    } finally {
+      cleanup();
+    }
   });
 
 });

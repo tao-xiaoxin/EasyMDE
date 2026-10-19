@@ -27,6 +27,9 @@ import {
 	THEME_HEADING_SUFFIX_CLONES,
 	THEME_IMAGE_CLONES,
 	WECHAT_PNG_GENERATED_IMAGES,
+	WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS,
+	WECHAT_STRUCTURE_REPLACEMENTS,
+	registerMathEmptyTransportCarrier,
 } from "./wechat-clone-metadata";
 import {
 	type BackgroundAssetCache,
@@ -396,6 +399,7 @@ function applyNodeFidelity(
 			// WeChat drops empty KaTeX structure spans such as `.pstrut`. Keep a
 			// zero-width word joiner so their copied dimensions remain in the
 			// visual tree; the plain-text path strips this marker before writing.
+			registerMathEmptyTransportCarrier(source, clone);
 			clone.textContent = "\u2060";
 		}
 	}
@@ -660,6 +664,7 @@ export function normalizeStructure(clone: HTMLElement): HTMLElement {
 		: clone;
 
 	if (root !== clone) {
+		WECHAT_STRUCTURE_REPLACEMENTS.set(clone, root);
 		if (TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES.has(clone)) {
 			TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS.set(clone, root);
 		}
@@ -675,6 +680,7 @@ export function normalizeStructure(clone: HTMLElement): HTMLElement {
 	root.querySelectorAll("blockquote, div").forEach((element) => {
 		if (element.closest("svg")) return;
 		const section = document.createElement("section");
+		WECHAT_STRUCTURE_REPLACEMENTS.set(element, section);
 		if (TASK_LIST_CHECKBOX_CAPTION_MIGRATION_CANDIDATES.has(element)) {
 			TASK_LIST_CHECKBOX_CAPTION_STRUCTURE_REPLACEMENTS.set(element, section);
 		}
@@ -722,6 +728,13 @@ export function wrapTextLeaves(root: HTMLElement): void {
 	textNodes.forEach((textNode) => {
 		const parent = textNode.parentElement;
 		const value = textNode.nodeValue ?? "";
+		if (
+			parent &&
+			WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.has(parent) &&
+			value === "\u2060" &&
+			parent.childNodes.length === 1
+		)
+			return;
 		if (
 			!parent ||
 			parent.closest("svg") ||
@@ -1318,7 +1331,7 @@ export async function createMarkup(
 				gate: createMathStaticFlowGate(conversion, signal, isCurrent),
 			});
 		}
-		svgIntegration.applyPlan();
+		svgIntegration.applyPlan(finalized);
 		assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
 		assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
 		assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);
@@ -1450,7 +1463,7 @@ export function createMarkupSynchronously(
 				gate: createMathStaticFlowGate(undefined, undefined, isCurrent),
 			});
 		}
-		svgIntegration.applyPlan();
+		svgIntegration.applyPlan(finalized);
 		assertTaskCheckboxStaticOwners(sourceTaskInputs, finalized);
 		assertTaskCheckboxStaticFlowAllocationsForRoot(finalized);
 		assertHeadingEmptyPseudoFlows(headingFlowCollector.expectations, finalized);

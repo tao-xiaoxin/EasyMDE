@@ -16,6 +16,7 @@ import {
 	captureWechatMathSourceAdmissionSynchronously,
 	createMarkupSynchronously,
 } from "./wechat-portable-serialization";
+import { WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS } from "./wechat-clone-metadata";
 import type { WechatMathSourceCaptureResult } from "./wechat-portable-serialization";
 import {
 	reusablePreparedClipboardPayload,
@@ -78,6 +79,43 @@ describe("portable serialization math admission plumbing", () => {
 
 			expect(asyncWithAdmission).toEqual(asyncBaseline);
 			expect(syncWithAdmission).toEqual(syncBaseline);
+		} finally {
+			preview.remove();
+		}
+	});
+
+	it("registers exact source provenance for an originally empty KaTeX carrier", () => {
+		const preview = readyPreview();
+		preview.innerHTML =
+			'<div class="katex"><span class="katex-html"><span class="frac-line"></span></span></div>';
+		const sourceCarrier = preview.querySelector(".frac-line");
+		if (!(sourceCarrier instanceof HTMLElement))
+			throw new Error("source-carrier-missing");
+		const runtime: BrowserWechatClipboardRuntime = {
+			blob: Blob,
+			clipboardItem: null,
+			document,
+			getComputedStyle: computedStyle,
+			getSelection: window.getSelection.bind(window),
+			pageOffset: () => ({ x: 0, y: 0 }),
+			scrollTo: () => undefined,
+			write: null,
+		};
+
+		try {
+			const clone = createMarkupSynchronously(preview, runtime);
+			if (!clone) throw new Error("carrier-clone-missing");
+			const cloneCarrier = Array.from(clone.querySelectorAll("span")).find(
+				(element) =>
+					WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.has(element) &&
+					element.textContent === "\u2060",
+			);
+			if (!cloneCarrier) throw new Error("clone-carrier-missing");
+			expect(cloneCarrier.childNodes).toHaveLength(1);
+			expect(cloneCarrier.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+			expect(
+				WECHAT_MATH_EMPTY_TRANSPORT_CARRIERS.get(cloneCarrier)?.source,
+			).toBe(sourceCarrier);
 		} finally {
 			preview.remove();
 		}

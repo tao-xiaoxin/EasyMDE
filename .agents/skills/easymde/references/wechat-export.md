@@ -597,9 +597,37 @@ decoration. Omit `attr()` and counter pseudo content. Exporter-owned
 `aria-hidden` and `leaf` markers may remain.
 
 Keep only the KaTeX `.katex-mathml` fallback tree removed; preserve its visual
-tree and SVG geometry. Preserve hidden SVG `defs` required by visible
+tree and SVG geometry. With PNG conversion disabled, the existing math
+static-flow owner freezes source evidence before binding it to the clone. It
+projects only measured negative-top KaTeX vlist rows with positive pstruts:
+Typed OM must prove `bottom:auto`, while the CSSOM used bottom may resolve to
+the opposite of top. Vertical margins, padding, and borders remain zero;
+finite horizontal margins, including negative script spacing, remain unchanged.
+The projection replaces relative top with paired vertical margins. Row-owned
+SVG transitions require exact Typed OM auto physical/logical insets and the
+existing holder, size, and same-rect proof; a used pixel inset is not proof of
+an authored offset. Neutral or unproven groups retain their existing geometry.
+For an originally empty, border-painted KaTeX inline-block, the exporter records
+its own word-joiner carrier identity. The same frozen math plan may preserve
+that empty box's baseline with hidden overflow and the captured source box
+sizing only after its static, baseline, horizontal-writing, finite-geometry,
+paint, pseudo, animation, and exact-clone checks pass. Keep the carrier and
+source dimensions, borders, and row margins; do not compensate with offsets or
+font sizing. Original emptiness is a constant-time child-node fact, and PNG
+conversion bypasses this transition. Apply validates carrier identity again and
+uses the existing atomic style rollback. Admission does not establish
+destination fidelity without native saved-Reader verification.
+
+Preserve hidden SVG `defs` required by visible
 clip-path, mask, gradient, or filter references; discard unrelated hidden
-nodes. Keep non-math SVG and ordinary inline media responsive without changing
+nodes. An OFF Mermaid SVG admitted by the existing intrinsic-scroll geometry
+owner retains its frozen positive pixel max-width cap instead of the generic
+responsive rewrite. Apply this only to the final, identity-verified scroll
+owner after structural normalization, using the existing owned-scroll marker;
+invalid intrinsic caps fail explicitly. PNG conversion and other Mermaid
+layouts retain their existing paths.
+
+Keep ordinary non-math SVG and ordinary inline media responsive without changing
 an inline element's display, captured width, or margins: retain its width while
 emitting `max-width:100%!important` and `height:auto!important`. Explicit
 atomic icon and inline-math owners remain excluded. For ordinary block `img`

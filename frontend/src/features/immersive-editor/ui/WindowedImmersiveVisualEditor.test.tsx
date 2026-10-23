@@ -21,7 +21,6 @@ import type {
 	ImmersiveWindowAcceptedSnapshot,
 } from "./ImmersiveVisualEditor";
 import {
-	resolveLiveWindowContextMenuTarget,
 	WindowedImmersiveVisualEditor,
 } from "./WindowedImmersiveVisualEditor";
 
@@ -214,6 +213,21 @@ function expectConnectedCodeCaret(
 
 const testPrepareWindowBlockAdoption = (): (() => boolean) => () => true;
 
+/**
+ * Isolated owned lease fixture: every acquisition returns a real lease with an
+ * idempotent release, so the consumer must own and settle exactly what it took.
+ * No no-op capability stands in for a missing runtime.
+ */
+function testRetainCompositionSurface(): Readonly<{ release: () => void }> {
+	let released = false;
+	return {
+		release: () => {
+			if (released) return;
+			released = true;
+		},
+	};
+}
+
 const testDocumentEndPreviewRequest =
 	(signature: string) => (_markdown: string) => ({
 		release: vi.fn(),
@@ -268,6 +282,7 @@ function renderWindowEditor(
 	options: Readonly<{
 		documentSession?: EditorDocumentSession;
 		prepareWindowBlockAdoption?: (node: HTMLElement) => (() => boolean) | null;
+		retainCompositionSurface?: () => Readonly<{ release: () => void }>;
 			requestPreviewAtDocumentEnd?: (
 				markdown: string,
 				sourceSelection?: Readonly<{ end: number; start: number }>,
@@ -282,6 +297,7 @@ function renderWindowEditor(
 		onMarkdownChange?: () => void;
 		onPendingChange?: (pending: boolean) => void;
 		onReady?: (runtime: ImmersiveVisualEditorRuntime) => void;
+		pending?: boolean;
 		acceptedWindowSnapshotGeneration?: number;
 		getAcceptedWindowSnapshot?: () => ImmersiveWindowAcceptedSnapshot | null;
 		getGeneratedPreviewIdentity?: ImmersiveVisualEditorRuntime["getGeneratedPreviewIdentity"];
@@ -304,6 +320,8 @@ function renderWindowEditor(
 			signature: requestPreview(markdown),
 		}));
 	const prepareBlock = options.prepareWindowBlockAdoption ?? (() => () => true);
+	const retainCompositionSurface =
+		options.retainCompositionSurface ?? testRetainCompositionSurface;
 	const componentProps = {
 		documentSession: options.documentSession ?? current.documentSession,
 		editMap: current.editMap,
@@ -317,7 +335,7 @@ function renderWindowEditor(
 		onPendingChange,
 		onReady: options.onReady ?? vi.fn(),
 		onTransferFailure,
-		pending: false,
+		pending: options.pending ?? false,
 		...(undefined !== options.acceptedWindowSnapshotGeneration
 			? {
 					acceptedWindowSnapshotGeneration:
@@ -348,6 +366,7 @@ function renderWindowEditor(
 		previewSnapshot: { revision: 1, signature: "windowed" },
 		previewStatus: "ready" as const,
 		prepareWindowBlockAdoption: prepareBlock,
+		retainCompositionSurface,
 		requestPreview,
 		requestPreviewAtDocumentEnd,
 		surface: current.surface,
@@ -375,6 +394,42 @@ function renderWindowEditor(
 				<WindowedImmersiveVisualEditor
 					{...componentProps}
 					acceptedWindowSnapshotGeneration={generation}
+				/>,
+			),
+		// A same-source transfer states itself through the owner's pending
+		// prop; the surface stays editable, exactly as the real producer does.
+		rerenderPending: (nextPending: boolean) =>
+			view.rerender(
+				<WindowedImmersiveVisualEditor
+					{...componentProps}
+					pending={nextPending}
+				/>,
+			),
+		rerenderPendingAcceptedWindow: (
+			generation: number,
+			nextPending: boolean,
+		) =>
+			view.rerender(
+				<WindowedImmersiveVisualEditor
+					{...componentProps}
+					acceptedWindowSnapshotGeneration={generation}
+					pending={nextPending}
+				/>,
+			),
+		// One public-props render carrying a new map, its matching Preview
+		// snapshot and the accepted window generation together. Splitting these
+		// would let a later call overwrite the map with the original props.
+		rerenderAcceptedWindowWithMap: (
+			editMap: PreviewEditMap,
+			previewSnapshot: Readonly<{ revision: number; signature: string }>,
+			generation: number,
+		) =>
+			view.rerender(
+				<WindowedImmersiveVisualEditor
+					{...componentProps}
+					acceptedWindowSnapshotGeneration={generation}
+					editMap={editMap}
+					previewSnapshot={previewSnapshot}
 				/>,
 			),
 	};
@@ -540,6 +595,158 @@ function dispatchCodeBodyDeletion(
 }
 
 describe("WindowedImmersiveVisualEditor", () => {
+	it.each([
+		{ language: "bash", position: "first", blockIndex: 1 },
+		{ language: "python", position: "middle", blockIndex: 160 },
+		{ language: "typescript", position: "end", blockIndex: 319 },
+	])("test-first visual sequential deletion reaches the heading tail before Enter ($language, $position)", async ({ language, blockIndex }) => {
+		// This unlocked visual surface has no literal fence glyphs: its empty
+		// PRE command removes the delimiters. Keep deleting through the resulting
+		// native paragraph boundary; a toolbar/remove-code call cannot stand in.
+		const fence = `~~~${language}\nAB\n~~~`;
+		const headingIndex = blockIndex - 1;
+		const current = fixture({
+			blockOverrides: { [headingIndex]: "### Before", [blockIndex]: fence },
+			markupOverrides: {
+				[headingIndex]: `<h3 data-easymde-visual-block-id="b${headingIndex}">Before</h3>`,
+				[blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code class="language-${language}">AB\n</code></pre>`,
+			},
+			mounted: blockIndex === 319 ? [headingIndex, blockIndex] : [headingIndex, blockIndex, blockIndex + 1],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const field = document.createElement("textarea");
+		field.value = field.defaultValue = original;
+		const container = document.createElement("div");
+		document.body.append(container, field);
+		const owner = createCodeMirrorDocumentSession({ container, label: "Markdown", submissionField: field });
+		const session = createEditorDocumentSession(owner, createNativeTitleSession(null));
+		session.registerSubmissionState({ appleFont: "system", codeTheme: "github", codeThemeExplicit: false, customCssId: "", customFont: "none", markdownTheme: "default", serifFont: "off", windowsFont: "system" });
+		const rendered = renderWindowEditor(current, { documentSession: session });
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const code = current.surface.querySelector("code");
+			if (!(code instanceof HTMLElement)) throw new Error("sequence-code-missing");
+			for (const [index, body] of ["A\n", "\n"].entries()) {
+				act(() => {
+					const key = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" });
+					const text = code.firstChild;
+					if (!(text instanceof Text)) throw new Error("sequence-body-text-missing");
+					placeCaret(text, 2 - index);
+					current.surface.dispatchEvent(key);
+					if (!key.defaultPrevented) dispatchCodeBodyDeletion(current.surface, code, { inputType: "deleteContentBackward", removedLength: 1, start: 1 - index });
+				});
+				expect(owner.getValue()).toBe(original.replace(fence, `~~~${language}\n${body}~~~`));
+				expectConnectedCodeCaret(code, 1 - index);
+			}
+			act(() => current.surface.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" })));
+			const empty = current.surface.querySelector(`[data-easymde-visual-block-id="b${blockIndex}"]`);
+			const heading = current.surface.querySelector("h3");
+			const headingText = heading?.firstChild;
+			if (!(empty instanceof HTMLParagraphElement) || !(heading instanceof HTMLElement) || !(headingText instanceof Text)) throw new Error("sequence-exit-prerequisite-missing");
+			expect(empty.textContent).toBe("");
+			const afterExit = owner.getValue();
+			const headingTail = afterExit.indexOf("### Before") + "### Before".length;
+			const emptyPoint = owner.getSelection().start;
+			expect(afterExit.slice(headingTail, emptyPoint)).toMatch(/^\n+$/);
+			// The serializer omits an empty P; removing its native boundary does
+			// not normalize the canonical owner's pre-existing hidden blank lines.
+			const afterExtraDelete = afterExit;
+			act(() => {
+				const key = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" });
+				current.surface.dispatchEvent(key);
+				if (key.defaultPrevented) return;
+				const target = document.createRange();
+				target.setStart(headingText, headingText.length);
+				target.setEnd(empty, 0);
+				const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+				Object.defineProperty(before, "getTargetRanges", { value: () => [target] });
+				current.surface.dispatchEvent(before);
+				if (!before.defaultPrevented) {
+					empty.remove();
+					placeCaret(headingText, headingText.length);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+				}
+			});
+			expect.soft(owner.getValue()).toBe(afterExtraDelete);
+			expect.soft(owner.getSelection()).toEqual({ direction: "none", start: headingTail, end: headingTail });
+			const native = window.getSelection();
+			expect.soft(native?.anchorNode?.isConnected).toBe(true);
+			expect.soft(native?.anchorNode && heading.contains(native.anchorNode)).toBe(true);
+			if (native?.anchorNode && heading.contains(native.anchorNode)) expect(textOffsetWithin(heading, native.anchorNode, native.anchorOffset)).toBe("Before".length);
+			expect.soft(rendered.onFailure).not.toHaveBeenCalled();
+			// Accept the real structural request before a deliberate later click.
+			// A permanently held request would make that click invalidate the
+			// pending lease and test rejection, not heading-tail Enter.
+			const canonicalBlocks = original.split("\n\n");
+			let sourceOffset = 0;
+			const acceptedMap: PreviewEditMap = { ...current.editMap, signature: "next", blocks: current.editMap.blocks.filter((block) => block.id !== `b${blockIndex}`).map((block) => {
+				const ordinal = Number.parseInt(block.id.slice(1), 10);
+				const source = canonicalBlocks[ordinal];
+				if (!source) throw new Error("sequence-accepted-source-missing");
+				const offset = afterExtraDelete.indexOf(source, sourceOffset);
+				if (offset < 0) throw new Error("sequence-accepted-source-range-missing");
+				sourceOffset = offset + source.length;
+				const startLine = afterExtraDelete.slice(0, offset).split("\n").length - 1;
+				return { ...block, startLine, endLine: startLine + source.split("\n").length };
+			}) };
+			act(() => rendered.rerenderPreview(acceptedMap, { revision: 2, signature: "next" }));
+			expect.soft(owner.getValue()).toBe(afterExtraDelete);
+			expect.soft(owner.getSelection()).toEqual({ direction: "none", start: headingTail, end: headingTail });
+			expect.soft(window.getSelection()?.anchorNode && heading.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+			if (window.getSelection()?.anchorNode && heading.contains(window.getSelection()?.anchorNode ?? null)) expect(textOffsetWithin(heading, window.getSelection()?.anchorNode as Node, window.getSelection()?.anchorOffset ?? -1)).toBe("Before".length);
+			// Explicit user click at the heading end is a separate accepted action;
+			// it does not repair or excuse the pre-Enter native-caret assertions.
+			placeCaret(headingText, headingText.length);
+			const paragraph = document.createElement("p");
+			paragraph.append(document.createElement("br"));
+			act(() => {
+				const key = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" });
+				current.surface.dispatchEvent(key);
+				if (key.defaultPrevented) return;
+				const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" });
+				current.surface.dispatchEvent(before);
+				if (!before.defaultPrevented) {
+					heading.after(paragraph);
+					window.getSelection()?.collapse(paragraph, 0);
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertParagraph" }));
+				}
+			});
+			const afterEnter = owner.getValue();
+			const point = owner.getSelection().start;
+			expect.soft(point, "Enter owns a source point after the heading text").toBeGreaterThan(headingTail);
+			expect.soft(afterEnter.slice(headingTail, point)).toMatch(/^\n+$/);
+			expect.soft(afterEnter.replace(/\n/g, "")).toBe(afterExtraDelete.replace(/\n/g, ""));
+			expect.soft(window.getSelection()?.anchorNode && heading.contains(window.getSelection()?.anchorNode ?? null)).toBe(false);
+			for (const [index, data] of ["a", "b", "c"].entries()) {
+				act(() => {
+					const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data });
+					current.surface.dispatchEvent(before);
+					if (!before.defaultPrevented) {
+						const range = window.getSelection()?.getRangeAt(0);
+						if (!range) throw new Error("sequence-typing-range-missing");
+						const text = document.createTextNode(data);
+						range.insertNode(text);
+						window.getSelection()?.collapse(text, 1);
+					}
+					current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data }));
+				});
+				const draft = "abc".slice(0, index + 1);
+				expect.soft(owner.getValue()).toBe(afterEnter.slice(0, point) + draft + afterEnter.slice(point));
+				expect.soft(owner.getSelection()).toEqual({ direction: "none", start: point + draft.length, end: point + draft.length });
+				expect.soft(window.getSelection()?.anchorNode?.isConnected).toBe(true);
+			}
+			expect.soft(current.surface.textContent).toContain("abc");
+			expect.soft(document.activeElement).toBe(current.surface);
+			expect.soft(rendered.onFailure).not.toHaveBeenCalled();
+			expect.soft(rendered.onDiagnostic).not.toHaveBeenCalled();
+		} finally {
+			rendered.view.unmount(); owner.destroy(); container.remove(); field.remove(); current.surface.remove();
+		}
+	});
+
 	it("creates a current-surface caret for a cold-entry context menu", () => {
 		const blockIndex = 160;
 		const current = fixture({
@@ -888,7 +1095,10 @@ describe("WindowedImmersiveVisualEditor", () => {
 			current: null,
 		};
 		const failures: string[] = [];
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
 		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
 			onFailure: (code: string) => {
 				failures.push(code);
 			},
@@ -924,6 +1134,15 @@ describe("WindowedImmersiveVisualEditor", () => {
 				throw new Error("windowed-refresh-block-missing");
 			}
 			paragraph.outerHTML = blockMarkup;
+			const replacement = current.surface.querySelector("p");
+			if (!(replacement instanceof HTMLParagraphElement)) {
+				throw new Error("windowed-refresh-block-missing");
+			}
+			acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(
+				current,
+				replacement,
+			);
+			act(() => rendered.rerenderAcceptedWindow(1));
 			const caret = document.createRange();
 			caret.selectNodeContents(current.surface);
 			caret.collapse(true);
@@ -975,7 +1194,10 @@ describe("WindowedImmersiveVisualEditor", () => {
 			current: null,
 		};
 		const failures: string[] = [];
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
 		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
 			onFailure: (code: string) => {
 				failures.push(code);
 			},
@@ -1022,6 +1244,14 @@ describe("WindowedImmersiveVisualEditor", () => {
 				}
 				block.outerHTML = markup;
 			}
+			const rebuilt = current.surface.querySelector(
+				`[data-easymde-visual-block-id="b${firstIndex}"]`,
+			);
+			if (!(rebuilt instanceof HTMLElement)) {
+				throw new Error("windowed-rebuild-block-missing");
+			}
+			acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(current, rebuilt);
+			act(() => rendered.rerenderAcceptedWindow(1));
 			const surfaceCaret = document.createRange();
 			surfaceCaret.selectNodeContents(current.surface);
 			surfaceCaret.collapse(true);
@@ -1338,7 +1568,10 @@ describe("WindowedImmersiveVisualEditor", () => {
 			current: null,
 		};
 		const failures: string[] = [];
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
 		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
 			onFailure: (code: string) => {
 				failures.push(code);
 			},
@@ -1384,6 +1617,15 @@ describe("WindowedImmersiveVisualEditor", () => {
 				throw new Error("windowed-duplicate-block-missing");
 			}
 			paragraph.outerHTML = blockMarkup;
+			const replacement = current.surface.querySelector("p");
+			if (!(replacement instanceof HTMLParagraphElement)) {
+				throw new Error("windowed-duplicate-block-missing");
+			}
+			acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(
+				current,
+				replacement,
+			);
+			act(() => rendered.rerenderAcceptedWindow(1));
 			const selection = window.getSelection();
 			selection?.removeAllRanges();
 			selection?.addRange(surfaceCaret);
@@ -2113,6 +2355,64 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(current.applyTextChange).toHaveBeenCalledTimes(2);
 		expect(onTransferFailure).toHaveBeenCalledOnce();
 		expect(onFailure).toHaveBeenCalledWith("windowed-hr-preview-failed");
+		view.unmount();
+	});
+
+	it("rejects structural pending text insertion when the canonical lease is stale", () => {
+		const blockIndex = 160;
+		const current = fixture({
+			blockOverrides: { [blockIndex]: "---" },
+			markupOverrides: {
+				[blockIndex]: `<hr data-easymde-visual-block-id="b${blockIndex}">`,
+			},
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const sourceStart = original.indexOf("---");
+		if (sourceStart < 0) throw new Error("windowed-hr-source-missing");
+		const deleted =
+			original.slice(0, sourceStart) + original.slice(sourceStart + 3);
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			onTransferFailure,
+			requestPreview: vi.fn(() => "windowed-hr-pending"),
+		});
+		current.surface.tabIndex = 0;
+		current.surface.setAttribute("contenteditable", "true");
+		current.surface.focus();
+		selectThematicBreak(current.surface);
+
+		const deleteInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		current.surface.dispatchEvent(deleteInput);
+		expect(deleteInput.defaultPrevented).toBe(true);
+		expect(current.canonical()).toBe(deleted);
+
+		// Canonical selection changes while structural preview is pending
+		current.applyTextChange({
+			selection: { direction: "none", end: 0, start: 0 },
+			value: deleted,
+		});
+
+		const insertInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			data: "X",
+			inputType: "insertText",
+		});
+		current.surface.dispatchEvent(insertInput);
+
+		expect(insertInput.defaultPrevented).toBe(true);
+		expect(onFailure).toHaveBeenCalledWith(
+			"visual-editor-window-pending-selection-stale",
+		);
+		expect(current.canonical()).toBe(deleted);
 		view.unmount();
 	});
 
@@ -3035,6 +3335,317 @@ describe("WindowedImmersiveVisualEditor", () => {
 		submissionField.remove();
 	});
 
+	it.each(["text", "enter", "composition", "undo", "outside focus", "revision ABA", "held local", "paste", "held composition", "descended target", "descended target consumed", "pending paste"] as const)("keeps heading-adjacent fence exit and Enter at its original middle source gap (%s)", async (action) => {
+		const blockIndex = 160;
+		const fence = "~~~lang\nA\n~~~";
+		const current = fixture({
+			blockOverrides: { 159: "### Before", 160: fence, 161: "### After", 162: "```other\nNEIGHBOR\n```" },
+			markupOverrides: {
+				159: '<h3 data-easymde-visual-block-id="b159">Before</h3>\n',
+				160: '<pre data-easymde-visual-block-id="b160" data-easymde-visual-fence="~~~" data-easymde-visual-fence-info="lang"><code>A\n</code></pre>\n',
+				161: '<h3 data-easymde-visual-block-id="b161">After</h3>\n',
+				162: '<pre data-easymde-visual-block-id="b162" data-easymde-visual-fence="```" data-easymde-visual-fence-info="other"><code>NEIGHBOR\n</code></pre>\n',
+			},
+			mounted: [159, 160, 161, 162], paragraphBlocks: true,
+		});
+		const original = current.canonical();
+		const fenceStart = original.indexOf(fence);
+		const bodyStart = fenceStart + "~~~lang\n".length;
+		const container = document.createElement("div");
+		const submissionField = document.createElement("textarea");
+		submissionField.value = original;
+		submissionField.setSelectionRange(bodyStart + 1, bodyStart + 1);
+		document.body.append(container, submissionField);
+		const history = createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField });
+		history.setVisualEditingActive(true);
+		const requestPreview = vi.fn((_markdown: string) => "heading-fence-enter");
+		const release = vi.fn();
+		const onCanonicalDocumentChange = vi.fn();
+		const { view, rerenderPreview, onFailure, onDiagnostic } = renderWindowEditor(current, {
+			documentSession: { document: history } as unknown as EditorDocumentSession,
+			onCanonicalDocumentChange,
+			requestPreview,
+			requestPreviewAtDocumentEnd: (markdown) => ({ release, signature: requestPreview(markdown) }),
+		});
+		const outside = document.createElement("input");
+		document.body.append(outside);
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			current.surface.focus();
+			const text = current.surface.querySelector('[data-easymde-visual-block-id="b160"] code')?.firstChild;
+			const neighbor = current.surface.querySelector('[data-easymde-visual-block-id="b162"]');
+			if (!(text instanceof Text) || !(neighbor instanceof HTMLElement)) throw new Error("middle-fence-consumer-missing");
+			placeCaret(text, 1);
+			const deletion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "deleteContentBackward" });
+			const target = document.createRange(); target.setStart(text, 0); target.setEnd(text, 1);
+			Object.defineProperty(deletion, "getTargetRanges", { value: () => [target] });
+			current.surface.dispatchEvent(deletion);
+			expect(deletion.defaultPrevented).toBe(false);
+			text.deleteData(0, 1); placeCaret(text, 0);
+			current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+			expect(history.getValue()).toBe(original.replace("~~~lang\nA\n~~~", "~~~lang\n\n~~~"));
+			const backspace = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Backspace" });
+			current.surface.dispatchEvent(backspace);
+			expect(backspace.defaultPrevented).toBe(true);
+			const paragraph = current.surface.querySelector('[data-easymde-visual-block-id="b160"]');
+			if (!(paragraph instanceof HTMLParagraphElement)) throw new Error("middle-fence-exit-paragraph-missing");
+			expect(history.getSelection()).toEqual({ direction: "none", start: fenceStart, end: fenceStart });
+			expect(window.getSelection()?.anchorNode).toBe(paragraph);
+			// The exited fence leaves the renderer's lone BR placeholder, so the
+			// caret must sit at the block start rather than after the placeholder.
+			expect(paragraph.childNodes).toHaveLength(1);
+			expect(paragraph.firstChild).toBeInstanceOf(HTMLBRElement);
+			expect(window.getSelection()?.anchorOffset).toBe(0);
+			expect(neighbor.isConnected).toBe(true);
+			expect(current.surface.querySelector('[data-easymde-visual-block-id="b162"]')).toBe(neighbor);
+			const afterExit = history.getValue();
+			const enterKey = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" });
+			current.surface.dispatchEvent(enterKey);
+			expect(enterKey.defaultPrevented).toBe(false);
+			expect(onFailure).not.toHaveBeenCalled();
+			const enter = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" });
+			const paragraphStart = document.createRange(); paragraphStart.setStart(paragraph, 0); paragraphStart.collapse(true);
+			Object.defineProperty(enter, "getTargetRanges", { value: () => [paragraphStart] });
+			current.surface.dispatchEvent(enter);
+			expect(enter.defaultPrevented).toBe(true);
+			const gapStart = fenceStart + 1;
+			const afterEnter = afterExit.slice(0, fenceStart) + "\n" + afterExit.slice(fenceStart);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(history.getValue()).toBe(afterEnter);
+			expect(history.getSelection().start).toBeGreaterThan(0);
+			expect(requestPreview).toHaveBeenCalledOnce();
+			const acceptedMap: PreviewEditMap = { ...current.editMap, signature: "heading-fence-enter", blocks: current.editMap.blocks
+				.filter((_, index) => index !== blockIndex)
+				.map((block, index) => index < blockIndex ? block : { ...block, id: `b${index}`, startLine: block.startLine - 1, endLine: block.endLine - 1 }) };
+			if (action === "held local") {
+				const held = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "gap" });
+				const placeholder = paragraph.firstChild;
+				if (!(placeholder instanceof HTMLBRElement)) throw new Error("gap-placeholder-missing");
+				const target = document.createRange(); target.setStart(placeholder, 0); target.collapse(true);
+				Object.defineProperty(held, "getTargetRanges", { value: () => [target] });
+				current.surface.dispatchEvent(held);
+				expect(held.defaultPrevented).toBe(true);
+				const typed = afterEnter.slice(0, gapStart) + "gap" + afterEnter.slice(gapStart);
+				expect(history.getValue()).toBe(typed);
+				expect(history.getSelection()).toEqual({ direction: "none", start: gapStart + 3, end: gapStart + 3 });
+				expect(paragraph.textContent).toBe("gap");
+				expectConnectedCodeCaret(paragraph, 3);
+				expect(current.surface.querySelector('[data-easymde-visual-block-id="b162"]')).toBe(neighbor);
+				expect(onFailure).not.toHaveBeenCalled();
+				const typedMap: PreviewEditMap = { ...current.editMap, signature: "heading-fence-enter", blocks: current.editMap.blocks.map((block, index) => index < 160 ? block : index === 160 ? { ...block, startLine: block.startLine + 1, endLine: block.startLine + 2 } : { ...block, startLine: block.startLine - 1, endLine: block.endLine - 1 }) };
+				current.surface.innerHTML = '<div data-easymde-preview-window-spacer="1"></div><h3 data-easymde-visual-block-id="b159">Before</h3>\n<p data-easymde-visual-block-id="b160">gap</p>\n<h3 data-easymde-visual-block-id="b161">After</h3>\n<pre data-easymde-visual-block-id="b162"><code>NEIGHBOR\n</code></pre>\n<div data-easymde-preview-window-spacer="1"></div>';
+				rerenderPreview(typedMap, { revision: 4, signature: "heading-fence-enter" });
+				expect(current.surface.getAttribute("contenteditable")).toBe("true");
+				const acceptedText = current.surface.querySelector('[data-easymde-visual-block-id="b160"]')?.firstChild;
+				if (!(acceptedText instanceof Text)) throw new Error("gap-accepted-text-missing");
+				expect(window.getSelection()?.anchorNode).toBe(acceptedText);
+				expect(window.getSelection()?.anchorOffset).toBe(3);
+				const continuation = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "Z" });
+				current.surface.dispatchEvent(continuation);
+				expect(continuation.defaultPrevented).toBe(false);
+				acceptedText.appendData("Z"); placeCaret(acceptedText, 4);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "Z" }));
+				expect(history.getValue()).toBe(afterEnter.slice(0, gapStart) + "gapZ" + afterEnter.slice(gapStart));
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onDiagnostic).not.toHaveBeenCalled();
+				return;
+			}
+			if (action === "held composition") {
+				// An IME that begins before the Enter response returns must keep the
+				// pending canonical lease instead of being refused by the ready-only
+				// gap branch: the draft is discarded and its data is inserted once at
+				// the recorded gap.
+				const paragraphAfterEnter = current.surface.querySelector('[data-easymde-visual-block-id="b160"]');
+				if (!(paragraphAfterEnter instanceof HTMLElement)) throw new Error("gap-held-composition-paragraph-missing");
+				const revisionBeforeComposition = history.getRevision?.();
+				current.surface.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", isComposing: true, data: "文" }));
+				const draft = document.createTextNode("文");
+				paragraphAfterEnter.prepend(draft);
+				placeCaret(draft, 1);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", isComposing: true, data: "文" }));
+				expect(history.getValue()).toBe(afterEnter);
+				current.surface.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "文" }));
+				expect(onFailure).not.toHaveBeenCalled();
+				const composed = `${afterEnter.slice(0, gapStart)}文${afterEnter.slice(gapStart)}`;
+				expect(history.getValue()).toBe(composed);
+				expect(history.getSelection()).toEqual({ direction: "none", start: gapStart + 1, end: gapStart + 1 });
+				// The committed data is now the owned draft's own text: it must be
+				// visible exactly once, and canonical must have taken it exactly
+				// once, without the earlier formal certificate being refreshed.
+				const visible = paragraphAfterEnter.textContent ?? "";
+				expect(visible.split("文").length - 1).toBe(1);
+				expect(visible).toBe("文");
+				expect(history.getRevision?.()).toBe((revisionBeforeComposition as number) + 1);
+				expect(current.surface.querySelector('[data-easymde-visual-block-id="b162"]')).toBe(neighbor);
+				expect(onDiagnostic).not.toHaveBeenCalled();
+				return;
+			}
+			if (action === "pending paste") {
+				// The Enter Preview is still outstanding, so the paste must consume
+				// the authenticated pending lease instead of being refused.
+				expect(requestPreview).toHaveBeenCalledOnce();
+				const paste = new Event("paste", { bubbles: true, cancelable: true });
+				Object.defineProperty(paste, "clipboardData", {
+					value: { files: [], getData: () => "X", items: [], types: ["text/plain"] },
+				});
+				current.surface.dispatchEvent(paste);
+				expect(paste.defaultPrevented).toBe(true);
+				await act(async () => {
+					await new Promise<void>((resolve) => setTimeout(resolve, 0));
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(history.getValue()).toBe(`${afterEnter.slice(0, gapStart)}X${afterEnter.slice(gapStart)}`);
+				expect(history.getSelection()).toEqual({ direction: "none", start: gapStart + 1, end: gapStart + 1 });
+				expect(paragraph.textContent).toBe("X");
+				expectConnectedCodeCaret(paragraph, 1);
+				expect(requestPreview).toHaveBeenCalledTimes(2);
+				return;
+			}
+			current.surface.innerHTML = '<div data-easymde-preview-window-spacer="1"></div><h3 data-easymde-visual-block-id="b159">Before</h3><h3 data-easymde-visual-block-id="b160">After</h3><pre data-easymde-visual-block-id="b161"><code>NEIGHBOR\n</code></pre><div data-easymde-preview-window-spacer="1"></div>';
+			if (action === "outside focus") outside.focus();
+			if (action === "revision ABA") { expect(history.undo()).toBe(true); expect(history.redo()).toBe(true); }
+			rerenderPreview(acceptedMap, { revision: 3, signature: "heading-fence-enter" });
+			if (action === "revision ABA") {
+				expect(onCanonicalDocumentChange).toHaveBeenCalled();
+				const rejected = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "Q" });
+				current.surface.dispatchEvent(rejected);
+				expect(rejected.defaultPrevented).toBe(true);
+				expect(history.getValue()).toBe(afterEnter);
+				return;
+			}
+			if (action === "outside focus") {
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(document.activeElement).toBe(outside);
+				expect(history.getValue()).toBe(afterEnter);
+				return;
+			}
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+			expect(history.getSelection().start).toBeGreaterThan(0);
+			expect(window.getSelection()?.anchorNode).not.toBe(current.surface.firstChild);
+			expect(document.activeElement).toBe(current.surface);
+			if (action === "descended target" || action === "descended target consumed") {
+				// After acceptance the caret collapses onto the following heading's
+				// element boundary while canonical selection stays in the blank gap.
+				// Chromium then names a `beforeinput` target inside that heading's own
+				// text run; only a zero-length prefix is the same source boundary.
+				const presentation = current.surface.querySelector('[data-easymde-visual-block-id="b160"]');
+				if (!(presentation instanceof HTMLElement)) throw new Error("gap-descended-presentation-missing");
+				const headingText = presentation.firstChild;
+				if (!(headingText instanceof Text)) throw new Error("gap-descended-text-missing");
+				const target = document.createRange();
+				target.setStart(headingText, action === "descended target" ? 0 : 2);
+				target.collapse(true);
+				const input = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: "Q" });
+				Object.defineProperty(input, "getTargetRanges", { value: () => [target] });
+				current.surface.dispatchEvent(input);
+				expect(input.defaultPrevented).toBe(true);
+				if (action === "descended target") {
+					expect(history.getValue()).toBe(`${afterEnter.slice(0, gapStart)}Q${afterEnter.slice(gapStart)}`);
+					expect(history.getSelection()).toEqual({ direction: "none", start: gapStart + 1, end: gapStart + 1 });
+					expect(onFailure).not.toHaveBeenCalled();
+					expect(onDiagnostic).not.toHaveBeenCalled();
+				} else {
+					// A consumed prefix is source the browser would leave in front of
+					// the insertion point, so this point is not the blank gap.
+					expect(history.getValue()).toBe(afterEnter);
+					expect(onFailure).toHaveBeenCalledWith("visual-editor-window-pending-selection-stale");
+				}
+				return;
+			}
+			if (action === "paste") {
+				// The accepted restore collapses the native caret at the following
+				// heading's boundary while canonical selection stays in the blank
+				// gap. A plain-text paste must consume that authenticated gap
+				// instead of remapping the substitute presentation position.
+				const paste = new Event("paste", { bubbles: true, cancelable: true });
+				Object.defineProperty(paste, "clipboardData", {
+					value: {
+						files: [],
+						getData: () => "X",
+						items: [],
+						types: ["text/plain"],
+					},
+				});
+				current.surface.dispatchEvent(paste);
+				expect(paste.defaultPrevented).toBe(true);
+				await act(async () => {
+					await new Promise<void>((resolve) => setTimeout(resolve, 0));
+				});
+				expect(history.getValue()).toBe(
+					`${afterEnter.slice(0, gapStart)}X${afterEnter.slice(gapStart)}`,
+				);
+				expect(history.getSelection()).toEqual({
+					direction: "none",
+					end: gapStart + 1,
+					start: gapStart + 1,
+				});
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onDiagnostic).not.toHaveBeenCalled();
+				return;
+			}
+			let expectedSource = afterEnter;
+			let insertionPoint = gapStart;
+			if (action === "enter") {
+				current.surface.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+				const newline = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertParagraph" });
+				current.surface.dispatchEvent(newline);
+				expect(newline.defaultPrevented).toBe(true);
+				expectedSource = afterEnter.slice(0, gapStart) + "\n" + afterEnter.slice(gapStart);
+				insertionPoint += 1;
+				expect(history.getValue()).toBe(expectedSource);
+				rerenderPreview({ ...acceptedMap, blocks: acceptedMap.blocks.map((block, index) => index < 160 ? block : { ...block, startLine: block.startLine + 1, endLine: block.endLine + 1 }) }, { revision: 4, signature: "heading-fence-enter" });
+			}
+			const inserted = action === "composition" ? "文" : "Q";
+			if (action === "composition") {
+				const after = current.surface.querySelector('[data-easymde-visual-block-id="b160"]');
+				if (!(after instanceof HTMLElement)) throw new Error("gap-composition-after-missing");
+				current.surface.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", isComposing: true, data: inserted }));
+				const draft = document.createTextNode(inserted); after.prepend(draft); placeCaret(draft, draft.length);
+				current.surface.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", isComposing: true, data: inserted }));
+				expect(history.getValue()).toBe(expectedSource);
+				current.surface.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: inserted }));
+				expect(after.textContent).toBe("After");
+				expect(Array.from(current.surface.querySelectorAll("p")).some((node) => node.textContent === inserted)).toBe(true);
+				const completion = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertFromComposition", data: inserted });
+				current.surface.dispatchEvent(completion);
+				expect(completion.defaultPrevented).toBe(true);
+			} else {
+				const continuation = new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: inserted });
+				current.surface.dispatchEvent(continuation);
+				expect(continuation.defaultPrevented).toBe(true);
+			}
+			const typed = expectedSource.slice(0, insertionPoint) + inserted + expectedSource.slice(insertionPoint);
+			expect(history.getValue()).toBe(typed);
+			expect(history.getSelection()).toEqual({ direction: "none", start: insertionPoint + inserted.length, end: insertionPoint + inserted.length });
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+			if (action === "undo") {
+				const typedMap: PreviewEditMap = { ...current.editMap, signature: "heading-fence-enter", blocks: current.editMap.blocks.map((block, index) => index < 160 ? block : index === 160 ? { ...block, startLine: block.startLine + 1, endLine: block.startLine + 2 } : { ...block, startLine: block.startLine - 1, endLine: block.endLine - 1 }) };
+				const typedHtml = '<div data-easymde-preview-window-spacer="1"></div><h3 data-easymde-visual-block-id="b159">Before</h3><p data-easymde-visual-block-id="b160">Q</p><h3 data-easymde-visual-block-id="b161">After</h3><pre data-easymde-visual-block-id="b162"><code>NEIGHBOR\n</code></pre><div data-easymde-preview-window-spacer="1"></div>';
+				current.surface.innerHTML = typedHtml;
+				rerenderPreview(typedMap, { revision: 4, signature: "heading-fence-enter" });
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyUndo" }));
+				expect(history.getValue()).toBe(afterEnter);
+				current.surface.innerHTML = '<div data-easymde-preview-window-spacer="1"></div><h3 data-easymde-visual-block-id="b159">Before</h3><h3 data-easymde-visual-block-id="b160">After</h3><pre data-easymde-visual-block-id="b161"><code>NEIGHBOR\n</code></pre><div data-easymde-preview-window-spacer="1"></div>';
+				rerenderPreview(acceptedMap, { revision: 5, signature: "heading-fence-enter" });
+				expect(history.getSelection()).toEqual({ direction: "none", start: gapStart, end: gapStart });
+				current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" }));
+				expect(history.getValue()).toBe(typed);
+				current.surface.innerHTML = typedHtml;
+				rerenderPreview(typedMap, { revision: 6, signature: "heading-fence-enter" });
+				expect(history.getSelection()).toEqual({ direction: "none", start: gapStart + 1, end: gapStart + 1 });
+				expect(onFailure).not.toHaveBeenCalled();
+				expect(onDiagnostic).not.toHaveBeenCalled();
+			}
+		} finally {
+			view.unmount(); history.destroy(); container.remove(); submissionField.remove(); outside.remove();
+		}
+	});
+
 	it.each([
 		{ closed: true, fence: "~~~", targetRanges: "explicit" },
 		{ closed: true, fence: "```", targetRanges: "explicit" },
@@ -3448,12 +4059,19 @@ describe("WindowedImmersiveVisualEditor", () => {
 			await dispatchHistory("historyRedo", emptyMarkdown, true);
 			await dispatchHistory("historyRedo", frameRemovedMarkdown, false);
 
-			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledOnce();
-			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(
-				frameRemovedMarkdown,
-			);
-			expect(pinReleases).toHaveLength(1);
-			expect(pinReleases[0]).toHaveBeenCalledOnce();
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledTimes(4);
+			expect(requestPreviewAtDocumentEnd).toHaveBeenNthCalledWith(1, emptyMarkdown, {
+				direction: "none", start: bodyStart, end: bodyStart,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenNthCalledWith(2, initialMarkdown, {
+				direction: "none", start: bodyStart + 1, end: bodyStart + 1,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenNthCalledWith(3, emptyMarkdown, {
+				direction: "none", start: bodyStart, end: bodyStart,
+			});
+			expect(requestPreviewAtDocumentEnd).toHaveBeenNthCalledWith(4, frameRemovedMarkdown);
+			expect(pinReleases).toHaveLength(4);
+			for (const release of pinReleases) expect(release).toHaveBeenCalledOnce();
 			expect(documentSession.document.getSelection()).toEqual({
 				direction: "none",
 				end: frameRemovedMarkdown.length,
@@ -4227,7 +4845,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 		);
 
 		expect(current.canonical().split("\n")[160]).toBe("Line 160!");
-		expect(onFailure).toHaveBeenCalledOnce();
+		expect(
+			onFailure.mock.calls.map(([code]) => code),
+		).toContain("visual-editor-window-block-adoption-failed");
 		view.unmount();
 	});
 
@@ -4384,6 +5004,206 @@ describe("WindowedImmersiveVisualEditor", () => {
 		} finally {
 			view.unmount();
 		}
+	});
+
+	it("registers accepted window certificate with list and blockquote nested fences and preserves navigation", () => {
+		const listSource = "- item\n\n  ~~~js\n  alpha\n  ~~~";
+		const quoteSource = "> ```bash linenos\n> beta\n> ```";
+		const current = fixture({
+			blockOverrides: {
+				160: listSource,
+				161: quoteSource,
+			},
+			markupOverrides: {
+				160:
+					'<ul data-easymde-visual-block-id="b160"><li><p>item</p>' +
+					"<pre><code>alpha\n</code></pre></li></ul>",
+				161:
+					'<blockquote data-easymde-visual-block-id="b161">' +
+					"<pre><code>beta\n</code></pre></blockquote>",
+			},
+			mounted: [160, 161],
+			paragraphBlocks: true,
+		});
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const { rerenderAcceptedWindow, view } = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+		});
+		const listRoot = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		const quoteRoot = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b161"]',
+		);
+		if (!listRoot || !quoteRoot || !runtime) {
+			throw new Error("windowed-nested-fence-nodes-missing");
+		}
+		const adoptedList = listRoot.cloneNode(true) as HTMLElement;
+		const adoptedQuote = quoteRoot.cloneNode(true) as HTMLElement;
+		listRoot.replaceWith(adoptedList);
+		quoteRoot.replaceWith(adoptedQuote);
+		acceptedSnapshot = {
+			blocks: [
+				{
+					id: "b160",
+					innerHTML: adoptedList.innerHTML,
+					node: adoptedList,
+				},
+				{
+					id: "b161",
+					innerHTML: adoptedQuote.innerHTML,
+					node: adoptedQuote,
+				},
+			],
+			key: 1,
+			nodes: Array.from(current.surface.childNodes),
+			revision: 1,
+			signature: "windowed",
+		};
+		act(() => rerenderAcceptedWindow(1));
+		const listPre = adoptedList.querySelector("pre");
+		const quotePre = adoptedQuote.querySelector("pre");
+		expect(listPre?.getAttribute("data-easymde-visual-fence")).toBe("~~~");
+		expect(listPre?.getAttribute("data-easymde-visual-fence-info")).toBe("js");
+		expect(quotePre?.getAttribute("data-easymde-visual-fence")).toBe("```");
+		expect(quotePre?.getAttribute("data-easymde-visual-fence-info")).toBe(
+			"bash linenos",
+		);
+		const canonicalBefore = {
+			history: current.documentSession.document.getHistoryState(),
+			revision: current.documentSession.document.getRevision?.(),
+			value: current.canonical(),
+		};
+
+		try {
+			// Navigation succeeds because accepted certificate and live DOM matched
+			// through one source-bound idempotent transaction.
+			expect(
+				(runtime as ImmersiveVisualEditorRuntime).prepareSourceNavigation({
+					revision: 0,
+					value: current.canonical(),
+				}),
+			).toBe(true);
+			expect({
+				history: current.documentSession.document.getHistoryState(),
+				revision: current.documentSession.document.getRevision?.(),
+				value: current.canonical(),
+			}).toEqual(canonicalBefore);
+			expect(onFailure).not.toHaveBeenCalled();
+
+			// Context-menu whole-block selection on nested code pre is prepared.
+			expect(
+				(runtime as ImmersiveVisualEditorRuntime).prepareContextMenuSelection?.(
+					listPre,
+				),
+			).toBe(true);
+
+			// Ready-to-Ready window replacement: a newer snapshot for the same nodes
+			// re-registers idempotently.
+			acceptedSnapshot = {
+				...acceptedSnapshot,
+				key: 2,
+				revision: 2,
+			};
+			act(() => rerenderAcceptedWindow(2));
+			expect(
+				(runtime as ImmersiveVisualEditorRuntime).prepareSourceNavigation({
+					revision: 0,
+					value: current.canonical(),
+				}),
+			).toBe(true);
+			expect(listPre?.getAttribute("data-easymde-visual-fence")).toBe("~~~");
+
+			// Remount re-registers and preserves source navigation.
+			view.unmount();
+			let remountedRuntime: ImmersiveVisualEditorRuntime | null = null;
+			const remounted = renderWindowEditor(current, {
+				acceptedWindowSnapshotGeneration: 2,
+				getAcceptedWindowSnapshot: () => acceptedSnapshot,
+				onFailure,
+				onReady: (next) => {
+					remountedRuntime = next;
+				},
+			});
+			expect(
+				(remountedRuntime as ImmersiveVisualEditorRuntime | null)?.prepareSourceNavigation({
+					revision: 0,
+					value: current.canonical(),
+				}),
+			).toBe(true);
+			remounted.view.unmount();
+		} finally {
+			view.unmount();
+		}
+	});
+
+	it("rejects accepted window certificate for nested fence when DOM or bindings are invalid", () => {
+		const listSource = "- item\n\n  ~~~js\n  alpha\n  ~~~";
+		const current = fixture({
+			blockOverrides: { 160: listSource },
+			markupOverrides: {
+				160:
+					'<ul data-easymde-visual-block-id="b160"><li><p>item</p>' +
+					"<pre><code>alpha\n</code></pre></li></ul>",
+			},
+			mounted: [160],
+			paragraphBlocks: true,
+		});
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const onFailure = vi.fn();
+		const { rerenderAcceptedWindow, view } = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		const listRoot = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!listRoot || !runtime) throw new Error("windowed-root-missing");
+		const adoptedList = listRoot.cloneNode(true) as HTMLElement;
+		listRoot.replaceWith(adoptedList);
+
+		// Negative 1: non-derived HTML mutation in live container
+		acceptedSnapshot = {
+			blocks: [
+				{
+					id: "b160",
+					innerHTML: adoptedList.innerHTML,
+					node: adoptedList,
+				},
+			],
+			key: 1,
+			nodes: Array.from(current.surface.childNodes),
+			revision: 1,
+			signature: "windowed",
+		};
+		const paragraph = adoptedList.querySelector("p");
+		if (!paragraph) throw new Error("nested-paragraph-missing");
+		paragraph.textContent = "Mutated";
+		act(() => rerenderAcceptedWindow(1));
+		expect(
+			(runtime as ImmersiveVisualEditorRuntime).prepareSourceNavigation({
+				revision: 0,
+				value: current.canonical(),
+			}),
+		).toBe(false);
+		expect(onFailure).toHaveBeenCalledWith(
+			"visual-editor-window-source-navigation-dom-stale",
+		);
+		view.unmount();
 	});
 
 	it("rejects a same-ID foreign window node after certificate registration", () => {
@@ -5184,6 +6004,176 @@ describe("WindowedImmersiveVisualEditor", () => {
 		}
 	});
 
+	it("commits the following block boundary when a removal caret lands on the blank line it left", () => {
+		const current = fixture({
+			lineOverrides: { 160: "Remove me", 161: "After" },
+			mounted: [159, 160, 161],
+			paragraphBlocks: true,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(_markdown: string, _selection?: Readonly<{ end: number; start: number }>) => ({
+				release: vi.fn(),
+				signature: "windowed",
+			}),
+		);
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+
+		try {
+			if (!runtime) throw new Error("windowed-removal-caret-runtime-missing");
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			const source = current.canonical();
+			const removed = "Remove me";
+			const from = source.indexOf(removed);
+			if (from < 0) throw new Error("windowed-removal-caret-target-missing");
+			const to = from + removed.length + 1;
+			const value = source.slice(0, from) + source.slice(to);
+			// The command collapses its caret where the removed block started.
+			// That offset is the empty line the removal left behind, which no
+			// editable block owns.
+			expect(
+				readyRuntime.applyCanonicalChange({
+					change: {
+						changes: { from, insert: "", to },
+						selection: { direction: "none", end: from, start: from },
+						value,
+					},
+					expected: {
+						revision: 0,
+						selection: { direction: "none", end: 0, start: 0 },
+						value: source,
+					},
+				}),
+			).toBe("handled");
+			const projected = value.indexOf("After");
+			if (projected <= 0) {
+				throw new Error("windowed-removal-caret-follower-missing");
+			}
+			expect(current.documentChanges).toHaveBeenLastCalledWith(
+				expect.objectContaining({
+					selection: { direction: "none", end: projected, start: projected },
+					value,
+				}),
+			);
+			expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(value, {
+				direction: "none",
+				end: projected,
+				start: projected,
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+		} finally {
+			view.unmount();
+		}
+	});
+
+	it("commits the preceding block boundary when the removal has no following block", () => {
+		const current = fixture({
+			mounted: [159, 160],
+			paragraphBlocks: true,
+			sourceBlockCount: 161,
+		});
+		const onFailure = vi.fn();
+		const onTransferFailure = vi.fn();
+		const requestPreviewAtDocumentEnd = vi.fn(
+			(_markdown: string, _selection?: Readonly<{ end: number; start: number }>) => ({
+				release: vi.fn(),
+				signature: "windowed",
+			}),
+		);
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const { rerenderPreview, view } = renderWindowEditor(current, {
+			onFailure,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			onTransferFailure,
+			requestPreviewAtDocumentEnd,
+		});
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+
+		try {
+			if (!runtime) {
+				throw new Error("windowed-trailing-removal-runtime-missing");
+			}
+			const readyRuntime = runtime as ImmersiveVisualEditorRuntime;
+			const source = current.canonical();
+			const removed = "Line 160";
+			const from = source.indexOf(removed);
+			if (from < 0) throw new Error("windowed-trailing-removal-target-missing");
+			// The last block ends the document, so it has no trailing newline.
+			const to = source.length;
+			const value = source.slice(0, from) + source.slice(to);
+			const result = readyRuntime.applyCanonicalChange({
+				change: {
+					changes: { from, insert: "", to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			});
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(result).toBe("handled");
+			const preceding = "Line 159";
+			// The projected caret sits on the surviving boundary the removal
+			// left behind; the canonical write itself must carry the exact
+			// source and the projected collapsed selection.
+			const lastChange = current.documentChanges.mock.calls.at(-1)?.[0];
+			if (!lastChange) {
+				throw new Error("windowed-trailing-removal-change-missing");
+			}
+			expect(lastChange.value).toBe(value);
+			expect(lastChange.selection.start).toBe(lastChange.selection.end);
+			expect(
+				lastChange.selection.start,
+			).toBeGreaterThanOrEqual(value.indexOf(preceding));
+			expect(
+				lastChange.selection.start,
+			).toBeLessThanOrEqual(value.indexOf(preceding) + preceding.length + 1);
+			expect(onFailure).not.toHaveBeenCalled();
+			// The accepted Preview for the removal must not tear the surface
+			// down. The committed caret sits on the line terminator the removed
+			// block left behind, which no editable block owns, so the nearest
+			// mounted block owns the native caret instead.
+			current.surface
+				.querySelector('[data-easymde-visual-block-id="b160"]')
+				?.remove();
+			rerenderPreview(
+				{
+					blocks: current.editMap.blocks.slice(0, 160),
+					coordinate: "line",
+					signature: "windowed",
+					version: 1,
+				},
+				{ revision: 2, signature: "windowed" },
+			);
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onTransferFailure).not.toHaveBeenCalled();
+			const caret = window.getSelection();
+			expect(caret?.rangeCount).toBe(1);
+			expect(caret?.isCollapsed).toBe(true);
+			expect(current.surface.contains(caret?.anchorNode ?? null)).toBe(true);
+		} finally {
+			view.unmount();
+		}
+	});
+
 	it("applies an accepted canonical change through the formal windowed Preview owner", () => {
 		const current = fixture();
 		const onMarkdownChange = vi.fn();
@@ -5446,6 +6436,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -5725,6 +6716,125 @@ describe("WindowedImmersiveVisualEditor", () => {
 		},
 	);
 
+	it("rejects a cross-block forward target from a mid-body caret", () => {
+		// A malformed Chromium target is a no-op ONLY at the body's terminal
+		// caret. From a mid-body caret the same cross-block shape contradicts
+		// the code-body owner and keeps the explicit stale rejection.
+		const body = "ABCD\n";
+		const initialFence = `~~~\n${body}~~~`;
+		const onFailure = vi.fn();
+		const { code, current, initialMarkdown, view } = renderCodeBodyEditor(
+			initialFence,
+			body,
+			{ onFailure },
+		);
+
+		const heading = document.createElement("h3");
+		heading.setAttribute("data-easymde-visual-block-id", "b161");
+		heading.textContent = "Next";
+		const pre = code.closest("pre");
+		if (!(pre instanceof HTMLElement)) {
+			throw new Error("windowed-midbody-pre-missing");
+		}
+		pre.after(heading);
+		const text = code.firstChild;
+		if (!(text instanceof Text)) {
+			throw new Error("windowed-midbody-text-missing");
+		}
+		placeCaret(text, 2);
+		const target = document.createRange();
+		target.setStart(text, 2);
+		target.setEnd(heading, 0);
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentForward",
+		});
+		Object.defineProperty(beforeInput, "getTargetRanges", {
+			value: () => [target],
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		// The mid-body contradiction must stay an explicit failure - never a
+		// silent no-op and never a native mutation.
+		expect(onFailure).toHaveBeenCalled();
+		expect(current.canonical()).toBe(initialMarkdown);
+		view.unmount();
+	});
+
+	it("consumes a terminal forward deletion whose target leaves the code body", () => {
+		// The real Chromium shape captured on post-1018: the caret sits after
+		// the body's last content - one stop before the body's own terminal
+		// newline, which is its own trailing Text node - and the forward
+		// target runs from that newline's start out to the next block's
+		// element boundary. There is no in-body character to delete, so the
+		// keystroke is a structural no-op, not stale state.
+		const body = 'echo "gap-target"Q';
+		const markup =
+			'<span class="hljs-built_in">echo</span> '
+			+ '<span class="hljs-string">"gap-target"Q</span>\n';
+		const initialFence = `~~~bash\n${body}\n~~~`;
+		const onFailure = vi.fn();
+		const { code, current, initialMarkdown, view } = renderCodeBodyEditor(
+			initialFence,
+			`${body}\n`,
+			{ codeMarkup: markup, onFailure },
+		);
+
+		const heading = document.createElement("h3");
+		heading.setAttribute("data-easymde-visual-block-id", "b161");
+		heading.textContent = "Next";
+		const pre = code.closest("pre");
+		if (!(pre instanceof HTMLElement)) {
+			throw new Error("windowed-terminal-pre-missing");
+		}
+		pre.after(heading);
+		const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+		const textNodes: Text[] = [];
+		let walked = walker.nextNode();
+		while (walked) {
+			if (walked instanceof Text) textNodes.push(walked);
+			walked = walker.nextNode();
+		}
+		const caretNode = textNodes[textNodes.length - 2];
+		const newlineNode = textNodes[textNodes.length - 1];
+		if (
+			!caretNode
+			|| !newlineNode
+			|| "\n" !== newlineNode.data
+			|| caretNode.data !== '"gap-target"Q'
+		) {
+			throw new Error("windowed-terminal-text-shape-missing");
+		}
+		placeCaret(caretNode, caretNode.length);
+		const target = document.createRange();
+		target.setStart(newlineNode, 0);
+		target.setEnd(heading, 0);
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentForward",
+		});
+		Object.defineProperty(beforeInput, "getTargetRanges", {
+			value: () => [target],
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(current.canonical()).toBe(initialMarkdown);
+		const selection = window.getSelection();
+		const caretElement =
+			selection?.anchorNode instanceof Element
+				? selection.anchorNode
+				: (selection?.anchorNode?.parentElement ?? null);
+		expect(caretElement?.closest("pre > code")).toBe(code);
+		expect(onFailure).not.toHaveBeenCalledWith(
+			"visual-editor-code-body-selection-invalid",
+		);
+		view.unmount();
+	});
+
 	it("keeps a noncollapsed target range authoritative for code deletion", () => {
 		const initialFence = "~~~\nABCD\n~~~";
 		const expectedFence = "~~~\nAD\n~~~";
@@ -5865,6 +6975,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -5920,6 +7031,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={onPendingChange}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -6078,6 +7190,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -6728,6 +7841,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 						onPendingChange={vi.fn()}
 						onReady={vi.fn()}
 						prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+						retainCompositionSurface={testRetainCompositionSurface}
 						onTransferFailure={vi.fn()}
 						pending={false}
 						previewSnapshot={{ revision, signature: "word-history" }}
@@ -6982,6 +8096,95 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(selection?.toString()).toBe("前端开发");
 		expect(selection?.isCollapsed).toBe(false);
 		view.unmount();
+	});
+
+	it.each([true, false])("pins a focused non-EOF native Redo caret at the unmounted HR source boundary (focused=%s)", (focused) => {
+		const blocks = Array.from({ length: 100 }, (_, index) => `Line ${index}`);
+		const prefix = blocks.slice(0, 68).join("\n\n") + "\n\n";
+		blocks[68] = "P".repeat(3523 - prefix.length) + "R".repeat(170);
+		blocks[69] = "---";
+		const unpadded = blocks.join("\n\n");
+		blocks[99] += "Z".repeat(36979 - unpadded.length);
+		const original = blocks.join("\n\n");
+		const redone = original.slice(0, 3523) + original.slice(3693);
+		expect(original.length).toBe(36979);
+		expect(redone.length).toBe(36809);
+		expect(redone.slice(3525, 3529)).toBe("---\n");
+		const current = fixture({
+			blockOverrides: Object.fromEntries(blocks.map((block, index) => [index, block])),
+			mounted: Array.from({ length: 41 }, (_, index) => index),
+			paragraphBlocks: true,
+			sourceBlockCount: blocks.length,
+		});
+		const container = document.createElement("div");
+		const submissionField = document.createElement("textarea");
+		submissionField.value = original;
+		document.body.append(container, submissionField);
+		const history = createCodeMirrorDocumentSession({ container, label: "Markdown source", submissionField });
+		history.setVisualEditingActive(true);
+		history.applyTextChange({
+			changes: { from: 3523, to: 3693, insert: "" },
+			historySelectionBefore: { direction: "forward", start: 3523, end: 3693 },
+			recordHistorySelection: true,
+			selection: { direction: "none", start: 3525, end: 3525 },
+			value: redone,
+		});
+		expect(history.undo()).toBe(true);
+		const release = vi.fn();
+		const signature = "offscreen-hr-native-redo";
+		const requestPreviewAtDocumentEnd = vi.fn(() => ({ signature, release }));
+		const requestPreview = vi.fn(() => signature);
+		const { view, rerenderPreview, onDiagnostic, onFailure } = renderWindowEditor(current, {
+			documentSession: { document: history } as unknown as EditorDocumentSession,
+			requestPreview,
+			requestPreviewAtDocumentEnd,
+		});
+		const outside = document.createElement("input");
+		document.body.append(outside);
+		try {
+			current.surface.tabIndex = 0;
+			current.surface.setAttribute("contenteditable", "true");
+			if (focused) current.surface.focus();
+			else outside.focus();
+			expect(current.surface.querySelector('[data-easymde-visual-block-id="b69"]')).toBeNull();
+			current.surface.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "historyRedo" }));
+			expect(history.getValue()).toBe(redone);
+			expect(history.getSelection()).toEqual({ direction: "none", start: 3525, end: 3525 });
+			expect(history.getRevision?.()).toBe(3);
+			expect(history.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+			if (focused) {
+				expect(requestPreviewAtDocumentEnd).toHaveBeenCalledWith(redone, { direction: "none", start: 3525, end: 3525 });
+				expect(requestPreview).not.toHaveBeenCalled();
+				current.surface.innerHTML = '<div data-easymde-preview-window-spacer="1"></div>'
+					+ `<p data-easymde-visual-block-id="b68">${blocks[68]?.slice(0, -170)}</p>`
+					+ '<hr data-easymde-visual-block-id="b69"><p data-easymde-visual-block-id="b70">Line 70</p>'
+					+ '<div data-easymde-preview-window-spacer="1"></div>';
+			} else {
+				expect(requestPreviewAtDocumentEnd).not.toHaveBeenCalled();
+				expect(requestPreview).toHaveBeenCalledWith(redone);
+			}
+			rerenderPreview({ ...current.editMap, signature }, { revision: 2, signature });
+			expect(onFailure).not.toHaveBeenCalled();
+			expect(onDiagnostic).not.toHaveBeenCalled();
+			expect(history.getSelection()).toEqual({ direction: "none", start: 3525, end: 3525 });
+			expect(history.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+			expect(document.activeElement).toBe(focused ? current.surface : outside);
+			if (focused) {
+				const hr = current.surface.querySelector("hr");
+				expect(hr?.isConnected).toBe(true);
+				const native = window.getSelection();
+				expect(native?.isCollapsed).toBe(true);
+				expect(native?.anchorNode).toBe(current.surface);
+				expect(current.surface.childNodes[native?.anchorOffset ?? -1]).toBe(hr);
+				expect(release).toHaveBeenCalledOnce();
+			} else expect(release).not.toHaveBeenCalled();
+		} finally {
+			view.unmount();
+			history.destroy();
+			container.remove();
+			submissionField.remove();
+			outside.remove();
+		}
 	});
 
 	it("pins every focused Windowed history selection through the Preview owner", () => {
@@ -8407,13 +9610,13 @@ describe("WindowedImmersiveVisualEditor", () => {
 			expect(documentSession.document.undo()).toBe(true);
 			assertHistory(afterY, bodyStart + 2);
 			expect(documentSession.document.undo()).toBe(true);
-			assertHistory(afterX, bodyStart + 1);
-			expect(documentSession.document.undo()).toBe(true);
 			assertHistory(initialMarkdown, initialMarkdown.length);
 			expect(documentSession.document.redo()).toBe(true);
-			assertHistory(afterX, bodyStart + 1);
-			expect(documentSession.document.redo()).toBe(true);
-			assertHistory(afterY, bodyStart + 2);
+			// Redoing the whole run restores the caret CodeMirror maps from the
+			// run's pre-edit start selection through the composed change, which
+			// lands one stop short of the run's own post-edit caret - the same
+			// position a native typing run redoes to.
+			assertHistory(afterY, bodyStart + 1);
 			expect(documentSession.document.redo()).toBe(true);
 			assertHistory(afterLineBreak, bodyStart + 2 + lineEnding.length);
 
@@ -8987,7 +10190,9 @@ describe("WindowedImmersiveVisualEditor", () => {
 		if (!(pre instanceof HTMLElement) || !(code instanceof HTMLElement)) {
 			throw new Error("windowed-partial-open-fence-code-missing");
 		}
-		expect(pre.getAttribute("data-easymde-visual-fence-open-eof")).toBe("0");
+		// An opening-only row cannot prove a complete canonical interval, so it
+		// must not claim EOF ownership.
+		expect(pre.hasAttribute("data-easymde-visual-fence-open-eof")).toBe(false);
 		const initialHtml = current.surface.innerHTML;
 		const selectionRange = document.createRange();
 		selectionRange.setStart(code, 0);
@@ -9034,8 +10239,147 @@ describe("WindowedImmersiveVisualEditor", () => {
 		expect(current.canonical()).toBe(initialMarkdown);
 		expect(current.documentChanges).not.toHaveBeenCalled();
 		expect(current.surface.innerHTML).toBe(initialHtml);
-		expect(pre.getAttribute("data-easymde-visual-fence-open-eof")).toBe("0");
+		expect(pre.hasAttribute("data-easymde-visual-fence-open-eof")).toBe(false);
 		expect(onFailure).toHaveBeenCalledOnce();
+		view.unmount();
+	});
+
+	it("rejects an exact parent-anchored deletion when an open fence slice stops before canonical EOF", () => {
+		const blockIndex = 160;
+		const initialFence = "~~~js\n";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: initialFence },
+			markupOverrides: {
+				[blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code class="language-js"></code></pre>`,
+			},
+			mounted: [159, blockIndex, 161],
+			paragraphBlocks: true,
+		});
+		const initialMarkdown = current.canonical();
+		const initialHistory = current.documentSession.document.getHistoryState();
+		const initialSelection = current.documentSession.document.getSelection();
+		const onFailure = vi.fn();
+		const requestPreview = vi.fn(() => "unexpected-preview");
+		const { view } = renderWindowEditor(current, { onFailure, requestPreview });
+		const pre = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!(pre instanceof HTMLElement)) {
+			throw new Error("windowed-partial-open-fence-missing");
+		}
+		expect(pre.hasAttribute("data-easymde-visual-fence-open-eof")).toBe(false);
+		const initialHtml = current.surface.innerHTML;
+
+		const range = document.createRange();
+		range.selectNode(pre);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(onFailure).toHaveBeenCalledWith(
+			"visual-editor-window-selection-invalid",
+		);
+		expect(current.canonical()).toBe(initialMarkdown);
+		expect(current.documentChanges).not.toHaveBeenCalled();
+		expect(current.applyTextChange).not.toHaveBeenCalled();
+		expect(current.documentSession.document.getHistoryState()).toEqual(initialHistory);
+		expect(current.documentSession.document.getSelection()).toEqual(initialSelection);
+		expect(requestPreview).not.toHaveBeenCalled();
+		expect(current.surface.innerHTML).toBe(initialHtml);
+		view.unmount();
+	});
+
+	it("deletes a closed middle fence through exact parent-anchored selectNode(pre) and projects selection to the next surviving editable block", () => {
+		const blockIndex = 160;
+		const initialFence = "~~~js\nconsole.log(1);\n~~~";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: initialFence },
+			markupOverrides: {
+				[blockIndex]: `<pre data-easymde-visual-block-id="b${blockIndex}"><code class="language-js">console.log(1);\n</code></pre>`,
+			},
+			mounted: [159, blockIndex, 161],
+			paragraphBlocks: true,
+		});
+		const initialMarkdown = current.canonical();
+		const sourceRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+			initialMarkdown,
+			current.editMap,
+			{ end: blockIndex + 1, start: blockIndex },
+		);
+		const expectedMarkdown =
+			initialMarkdown.slice(0, sourceRange.start) +
+			initialMarkdown.slice(sourceRange.end);
+		const nextBlockIndex = 161;
+		const nextBlockRange = createVisualMarkdownSourceRangeFromPreviewEditMap(
+			initialMarkdown,
+			current.editMap,
+			{ end: nextBlockIndex + 1, start: nextBlockIndex },
+		);
+		const removedLength = sourceRange.end - sourceRange.start;
+		const nextBlockExpectedStart = nextBlockRange.start - removedLength;
+		expect(sourceRange.start).not.toBe(nextBlockExpectedStart);
+		expect(
+			expectedMarkdown.slice(sourceRange.start, nextBlockExpectedStart),
+		).toMatch(/^\n+$/);
+
+		const onFailure = vi.fn();
+		const requestPreview = vi.fn(() => "preview-after-middle-fence-delete");
+		const onMarkdownChange = vi.fn();
+		const { view } = renderWindowEditor(current, {
+			onFailure,
+			onMarkdownChange,
+			requestPreview,
+		});
+		const pre = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!(pre instanceof HTMLElement)) {
+			throw new Error("windowed-middle-fence-pre-missing");
+		}
+
+		const range = document.createRange();
+		range.selectNode(pre);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			inputType: "deleteContentBackward",
+		});
+		current.surface.dispatchEvent(beforeInput);
+
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(onFailure).not.toHaveBeenCalled();
+		expect(current.canonical()).toBe(expectedMarkdown);
+		expect(current.documentChanges).toHaveBeenCalledOnce();
+		expect(onMarkdownChange).toHaveBeenCalledOnce();
+		expect(current.documentSession.document.getSelection()).toEqual({
+			direction: "none",
+			end: nextBlockExpectedStart,
+			start: nextBlockExpectedStart,
+		});
+		expect(current.applyTextChange).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				changes: { from: sourceRange.start, insert: "", to: sourceRange.end },
+				selection: {
+					direction: "none",
+					end: nextBlockExpectedStart,
+					start: nextBlockExpectedStart,
+				},
+				value: expectedMarkdown,
+			}),
+		);
+		expect(requestPreview).toHaveBeenCalledWith(expectedMarkdown);
 		view.unmount();
 	});
 
@@ -9199,6 +10543,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 			onTransferFailure: vi.fn(),
 			pending: false,
 			prepareWindowBlockAdoption: testPrepareWindowBlockAdoption,
+			retainCompositionSurface: testRetainCompositionSurface,
 			previewSnapshot: { revision: 1, signature: "windowed" },
 			previewStatus: "ready" as const,
 			requestPreview,
@@ -9569,6 +10914,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9719,6 +11065,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending={false}
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9771,6 +11118,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 					onPendingChange={vi.fn()}
 					onReady={vi.fn()}
 					prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+					retainCompositionSurface={testRetainCompositionSurface}
 					onTransferFailure={vi.fn()}
 					pending={false}
 					previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9826,6 +11174,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 					onPendingChange={vi.fn()}
 					onReady={vi.fn()}
 					prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+					retainCompositionSurface={testRetainCompositionSurface}
 					onTransferFailure={vi.fn()}
 					pending={false}
 					previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9853,7 +11202,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 		},
 	);
 
-	it("blocks native keyboard history while a formal Preview is pending", () => {
+	it("claims native keyboard history while a formal Preview is pending", () => {
 		const current = fixture();
 		const view = render(
 			<WindowedImmersiveVisualEditor
@@ -9869,6 +11218,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 				onPendingChange={vi.fn()}
 				onReady={vi.fn()}
 				prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+				retainCompositionSurface={testRetainCompositionSurface}
 				onTransferFailure={vi.fn()}
 				pending
 				previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9886,8 +11236,11 @@ describe("WindowedImmersiveVisualEditor", () => {
 		});
 		current.surface.dispatchEvent(event);
 
+		// The canonical history owner claims the shortcut even while a formal
+		// Preview is in flight, so Undo/Redo is never invisible; the pending
+		// request is reconciled by the history path instead of dropped here.
 		expect(event.defaultPrevented).toBe(true);
-		expect(current.documentSession.document.redo).not.toHaveBeenCalled();
+		expect(current.documentSession.document.redo).toHaveBeenCalled();
 		view.unmount();
 	});
 
@@ -9910,6 +11263,7 @@ describe("WindowedImmersiveVisualEditor", () => {
 					onPendingChange={vi.fn()}
 					onReady={vi.fn()}
 					prepareWindowBlockAdoption={testPrepareWindowBlockAdoption}
+					retainCompositionSurface={testRetainCompositionSurface}
 					onTransferFailure={vi.fn()}
 					pending={false}
 					previewSnapshot={{ revision: 1, signature: "windowed" }}
@@ -9934,65 +11288,1340 @@ describe("WindowedImmersiveVisualEditor", () => {
 	);
 });
 
-describe("resolveLiveWindowContextMenuTarget", () => {
-	it("re-anchors a retired target onto the live element of the same visual block", () => {
-		const surface = document.createElement("article");
-		surface.innerHTML = [
-			'<p data-easymde-visual-block-id="b0"><a href="https://example.test/link"><span>link</span><img alt="linked" src="https://example.test/linked.png"></a><span class="easymde-math" data-easymde-generated-source="x">x</span><img alt="alt" src="https://example.test/original.png"></p>',
-			'<p data-easymde-visual-block-id="b1">Line 1</p>',
-		].join("");
-		document.body.append(surface);
-		const liveImage = surface.querySelectorAll("img")[1];
-		const liveLinkedImage = surface.querySelector("a img");
-		const liveLink = surface.querySelector("a");
-		const liveMath = surface.querySelector(".easymde-math");
-		const retiredBlock = document.createElement("p");
-		retiredBlock.setAttribute("data-easymde-visual-block-id", "b0");
-		const retiredLink = document.createElement("a");
-		retiredLink.href = "https://example.test/link";
-		retiredLink.innerHTML = '<span>link</span><img alt="linked" src="https://example.test/linked.png">';
-		const retiredMath = document.createElement("span");
-		retiredMath.className = "easymde-math";
-		retiredMath.setAttribute("data-easymde-generated-source", "x");
-		retiredMath.textContent = "x";
-		const retiredImage = document.createElement("img");
-		retiredImage.setAttribute("alt", "alt");
-		retiredImage.setAttribute("src", "https://example.test/original.png");
-		const retiredLinkedImage = retiredLink.querySelector("img") as HTMLImageElement;
-		retiredBlock.append(retiredLink, retiredMath);
-		retiredBlock.append(retiredImage);
-		const retiredParagraph = document.createElement("p");
-		retiredParagraph.setAttribute("data-easymde-visual-block-id", "b1");
+describe("Windowed context-menu target lease", () => {
+	function targetFixture(): Readonly<{
+		current: ReturnType<typeof fixture>;
+		runtime: () => ImmersiveVisualEditorRuntime;
+		surface: HTMLElement;
+		unmount: () => void;
+	}> {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const current = fixture({
+			blockOverrides: { [blockIndex]: `Before ${imageMarkdown}` },
+			markupOverrides: {
+				[blockIndex]:
+					`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+					+ '<img alt="alt" src="https://example.test/image.png"></p>',
+			},
+			mounted: [blockIndex],
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		const surface = current.surface;
+		return {
+			current,
+			runtime: () => {
+				if (!runtime) throw new Error("windowed-lease-runtime-missing");
+				return runtime;
+			},
+			surface,
+			unmount: () => {
+				rendered.view.unmount();
+				if (surface.isConnected) surface.remove();
+			},
+		};
+	}
 
-		// A target that still lives in the surface is its own live element.
-		expect(resolveLiveWindowContextMenuTarget(surface, liveImage)).toBe(
-			liveImage,
+	it("binds the exact live target without writing the document", () => {
+		const { current, runtime, surface, unmount } = targetFixture();
+		const image = surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		const canonicalBefore = current.canonical();
+		const writesBefore = current.applyTextChange.mock.calls.length;
+
+		const lease = runtime().captureContextMenuTarget(image);
+		expect(lease).not.toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writesBefore);
+		expect(current.canonical()).toBe(canonicalBefore);
+		expect(lease?.resolve()).toBe(image);
+
+		lease?.release();
+		// Release is terminal and idempotent: the block is still mounted, yet
+		// the retired demand no longer has a target.
+		expect(lease?.resolve()).toBeNull();
+		expect(() => lease?.release()).not.toThrow();
+		unmount();
+	});
+
+	it("captures and resolves a pointed block while another block changed", () => {
+		const current = fixture({
+			blockOverrides: { 160: "Pointed", 161: "Neighbour" },
+			mounted: [160, 161],
+			markupOverrides: {
+				160:
+					'<p data-easymde-visual-block-id="b160">Pointed '
+					+ '<img alt="alt" src="https://example.test/image.png"></p>',
+				161: '<p data-easymde-visual-block-id="b161">Neighbour</p>',
+			},
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const surface = current.surface;
+		const image = surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		// A different mounted root is rewritten by a legally accepted render
+		// (enhancement, materialization, a scroll-driven window commit). The
+		// pointed block is untouched, so the gesture still owns its own row.
+		const neighbour = surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b161"]',
 		);
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBe(
-			liveImage,
+		if (!neighbour) throw new Error("windowed-lease-neighbour-missing");
+		neighbour.textContent = "Enhancement rendered elsewhere";
+		const writes = current.applyTextChange.mock.calls.length;
+		const canonical = current.canonical();
+
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const lease = root.captureContextMenuTarget(image);
+		if (!lease) throw new Error("windowed-lease-not-issued");
+		expect(lease.resolve()).toBe(image);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		expect(current.canonical()).toBe(canonical);
+
+		// The same proof still refuses a target whose OWN block was rewritten:
+		// a foreign change is never laundered into another block's authority.
+		const imageBlock = image.closest<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
 		);
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredLinkedImage)).toBe(
-			liveLinkedImage,
-		);
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredLink)).toBe(
-			liveLink,
-		);
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredMath)).toBe(
-			liveMath,
-		);
-		expect(
-			resolveLiveWindowContextMenuTarget(surface, retiredParagraph),
-		).toBe(surface.children[1]);
-		expect(resolveLiveWindowContextMenuTarget(surface, null)).toBeNull();
-		// The live slot is only the same image target while it renders the same
-		// source, and a block that is not mounted any more cannot be
-		// re-anchored at all.
-		liveImage?.setAttribute("src", "https://example.test/other.png");
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBeNull();
-		// A block that is not mounted any more cannot be re-anchored at all.
-		liveImage?.setAttribute("src", "https://example.test/original.png");
-		retiredBlock.setAttribute("data-easymde-visual-block-id", "b9");
-		expect(resolveLiveWindowContextMenuTarget(surface, retiredImage)).toBeNull();
+		if (!imageBlock) throw new Error("windowed-lease-block-missing");
+		imageBlock.append("foreign");
+		expect(lease.resolve()).toBeNull();
+		expect(root.captureContextMenuTarget(image)).toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		lease.release();
+		expect(lease.resolve()).toBeNull();
+		rendered.view.unmount();
 		surface.remove();
+	});
+
+	it("refuses a surface witness once the accepted child list was mutated", () => {
+		const { runtime, surface, unmount } = targetFixture();
+		expect(runtime().captureContextMenuTarget(surface)).not.toBeNull();
+		// A same-id replacement is not a new accepted render: the owner never
+		// installed this node, so the surface no longer describes the document
+		// it accepted and a whole-surface gesture is refused rather than being
+		// prepared against rows that no longer describe the mounted DOM.
+		const imageBlock = surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!imageBlock) throw new Error("windowed-lease-block-missing");
+		imageBlock.replaceWith(imageBlock.cloneNode(true));
+		expect(runtime().captureContextMenuTarget(surface)).toBeNull();
+		expect(runtime().captureContextMenuTarget(surface.querySelector("img")))
+			.toBeNull();
+		unmount();
+	});
+
+	it("refuses the demand preflight while the accepted DOM describes another source", () => {
+		const blockIndex = 160;
+		const current = fixture({ mounted: [blockIndex] });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		// A committed canonical write whose accepted render has not arrived: the
+		// mounted DOM still describes the previous revision, so no demand can be
+		// attributed to it yet. The gesture ends here, before any capture.
+		const before = current.canonical();
+		current.setCanonical(`${before}\n\nPending`);
+		expect(root.prepareContextMenuDemand()).toBe(false);
+		expect(root.captureContextMenuTarget(current.surface)).toBeNull();
+		// Nothing was written, and the refusal is not a failure report.
+		expect(current.canonical()).toBe(`${before}\n\nPending`);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("captures the surface root for a keyboard activation and never a spacer", () => {
+		const blockIndex = 160;
+		const current = fixture({
+			mounted: [blockIndex],
+			sourceBlockCount: 320,
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const lease = root.captureContextMenuTarget(current.surface);
+		expect(lease?.resolve()).toBe(current.surface);
+		const spacer = current.surface.querySelector(
+			"[data-easymde-preview-window-spacer]",
+		);
+		if (!(spacer instanceof HTMLElement)) {
+			throw new Error("windowed-lease-spacer-missing");
+		}
+		expect(root.captureContextMenuTarget(spacer)).toBeNull();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses detached, foreign, and unattributable targets", () => {
+		const { runtime, surface, unmount } = targetFixture();
+		const detached = document.createElement("img");
+		detached.setAttribute("alt", "alt");
+		detached.setAttribute("src", "https://example.test/image.png");
+		const otherSurface = document.createElement("article");
+		otherSurface.innerHTML =
+			'<p data-easymde-visual-block-id="b160">Before '
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		document.body.append(otherSurface);
+		const foreignImage = otherSurface.querySelector("img");
+		const loose = document.createElement("span");
+		surface.append(loose);
+
+		expect(runtime().captureContextMenuTarget(detached)).toBeNull();
+		expect(runtime().captureContextMenuTarget(foreignImage)).toBeNull();
+		expect(runtime().captureContextMenuTarget(loose)).toBeNull();
+		expect(runtime().captureContextMenuTarget(null)).toBeNull();
+		otherSurface.remove();
+		unmount();
+	});
+
+	it("retires the lease when an accepted source change reuses the block id", () => {
+		const { current, runtime, surface, unmount } = targetFixture();
+		const image = surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		const lease = runtime().captureContextMenuTarget(image);
+		expect(lease).not.toBeNull();
+		const writes = current.applyTextChange.mock.calls.length;
+		// A foreign canonical write reuses the label for a different block.
+		current.setCanonical(`${current.canonical()}\n\nReplaced`);
+		expect(lease?.resolve()).toBeNull();
+		// Resolution itself never writes canonical content or history.
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		unmount();
+	});
+
+	it("refuses capture while a foreign canonical write stands", () => {
+		const { current, runtime, surface, unmount } = targetFixture();
+		current.setCanonical(`${current.canonical()}\n\nForeign`);
+		expect(runtime().captureContextMenuTarget(surface.querySelector("img")))
+			.toBeNull();
+		unmount();
+	});
+
+	it("refuses the demand preflight during an unsettled native input", async () => {
+		const blockIndex = 160;
+		const current = fixture({ mounted: [blockIndex] });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		expect(root.prepareContextMenuDemand()).toBe(true);
+
+		const text = current.surface.querySelector("p")?.firstChild;
+		if (!(text instanceof Text)) throw new Error("windowed-lease-text-missing");
+		// compositionstart owns a draft only from this surface's authenticated
+		// caret; without one the owner rejects the composition and never enters
+		// the state this preflight must refuse.
+		placeCaret(text, text.length);
+		// An IME draft belongs to the browser until compositionend publishes it.
+		current.surface.dispatchEvent(
+			new CompositionEvent("compositionstart", { bubbles: true }),
+		);
+		expect(root.prepareContextMenuDemand()).toBe(false);
+		current.surface.dispatchEvent(
+			new CompositionEvent("compositionend", { data: "" }),
+		);
+		await act(async () => {
+			await Promise.resolve();
+		});
+		// Once the draft is settled the ordinary preflight resumes.
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("resolves a registered same-source replacement through the lease API", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: `Before ${imageMarkdown}` },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const originalImage = current.surface.querySelector("img");
+		if (!(originalImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		const writesBefore = current.applyTextChange.mock.calls.length;
+
+		const lease = root.captureContextMenuTarget(originalImage);
+		expect(lease).not.toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writesBefore);
+		expect(lease?.resolve()).toBe(originalImage);
+
+		// The accepted Preview window commit replaces the block with an
+		// equivalent render of the same source.
+		const paragraph = current.surface.querySelector("p");
+		if (!(paragraph instanceof HTMLParagraphElement)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		paragraph.outerHTML = blockMarkup;
+		const replacement = current.surface.querySelector("p");
+		if (!(replacement instanceof HTMLParagraphElement)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(
+			current,
+			replacement,
+		);
+		act(() => rendered.rerenderAcceptedWindow(1));
+
+		const replacementImage = current.surface.querySelector("img");
+		if (!(replacementImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		expect(originalImage.isConnected).toBe(false);
+		expect(replacementImage.isConnected).toBe(true);
+		expect(replacementImage).not.toBe(originalImage);
+		expect(lease?.resolve()).toBe(replacementImage);
+		expect(failures).toEqual([]);
+		expect(current.applyTextChange.mock.calls.length).toBe(writesBefore);
+
+		// A released lease is dead even though its block is still mounted.
+		lease?.release();
+		expect(lease?.resolve()).toBeNull();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("keeps a certified same-source row while pending and resolves after acceptance", () => {
+		const blockIndex = 160;
+		const imageMarkdown = "![alt](https://example.test/image.png)";
+		const blockMarkup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: `Before ${imageMarkdown}` },
+			markupOverrides: { [blockIndex]: blockMarkup },
+			mounted: [blockIndex],
+		});
+		// The fixture assigns the editable property; jsdom does not reflect it to
+		// the attribute, so publish the producer's editable surface explicitly.
+		current.surface.setAttribute("contenteditable", "true");
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			pending: true,
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const image = current.surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		// The real producer keeps the surface editable during a same-source
+		// transfer, so the demand is admitted.
+		expect(current.surface.getAttribute("contenteditable")).toBe("true");
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		const writesBefore = current.applyTextChange.mock.calls.length;
+		const lease = root.captureContextMenuTarget(image);
+		expect(lease).not.toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writesBefore);
+		// Readiness, not identity, keeps the target unresolved while pending.
+		expect(lease?.resolve()).toBeNull();
+
+		const paragraph = current.surface.querySelector("p");
+		if (!(paragraph instanceof HTMLParagraphElement)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		paragraph.outerHTML = blockMarkup;
+		const replacement = current.surface.querySelector("p");
+		if (!(replacement instanceof HTMLParagraphElement)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(
+			current,
+			replacement,
+		);
+		act(() => rendered.rerenderPendingAcceptedWindow(1, false));
+
+		const replacementImage = current.surface.querySelector("img");
+		if (!(replacementImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		expect(lease?.resolve()).toBe(replacementImage);
+		expect(failures).toEqual([]);
+		expect(current.applyTextChange.mock.calls.length).toBe(writesBefore);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("rebinds a fresh demand on the same image after the accepted scale render", () => {
+		const blockIndex = 160;
+		const scaled = '![alt](https://example.test/image.png "{width=50%}")';
+		const markup = (title: string): string =>
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ `<img alt="alt" src="https://example.test/image.png" title="${title}"></p>`;
+		// The scaled source is already the canonical document, exactly as it is
+		// once the Image scale command has written it; the mounted DOM is still
+		// the accepted 100% render.
+		const current = fixture({
+			blockOverrides: { [blockIndex]: `Before ${scaled}` },
+			markupOverrides: { [blockIndex]: markup("{width=100%}") },
+			mounted: [blockIndex],
+		});
+		expect(current.canonical()).toContain(scaled);
+		current.surface.setAttribute("contenteditable", "true");
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const firstImage = current.surface.querySelector("img");
+		if (!(firstImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		// The accepted render for the scaled source installs a new image node.
+		const block = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		block.outerHTML = markup("{width=50%}");
+		const replacement = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!replacement) throw new Error("windowed-lease-block-missing");
+		acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(
+			current,
+			replacement,
+		);
+		act(() => rendered.rerenderAcceptedWindow(1));
+		expect(failures).toEqual([]);
+
+		// A demand on the SAME image after that accepted render binds the live
+		// replacement node and never the retired element.
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		const acceptedImage = current.surface.querySelector("img");
+		if (!(acceptedImage instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		expect(acceptedImage).not.toBe(firstImage);
+		const replay = root.captureContextMenuTarget(acceptedImage);
+		if (!replay) throw new Error("windowed-lease-not-issued");
+		expect(replay.resolve()).toBe(acceptedImage);
+		expect(failures).toEqual([]);
+		replay.release();
+		expect(replay.resolve()).toBeNull();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses the demand while the owner's own scale transfer is still pending", () => {
+		const blockIndex = 160;
+		const original = '![alt](https://example.test/image.png "{width=100%}")';
+		const markup =
+			`<p data-easymde-visual-block-id="b${blockIndex}">Before `
+			+ '<img alt="alt" src="https://example.test/image.png" title="{width=100%}"></p>';
+		const current = fixture({
+			blockOverrides: { [blockIndex]: `Before ${original}` },
+			markupOverrides: { [blockIndex]: markup },
+			mounted: [blockIndex],
+		});
+		current.surface.setAttribute("contenteditable", "true");
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			requestPreview: () => "windowed",
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const image = current.surface.querySelector("img");
+		if (!(image instanceof HTMLImageElement)) {
+			throw new Error("windowed-lease-image-missing");
+		}
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		root.captureContextMenuTarget(image)?.release();
+		const source = current.canonical();
+		const from = source.indexOf('"{width=100%}"');
+		if (from < 0) throw new Error("windowed-lease-source-missing");
+		const to = from + '"{width=100%}"'.length;
+		const value = `${source.slice(0, from)}"{width=50%}"${source.slice(to)}`;
+		expect(
+			root.applyCanonicalChange({
+				change: {
+					changes: { from, insert: '"{width=50%}"', to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			}),
+		).toBe("handled");
+		// The canonical document is already the scaled source while the accepted
+		// DOM still renders the previous width: the pointed block cannot be
+		// attributed to either document yet. The gesture ends before capture and
+		// reports nothing; the settled transfer admits the next gesture.
+		expect(current.canonical()).toBe(value);
+		expect(image.getAttribute("title")).toBe("{width=100%}");
+		expect(root.prepareContextMenuDemand()).toBe(false);
+		expect(root.captureContextMenuTarget(image)).toBeNull();
+		expect(failures).toEqual([]);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses capture while the accepted DOM still describes another source", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const block = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		// A structural local commit retires the produced block and publishes a
+		// new canonical source while the accepted window still renders the old
+		// one; no correspondence into the demanded source exists yet.
+		const source = current.canonical();
+		const from = source.indexOf("Line 160");
+		if (from < 0) throw new Error("windowed-lease-source-missing");
+		const to = from + "Line 160".length;
+		const value = source.slice(0, from) + source.slice(to);
+		expect(
+			root.applyCanonicalChange({
+				change: {
+					changes: { from, insert: "", to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			}),
+		).toBe("handled");
+		expect(root.captureContextMenuTarget(block)).toBeNull();
+		expect(current.applyTextChange).toHaveBeenCalled();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("never retargets an earlier lease after a structural source change", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const block = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		const lease = root.captureContextMenuTarget(block);
+		expect(lease?.resolve()).toBe(block);
+		const source = current.canonical();
+		const from = source.indexOf("Line 160");
+		if (from < 0) throw new Error("windowed-lease-source-missing");
+		const to = from + "Line 160".length;
+		const value = source.slice(0, from) + source.slice(to);
+		expect(
+			root.applyCanonicalChange({
+				change: {
+					changes: { from, insert: "", to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			}),
+		).toBe("handled");
+		const writes = current.applyTextChange.mock.calls.length;
+		// The lease binds the canonical source it was captured in, so a later
+		// render of a different document cannot satisfy it. (This case is
+		// rejected by source equality, before the captured row could be
+		// compared; it does not by itself exercise the row guard.)
+		expect(lease?.resolve()).toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		expect(current.canonical()).toBe(value);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses a forged nested label and a duplicated same-label root", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const accepted = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!accepted) throw new Error("windowed-lease-block-missing");
+
+		// A forged nested label is certified into the accepted DOM first, so
+		// the mount certificate passes and only the actual-root/identity rule
+		// can refuse it.
+		const forgedLabel = document.createElement("span");
+		forgedLabel.setAttribute("data-easymde-visual-block-id", "b999");
+		accepted.append(forgedLabel);
+		acceptedSnapshot = acceptedWindowSnapshotForMountedBlock(current, accepted);
+		act(() => rendered.rerenderAcceptedWindow(1));
+		expect(root.captureContextMenuTarget(forgedLabel)).toBeNull();
+		const validLease = root.captureContextMenuTarget(accepted);
+		if (!validLease) throw new Error("windowed-lease-not-issued");
+		expect(validLease.resolve()).toBe(accepted);
+		validLease.release();
+		expect(validLease.resolve()).toBeNull();
+
+		// A second mounted root claiming the same label can never be part of an
+		// accepted mount (the certificate pins the exact child sequence and
+		// unique ids), so a duplicated mount is refused before any label is
+		// trusted, and the captured-root uniqueness check is a second defense
+		// for the window before a fresh certificate exists.
+		const duplicate = accepted.cloneNode(true) as HTMLElement;
+		current.surface.append(duplicate);
+		expect(root.captureContextMenuTarget(duplicate)).toBeNull();
+		expect(root.captureContextMenuTarget(accepted)).toBeNull();
+		duplicate.remove();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("binds an immediate ordinary native input without a flush", () => {
+		const blockIndex = 160;
+		const current = fixture({ mounted: [blockIndex] });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const requestPreview = vi.fn(() => "next");
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			requestPreview,
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+		const text = current.surface.querySelector("p")?.firstChild;
+		if (!(text instanceof Text)) {
+			throw new Error("windowed-lease-text-missing");
+		}
+		const initial = current.canonical();
+		const start = initial.indexOf("Line 160");
+		if (start < 0) throw new Error("windowed-lease-source-missing");
+		placeCaret(text, text.data.length);
+
+		current.surface.dispatchEvent(
+			new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+		text.data = `${text.data}Z`;
+		placeCaret(text, text.data.length);
+		current.surface.dispatchEvent(
+			new InputEvent("input", {
+				bubbles: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+
+		// The ordinary owner publishes its own native input synchronously, so
+		// the demand sees the user's text with no debounce to flush.
+		expect(current.canonical()).toBe(
+			`${initial.slice(0, start)}Line 160Z${initial.slice(start + 8)}`,
+		);
+		expect(requestPreview).not.toHaveBeenCalled();
+		const block = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		const writes = current.applyTextChange.mock.calls.length;
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		const lease = root.captureContextMenuTarget(block);
+		expect(lease?.resolve()).toBe(block);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses authority for a mounted root relabelled to another valid unmounted row", () => {
+		const blockIndex = 160;
+		const neighborIndex = 161;
+		const current = fixture({
+			lineOverrides: {
+				[blockIndex]: "Same",
+				[neighborIndex]: "Same",
+			},
+			mounted: [blockIndex],
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const mounted = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${blockIndex}"]`,
+		);
+		if (!mounted) throw new Error("windowed-lease-block-missing");
+		const canonicalBefore = current.canonical();
+		const lease = root.captureContextMenuTarget(mounted);
+		if (!lease) throw new Error("windowed-lease-not-issued");
+		expect(lease.resolve()).toBe(mounted);
+		const writes = current.applyTextChange.mock.calls.length;
+		const selectionBefore = window.getSelection();
+		const rangeBefore =
+			selectionBefore && selectionBefore.rangeCount > 0
+				? selectionBefore.getRangeAt(0).cloneRange()
+				: null;
+
+		// Only the live label changes: same Node, same body, same source, same
+		// accepted mount, and the new label names a real unmounted row whose
+		// rendering is identical.
+		mounted.setAttribute(
+			"data-easymde-visual-block-id",
+			`b${neighborIndex}`,
+		);
+		expect(mounted.textContent).toBe("Same");
+		expect(
+			current.surface.querySelectorAll(
+				`[data-easymde-visual-block-id="b${neighborIndex}"]`,
+			).length,
+		).toBe(1);
+
+		expect(root.captureContextMenuTarget(mounted)).toBeNull();
+		expect(lease.resolve()).toBeNull();
+		// The metadata-using readiness/source-navigation path rejects before any
+		// canonical selection or data write.
+		expect(
+			root.prepareSourceNavigation({
+				revision: 0,
+				value: current.canonical(),
+			}),
+		).toBe(false);
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		expect(failures).toContain(
+			"visual-editor-window-source-navigation-dom-stale",
+		);
+		expect(current.canonical()).toBe(canonicalBefore);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		const selectionAfter = window.getSelection();
+		const rangeAfter =
+			selectionAfter && selectionAfter.rangeCount > 0
+				? selectionAfter.getRangeAt(0).cloneRange()
+				: null;
+		expect(rangeAfter?.startContainer ?? null).toBe(
+			rangeBefore?.startContainer ?? null,
+		);
+		expect(rangeAfter?.startOffset ?? -1).toBe(rangeBefore?.startOffset ?? -1);
+
+		// A native beforeinput on the forged root cannot launder the label into a
+		// fresh local accepted registry either. The owner cancels the native
+		// mutation, so the DOM text must not be advanced after the rejection.
+		const text = mounted.firstChild;
+		if (!(text instanceof Text)) {
+			throw new Error("windowed-lease-text-missing");
+		}
+		placeCaret(text, text.data.length);
+		const beforeInput = new InputEvent("beforeinput", {
+			bubbles: true,
+			cancelable: true,
+			data: "Z",
+			inputType: "insertText",
+		});
+		current.surface.dispatchEvent(beforeInput);
+		expect(beforeInput.defaultPrevented).toBe(true);
+		expect(mounted.textContent).toBe("Same");
+		expect(current.canonical()).toBe(canonicalBefore);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("does not publish canonical input when retained metadata changes mid-event", () => {
+		const firstIndex = 159;
+		const secondIndex = 160;
+		const current = fixture({ mounted: [firstIndex, secondIndex] });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const failures: string[] = [];
+		const rendered = renderWindowEditor(current, {
+			onFailure: (code: string) => failures.push(code),
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+		const edited = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${firstIndex}"]`,
+		);
+		const text = edited?.firstChild;
+		if (!(edited && text instanceof Text)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		const canonicalBefore = current.canonical();
+		const documentChangesBefore = current.documentChanges.mock.calls.length;
+		placeCaret(text, text.data.length);
+		current.surface.dispatchEvent(
+			new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+		// The native event is free to change content, but this retained root no
+		// longer carries the label it was accepted with.
+		edited.setAttribute(
+			"data-easymde-visual-block-id",
+			`b${secondIndex + 1}`,
+		);
+		text.data = `${text.data}Z`;
+		placeCaret(text, text.data.length);
+		current.surface.dispatchEvent(
+			new InputEvent("input", {
+				bubbles: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+
+		expect(current.canonical()).toBe(canonicalBefore);
+		// A selection-only publication from the beforeinput capture is expected;
+		// canonical document writes are not.
+		expect(current.documentChanges.mock.calls.length).toBe(documentChangesBefore);
+		expect(failures).toContain(
+			"visual-editor-window-source-navigation-dom-stale",
+		);
+		// The forged label gained no canonical authority: the same node remains
+		// uncapturable, and canonical source/history are untouched by the
+		// rejected transaction (this path is not one of the region-restoring
+		// failure kinds).
+		expect(root.captureContextMenuTarget(edited)).toBeNull();
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("preserves a real local ledger shift for an unchanged later root", () => {
+		const firstIndex = 159;
+		const secondIndex = 160;
+		const current = fixture({ mounted: [firstIndex, secondIndex] });
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const requestPreview = vi.fn(() => "next");
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			requestPreview,
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		current.surface.tabIndex = 0;
+		current.surface.focus();
+		const earlier = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${firstIndex}"]`,
+		);
+		const later = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${secondIndex}"]`,
+		);
+		const text = earlier?.firstChild;
+		if (!(earlier && later && text instanceof Text)) {
+			throw new Error("windowed-lease-block-missing");
+		}
+		const initial = current.canonical();
+		const line = `Line ${firstIndex}`;
+		const lineStart = initial.indexOf(line);
+		if (lineStart < 0) throw new Error("windowed-lease-source-missing");
+		placeCaret(text, text.data.length);
+		current.surface.dispatchEvent(
+			new InputEvent("beforeinput", {
+				bubbles: true,
+				cancelable: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+		text.data = `${text.data}Z`;
+		placeCaret(text, text.data.length);
+		current.surface.dispatchEvent(
+			new InputEvent("input", {
+				bubbles: true,
+				data: "Z",
+				inputType: "insertText",
+			}),
+		);
+
+		// The ordinary owner publishes the edit synchronously and exactly; no
+		// Preview burst is invented to settle it.
+		expect(current.canonical()).toBe(
+			initial.slice(0, lineStart + line.length) +
+				"Z" +
+				initial.slice(lineStart + line.length),
+		);
+		expect(requestPreview).not.toHaveBeenCalled();
+		expect(root.prepareContextMenuDemand()).toBe(true);
+		const lease = root.captureContextMenuTarget(later);
+		if (!lease) throw new Error("windowed-lease-not-issued");
+		// A record frozen at the pre-edit offsets would not describe the shifted
+		// row, so this positive depends on the refreshed effective bounds.
+		expect(lease.resolve()).toBe(later);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses a genuinely read-only surface even while a transfer stands", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			pending: true,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		current.surface.setAttribute("contenteditable", "false");
+		expect(root.prepareContextMenuDemand()).toBe(false);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("refuses the removed occurrence after the real accepted render renumbers roots", () => {
+		const intro = 0;
+		const firstFence = 1;
+		const middle = 2;
+		const secondFence = 3;
+		const tail = 4;
+		const fenceSource = "```\nsame\n```";
+		const current = fixture({
+			blockOverrides: {
+				[intro]: "Intro",
+				[firstFence]: fenceSource,
+				[middle]: "Middle",
+				[secondFence]: fenceSource,
+				[tail]: "Tail",
+			},
+			markupOverrides: {
+				[intro]: '<p data-easymde-visual-block-id="b0">Intro</p>',
+				[firstFence]:
+					'<pre data-easymde-visual-block-id="b1"><code>same\n</code></pre>',
+				[middle]: '<p data-easymde-visual-block-id="b2">Middle</p>',
+				[secondFence]:
+					'<pre data-easymde-visual-block-id="b3"><code>same\n</code></pre>',
+				[tail]: '<p data-easymde-visual-block-id="b4">Tail</p>',
+			},
+			mounted: [intro, firstFence, middle, secondFence, tail],
+			paragraphBlocks: true,
+			sourceBlockCount: 5,
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+			requestPreview: vi.fn(() => "windowed"),
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const pointed = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b1"]',
+		);
+		const surviving = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b3"]',
+		);
+		if (!(pointed && surviving)) {
+			throw new Error("windowed-lease-fence-missing");
+		}
+		// A lease taken while the old source was current; it is the control for
+		// the later non-revival assertion.
+		const oldSourceLease = root.captureContextMenuTarget(surviving);
+		if (!oldSourceLease) throw new Error("windowed-lease-not-issued");
+		expect(oldSourceLease.resolve()).toBe(surviving);
+
+		const source = current.canonical();
+		const value = `Middle\n\n${fenceSource}\n\nTail`;
+		expect(source.endsWith(value)).toBe(true);
+		const from = 0;
+		const to = source.length - value.length;
+		expect(
+			root.applyCanonicalChange({
+				change: {
+					changes: { from, insert: "", to },
+					selection: { direction: "none", end: from, start: from },
+					value,
+				},
+				expected: {
+					revision: 0,
+					selection: { direction: "none", end: 0, start: 0 },
+					value: source,
+				},
+			}),
+		).toBe("handled");
+		expect(current.canonical()).toBe(value);
+		const writes = current.applyTextChange.mock.calls.length;
+		// The accepted render has not arrived yet, so the accepted DOM still
+		// describes the previous revision and keeps the demanded source
+		// parked. The old-source lease is already dead on source equality.
+		expect(oldSourceLease.resolve()).toBeNull();
+
+		// The accepted render has not arrived yet, so the owner holds no
+		// correspondence into the demanded source for the removed block.
+		expect(pointed.isConnected).toBe(true);
+		expect(root.captureContextMenuTarget(pointed)).toBeNull();
+
+		// The real accepted response: three roots, b0=Middle, b1=surviving
+		// fence, b2=Tail, with truthful line spans for that exact source.
+		const acceptedMiddle = document.createElement("p");
+		acceptedMiddle.innerHTML = "Middle";
+		const acceptedFence = document.createElement("pre");
+		const acceptedCode = document.createElement("code");
+		acceptedCode.textContent = "same\n";
+		acceptedFence.append(acceptedCode);
+		const acceptedTail = document.createElement("p");
+		acceptedTail.innerHTML = "Tail";
+		current.surface.replaceChildren(acceptedMiddle, acceptedFence, acceptedTail);
+		const [newMiddle, newFence, newTail] = Array.from(current.surface.children);
+		if (
+			!(newMiddle instanceof HTMLElement)
+			|| !(newFence instanceof HTMLElement)
+			|| !(newTail instanceof HTMLElement)
+		) {
+			throw new Error("windowed-lease-accepted-block-missing");
+		}
+		newMiddle.setAttribute("data-easymde-visual-block-id", "b0");
+		newFence.setAttribute("data-easymde-visual-block-id", "b1");
+		newTail.setAttribute("data-easymde-visual-block-id", "b2");
+		const acceptedMap: PreviewEditMap = {
+			blocks: [
+				{ editable: true, endLine: 1, id: "b0", startLine: 0 },
+				{ editable: true, endLine: 5, id: "b1", startLine: 2 },
+				{ editable: true, endLine: 7, id: "b2", startLine: 6 },
+			],
+			coordinate: "line",
+			signature: "windowed",
+			version: 1,
+		};
+		act(() =>
+			rendered.rerenderPreview(acceptedMap, {
+				revision: 1,
+				signature: "windowed",
+			}),
+		);
+		expect(current.canonical()).toBe(value);
+		// The removed occurrence is detached and stays uncapturable; no label
+		// or content comparison can reattach it to the surviving fence.
+		expect(pointed.isConnected).toBe(false);
+		expect(root.captureContextMenuTarget(pointed)).toBeNull();
+		// The pre-change lease is dead. Its discriminator is the canonical
+		// source it was captured in, not the row comparison.
+		expect(oldSourceLease.resolve()).toBeNull();
+		// The fresh current roots are capturable on their own merits.
+		const freshLease = root.captureContextMenuTarget(newFence);
+		if (!freshLease) throw new Error("windowed-lease-not-issued");
+		expect(freshLease.resolve()).toBe(newFence);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("rejects a captured fence lease after a same-source accepted render relocates its row", () => {
+		const firstIndex = 0;
+		const secondIndex = 1;
+		const fenceSource = "```\nsame\n```";
+		const current = fixture({
+			blockOverrides: {
+				[firstIndex]: fenceSource,
+				[secondIndex]: fenceSource,
+			},
+			markupOverrides: {
+				[firstIndex]:
+					`<pre data-easymde-visual-block-id="b${firstIndex}"><code>same\n</code></pre>`,
+				[secondIndex]:
+					`<pre data-easymde-visual-block-id="b${secondIndex}"><code>same\n</code></pre>`,
+			},
+			mounted: [firstIndex, secondIndex],
+			paragraphBlocks: true,
+			sourceBlockCount: 2,
+		});
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		let acceptedSnapshot: ImmersiveWindowAcceptedSnapshot | null = null;
+		const rendered = renderWindowEditor(current, {
+			acceptedWindowSnapshotGeneration: 0,
+			getAcceptedWindowSnapshot: () => acceptedSnapshot,
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const oldFirst = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${firstIndex}"]`,
+		);
+		const oldSecond = current.surface.querySelector<HTMLElement>(
+			`[data-easymde-visual-block-id="b${secondIndex}"]`,
+		);
+		const [firstRow, secondRow] = current.editMap.blocks;
+		if (!(oldFirst && oldSecond && firstRow && secondRow)) {
+			throw new Error("windowed-lease-fence-missing");
+		}
+		// Both fences render exactly the same bytes, so only the accepted
+		// interval can tell the two occurrences apart.
+		expect(oldFirst.tagName).toBe("PRE");
+		expect(oldSecond.tagName).toBe("PRE");
+		expect(oldFirst.innerHTML).toBe(oldSecond.innerHTML);
+		const lease = root.captureContextMenuTarget(oldFirst);
+		if (!lease) throw new Error("windowed-lease-not-issued");
+		expect(lease.resolve()).toBe(oldFirst);
+
+		const canonicalBefore = current.canonical();
+		const revisionBefore = current.documentSession.document.getRevision?.();
+		const historyBefore = current.documentSession.document.getHistoryState();
+		const writes = current.applyTextChange.mock.calls.length;
+		const documentChanges = current.documentChanges.mock.calls.length;
+
+		// A fresh accepted render of the SAME source and signature, in source
+		// order, with truthful and unique spans: the first row is now owned by
+		// b1 and the second by b0, so the captured b0 label has moved to the
+		// other identical fence interval.
+		const relocatedMap: PreviewEditMap = {
+			...current.editMap,
+			blocks: [
+				{ ...firstRow, id: `b${secondIndex}` },
+				{ ...secondRow, id: `b${firstIndex}` },
+			],
+		};
+		const freshFirstRow = document.createElement("pre");
+		freshFirstRow.setAttribute(
+			"data-easymde-visual-block-id",
+			`b${secondIndex}`,
+		);
+		const freshFirstCode = document.createElement("code");
+		freshFirstCode.textContent = "same\n";
+		freshFirstRow.append(freshFirstCode);
+		const freshSecondRow = document.createElement("pre");
+		freshSecondRow.setAttribute(
+			"data-easymde-visual-block-id",
+			`b${firstIndex}`,
+		);
+		const freshSecondCode = document.createElement("code");
+		freshSecondCode.textContent = "same\n";
+		freshSecondRow.append(freshSecondCode);
+		current.surface.replaceChildren(freshFirstRow, freshSecondRow);
+		acceptedSnapshot = {
+			blocks: [
+				{
+					id: `b${secondIndex}`,
+					innerHTML: freshFirstRow.innerHTML,
+					node: freshFirstRow,
+				},
+				{
+					id: `b${firstIndex}`,
+					innerHTML: freshSecondRow.innerHTML,
+					node: freshSecondRow,
+				},
+			],
+			key: 1,
+			nodes: Array.from(current.surface.childNodes),
+			revision: 1,
+			signature: "windowed",
+		};
+		// ONE public-props render carries the relocated map, its matching
+		// Preview snapshot and the accepted generation together.
+		act(() =>
+			rendered.rerenderAcceptedWindowWithMap(
+				relocatedMap,
+				{ revision: 1, signature: "windowed" },
+				1,
+			),
+		);
+
+		// Acceptance changes no canonical byte, revision, history or DOM text.
+		expect(current.canonical()).toBe(canonicalBefore);
+		expect(current.documentSession.document.getRevision?.()).toBe(
+			revisionBefore,
+		);
+		expect(current.documentSession.document.getHistoryState()).toEqual(
+			historyBefore,
+		);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		expect(current.documentChanges.mock.calls.length).toBe(documentChanges);
+		expect(oldFirst.isConnected).toBe(false);
+		expect(oldSecond.isConnected).toBe(false);
+
+		// The captured label still names exactly one mounted fence with the same
+		// rendering, but its accepted interval moved: the demand is dead.
+		expect(lease.resolve()).toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		lease.release();
+		expect(lease.resolve()).toBeNull();
+
+		// Each fresh root is capturable through its own accepted binding.
+		const freshLeaseFirst = root.captureContextMenuTarget(freshFirstRow);
+		const freshLeaseSecond = root.captureContextMenuTarget(freshSecondRow);
+		if (!(freshLeaseFirst && freshLeaseSecond)) {
+			throw new Error("windowed-lease-not-issued");
+		}
+		expect(freshLeaseFirst.resolve()).toBe(freshFirstRow);
+		expect(freshLeaseSecond.resolve()).toBe(freshSecondRow);
+		freshLeaseFirst.release();
+		freshLeaseSecond.release();
+		expect(freshLeaseFirst.resolve()).toBeNull();
+		expect(freshLeaseSecond.resolve()).toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("does not revive a lease across a notified source ABA", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const root = runtime as ImmersiveVisualEditorRuntime;
+		const block = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		const original = current.canonical();
+		const lease = root.captureContextMenuTarget(block);
+		if (!lease) throw new Error("windowed-lease-not-issued");
+		expect(lease.resolve()).toBe(block);
+		const writes = current.applyTextChange.mock.calls.length;
+
+		// Ordinary owner notifications carry the foreign writes: A -> B -> A.
+		current.setCanonical(`${original}\nForeign`);
+		expect(lease.resolve()).toBeNull();
+		current.setCanonical(original);
+		expect(current.canonical()).toBe(original);
+		expect(lease.resolve()).toBeNull();
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		rendered.view.unmount();
+		current.surface.remove();
+	});
+
+	it("keeps a released lease dead across teardown and re-entry", () => {
+		const current = fixture();
+		let runtime: ImmersiveVisualEditorRuntime | null = null;
+		const rendered = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				runtime = nextRuntime;
+			},
+		});
+		if (!runtime) throw new Error("windowed-lease-runtime-missing");
+		const first = runtime as ImmersiveVisualEditorRuntime;
+		const block = current.surface.querySelector<HTMLElement>(
+			'[data-easymde-visual-block-id="b160"]',
+		);
+		if (!block) throw new Error("windowed-lease-block-missing");
+		const lease = first.captureContextMenuTarget(block);
+		expect(lease?.resolve()).toBe(block);
+		rendered.view.unmount();
+		// The same DOM is mounted again by a fresh owner instance.
+		let reentered: ImmersiveVisualEditorRuntime | null = null;
+		const second = renderWindowEditor(current, {
+			onReady: (nextRuntime) => {
+				reentered = nextRuntime;
+			},
+		});
+		const root = reentered as ImmersiveVisualEditorRuntime | null;
+		if (!root) throw new Error("windowed-lease-runtime-missing");
+		expect(lease?.resolve()).toBeNull();
+		const writes = current.applyTextChange.mock.calls.length;
+		expect(root.captureContextMenuTarget(block)?.resolve()).toBe(block);
+		expect(current.applyTextChange.mock.calls.length).toBe(writes);
+		lease?.release();
+		second.view.unmount();
+		current.surface.remove();
 	});
 });

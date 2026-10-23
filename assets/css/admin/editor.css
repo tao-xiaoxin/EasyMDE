@@ -1828,8 +1828,8 @@ body:has(.easymde-editor.is-immersive) .wrap {
     animation: easymde-markdown-inline-applied 120ms ease-out;
 }
 @keyframes easymde-markdown-block-applied {
-    from { opacity: .72; transform: translateY(-1px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: .72; }
+    to { opacity: 1; }
 }
 @keyframes easymde-markdown-inline-applied {
     from { background-color: rgba(76, 110, 245, .12); }

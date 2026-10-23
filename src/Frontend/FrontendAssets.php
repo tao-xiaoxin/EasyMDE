@@ -20,17 +20,20 @@ final class FrontendAssets {
 	private $theme_state_repository;
 	private $feature_detector;
 	private $settings_center_repository;
+	private $editor_block_index_worker_build_dir;
 
 	public function __construct(
 		PostDocument $post_document,
 		ThemeStateRepository $theme_state_repository,
 		?MarkdownFeatureDetector $feature_detector = null,
-		?SettingsCenterRepository $settings_center_repository = null
+		?SettingsCenterRepository $settings_center_repository = null,
+		$editor_block_index_worker_build_dir = 'assets/build/editor-block-index-worker/'
 	) {
-		$this->post_document              = $post_document;
-		$this->theme_state_repository     = $theme_state_repository;
-		$this->feature_detector           = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
-		$this->settings_center_repository = $settings_center_repository;
+		$this->post_document                       = $post_document;
+		$this->theme_state_repository              = $theme_state_repository;
+		$this->feature_detector                    = $feature_detector ? $feature_detector : new MarkdownFeatureDetector();
+		$this->settings_center_repository          = $settings_center_repository;
+		$this->editor_block_index_worker_build_dir = (string) $editor_block_index_worker_build_dir;
 	}
 
 	public function register_hooks() {
@@ -382,7 +385,7 @@ final class FrontendAssets {
 	public function get_editor_block_index_worker_url() {
 		$worker = ManifestAssetResolver::resolve(
 			'frontend/src/entrypoints/editor-block-index-worker.ts',
-			'assets/build/editor-block-index-worker/',
+			$this->editor_block_index_worker_build_dir,
 			'easymde-editor-block-index-worker',
 			array(),
 			'editor-block-index-worker',

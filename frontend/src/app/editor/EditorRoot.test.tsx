@@ -51,15 +51,19 @@ import {
 import type { PreparedToolbarShortcutBinding } from '../../contracts/ports/toolbar-shortcuts-port';
 import { createWordPressNativeSubmissionPort } from '../../integrations/wordpress/native-form/wordpress-native-submission';
 import type { ImmersiveVisualEditorRuntime } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
+import * as observedVisualOwner from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import type { GeneratedContentExportSession } from '../../features/generated-content-export/generated-content-export-session';
 import * as generatedImageTarget from '../../features/generated-content-export/generated-image-target';
 import * as imageScaleContract from '../../features/image-scale/image-scale-contract';
 import * as observedSourceAdapter from '../../features/document-source/adapters/code-mirror-document-session';
-import type { CodeMirrorDocumentSession } from '../../features/document-source/adapters/code-mirror-document-session';
+import type { CodeMirrorDocumentSession, DocumentHistoryState, DocumentSelection } from '../../features/document-source/adapters/code-mirror-document-session';
 import {
-  createEditorMarkdownBlockIndex as observedBlockIndex,
-  findEditorCodeContentTarget as observedCodeContentTarget
+  createEditorMarkdownBlockIndex as observedBlockIndex
 } from '../../features/editor-context-menu/editor-markdown-block-index';
+import {
+  findEditorCodeContentTarget as observedCodeContentTarget
+} from '../../features/editor-context-menu/editor-code-content-target';
+import type { EditorContextMenuSurfaceSnapshot, EditorContextMenuTargetLease } from '../../features/editor-context-menu/EditorContextMenuFeature';
 import * as observedPreviewOwner from '../../features/live-preview/ui/PreviewSurfaceOwner';
 import { DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED } from '../../features/live-preview/model/preview-window-model';
 import {
@@ -630,6 +634,25 @@ function imageBlockIndexPort(): EditorMarkdownBlockIndexPort {
   };
 }
 
+/**
+ * A demand/session request carries `<revision>:<markdown.length>`. The menu's
+ * code-content query mints its own `editor-code-content:<seq>:...` signature and
+ * is a DIFFERENT, legitimate render kind, so request accounting for a gesture's
+ * demand refresh must exclude it explicitly rather than assume one render.
+ */
+function isCodeContentQuery(request: PreviewRequest): boolean {
+  return request.signature.startsWith('editor-code-content:');
+}
+
+/** The gesture-relevant renders: everything except code-content queries. */
+function demandRenders(
+  render: ReturnType<typeof vi.fn>
+): PreviewRequest[] {
+  return render.mock.calls
+    .map((call) => call[0] as PreviewRequest)
+    .filter((request) => !isCodeContentQuery(request));
+}
+
 function BrokenEditorRoot(): never {
   throw new Error('synthetic editor-root render failure');
 }
@@ -648,6 +671,10 @@ function fixture(): EditorRootProps &
     getPreviewLayoutObservationCount: () => number;
     triggerResize: () => void;
     triggerPreviewLayout: () => void;
+    // The fixture always supplies the Clipboard port, so rows that assert on it
+    // read it without an optional chain. The production prop itself stays
+    // optional for callers that genuinely have no Clipboard.
+    editorClipboardPort: EditorClipboardPort;
   }> {
   const submissionField = document.createElement('textarea');
   const titleField = document.createElement('input');
@@ -1500,6 +1527,189 @@ describe('EditorRoot', () => {
       expect(hint?.textContent ?? '').toBe(binding);
       expect(props.submissionField.value).toBe('selected');
       view.unmount();
+    }
+  );
+
+  it.each(['readOnly', 'disabled'] as const)(
+    'fails a Source Paste whose field became %s during the Clipboard read',
+    async (flag) => {
+      // The action gate ran while the field was editable. The awaited Clipboard
+      // read is the window: the authoritative native field changes after the
+      // enabled action started. The mutation itself must re-check, fail exactly
+      // once, and write neither the canonical document nor history.
+      const props = fixture();
+      props.submissionField.value = 'Before after';
+      props.submissionField.defaultValue = 'Before after';
+      props.submissionField.setSelectionRange(7, 7);
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      const documentOwnerRef: {
+        current: ReturnType<typeof realCreateDocumentSession> | null;
+      } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+        .mockImplementation((options) => {
+          const owner = realCreateDocumentSession(options);
+          documentOwnerRef.current = owner;
+          return owner;
+        });
+      const read = props.editorClipboardPort?.read;
+      if (!read) throw new Error('clipboard-read-port-missing');
+      vi.mocked(read).mockImplementation(async () => {
+        if ('readOnly' === flag) props.submissionField.readOnly = true;
+        else props.submissionField.disabled = true;
+        return { status: 'available', text: 'PASTED' };
+      });
+      const view = render(<EditorRoot {...props} />);
+      try {
+        const source = await waitFor(() => {
+          const element = view.container.querySelector<HTMLElement>('.cm-content');
+          if (!element) throw new Error('source-surface-missing');
+          return element;
+        });
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('source-document-owner-missing');
+        const beforeSource = owner.getValue();
+        const beforeSelection = owner.getSelection();
+        const beforeHistory = owner.getHistoryState();
+        const beforeRevision = owner.getRevision?.();
+        layoutContextMenuSurface(source);
+        fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+        fireEvent.click(
+          await within(document.body).findByRole('menuitem', { name: /^Paste$/ })
+        );
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(
+            'editor-context-menu-surface-read-only'
+          )
+        );
+        expect(view.getByRole('alert').textContent).toBe(
+          contextMenuStrings.statusActionFailed
+        );
+        // Only the selected authoritative flag changed and is still set.
+        expect(props.submissionField.readOnly).toBe('readOnly' === flag);
+        expect(props.submissionField.disabled).toBe('disabled' === flag);
+        expect(owner.getValue()).toBe(beforeSource);
+        expect(props.submissionField.value).toBe('Before after');
+        expect(props.submissionField.value).not.toContain('PASTED');
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+        expect(owner.getRevision?.()).toBe(beforeRevision);
+        // One stable owning error, not a duplicate or a generic code.
+        expect(
+          vi.mocked(props.onFailure).mock.calls.filter((call) =>
+            call[0].startsWith('editor-context-menu-')
+          )
+        ).toEqual([['editor-context-menu-surface-read-only']]);
+
+        // Restoring the exact original flag defers no insertion.
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(owner.getValue()).toBe('Before after');
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+      } finally {
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        view.unmount();
+      }
+    }
+  );
+
+  it.each(['readOnly', 'disabled'] as const)(
+    'fails a Source Cut whose field became %s during the Clipboard write',
+    async (flag) => {
+      // The Clipboard write may truthfully complete: the external write is not
+      // the canonical Cut. The source deletion is the rejected half and must
+      // leave the document, revision, history, and native selection untouched.
+      const props = fixture();
+      const initial = 'Before selected after';
+      props.submissionField.value = initial;
+      props.submissionField.defaultValue = initial;
+      props.submissionField.setSelectionRange(7, 15);
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      const documentOwnerRef: {
+        current: ReturnType<typeof realCreateDocumentSession> | null;
+      } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+        .mockImplementation((options) => {
+          const owner = realCreateDocumentSession(options);
+          documentOwnerRef.current = owner;
+          return owner;
+        });
+      const write = props.editorClipboardPort?.write;
+      if (!write) throw new Error('clipboard-write-port-missing');
+      vi.mocked(write).mockImplementation(async () => {
+        if ('readOnly' === flag) props.submissionField.readOnly = true;
+        else props.submissionField.disabled = true;
+        return { status: 'written' };
+      });
+      const view = render(<EditorRoot {...props} />);
+      try {
+        const source = await waitFor(() => {
+          const element = view.container.querySelector<HTMLElement>('.cm-content');
+          if (!element) throw new Error('source-surface-missing');
+          return element;
+        });
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('source-document-owner-missing');
+        const beforeSelection = owner.getSelection();
+        const beforeHistory = owner.getHistoryState();
+        const beforeRevision = owner.getRevision?.();
+        layoutContextMenuSurface(source);
+        fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+        fireEvent.click(
+          await within(document.body).findByRole('menuitem', { name: /^Cut$/ })
+        );
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(
+            'editor-context-menu-surface-read-only'
+          )
+        );
+        // The visible failure is the same one the action gate reports.
+        expect(view.getByRole('alert').textContent).toBe(
+          contextMenuStrings.statusActionFailed
+        );
+        // The Clipboard write itself really happened; the deletion did not.
+        expect(write).toHaveBeenCalledWith(
+          'selected',
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        );
+        // Only the selected authoritative flag changed and is still set.
+        expect(props.submissionField.readOnly).toBe('readOnly' === flag);
+        expect(props.submissionField.disabled).toBe('disabled' === flag);
+        expect(owner.getValue()).toBe(initial);
+        expect(props.submissionField.value).toBe(initial);
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+        expect(owner.getRevision?.()).toBe(beforeRevision);
+        expect([
+          props.submissionField.selectionStart,
+          props.submissionField.selectionEnd
+        ]).toEqual([7, 15]);
+        expect(
+          vi.mocked(props.onFailure).mock.calls.filter((call) =>
+            call[0].startsWith('editor-context-menu-')
+          )
+        ).toEqual([['editor-context-menu-surface-read-only']]);
+
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(owner.getValue()).toBe(initial);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+      } finally {
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        view.unmount();
+      }
     }
   );
 
@@ -2621,6 +2831,100 @@ describe('EditorRoot', () => {
     view.unmount();
   });
 
+  it('opens context menu after Full Visual local text commit without Preview request via pointer and Shift+F10', async () => {
+    const props = fixture();
+    props.submissionField.value = 'Rendered';
+    props.submissionField.defaultValue = 'Rendered';
+    const view = render(<EditorRoot {...props} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    fireEvent.click(
+      await view.findByRole('button', { name: '解除锁定并编辑' })
+    );
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const renderCallsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+
+    // Dispatch local text input on the Full visual surface
+    const paragraphText = visual.querySelector('p')?.firstChild;
+    if (!(paragraphText instanceof Text)) throw new Error('visual-text-missing');
+    visual.dispatchEvent(
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: '!',
+        inputType: 'insertText'
+      })
+    );
+    paragraphText.insertData(paragraphText.length, '!');
+    const caret = document.createRange();
+    caret.setStart(paragraphText, paragraphText.length);
+    caret.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
+    visual.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        data: '!',
+        inputType: 'insertText'
+      })
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(props.submissionField.value).toBe('Rendered!'));
+
+    // Assert ordinary local text input does not trigger formal Preview while in Visual editing
+    expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(renderCallsBefore);
+
+    // Pointer context-menu demand succeeds exactly once
+    layoutContextMenuSurface(visual);
+    fireEvent.contextMenu(visual, { clientX: 24, clientY: 30 });
+    const pointerMenu = await within(document.body).findByRole('menu');
+    expect(pointerMenu).toBeTruthy();
+    expect(within(document.body).getByRole('menuitem', { name: 'Copy' })).toBeTruthy();
+    fireEvent.keyDown(pointerMenu, { key: 'Escape' });
+    await waitFor(() => expect(within(document.body).queryByRole('menu')).toBeNull());
+
+    // Shift+F10 keyboard context-menu demand succeeds exactly once
+    fireEvent.keyDown(visual, { key: 'F10', shiftKey: true });
+    const keyboardMenu = await within(document.body).findByRole('menu');
+    expect(keyboardMenu).toBeTruthy();
+    expect(within(document.body).getByRole('menuitem', { name: 'Copy' })).toBeTruthy();
+    fireEvent.keyDown(keyboardMenu, { key: 'Escape' });
+    await waitFor(() => expect(within(document.body).queryByRole('menu')).toBeNull());
+    // While a genuine formal preview transfer is in flight, context-menu readiness remains pending
+    const held = deferred<PreviewResponse>();
+    vi.mocked(props.previewPort.render).mockImplementationOnce(() => held.promise);
+    fireEvent.paste(visual, {
+      clipboardData: {
+        getData: (type: string) => type === 'text/plain' ? 'More' : '',
+        types: ['text/plain']
+      }
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // While the formal preview transfer is in flight, context-menu gesture stays pending (does not open)
+    fireEvent.contextMenu(visual, { clientX: 24, clientY: 30 });
+    expect(within(document.body).queryByRole('menu')).toBeNull();
+
+    // Settle the held preview to allow the transfer to complete
+    const [lastRequest] = vi.mocked(props.previewPort.render).mock.lastCall ?? [];
+    if (lastRequest) {
+      held.resolve(createPreviewResponse(lastRequest, '<p>Rendered!More</p>' as SafePreviewHtml, {}));
+      await act(async () => {
+        await held.promise;
+      });
+    }
+
+    expect(props.onFailure).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it('cuts through the complete visual owner only after the Clipboard write succeeds', async () => {
     const props = fixture();
     props.submissionField.value = 'Rendered';
@@ -2900,6 +3204,84 @@ describe('EditorRoot', () => {
       expect(props.submissionField.value).toBe(
         'Before  mid ![b](https://example.test/b.png) after'
       )
+    );
+    view.unmount();
+  });
+
+  it('opens the generic menu for a deliberate mixed text and image range over the pointed image', async () => {
+    const props = fixture();
+    const sourceMarkdown =
+      'Before ![alt](https://example.test/original.png) after';
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          '<p>Before <img alt="alt" src="https://example.test/original.png"> after</p>' as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={imageBlockIndexPort()} />
+    );
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', {
+      name: '可视化文章编辑器'
+    });
+    const paragraph = visual.querySelector('p');
+    const before = paragraph?.firstChild;
+    const after = paragraph?.lastChild;
+    const image = visual.querySelector('img');
+    if (
+      !(paragraph instanceof HTMLElement)
+      || !(before instanceof Text)
+      || !(after instanceof Text)
+      || !(image instanceof HTMLImageElement)
+    ) {
+      throw new Error('visual-mixed-image-context-fixture-missing');
+    }
+    layoutContextMenuSurface(visual);
+    // Native selection begins in the focused editable surface; focusing only
+    // after installing a Range can collapse it to the prior contenteditable caret.
+    visual.focus();
+    expect(document.activeElement).toBe(visual);
+    // A genuine mixed range covers text on both sides of the image, so no
+    // single image source range contains it. The pointer is still on the image,
+    // and the demanded outcome is the generic text menu with the extent kept.
+    const range = document.createRange();
+    range.setStart(before, 0);
+    range.setEnd(after, after.length);
+    const nativeSelection = window.getSelection();
+    nativeSelection?.removeAllRanges();
+    nativeSelection?.addRange(range);
+
+    fireEvent.contextMenu(image, { clientX: 24, clientY: 30 });
+    const menu = await within(document.body).findByRole('menu');
+    expect(
+      within(menu).queryByRole('menuitem', { name: 'Delete image' })
+    ).toBeNull();
+    expect(
+      within(menu).queryByRole('menuitem', { name: 'Image scale' })
+    ).toBeNull();
+    expect(props.onFailure).not.toHaveBeenCalledWith(
+      'editor-context-menu-image-stale'
+    );
+    expect(props.onFailure).not.toHaveBeenCalled();
+    const keptSelection = window.getSelection();
+    expect(keptSelection?.isCollapsed).toBe(false);
+    expect(keptSelection?.anchorNode).toBe(before);
+    expect(keptSelection?.anchorOffset).toBe(0);
+    expect(keptSelection?.focusNode).toBe(after);
+    expect(keptSelection?.focusOffset).toBe(after.length);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(within(document.body).queryByRole('menu')).toBeNull()
     );
     view.unmount();
   });
@@ -3895,6 +4277,583 @@ describe('EditorRoot', () => {
     }
   });
 
+  it.each([
+    { name: 'Full Shift+F10 before HR', windowed: false, key: 'F10', shiftKey: true, side: 'before' as const },
+    { name: 'Full ContextMenu after HR', windowed: false, key: 'ContextMenu', shiftKey: false, side: 'after' as const },
+    { name: 'Windowed Shift+F10 before HR', windowed: true, key: 'F10', shiftKey: true, side: 'before' as const },
+    { name: 'Windowed ContextMenu after HR', windowed: true, key: 'ContextMenu', shiftKey: false, side: 'after' as const }
+  ])('opens exactly one HR menu via real Feature keyboard event for $name with displaced canonical EOF', async ({
+    windowed, key, shiftKey, side
+  }) => {
+    const props = fixture();
+    const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const suffixBlocks = windowed
+      ? Array.from({ length: 158 }, (_, index) => `suffix paragraph ${index}`)
+      : [];
+    const sourceBlocks = ['before', '---', 'after', ...suffixBlocks];
+    const initial = sourceBlocks.join('\n\n');
+    const hrStart = initial.indexOf('---');
+    const hrEnd = hrStart + 3;
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+
+    const renderedHtml = [
+      '<p data-easymde-visual-block-id="b0">before</p>',
+      '<hr data-easymde-visual-block-id="b1">',
+      '<p data-easymde-visual-block-id="b2">after</p>',
+      ...suffixBlocks.map((text, index) => `<p data-easymde-visual-block-id="b${index + 3}">${text}</p>`)
+    ].join('');
+
+    const editMapBlocks = sourceBlocks.map((_, index) => ({
+      editable: true,
+      endLine: index * 2 + 1,
+      id: `b${index}`,
+      startLine: index * 2
+    }));
+
+    let previewCalls = 0;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      previewCalls += 1;
+      return Promise.resolve({
+        editMap: {
+          blocks: editMapBlocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: renderedHtml as SafePreviewHtml
+      });
+    });
+
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('feature-hr-test-hr-missing');
+      }
+
+      // Assert spacer presence: spacer present for Windowed, absent for Full
+      const hasSpacer = visual.querySelector('[data-easymde-preview-window-spacer]') !== null;
+      if (windowed) {
+        expect(hasSpacer).toBe(true);
+      } else {
+        expect(hasSpacer).toBe(false);
+      }
+
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('feature-hr-test-owner-missing');
+
+      // Displace canonical selection to EOF (matching independent tester diagnosis)
+      const eof = initial.length;
+      owner.applyTextChange({
+        selection: { direction: 'none', start: eof, end: eof },
+        value: initial
+      });
+      expect(owner.getSelection().start).toBe(eof);
+      expect(owner.getSelection().start).toBeGreaterThan(hrEnd);
+
+      // Focus visual and collapse native selection before or after HR
+      visual.focus();
+      const hrIndex = Array.from(visual.childNodes).indexOf(thematicBreak);
+      const targetOffset = side === 'before' ? hrIndex : hrIndex + 1;
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(visual, targetOffset);
+      range.collapse(true);
+      nativeSelection?.addRange(range);
+      expect(nativeSelection?.anchorNode).toBe(visual);
+      expect(nativeSelection?.anchorOffset).toBe(targetOffset);
+
+      const beforeKey = {
+        history: owner.getHistoryState(),
+        previewCalls,
+        revision: owner.getRevision?.(),
+        value: owner.getValue(),
+        visualHtml: visual.innerHTML
+      };
+
+      // Dispatch real key event to visual surface
+      fireEvent.keyDown(visual, { key, shiftKey });
+
+      // The Feature prepares the certified parent gap synchronously. jsdom moves
+      // the DOM Selection onto the focused menu item when the menu takes focus,
+      // so the native owner's full collapsed shape is asserted here, before that
+      // unrelated focus transfer, and the canonical projection below stays.
+      const native = window.getSelection();
+      expect(native?.rangeCount).toBe(1);
+      expect(native?.isCollapsed).toBe(true);
+      expect(native?.anchorNode).toBe(visual);
+      expect(native?.anchorOffset).toBe(targetOffset);
+      expect(native?.focusNode).toBe(visual);
+      expect(native?.focusOffset).toBe(targetOffset);
+
+      // Exactly one menu opened
+      const menus = await within(document.body).findAllByRole('menu');
+      expect(menus).toHaveLength(1);
+      const menu = menus[0];
+      if (!menu) throw new Error('feature-hr-test-menu-missing');
+
+      // Enabled "Delete horizontal rule" item present
+      const deleteItem = within(menu).getByRole('menuitem', {
+        name: 'Delete horizontal rule'
+      });
+      expect(deleteItem.getAttribute('aria-disabled')).toBe('false');
+
+      // Canonical selection collapsed to expected token side
+      const expectedCanonical = side === 'before' ? hrStart : hrEnd;
+      expect(owner.getSelection()).toEqual({
+        direction: 'none',
+        start: expectedCanonical,
+        end: expectedCanonical
+      });
+
+      // Native selection was asserted above, before menu focus moved it.
+
+      // Value, submissionField, revision, history, Preview calls, DOM unchanged
+      expect(owner.getValue()).toBe(beforeKey.value);
+      expect(props.submissionField.value).toBe(beforeKey.value);
+      expect(owner.getRevision?.()).toBe(beforeKey.revision);
+      expect(owner.getHistoryState()).toEqual(beforeKey.history);
+      expect(previewCalls).toBe(beforeKey.previewCalls);
+      expect(visual.innerHTML).toBe(beforeKey.visualHtml);
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { name: 'Full noncollapsed canonical adjacent HR', windowed: false },
+    { name: 'Windowed noncollapsed canonical adjacent HR', windowed: true }
+  ])('refuses keyboard menu on ambiguous adjacent HR when canonical is noncollapsed for $name', async ({
+    windowed
+  }) => {
+    const props = fixture();
+    const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const suffixBlocks = windowed
+      ? Array.from({ length: 160 }, (_, index) => `suffix paragraph ${index}`)
+      : [];
+    const sourceBlocks = ['---', '---', ...suffixBlocks];
+    const initial = sourceBlocks.join('\n\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+
+    const renderedHtml = [
+      '<hr data-easymde-visual-block-id="b0">',
+      '<hr data-easymde-visual-block-id="b1">',
+      ...suffixBlocks.map((text, index) => `<p data-easymde-visual-block-id="b${index + 2}">${text}</p>`)
+    ].join('');
+
+    const editMapBlocks = sourceBlocks.map((_, index) => ({
+      editable: true,
+      endLine: index * 2 + 1,
+      id: `b${index}`,
+      startLine: index * 2
+    }));
+
+    let previewCalls = 0;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      previewCalls += 1;
+      return Promise.resolve({
+        editMap: {
+          blocks: editMapBlocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: renderedHtml as SafePreviewHtml
+      });
+    });
+
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+
+      // Assert spacer presence: spacer present for Windowed, absent for Full
+      const hasSpacer = visual.querySelector('[data-easymde-preview-window-spacer]') !== null;
+      if (windowed) {
+        expect(hasSpacer).toBe(true);
+      } else {
+        expect(hasSpacer).toBe(false);
+      }
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('feature-negative-test-owner-missing');
+
+      // Set stale non-collapsed canonical range {start: 3, end: 8, direction: 'forward'}
+      // (start happens to equal firstEnd=3, but non-collapsed means it must NOT disambiguate)
+      owner.applyTextChange({
+        selection: { direction: 'forward', start: 3, end: 8 },
+        value: initial
+      });
+      expect(owner.getSelection()).toEqual({
+        direction: 'forward',
+        start: 3,
+        end: 8
+      });
+
+      // Native selection collapsed at surface offset 1 (between the two HRs)
+      visual.focus();
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(visual, 1);
+      range.collapse(true);
+      nativeSelection?.addRange(range);
+      expect(nativeSelection?.anchorNode).toBe(visual);
+      expect(nativeSelection?.anchorOffset).toBe(1);
+
+      const beforeKey = {
+        history: owner.getHistoryState(),
+        previewCalls,
+        revision: owner.getRevision?.(),
+        selection: owner.getSelection(),
+        value: owner.getValue(),
+        visualHtml: visual.innerHTML
+      };
+
+      // Dispatch Shift+F10
+      fireEvent.keyDown(visual, { key: 'F10', shiftKey: true });
+
+      // No menu should open on ambiguous adjacent HRs
+      const menus = within(document.body).queryAllByRole('menu');
+      expect(menus).toHaveLength(0);
+
+      // Value, submissionField, revision, history, selection, Preview calls, DOM unchanged
+      expect(owner.getValue()).toBe(beforeKey.value);
+      expect(props.submissionField.value).toBe(beforeKey.value);
+      expect(owner.getRevision?.()).toBe(beforeKey.revision);
+      expect(owner.getHistoryState()).toEqual(beforeKey.history);
+      expect(owner.getSelection()).toEqual(beforeKey.selection);
+      expect(previewCalls).toBe(beforeKey.previewCalls);
+      expect(visual.innerHTML).toBe(beforeKey.visualHtml);
+      await waitFor(() =>
+        expect(props.onFailure).toHaveBeenCalledWith(
+          'editor-context-menu-selection-map-failed'
+        )
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { name: 'Full same-ID replacement HR', windowed: false },
+    { name: 'Windowed same-ID replacement HR', windowed: true }
+  ])('refuses keyboard menu and preserves state on replaced same-ID HR for $name', async ({
+    windowed
+  }) => {
+    const props = fixture();
+    const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const suffixBlocks = windowed
+      ? Array.from({ length: 160 }, (_, index) => `suffix paragraph ${index}`)
+      : [];
+    const sourceBlocks = ['before', '---', 'after', ...suffixBlocks];
+    const initial = sourceBlocks.join('\n\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+
+    const renderedHtml = [
+      '<p data-easymde-visual-block-id="b0">before</p>',
+      '<hr data-easymde-visual-block-id="b1">',
+      '<p data-easymde-visual-block-id="b2">after</p>',
+      ...suffixBlocks.map((text, index) => `<p data-easymde-visual-block-id="b${index + 3}">${text}</p>`)
+    ].join('');
+
+    const editMapBlocks = sourceBlocks.map((_, index) => ({
+      editable: true,
+      endLine: index * 2 + 1,
+      id: `b${index}`,
+      startLine: index * 2
+    }));
+
+    let previewCalls = 0;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      previewCalls += 1;
+      return Promise.resolve({
+        editMap: {
+          blocks: editMapBlocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: renderedHtml as SafePreviewHtml
+      });
+    });
+
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+
+      const hasSpacer = visual.querySelector('[data-easymde-preview-window-spacer]') !== null;
+      if (windowed) {
+        expect(hasSpacer).toBe(true);
+      } else {
+        expect(hasSpacer).toBe(false);
+      }
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('feature-replacement-negative-owner-missing');
+
+      // Displace canonical selection to EOF
+      const eof = initial.length;
+      owner.applyTextChange({
+        selection: { direction: 'none', start: eof, end: eof },
+        value: initial
+      });
+      expect(owner.getSelection().start).toBe(eof);
+
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('feature-replacement-negative-hr-missing');
+      }
+
+      const beforeKey = {
+        history: owner.getHistoryState(),
+        previewCalls,
+        revision: owner.getRevision?.(),
+        selection: owner.getSelection(),
+        value: owner.getValue()
+      };
+
+      // Mutate: replace HR with a same-ID clone
+      thematicBreak.replaceWith(thematicBreak.cloneNode(true));
+
+      visual.focus();
+      const hrIndex = Array.from(visual.childNodes).findIndex((node) => node instanceof HTMLHRElement);
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(visual, hrIndex);
+      range.collapse(true);
+      nativeSelection?.addRange(range);
+
+      fireEvent.keyDown(visual, { key: 'F10', shiftKey: true });
+
+      // A replaced same-ID HR is a LEASE-LOST target: the Feature's replay path
+      // retires it silently (EditorContextMenuFeature.tsx:1073-1096 classifies
+      // lease-lost separately from every other rebuild failure), so the truthful
+      // behaviour is no menu and NO user-facing failure - the user cannot act on
+      // a target the owner can no longer authenticate. Every piece of state the
+      // negative protects is still asserted unchanged below.
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // Observed per variant: the Full owner retires the lease-lost target
+      // silently, while the Windowed owner reports its own explicit
+      // `editor-context-menu-target-unavailable` capture failure. Both are the
+      // owner's own single report, and neither opens a menu or mutates state.
+      const reported = vi
+        .mocked(props.onFailure)
+        .mock.calls.map((call) => String(call[0]));
+      expect(
+        reported.length <= 1
+        && reported.every(
+          (code) =>
+            'editor-context-menu-target-unavailable' === code
+        )
+      ).toBe(true);
+      const menus = within(document.body).queryAllByRole('menu');
+      expect(menus).toHaveLength(0);
+
+      expect(owner.getValue()).toBe(beforeKey.value);
+      expect(props.submissionField.value).toBe(beforeKey.value);
+      expect(owner.getRevision?.()).toBe(beforeKey.revision);
+      expect(owner.getHistoryState()).toEqual(beforeKey.history);
+      expect(owner.getSelection()).toEqual(beforeKey.selection);
+      expect(previewCalls).toBe(beforeKey.previewCalls);
+      const hrAfterMutation = visual.querySelector('hr');
+      expect(hrAfterMutation).not.toBeNull();
+      expect(hrAfterMutation).not.toBe(thematicBreak);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it.each([
+    { name: 'Full intact-DOM beforeinput canonical mismatch', windowed: false },
+    { name: 'Windowed intact-DOM beforeinput canonical mismatch', windowed: true }
+  ])('rejects beforeinput text insertion on intact accepted DOM when canonical caret is mismatched for $name', async ({
+    windowed
+  }) => {
+    const props = fixture();
+    const realCreateDocumentSession = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const suffixBlocks = windowed
+      ? Array.from({ length: 160 }, (_, index) => `suffix paragraph ${index}`)
+      : [];
+    const sourceBlocks = ['before', '---', 'after', ...suffixBlocks];
+    const initial = sourceBlocks.join('\n\n');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+
+    const renderedHtml = [
+      '<p data-easymde-visual-block-id="b0">before</p>',
+      '<hr data-easymde-visual-block-id="b1">',
+      '<p data-easymde-visual-block-id="b2">after</p>',
+      ...suffixBlocks.map((text, index) => `<p data-easymde-visual-block-id="b${index + 3}">${text}</p>`)
+    ].join('');
+
+    const editMapBlocks = sourceBlocks.map((_, index) => ({
+      editable: true,
+      endLine: index * 2 + 1,
+      id: `b${index}`,
+      startLine: index * 2
+    }));
+
+    let previewCalls = 0;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      previewCalls += 1;
+      return Promise.resolve({
+        editMap: {
+          blocks: editMapBlocks,
+          coordinate: 'line',
+          signature: request.signature,
+          version: 1
+        },
+        features: {},
+        html: renderedHtml as SafePreviewHtml
+      });
+    });
+
+    const view = render(
+      <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+
+      const hasSpacer = visual.querySelector('[data-easymde-preview-window-spacer]') !== null;
+      if (windowed) {
+        expect(hasSpacer).toBe(true);
+      } else {
+        expect(hasSpacer).toBe(false);
+      }
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('feature-intact-mismatch-owner-missing');
+
+      // Canonical caret is displaced to EOF (mismatched with native gap)
+      const eof = initial.length;
+      owner.applyTextChange({
+        selection: { direction: 'none', start: eof, end: eof },
+        value: initial
+      });
+      expect(owner.getSelection().start).toBe(eof);
+
+      // Native selection collapsed at surface root gap before HR on INTACT DOM
+      visual.focus();
+      const thematicBreak = visual.querySelector('hr');
+      if (!(thematicBreak instanceof HTMLHRElement)) {
+        throw new Error('feature-intact-mismatch-hr-missing');
+      }
+      const hrIndex = Array.from(visual.childNodes).indexOf(thematicBreak);
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(visual, hrIndex);
+      range.collapse(true);
+      nativeSelection?.addRange(range);
+
+      const beforeInput = {
+        history: owner.getHistoryState(),
+        previewCalls,
+        revision: owner.getRevision?.(),
+        selection: owner.getSelection(),
+        value: owner.getValue(),
+        visualHtml: visual.innerHTML
+      };
+
+      // Dispatch beforeinput text insertion on INTACT accepted DOM before any context preparation
+      const inputEvent = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'X',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(inputEvent);
+
+      // Event must be prevented and fail closed
+      expect(inputEvent.defaultPrevented).toBe(true);
+      expect(owner.getValue()).toBe(beforeInput.value);
+      expect(props.submissionField.value).toBe(beforeInput.value);
+      expect(owner.getRevision?.()).toBe(beforeInput.revision);
+      expect(owner.getHistoryState()).toEqual(beforeInput.history);
+      expect(owner.getSelection()).toEqual(beforeInput.selection);
+      expect(previewCalls).toBe(beforeInput.previewCalls);
+      expect(visual.innerHTML).toBe(beforeInput.visualHtml);
+      expect(props.onFailure).toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('keeps the full surface menu usable on the next HR right after an HR deletion', async () => {
     const props = fixture();
     const initial = 'before\n\n---\n\nmid\n\n---\n\nafter';
@@ -4030,6 +4989,1356 @@ describe('EditorRoot', () => {
       expect(visual.getAttribute('contenteditable')).toBe('true');
       expect(props.submissionField.value).toBe(expected);
       expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps the pointed PRE usable after a native local edit commits without a render', async () => {
+    // The availability invariant for the pointed-PRE workflow: a native local
+    // edit commits to the canonical document without requesting a render, and
+    // the very next PRE demand must still open the menu. It must never turn into
+    // "no menu, explicit error", which is the defect the owner-level refresh
+    // exists to prevent. The coordinate-move case that forces a re-authenticated
+    // render is driven in `ImmersiveVisualEditor.test.tsx`, where a real burst
+    // can be synthesised; this fixture proves the Root wiring keeps the gesture.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `Lead\n\n${fence}js\nalpha\n${fence}\n`;
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const bodyOf = (markdown: string): string => {
+      const match = /```[^\n]*\n([\s\S]*?)\n```/u.exec(markdown);
+      return match?.[1] ?? '';
+    };
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      const template = document.createElement('template');
+      template.innerHTML =
+        `<p>Lead</p><pre><code class="language-js">${bodyOf(request.markdown)}</code></pre>`;
+      Array.from(template.content.children).forEach((element, index) => {
+        element.setAttribute('data-easymde-visual-block-id', `b${index}`);
+      });
+      const lineCount = request.markdown.split('\n').length;
+      return Promise.resolve({
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            { editable: true, endLine: lineCount, id: 'b1', startLine: 2 }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: template.innerHTML as SafePreviewHtml
+      });
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const renderCalls = vi.mocked(props.previewPort.render).mock.calls.length;
+      const body = visual.querySelector('pre > code')?.firstChild;
+      if (!(body instanceof Text)) throw new Error('availability-code-body-missing');
+      body.insertData(body.length, 'z');
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'z',
+          inputType: 'insertText'
+        })
+      );
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe(
+          `Lead\n\n${fence}js\nalphaz\n${fence}\n`
+        )
+      );
+      // The local edit stays inside the code body, so no render was requested.
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        renderCalls
+      );
+      // The pointed PRE still opens its menu, with no stale-map failure.
+      const pre = visual.querySelector('pre');
+      if (!(pre instanceof HTMLElement)) throw new Error('availability-pre-missing');
+      layoutContextMenuSurface(pre);
+      fireEvent.contextMenu(pre, { clientX: 20, clientY: 20 });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await waitFor(() =>
+        expect(within(document.body).queryAllByRole('menu').length).toBeGreaterThan(0)
+      );
+      expect(
+        vi.mocked(props.onFailure).mock.calls.map((call) => call[0])
+      ).not.toContain('visual-editor-canonical-change-map-stale');
+      expect(
+        vi.mocked(props.onFailure).mock.calls.map((call) => call[0])
+      ).not.toContain('editor-context-menu-selection-map-failed');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('reports one terminal failure and makes no second request when the refresh render fails', async () => {
+    // Main's ordering blocker: the failed render settles the pending state while
+    // the old accepted HTML and revision are still installed. If readiness were
+    // published before the terminal flags, the parked demand would wake on a
+    // stale accepted source with no failure set and start a SECOND formal
+    // request. Exactly one request, one terminal failure, and a closed demand.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `Lead\n\n${fence}js\nalpha\n${fence}\n`;
+    const expectedCommitted = `Lead\n\n${fence}js\nalpha\nz\n${fence}\n`;
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const openIndex = lines.findIndex((line) =>
+        new RegExp(`^${fence}[^${fence}]*$`, 'u').test(line)
+      );
+      const closeIndex = openIndex < 0
+        ? -1
+        : lines.findIndex((line, index) =>
+            index > openIndex && line.startsWith(fence)
+          );
+      if (openIndex < 0 || closeIndex < 0) {
+        throw new Error(`failed-refresh-source-without-fence:${request.markdown}`);
+      }
+      const body = lines.slice(openIndex + 1, closeIndex).join('\n');
+      return {
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            {
+              editable: true,
+              endLine: closeIndex + 1,
+              id: 'b1',
+              startLine: openIndex
+            }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + `<pre data-easymde-visual-block-id="b1"><code class="language-js">${body}\n</code></pre>`
+        ) as SafePreviewHtml
+      };
+    };
+    const failingRefresh = deferred<PreviewResponse>();
+    let failRefresh = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      failRefresh && request.markdown === expectedCommitted
+        ? failingRefresh.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(
+        () => expect(props.previewPort.render).toHaveBeenCalled(),
+        { timeout: 3000 }
+      );
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('failed-refresh-owner-missing');
+      const codeBody = visual.querySelector('pre > code')?.firstChild;
+      if (!(codeBody instanceof Text)) {
+        throw new Error('failed-refresh-code-body-missing');
+      }
+      visual.focus();
+      const placeCaret = (offset: number) => {
+        const range = document.createRange();
+        range.setStart(codeBody, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      // The same native burst the positive case uses: a consumed line break,
+      // then a typed character, so the committed source really gains a line.
+      const offset = codeBody.data.length;
+      placeCaret(offset);
+      const lineBreak = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: null,
+        inputType: 'insertLineBreak'
+      });
+      visual.dispatchEvent(lineBreak);
+      if (!lineBreak.defaultPrevented) {
+        codeBody.insertData(offset, '\n');
+        placeCaret(offset + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: null,
+          inputType: 'insertLineBreak'
+        })
+      );
+      const typedAt = codeBody.data.length;
+      placeCaret(typedAt);
+      const typed = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'z',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(typed);
+      if (!typed.defaultPrevented) {
+        codeBody.insertData(typedAt, 'z');
+        placeCaret(typedAt + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'z',
+          inputType: 'insertText'
+        })
+      );
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe(expectedCommitted)
+      );
+      const committed = props.submissionField.value;
+      const failuresBefore = vi.mocked(props.onFailure).mock.calls.length;
+      const requestsBeforeGesture = vi.mocked(props.previewPort.render).mock.calls.length;
+      // The failed refresh must not change canonical history either: the typed
+      // burst is the last documented entry, and the demand adds none.
+      const historyBeforeGesture = owner.getHistoryState();
+      const revisionBeforeGesture = owner.getRevision?.();
+
+      failRefresh = true;
+      const target = visual.querySelector('pre');
+      if (!(target instanceof HTMLElement)) {
+        throw new Error('failed-refresh-target-missing');
+      }
+      layoutContextMenuSurface(target);
+      fireEvent.pointerDown(target, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(target, { clientX: 20, clientY: 20 });
+
+      // Exactly ONE request for the committed source while it is held.
+      await waitFor(() =>
+        expect(
+          vi.mocked(props.previewPort.render).mock.calls.length
+        ).toBe(requestsBeforeGesture + 1)
+      );
+      const demandRequests = vi
+        .mocked(props.previewPort.render)
+        .mock.calls.slice(requestsBeforeGesture);
+      expect(demandRequests).toHaveLength(1);
+      expect(demandRequests[0]?.[0].markdown).toBe(committed);
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+
+      // The render really fails.
+      failingRefresh.reject(new Error('preview-render-unavailable'));
+      await waitFor(
+        () =>
+          expect(props.onFailure).toHaveBeenCalledTimes(failuresBefore + 1),
+        { timeout: 5000 }
+      );
+      expect(props.onFailure).toHaveBeenLastCalledWith(
+        'visual-editor-native-preview-failed'
+      );
+      // Terminal: the owner left the editable surface, no menu opened, and no
+      // second request was issued after the failure settled.
+      await waitFor(() =>
+        expect(
+          view.queryByRole('textbox', { name: '可视化文章编辑器' })
+        ).toBeNull()
+      );
+      const requestsAtFailure = vi.mocked(props.previewPort.render).mock.calls.length;
+      expect(requestsAtFailure).toBe(requestsBeforeGesture + 1);
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsAtFailure
+      );
+      expect(props.onFailure).toHaveBeenCalledTimes(failuresBefore + 1);
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      // The user's own typed source is preserved, never rolled back, and the
+      // failed refresh added neither a history entry nor a revision.
+      expect(props.submissionField.value).toBe(committed);
+      expect(owner.getHistoryState()).toEqual(historyBeforeGesture);
+      expect(owner.getRevision?.()).toBe(revisionBeforeGesture);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps one pointer demand alive through the refresh it requested and copies the whole fence', async () => {
+    // Main's requirement: after one native code-body burst that moves a line,
+    // ONE pointer demand must survive the re-authentication it triggers, bind
+    // the freshly accepted DOM, and open ONE menu whose Copy reproduces the
+    // whole current fence - not cancel so the user has to right-click again.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `Lead\n\n${fence}js\nalpha\n${fence}\n`;
+    const expectedCommitted = `Lead\n\n${fence}js\nalpha\nz\n${fence}\n`;
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    // A response builder over the ACTUAL requested source: explicit source
+    // lines and a real edit map over them, including the formal renderer's
+    // terminal body LF inside the code element.
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const openIndex = lines.findIndex((line) =>
+        new RegExp(`^${fence}[^${fence}]*$`, 'u').test(line)
+      );
+      const closeIndex = openIndex < 0
+        ? -1
+        : lines.findIndex((line, index) =>
+            index > openIndex && line.startsWith(fence)
+          );
+      if (openIndex < 0 || closeIndex < 0) {
+        throw new Error(`single-demand-source-without-fence:${request.markdown}`);
+      }
+      const body = lines.slice(openIndex + 1, closeIndex).join('\n');
+      const editableLines = closeIndex + 1;
+      return {
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            {
+              editable: true,
+              endLine: editableLines,
+              id: 'b1',
+              startLine: openIndex
+            }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + `<pre data-easymde-visual-block-id="b1"><code class="language-js">${body}\n</code></pre>`
+        ) as SafePreviewHtml
+      };
+    };
+    const refreshed = deferred<PreviewResponse>();
+    let holdRefresh = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdRefresh
+        && request.markdown === expectedCommitted
+        && !isCodeContentQuery(request)) {
+        return refreshed.promise;
+      }
+      if (isCodeContentQuery(request)) {
+        // The menu's own code-content query is answered truthfully for the
+        // committed source, so the code-block actions are genuinely available.
+        // The helper resolves the code target from the FENCE it renders, so it
+        // is given the fence text the request asked for.
+        try {
+          return Promise.resolve(
+            createCodeContentPreviewResponse(
+              request,
+              request.markdown,
+              request.markdown.indexOf('alpha'),
+              `alpha${String.fromCharCode(10)}z${String.fromCharCode(10)}`
+            )
+          );
+        } catch {
+          return Promise.resolve(responseFor(request));
+        }
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const oldPre = visual.querySelector('pre');
+      const codeBody = oldPre?.querySelector('code')?.firstChild;
+      if (!(oldPre instanceof HTMLElement) || !(codeBody instanceof Text)) {
+        throw new Error('single-demand-code-body-missing');
+      }
+      visual.focus();
+      const placeCaret = (offset: number) => {
+        const range = document.createRange();
+        range.setStart(codeBody, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      // One native burst: a line break inside the code body, then a plain
+      // character, both inside the input debounce. The owner consumes the line
+      // break itself, so the DOM mutation is issued only when the event was
+      // not prevented - exactly what a browser would do.
+      const offset = codeBody.data.length;
+      placeCaret(offset);
+      const lineBreak = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: null,
+        inputType: 'insertLineBreak'
+      });
+      visual.dispatchEvent(lineBreak);
+      if (!lineBreak.defaultPrevented) {
+        codeBody.insertData(offset, '\n');
+        placeCaret(offset + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: null,
+          inputType: 'insertLineBreak'
+        })
+      );
+      const typedAt = codeBody.data.length;
+      placeCaret(typedAt);
+      const typed = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'z',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(typed);
+      if (!typed.defaultPrevented) {
+        codeBody.insertData(typedAt, 'z');
+        placeCaret(typedAt + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'z',
+          inputType: 'insertText'
+        })
+      );
+      // The burst commits the exact current source, including the new code
+      // line; a mere "changed" document would let a stale fence through.
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe(expectedCommitted)
+      );
+      const committed = props.submissionField.value;
+
+      // Hold only the re-authentication the demand itself requests. Demand and
+      // session requests are counted separately from the menu's own code-content
+      // query renders, which are a different and legitimate request kind.
+      const demandRequests = (): PreviewRequest[] =>
+        demandRenders(vi.mocked(props.previewPort.render));
+      const requestsBeforeGesture = demandRequests().length;
+      holdRefresh = true;
+      const pre = visual.querySelector('pre');
+      if (!(pre instanceof HTMLElement)) {
+        throw new Error('single-demand-pre-missing');
+      }
+      layoutContextMenuSurface(pre);
+      fireEvent.pointerDown(pre, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(pre, { clientX: 20, clientY: 20 });
+
+      // While that render is held there is no menu and no stale-map failure.
+      await waitFor(() =>
+        expect(demandRequests().length).toBe(requestsBeforeGesture + 1)
+      );
+      const demandRequest = demandRequests().at(-1);
+      expect(demandRequest?.markdown).toBe(committed);
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(props.submissionField.value).toBe(committed);
+
+      // Accept exactly that response: the old PRE must be retired and a fresh
+      // accepted DOM installed before the same gesture opens its menu.
+      refreshed.resolve({
+        ...responseFor(demandRequest as PreviewRequest),
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            { editable: true, endLine: 6, id: 'b1', startLine: 2 }
+          ],
+          coordinate: 'line' as const,
+          signature: (demandRequest as PreviewRequest).signature,
+          version: 1 as const
+        }
+      });
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      expect(pre.isConnected).toBe(false);
+      const acceptedPre = visual.querySelector('pre');
+      expect(acceptedPre).not.toBeNull();
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(
+        vi.mocked(props.onFailure).mock.calls.map((call) => call[0])
+      ).toEqual([]);
+      // Exactly one DEMAND/SESSION request belongs to this gesture; no retry
+      // occurred. The code-content query render is counted separately and is
+      // still observed by its own signature below.
+      expect(demandRequests().length).toBe(requestsBeforeGesture + 1);
+      expect(
+        vi.mocked(props.previewPort.render).mock.calls.some(
+          ([request]) => isCodeContentQuery(request)
+        )
+      ).toBe(true);
+
+      // Copy must reproduce the whole CURRENT fence, typed line included. The
+      // code actions live in the code-block submenu.
+      fireEvent.mouseEnter(
+        within(within(document.body).getByRole('menu')).getByRole('menuitem', {
+          name: /^Code block/
+        })
+      );
+      fireEvent.click(
+        await within(document.body).findByRole('menuitem', {
+          name: /^Copy code block/
+        })
+      );
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalled()
+      );
+      const written = vi
+        .mocked(props.editorClipboardPort?.write ?? (() => undefined))
+        .mock.calls.at(-1)?.[0];
+      expect(written).toBe(`${fence}js\nalpha\nz\n${fence}`);
+      expect(props.submissionField.value).toBe(committed);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('runs an ordinary fence-free context action after a native edit with exact native history', async () => {
+    // A document with no fenced block at all: the menu must still be an ordinary
+    // text menu, and the actual canonical Cut plus native Undo/Redo must work on
+    // the typed bytes. No PRE may exist, so a code-only proof cannot pass here.
+    const props = fixture();
+    const initial = 'Alpha beta';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(initial.length, initial.length);
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(
+        createPreviewResponse(
+          request,
+          `<p data-easymde-visual-block-id="b0">${request.markdown}</p>` as SafePreviewHtml,
+          {}
+        )
+      )
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('fence-free-document-owner-missing');
+      // There is genuinely no code block anywhere in this surface.
+      expect(visual.querySelector('pre')).toBeNull();
+      expect(owner.getValue()).not.toContain('```');
+
+      // The owner may reflow the paragraph after committing, so the caret is
+      // always placed against the text node that is live right now.
+      const surfaceText = (): Text => {
+        const candidate = visual.querySelector('p')?.firstChild;
+        if (!(candidate instanceof Text)) {
+          throw new Error('fence-free-paragraph-missing');
+        }
+        return candidate;
+      };
+      visual.focus();
+      const placeCaret = (node: Text, offset: number) => {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      // A multi-character native burst in the ordinary paragraph: one event per
+      // character, exactly as the browser delivers ordinary typing.
+      for (const character of ' z') {
+        const node = surfaceText();
+        placeCaret(node, node.data.length);
+        const typed = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        });
+        visual.dispatchEvent(typed);
+        if (!typed.defaultPrevented) {
+          node.insertData(node.data.length, character);
+          placeCaret(node, node.data.length);
+        }
+        visual.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText'
+          })
+        );
+      }
+      const typedSource = 'Alpha beta z';
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      const typedHistory = owner.getHistoryState();
+
+      // Select the typed word natively and open the ordinary menu on it.
+      const text = surfaceText();
+      const selectFrom = typedSource.indexOf('beta');
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.setStart(text, selectFrom);
+      range.setEnd(text, selectFrom + 'beta'.length);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const paragraph = text.parentElement;
+      if (!(paragraph instanceof HTMLElement)) {
+        throw new Error('fence-free-paragraph-element-missing');
+      }
+      layoutContextMenuSurface(paragraph);
+      fireEvent.pointerDown(paragraph, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(paragraph, { clientX: 20, clientY: 20 });
+      const menu = await within(document.body).findByRole('menu');
+      expect(within(menu).queryByRole('menuitem', { name: 'Code block' })).toBeNull();
+      fireEvent.click(within(menu).getByRole('menuitem', { name: /^Cut$/ }));
+      const cutSource = 'Alpha  z';
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalledWith(
+          'beta',
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        )
+      );
+      await waitFor(() => expect(owner.getValue()).toBe(cutSource));
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth + 1);
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+
+      // Native keyboard history over the actual canonical document.
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(cutSource));
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      // Nothing in this row ever became a fence, so the executed actions were
+      // ordinary text commands on ordinary text.
+      expect(visual.querySelector('pre')).toBeNull();
+      expect(owner.getValue()).not.toContain(String.fromCharCode(96).repeat(3));
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('keeps fence bytes intact for an ordinary action after the last fence', async () => {
+    // A fence followed by an ordinary paragraph: typing and acting after the
+    // LAST fence must keep the fence exactly as accepted. A code-only signature
+    // cannot certify this consumer, so the assertion is on exact bytes.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `${fence}js\nalpha\n${fence}\n\nTail`;
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    // A response builder over the ACTUAL requested source, so a re-render can
+    // never restore stale paragraph text under a live selection.
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const openIndex = lines.findIndex((line) =>
+        new RegExp(`^${fence}[^${fence}]*$`, 'u').test(line)
+      );
+      const closeIndex = openIndex < 0
+        ? -1
+        : lines.findIndex((line, index) =>
+            index > openIndex && line.startsWith(fence)
+          );
+      if (openIndex < 0 || closeIndex < 0) {
+        throw new Error(`after-last-fence-source-without-fence:${request.markdown}`);
+      }
+      const body = lines.slice(openIndex + 1, closeIndex).join('\n');
+      const paragraph = lines
+        .slice(closeIndex + 1)
+        .filter((line) => '' !== line)
+        .join('\n');
+      return {
+        editMap: {
+          blocks: [
+            {
+              editable: true,
+              endLine: closeIndex + 1,
+              id: 'b0',
+              startLine: openIndex
+            },
+            {
+              editable: true,
+              endLine: lines.length,
+              id: 'b1',
+              startLine: closeIndex + 2
+            }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          `<pre data-easymde-visual-block-id="b0"><code class="language-js">${body}\n</code></pre>`
+          + `<p data-easymde-visual-block-id="b1">${paragraph}</p>`
+        ) as SafePreviewHtml
+      };
+    };
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(responseFor(request))
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('after-last-fence-owner-missing');
+      const tailText = (): Text => {
+        const candidate = visual.querySelector('p')?.firstChild;
+        if (!(candidate instanceof Text)) {
+          throw new Error('after-last-fence-paragraph-missing');
+        }
+        return candidate;
+      };
+      visual.focus();
+      const placeCaret = (node: Text, offset: number) => {
+        const range = document.createRange();
+        range.setStart(node, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      for (const character of 'ed') {
+        const node = tailText();
+        placeCaret(node, node.data.length);
+        const typed = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        });
+        visual.dispatchEvent(typed);
+        if (!typed.defaultPrevented) {
+          node.insertData(node.data.length, character);
+          placeCaret(node, node.data.length);
+        }
+        visual.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText'
+          })
+        );
+      }
+      const typedSource = `${fence}js\nalpha\n${fence}\n\nTailed`;
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+
+      // Act on the trailing paragraph itself, not on the fence.
+      const tail = tailText();
+      const range = document.createRange();
+      range.selectNodeContents(tail);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const paragraph = tail.parentElement;
+      if (!(paragraph instanceof HTMLElement)) {
+        throw new Error('after-last-fence-paragraph-element-missing');
+      }
+      layoutContextMenuSurface(paragraph);
+      fireEvent.pointerDown(paragraph, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(paragraph, { clientX: 20, clientY: 20 });
+      const menu = await within(document.body).findByRole('menu');
+      // The demand describes the paragraph, so the code submenu is absent.
+      expect(within(menu).queryByRole('menuitem', { name: 'Code block' })).toBeNull();
+      fireEvent.click(
+        within(menu).getByRole('menuitem', { name: 'Copy / Paste as' })
+      );
+      fireEvent.click(
+        await within(document.body).findByRole('menuitem', {
+          name: 'Copy as Markdown'
+        })
+      );
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalledWith('Tailed')
+      );
+      // The fence is byte-identical and nothing else moved.
+      expect(owner.getValue()).toBe(typedSource);
+      expect(owner.getValue().startsWith(`${fence}js\nalpha\n${fence}\n\n`)).toBe(
+        true
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('completes the same first pointer gesture when it arrives inside the input debounce', async () => {
+    // The debounce boundary: the right-click is dispatched immediately after the
+    // native input events, with no wait for the committed document. The owner's
+    // preflight must settle that already-authored input, so the demand captures
+    // and completes against the post-burst source - one menu, one matching
+    // refresh - instead of describing the pre-typing document.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `Lead\n\n${fence}js\nalpha\n${fence}\n`;
+    const expectedCommitted = `Lead\n\n${fence}js\nalpha\nz\n${fence}\n`;
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const openIndex = lines.findIndex((line) =>
+        new RegExp(`^${fence}[^${fence}]*$`, 'u').test(line)
+      );
+      const closeIndex = openIndex < 0
+        ? -1
+        : lines.findIndex((line, index) =>
+            index > openIndex && line.startsWith(fence)
+          );
+      if (openIndex < 0 || closeIndex < 0) {
+        throw new Error(`immediate-gesture-source-without-fence:${request.markdown}`);
+      }
+      const body = lines.slice(openIndex + 1, closeIndex).join('\n');
+      return {
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            {
+              editable: true,
+              endLine: closeIndex + 1,
+              id: 'b1',
+              startLine: openIndex
+            }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + `<pre data-easymde-visual-block-id="b1"><code class="language-js">${body}\n</code></pre>`
+        ) as SafePreviewHtml
+      };
+    };
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (request.markdown !== initial && request.markdown !== expectedCommitted) {
+        throw new Error(`immediate-gesture-unexpected-source:${request.markdown}`);
+      }
+      return Promise.resolve(responseFor(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const codeBody = visual.querySelector('pre > code')?.firstChild;
+      if (!(codeBody instanceof Text)) {
+        throw new Error('immediate-gesture-code-body-missing');
+      }
+      visual.focus();
+      const placeCaret = (offset: number) => {
+        const range = document.createRange();
+        range.setStart(codeBody, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      const offset = codeBody.data.length;
+      placeCaret(offset);
+      const lineBreak = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: null,
+        inputType: 'insertLineBreak'
+      });
+      visual.dispatchEvent(lineBreak);
+      if (!lineBreak.defaultPrevented) {
+        codeBody.insertData(offset, '\n');
+        placeCaret(offset + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: null,
+          inputType: 'insertLineBreak'
+        })
+      );
+      const typedAt = codeBody.data.length;
+      placeCaret(typedAt);
+      const typed = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'z',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(typed);
+      if (!typed.defaultPrevented) {
+        codeBody.insertData(typedAt, 'z');
+        placeCaret(typedAt + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'z',
+          inputType: 'insertText'
+        })
+      );
+      // No commit wait: this is the immediate gesture.
+      const pre = visual.querySelector('pre');
+      if (!(pre instanceof HTMLElement)) {
+        throw new Error('immediate-gesture-pre-missing');
+      }
+      layoutContextMenuSurface(pre);
+      fireEvent.pointerDown(pre, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(pre, { clientX: 20, clientY: 20 });
+
+      // The committed document is exactly the post-burst source, and the menu
+      // describes it: the demand never captured the pre-typing document.
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      expect(props.submissionField.value).toBe(expectedCommitted);
+      expect(
+        vi.mocked(props.previewPort.render).mock.calls.some(
+          ([request]) => request.markdown === expectedCommitted
+        )
+      ).toBe(true);
+      expect(
+        vi.mocked(props.onFailure).mock.calls.map((call) => call[0])
+      ).toEqual([]);
+      // Exactly one re-authentication of the committed source, and the PRE the
+      // gesture was retired from is gone: only the freshly accepted DOM may
+      // carry the menu. Only DEMAND/SESSION renders count here - the menu's own
+      // `editor-code-content:` query is a different, legitimate request kind for
+      // the same markdown.
+      expect(
+        vi.mocked(props.previewPort.render).mock.calls.filter(
+          ([request]) =>
+            request.markdown === expectedCommitted
+            && !isCodeContentQuery(request)
+        )
+      ).toHaveLength(1);
+      const acceptedPre = visual.querySelector('pre');
+      expect(acceptedPre).not.toBeNull();
+      expect(acceptedPre).not.toBe(pre);
+      expect(pre.isConnected).toBe(false);
+      // The code actions live in the code-block submenu.
+      fireEvent.mouseEnter(
+        within(within(document.body).getByRole('menu')).getByRole('menuitem', {
+          name: /^Code block/
+        })
+      );
+      fireEvent.click(
+        await within(document.body).findByRole('menuitem', {
+          name: /^Copy code block/
+        })
+      );
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalled()
+      );
+      expect(
+        vi.mocked(props.editorClipboardPort?.write ?? (() => undefined))
+          .mock.calls.at(-1)?.[0]
+      ).toBe(`${fence}js\nalpha\nz\n${fence}`);
+      expect(props.submissionField.value).toBe(expectedCommitted);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('cuts the whole refreshed fence from the first gesture with exact native history', async () => {
+    // The Cut sibling of the Copy row: the same one-gesture re-authentication,
+    // then a real Clipboard write and the exact canonical fence removal. Native
+    // Undo must restore the TYPED document (not the pre-typing baseline), Redo
+    // must restore the exact cut, and Undo again the typed document.
+    const fence = String.fromCharCode(96).repeat(3);
+    const initial = `Lead\n\n${fence}js\nalpha\n${fence}\n`;
+    const typedSource = `Lead\n\n${fence}js\nalpha\nz\n${fence}\n`;
+    // The Cut removes the fence block itself; the separator newline that
+    // followed it stays, so the surviving paragraph keeps its own trailing
+    // line terminator (the block range stops before it, see
+    // `blockRangeWithTrailingTerminator` in EditorRoot.tsx:360).
+    const cutSource = 'Lead\n\n\n';
+    const props = fixture();
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const openIndex = lines.findIndex((line) =>
+        new RegExp(`^${fence}[^${fence}]*$`, 'u').test(line)
+      );
+      const closeIndex = openIndex < 0
+        ? -1
+        : lines.findIndex((line, index) =>
+            index > openIndex && line.startsWith(fence)
+          );
+      const body = openIndex < 0 || closeIndex < 0
+        ? ''
+        : lines.slice(openIndex + 1, closeIndex).join('\n');
+      const blocks = openIndex < 0 || closeIndex < 0
+        ? [{ editable: true, endLine: 1, id: 'b0', startLine: 0 }]
+        : [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            {
+              editable: true,
+              endLine: closeIndex + 1,
+              id: 'b1',
+              startLine: openIndex
+            }
+          ];
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + (openIndex < 0 || closeIndex < 0
+            ? ''
+            : `<pre data-easymde-visual-block-id="b1"><code class="language-js">${body}\n</code></pre>`)
+        ) as SafePreviewHtml
+      };
+    };
+    // Hold only the re-authentication this gesture requests, exactly as the
+    // Copy sibling does, so the Cut path is proved with the same lifecycle
+    // barriers instead of a render that settles immediately.
+    const refreshed = deferred<PreviewResponse>();
+    let holdRefresh = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdRefresh && request.markdown === typedSource
+        ? refreshed.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('cut-document-owner-missing');
+      const codeBody = visual.querySelector('pre > code')?.firstChild;
+      if (!(codeBody instanceof Text)) {
+        throw new Error('cut-code-body-missing');
+      }
+      visual.focus();
+      const placeCaret = (offset: number) => {
+        const range = document.createRange();
+        range.setStart(codeBody, offset);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      };
+      const offset = codeBody.data.length;
+      placeCaret(offset);
+      const lineBreak = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: null,
+        inputType: 'insertLineBreak'
+      });
+      visual.dispatchEvent(lineBreak);
+      if (!lineBreak.defaultPrevented) {
+        codeBody.insertData(offset, '\n');
+        placeCaret(offset + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: null,
+          inputType: 'insertLineBreak'
+        })
+      );
+      const typedAt = codeBody.data.length;
+      placeCaret(typedAt);
+      const typed = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'z',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(typed);
+      if (!typed.defaultPrevented) {
+        codeBody.insertData(typedAt, 'z');
+        placeCaret(typedAt + 1);
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'z',
+          inputType: 'insertText'
+        })
+      );
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      const typedHistory = owner.getHistoryState();
+
+      // Hold the refresh the demand itself requests, then open the one gesture.
+      // Demand/session renders only: the menu's `editor-code-content:` query is
+      // a different, legitimate request kind.
+      const demandRequests = (): PreviewRequest[] =>
+        demandRenders(vi.mocked(props.previewPort.render));
+      const requestsBeforeGesture = demandRequests().length;
+      holdRefresh = true;
+      const pre = visual.querySelector('pre');
+      if (!(pre instanceof HTMLElement)) {
+        throw new Error('cut-pre-missing');
+      }
+      layoutContextMenuSurface(pre);
+      fireEvent.pointerDown(pre, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(pre, { clientX: 20, clientY: 20 });
+
+      // While the re-authentication is held: exactly one request for the typed
+      // source, no menu, and no canonical or history change from the gesture.
+      await waitFor(() =>
+        expect(demandRequests().length).toBe(requestsBeforeGesture + 1)
+      );
+      const demandRequest = demandRequests().at(-1);
+      expect(demandRequest?.markdown).toBe(typedSource);
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(owner.getValue()).toBe(typedSource);
+      expect(owner.getHistoryState()).toEqual(typedHistory);
+      expect(props.submissionField.value).toBe(typedSource);
+
+      // Accept exactly that response: the retired PRE must be replaced before
+      // the same gesture opens its menu.
+      refreshed.resolve({
+        ...responseFor(demandRequest as PreviewRequest),
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            { editable: true, endLine: 6, id: 'b1', startLine: 2 }
+          ],
+          coordinate: 'line' as const,
+          signature: (demandRequest as PreviewRequest).signature,
+          version: 1 as const
+        }
+      });
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      expect(pre.isConnected).toBe(false);
+      const acceptedPre = visual.querySelector('pre');
+      // An explicit guard narrows the nullable query result for the later
+      // ownership assertion. `expect(...).not.toBeNull()` is not a TypeScript
+      // narrowing, and the exact typing is what keeps the check honest instead
+      // of an optional chain or a non-null assertion.
+      if (!acceptedPre) {
+        throw new Error('cut-accepted-pre-missing');
+      }
+      expect(acceptedPre).not.toBe(pre);
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      // Only the demanded refresh was held; later Cut and history renders use
+      // their own responses.
+      holdRefresh = false;
+      // One request belongs to this gesture, and the committed document is
+      // still exactly the typed source the request described.
+      expect(demandRequests().length).toBe(requestsBeforeGesture + 1);
+      expect(owner.getValue()).toBe(typedSource);
+      expect(owner.getHistoryState()).toEqual(typedHistory);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      fireEvent.click(
+        within(within(document.body).getByRole('menu')).getByRole('menuitem', {
+          name: /^Cut$/
+        })
+      );
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalledWith(
+          `${fence}js\nalpha\nz\n${fence}`,
+          expect.objectContaining({ signal: expect.any(AbortSignal) })
+        )
+      );
+      await waitFor(() => expect(owner.getValue()).toBe(cutSource));
+      // Exactly one canonical history entry for the Cut, and no orphan fence.
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth + 1);
+      expect(owner.getHistoryState().redoDepth).toBe(0);
+      expect(owner.getValue()).not.toContain(fence);
+      // The Cut's own accepted surface: the fence block is gone from the
+      // accepted DOM, and the editor is still editable.
+      await waitFor(() => expect(visual.querySelector('pre')).toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+
+      // Each native transition is proved by its OWN accepted DOM shape, not by
+      // a phase string that can still be `ready` from the previous state: the
+      // fence is absent after the Cut and present again only once Undo restores
+      // it.
+      // The typed fence body after the burst is exactly `alpha`, the new line,
+      // and `z`, with the formatter's terminal body LF. Asserting the exact
+      // bytes is what proves the accepted DOM carries the whole typed fence
+      // rather than a truncated or otherwise different code block.
+      const typedCodeBody = 'alpha\nz\n';
+      const awaitAcceptedSurface = async (prePresent: boolean): Promise<void> => {
+        // `prePresent` is the semantic outcome of this transition:
+        // true = the typed fence must be back in the accepted DOM,
+        // false = the fence must really be gone from it.
+        if (prePresent) {
+          await waitFor(() => {
+            const fences = visual.querySelectorAll('pre');
+            expect(fences).toHaveLength(1);
+            expect(fences[0]?.querySelector('code')?.textContent).toBe(
+              typedCodeBody
+            );
+          });
+        } else {
+          await waitFor(() => expect(visual.querySelectorAll('pre')).toHaveLength(0));
+        }
+        await waitFor(() =>
+          expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+        );
+        expect(visual.getAttribute('contenteditable')).toBe('true');
+      };
+
+      // Native history: Undo restores the TYPED fence, not the pre-typing one.
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      await awaitAcceptedSurface(true);
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth);
+      expect(owner.getHistoryState().redoDepth).toBe(1);
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(cutSource));
+      // Redo completes its own accepted surface: the fence really leaves the DOM
+      // again, so the later Undo is not credited with a state it never left.
+      await awaitAcceptedSurface(false);
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth + 1);
+      expect(owner.getHistoryState().redoDepth).toBe(0);
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(typedSource));
+      // The final Undo also completes its own accepted surface state: the
+      // editor is editable again, the typed fence is back in the DOM, and no
+      // history entry was added by the restore.
+      await awaitAcceptedSurface(true);
+      const restoredPre = visual.querySelector('pre');
+      expect(restoredPre).not.toBeNull();
+      // Reuse the same exact-bytes oracle instead of a weaker duplicate: the
+      // restored PRE must carry the full typed fence body, not merely a `z`.
+      expect(restoredPre?.querySelector('code')?.textContent).toBe(typedCodeBody);
+      // The Cut entry now sits on the redo side: this Undo undid it, so undo is
+      // back at the typed depth and exactly one redo is available.
+      expect(owner.getHistoryState().undoDepth).toBe(typedHistory.undoDepth);
+      expect(owner.getHistoryState().redoDepth).toBe(1);
+      // The PRE accepted for the demand is the detached one from before the
+      // Cut: the restores mounted their own block, not that retired element.
+      expect(acceptedPre.isConnected).toBe(false);
+      expect(visual.querySelectorAll('pre')).toHaveLength(1);
+      expect(props.onFailure).not.toHaveBeenCalled();
     } finally {
       view.unmount();
     }
@@ -4338,8 +6647,27 @@ describe('EditorRoot', () => {
     nativeSelection?.addRange(range);
     visual.focus();
 
+    // A prior accepted identity can fail for the same reason before this
+    // action ever starts, and `is-preview` is already true here, so neither
+    // proves that THIS demand settled. Record the failure count first and
+    // require a new callback from the action under test.
+    const failuresBefore = vi.mocked(props.onFailure).mock.calls.slice();
+
     fireEvent.click(view.getByRole('button', { name: 'Link' }));
 
+    await waitFor(() =>
+      expect(
+        vi.mocked(props.onFailure).mock.calls.length
+      ).toBeGreaterThan(failuresBefore.length)
+    );
+    const addedFailures = vi
+      .mocked(props.onFailure)
+      .mock.calls.slice(failuresBefore.length)
+      .map((call) => call[0]);
+    expect(addedFailures).toContain('visual-editor-selection-map-failed');
+    expect(addedFailures).not.toContain(
+      'visual-editor-canonical-change-failed'
+    );
     await waitFor(() =>
       expect(
         Boolean(
@@ -4476,9 +6804,12 @@ describe('EditorRoot', () => {
       expect(owner.getRevision?.()).toBe(beforeRevision);
       expect(owner.getHistoryState()).toEqual(beforeHistory);
       expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).toBeNull();
-      expect(view.getByRole('alert').textContent).toBe(
-        contextMenuStrings.statusActionFailed
-      );
+      // Leaving visual editing is the terminal outcome for an invalidated
+      // accepted DOM, and that transition dismisses the editor status surface,
+      // so the failure is proved by the single reported code above plus the
+      // preserved canonical state - not by a transient alert that the leave
+      // itself removes.
+      expect(props.onFailure).toHaveBeenCalledTimes(1);
     } finally {
       view.unmount();
     }
@@ -4596,9 +6927,14 @@ describe('EditorRoot', () => {
         );
         layoutPreviewSurface(view.container);
         fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
-        const visual = await view.findByRole('textbox', {
-          name: '可视化文章编辑器'
-        });
+        // The 320-block windowed handoff exceeds the 1000ms default query
+        // budget once the host is loaded, so give the certificate update an
+        // explicit budget instead of racing the window measurement.
+        const visual = await view.findByRole(
+          'textbox',
+          { name: '可视化文章编辑器' },
+          { timeout: 8000 }
+        );
         const canvas = visual.closest<HTMLElement>(
           '.easymde-immersive-preview-canvas'
         );
@@ -4897,13 +7233,28 @@ describe('EditorRoot', () => {
         fireEvent.click(unlock);
 
         if (frameQueue) {
+          // The queued window commit arrives on a later frame than the batch
+          // that is already pending when the unlock click returns, so waiting
+          // for a single batch only proves a frame ran. Drain until the owner
+          // actually installs its window or hands over to the visual editor;
+          // the cap and spacer assertions below stay the real invariant.
           await drainAnimationFramesUntil(
             frameQueue,
-            () => frameQueue.callbacks.size > 0
+            () => {
+              const sink = view.container.querySelector<HTMLElement>(
+                '[data-easymde-preview-html-sink="1"]'
+              );
+              return (
+                null !== sink?.querySelector(
+                  '[data-easymde-preview-window-spacer]'
+                )
+                || null
+                  !== view.queryByRole('textbox', {
+                    name: '可视化文章编辑器'
+                  })
+              );
+            }
           );
-          if (!(await drainAnimationFrameBatch(frameQueue, 0))) {
-            throw new Error('windowed-upload-first-frame-missing');
-          }
           const previewSurface = view.container.querySelector<HTMLElement>(
             '[data-easymde-preview-html-sink="1"]'
           );
@@ -5082,7 +7433,7 @@ describe('EditorRoot', () => {
   });
 
   it.each([false, true] as const)(
-    'keeps the scaled image target selected after a visual image scale action (windowed=%s)',
+    'keeps the scaled image target across the accepted scale render and refuses a mid-transfer replay (windowed=%s)',
     async (windowed) => {
       const props = fixture();
       const firstLine =
@@ -5095,18 +7446,30 @@ describe('EditorRoot', () => {
         : firstLine;
       props.submissionField.value = sourceMarkdown;
       props.submissionField.defaultValue = sourceMarkdown;
-      const rendered = windowed
-        ? [
-            '<p>Before <img alt="alt" src="https://example.test/original.png" title="{width=100%}"> after</p>',
-            ...Array.from(
-              { length: 160 },
-              (_, index) => `<p>suffix ${index}</p>`
-            )
-          ].join('')
-        : '<p>Before <img alt="alt" src="https://example.test/original.png" title="{width=100%}"> after</p>';
+      // A real renderer draws the image scale the SOURCE requests. The double
+      // therefore derives the title from the requested markdown instead of
+      // always returning the pre-scale markup: a fixed html would leave the
+      // accepted DOM permanently describing another source, which no real
+      // Preview does and which would hide the settle the row is about.
+      const renderedFor = (request: { markdown: string }): string => {
+        const scale = /\{width=(\d+)%\}/.exec(request.markdown);
+        const title = scale ? `{width=${scale[1]}%}` : '{width=100%}';
+        const image = `<p>Before <img alt="alt" src="https://example.test/original.png" title="${title}"> after</p>`;
+        return windowed
+          ? image +
+              Array.from(
+                { length: 160 },
+                (_, index) => `<p>suffix ${index}</p>`
+              ).join('')
+          : image;
+      };
       vi.mocked(props.previewPort.render).mockImplementation((request) =>
         Promise.resolve(
-          createPreviewResponse(request, rendered as SafePreviewHtml, {})
+          createPreviewResponse(
+            request,
+            renderedFor(request) as SafePreviewHtml,
+            {}
+          )
         )
       );
       const view = render(
@@ -5188,6 +7551,82 @@ describe('EditorRoot', () => {
         expect(restored.intersectsNode(currentImage())).toBe(true);
       }
 
+      // The canonical Markdown keeps the image's EXACT syntax. The whole
+      // attribute form and the alt text are asserted, not just the width
+      // fragment, because a source that lost either would still "contain"
+      // `{width=50%}` while no longer being the user's image.
+      const imageSource50 =
+        '![alt](https://example.test/original.png "{width=50%}")';
+      const scaledSource = props.submissionField.value;
+      expect(scaledSource).toContain(imageSource50);
+      expect(scaledSource).not.toContain('{width=100%}');
+      // Exactly one width attribute: no duplication, no dropped token.
+      expect((scaledSource.match(/\{width=/g) ?? []).length).toBe(1);
+      // The ONLY difference from the original source is the width token, so
+      // the length delta is exactly one byte shorter at 50% and every other
+      // byte - line breaks, alt text, URL, spacing, the trailing paragraph -
+      // is identical. This also rules out soft-break-to-space rewriting,
+      // lost `\n` between blocks, and trailing-whitespace normalization.
+      const expectedScaledSource = sourceMarkdown.replace(
+        '{width=100%}',
+        '{width=50%}'
+      );
+      expect(scaledSource).toBe(expectedScaledSource);
+      expect(sourceMarkdown.length - scaledSource.length).toBe(1);
+      expect(scaledSource.split('\n').length).toBe(
+        sourceMarkdown.split('\n').length
+      );
+      // The canonical selection is the WHOLE image target, not a caret inside
+      // image syntax: the selected slice is the image source verbatim.
+      const selectionStart = props.submissionField.selectionStart ?? -1;
+      const selectionEnd = props.submissionField.selectionEnd ?? -1;
+      expect(
+        scaledSource.slice(selectionStart, selectionEnd),
+        'canonical selection covers the whole image target'
+      ).toBe(imageSource50);
+
+      // A replay that arrives BEFORE the accepted render is a different
+      // gesture: the owner's own scale transfer is still pending, so the
+      // demand is refused silently - no menu is built, no failure is reported,
+      // the canonical source keeps the accepted `{width=50%}`, and the mounted
+      // DOM still draws the pre-acceptance markup. Nothing is retried here and
+      // no guard is bypassed: this is the owner's documented pending window.
+      const writesBeforeScaleReplay = vi.mocked(
+        props.editorClipboardPort?.write ?? (() => undefined)
+      ).mock.calls.length;
+      layoutContextMenuSurface(visual);
+      fireEvent.contextMenu(currentImage(), { clientX: 24, clientY: 30 });
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(
+        within(document.body).queryAllByRole('menu'),
+        'menus while the owner scale transfer is pending'
+      ).toHaveLength(0);
+      expect(
+        vi.mocked(props.onFailure).mock.calls,
+        'failures while the owner scale transfer is pending'
+      ).toEqual([]);
+      expect(props.submissionField.value).toBe(scaledSource);
+      // The refused gesture wrote nothing at all.
+      expect(
+        vi.mocked(props.editorClipboardPort?.write ?? (() => undefined)).mock
+          .calls.length,
+        'clipboard writes during the refused mid-transfer replay'
+      ).toBe(writesBeforeScaleReplay);
+
+      // The replay waits for the ACCEPTED render of the scale, using the same
+      // readiness barrier the other visual rows use: the surface phase returns
+      // to `ready` and the accepted DOM draws the source's own `{width=50%}`.
+      // A demand that arrives earlier belongs to the mid-transfer window and is
+      // parked by the owner, so it is not the state this row is about.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      await waitFor(() =>
+        expect(currentImage().getAttribute('title')).toBe('{width=50%}')
+      );
       // A repeated action replays the menu after the accepted Preview window
       // re-rendered the scaled image. The replayed target is stale, so the
       // owner must rebuild a legal target/selection instead of failing.
@@ -5329,7 +7768,14 @@ describe('EditorRoot', () => {
       await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
       layoutPreviewSurface(view.container);
       fireEvent.click(unlock);
-      const editor = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      // The windowed handoff measures all 320 blocks before it publishes the
+      // window, which exceeds the 1000ms default query budget on a loaded host.
+      // The explicit budget keeps this test about the HR transfer race.
+      const editor = await view.findByRole(
+        'textbox',
+        { name: '可视化文章编辑器' },
+        { timeout: 8000 }
+      );
       await waitFor(() =>
         expect(editor.getAttribute('data-easymde-preview-phase')).toBe('ready')
       );
@@ -5504,9 +7950,17 @@ describe('EditorRoot', () => {
     const view = render(<EditorRoot {...props} />);
     fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
     fireEvent.click(view.getByRole('button', { name: '预览' }));
-    fireEvent.click(
-      await view.findByRole('button', { name: '解除锁定并编辑' })
-    );
+    // A windowed unlock is only admitted on a Ready Preview with a window that
+    // has real layout metrics. Waiting for the button to leave its disabled
+    // state and laying out the mounted blocks first keeps this test measuring
+    // the owner's handoff instead of racing the enhancement and the zero-height
+    // jsdom geometry.
+    const unlock = await view.findByRole('button', {
+      name: '解除锁定并编辑'
+    });
+    await waitFor(() => expect(unlock.hasAttribute('disabled')).toBe(false));
+    layoutPreviewSurface(view.container);
+    fireEvent.click(unlock);
     const visual = await view.findByRole('textbox', {
       name: '可视化文章编辑器'
     });
@@ -5832,6 +8286,98 @@ describe('EditorRoot', () => {
     );
     view.unmount();
   });
+
+  it.each(['readOnly', 'disabled'] as const)(
+    'fails a Source table confirmation whose field became %s while the dialog was open',
+    async (flag) => {
+      // The dialog stays open across an arbitrary delay, so the authoritative
+      // native field can change after the enabled action started and before the
+      // user confirms. Confirming must fail exactly once and write neither the
+      // canonical document nor history.
+      const props = fixture();
+      props.submissionField.value = 'selected';
+      props.submissionField.defaultValue = 'selected';
+      props.submissionField.setSelectionRange(0, 8);
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      const documentOwnerRef: {
+        current: ReturnType<typeof realCreateDocumentSession> | null;
+      } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+        .mockImplementation((options) => {
+          const owner = realCreateDocumentSession(options);
+          documentOwnerRef.current = owner;
+          return owner;
+        });
+      const view = render(<EditorRoot {...props} />);
+      try {
+        const source = await waitFor(() => {
+          const element = view.container.querySelector<HTMLElement>('.cm-content');
+          if (!element) throw new Error('source-surface-missing');
+          return element;
+        });
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('source-document-owner-missing');
+        layoutContextMenuSurface(source);
+        fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+        await within(document.body).findByRole('menu');
+        fireEvent.click(
+          within(document.body).getByRole('menuitem', { name: 'Insert' })
+        );
+        fireEvent.click(
+          await within(document.body).findByRole('menuitem', {
+            name: 'Insert table above'
+          })
+        );
+        await within(document.body).findByRole('dialog', { name: '插入表格' });
+        const beforeSelection = owner.getSelection();
+        const beforeHistory = owner.getHistoryState();
+        const beforeRevision = owner.getRevision?.();
+        if ('readOnly' === flag) props.submissionField.readOnly = true;
+        else props.submissionField.disabled = true;
+        expect(props.submissionField.readOnly).toBe('readOnly' === flag);
+        expect(props.submissionField.disabled).toBe('disabled' === flag);
+        fireEvent.click(
+          within(document.body).getByRole('button', { name: '2 × 2' })
+        );
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(
+            'editor-context-menu-surface-read-only'
+          )
+        );
+        expect(view.getByRole('alert').textContent).toBe(
+          contextMenuStrings.statusActionFailed
+        );
+        expect(owner.getValue()).toBe('selected');
+        expect(props.submissionField.value).toBe('selected');
+        expect(EditorView.findFromDOM(source)?.state.doc.toString()).toBe(
+          'selected'
+        );
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+        expect(owner.getRevision?.()).toBe(beforeRevision);
+        expect(
+          vi.mocked(props.onFailure).mock.calls.filter((call) =>
+            call[0].startsWith('editor-context-menu-')
+          )
+        ).toEqual([['editor-context-menu-surface-read-only']]);
+
+        // Restoring the flag schedules no deferred table insert.
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(owner.getValue()).toBe('selected');
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+      } finally {
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        view.unmount();
+      }
+    }
+  );
 
   it('formats a captured Source table through one canonical undoable edit', async () => {
     const props = fixture();
@@ -7264,10 +9810,12 @@ describe('EditorRoot', () => {
     const surfaceB = createSurface();
     const runtimeA: ImmersiveVisualEditorRuntime = {
       applyCanonicalChange: () => 'blocked',
+      captureContextMenuTarget: () => null,
       executeCommand: () => 'blocked',
       getGeneratedPreviewIdentity: () => null,
       isEditable: () => true,
       isTransferPending: () => false,
+      prepareContextMenuDemand: () => true,
       prepareGeneratedContentTarget: () => null,
       prepareGeneratedContentTargetForSelection: () => null,
       prepareImageTarget: () => null,
@@ -7279,10 +9827,12 @@ describe('EditorRoot', () => {
     };
     const runtimeB: ImmersiveVisualEditorRuntime = {
       applyCanonicalChange: () => 'blocked',
+      captureContextMenuTarget: () => null,
       executeCommand: () => 'blocked',
       getGeneratedPreviewIdentity: () => null,
       isEditable: () => true,
       isTransferPending: () => false,
+      prepareContextMenuDemand: () => true,
       prepareGeneratedContentTarget: () => null,
       prepareGeneratedContentTargetForSelection: () => null,
       prepareImageTarget: () => null,
@@ -7361,6 +9911,7 @@ describe('EditorRoot', () => {
     ['编辑', '预览', 'source', 'fail']
   ] as const)(
     'settles a second windowed unlock after %s → %s (%s, %s materialization)',
+    { timeout: 10_000 },
     async (modeControl, previewControl, mode, materialization) => {
       const props = fixture();
       const lines = Array.from({ length: 200 }, (_, index) => `Paragraph ${index}`);
@@ -13621,6 +16172,2930 @@ describe('EditorRoot', () => {
     });
   });
 
+  it('fails a Source media insertion when the field became read-only while the picker was open', async () => {
+    // The media picker is a user gesture that can stay open indefinitely, so the
+    // authoritative Source field may turn read-only before the user selects an
+    // attachment. The insertion must then fail explicitly and write neither the
+    // canonical document nor history.
+    const props = fixture();
+    props.submissionField.value = 'Before after';
+    props.submissionField.defaultValue = 'Before after';
+    props.submissionField.setSelectionRange(7, 7);
+    const before = props.submissionField.value;
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(view.getByRole('button', { name: 'Image' }));
+      fireEvent.click(view.getByRole('button', { name: 'Image' }));
+      const frame = props.mediaPickerFrame;
+      if (!frame) throw new Error('media-frame-missing');
+      const open = vi.mocked(frame.open).mock.calls[0]?.[0];
+      if (!open) throw new Error('media-frame-open-missing');
+      // The picker was opened while editable; the field turns read-only now.
+      props.submissionField.readOnly = true;
+      open.onSelect({
+        alt: 'Selected image',
+        url: 'https://example.test/readonly.png'
+      });
+      open.onClose();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(props.submissionField.value).toBe(before);
+      expect(props.submissionField.value).not.toContain('readonly.png');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'media-picker-document-read-only'
+      );
+    } finally {
+      props.submissionField.readOnly = false;
+      view.unmount();
+    }
+  });
+
+  it('fails a Source media insertion when the field became disabled while the picker was open', async () => {
+    // The authoritative field can also be disabled rather than read-only. The
+    // adapter reads both, so the mutation must reject either transition without
+    // touching the canonical document or history.
+    const props = fixture();
+    props.submissionField.value = 'Before after';
+    props.submissionField.defaultValue = 'Before after';
+    props.submissionField.setSelectionRange(7, 7);
+    const before = props.submissionField.value;
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(view.getByRole('button', { name: 'Image' }));
+      fireEvent.click(view.getByRole('button', { name: 'Image' }));
+      const frame = props.mediaPickerFrame;
+      if (!frame) throw new Error('media-frame-missing');
+      const open = vi.mocked(frame.open).mock.calls[0]?.[0];
+      if (!open) throw new Error('media-frame-open-missing');
+      props.submissionField.disabled = true;
+      open.onSelect({
+        alt: 'Selected image',
+        url: 'https://example.test/disabled.png'
+      });
+      open.onClose();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(props.submissionField.value).toBe(before);
+      expect(props.submissionField.value).not.toContain('disabled.png');
+      expect(props.onFailure).toHaveBeenCalledWith(
+        'media-picker-document-read-only'
+      );
+    } finally {
+      props.submissionField.disabled = false;
+      view.unmount();
+    }
+  });
+
+  it.each([
+    ['readOnly', 'above'],
+    ['readOnly', 'below'],
+    ['disabled', 'above'],
+    ['disabled', 'below']
+  ] as const)(
+    'rejects formatted Source context media insertion after %s permission loss in position %s without changing history',
+    async (flag, direction) => {
+      // The picker opens while the field is editable, so the formatted
+      // context-menu insertion (Insert -> image above / below) is genuinely
+      // enabled on the relative-insertion branch. The authoritative native flag
+      // then changes before confirmation: the mutation itself must reject, keep
+      // the exact source and selection, and leave no history entry or deferred
+      // insertion behind.
+      const props = fixture();
+      const initial = 'Before after\n\nTail';
+      props.submissionField.value = initial;
+      props.submissionField.defaultValue = initial;
+      const caret = initial.indexOf('after');
+      props.submissionField.setSelectionRange(caret, caret);
+      const realCreateDocumentSession =
+        observedSourceAdapter.createCodeMirrorDocumentSession;
+      const documentOwnerRef: {
+        current: ReturnType<typeof realCreateDocumentSession> | null;
+      } = { current: null };
+      vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+        .mockImplementation((options) => {
+          const owner = realCreateDocumentSession(options);
+          documentOwnerRef.current = owner;
+          return owner;
+        });
+      const view = render(
+        <EditorRoot {...props} editorBlockIndexPort={sourceLinkBlockIndexPort()} />
+      );
+      try {
+        const source = await waitFor(() => {
+          const element = view.container.querySelector<HTMLElement>('.cm-content');
+          if (!element) throw new Error('source-surface-missing');
+          return element;
+        });
+        const owner = documentOwnerRef.current;
+        if (!owner) throw new Error('source-document-owner-missing');
+        layoutContextMenuSurface(source);
+        fireEvent.contextMenu(source, { clientX: 20, clientY: 24 });
+        await within(document.body).findByRole('menu');
+        fireEvent.click(
+          within(document.body).getByRole('menuitem', { name: 'Insert' })
+        );
+        const relativeInsert = await within(document.body).findByRole('menuitem', {
+          name: `Insert image ${direction}`
+        });
+        expect(relativeInsert.getAttribute('aria-disabled')).toBe('false');
+        fireEvent.click(relativeInsert);
+
+        const frame = props.mediaPickerFrame;
+        if (!frame) throw new Error('media-frame-missing');
+        const open = vi.mocked(frame.open).mock.calls.at(-1)?.[0];
+        if (!open) throw new Error('media-frame-open-missing');
+        // Everything is still editable while the user works in the picker.
+        const beforeSource = owner.getValue();
+        const beforeSelection = owner.getSelection();
+        const beforeHistory = owner.getHistoryState();
+        const beforeRevision = owner.getRevision?.();
+
+        // Only the authoritative native field changes, immediately before the
+        // real confirmation.
+        if ('readOnly' === flag) props.submissionField.readOnly = true;
+        else props.submissionField.disabled = true;
+        // Read the authoritative native field back: exactly the selected flag
+        // changed, while the other one still permits nothing extra.
+        expect(props.submissionField.readOnly).toBe('readOnly' === flag);
+        expect(props.submissionField.disabled).toBe('disabled' === flag);
+
+        open.onSelect({
+          alt: 'Selected image',
+          url: `https://example.test/${flag}.png`
+        });
+        open.onClose();
+
+        await waitFor(() =>
+          expect(props.onFailure).toHaveBeenCalledWith(
+            'media-picker-document-read-only'
+          )
+        );
+        // Exactly one stable failure: not the generic fallback, no duplicate.
+        expect(
+          vi.mocked(props.onFailure).mock.calls.filter(
+            (call) => call[0].startsWith('media-picker-')
+          )
+        ).toEqual([['media-picker-document-read-only']]);
+        expect(view.getByRole('alert').textContent).toBe(
+          'The media library could not be opened.'
+        );
+        // Byte-identical source, identical native and canonical selection,
+        // identical revision and history: the failed insertion wrote nothing.
+        expect(owner.getValue()).toBe(beforeSource);
+        expect(props.submissionField.value).toBe(initial);
+        // The authoritative native field keeps the user's own caret exactly:
+        // a rejected insertion never moves the native selection either.
+        expect([
+          props.submissionField.selectionStart,
+          props.submissionField.selectionEnd
+        ]).toEqual([caret, caret]);
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+        expect(owner.getRevision?.()).toBe(beforeRevision);
+        expect(props.submissionField.value).not.toContain(`${flag}.png`);
+        expect(source.querySelector('img')).toBeNull();
+
+        // Restore the exact original flag and prove no insertion is deferred.
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(owner.getValue()).toBe(initial);
+        expect(owner.getSelection()).toEqual(beforeSelection);
+        expect(owner.getHistoryState()).toEqual(beforeHistory);
+        expect(source.querySelector('img')).toBeNull();
+        expect(view.queryByRole('dialog')).toBeNull();
+      } finally {
+        props.submissionField.readOnly = false;
+        props.submissionField.disabled = false;
+        view.unmount();
+      }
+    }
+  );
+
+  it('keeps a keyboard context-menu demand on the block the user selected, then dismisses it by Escape', async () => {
+    // A truthful two-block document: Lead is line 0, Tail is line 2. The map
+    // names both blocks, so a demand that silently described Lead would be
+    // observable instead of passing on a single-child fixture.
+    const props = fixture();
+    const initial = 'Lead\n\nTail';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve({
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            { editable: true, endLine: 3, id: 'b1', startLine: 2 }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + '<p data-easymde-visual-block-id="b1">Tail</p>'
+        ) as SafePreviewHtml
+      })
+    );
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const blocks = visual.querySelectorAll('p');
+      expect(blocks).toHaveLength(2);
+      const tail = blocks[1];
+      if (!(tail instanceof HTMLElement)) throw new Error('tail-block-missing');
+      expect(tail.textContent).toBe('Tail');
+      visual.focus();
+      expect(document.activeElement).toBe(visual);
+      // A real user selection inside the SECOND block, then the menu key.
+      const tailText = tail.firstChild;
+      if (!(tailText instanceof Text)) throw new Error('tail-text-missing');
+      const range = document.createRange();
+      range.setStart(tailText, 0);
+      range.setEnd(tailText, tailText.data.length);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const writesBefore = vi.mocked(
+        props.editorClipboardPort?.write ?? (() => undefined)
+      ).mock.calls.length;
+      // The keyboard activation commits the menu in a React update, so the row
+      // awaits that commit boundary explicitly (the pointer variants get it from
+      // the preceding act) instead of racing findByRole's first poll.
+      await act(async () => {
+        fireEvent.keyDown(tail, { key: 'F10', shiftKey: true });
+      });
+      const menu = await within(document.body).findByRole('menu');
+      expect(menu).toBeTruthy();
+      // The captured demand is the Tail block: the keyboard activation keeps
+      // the user's own selection, so the menu's Copy reproduces those bytes
+      // and nothing from Lead.
+      fireEvent.click(within(menu).getByRole('menuitem', { name: /^Copy$/ }));
+      await waitFor(() =>
+        expect(props.editorClipboardPort?.write).toHaveBeenCalledWith('Tail')
+      );
+      expect(props.submissionField.value).toBe(initial);
+      expect(props.onFailure).not.toHaveBeenCalled();
+
+      // A second gesture is cancelled by Escape: the menu goes away, its
+      // witness is released, and the document and Clipboard stay untouched.
+      const writesAfterCopy = vi.mocked(
+        props.editorClipboardPort?.write ?? (() => undefined)
+      ).mock.calls.length;
+      // The block is re-queried from the LIVE surface: a preceding accepted
+      // render may have replaced the paragraph node, and a stale detached node
+      // cannot receive a keyboard activation at all.
+      const liveTail = (): HTMLElement => {
+        const node = visual.querySelectorAll('p')[1];
+        if (!(node instanceof HTMLElement)) throw new Error('tail-block-gone');
+        return node;
+      };
+      // The first gesture's Copy is a pure read, but the owner may still be
+      // settling the selection it restored. Wait for the readiness the other
+      // visual rows use before the second activation instead of racing it.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(visual);
+      const restoredSelection = window.getSelection();
+      expect(restoredSelection?.anchorNode?.isConnected).toBe(true);
+      expect(liveTail().contains(restoredSelection?.anchorNode ?? null)).toBe(true);
+      expect(restoredSelection?.toString()).toBe('Tail');
+      await act(async () => {
+        fireEvent.keyDown(liveTail(), { key: 'F10', shiftKey: true });
+      });
+      expect(props.onFailure).not.toHaveBeenCalled();
+      const cancelled = await within(document.body).findByRole('menu');
+      fireEvent.keyDown(cancelled, { key: 'Escape' });
+      await waitFor(() =>
+        expect(within(document.body).queryAllByRole('menu')).toHaveLength(0)
+      );
+      expect(
+        vi.mocked(props.editorClipboardPort?.write ?? (() => undefined)).mock
+          .calls.length
+      ).toBe(writesAfterCopy);
+      expect(writesAfterCopy).toBeGreaterThan(writesBefore);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(props.submissionField.value).toBe(initial);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  /**
+   * The four table controls. Each one deletes one character from a delimiter
+   * line, which the formal renderer reinterprets as a table while the
+   * serialized source keeps its exact bytes. The pre-edit paragraph and the
+   * post-edit table share the exact same source extent, so only the accepted
+   * render can describe the table.
+   */
+  const tablePromotion = {
+    equalEof: {
+      // The named EOF counterexample: deleting the final byte of a lenient
+      // delimiter promotes the paragraph into a valid table.
+      after: 'a | b\n--- | ---',
+      before: 'a | b\n--- | ---x',
+      columns: 'equal' as const,
+      scope: 'isolated' as const,
+      deletion: { from: 15, to: 16 },
+      region: 'eof' as const
+    },
+    equalInterior: {
+      after: 'a | b\n--- | ---',
+      before: 'a | b\n---x | ---',
+      columns: 'equal' as const,
+      scope: 'isolated' as const,
+      deletion: { from: 9, to: 10 },
+      region: 'interior' as const
+    },
+    unequalEof: {
+      after: 'a | b\n--- | --- | ---',
+      before: 'a | b\n--- | --- | ---x',
+      columns: 'unequal' as const,
+      scope: 'isolated' as const,
+      deletion: { from: 21, to: 22 },
+      region: 'eof' as const
+    },
+    unequalInterior: {
+      after: 'a | b\n--- | --- | ---',
+      before: 'a | b\n---x | --- | ---',
+      columns: 'unequal' as const,
+      scope: 'isolated' as const,
+      deletion: { from: 9, to: 10 },
+      region: 'interior' as const
+    }
+  };
+
+  type PromotionCase = {
+    before: string;
+    after: string;
+    columns: 'equal' | 'unequal';
+    region: 'interior' | 'eof';
+    scope: 'isolated' | 'held-neighbor';
+    deletion: { from: number; to: number };
+    neighbor?: string;
+  };
+  const neighborPromotions: PromotionCase[] = Object.values(tablePromotion).map((promotion) => ({
+    ...promotion,
+    scope: 'held-neighbor',
+    before: `${promotion.before}\n\nTrailing native neighbor.`,
+    after: `${promotion.after}\n\nTrailing native neighbor.`,
+    neighbor: 'Trailing native neighbor.'
+  }));
+
+  /**
+   * True when this fixture source's second line is a valid table delimiter row
+   * with at least as many cells as the header row - the formal renderer's own
+   * admission rule, which accepts a delimiter wider than the header and pads
+   * the missing header cells.
+   */
+  function promotionTableShape(markdown: string): boolean {
+    const lines = markdown.split('\n');
+    const header = lines[0] ?? '';
+    const delimiter = lines[1] ?? '';
+    if ('' === header.trim() || '' === delimiter.trim()) return false;
+    const delimiterCells = delimiter.split('|');
+    if (delimiterCells.length < header.split('|').length) return false;
+    return delimiterCells.every((cell) => /^\s*:?-+:?\s*$/u.test(cell));
+  }
+
+  /**
+   * A truthful accepted response for ANY source these promotion fixtures can
+   * produce, including the sources a continued native edit creates. Blank
+   * separator lines are not blocks, and the table shape follows the renderer's
+   * own admission rule rather than a label.
+   */
+  function promotionSourceResponse(
+    markdown: string,
+    request: PreviewRequest
+  ): PreviewResponse {
+    if ('' === markdown) {
+      return {
+        editMap: {
+          blocks: [],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: '' as SafePreviewHtml
+      };
+    }
+    const lines = markdown.split('\n');
+    if (promotionTableShape(markdown)) {
+      const headerCells = (lines[0] ?? '').split('|');
+      const delimiterCells = (lines[1] ?? '').split('|');
+      const cells = delimiterCells
+        .map((_cell, index) => `<th>${(headerCells[index] ?? '').trim()}</th>`)
+        .join('');
+      // The table owns the first two lines; any further non-blank line is its
+      // own ordinary paragraph, exactly like every other block in these
+      // fixtures - a trailing paragraph is not swallowed into the table.
+      const blocks: Array<{
+        editable: true;
+        endLine: number;
+        id: string;
+        startLine: number;
+      }> = [{ editable: true, endLine: 2, id: 'b0', startLine: 0 }];
+      let html =
+        '<section class="table-container easymde-table-container" data-easymde-visual-block-id="b0">'
+        + `<table><thead><tr>${cells}</tr></thead></table></section>`;
+      for (let index = 2; index < lines.length; index += 1) {
+        const line = lines[index] ?? '';
+        if ('' === line) continue;
+        const id = `b${blocks.length}`;
+        blocks.push({ editable: true, endLine: index + 1, id, startLine: index });
+        html += `<p data-easymde-visual-block-id="${id}">${line}</p>`;
+      }
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: html as SafePreviewHtml
+      };
+    }
+    const blocks: Array<{
+      editable: true;
+      endLine: number;
+      id: string;
+      startLine: number;
+    }> = [];
+    const html: string[] = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? '';
+      if ('' === line) continue;
+      const id = `b${blocks.length}`;
+      blocks.push({ editable: true, endLine: index + 1, id, startLine: index });
+      html.push(`<p data-easymde-visual-block-id="${id}">${line}</p>`);
+    }
+    return {
+      editMap: {
+        blocks,
+        coordinate: 'line' as const,
+        signature: request.signature,
+        version: 1 as const
+      },
+      features: {},
+      html: html.join('') as SafePreviewHtml
+    };
+  }
+
+  /**
+   * The two exact response shapes. No renderer is approximated here: the
+   * pre-deletion source is the paragraph the formal renderer produces, and the
+   * post-deletion source is the table it produces. Anything else is a fixture
+   * bug, so an unexpected source throws.
+   */
+  function tablePromotionResponse(
+    promotion: PromotionCase,
+    request: PreviewRequest
+  ): PreviewResponse {
+    const beforeBlock = promotion.before.split('\n\n')[0] ?? '';
+    const editMap = {
+      blocks: [
+        { editable: true as const, endLine: 2, id: 'b0', startLine: 0 },
+        ...(promotion.neighbor ? [{ editable: true as const, endLine: 4, id: 'b1', startLine: 3 }] : [])
+      ],
+      coordinate: 'line' as const,
+      signature: request.signature,
+      version: 1 as const
+    };
+    if (request.markdown === promotion.before) {
+      return {
+        editMap,
+        features: {},
+        html: (
+          `<p data-easymde-visual-block-id="b0">${beforeBlock}</p>`
+          + (promotion.neighbor ? `<p data-easymde-visual-block-id="b1">${promotion.neighbor}</p>` : '')
+        ) as SafePreviewHtml
+      };
+    }
+    if ('' === request.markdown) {
+      // Deleting the table empties the document; the shared builder returns the
+      // zero-block empty paper the owner presents for that map.
+      return promotionSourceResponse('', request);
+    }
+    if (request.markdown !== promotion.after) {
+      throw new Error('table-promotion-unexpected-source');
+    }
+    // The promoted source is delivered by the shared truthful builder, so the
+    // equal and unequal shapes follow the same formal admission rule as any
+    // source a continued native edit produces.
+    return promotionSourceResponse(promotion.after, request);
+  }
+
+  /**
+   * Drive the real native deletion the browser performs: prevent-default
+   * aware, mutating the DOM only when the owner did not consume the event,
+   * then publishing the matching input event. The owner - not the test -
+   * commits the canonical source from its own serialization.
+   */
+  function nativeDelete(
+    visual: HTMLElement,
+    text: Text,
+    from: number,
+    to: number
+  ): void {
+    const range = document.createRange();
+    range.setStart(text, from);
+    range.setEnd(text, to);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const before = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'deleteContentBackward'
+    });
+    visual.dispatchEvent(before);
+    if (!before.defaultPrevented) {
+      text.deleteData(from, to - from);
+      const caret = document.createRange();
+      caret.setStart(text, from);
+      caret.collapse(true);
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+    }
+    visual.dispatchEvent(
+      new InputEvent('input', {
+        bubbles: true,
+        inputType: 'deleteContentBackward'
+      })
+    );
+  }
+
+  function tablePromotionFixture(
+    promotion: PromotionCase
+  ) {
+    const props = fixture();
+    props.submissionField.value = promotion.before;
+    props.submissionField.defaultValue = promotion.before;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve(tablePromotionResponse(promotion, request))
+    );
+    // Capture the REAL factory and install one spy for THIS run only. The caller
+    // restores it in its own `finally`, so a later fresh run starts from the
+    // real factory instead of wrapping an earlier spy (which would layer the
+    // mocks and make the observed owner ambiguous).
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: {
+      current: CodeMirrorDocumentSession | null;
+    } = { current: null };
+    const receiptResults: boolean[] = [];
+    const receiptReplayResults: boolean[] = [];
+    const receiptPublications: Array<{
+      value: string | undefined;
+      revision: number | undefined;
+      history: { undoDepth: number; redoDepth: number } | undefined;
+      before: EditorContextMenuSurfaceSnapshot;
+      after: EditorContextMenuSurfaceSnapshot;
+      selection: DocumentSelection | undefined;
+      nativeAnchor: Node | null | undefined;
+      nativeFocus: Node | null | undefined;
+      nativeAnchorOffset: number | undefined;
+      nativeFocusOffset: number | undefined;
+      nativeCollapsed: boolean | undefined;
+      activeElement: Element | null;
+    }> = [];
+    const realVisualOwner = observedVisualOwner.ImmersiveVisualEditor;
+    const visualSpy = vi.spyOn(observedVisualOwner, 'ImmersiveVisualEditor').mockImplementation((componentProps) => {
+      const onReady = observedCallback((runtime: ImmersiveVisualEditorRuntime) => {
+        const capture = runtime.captureContextMenuTarget;
+        const captureContextMenuTarget: ImmersiveVisualEditorRuntime['captureContextMenuTarget'] = (target) => {
+          // Observe only the owner's definition during this synchronous capture.
+          // The real lease, receiver, arguments, result and immutable descriptor
+          // flags survive unchanged; no published member is replaced or proxied.
+          const defineProperty = Object.defineProperty;
+          const definitions: unknown[] = [];
+          const definitionSpy = vi.spyOn(Object, 'defineProperty').mockImplementation((object, key, descriptor) => {
+            if ('consumeAcceptedSelectionTransition' !== key || 'function' !== typeof descriptor.value) {
+              return defineProperty(object, key, descriptor);
+            }
+            definitions.push(object);
+            const consume = descriptor.value as NonNullable<EditorContextMenuTargetLease['consumeAcceptedSelectionTransition']>;
+            const observedConsume: typeof consume = function (this: unknown, ...args: Parameters<typeof consume>) {
+              const consumed = Reflect.apply(consume, this, args) as boolean;
+              receiptResults.push(consumed);
+              if (consumed) {
+                const native = window.getSelection();
+                receiptPublications.push({
+                  value: ownerRef.current?.getValue(),
+                  revision: ownerRef.current?.getRevision?.(),
+                  history: ownerRef.current?.getHistoryState(),
+                  before: {
+                    ...args[0],
+                    selection: { ...args[0].selection }
+                  },
+                  after: {
+                    ...args[1],
+                    selection: { ...args[1].selection }
+                  },
+                  selection: ownerRef.current?.getSelection(),
+                  nativeAnchor: native?.anchorNode,
+                  nativeFocus: native?.focusNode,
+                  nativeAnchorOffset: native?.anchorOffset,
+                  nativeFocusOffset: native?.focusOffset,
+                  nativeCollapsed: native?.isCollapsed,
+                  activeElement: document.activeElement
+                });
+                // Separate probe, not a second Feature invocation: even while
+                // publication is still synchronous/live, consumed is one-shot.
+                receiptReplayResults.push(Reflect.apply(consume, this, args) as boolean);
+              }
+              return consumed;
+            };
+            return defineProperty(object, key, { ...descriptor, value: observedConsume });
+          });
+          let lease: EditorContextMenuTargetLease | null;
+          try {
+            lease = capture(target);
+          } finally {
+            definitionSpy.mockRestore();
+          }
+          expect(definitions).toHaveLength(lease?.consumeAcceptedSelectionTransition ? 1 : 0);
+          if (lease?.consumeAcceptedSelectionTransition) expect(definitions[0]).toBe(lease);
+          return lease;
+        };
+        componentProps.onReady({ ...runtime, captureContextMenuTarget });
+      }, [componentProps.onReady]);
+      return realVisualOwner({ ...componentProps, onReady });
+    });
+    const sessionSpy = vi
+      .spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((session) => {
+        const owner = realCreateDocumentSession(session);
+        ownerRef.current = owner;
+        return owner;
+      });
+    return {
+      owner: () => ownerRef.current,
+      promotion,
+      receiptResults,
+      receiptReplayResults,
+      receiptPublications,
+      props,
+      restore: () => { sessionSpy.mockRestore(); visualSpy.mockRestore(); }
+    };
+  }
+  async function roundTripPromotionCopy(
+    owner: CodeMirrorDocumentSession,
+    visual: HTMLElement,
+    promotion: PromotionCase,
+    historyBefore: DocumentHistoryState
+  ): Promise<void> {
+    const copiedRevision = owner.getRevision?.();
+    if (undefined === copiedRevision) throw new Error('promotion-copy-revision-missing');
+    expect(owner.getHistoryState()).toEqual({ undoDepth: historyBefore.undoDepth + 1, redoDepth: 0 });
+    fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+    await waitFor(() => expect(owner.getValue()).toBe(promotion.before));
+    await waitFor(() => expect(visual.querySelector('table')).toBeNull());
+    await waitFor(() => expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready'));
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    expect(visual.querySelector('table')).toBeNull();
+    expect(owner.getHistoryState()).toEqual({ undoDepth: historyBefore.undoDepth, redoDepth: 1 });
+    expect(owner.getRevision?.()).toBe(copiedRevision + 1);
+    fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z', shiftKey: true });
+    await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+    await waitFor(() => expect(visual.querySelector('table')).not.toBeNull());
+    await waitFor(() => expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready'));
+    expect(visual.getAttribute('contenteditable')).toBe('true');
+    expect(visual.querySelector('table')).not.toBeNull();
+    expect(owner.getHistoryState()).toEqual({ undoDepth: historyBefore.undoDepth + 1, redoDepth: 0 });
+    expect(owner.getRevision?.()).toBe(copiedRevision + 2);
+  }
+
+
+  it.each([
+    tablePromotion.equalInterior,
+    tablePromotion.equalEof,
+    ...neighborPromotions.filter(({ columns }) => 'equal' === columns)
+  ].flatMap((promotion) => (['copy', 'cut', 'delete-table'] as const).map((operation) => ({ ...promotion, operation }))))(
+    'completes the $columns $region $scope table promotion with real $operation and native history',
+    async (promotion: PromotionCase & { operation: 'copy' | 'cut' | 'delete-table' }) => {
+      // Each operation owns a fresh document, gesture and independently held
+      // formal Preview and genuine producer result; no row rescues another.
+      const operation = promotion.operation;
+        const tableBytes = promotion.after.split('\n\n')[0] ?? '';
+        const remainder = promotion.neighbor ? `\n\n${promotion.neighbor}` : '';
+        const parts = tablePromotionFixture(promotion);
+        const { props } = parts;
+        // The worker barrier holds the REAL producer's own result for C, not a
+        // synthesised one-paragraph-per-line shape.
+        const demandedIndex = observedBlockIndex(promotion.after);
+        const heldPreview = deferred<PreviewResponse>();
+        const heldIndex = deferred<EditorMarkdownBlockIndexData>();
+        let holdDemandPreview = false;
+        let holdDemandIndex = false;
+        const indexPort: EditorMarkdownBlockIndexPort = {
+          build: vi.fn(async ({ source }) => {
+            if (holdDemandIndex && promotion.after === source) {
+              return heldIndex.promise;
+            }
+            return observedBlockIndex(source);
+          }),
+          dispose: vi.fn()
+        };
+        // The two promotion shapes - the ORIGINAL pre-promotion source, the
+        // promoted source, and the emptied document - come from the explicit
+        // `tablePromotionResponse` fixture, exactly as the cancellation row does.
+        // Only a source this fixture cannot name (a typed or history-restored
+        // source) uses the source-specific builder.
+        vi.mocked(props.previewPort.render).mockImplementation((request) =>
+          holdDemandPreview && promotion.after === request.markdown
+            ? heldPreview.promise
+            : Promise.resolve(
+                request.markdown === promotion.before
+                || request.markdown === promotion.after
+                || '' === request.markdown
+                  ? tablePromotionResponse(promotion, request)
+                  : promotionSourceResponse(request.markdown, request)
+              )
+        );
+        const view = render(
+          <EditorRoot {...props} editorBlockIndexPort={indexPort} />
+        );
+        try {
+          fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+          fireEvent.click(view.getByRole('button', { name: '预览' }));
+          await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+          layoutPreviewSurface(view.container);
+          fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+          const visual = await view.findByRole('textbox', {
+            name: '可视化文章编辑器'
+          });
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          const owner = parts.owner();
+          if (!owner) throw new Error('table-promotion-owner-missing');
+          const historyBefore = owner.getHistoryState();
+          const revisionBefore = owner.getRevision?.();
+          if (undefined === revisionBefore) throw new Error('promotion-revision-missing');
+          expect(historyBefore).toEqual({ undoDepth: 0, redoDepth: 0 });
+
+          expect(promotion.deletion.to === promotion.before.split('\n\n')[0]?.length).toBe(
+            'eof' === promotion.region
+          );
+          const paragraph = visual.querySelector('p')?.firstChild;
+          if (!(paragraph instanceof Text)) {
+            throw new Error('table-promotion-paragraph-missing');
+          }
+          // Arm both prerequisites BEFORE the deletion: the deletion's own
+          // re-authentication is the single request this row holds, and the
+          // gesture then joins that pending transfer instead of issuing another.
+          const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+          holdDemandPreview = true;
+          holdDemandIndex = true;
+          nativeDelete(
+            visual,
+            paragraph,
+            promotion.deletion.from,
+            promotion.deletion.to
+          );
+          await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+          // The deletion caret is retained exactly.
+          expect(owner.getSelection()).toEqual({
+            direction: 'none',
+            end: promotion.deletion.from,
+            start: promotion.deletion.from
+          });
+          expect(owner.getSelection().start === tableBytes.length).toBe(
+            'eof' === promotion.region
+          );
+          expect(owner.getHistoryState().undoDepth).toBe(historyBefore.undoDepth + 1);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          const revisionAfterDeletion = owner.getRevision?.();
+
+          const oldParagraph = visual.querySelector('p');
+          if (!(oldParagraph instanceof HTMLElement)) {
+            throw new Error('table-promotion-pointed-paragraph-missing');
+          }
+          layoutContextMenuSurface(oldParagraph);
+          fireEvent.pointerDown(oldParagraph, {
+            button: 2,
+            clientX: 20,
+            clientY: 20
+          });
+          fireEvent.contextMenu(oldParagraph, { clientX: 20, clientY: 20 });
+
+          // Exactly ONE request belongs to this promotion: the deletion's own
+          // re-authentication, which the gesture joined while it was held.
+          await waitFor(() =>
+            expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+              requestsBefore + 1
+            )
+          );
+          expect(
+            vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0].markdown
+          ).toBe(promotion.after);
+          const demandRequest = vi.mocked(props.previewPort.render).mock
+            .calls.at(-1)?.[0];
+          if (!demandRequest) throw new Error('table-promotion-demand-missing');
+          await waitFor(() =>
+            expect(
+              vi.mocked(indexPort.build).mock.calls.some(
+                ([request]) => request.source === promotion.after
+              )
+            ).toBe(true)
+          );
+          await act(async () => {
+            await Promise.resolve();
+          });
+          // No menu, no table submenu, and no document/history/Clipboard write
+          // while either prerequisite is outstanding.
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+          expect(within(document.body).queryByRole('menuitem', {
+            name: 'Table'
+          })).toBeNull();
+          expect(owner.getValue()).toBe(promotion.after);
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 1
+          );
+          expect(props.onFailure).not.toHaveBeenCalled();
+          expect(parts.receiptResults).toEqual([]);
+          expect(props.editorClipboardPort.write).not.toHaveBeenCalled();
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+
+          // Deliver the FORMAL Preview response first: the genuine worker result
+          // is still held, so a demand that opened on the render alone would be
+          // observable here.
+          heldPreview.resolve(tablePromotionResponse(promotion, demandRequest));
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+          expect(within(document.body).queryByRole('menuitem', {
+            name: 'Table'
+          })).toBeNull();
+          // The accepted render really installed the table while the menu stays
+          // closed, so the remaining barrier is the inventory, not the render.
+          expect(visual.querySelector('table')).not.toBeNull();
+          expect(owner.getValue()).toBe(promotion.after);
+
+          // Now deliver the producer's own result for exactly this source.
+          expect(demandedIndex.source).toBe(promotion.after);
+          expect(demandedIndex.length).toBe(promotion.after.length);
+          heldIndex.resolve(demandedIndex);
+          await waitFor(
+            () =>
+              expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+            { timeout: 5000 }
+          );
+          expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+            requestsBefore + 1
+          );
+          // Disarm the held mocks: every later legitimate request (the emptied
+          // source, and each Undo/Redo refresh) must get a FRESH response for
+          // its own request, never this obsolete held one.
+          holdDemandPreview = false;
+          holdDemandIndex = false;
+          // The accepted render installed the formal table root and the old
+          // paragraph is really gone.
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          const acceptedTable = visual.querySelector('table');
+          if (!(acceptedTable instanceof HTMLTableElement)) {
+            throw new Error('table-promotion-table-missing');
+          }
+          expect(
+            acceptedTable.querySelectorAll('thead > tr > th')
+          ).toHaveLength(2);
+          expect(owner.getValue()).toBe(promotion.after);
+          expect(props.onFailure).not.toHaveBeenCalled();
+
+          const menu = within(document.body).getByRole('menu');
+          // Both the interior and delimiter-end caret are inside the exact
+          // changed-kind extent (the end is inclusive). The accepted owner
+          // therefore publishes its mapped first-header caret, not an EOF
+          // exception: one selection-only transition from deletion.from to 0.
+          const firstHeaderText = acceptedTable.querySelector('thead th')?.firstChild;
+          expect(firstHeaderText).toBeInstanceOf(Text);
+          expect(firstHeaderText?.isConnected).toBe(true);
+          expect(parts.receiptResults.filter(Boolean)).toHaveLength(1);
+          expect(parts.receiptReplayResults).toEqual([false]);
+          expect(parts.receiptPublications).toEqual([{
+            value: promotion.after,
+            revision: revisionBefore + 1,
+            history: { undoDepth: 1, redoDepth: 0 },
+            before: {
+              value: promotion.after,
+              revision: revisionBefore + 1,
+              selection: { direction: 'none', start: promotion.deletion.from, end: promotion.deletion.from }
+            },
+            after: {
+              value: promotion.after,
+              revision: revisionBefore + 1,
+              selection: { direction: 'none', start: 0, end: 0 }
+            },
+            selection: { direction: 'none', start: 0, end: 0 },
+            nativeAnchor: firstHeaderText,
+            nativeFocus: firstHeaderText,
+            nativeAnchorOffset: 0,
+            nativeFocusOffset: 0,
+            nativeCollapsed: true,
+            activeElement: visual
+          }]);
+          expect(oldParagraph.isConnected).toBe(false);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+          if ('copy' === operation) {
+            fireEvent.click(
+              within(menu).getByRole('menuitem', { name: 'Copy / Paste as' })
+            );
+            fireEvent.click(
+              await within(document.body).findByRole('menuitem', {
+                name: 'Copy as Markdown'
+              })
+            );
+            // The clipboard receives the exact promoted bytes.
+            await waitFor(() =>
+              expect(props.editorClipboardPort.write).toHaveBeenCalledWith(
+                tableBytes
+              )
+            );
+            // Copy writes nothing at all.
+            expect(owner.getValue()).toBe(promotion.after);
+            expect(owner.getRevision?.()).toBe(revisionAfterDeletion);
+            expect(owner.getHistoryState().undoDepth).toBe(
+              historyBefore.undoDepth + 1
+            );
+            await roundTripPromotionCopy(owner, visual, promotion, historyBefore);
+            return;
+          }
+
+          if ('cut' === operation) {
+            fireEvent.click(within(menu).getByRole('menuitem', { name: /^Cut$/ }));
+            await waitFor(() =>
+              expect(props.editorClipboardPort.write).toHaveBeenCalledWith(
+                tableBytes,
+                expect.objectContaining({ signal: expect.any(AbortSignal) })
+              )
+            );
+          } else {
+            const tableEntry = within(menu).getByRole('menuitem', { name: 'Table' });
+            expect(tableEntry.getAttribute('aria-disabled')).toBe('false');
+            fireEvent.mouseEnter(tableEntry);
+            const deleteTable = await within(document.body).findByRole('menuitem', {
+              name: 'Delete table'
+            });
+            expect(deleteTable.getAttribute('aria-disabled')).toBe('false');
+            fireEvent.click(deleteTable);
+          }
+          await waitFor(() => expect(owner.getValue()).toBe(remainder));
+          // The accepted DOM barrier for the emptied document: the table is
+          // really gone before native history is exercised.
+          await waitFor(() => expect(visual.querySelector('table')).toBeNull());
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 2
+          );
+          expect(owner.getHistoryState().redoDepth).toBe(0);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 2);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+
+          // Native history: Undo restores the exact promoted source AND the
+          // actual table DOM; Redo completes the empty document again, with the
+          // accepted readiness/editability barrier after each transition.
+          fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+          await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+          await waitFor(() =>
+            expect(visual.querySelector('table')).not.toBeNull()
+          );
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(visual.getAttribute('contenteditable')).toBe('true');
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 1
+          );
+          expect(owner.getHistoryState().redoDepth).toBe(1);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 3);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          fireEvent.keyDown(visual, {
+            cancelable: true,
+            ctrlKey: true,
+            key: 'z',
+            shiftKey: true
+          });
+          await waitFor(() => expect(owner.getValue()).toBe(remainder));
+          await waitFor(() => expect(visual.querySelector('table')).toBeNull());
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(visual.getAttribute('contenteditable')).toBe('true');
+          expect(owner.getHistoryState()).toEqual({
+            undoDepth: historyBefore.undoDepth + 2,
+            redoDepth: 0
+          });
+          expect(owner.getRevision?.()).toBe(revisionBefore + 4);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          expect(props.onFailure).not.toHaveBeenCalled();
+        } finally {
+          view.unmount();
+          // Restore the real factory before the next fresh run installs its own
+          // spy, so no spy survives its run.
+          parts.restore();
+        }
+    }
+  );
+
+  it.each([
+    tablePromotion.unequalInterior,
+    tablePromotion.unequalEof,
+    ...neighborPromotions.filter(({ columns }) => 'unequal' === columns)
+  ].flatMap((promotion) => (['copy', 'cut'] as const).map((operation) => ({ ...promotion, operation }))))(
+    'keeps the deletion caret through the $columns $region $scope promotion for real $operation and refuses only the table submenu',
+    async (promotion: PromotionCase & { operation: 'copy' | 'cut' }) => {
+      // The formal renderer accepts this shape as a table even though its
+      // three-cell delimiter faces a two-cell header (third header cell empty),
+      // and the accepted render installs that table. The context menu's own
+      // table rules refuse the mismatch, so the ONLY thing that goes missing is
+      // the `Table` submenu - not the promotion, not the one gesture, and not
+      // the accepted DOM. The caret stays exactly where the deletion left it.
+      // Both generic outcomes run in their own fresh run from their own first
+      // menu, each holding the Preview response AND the genuine worker result.
+      const operation = promotion.operation;
+        const parts = tablePromotionFixture(promotion);
+        const tableBytes = promotion.after.split('\n\n')[0] ?? '';
+        const remainder = promotion.neighbor ? `\n\n${promotion.neighbor}` : '';
+        const { props } = parts;
+        const demandedIndex = observedBlockIndex(promotion.after);
+        const heldPreview = deferred<PreviewResponse>();
+        const heldIndex = deferred<EditorMarkdownBlockIndexData>();
+        let holdDemandPreview = false;
+        let holdDemandIndex = false;
+        const indexPort: EditorMarkdownBlockIndexPort = {
+          build: vi.fn(async ({ source }) => {
+            if (holdDemandIndex && promotion.after === source) {
+              return heldIndex.promise;
+            }
+            return observedBlockIndex(source);
+          }),
+          dispose: vi.fn()
+        };
+        // As in the equal-column group: the named promotion shapes use the
+        // explicit fixture, and only typed/history-restored sources fall back to
+        // the source-specific builder.
+        vi.mocked(props.previewPort.render).mockImplementation((request) =>
+          holdDemandPreview && promotion.after === request.markdown
+            ? heldPreview.promise
+            : Promise.resolve(
+                request.markdown === promotion.before
+                || request.markdown === promotion.after
+                || '' === request.markdown
+                  ? tablePromotionResponse(promotion, request)
+                  : promotionSourceResponse(request.markdown, request)
+              )
+        );
+        const view = render(
+          <EditorRoot {...props} editorBlockIndexPort={indexPort} />
+        );
+        try {
+          fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+          fireEvent.click(view.getByRole('button', { name: '预览' }));
+          await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+          layoutPreviewSurface(view.container);
+          fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+          const visual = await view.findByRole('textbox', {
+            name: '可视化文章编辑器'
+          });
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          const owner = parts.owner();
+          if (!owner) throw new Error('unequal-promotion-owner-missing');
+          const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+          const historyBefore = owner.getHistoryState();
+          const revisionBefore = owner.getRevision?.();
+          if (undefined === revisionBefore) throw new Error('promotion-revision-missing');
+          expect(historyBefore).toEqual({ undoDepth: 0, redoDepth: 0 });
+
+          expect(promotion.deletion.to === promotion.before.split('\n\n')[0]?.length).toBe(
+            'eof' === promotion.region
+          );
+          const paragraph = visual.querySelector('p')?.firstChild;
+          if (!(paragraph instanceof Text)) {
+            throw new Error('unequal-promotion-paragraph-missing');
+          }
+          nativeDelete(
+            visual,
+            paragraph,
+            promotion.deletion.from,
+            promotion.deletion.to
+          );
+          await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+          // The OWNER committed one history entry and moved no caret: the
+          // deletion offset is still the canonical selection.
+          expect(owner.getSelection()).toEqual({
+            direction: 'none',
+            end: promotion.deletion.from,
+            start: promotion.deletion.from
+          });
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 1
+          );
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          const revisionAfterDeletion = owner.getRevision?.();
+
+          // The ONE gesture, on the still-mounted pre-promotion paragraph, with
+          // both prerequisites held.
+          holdDemandPreview = true;
+          holdDemandIndex = true;
+          const oldParagraph = visual.querySelector('p');
+          if (!(oldParagraph instanceof HTMLElement)) {
+            throw new Error('unequal-promotion-paragraph-element-missing');
+          }
+          layoutContextMenuSurface(oldParagraph);
+          fireEvent.pointerDown(oldParagraph, {
+            button: 2,
+            clientX: 20,
+            clientY: 20
+          });
+          fireEvent.contextMenu(oldParagraph, { clientX: 20, clientY: 20 });
+
+          // Exactly one formal request, for the post-deletion source, plus a
+          // genuine worker build for that same source.
+          await waitFor(() =>
+            expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+              requestsBefore + 1
+            )
+          );
+          expect(
+            vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0].markdown
+          ).toBe(promotion.after);
+          const demandRequest = vi.mocked(props.previewPort.render).mock
+            .calls.at(-1)?.[0];
+          if (!demandRequest) throw new Error('unequal-promotion-demand-missing');
+          await waitFor(() =>
+            expect(
+              vi.mocked(indexPort.build).mock.calls.some(
+                ([request]) => request.source === promotion.after
+              )
+            ).toBe(true)
+          );
+          await act(async () => {
+            await Promise.resolve();
+          });
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+          expect(parts.receiptResults).toEqual([]);
+          expect(props.editorClipboardPort.write).not.toHaveBeenCalled();
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+          expect(within(document.body).queryByRole('menuitem', {
+            name: 'Table'
+          })).toBeNull();
+          expect(owner.getValue()).toBe(promotion.after);
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 1
+          );
+
+          // Preview first: the worker result is still held.
+          heldPreview.resolve(tablePromotionResponse(promotion, demandRequest));
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+          });
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+          expect(within(document.body).queryByRole('menuitem', {
+            name: 'Table'
+          })).toBeNull();
+          expect(visual.querySelector('table')).not.toBeNull();
+
+          // Then the producer's own result for exactly this source.
+          heldIndex.resolve(demandedIndex);
+          await waitFor(
+            () =>
+              expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+            { timeout: 5000 }
+          );
+          holdDemandPreview = false;
+          holdDemandIndex = false;
+          expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+            requestsBefore + 1
+          );
+          // A genuinely NEW accepted DOM: the paragraph is gone and the formal
+          // table, with its three delimiter columns and empty third header cell,
+          // is what the accepted render installed.
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          const acceptedTable = visual.querySelector('table');
+          if (!(acceptedTable instanceof HTMLTableElement)) {
+            throw new Error('unequal-promotion-table-missing');
+          }
+          const headerCells = acceptedTable.querySelectorAll('thead > tr > th');
+          expect(headerCells).toHaveLength(3);
+          expect(headerCells[2]?.textContent).toBe('');
+          expect(owner.getValue()).toBe(promotion.after);
+          expect(props.onFailure).not.toHaveBeenCalled();
+
+          const menu = within(document.body).getByRole('menu');
+          // Delimiter-end is eligible for the same exact changed-kind
+          // normalization as interior; it is not a zero-receipt special case.
+          const firstHeaderText = acceptedTable.querySelector('thead th')?.firstChild;
+          expect(firstHeaderText).toBeInstanceOf(Text);
+          expect(firstHeaderText?.isConnected).toBe(true);
+          expect(parts.receiptResults.filter(Boolean)).toHaveLength(1);
+          expect(parts.receiptReplayResults).toEqual([false]);
+          expect(parts.receiptPublications).toEqual([{
+            value: promotion.after,
+            revision: revisionBefore + 1,
+            history: { undoDepth: 1, redoDepth: 0 },
+            before: {
+              value: promotion.after,
+              revision: revisionBefore + 1,
+              selection: { direction: 'none', start: promotion.deletion.from, end: promotion.deletion.from }
+            },
+            after: {
+              value: promotion.after,
+              revision: revisionBefore + 1,
+              selection: { direction: 'none', start: 0, end: 0 }
+            },
+            selection: { direction: 'none', start: 0, end: 0 },
+            nativeAnchor: firstHeaderText,
+            nativeFocus: firstHeaderText,
+            nativeAnchorOffset: 0,
+            nativeFocusOffset: 0,
+            nativeCollapsed: true,
+            activeElement: visual
+          }]);
+          expect(oldParagraph.isConnected).toBe(false);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 1);
+          expect(owner.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+          // The table grammar refuses the mismatch, so only the submenu is
+          // absent; every generic text command stays available.
+          expect(
+            within(menu).queryByRole('menuitem', { name: 'Table' })
+          ).toBeNull();
+
+          if ('copy' === operation) {
+            fireEvent.click(
+              within(menu).getByRole('menuitem', { name: 'Copy / Paste as' })
+            );
+            fireEvent.click(
+              await within(document.body).findByRole('menuitem', {
+                name: 'Copy as Markdown'
+              })
+            );
+            await waitFor(() =>
+              expect(props.editorClipboardPort.write).toHaveBeenCalledWith(
+                tableBytes
+              )
+            );
+            // A Copy writes nothing: no source, revision, or history change.
+            expect(owner.getValue()).toBe(promotion.after);
+            expect(owner.getRevision?.()).toBe(revisionAfterDeletion);
+            expect(owner.getHistoryState().undoDepth).toBe(
+              historyBefore.undoDepth + 1
+            );
+            expect(owner.getHistoryState().redoDepth).toBe(0);
+            await roundTripPromotionCopy(owner, visual, promotion, historyBefore);
+            return;
+          }
+
+          // Actual generic Cut of that same accepted extent.
+          fireEvent.click(within(menu).getByRole('menuitem', { name: /^Cut$/ }));
+          await waitFor(() =>
+            expect(props.editorClipboardPort.write).toHaveBeenCalledWith(
+              tableBytes,
+              expect.objectContaining({ signal: expect.any(AbortSignal) })
+            )
+          );
+          await waitFor(() => expect(owner.getValue()).toBe(remainder));
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(owner.getHistoryState().undoDepth).toBe(
+            historyBefore.undoDepth + 2
+          );
+          expect(owner.getHistoryState().redoDepth).toBe(0);
+          expect(owner.getRevision?.()).toBe(revisionBefore + 2);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+
+          // Native history over the real document: Undo restores the promoted
+          // table and its exact bytes, Redo completes the cut again - each with
+          // its own accepted readiness/editability barrier.
+          fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+          await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+          await waitFor(() =>
+            expect(visual.querySelector('table')).not.toBeNull()
+          );
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(visual.getAttribute('contenteditable')).toBe('true');
+          expect(owner.getHistoryState()).toEqual({
+            undoDepth: historyBefore.undoDepth + 1,
+            redoDepth: 1
+          });
+          expect(owner.getRevision?.()).toBe(revisionBefore + 3);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          fireEvent.keyDown(visual, {
+            cancelable: true,
+            ctrlKey: true,
+            key: 'z',
+            shiftKey: true
+          });
+          await waitFor(() => expect(owner.getValue()).toBe(remainder));
+          await waitFor(() => expect(visual.querySelector('table')).toBeNull());
+          await waitFor(() =>
+            expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+          );
+          expect(visual.getAttribute('contenteditable')).toBe('true');
+          expect(owner.getHistoryState()).toEqual({
+            undoDepth: historyBefore.undoDepth + 2,
+            redoDepth: 0
+          });
+          expect(owner.getRevision?.()).toBe(revisionBefore + 4);
+          expect(visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          expect(props.onFailure).not.toHaveBeenCalled();
+        } finally {
+          view.unmount();
+          parts.restore();
+        }
+    }
+  );
+
+  /**
+   * Open the promotion prerequisite for a cancellation run: settle the real
+   * native deletion, hold the demanded Preview response and the genuine worker
+   * inventory, issue ONE gesture, and return everything the two independent
+   * continuation rows need.
+   */
+  async function openHeldPromotionDemand(
+    promotion: PromotionCase,
+    options: Readonly<{ retainFocus?: boolean }> = {}
+  ) {
+    const parts = tablePromotionFixture(promotion);
+    const { props } = parts;
+    const demandedIndex = observedBlockIndex(promotion.after);
+    const heldPreview = deferred<PreviewResponse>();
+    const heldIndex = deferred<EditorMarkdownBlockIndexData>();
+    let holdDemandPreview = false;
+    let holdDemandIndex = false;
+    const indexPort: EditorMarkdownBlockIndexPort = {
+      build: vi.fn(async ({ source }) => {
+        if (holdDemandIndex && promotion.after === source) {
+          return heldIndex.promise;
+        }
+        return observedBlockIndex(source);
+      }),
+      dispose: vi.fn()
+    };
+    // The named promotion shapes use the explicit fixture, exactly like the
+    // positive groups; only a source it cannot name uses the shared builder.
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdDemandPreview && promotion.after === request.markdown
+        ? heldPreview.promise
+        : Promise.resolve(
+            request.markdown === promotion.before
+            || request.markdown === promotion.after
+            || '' === request.markdown
+              ? tablePromotionResponse(promotion, request)
+              : promotionSourceResponse(request.markdown, request)
+          )
+    );
+    const view = render(<EditorRoot {...props} editorBlockIndexPort={indexPort} />);
+    fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+    fireEvent.click(view.getByRole('button', { name: '预览' }));
+    await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+    layoutPreviewSurface(view.container);
+    fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+    const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+    await waitFor(() =>
+      expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+    );
+    const owner = parts.owner();
+    if (!owner) throw new Error('cancel-promotion-owner-missing');
+    // The pre-promotion source is ONE paragraph whose text is the complete
+    // two-line source, and the deletion range lies inside it.
+    const paragraphs = visual.querySelectorAll('p');
+    expect(paragraphs).toHaveLength(promotion.neighbor ? 2 : 1);
+    const paragraph = paragraphs[0]?.firstChild;
+    if (!(paragraph instanceof Text)) {
+      throw new Error('cancel-promotion-paragraph-missing');
+    }
+    expect(paragraph.data).toBe(promotion.before.split('\n\n')[0]);
+    expect(owner.getValue()).toBe(promotion.before);
+    expect(promotion.deletion.from).toBeGreaterThanOrEqual(0);
+    expect(promotion.deletion.to).toBeLessThanOrEqual(paragraph.data.length);
+    expect(promotion.deletion.to).toBeGreaterThan(promotion.deletion.from);
+    nativeDelete(
+      visual,
+      paragraph,
+      promotion.deletion.from,
+      promotion.deletion.to
+    );
+    await waitFor(() => expect(owner.getValue()).toBe(promotion.after));
+    const historyBefore = owner.getHistoryState();
+    const revisionBefore = owner.getRevision?.();
+    if (undefined === revisionBefore) throw new Error('cancel-promotion-revision-missing');
+    expect(historyBefore).toEqual({ undoDepth: 1, redoDepth: 0 });
+    const writesBefore = vi.mocked(props.editorClipboardPort.write).mock.calls
+      .length;
+
+    // The retained-focus oracle: this run owns the editor focus from before the
+    // gesture onwards, and never repairs or repositions it later.
+    const assertEditorFocus = (label: string): void => {
+      expect(document.activeElement, label).toBe(visual);
+      expect(visual.contains(document.activeElement), label).toBe(true);
+    };
+    if (options.retainFocus) {
+      visual.focus();
+      assertEditorFocus('before-held-gesture');
+    }
+
+    holdDemandPreview = true;
+    holdDemandIndex = true;
+    const oldParagraph = visual.querySelector('p');
+    if (!(oldParagraph instanceof HTMLElement)) {
+      throw new Error('cancel-promotion-paragraph-element-missing');
+    }
+    layoutContextMenuSurface(oldParagraph);
+    // The baseline is captured BEFORE the gesture, so a request the gesture
+    // issues synchronously is counted as the demand's own.
+    const requestsBefore = demandRenders(
+      vi.mocked(props.previewPort.render)
+    ).length;
+    fireEvent.pointerDown(oldParagraph, { button: 2, clientX: 20, clientY: 20 });
+    fireEvent.contextMenu(oldParagraph, { clientX: 20, clientY: 20 });
+    await waitFor(() =>
+      expect(
+        demandRenders(vi.mocked(props.previewPort.render)).length
+      ).toBe(requestsBefore + 1)
+    );
+    await waitFor(() =>
+      expect(
+        vi.mocked(indexPort.build).mock.calls.some(
+          ([request]) => request.source === promotion.after
+        )
+      ).toBe(true)
+    );
+    expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+    const demandRequest = vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0];
+    if (!demandRequest) throw new Error('cancel-promotion-demand-missing');
+    expect(demandRequest.markdown).toBe(promotion.after);
+
+    /** Deliver both held prerequisites to the now-cancelled demand. */
+    const deliverLate = async (): Promise<void> => {
+      holdDemandPreview = false;
+      holdDemandIndex = false;
+      heldPreview.resolve(tablePromotionResponse(promotion, demandRequest));
+      heldIndex.resolve(demandedIndex);
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    return {
+      assertEditorFocus,
+      demandRequest,
+      deliverLate,
+      historyBefore,
+      owner,
+      parts,
+      props,
+      requestsBefore,
+      revisionBefore,
+      visual,
+      view,
+      writesBefore
+    };
+  }
+
+  it.each([
+    tablePromotion.equalInterior,
+    tablePromotion.equalEof,
+    tablePromotion.unequalInterior,
+    tablePromotion.unequalEof,
+    ...neighborPromotions
+  ])(
+    'cancels a $columns $region $scope promotion demand with retained focus, then continues editing at the mapped boundary',
+    async (promotion: PromotionCase) => {
+      // First independent run: the editor KEEPS focus across the cancellation
+      // and the late acceptance. Nothing may reopen or act, the accepted table
+      // must be in this root, the canonical and native boundary must be the
+      // documented mapped index for an adopted table, and a continuation typed
+      // there must commit exactly one history entry.
+      const run = await openHeldPromotionDemand(promotion, { retainFocus: true });
+      try {
+        // Focus was already asserted in the shared setup, before the held
+        // gesture. It must still hold immediately before the late delivery.
+        run.assertEditorFocus('immediately-before-late-delivery');
+        fireEvent.keyDown(document, { key: 'Escape' });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        // Escape cancels the pending demand itself. A pending demand has no
+        // visible menu, so the context-menu owner must consume that Escape
+        // before the immersive owner sees it; otherwise the same key also exits
+        // the mode and the late acceptance would have no editable surface.
+        expect(run.visual.isConnected).toBe(true);
+        expect(document.activeElement).toBe(run.visual);
+        expect(run.visual.getAttribute('contenteditable')).toBe('true');
+        await run.deliverLate();
+        // The late acceptance must neither move focus nor leave a detached
+        // surface behind: the same live, focused editor continues.
+        expect(run.visual.isConnected).toBe(true);
+        expect(
+          document.querySelector('[aria-label="可视化文章编辑器"]')
+        ).toBe(run.visual);
+        expect(document.activeElement).toBe(run.visual);
+        expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+        expect(within(document.body).queryByRole('menuitem', {
+          name: 'Table'
+        })).toBeNull();
+        expect(vi.mocked(run.props.editorClipboardPort.write).mock.calls.length).toBe(
+          run.writesBefore
+        );
+        expect(run.owner.getValue()).toBe(promotion.after);
+        expect(run.owner.getHistoryState()).toEqual(run.historyBefore);
+        expect(run.owner.getRevision?.()).toBe(run.revisionBefore);
+        expect(run.parts.receiptResults.filter(Boolean)).toHaveLength(0);
+        expect(run.props.onFailure).not.toHaveBeenCalled();
+        expect(demandRenders(vi.mocked(run.props.previewPort.render))).toHaveLength(run.requestsBefore + 1);
+        expect(run.visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+        // The accepted table lives in THIS accepted root, and the documented
+        // mapped boundary is index 0 - collapsed canonically and connected
+        // natively inside the table, not the surface.
+        const acceptedTable = run.visual.querySelector('table');
+        if (!(acceptedTable instanceof HTMLTableElement)) {
+          throw new Error('cancel-promotion-accepted-table-missing');
+        }
+        expect(run.visual.contains(acceptedTable)).toBe(true);
+        // The approved presentation rule for an accepted changed-kind table
+        // publishes the first nonempty editable Text unit inside that same
+        // accepted root at offset 0. Both the canonical selection and the real
+        // native caret must already be there, without any test-side focus or
+        // Range repair.
+        expect(run.owner.getSelection()).toEqual({
+          direction: 'none',
+          end: 0,
+          start: 0
+        });
+        const surface = run.visual;
+        const firstHeaderText = acceptedTable.querySelector('thead th')?.firstChild;
+        if (!(firstHeaderText instanceof Text)) {
+          throw new Error('cancel-promotion-first-header-missing');
+        }
+        const nativeSelection = window.getSelection();
+        expect(nativeSelection?.rangeCount).toBe(1);
+        expect(nativeSelection?.isCollapsed).toBe(true);
+        expect(nativeSelection?.anchorNode).toBe(firstHeaderText);
+        expect(nativeSelection?.anchorOffset).toBe(0);
+        expect(nativeSelection?.focusNode).toBe(firstHeaderText);
+        expect(nativeSelection?.focusOffset).toBe(0);
+        expect(surface.contains(firstHeaderText)).toBe(true);
+
+        // Typing at that boundary commits one byte at the canonical offset.
+        const typed = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: 'q',
+          inputType: 'insertText'
+        });
+        surface.dispatchEvent(typed);
+        if (!typed.defaultPrevented) {
+          firstHeaderText.insertData(0, 'q');
+        }
+        surface.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            data: 'q',
+            inputType: 'insertText'
+          })
+        );
+        const expectedTyped = `q${promotion.after}`;
+        await waitFor(() => expect(run.owner.getValue()).toBe(expectedTyped));
+        expect(run.owner.getRevision?.()).toBe(run.revisionBefore + 1);
+        expect(run.owner.getSelection()).toEqual({
+          direction: 'none',
+          end: 1,
+          start: 1
+        });
+        expect(run.owner.getHistoryState()).toEqual({
+          redoDepth: 0,
+          undoDepth: run.historyBefore.undoDepth + 1
+        });
+        await waitFor(() =>
+          expect(surface.getAttribute('data-easymde-preview-phase')).toBe('ready')
+        );
+        // The typed source's own accepted shape follows the renderer's rule.
+        expect(promotionTableShape(expectedTyped)).toBe(
+          surface.querySelector('table') !== null
+        );
+        expect(surface.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+
+        // Accepted Undo/Redo over the typed source.
+        fireEvent.keyDown(surface, {
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z'
+        });
+        await waitFor(() => expect(run.owner.getValue()).toBe(promotion.after));
+        await waitFor(() =>
+          expect(surface.getAttribute('data-easymde-preview-phase')).toBe('ready')
+        );
+        expect(surface.getAttribute('contenteditable')).toBe('true');
+        expect(run.owner.getRevision?.()).toBe(run.revisionBefore + 2);
+        expect(surface.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+        expect(run.owner.getHistoryState()).toEqual({
+          redoDepth: 1,
+          undoDepth: run.historyBefore.undoDepth
+        });
+        expect(run.owner.getSelection()).toEqual({
+          direction: 'none',
+          end: 0,
+          start: 0
+        });
+        fireEvent.keyDown(surface, {
+          cancelable: true,
+          ctrlKey: true,
+          key: 'z',
+          shiftKey: true
+        });
+        await waitFor(() => expect(run.owner.getValue()).toBe(expectedTyped));
+        await waitFor(() =>
+          expect(surface.getAttribute('data-easymde-preview-phase')).toBe('ready')
+        );
+        expect(surface.getAttribute('contenteditable')).toBe('true');
+        expect(run.owner.getRevision?.()).toBe(run.revisionBefore + 3);
+        expect(surface.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+        expect(run.props.onFailure).not.toHaveBeenCalled();
+        expect(run.owner.getHistoryState()).toEqual({
+          redoDepth: 0,
+          undoDepth: run.historyBefore.undoDepth + 1
+        });
+        expect(run.owner.getSelection()).toEqual({
+          direction: 'none',
+          end: 1,
+          start: 1
+        });
+      } finally {
+        run.view.unmount();
+        run.parts.restore();
+      }
+    }
+  );
+
+  it.each([
+    tablePromotion.equalInterior,
+    tablePromotion.equalEof,
+    tablePromotion.unequalInterior,
+    tablePromotion.unequalEof,
+    ...neighborPromotions
+  ])(
+    'cancels a $columns $region $scope promotion demand while focus is outside, without reopening or stealing it',
+    async (promotion: PromotionCase) => {
+      // Second independent run: focus AND a real text selection are moved
+      // OUTSIDE the editor while the response is still held, then both
+      // prerequisites are delivered late. No caret inside the editor is required
+      // before refocusing, and nothing may reopen, act, mutate, steal focus, or
+      // move the outside selection.
+      const run = await openHeldPromotionDemand(promotion);
+      try {
+        // A real outside editable host carrying selectable text.
+        const outside = document.createElement('div');
+        outside.contentEditable = 'true';
+        // A real outside editable host is focusable; tabIndex makes that
+        // explicit so the row does not depend on jsdom's contenteditable
+        // focus heuristics.
+        outside.tabIndex = 0;
+        outside.textContent = 'outside host text';
+        document.body.append(outside);
+        try {
+          // The outside host and its selection are established FIRST, as a real
+          // user state, and then the demand is cancelled. Escape's own focus
+          // handling must not move the user's outside focus or selection.
+          outside.focus();
+          expect(document.activeElement).toBe(outside);
+          // A REAL outside text selection, established while held.
+          const outsideText = outside.firstChild;
+          if (!(outsideText instanceof Text)) {
+            throw new Error('outside-focus-text-missing');
+          }
+          const outsideRange = document.createRange();
+          outsideRange.setStart(outsideText, 0);
+          outsideRange.setEnd(outsideText, 7);
+          const outsideSelection = window.getSelection();
+          outsideSelection?.removeAllRanges();
+          outsideSelection?.addRange(outsideRange);
+          expect(outsideSelection?.anchorNode).toBe(outsideText);
+          expect(outsideSelection?.focusNode).toBe(outsideText);
+          expect(outsideSelection?.anchorOffset).toBe(0);
+          expect(outsideSelection?.focusOffset).toBe(7);
+
+          fireEvent.keyDown(document, { key: 'Escape' });
+          await act(async () => {
+            await Promise.resolve();
+          });
+          expect(document.activeElement).toBe(outside);
+          const snapshotSelection = () => {
+            const selection = window.getSelection();
+            return {
+              rangeCount: selection?.rangeCount,
+              anchorNode: selection?.anchorNode,
+              focusNode: selection?.focusNode,
+              anchorOffset: selection?.anchorOffset,
+              focusOffset: selection?.focusOffset
+            };
+          };
+          // Copy scalar offsets and Node identities, never alias the live Selection.
+          const selectionAfterCancel = snapshotSelection();
+          expect(selectionAfterCancel).toEqual({
+            rangeCount: 1,
+            anchorNode: outsideText,
+            focusNode: outsideText,
+            anchorOffset: 0,
+            focusOffset: 7
+          });
+          await run.deliverLate();
+          expect(run.parts.receiptResults.filter(Boolean)).toHaveLength(0);
+          expect(run.parts.receiptPublications).toEqual([]);
+          expect(run.visual.isConnected).toBe(true);
+          expect(run.view.getByRole('textbox', { name: '可视化文章编辑器' })).toBe(run.visual);
+          expect(run.visual.getAttribute('contenteditable')).toBe('true');
+          const acceptedTable = run.visual.querySelector('table');
+          if (!(acceptedTable instanceof HTMLTableElement)) {
+            throw new Error('outside-cancel-promotion-accepted-table-missing');
+          }
+          expect(run.visual.contains(acceptedTable)).toBe(true);
+          expect(Array.from(acceptedTable.querySelectorAll('thead > tr > th')).map((cell) => cell.textContent)).toEqual(
+            'equal' === promotion.columns ? ['a', 'b'] : ['a', 'b', '']
+          );
+          expect(run.visual.querySelectorAll('p')).toHaveLength(promotion.neighbor ? 1 : 0);
+          expect(run.visual.querySelector('p')?.textContent ?? '').toBe(promotion.neighbor ?? '');
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+          expect(within(document.body).queryByRole('menuitem', {
+            name: 'Table'
+          })).toBeNull();
+          expect(
+            vi.mocked(run.props.editorClipboardPort.write).mock.calls.length
+          ).toBe(run.writesBefore);
+          expect(run.owner.getValue()).toBe(promotion.after);
+          expect(run.owner.getHistoryState()).toEqual(run.historyBefore);
+          expect(run.owner.getRevision?.()).toBe(run.revisionBefore);
+          expect(run.props.onFailure).not.toHaveBeenCalled();
+          // Demand/session renders only: the menu's own `editor-code-content:`
+          // query is a different, legitimate render kind and is excluded.
+          expect(
+            demandRenders(vi.mocked(run.props.previewPort.render)).length
+          ).toBe(run.requestsBefore + 1);
+          expect(document.activeElement).toBe(outside);
+          expect(snapshotSelection()).toEqual(selectionAfterCancel);
+          // A later mutation must disagree with the immutable baseline, proving
+          // this oracle cannot pass by comparing the same live Selection alias.
+          window.getSelection()?.collapse(outsideText, 2);
+          expect(snapshotSelection()).not.toEqual(selectionAfterCancel);
+        } finally {
+          outside.remove();
+        }
+      } finally {
+        run.view.unmount();
+        run.parts.restore();
+      }
+    }
+  );
+
+
+  it('does not fabricate a selection for a held paste and copies only a deliberate pasted range', async () => {
+    // A REAL clipboard paste legitimately writes the source, the revision, and
+    // one history entry, and its Preview transfer is then held. The baseline for
+    // the demand is therefore the POST-paste state, not the pre-paste one. The
+    // gesture targets the RETAINED paragraph element - not the surface root -
+    // and the demand itself must add nothing. The menu that finally opens is the
+    // ORIGINAL resumed demand, and it performs its action directly, with no
+    // replacement second gesture.
+    const props = fixture();
+    const initial = 'Rendered!';
+    const pasted = 'Rendered!More';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(initial.length, initial.length);
+    const held = deferred<PreviewResponse>();
+    const responseFor = (request: PreviewRequest): PreviewResponse => ({
+      editMap: {
+        blocks: [
+          {
+            editable: true,
+            endLine: request.markdown.split('\n').length,
+            id: 'b0',
+            startLine: 0
+          }
+        ],
+        coordinate: 'line' as const,
+        signature: request.signature,
+        version: 1 as const
+      },
+      features: {},
+      html: (
+        `<p data-easymde-visual-block-id="b0">${request.markdown}</p>`
+      ) as SafePreviewHtml
+    });
+    let holdTransfer = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdTransfer && request.markdown === pasted
+        ? held.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    const sessionSpy = vi
+      .spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((session) => {
+        const owner = realCreateDocumentSession(session);
+        ownerRef.current = owner;
+        return owner;
+      });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('held-paste-owner-missing');
+      const retainedParagraph = visual.querySelector('p');
+      const paragraphText = retainedParagraph?.firstChild;
+      if (!(retainedParagraph instanceof HTMLElement)
+        || !(paragraphText instanceof Text)) {
+        throw new Error('held-paste-paragraph-missing');
+      }
+      visual.focus();
+      const caret = document.createRange();
+      caret.setStart(paragraphText, paragraphText.data.length);
+      caret.collapse(true);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(caret);
+      const historyBeforePaste = owner.getHistoryState();
+      const revisionBeforePaste = owner.getRevision?.();
+
+      // The real paste owner path, with its formal transfer held.
+      holdTransfer = true;
+      const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+      fireEvent.paste(visual, {
+        clipboardData: {
+          getData: (type: string) => ('text/plain' === type ? 'More' : ''),
+          types: ['text/plain']
+        }
+      });
+      await waitFor(() => expect(props.submissionField.value).toBe(pasted));
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready')
+      );
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      const heldRequest = vi
+        .mocked(props.previewPort.render)
+        .mock.calls.at(-1)?.[0];
+      expect(heldRequest?.markdown).toBe(pasted);
+      // The paste is a REAL user write: the POST-paste state is the baseline.
+      const historyAfterPaste = owner.getHistoryState();
+      const revisionAfterPaste = owner.getRevision?.();
+      expect(historyAfterPaste.undoDepth).toBe(historyBeforePaste.undoDepth + 1);
+      expect(revisionAfterPaste).not.toBe(revisionBeforePaste);
+      expect(owner.getValue()).toBe(pasted);
+      // The accepted DOM still shows the pre-paste text while held, and the
+      // element the user points at is that same retained paragraph.
+      expect(retainedParagraph.isConnected).toBe(true);
+      expect(retainedParagraph.textContent).toBe(initial);
+
+      // The gesture targets the RETAINED PARAGRAPH, never the surface root.
+      layoutContextMenuSurface(retainedParagraph);
+      fireEvent.pointerDown(retainedParagraph, {
+        button: 2,
+        clientX: 20,
+        clientY: 20
+      });
+      fireEvent.contextMenu(retainedParagraph, { clientX: 20, clientY: 20 });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // No second authentication request and no menu yet, and the demand itself
+      // added no mutation on top of the paste.
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(owner.getValue()).toBe(pasted);
+      expect(owner.getHistoryState()).toEqual(historyAfterPaste);
+      expect(owner.getRevision?.()).toBe(revisionAfterPaste);
+      expect(vi.mocked(props.editorClipboardPort.write)).not.toHaveBeenCalled();
+
+      if (!heldRequest) throw new Error('held-paste-request-missing');
+      // Disarm the held transfer: the action's own refresh must get a FRESH
+      // response for its own request.
+      holdTransfer = false;
+      held.resolve(responseFor(heldRequest));
+      // This is the ORIGINAL resumed demand's menu, not a replacement gesture.
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      // The retained paragraph is retired, and the fresh accepted DOM shows the
+      // pasted bytes.
+      expect(retainedParagraph.isConnected).toBe(false);
+      expect(visual.querySelector('p')?.textContent).toBe(pasted);
+      const acceptedRevision = owner.getRevision?.();
+      expect(owner.getHistoryState().undoDepth).toBe(historyAfterPaste.undoDepth);
+
+      // The resumed menu is the ORIGINAL demand's, and for a HELD PASTE the
+      // captured selection is collapsed. The Full owner must not widen a
+      // collapsed capture into a whole block (that would copy bytes the user did
+      // not select), so the generic Copy is correctly DISABLED here and the
+      // handler writes nothing.
+      const resumedMenu = within(document.body).getByRole('menu');
+      const collapsedCopy = within(resumedMenu).getByRole('menuitem', {
+        name: /^Copy$/
+      });
+      expect(collapsedCopy.getAttribute('aria-disabled')).toBe('true');
+      fireEvent.click(collapsedCopy);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(props.editorClipboardPort.write).not.toHaveBeenCalled();
+      // Clicking a disabled item performs no action, so the menu stays open and
+      // nothing is fabricated; the canonical document and history are untouched.
+      expect(owner.getValue()).toBe(pasted);
+      expect(owner.getRevision?.()).toBe(acceptedRevision);
+      expect(owner.getHistoryState().undoDepth).toBe(historyAfterPaste.undoDepth);
+      expect(props.submissionField.value).toBe(pasted);
+
+      // A DELIBERATE range over the pasted block is a real user selection, and
+      // that CAN be copied: the demand publishes exactly its extent.
+      const acceptedParagraph = visual.querySelector('p');
+      if (!(acceptedParagraph instanceof HTMLElement)) {
+        throw new Error('held-paste-accepted-paragraph-missing');
+      }
+      const deliberateRange = document.createRange();
+      deliberateRange.selectNodeContents(acceptedParagraph);
+      const deliberateSelection = window.getSelection();
+      deliberateSelection?.removeAllRanges();
+      deliberateSelection?.addRange(deliberateRange);
+      layoutContextMenuSurface(acceptedParagraph);
+      fireEvent.pointerDown(acceptedParagraph, {
+        button: 2,
+        clientX: 20,
+        clientY: 20
+      });
+      fireEvent.contextMenu(acceptedParagraph, { clientX: 20, clientY: 20 });
+      await waitFor(() =>
+        expect(within(document.body).queryAllByRole('menu')).toHaveLength(1)
+      );
+      const deliberateMenu = within(document.body).getByRole('menu');
+      const deliberateCopy = within(deliberateMenu).getByRole('menuitem', {
+        name: /^Copy$/
+      });
+      expect(deliberateCopy.getAttribute('aria-disabled')).toBe('false');
+      // The published range is the whole pasted block.
+      expect(owner.getSelection()).toEqual({
+        direction: 'forward',
+        end: pasted.length,
+        start: 0
+      });
+      fireEvent.click(deliberateCopy);
+      await waitFor(() =>
+        expect(props.editorClipboardPort.write).toHaveBeenCalledWith(pasted)
+      );
+      // Copy is a pure read in both cases: no source, revision or history write.
+      expect(owner.getValue()).toBe(pasted);
+      expect(owner.getRevision?.()).toBe(acceptedRevision);
+      expect(owner.getHistoryState().undoDepth).toBe(historyAfterPaste.undoDepth);
+      expect(props.submissionField.value).toBe(pasted);
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      sessionSpy.mockRestore();
+    }
+  });
+
+  it('keeps a stale protected generated identity through one refresh and deletes the current formula', async () => {
+    // The approved control: a native edit in the BEFORE paragraph. The initial
+    // source `Before\n\n$x$\n\nAfter` owns the formula at [8,11); typing `q` at
+    // the end of `Before` commits `Beforeq\n\n$x$\n\nAfter`, so the formula now
+    // occupies [9,12) and the trailing `After` paragraph is source line 4.
+    const sourceMarkdown = 'Before\n\n$x$\n\nAfter';
+    const typedMarkdown = 'Beforeq\n\n$x$\n\nAfter';
+    const initialFormula = sourceMarkdown.indexOf('$x$');
+    expect([initialFormula, initialFormula + 3]).toEqual([8, 11]);
+    const typedFormula = typedMarkdown.indexOf('$x$');
+    expect([typedFormula, typedFormula + 3]).toEqual([9, 12]);
+    expect(typedMarkdown.split('\n').indexOf('After')).toBe(4);
+    const deleted = 'Beforeq\n\n\n\nAfter';
+    // The fixture for THIS row: the source is the initial two-paragraph formula
+    // document, and the canonical owner observes the real session.
+    const props = fixture();
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    /**
+     * Truthful HTML and edit map for every state this row can request: the
+     * initial paragraph+formula source, the typed source, the deleted source
+     * (which no longer contains `$x$` at all), and the history-restored states.
+     * Blank separator lines are not blocks.
+     */
+    const responseForSource = (markdown: string): SafePreviewHtml => {
+      const lines = markdown.split('\n');
+      const html: string[] = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? '';
+        if ('' === line) continue;
+        const id = `b${html.length}`;
+        html.push(
+          '$x$' === line
+            ? `<p data-easymde-visual-block-id="${id}"><span class="easymde-math easymde-math-inline"><span class="katex"><span class="katex-mathml"><math><mi>x</mi></math></span></span></span></p>`
+            : `<p data-easymde-visual-block-id="${id}">${line}</p>`
+        );
+      }
+      return html.join('') as SafePreviewHtml;
+    };
+    const editMapFor = (request: PreviewRequest) => {
+      const lines = request.markdown.split('\n');
+      const blocks: Array<{
+        editable: true;
+        endLine: number;
+        id: string;
+        startLine: number;
+      }> = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        if ('' === (lines[index] ?? '')) continue;
+        blocks.push({
+          editable: true,
+          endLine: index + 1,
+          id: `b${blocks.length}`,
+          startLine: index
+        });
+      }
+      return {
+        blocks,
+        coordinate: 'line' as const,
+        signature: request.signature,
+        version: 1 as const
+      };
+    };
+    const hasFormula = (markdown: string): boolean =>
+      markdown.split('\n').includes('$x$');
+    const responseFor = (request: PreviewRequest): PreviewResponse => ({
+      editMap: editMapFor(request),
+      features: hasFormula(request.markdown) ? { math: true } : {},
+      html: responseForSource(request.markdown)
+    });
+    // The REAL worker inventory, derived from the producer for whatever source
+    // it is asked about; only the demanded refresh holds it.
+    const heldIndex = deferred<EditorMarkdownBlockIndexData>();
+    let holdDemandIndex = false;
+    const indexPort: EditorMarkdownBlockIndexPort = {
+      build: vi.fn(async ({ source }) => {
+        if (holdDemandIndex && typedMarkdown === source) {
+          return heldIndex.promise;
+        }
+        return observedBlockIndex(source);
+      }),
+      dispose: vi.fn()
+    };
+    const heldRefresh = deferred<PreviewResponse>();
+    let holdRefresh = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdRefresh && typedMarkdown === request.markdown
+        ? heldRefresh.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const generatedContentExportSession = {
+      copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' as const }),
+      copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' as const }),
+      dispose: vi.fn()
+    } as GeneratedContentExportSession;
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    const sessionSpy = vi
+      .spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((session) => {
+        const owner = realCreateDocumentSession(session);
+        ownerRef.current = owner;
+        return owner;
+      });
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={indexPort}
+        generatedContentExportSession={generatedContentExportSession}
+      />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('protected-identity-owner-missing');
+      const staleMath = visual.querySelector('.easymde-math');
+      const beforeText = visual.querySelector('p')?.firstChild;
+      if (!(staleMath instanceof HTMLElement) || !(beforeText instanceof Text)) {
+        throw new Error('protected-identity-dom-missing');
+      }
+      expect(owner.getValue()).toBe(sourceMarkdown);
+
+      // The approved control: a REAL native character typed at the end of the
+      // BEFORE paragraph, which shifts the formula one byte later.
+      visual.focus();
+      const caret = document.createRange();
+      caret.setStart(beforeText, beforeText.data.length);
+      caret.collapse(true);
+      const nativeSelection = window.getSelection();
+      nativeSelection?.removeAllRanges();
+      nativeSelection?.addRange(caret);
+      const typedEvent = new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'q',
+        inputType: 'insertText'
+      });
+      visual.dispatchEvent(typedEvent);
+      if (!typedEvent.defaultPrevented) {
+        beforeText.insertData(beforeText.data.length, 'q');
+      }
+      visual.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          data: 'q',
+          inputType: 'insertText'
+        })
+      );
+      await waitFor(() => expect(owner.getValue()).toBe(typedMarkdown));
+      const historyBefore = owner.getHistoryState();
+      const revisionBefore = owner.getRevision?.();
+      expect(revisionBefore).not.toBeUndefined();
+      expect(historyBefore.undoDepth).toBeGreaterThan(0);
+
+      // ONE gesture on the now-STALE formula element, with the refresh and the
+      // worker inventory both held.
+      holdRefresh = true;
+      holdDemandIndex = true;
+      const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+      layoutContextMenuSurface(staleMath);
+      fireEvent.pointerDown(staleMath, { button: 2, clientX: 24, clientY: 30 });
+      fireEvent.contextMenu(staleMath, { clientX: 24, clientY: 30 });
+
+      // Exactly one formal request, for the typed source.
+      await waitFor(() =>
+        expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+          requestsBefore + 1
+        )
+      );
+      expect(
+        vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0].markdown
+      ).toBe(typedMarkdown);
+      const demandRequest = vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0];
+      if (!demandRequest) throw new Error('protected-identity-demand-missing');
+      // The worker really builds the genuine inventory for the TYPED source.
+      await waitFor(() =>
+        expect(
+          vi.mocked(indexPort.build).mock.calls.some(
+            ([request]) => request.source === typedMarkdown
+          )
+        ).toBe(true)
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // While either prerequisite is outstanding: no menu, no Formula submenu,
+      // and nothing touched the document, history, or Clipboard.
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(within(document.body).queryByRole('menuitem', {
+        name: 'Formula'
+      })).toBeNull();
+      expect(owner.getValue()).toBe(typedMarkdown);
+      expect(owner.getHistoryState()).toEqual(historyBefore);
+
+      // Deliver the fresh real Preview: the worker inventory is still held, so
+      // the demand must still not open or act on the stale identity.
+      heldRefresh.resolve(responseFor(demandRequest));
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(within(document.body).queryByRole('menuitem', {
+        name: 'Formula'
+      })).toBeNull();
+      // The fresh accepted Preview really replaced the protected identity.
+      expect(staleMath.isConnected).toBe(false);
+      expect(visual.querySelector('.easymde-math')).not.toBeNull();
+      expect(owner.getValue()).toBe(typedMarkdown);
+      expect(owner.getHistoryState()).toEqual(historyBefore);
+
+      // Deliver the genuine worker result for exactly the typed source: the
+      // lease now authenticates [9,12) in the CURRENT source.
+      holdDemandIndex = false;
+      heldIndex.resolve(observedBlockIndex(typedMarkdown));
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      // Disarm the held refresh: the deletion and each history refresh must get
+      // a FRESH response for their own request, never this obsolete one.
+      holdRefresh = false;
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      expect(owner.getValue()).toBe(typedMarkdown);
+      expect(owner.getHistoryState()).toEqual(historyBefore);
+
+      // The actual Formula submenu, through the generated handler.
+      const menu = within(document.body).getByRole('menu');
+      const trigger = within(menu).getByRole('menuitem', { name: 'Formula' });
+      fireEvent.pointerDown(trigger, { button: 0 });
+      fireEvent.click(trigger);
+      const formulaMenu = await within(document.body).findByRole('menu', {
+        name: 'Formula'
+      });
+      const deleteFormula = within(formulaMenu).getByRole('menuitem', {
+        name: 'Delete'
+      });
+      expect(deleteFormula.getAttribute('aria-disabled')).toBe('false');
+      fireEvent.click(deleteFormula);
+      // The generated handler removes exactly the CURRENT formula bytes at
+      // [9,12), preserving the blank lines and both paragraphs.
+      await waitFor(() => expect(owner.getValue()).toBe(deleted));
+      expect(owner.getValue().split('\n')).toEqual([
+        'Beforeq',
+        '',
+        '',
+        '',
+        'After'
+      ]);
+      expect(owner.getHistoryState().undoDepth).toBe(historyBefore.undoDepth + 1);
+      // The generated deletion's own ACCEPTED presentation must land first: no
+      // formula remains in the accepted DOM and the surface is ready/editable.
+      await waitFor(() => expect(visual.querySelector('.easymde-math')).toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(owner.getValue()).toBe(deleted);
+
+      // Native history over the real document: Undo restores the typed source
+      // with its accepted formula, Redo completes the deletion again - each
+      // behind its own accepted readiness/editability barrier.
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(typedMarkdown));
+      await waitFor(() => expect(visual.querySelector('.easymde-math')).not.toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(deleted));
+      await waitFor(() => expect(visual.querySelector('.easymde-math')).toBeNull());
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      sessionSpy.mockRestore();
+    }
+  });
+
+  it('retires a stale protected identity that the user changes again, and a later gesture still acts', async () => {
+    // The delayed/stale negative beside the B2 positive: the SAME approved
+    // control creates the stale identity, but the user types again before the
+    // demanded refresh settles. The authenticated identity then no longer
+    // describes the current source, so the demand must retire without acting,
+    // without a stale action, and without spamming failures - and a later
+    // truthful gesture must still work.
+    const sourceMarkdown = 'Before\n\n$x$\n\nAfter';
+    const firstTyped = 'Beforeq\n\n$x$\n\nAfter';
+    const secondTyped = 'Beforeqq\n\n$x$\n\nAfter';
+    expect(firstTyped.indexOf('$x$') + 3).toBe(12);
+    expect(secondTyped.indexOf('$x$') + 3).toBe(13);
+    const props = fixture();
+    props.submissionField.value = sourceMarkdown;
+    props.submissionField.defaultValue = sourceMarkdown;
+    props.submissionField.setSelectionRange(0, 0);
+    /** Truthful HTML and map for any of this row's source states. */
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const html: string[] = [];
+      const blocks: Array<{
+        editable: true;
+        endLine: number;
+        id: string;
+        startLine: number;
+      }> = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? '';
+        if ('' === line) continue;
+        const id = `b${blocks.length}`;
+        blocks.push({
+          editable: true,
+          endLine: index + 1,
+          id,
+          startLine: index
+        });
+        html.push(
+          '$x$' === line
+            ? `<p data-easymde-visual-block-id="${id}"><span class="easymde-math easymde-math-inline"><span class="katex"><span class="katex-mathml"><math><mi>x</mi></math></span></span></span></p>`
+            : `<p data-easymde-visual-block-id="${id}">${line}</p>`
+        );
+      }
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: request.markdown.split('\n').includes('$x$')
+          ? { math: true }
+          : {},
+        html: html.join('') as SafePreviewHtml
+      };
+    };
+    const indexPort: EditorMarkdownBlockIndexPort = {
+      build: vi.fn(async ({ source }) => observedBlockIndex(source)),
+      dispose: vi.fn()
+    };
+    // Only the FIRST typed source's refresh is held, so the second typing
+    // happens while that refresh is genuinely outstanding.
+    const heldRefresh = deferred<PreviewResponse>();
+    let holdRefresh = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdRefresh && firstTyped === request.markdown
+        ? heldRefresh.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const generatedContentExportSession = {
+      copyAsImage: vi.fn().mockResolvedValue({ status: 'copied' as const }),
+      copyMathMl: vi.fn().mockResolvedValue({ status: 'copied' as const }),
+      dispose: vi.fn()
+    } as GeneratedContentExportSession;
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    const sessionSpy = vi
+      .spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((session) => {
+        const owner = realCreateDocumentSession(session);
+        ownerRef.current = owner;
+        return owner;
+      });
+    const view = render(
+      <EditorRoot
+        {...props}
+        editorBlockIndexPort={indexPort}
+        generatedContentExportSession={generatedContentExportSession}
+      />
+    );
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(await view.findByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('stale-negative-owner-missing');
+      const beforeText = (): Text => {
+        const node = visual.querySelector('p')?.firstChild;
+        if (!(node instanceof Text)) {
+          throw new Error('stale-negative-before-text-missing');
+        }
+        return node;
+      };
+      const typeIntoBefore = (character: string): void => {
+        const node = beforeText();
+        const range = document.createRange();
+        range.setStart(node, node.data.length);
+        range.collapse(true);
+        const nativeSelection = window.getSelection();
+        nativeSelection?.removeAllRanges();
+        nativeSelection?.addRange(range);
+        const typed = new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText'
+        });
+        visual.dispatchEvent(typed);
+        if (!typed.defaultPrevented) {
+          node.insertData(node.data.length, character);
+        }
+        visual.dispatchEvent(
+          new InputEvent('input', {
+            bubbles: true,
+            data: character,
+            inputType: 'insertText'
+          })
+        );
+      };
+      visual.focus();
+      typeIntoBefore('q');
+      await waitFor(() => expect(owner.getValue()).toBe(firstTyped));
+      const staleMath = visual.querySelector('.easymde-math');
+      if (!(staleMath instanceof HTMLElement)) {
+        throw new Error('stale-negative-math-missing');
+      }
+      const writesBefore = vi.mocked(props.editorClipboardPort.write).mock.calls
+        .length;
+
+      holdRefresh = true;
+      const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+      layoutContextMenuSurface(staleMath);
+      fireEvent.pointerDown(staleMath, { button: 2, clientX: 24, clientY: 30 });
+      fireEvent.contextMenu(staleMath, { clientX: 24, clientY: 30 });
+      // The held request must be observed BEFORE the obsolete response is
+      // delivered, so this is a real hold and not a race.
+      await waitFor(() =>
+        expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+          requestsBefore + 1
+        )
+      );
+      const heldRequest = vi.mocked(props.previewPort.render).mock.calls.at(-1)?.[0];
+      if (!heldRequest) throw new Error('stale-negative-demand-missing');
+      expect(heldRequest.markdown).toBe(firstTyped);
+
+      // The user types again while that refresh is outstanding.
+      typeIntoBefore('q');
+      await waitFor(() => expect(owner.getValue()).toBe(secondTyped));
+      const historyAfterSecondTyping = owner.getHistoryState();
+
+      // Deliver the now-obsolete response: nothing may act on it.
+      heldRefresh.resolve(responseFor(heldRequest));
+      holdRefresh = false;
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(vi.mocked(props.editorClipboardPort.write).mock.calls.length).toBe(
+        writesBefore
+      );
+      expect(owner.getValue()).toBe(secondTyped);
+      expect(owner.getHistoryState().undoDepth).toBe(
+        historyAfterSecondTyping.undoDepth
+      );
+
+      // A later truthful gesture on the current accepted formula still acts.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const currentMath = visual.querySelector('.easymde-math');
+      if (!(currentMath instanceof HTMLElement)) {
+        throw new Error('stale-negative-current-math-missing');
+      }
+      layoutContextMenuSurface(currentMath);
+      fireEvent.pointerDown(currentMath, { button: 2, clientX: 24, clientY: 30 });
+      fireEvent.contextMenu(currentMath, { clientX: 24, clientY: 30 });
+      // The later gesture's menu is awaited explicitly and then read with
+      // `getByRole`, so an obsolete response can never be credited with opening
+      // it and no implicit retry window is added.
+      await waitFor(
+        () => expect(within(document.body).queryAllByRole('menu')).toHaveLength(1)
+      );
+      const menu = within(document.body).getByRole('menu');
+      const trigger = within(menu).getByRole('menuitem', { name: 'Formula' });
+      fireEvent.pointerDown(trigger, { button: 0 });
+      fireEvent.click(trigger);
+      await waitFor(() =>
+        expect(
+          within(document.body).queryAllByRole('menu', { name: 'Formula' })
+        ).toHaveLength(1)
+      );
+      const formulaMenu = within(document.body).getByRole('menu', {
+        name: 'Formula'
+      });
+      fireEvent.click(
+        within(formulaMenu).getByRole('menuitem', { name: 'Delete' })
+      );
+      const afterDelete = 'Beforeqq\n\n\n\nAfter';
+      await waitFor(() => expect(owner.getValue()).toBe(afterDelete));
+      expect(owner.getHistoryState().undoDepth).toBe(
+        historyAfterSecondTyping.undoDepth + 1
+      );
+    } finally {
+      view.unmount();
+      sessionSpy.mockRestore();
+    }
+  });
+
+  it('acts on the surviving second HR after the first is deleted under a held transfer', async () => {
+    // Two identical HRs. The canonical operation deletes exactly the FIRST one
+    // at [8,11) - the three dashes - and the surviving second HR keeps its own
+    // current source position, so old IDs cannot decide which HR the user
+    // pointed at.
+    const props = fixture();
+    const initial = 'before\n\n---\n\nmid\n\n---\n\nafter';
+    // The HR command removes exactly the addressed block range - the three
+    // dashes - and leaves the surrounding separators in place. The literal
+    // bytes are asserted so a wrong length cannot slip in.
+    expect(initial.slice(8, 11)).toBe('---');
+    const afterFirstDeletion = initial.slice(0, 8) + initial.slice(11);
+    expect(afterFirstDeletion).toBe('before\n\n\n\nmid\n\n---\n\nafter');
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    const held = deferred<PreviewResponse>();
+    /**
+     * Explicit, line-indexed blocks with the real HTML. Blank separator lines
+     * are not blocks: the preserved gap after the first HR must not become an
+     * empty rendered paragraph, which is exactly what a `split('\n\n')`
+     * projection would have manufactured.
+     */
+    const responseFor = (request: PreviewRequest): PreviewResponse => {
+      const lines = request.markdown.split('\n');
+      const blocks: Array<{
+        editable: true;
+        endLine: number;
+        id: string;
+        startLine: number;
+      }> = [];
+      const html: string[] = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? '';
+        if ('' === line) continue;
+        const id = `b${blocks.length}`;
+        blocks.push({
+          editable: true,
+          endLine: index + 1,
+          id,
+          startLine: index
+        });
+        html.push(
+          '---' === line
+            ? `<hr data-easymde-visual-block-id="${id}">`
+            : `<p data-easymde-visual-block-id="${id}">${line}</p>`
+        );
+      }
+      return {
+        editMap: {
+          blocks,
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: html.join('') as SafePreviewHtml
+      };
+    };
+    let holdTransfer = false;
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      holdTransfer && request.markdown === afterFirstDeletion
+        ? held.promise
+        : Promise.resolve(responseFor(request))
+    );
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    const sessionSpy = vi
+      .spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((session) => {
+        const owner = realCreateDocumentSession(session);
+        ownerRef.current = owner;
+        return owner;
+      });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('second-hr-owner-missing');
+      const breaks = visual.querySelectorAll('hr');
+      expect(breaks).toHaveLength(2);
+      const surviving = breaks[1];
+      if (!(surviving instanceof HTMLElement)) {
+        throw new Error('second-hr-missing');
+      }
+      const requestsBefore = vi.mocked(props.previewPort.render).mock.calls.length;
+      const historyBefore = owner.getHistoryState();
+      const revisionBefore = owner.getRevision?.();
+
+      // The REAL owner operation that deletes the first HR, held in its
+      // transfer: an actual canonical deletion of [8,11) - the three dashes -
+      // not a synthetic value swap, and the transfer carries exactly the source
+      // the owner reports.
+      holdTransfer = true;
+      const firstBreak = visual.querySelector('hr');
+      if (!(firstBreak instanceof HTMLElement)) throw new Error('first-hr-missing');
+      // The user removes the FIRST HR through the editor's own delete command
+      // for that root, which consumes the first HR's native range.
+      layoutContextMenuSurface(firstBreak);
+      fireEvent.pointerDown(firstBreak, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(firstBreak, { clientX: 20, clientY: 20 });
+      const firstMenu = await within(document.body).findByRole('menu');
+      fireEvent.click(
+        within(firstMenu).getByRole('menuitem', {
+          name: 'Delete horizontal rule'
+        })
+      );
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe(afterFirstDeletion)
+      );
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).not.toBe('ready')
+      );
+      // The old DOM is still mounted: both HRs are still present.
+      expect(visual.querySelectorAll('hr')).toHaveLength(2);
+      const firstDeletionHistory = owner.getHistoryState();
+      expect(firstDeletionHistory.undoDepth).toBe(historyBefore.undoDepth + 1);
+      // The owner commits the nearest surviving EDITABLE boundary rather than
+      // the raw start of the removed range: after removing the three dashes the
+      // preserved blank run is not editable, so the following block's first
+      // character (index 10, the `m` of `mid`) is the mountable position.
+      expect(afterFirstDeletion[10]).toBe('m');
+      expect(owner.getSelection()).toEqual({
+        direction: 'none',
+        end: 10,
+        start: 10
+      });
+
+      // Exactly ONE request, for exactly the first-deletion source.
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      const heldRequest = vi
+        .mocked(props.previewPort.render)
+        .mock.calls.at(-1)?.[0];
+      if (!heldRequest) throw new Error('held-hr-request-missing');
+      expect(heldRequest.markdown).toBe(afterFirstDeletion);
+
+      // The gesture on the SURVIVING second HR, still mounted, while that
+      // transfer is held: no menu, no second request, no write.
+      layoutContextMenuSurface(surviving);
+      fireEvent.pointerDown(surviving, { button: 2, clientX: 20, clientY: 20 });
+      fireEvent.contextMenu(surviving, { clientX: 20, clientY: 20 });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(owner.getValue()).toBe(afterFirstDeletion);
+      expect(owner.getHistoryState()).toEqual(firstDeletionHistory);
+
+      held.resolve(responseFor(heldRequest));
+      await waitFor(
+        () =>
+          expect(within(document.body).queryAllByRole('menu')).toHaveLength(1),
+        { timeout: 5000 }
+      );
+      // Still exactly one request: the demand was served by the transfer it
+      // joined, not by a new authentication.
+      expect(vi.mocked(props.previewPort.render).mock.calls.length).toBe(
+        requestsBefore + 1
+      );
+      // Disarm the held transfer: every later legitimate request (the survivor
+      // removal, and each Undo/Redo refresh) must get a FRESH response for its
+      // own request, never this obsolete held one.
+      holdTransfer = false;
+      // The fresh accepted map puts the SURVIVOR at b2; the gesture must act on
+      // that HR rather than on a same-ID neighbour.
+      const acceptedBreaks = visual.querySelectorAll('hr');
+      expect(acceptedBreaks).toHaveLength(1);
+      expect(acceptedBreaks[0]?.getAttribute('data-easymde-visual-block-id')).toBe(
+        'b2'
+      );
+      fireEvent.click(
+        within(within(document.body).getByRole('menu')).getByRole('menuitem', {
+          name: 'Delete horizontal rule'
+        })
+      );
+      // Deleting the surviving HR removes its own three dashes at their
+      // CURRENT offsets [15,18), leaving the preserved separators and both
+      // untouched paragraphs exactly.
+      expect(afterFirstDeletion.slice(15, 18)).toBe('---');
+      const afterSecondDeletion =
+        afterFirstDeletion.slice(0, 15) + afterFirstDeletion.slice(18);
+      await waitFor(() =>
+        expect(props.submissionField.value).toBe(afterSecondDeletion)
+      );
+      expect(props.submissionField.value).toBe(
+        'before\n\n\n\nmid\n\n\n\nafter'
+      );
+      // Exactly one more canonical history entry for this second removal.
+      expect(owner.getHistoryState().undoDepth).toBe(
+        firstDeletionHistory.undoDepth + 1
+      );
+      // The deletion's own ACCEPTED presentation must land before history is
+      // exercised: no HR remains in the accepted DOM and the surface is ready
+      // and editable. A canonical-only success would not satisfy this.
+      await waitFor(() => expect(visual.querySelectorAll('hr')).toHaveLength(0));
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(owner.getValue()).toBe(afterSecondDeletion);
+
+      // Native history over the real document: Undo restores the survivor and
+      // Redo removes it again.
+      fireEvent.keyDown(visual, { cancelable: true, ctrlKey: true, key: 'z' });
+      await waitFor(() => expect(owner.getValue()).toBe(afterFirstDeletion));
+      await waitFor(() => expect(visual.querySelectorAll('hr')).toHaveLength(1));
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      fireEvent.keyDown(visual, {
+        cancelable: true,
+        ctrlKey: true,
+        key: 'z',
+        shiftKey: true
+      });
+      await waitFor(() => expect(owner.getValue()).toBe(afterSecondDeletion));
+      await waitFor(() => expect(visual.querySelectorAll('hr')).toHaveLength(0));
+      // The Redo's own accepted readiness/editability barrier.
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      expect(visual.getAttribute('contenteditable')).toBe('true');
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(owner.getRevision?.()).not.toBe(revisionBefore);
+    } finally {
+      props.submissionField.readOnly = false;
+      view.unmount();
+      sessionSpy.mockRestore();
+    }
+  });
+
+  it('tears down an actively open keyboard demand when the user leaves the mode', async () => {
+    // Leaving the mode while the menu is STILL OPEN is the real teardown path:
+    // the demand is live, it owns a target witness, and nothing may act, reopen,
+    // or write after the user has gone.
+    const props = fixture();
+    const initial = 'Lead\n\nTail';
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    vi.mocked(props.previewPort.render).mockImplementation((request) =>
+      Promise.resolve({
+        editMap: {
+          blocks: [
+            { editable: true, endLine: 1, id: 'b0', startLine: 0 },
+            { editable: true, endLine: 3, id: 'b1', startLine: 2 }
+          ],
+          coordinate: 'line' as const,
+          signature: request.signature,
+          version: 1 as const
+        },
+        features: {},
+        html: (
+          '<p data-easymde-visual-block-id="b0">Lead</p>'
+          + '<p data-easymde-visual-block-id="b1">Tail</p>'
+        ) as SafePreviewHtml
+      })
+    );
+    // The canonical owner itself: teardown is proved against real history and
+    // revision, not only against the submission field.
+    const realCreateDocumentSession =
+      observedSourceAdapter.createCodeMirrorDocumentSession;
+    const documentOwnerRef: {
+      current: ReturnType<typeof realCreateDocumentSession> | null;
+    } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession')
+      .mockImplementation((options) => {
+        const owner = realCreateDocumentSession(options);
+        documentOwnerRef.current = owner;
+        return owner;
+      });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      layoutPreviewSurface(view.container);
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const visual = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      await waitFor(() =>
+        expect(visual.getAttribute('data-easymde-preview-phase')).toBe('ready')
+      );
+      const owner = documentOwnerRef.current;
+      if (!owner) throw new Error('active-teardown-owner-missing');
+      const writesBeforeGesture = vi.mocked(
+        props.editorClipboardPort?.write ?? (() => undefined)
+      ).mock.calls.length;
+      const historyBeforeGesture = owner.getHistoryState();
+      const revisionBeforeGesture = owner.getRevision?.();
+      const sourceBeforeGesture = owner.getValue();
+      fireEvent.keyDown(visual, { key: 'F10', shiftKey: true });
+      expect(await within(document.body).findByRole('menu')).toBeTruthy();
+      expect(
+        vi.mocked(props.editorClipboardPort?.write ?? (() => undefined)).mock
+          .calls.length
+      ).toBe(writesBeforeGesture);
+
+      // Mode exit with the demand still live.
+      fireEvent.click(view.getByRole('button', { name: '退出沉浸写作' }));
+      await waitFor(() =>
+        expect(view.queryByRole('textbox', { name: '可视化文章编辑器' })).toBeNull()
+      );
+      await waitFor(() =>
+        expect(within(document.body).queryAllByRole('menu')).toHaveLength(0)
+      );
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      // No late menu, no deferred action, no failure, no canonical or history
+      // write from the torn-down gesture.
+      expect(within(document.body).queryAllByRole('menu')).toHaveLength(0);
+      expect(
+        vi.mocked(props.editorClipboardPort?.write ?? (() => undefined)).mock
+          .calls.length
+      ).toBe(writesBeforeGesture);
+      expect(props.onFailure).not.toHaveBeenCalled();
+      expect(props.submissionField.value).toBe(initial);
+      // Real owner state, not just the field: the torn-down gesture added no
+      // history entry and advanced no revision.
+      expect(owner.getValue()).toBe(sourceBeforeGesture);
+      expect(owner.getHistoryState()).toEqual(historyBeforeGesture);
+      expect(owner.getRevision?.()).toBe(revisionBeforeGesture);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('opens WordPress Media from the Image command and inserts the selected attachment', async () => {
     const props = fixture();
     const view = render(<EditorRoot {...props} />);
@@ -14538,5 +20013,102 @@ describe('EditorRoot', () => {
 
     view.unmount();
     expect(props.scrollSyncBinding.dispose).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('FullPlan frozen Root lifecycle consumer', () => {
+  it.each(['native-edit', 'IME', 'Paste'] as const)('preserves a real Full %s across Root props-only rerender', async (operation) => {
+    const props = fixture();
+    const initial = 'prefix target suffix';
+    const offset = 8;
+    const insert = 'IME' === operation ? '文字' : 'X';
+    const expected = initial.slice(0, offset) + insert + initial.slice(offset);
+    props.submissionField.value = initial;
+    props.submissionField.defaultValue = initial;
+    props.submissionField.setSelectionRange(0, 0);
+    const originalCreate = observedSourceAdapter.createCodeMirrorDocumentSession;
+    const ownerRef: { current: CodeMirrorDocumentSession | null } = { current: null };
+    vi.spyOn(observedSourceAdapter, 'createCodeMirrorDocumentSession').mockImplementation((options) => {
+      const owner = originalCreate(options);
+      ownerRef.current = owner;
+      return owner;
+    });
+    const held = deferred<PreviewResponse>();
+    let heldRequest: PreviewRequest | null = null;
+    let holdPaste = false;
+    const response = (request: PreviewRequest): PreviewResponse => createPreviewResponse(request, `<p>${request.markdown}</p>` as SafePreviewHtml, {});
+    vi.mocked(props.previewPort.render).mockImplementation((request) => {
+      if (holdPaste && request.markdown === expected) {
+        heldRequest = request;
+        return held.promise;
+      }
+      return Promise.resolve(response(request));
+    });
+    const view = render(<EditorRoot {...props} />);
+    try {
+      fireEvent.click(await view.findByRole('button', { name: '进入沉浸写作' }));
+      fireEvent.click(view.getByRole('button', { name: '预览' }));
+      await waitFor(() => expect(view.getByText('内容已载入')).not.toBeNull());
+      fireEvent.click(view.getByRole('button', { name: '解除锁定并编辑' }));
+      const surface = await view.findByRole('textbox', { name: '可视化文章编辑器' });
+      const owner = ownerRef.current;
+      if (!owner) throw new Error('full-plan-root-real-owner-missing');
+      expect(owner.getValue()).toBe(initial);
+      expect(owner.getSelection()).toEqual({ direction: 'none', end: 0, start: 0 });
+      const revision = owner.getRevision?.();
+      expect(typeof revision).toBe('number');
+      const text = surface.querySelector('p')?.firstChild;
+      if (!(text instanceof Text)) throw new Error('full-plan-root-native-text-missing');
+      surface.focus();
+      window.getSelection()?.collapse(text, offset);
+      if ('Paste' === operation) {
+        holdPaste = true;
+        fireEvent.paste(surface, { clipboardData: { files: [], getData: (type: string) => 'text/plain' === type ? insert : '', types: ['text/plain'] } });
+        await waitFor(() => expect(heldRequest).not.toBeNull());
+        expect(surface.getAttribute('data-easymde-preview-phase')).not.toBe('ready');
+      } else {
+        if ('IME' === operation) fireEvent.compositionStart(surface);
+        const inputType = 'IME' === operation ? 'insertCompositionText' : 'insertText';
+        const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: insert, inputType, isComposing: 'IME' === operation });
+        surface.dispatchEvent(before);
+        expect(before.defaultPrevented).toBe(false);
+        text.insertData(offset, insert);
+        window.getSelection()?.collapse(text, offset + insert.length);
+        surface.dispatchEvent(new InputEvent('input', { bubbles: true, data: insert, inputType, isComposing: 'IME' === operation }));
+      }
+      // A normal parent callback update must not dispose the visual owner or
+      // erase its pending input, composition, or awaited formal transfer.
+      view.rerender(<EditorRoot {...props} onFailure={(code) => props.onFailure(code)} />);
+      expect(ownerRef.current).toBe(owner);
+      expect(surface.isConnected).toBe(true);
+      expect(text.isConnected).toBe(true);
+      if ('IME' === operation) {
+        expect(owner.getValue()).toBe(initial);
+        fireEvent.compositionEnd(surface, { data: insert });
+      }
+      await waitFor(() => expect(owner.getValue()).toBe(expected));
+      expect(owner.getRevision?.()).toBe((revision as number) + 1);
+      expect(owner.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+      if ('Paste' === operation) {
+        const request = heldRequest;
+        if (!request) throw new Error('full-plan-root-held-response-missing');
+        holdPaste = false;
+        await act(async () => held.resolve(response(request)));
+      }
+      await waitFor(() => {
+        expect(surface.getAttribute('data-easymde-preview-phase')).toBe('ready');
+        expect(surface.textContent).toBe(expected);
+      });
+      expect(props.submissionField.value).toBe(expected);
+      expect(owner.getSelection()).toEqual({ direction: 'none', end: offset + insert.length, start: offset + insert.length });
+      const acceptedText = surface.querySelector('p')?.firstChild;
+      expect(window.getSelection()?.anchorNode).toBe(acceptedText);
+      expect(window.getSelection()?.anchorOffset).toBe(offset + insert.length);
+      expect(window.getSelection()?.isCollapsed).toBe(true);
+      expect(surface.getAttribute('contenteditable')).toBe('true');
+      expect(props.onFailure).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
   });
 });

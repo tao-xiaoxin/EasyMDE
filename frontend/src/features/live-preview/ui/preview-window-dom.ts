@@ -43,6 +43,7 @@ type PreviewWindowRepositoryBlock = Readonly<{
 
 export type PreviewWindowNodeRepository = {
 	blocks: ReadonlyArray<PreviewWindowRepositoryBlock>;
+	ownedGap?: Readonly<{ node: HTMLElement; before: number; after: number }>;
 	context: PreviewWindowContext;
 	indexById: ReadonlyMap<string, number>;
 	model: ReturnType<typeof createPreviewWindowModel>;
@@ -383,6 +384,7 @@ export function measurePreviewWindowBlockGeometry(
 		marginAfter: 0,
 		gapAfter: 0,
 	},
+	ownedGap?: HTMLElement,
 ): PreviewWindowFlowMeasurement | null {
 	if (!node.isConnected) {
 		throw new PreviewWindowDomError("preview-window-flow-node-disconnected");
@@ -422,7 +424,7 @@ export function measurePreviewWindowBlockGeometry(
 	const canonicalNeighbor = Boolean(
 		nextNode?.isConnected &&
 			nextNode.parentNode === node.parentNode &&
-			node.nextElementSibling === nextNode,
+			(node.nextElementSibling === nextNode || (ownedGap && node.nextElementSibling === ownedGap && ownedGap.nextElementSibling === nextNode)),
 	);
 	if (canonicalNeighbor) {
 		const nextRect = nextNode?.getBoundingClientRect();
@@ -538,8 +540,8 @@ export function capturePreviewWindowFlowBoundary(
 		return;
 	}
 	if (
-		surface.children.length !== repository.nodes.length ||
-		!repository.nodes.every(
+		surface.children.length !== fullMaterializedNodes(repository).length ||
+		!fullMaterializedNodes(repository).every(
 			(node, index) =>
 				surface.children[index] === node &&
 				node.isConnected &&
@@ -618,6 +620,112 @@ export function capturePreviewWindowFlowBoundary(
 		origin,
 		end,
 	};
+}
+
+/**
+ * Advances the captured full-flow boundary by one measured block. A mounted
+ * root-preserving edit changes content without a new geometry epoch, so the
+ * measured delta is the only authority that can keep the boundary and the live
+ * surface in the same coordinates before a spacer reconciliation compares them.
+ */
+export function advancePreviewWindowFlowBoundary(
+	repository: PreviewWindowNodeRepository,
+	surface: HTMLElement,
+	index: number,
+	geometry: PreviewWindowFlowGeometry,
+	delta: number,
+	rect: DOMRect,
+): void {
+	const boundary = repository.flowBoundary;
+	const node = repository.nodes[index];
+	if (
+		!boundary ||
+		!node ||
+		boundary.epoch !== previewWindowGeometryEpochKey(repository.context) ||
+		!(boundary.first === node || index < repository.nodes.length - 1)
+	)
+		return;
+	const origin =
+		boundary.first === node
+			? previewWindowFlowDocumentCoordinate(
+					surface,
+					rect.top,
+					"preview-window-flow-origin-invalid",
+				)
+			: boundary.origin;
+	const end =
+		boundary.last === node
+			? previewWindowFlowDocumentCoordinate(
+					surface,
+					rect.bottom,
+					"preview-window-flow-end-invalid",
+				) + geometry.gapAfter
+			: boundary.end + delta;
+	if (!Number.isFinite(origin) || !Number.isFinite(end)) {
+		throw new PreviewWindowDomError("preview-window-flow-boundary-invalid");
+	}
+	repository.flowBoundary = { ...boundary, origin, end };
+}
+
+/**
+ * Records one already-accepted root-preserving block edit in the window flow.
+ * The caller owns the authenticated transition (repository identity, live
+ * surface, canonical source, and selection are already verified); this only
+ * records the measured geometry and advances the boundary that later spacer
+ * reconciliation verifies against.
+ */
+export function measurePreviewWindowAdoptedBlock(
+	repository: PreviewWindowNodeRepository,
+	surface: HTMLElement,
+	index: number,
+): void {
+	const node = repository.nodes[index];
+	const previousGeometry = repository.flowGeometry[index];
+	if (
+		!node ||
+		!previousGeometry ||
+		!node.isConnected ||
+		node.parentNode !== surface
+	)
+		return;
+	const rect = node.getBoundingClientRect();
+	if (
+		(!Number.isFinite(rect.height) || rect.height <= 0) &&
+		node.offsetHeight <= 0
+	)
+		return;
+	const measurement = measurePreviewWindowBlockGeometry(
+		node,
+		repository.nodes[index + 1] ?? null,
+		previousGeometry,
+		repository.ownedGap?.node,
+	);
+	if (!measurement) return;
+	const geometry = measurement.geometry;
+	const update = repository.model.updateMeasuredHeight({
+		anchorIndex: index,
+		context: repository.context,
+		geometry,
+		index,
+		measuredHeight: geometry.borderHeight,
+	});
+	advancePreviewWindowFlowBoundary(
+		repository,
+		surface,
+		index,
+		geometry,
+		update.delta,
+		rect,
+	);
+	const epoch = previewWindowGeometryEpochKey(repository.context);
+	repository.spacerContentHeights.clear();
+	repository.flowGeometry[index] = geometry;
+	repository.flowGeometryEpoch[index] = epoch;
+	markPreviewWindowFlowGeometryMeasured(repository, index);
+	if (measurement.gapMeasured) {
+		repository.flowGapEpoch[index] = epoch;
+		markPreviewWindowFlowGapMeasured(repository, index);
+	}
 }
 
 function currentBlockSibling(
@@ -985,6 +1093,7 @@ export function windowNodes(
 		for (let index = run.range.start; index < run.range.end; index += 1) {
 			const node = repository.nodes[index];
 			if (!node) fail("preview-window-repository-order-invalid");
+			if (repository.ownedGap?.after === index) nodes.push(repository.ownedGap.node);
 			nodes.push(node);
 		}
 	}
@@ -993,8 +1102,8 @@ export function windowNodes(
 
 export function fullMaterializedNodes(
 	repository: PreviewWindowNodeRepository,
-): ReadonlyArray<Node> {
-	return repository.nodes;
+): ReadonlyArray<HTMLElement> {
+	return repository.nodes.flatMap((node, index) => repository.ownedGap?.after === index ? [repository.ownedGap.node, node] : [node]);
 }
 
 export function viewportForCanvas(canvas: HTMLElement): PreviewWindowViewport {

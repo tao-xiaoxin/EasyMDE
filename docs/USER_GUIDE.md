@@ -42,6 +42,9 @@ activation is ignored.
 In editable immersive Preview, Backspace at the start of an empty fenced code
 block removes its frame and returns to a paragraph. Undo and Redo restore the
 source, frame and caret, including fences left open at the end of the document.
+Deleting the now-empty paragraph back into a preceding heading leaves the caret
+at that heading's end. Enter and subsequent typing continue there without moving
+to the article start or changing neighboring code blocks.
 Ctrl/Cmd+A selects the connected visual article. Backspace or Delete clears the
 canonical article only for that full visual-root selection. Cut, IME input,
 partial selections, and partial code selections keep their existing editing
@@ -52,7 +55,9 @@ If the source contains only terminal ASCII spaces or newlines, the empty
 paragraph is a visual presentation and those source bytes remain intact.
 Insertion at that boundary preserves them. Directly formatted list and quote
 wrappers follow the same empty-Backspace behavior while non-empty code content
-remains unchanged.
+remains unchanged. The caret in that fresh empty paragraph sits before the
+renderer's placeholder break. Typing remains available there while a Preview is
+pending, and IME preedit stays outside Markdown until composition ends.
 After a structural Enter in a long windowed document, the accepted formal
 Preview restores the current canonical editing position before following input
 is accepted. The existing Markdown source remains authoritative; a structural
@@ -63,6 +68,9 @@ that can be represented as valid backtick syntax and pressing Enter, its source
 uses an equally wide backtick fence with the typed language or info string.
 Existing or pasted tilde fences retain their original family; an info string
 containing a backtick remains literal instead of forming an invalid shortcut.
+Until Enter is pressed, each typed tilde or backtick remains literal paragraph
+text, including a fourth consecutive marker; it does not absorb a following code
+block. Enter converts only the paragraph being edited.
 On narrow screens, the Outline opens over the writing area. It closes when
 Preview becomes editable or an editable Preview is resized into a narrow
 screen. Its show control can reopen it without changing the saved Outline
@@ -126,6 +134,14 @@ place while a background Preview or block-index refresh is still building; its
 context is replaced once that refreshed inventory is ready, while a real
 document or selection change still dismisses it.
 
+In unlocked Visual editing, Enter may split a paragraph without losing the next
+right-click's target. A menu requested while a text paste is waiting for Preview
+keeps the same paragraph target, including text pasted at its beginning. During
+focused Undo/Redo in a long document, Preview brings the exact history caret's
+block into the mounted window before restoring the caret; it does not take
+focus back from another control.
+
+
 A selection spanning an object and surrounding text keeps text commands;
 it does not expose that object's deletion, alignment or adjacent insertion.
 Selections crossing the editable visual surface boundary are rejected without
@@ -149,7 +165,12 @@ right-click. After dismissing an image menu—or while one is open—a right-cli
 another image re-anchors the menu and its selection to that image, including
 duplicate URLs by block and image order. The Context Menu key and Shift+F10 use
 the current selection instead and never re-anchor it. Deliberate mixed text/image
-selections keep their extent and do not gain image mutation commands.
+selections keep their extent and do not gain image mutation commands: a range
+that spans text on both sides of an image still opens the text menu, and it is
+never reported as an unavailable image target. A selection the editor restored
+itself—for example the code-block range left after an undo—is not deliberate: a
+right-click on an image still selects that image and offers its actions, while a
+selection you made keeps its extent even when the pointer is over an image.
 
 Standalone Markdown thematic breaks (`---`, `***`, or `___`) use the same
 paragraph insertion actions as other editable blocks. Inserting above a rule
@@ -190,8 +211,10 @@ remote-import owner; the selected image is
 replaced only after the protected WordPress result succeeds. The scale marker
 is stored in the image title as `{width=NN%}` and preserves alt text, URL, and
 the rest of the title. These percentages use the containing content width;
-150% and 200% intentionally exceed it instead of being capped at 100% by the
-article theme. Images without a scale marker keep responsive theme sizing.
+canonical 150% and 200% markers are preserved, but shared base CSS applies
+`max-width: 100%`, so rendered output is capped by the containing content width
+with no horizontal overflow. Images without a scale marker keep responsive theme
+sizing.
 Image actions keep Markdown image syntax; there is no conversion to raw HTML
 `<img>`. Copy as HTML Code is Clipboard output only, not a source rewrite.
 Image menus intentionally omit Open in Browser and Save as PNG; these are not

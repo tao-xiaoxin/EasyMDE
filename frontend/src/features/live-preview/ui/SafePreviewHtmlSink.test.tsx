@@ -963,3 +963,348 @@ describe('SafePreviewHtmlSink window commits', () => {
     view.unmount();
   });
 });
+describe('SafePreviewHtmlSink composition gate', () => {
+  const gate = (held: boolean, version: number) => ({
+    isHeld: () => held,
+    version
+  });
+  const commitNodes = (html: string): Node[] => {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const nodes = Array.from(host.childNodes);
+    host.replaceChildren();
+    return nodes;
+  };
+
+  it('defers a raw HTML revision while held and installs the current frame after release', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const before = '<p>before</p>' as SafePreviewHtml;
+    const after = '<p>after</p>' as SafePreviewHtml;
+    const props = { contentEditable: true, surfaceRef } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 0)}
+        html={before}
+        htmlRevision={1}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-gate-surface-missing');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(true, 1)}
+        html={after}
+        htmlRevision={2}
+      />
+    );
+    expect(surface.innerHTML).toBe(before);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        html={after}
+        htmlRevision={2}
+      />
+    );
+    expect(surface.innerHTML).toBe(after);
+    view.unmount();
+  });
+
+  it('defers a staged commit while held and publishes it exactly once after release', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onStagedCommit = vi.fn();
+    const before = '<p>before</p>' as SafePreviewHtml;
+    const after = '<p>after</p>' as SafePreviewHtml;
+    const stagedCommit = { nodes: commitNodes(after), revision: 2 };
+    const props = { contentEditable: true, surfaceRef } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 0)}
+        html={before}
+        htmlRevision={1}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-gate-surface-missing');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(true, 1)}
+        html={after}
+        htmlRevision={2}
+        onStagedCommit={onStagedCommit}
+        stagedCommit={stagedCommit}
+      />
+    );
+    expect(onStagedCommit).not.toHaveBeenCalled();
+    expect(Array.from(surface.childNodes).map((node) => node.textContent)).toEqual([
+      'before'
+    ]);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        html={after}
+        htmlRevision={2}
+        onStagedCommit={onStagedCommit}
+        stagedCommit={stagedCommit}
+      />
+    );
+    expect(onStagedCommit).toHaveBeenCalledOnce();
+    expect(Array.from(surface.childNodes).map((node) => node.textContent)).toEqual([
+      'after'
+    ]);
+    view.unmount();
+  });
+
+  it('defers a window commit while held and installs it after release', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onStagedCommit = vi.fn();
+    const before = '<p>before</p>' as SafePreviewHtml;
+    const after = '<p>after</p>' as SafePreviewHtml;
+    const windowedCommit = { key: 1, nodes: commitNodes(after), revision: 2 };
+    const props = { contentEditable: true, surfaceRef } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 0)}
+        html={before}
+        htmlRevision={1}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-gate-surface-missing');
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(true, 1)}
+        html={after}
+        htmlRevision={2}
+        onStagedCommit={onStagedCommit}
+        windowedCommit={windowedCommit}
+      />
+    );
+    expect(onStagedCommit).not.toHaveBeenCalled();
+    expect(Array.from(surface.childNodes).map((node) => node.textContent)).toEqual([
+      'before'
+    ]);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        html={after}
+        htmlRevision={2}
+        onStagedCommit={onStagedCommit}
+        windowedCommit={windowedCommit}
+      />
+    );
+    expect(onStagedCommit).toHaveBeenCalledOnce();
+    expect(Array.from(surface.childNodes).map((node) => node.textContent)).toEqual([
+      'after'
+    ]);
+    view.unmount();
+  });
+
+  it('does not start a materialization while held and completes the current one after release', async () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const onMaterializeComplete = vi.fn();
+    const pending: Array<() => void> = [];
+    const scheduler = {
+      yield: () => new Promise<void>((resolve) => pending.push(resolve))
+    };
+    const nodes = Array.from({ length: 4 }, (_, index) => {
+      const node = document.createElement('p');
+      node.textContent = `materialized-${index}`;
+      return node;
+    });
+    const spacer = document.createElement('div');
+    spacer.setAttribute('data-easymde-preview-window-spacer', '1');
+    spacer.setAttribute('data-easymde-preview-window-start', '1');
+    spacer.setAttribute('data-easymde-preview-window-end', '3');
+    spacer.style.blockSize = '48px';
+    const windowNodes = [nodes[0] as Node, spacer, nodes[3] as Node];
+    const props = {
+      contentEditable: true,
+      html: '' as SafePreviewHtml,
+      htmlRevision: 2,
+      materializeScheduler: scheduler,
+      surfaceRef
+    } as const;
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 0)}
+        windowedCommit={{ key: 1, nodes: windowNodes, revision: 2 }}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-gate-surface-missing');
+    expect(Array.from(surface.childNodes)).toEqual(windowNodes);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(true, 1)}
+        materializeCommit={{ key: 3, nodes, revision: 2 }}
+        onMaterializeComplete={onMaterializeComplete}
+      />
+    );
+    expect(pending).toHaveLength(0);
+    expect(onMaterializeComplete).not.toHaveBeenCalled();
+    expect(Array.from(surface.childNodes)).toEqual(windowNodes);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        materializeCommit={{ key: 3, nodes, revision: 2 }}
+        onMaterializeComplete={onMaterializeComplete}
+      />
+    );
+    for (let slice = 0; slice < 12 && pending.length > 0; slice += 1) {
+      await act(async () => {
+        pending.shift()?.();
+        await Promise.resolve();
+      });
+    }
+    expect(onMaterializeComplete).toHaveBeenCalledOnce();
+    expect(Array.from(surface.childNodes)).toEqual(nodes);
+    view.unmount();
+  });
+
+  it('keeps the last applied surface for an uninstalled editable revision after a held deferral', () => {
+    const surfaceRef = createRef<HTMLElement>();
+    const applied = '<p>applied</p>' as SafePreviewHtml;
+    const obsolete = '<p>obsolete</p>' as SafePreviewHtml;
+    const props = { contentEditable: true, phase: 'ready' as const, surfaceRef };
+    const view = render(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 0)}
+        html={applied}
+        htmlRevision={1}
+      />
+    );
+    const surface = surfaceRef.current;
+    if (!surface) throw new Error('test-gate-surface-missing');
+    expect(surface.innerHTML).toBe(applied);
+
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(true, 1)}
+        html={obsolete}
+        htmlRevision={2}
+        phase="loading"
+      />
+    );
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        html={obsolete}
+        htmlRevision={2}
+        phase="loading"
+      />
+    );
+    expect(surface.innerHTML).toBe(applied);
+    expect(surface.getAttribute('data-easymde-preview-phase')).toBe('loading');
+
+    // A failed state still publishes; the continuity rule never hides errors.
+    view.rerender(
+      <SafePreviewHtmlSink
+        {...props}
+        compositionGate={gate(false, 2)}
+        error
+        html={'<p>failed frame</p>' as SafePreviewHtml}
+        htmlRevision={3}
+        phase="failed"
+      />
+    );
+    expect(surface.innerHTML).toBe('<p>failed frame</p>');
+    view.unmount();
+  });
+});
+
+describe('test-first SafePreviewHtmlSink live draft retention', () => {
+  it.each(['staged', 'window'] as const)(
+    'keeps native IME text and caret through props-only rerenders and superseded %s frames',
+    (kind) => {
+      const surfaceRef = createRef<HTMLElement>();
+      const before = '<p data-easymde-visual-block-id="b0">left right</p>' as SafePreviewHtml;
+      const obsolete = '<p data-easymde-visual-block-id="b0">obsolete</p>' as SafePreviewHtml;
+      const accepted = '<p data-easymde-visual-block-id="b0">left 文right</p>' as SafePreviewHtml;
+      let held = false;
+      const compositionGate = { isHeld: () => held, version: 0 };
+      const props = { contentEditable: true, surfaceRef } as const;
+      const obsoleteCompletion = vi.fn();
+      const latestCompletion = vi.fn();
+      const view = render(<SafePreviewHtmlSink {...props} compositionGate={compositionGate} html={before} htmlRevision={1} />);
+      const surface = surfaceRef.current;
+      const paragraph = surface?.firstElementChild;
+      const text = paragraph?.firstChild;
+      if (!surface || !(paragraph instanceof HTMLElement) || !(text instanceof Text)) throw new Error('test-first-live-draft-prerequisite-missing');
+      surface.tabIndex = 0;
+      surface.focus();
+      const native = window.getSelection();
+      native?.collapse(text, 5);
+      held = true;
+      act(() => {
+        surface.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        surface.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertCompositionText', isComposing: true, data: '文' }));
+        text.insertData(5, '文');
+        native?.collapse(text, 6);
+        surface.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', isComposing: true, data: '文' }));
+      });
+      const obsoleteTemplate = document.createElement('template');
+      obsoleteTemplate.innerHTML = obsolete;
+      const obsoleteNodes = Array.from(obsoleteTemplate.content.childNodes);
+      const acceptedTemplate = document.createElement('template');
+      acceptedTemplate.innerHTML = accepted;
+      const acceptedNodes = kind === 'window' ? [paragraph] : Array.from(acceptedTemplate.content.childNodes);
+      const obsoleteCommit = kind === 'window'
+        ? { windowedCommit: { key: 2, nodes: obsoleteNodes, revision: 2 } }
+        : { stagedCommit: { nodes: obsoleteNodes, revision: 2 } };
+      const latestCommit = kind === 'window'
+        ? { windowedCommit: { key: 3, nodes: acceptedNodes, revision: 3 } }
+        : { stagedCommit: { nodes: acceptedNodes, revision: 3 } };
+      const replaceChildren = vi.spyOn(surface, 'replaceChildren');
+      try {
+        view.rerender(<SafePreviewHtmlSink {...props} {...obsoleteCommit} ariaBusy compositionGate={{ ...compositionGate, version: 1 }} html={obsolete} htmlRevision={2} onStagedCommit={obsoleteCompletion} phase="committing" />);
+        view.rerender(<SafePreviewHtmlSink {...props} {...latestCommit} ariaBusy className="props-only-update" compositionGate={{ ...compositionGate, version: 1 }} html={accepted} htmlRevision={3} onStagedCommit={latestCompletion} phase="committing" />);
+        expect(surface.firstElementChild).toBe(paragraph);
+        expect(text.data).toBe('left 文right');
+        expect(text.isConnected).toBe(true);
+        expect(native?.anchorNode).toBe(text);
+        expect(native?.anchorOffset).toBe(6);
+        expect(native?.isCollapsed).toBe(true);
+        expect(document.activeElement).toBe(surface);
+        expect(replaceChildren).not.toHaveBeenCalled();
+        expect(obsoleteCompletion).not.toHaveBeenCalled();
+        expect(latestCompletion).not.toHaveBeenCalled();
+        held = false;
+        view.rerender(<SafePreviewHtmlSink {...props} {...latestCommit} compositionGate={{ ...compositionGate, version: 2 }} html={accepted} htmlRevision={3} onStagedCommit={latestCompletion} phase="ready" />);
+        expect(surface.textContent).toBe('left 文right');
+        expect(latestCompletion).toHaveBeenCalledExactlyOnceWith(3);
+        expect(obsoleteCompletion).not.toHaveBeenCalled();
+        view.rerender(<SafePreviewHtmlSink {...props} {...latestCommit} className="second-props-only-update" compositionGate={{ ...compositionGate, version: 2 }} html={accepted} htmlRevision={3} onStagedCommit={latestCompletion} phase="ready" />);
+        expect(latestCompletion).toHaveBeenCalledOnce();
+        expect(surface.textContent).toBe('left 文right');
+        if (kind === 'window') {
+          expect(text.isConnected).toBe(true);
+          expect(native?.anchorNode).toBe(text);
+          expect(native?.anchorOffset).toBe(6);
+        }
+      } finally { view.unmount(); }
+    }
+  );
+});

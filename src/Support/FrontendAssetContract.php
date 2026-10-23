@@ -13,6 +13,7 @@ final class FrontendAssetContract {
 	private const ERROR_PREFIXES = array(
 		'frontend-asset-',
 		'frontend-enhancement-',
+		'editor-block-index-worker-',
 		self::CODE_COPY_PREFIX,
 	);
 

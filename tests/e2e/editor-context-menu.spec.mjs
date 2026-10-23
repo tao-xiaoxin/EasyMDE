@@ -18,6 +18,11 @@ const fixtureImage = readFileSync(
   new URL('../../docs/assets/easymde-logo-rounded.png', import.meta.url)
 );
 const imageSourceAlt = '占位测试图片';
+// Written through the real native Attachment Details save path before the
+// picker is confirmed. The insert contract derives Alt from the attachment
+// file name, so this proves the native write round-trip rather than a second
+// Alt rule.
+const syntheticMediaAlt = 'Synthetic native alt text';
 const menuSelector = '[data-easymde-context-menu="true"]';
 const menuViewportSelector = '[data-easymde-context-menu-viewport="true"]';
 const sourceDocumentStartKey = process.platform === 'darwin'
@@ -122,17 +127,13 @@ async function loadCanonicalFixture(page, copies = 1, options = {}) {
   const source = page.locator('#easymde-source');
   const preview = page.locator('.easymde-pane-preview [data-easymde-preview-html-sink="1"]');
 
-  if (options.nativeInput) {
-    await replaceSourceWithNativeInput(
-      page,
-      sourceEditor,
-      source,
-      markdown,
-      'canonical-fixture-native-input'
-    );
-  } else {
-    await sourceEditor.fill(markdown);
-  }
+  await replaceSourceWithNativeInput(
+    page,
+    sourceEditor,
+    source,
+    markdown,
+    'canonical-fixture-native-input'
+  );
   await expect(source).toHaveValue(markdown);
   await expect(preview).toHaveAttribute('aria-busy', 'false');
   await expect(preview).not.toHaveAttribute('data-easymde-preview-error', '1');
@@ -299,30 +300,11 @@ function fencedBlockSource(markdown, language, occurrence = 0) {
   return match[1];
 }
 
-function fencedBlockMarkdown(markdown, language, occurrence = 0) {
-  const pattern = new RegExp(
-    '^```' + language + '\\r?\\n([\\s\\S]*?)\\r?\\n```',
-    'gmu'
-  );
-  const matches = [...markdown.matchAll(pattern)];
-  const match = matches[occurrence];
-  if (!match) throw new Error(`fixture-fenced-block-missing:${language}:${occurrence}`);
-  return match[0];
-}
-
 function displayMathSource(markdown, occurrence = 0) {
   const matches = [...markdown.matchAll(/^\$\$\r?\n([\s\S]*?)\r?\n\$\$/gmu)];
   const match = matches[occurrence];
   if (!match) throw new Error(`fixture-display-math-missing:${occurrence}`);
   return match[1];
-}
-
-function displayMathMarkdown(markdown, occurrence = 0) {
-  const pattern = /^\$\$\r?\n([\s\S]*?)\r?\n\$\$/gmu;
-  const matches = [...markdown.matchAll(pattern)];
-  const match = matches[occurrence];
-  if (!match) throw new Error(`fixture-display-math-missing:${occurrence}`);
-  return match[0];
 }
 
 function privacySafeTextEvidence(value) {
@@ -394,8 +376,14 @@ async function decodeGeneratedPng(page, bytes, phase) {
       }
     }
     bitmap.close();
+    let hash = 2166136261;
+    for (const byte of serializedBytes) {
+      hash ^= byte;
+      hash = Math.imul(hash, 16777619);
+    }
     return {
       bounds: { bottom, left, right, top },
+      hash: (hash >>> 0).toString(16),
       height,
       nonBlankPixels,
       width
@@ -448,39 +436,305 @@ async function readClipboardPng(page, phase) {
   return decodeGeneratedPng(page, bytes, phase);
 }
 
-function startGeneratedExportMutationProbe(page) {
+/**
+ * Decodes a POST body by its declared content type. WordPress sends
+ * urlencoded AJAX, JSON REST, and - for `navigator.sendBeacon` on pagehide - a
+ * real `multipart/form-data` body, so a urlencoded-only decoder would report a
+ * legitimate Core request as an unknown write. Parsing is strict and scalar
+ * only: a part carrying a file is reported separately instead of having its
+ * bytes scanned, and an unrecognized shape is an explicit failure rather than
+ * a guess.
+ */
+function decodePostParameters(request) {
+  // Only the media type is case-insensitive: a multipart boundary is
+  // case-sensitive, so the raw header value is preserved for parsing.
+  const rawContentType = request.headers()['content-type'] ?? '';
+  const contentType = rawContentType.toLowerCase();
+  const body = request.postData() ?? '';
+  const parameters = new URLSearchParams();
+  const shape = (extra = {}) => ({
+    encoding: 'urlencoded',
+    hasFilePart: false,
+    parameters,
+    unsupported: false,
+    ...extra
+  });
+  if (contentType.includes('multipart/form-data')) {
+    const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/iu.exec(rawContentType);
+    const boundary = (boundaryMatch?.[1] ?? boundaryMatch?.[2] ?? '').trim();
+    const delimiter = `--${boundary}`;
+    if (!boundary || !body.includes(delimiter)) {
+      return shape({ encoding: 'multipart', unsupported: true });
+    }
+    // Real multipart framing: an opening delimiter, CRLF-separated part
+    // headers, a blank line, then the scalar value up to the next delimiter.
+    let unsupported = false;
+    let hasFilePart = false;
+    let index = body.indexOf(delimiter);
+    if (index < 0) return shape({ encoding: 'multipart', unsupported: true });
+    for (;;) {
+      const afterDelimiter = index + delimiter.length;
+      if ('--' === body.slice(afterDelimiter, afterDelimiter + 2)) break;
+      const headerStart = afterDelimiter + (body.startsWith('\r\n', afterDelimiter) ? 2
+        : body.startsWith('\n', afterDelimiter) ? 1 : 0);
+      const headerEnd = body.indexOf('\r\n\r\n', headerStart);
+      const altHeaderEnd = body.indexOf('\n\n', headerStart);
+      const split = headerEnd < 0 ? altHeaderEnd : headerEnd;
+      if (split < 0) {
+        unsupported = true;
+        break;
+      }
+      const valueStart = split + (headerEnd >= 0 ? 4 : 2);
+      const next = body.indexOf(delimiter, valueStart);
+      if (next < 0) {
+        unsupported = true;
+        break;
+      }
+      const headerText = body.slice(headerStart, split);
+      const value = body
+        .slice(valueStart, next)
+        .replace(/\r\n$/u, '')
+        .replace(/\n$/u, '');
+      const disposition = /content-disposition:([^\r\n]*)/iu.exec(headerText)?.[1] ?? '';
+      const name = /name="([^"]*)"/iu.exec(disposition)?.[1];
+      if (!name) {
+        unsupported = true;
+      } else if (/filename=/iu.test(disposition)) {
+        hasFilePart = true;
+      } else {
+        parameters.append(name, value);
+      }
+      index = next;
+    }
+    return shape({ encoding: 'multipart', hasFilePart, unsupported });
+  }
+  if (contentType.includes('application/json') || body.trim().startsWith('{')) {
+    let payload;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      return shape({ encoding: 'json', unsupported: true });
+    }
+    if (!payload || 'object' !== typeof payload || Array.isArray(payload)) {
+      return shape({ encoding: 'json', unsupported: true });
+    }
+    for (const [name, value] of Object.entries(payload)) {
+      if ('string' === typeof value || 'number' === typeof value) {
+        parameters.append(name, String(value));
+      }
+    }
+    return shape({ encoding: 'json' });
+  }
+  for (const [name, value] of new URLSearchParams(body)) parameters.append(name, value);
+  return shape();
+}
+
+async function readNativeWordPressIdentity(page) {
+  return page.evaluate(() => ({
+    postId: document.querySelector('#post_ID')?.value ?? '',
+    title: document.querySelector('#title')?.value ?? '',
+    slug: document.querySelector('#post_name')?.value ?? '',
+    permalinkNonce: document.querySelector('#samplepermalinknonce')?.value ?? ''
+  }));
+}
+
+/**
+ * Classifies one POST as a Core native read or a write. The returned function
+ * is deliberately strict: an unknown action, an unknown heartbeat payload
+ * owner, or a heartbeat whose data names another post is a write. Only
+ * Core-owned read/maintenance requests that address the current post are
+ * exempt. `refresh()` re-reads the form identity after a save/navigation.
+ */
+/**
+ * Every value registered for one parameter name. PHP parses a repeated name by
+ * keeping the last value, so a classifier that reads only the first value can
+ * be handed a benign duplicate followed by a foreign one; all values must be
+ * inspected instead.
+ */
+function parameterValues(parameters, name) {
+  const values = [];
+  for (const [key, value] of parameters.entries()) {
+    if (key === name) values.push(value);
+  }
+  return values;
+}
+
+function everyParameterValue(parameters, name, accepted) {
+  const values = parameterValues(parameters, name);
+  return values.length > 0 && values.every(accepted);
+}
+
+function classifyNativeWordPressRead(identity, url, parameters, action, decoded = null) {
+  if (!url.pathname.endsWith('/wp-admin/admin-ajax.php')) return false;
+  // A body shape the decoder could not read, a multipart part carrying a file,
+  // or any field outside the allowlist for these reads is a write.
+  if (decoded && (decoded.unsupported || decoded.hasFilePart)) return false;
+  // Only the exact fields Core sends for each read are allowed, and only the
+  // two owners Core itself sends in a heartbeat payload. A duplicated or extra
+  // field changes what PHP would execute, so it is a write.
+  const shapes = {
+    'sample-permalink': {
+      fields: new Set(['action', 'post_id', 'samplepermalinknonce', 'new_title', 'new_slug']),
+      owners: new Set()
+    },
+    'wp-remove-post-lock': {
+      fields: new Set(['action', '_wpnonce', 'post_ID', 'active_post_lock']),
+      owners: new Set()
+    },
+    heartbeat: {
+      fields: new Set(['action', 'screen_id', '_nonce', 'interval', 'has_focus', 'data', 'wp_customize']),
+      owners: new Set(['wp-refresh-post-lock', 'wp-refresh-post-nonces'])
+    }
+  }[action];
+  if (!shapes) return false;
+  for (const key of parameters.keys()) {
+    // A repeated name keeps only its last value in PHP, so any duplicate is a
+    // payload Core never sends.
+    if (parameterValues(parameters, key).length > 1) return false;
+    const owner = /^data\[([^\]]+)\]/u.exec(key)?.[1];
+    if (owner) {
+      if (!shapes.owners.has(owner)) return false;
+      continue;
+    }
+    if (!shapes.fields.has(key)) return false;
+  }
+  const currentPost = (value) => value === identity.postId;
+  if (action === 'sample-permalink') {
+    return identity.postId !== '' && identity.permalinkNonce !== ''
+      && everyParameterValue(parameters, 'post_id', currentPost)
+      && everyParameterValue(parameters, 'samplepermalinknonce', (value) =>
+        value === identity.permalinkNonce)
+      && everyParameterValue(parameters, 'new_title', (value) => value === identity.title)
+      // Core omits `new_slug` when it asks for a slug from the title
+      // (wp-admin/js/post.js autosave path). Any slug it does send must still
+      // describe this form.
+      && parameterValues(parameters, 'new_slug')
+        .every((value) => value === identity.slug);
+  }
+  if (action === 'wp-remove-post-lock') {
+    return identity.postId !== '' && everyParameterValue(parameters, 'post_ID', currentPost)
+      && everyParameterValue(parameters, '_wpnonce', (value) => value.length > 0);
+  }
+  if (action !== 'heartbeat'
+    || !everyParameterValue(parameters, 'screen_id', (value) => 'post' === value)) {
+    return false;
+  }
+  // Every real Core heartbeat carries its own nonce; a payload without one
+  // is not a Core maintenance tick.
+  if (!everyParameterValue(parameters, '_nonce', (value) => value.length > 0)) return false;
+  // Core lock/nonce maintenance is not article persistence. These are the two
+  // owners Core itself sends on a post screen (wp-admin/js/post.js). Heartbeat
+  // autosave (`wp_autosave`) and extension payloads are writes, never exempt.
+  const allowed = new Set(['wp-refresh-post-lock', 'wp-refresh-post-nonces']);
+  const owners = new Map();
+  const register = (owner, payload) => {
+    if (!allowed.has(owner) || owners.has(owner)
+      || !payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const fields = Object.keys(payload);
+    if (!fields.includes('post_id') || !currentPost(String(payload.post_id))) return false;
+    if (fields.some((field) => field !== 'post_id'
+      && !(owner === 'wp-refresh-post-lock' && field === 'lock'))) return false;
+    if ('lock' in payload && (typeof payload.lock !== 'string' || !payload.lock)) return false;
+    owners.set(owner, payload);
+    return true;
+  };
+  const bracketOwners = new Map();
+  for (const [key, value] of parameters.entries()) {
+    if (!key.startsWith('data[')) continue;
+    const match = /^data\[([^\]]+)\]\[(post_id|lock)\]$/u.exec(key);
+    if (!match || !allowed.has(match[1])) return false;
+    const payload = bracketOwners.get(match[1]) ?? {};
+    payload[match[2]] = value;
+    bracketOwners.set(match[1], payload);
+  }
+  if (bracketOwners.size && parameters.has('data')) return false;
+  for (const [owner, payload] of bracketOwners) {
+    if (!register(owner, payload)) return false;
+  }
+  for (const value of parameterValues(parameters, 'data')) {
+    let data;
+    try { data = JSON.parse(value); } catch { return false; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+    for (const [owner, payload] of Object.entries(data)) {
+      if (!register(owner, payload)) return false;
+    }
+  }
+  return true;
+}
+
+async function nativeWordPressReadOwner(page) {
+  let identity = await readNativeWordPressIdentity(page);
+  // `decoded` carries the body shape the probes already parsed; dropping it
+  // here would bypass the unreadable/file-part guard for real requests.
+  const classify = (url, parameters, action, decoded = null) =>
+    classifyNativeWordPressRead(identity, url, parameters, action, decoded);
+  classify.refresh = async () => {
+    identity = await readNativeWordPressIdentity(page);
+    return identity;
+  };
+  classify.identity = () => identity;
+  return classify;
+}
+
+async function startGeneratedExportMutationProbe(page) {
+  const nativeRead = await nativeWordPressReadOwner(page);
   const writes = [];
+  // Every request the first pass rejected, with what the classifier needs to
+  // re-judge it against a freshly read identity at assertion time.
+  const rejected = [];
   const onRequest = (request) => {
     if ('POST' !== request.method()) return;
     const url = new URL(request.url());
-    const body = request.postData() ?? '';
-    const action = url.searchParams.get('action')
-      ?? new URLSearchParams(body).get('action');
+    const decoded = decodePostParameters(request);
+    const parameters = decoded.parameters;
+    const action = url.searchParams.get('action') ?? parameters.get('action');
     const isPreview = url.pathname.endsWith('/wp-json/easymde/v1/preview');
-    const isHeartbeat = url.pathname.endsWith('/wp-admin/admin-ajax.php')
-      && 'heartbeat' === action;
-    const isPostLockRelease = 'wp-remove-post-lock' === action;
-    if (!isPreview && !isHeartbeat && !isPostLockRelease) {
-      writes.push(
-        url.pathname.endsWith('/wp-admin/post.php')
-          ? 'post-form'
-          : url.pathname.endsWith('/wp-admin/admin-ajax.php')
-            ? `admin-ajax:${/^[a-z0-9_-]{1,40}$/iu.test(action ?? '') ? action : 'unknown'}`
-            : url.pathname.includes('/wp-json/')
-              ? 'rest'
-              : 'other'
-      );
+    if (!isPreview && !nativeRead(url, parameters, action, decoded)) {
+      const label = url.pathname.endsWith('/wp-admin/post.php')
+        ? 'post-form'
+        : url.pathname.endsWith('/wp-admin/admin-ajax.php')
+          ? `admin-ajax:${/^[a-z0-9_-]{1,40}$/iu.test(action ?? '') ? action : 'unknown'}`
+          : url.pathname.includes('/wp-json/')
+            ? 'rest'
+            : 'other';
+      writes.push(label);
+      rejected.push({ action, decoded, label, parameters, url });
     }
   };
   page.on('request', onRequest);
   return {
-    assertEmpty(phase) {
-      if (writes.length > 0) {
+    async assertEmpty(phase) {
+      if (0 === writes.length) return;
+      // A heartbeat is judged against `#post_ID`, so a capture taken before
+      // the form settled reports a Core maintenance tick as a state write.
+      // Re-read the identity now and re-judge every rejected request against
+      // it. The allowlist is unchanged, so a real autosave (`wp_autosave`),
+      // an unknown owner, an extra field, or a heartbeat naming another post
+      // still fails under any identity.
+      const freshRead = await nativeWordPressReadOwner(page);
+      const identity = freshRead.identity();
+      const real = rejected.filter(
+        (entry) => !freshRead(entry.url, entry.parameters, entry.action, entry.decoded)
+      );
+      if (real.length > 0) {
         throw new Error(
           `editor-context-menu-generated-export-state-write:${phase}:` +
-          `${[...new Set(writes)].join(',')}`
+          JSON.stringify(real.map((entry) => ({
+            action: entry.action ?? null,
+            dataOwners: [...new Set(
+              [...entry.parameters.keys()].filter((key) => key.startsWith('data['))
+            )],
+            identityPostId: identity.postId,
+            label: entry.label,
+            lockPostId:
+              entry.parameters.get('data[wp-refresh-post-lock][post_id]') ?? null,
+            screenId: entry.parameters.get('screen_id') ?? null
+          })))
         );
       }
+    },
+    writes() {
+      return [...writes];
     },
     stop() {
       page.off('request', onRequest);
@@ -488,25 +742,303 @@ function startGeneratedExportMutationProbe(page) {
   };
 }
 
+async function seedTextClipboard(page, text, phase) {
+  await page.evaluate(async (value) => {
+    if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
+      throw new Error('native-clipboard-write-unavailable');
+    }
+    await navigator.clipboard.writeText(value);
+  }, text);
+  const state = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    return {
+      hasText: items.some((item) => item.types.includes('text/plain')),
+      hasPng: items.some((item) => item.types.includes('image/png'))
+    };
+  });
+  if (state.hasPng || !state.hasText) {
+    throw new Error(`editor-context-menu-clipboard-seed-invalid:${phase}:${JSON.stringify(state)}`);
+  }
+}
+
+/**
+ * Denies native clipboard writes for the *actual* browser context this page
+ * runs in. Playwright's own permissions are not Chromium's protocol state, and
+ * the default browser context is not the one the test page uses, so the id is
+ * derived from this page's target and required to be unique before any
+ * permission is touched. Restoration is unconditional and verified.
+ */
+async function openClipboardWriteDenial(page, origin, phase) {
+  const context = page.context();
+  const browser = context.browser();
+  if (!browser) throw new Error(`clipboard-denial-browser-unavailable:${phase}`);
+  const pageSession = await context.newCDPSession(page);
+  const browserSession = await browser.newBrowserCDPSession();
+  let disposed = false;
+  let restored = false;
+  try {
+    const { targetInfos } = await browserSession.send('Target.getTargets');
+    let targetInfo = null;
+    try {
+      ({ targetInfo } = await pageSession.send('Target.getTargetInfo'));
+    } catch {
+      targetInfo = null;
+    }
+    // The page's identity comes from the protocol when the page session
+    // exposes it, and otherwise from a unique URL match. Either way the
+    // browserContextId is read off a real target, never assumed.
+    const currentUrl = page.url();
+    const candidates = targetInfos.filter((target) => (
+      'page' === target.type
+      && (targetInfo
+        ? target.targetId === targetInfo.targetId
+        : target.url === currentUrl)
+    ));
+    if (1 !== candidates.length) {
+      throw new Error(
+        `clipboard-denial-page-target-not-unique:${phase}:` +
+        `${JSON.stringify(candidates.map((target) => target.targetId))}`
+      );
+    }
+    const browserContextId = candidates[0].browserContextId;
+    if (!browserContextId) {
+      throw new Error(`clipboard-denial-context-unavailable:${phase}`);
+    }
+    const { browserContextIds } = await browserSession.send('Target.getBrowserContexts');
+    if (!browserContextIds.includes(browserContextId)) {
+      throw new Error(`clipboard-denial-context-unknown:${phase}`);
+    }
+    // The permission is context-scoped, so another page in the same context
+    // would also be denied. Playwright runs one page per test context; anything
+    // else is an explicit failure rather than a silent wider denial.
+    const siblingPages = targetInfos.filter((target) => (
+      'page' === target.type
+      && target.browserContextId === browserContextId
+      && target.targetId !== candidates[0].targetId
+    ));
+    if (siblingPages.length > 0) {
+      throw new Error(
+        `clipboard-denial-context-shared:${phase}:${JSON.stringify(
+          siblingPages.map((target) => target.targetId)
+        )}`
+      );
+    }
+    return {
+      browserContextId,
+      async deny() {
+        // Both sanitization variants: Chromium resolves the stricter one for
+        // an unsanitized write and the other for a sanitized write.
+        for (const allowWithoutSanitization of [false, true]) {
+          await browserSession.send('Browser.setPermission', {
+            browserContextId,
+            origin,
+            permission: { allowWithoutSanitization, name: 'clipboard-write' },
+            setting: 'denied'
+          });
+        }
+        const state = await page.evaluate(() => navigator.permissions
+          .query({ name: 'clipboard-write' })
+          .then((permission) => permission.state));
+        if ('denied' !== state) {
+          throw new Error(`clipboard-denial-not-applied:${phase}:${state}`);
+        }
+      },
+      async restore() {
+        // Idempotent: the success path restores before reading the seed and
+        // `finally` restores unconditionally, including after a failure.
+        if (restored) return;
+        await browserSession.send('Browser.resetPermissions', { browserContextId });
+        // Reproduce test.use's context-wide grant, not a narrower origin grant
+        // layered over the origin-scoped CDP denial.
+        await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+        const states = await page.evaluate(() => Promise.all(
+          ['clipboard-read', 'clipboard-write'].map((name) => navigator.permissions
+            .query({ name })
+            .then((permission) => permission.state))
+        ));
+        if ('granted' !== states[0] || 'granted' !== states[1]) {
+          throw new Error(`clipboard-denial-restore-failed:${phase}:${JSON.stringify(states)}`);
+        }
+        restored = true;
+        // Restoration is non-mutating on purpose: the clipboard still holds
+        // the text sentinel the denial must have preserved, and a write here
+        // would destroy that evidence before it is asserted. The recovery
+        // export afterwards proves write permission really works again.
+      },
+      async dispose() {
+        if (disposed) return;
+        disposed = true;
+        await pageSession.detach().catch(() => {});
+        await browserSession.detach().catch(() => {});
+      }
+    };
+  } catch (error) {
+    if (!disposed) {
+      disposed = true;
+      await pageSession.detach().catch(() => {});
+      await browserSession.detach().catch(() => {});
+    }
+    throw error;
+  }
+}
+
+/**
+ * Reads the box the export actually rasterizes. The selected source is a
+ * display `$$` block, so the inline `.easymde-math` fixture (E = mc²) is never
+ * a valid target; the display block is the only admissible math root.
+ */
+async function readGeneratedExportTargetRect(page, kind, phase, expectedSource) {
+  return page.evaluate(({ expectedKind, source }) => {
+    const preview = document.querySelector('[data-easymde-preview-html-sink="1"]');
+    if (!preview) throw new Error('generated-export-target-preview-missing');
+    const selector = 'math' === expectedKind ? '.easymde-math' : '.easymde-mermaid';
+    const roots = [...preview.querySelectorAll(selector)].filter(
+      (root) => !root.parentElement?.closest(selector)
+    );
+    // Bind to the root the action will lease: a display formula is the only
+    // admissible math root, and its TeX `annotation` is the rendered identity
+    // of the selected source. A different formula, an inline formula, or an
+    // unrelated block can therefore never supply the expected box.
+    const normalized = source.trim();
+    const candidates = 'math' === expectedKind
+      ? roots.filter((root) => {
+        if (!root.classList.contains('easymde-math-block')) return false;
+        const annotation = root.querySelector(
+          'annotation[encoding="application/x-tex"]'
+        );
+        return annotation?.textContent?.trim() === normalized;
+      })
+      // A Mermaid container keeps no selectable source text, so this fixed
+      // case binds the explicit ordinal it selects: the first diagram. The
+      // ordinal is stated here rather than inferred from "any root".
+      : [roots[0]].filter(Boolean);
+    const root = candidates[0];
+    if (!root) throw new Error('generated-export-target-root-missing');
+    if ('math' === expectedKind && candidates.length > 1) {
+      throw new Error('generated-export-target-root-ambiguous');
+    }
+    const rect = root.getBoundingClientRect();
+    return {
+      displayKind: 'math' === expectedKind
+        ? root.classList.contains('easymde-math-block')
+        : root.classList.contains('easymde-mermaid'),
+      height: rect.height,
+      width: rect.width
+    };
+  }, { expectedKind: kind, source: expectedSource }).then((rect) => {
+    if (!(rect.width > 0) || !(rect.height > 0)) {
+      throw new Error(`generated-export-target-rect-invalid:${phase}`);
+    }
+    if (!rect.displayKind) {
+      throw new Error(`generated-export-target-kind-mismatch:${phase}`);
+    }
+    return rect;
+  });
+}
+
+async function readContextMenuLayerItemIds(page) {
+  return page.evaluate(() => {
+    const layers = [...document.querySelectorAll(
+      '[data-easymde-context-menu-viewport="true"] [data-easymde-context-menu-layer]'
+    )];
+    const deepest = layers[layers.length - 1];
+    return deepest
+      ? [...deepest.querySelectorAll('[data-easymde-context-menu-item]')]
+        .map((item) => item.getAttribute('data-easymde-context-menu-item'))
+      : [];
+  });
+}
+
+function expectedGeneratedRootIds(kind) {
+  const copy = 'math' === kind
+    ? ['copy-generated-image', 'copy-generated-source', 'copy-generated-mathml']
+    : ['copy-generated-image', 'copy-generated-source'];
+  return {
+    copy,
+    root: [
+      'copy-generated',
+      'insert-paragraph-above-generated',
+      'insert-paragraph-below-generated',
+      'delete-generated-content'
+    ]
+  };
+}
+
 async function runGeneratedExportAction(
   page,
-  { action, expectedSource, label, markdown, preview, source, sourceEditor, selectText, mutationProbe }
+  {
+    action,
+    expectedSource,
+    kind,
+    label,
+    markdown,
+    preview,
+    source,
+    sourceEditor,
+    selectText,
+    mutationProbe,
+    previousPngHash
+  }
 ) {
   await assertSourceExactValue(source, markdown, `${label}-before`);
   await selectSourceText(page, sourceEditor, markdown, selectText);
   await openSourceMenu(page, sourceEditor);
   await openRootSubmenu(page, 'generated-content');
-  if ('copy-code-block' !== action) {
-    await openVisibleSubmenu(page, 'copy-generated');
-  } else {
-    await openVisibleSubmenu(page, 'code-block');
+  const ownership = expectedGeneratedRootIds(kind);
+  const rootIds = await readContextMenuLayerItemIds(page);
+  if (rootIds.includes('code-block')) {
+    throw new Error(`generated-export-code-block-submenu-exposed:${label}`);
+  }
+  if (JSON.stringify(rootIds) !== JSON.stringify(ownership.root)) {
+    throw new Error(
+      `generated-export-root-actions-mismatch:${label}:` +
+      `${JSON.stringify({ actual: rootIds, expected: ownership.root })}`
+    );
+  }
+  await openVisibleSubmenu(page, 'copy-generated');
+  const copyIds = await readContextMenuLayerItemIds(page);
+  if (JSON.stringify(copyIds) !== JSON.stringify(ownership.copy)) {
+    throw new Error(
+      `generated-export-copy-actions-mismatch:${label}:` +
+      `${JSON.stringify({ actual: copyIds, expected: ownership.copy })}`
+    );
   }
   const before = await readGeneratedExportSnapshot(page);
   const actionItem = anyMenuItem(page, action);
+  const targetRect = 'copy-generated-image' === action
+    ? await readGeneratedExportTargetRect(page, kind, label, expectedSource.trim())
+    : null;
   if ('copy-generated-image' === action) {
+    // Fresh text seed: a PNG left from an earlier owner must never satisfy
+    // the clipboard read below.
+    await seedTextClipboard(page, `${label} clipboard seed`, label);
     await actionItem.click();
-    await readClipboardPng(page, `${label}-clipboard`);
-  } else if ('copy-generated-mathml' === action) {
+    const evidence = await readClipboardPng(page, `${label}-clipboard`);
+    if (previousPngHash && evidence.hash === previousPngHash) {
+      throw new Error(`generated-export-png-stale:${label}:${evidence.hash}`);
+    }
+    for (const [axis, dimension] of [['width', targetRect.width], ['height', targetRect.height]]) {
+      if (Math.abs(evidence[axis] - Math.ceil(dimension)) > 1) {
+        throw new Error(
+          `generated-export-png-dimension-mismatch:${label}:` +
+          `${JSON.stringify({ actual: evidence[axis], axis, css: dimension, hash: evidence.hash })}`
+        );
+      }
+    }
+    await expect(page.locator(menuSelector)).toHaveCount(0);
+    await assertSourceExactValue(source, markdown, `${label}-after`);
+    const after = await readGeneratedExportSnapshot(page);
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      throw new Error(
+        `generated-export-dom-drift:${label}:` +
+        `${JSON.stringify({ after, before })}`
+      );
+    }
+    await mutationProbe.assertEmpty(label);
+    await expect(preview).toHaveAttribute('data-easymde-preview-accepted', '1');
+    return evidence;
+  }
+  if ('copy-generated-mathml' === action) {
     await actionItem.click();
     const mathMl = await page.evaluate(async () => {
       if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.readText) {
@@ -545,23 +1077,6 @@ async function runGeneratedExportAction(
         })}`
       );
     }
-  } else if ('copy-code-block' === action) {
-    await actionItem.click();
-    const copiedCodeBlock = await page.evaluate(async () => {
-      if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.readText) {
-        throw new Error('native-clipboard-read-unavailable');
-      }
-      return navigator.clipboard.readText();
-    });
-    if (copiedCodeBlock !== expectedSource) {
-      throw new Error(
-        `generated-code-block-clipboard-drift:${label}:` +
-        `${JSON.stringify({
-          actual: privacySafeTextEvidence(copiedCodeBlock),
-          expected: privacySafeTextEvidence(expectedSource)
-        })}`
-      );
-    }
   } else {
     throw new Error(`generated-export-action-unsupported:${label}`);
   }
@@ -574,8 +1089,9 @@ async function runGeneratedExportAction(
       `${JSON.stringify({ after, before })}`
     );
   }
-  mutationProbe.assertEmpty(label);
+  await mutationProbe.assertEmpty(label);
   await expect(preview).toHaveAttribute('data-easymde-preview-accepted', '1');
+  return null;
 }
 
 async function waitForSourceExactValue(source, expected, phase) {
@@ -606,23 +1122,29 @@ async function readNativeClipboardMarkup(page, phase) {
 }
 
 function startSourceMediaConsoleProbe(page) {
-  const codes = new Set();
+  // One entry per console event, in arrival order: a stable code that fires
+  // twice is two failures, so a Set would erase a repeated rejection. The
+  // helper only observes; the independent browser monitor keeps every level
+  // and popup transition of the same page.
+  const codes = [];
   const onConsole = (message) => {
     if ('error' !== message.type()) return;
     const match = message.text().match(/^\[EasyMDE\]\s+([a-z0-9-]+)$/u);
-    if (match) codes.add(match[1]);
+    if (match) codes.push(match[1]);
   };
   page.on('console', onConsole);
   return {
-    codes: () => [...codes].sort(),
+    codes: () => [...codes],
     stop() {
       page.off('console', onConsole);
     }
   };
 }
 
-function startSourceMediaMutationProbe(page) {
+async function startSourceMediaMutationProbe(page) {
+  const nativeRead = await nativeWordPressReadOwner(page);
   const articleWrites = new Set();
+  const mediaActionCounts = new Map();
   const mediaActions = new Set([
     'query-attachments',
     'save-attachment',
@@ -632,14 +1154,11 @@ function startSourceMediaMutationProbe(page) {
   const onRequest = (request) => {
     if ('POST' !== request.method()) return;
     const url = new URL(request.url());
-    const body = request.postData() ?? '';
-    const action = url.searchParams.get('action')
-      ?? new URLSearchParams(body).get('action');
+    const decoded = decodePostParameters(request);
+    const parameters = decoded.parameters;
+    const action = url.searchParams.get('action') ?? parameters.get('action');
     const path = url.pathname;
     const isPreview = path.endsWith('/wp-json/easymde/v1/preview');
-    const isHeartbeat = path.endsWith('/wp-admin/admin-ajax.php')
-      && 'heartbeat' === action;
-    const isPostLockRelease = 'wp-remove-post-lock' === action;
     const isMediaUpload = path.endsWith('/wp-admin/async-upload.php');
     const isMediaAction = path.endsWith('/wp-admin/admin-ajax.php')
       && mediaActions.has(action);
@@ -647,7 +1166,11 @@ function startSourceMediaMutationProbe(page) {
       uploadCount += 1;
       return;
     }
-    if (isPreview || isHeartbeat || isPostLockRelease || isMediaAction) return;
+    if (isMediaAction) {
+      mediaActionCounts.set(action, (mediaActionCounts.get(action) ?? 0) + 1);
+      return;
+    }
+    if (isPreview || nativeRead(url, parameters, action, decoded)) return;
     articleWrites.add(
       path.endsWith('/wp-admin/post.php')
         ? 'post-form'
@@ -672,6 +1195,9 @@ function startSourceMediaMutationProbe(page) {
       if (uploadCount < 1) {
         throw new Error(`editor-context-menu-source-media-upload-missing:${phase}`);
       }
+    },
+    mediaActionCounts() {
+      return new Map(mediaActionCounts);
     },
     uploadCount() {
       return uploadCount;
@@ -717,7 +1243,13 @@ async function readSourceMediaBridgeState(sourceEditor) {
   });
 }
 
-async function uploadAndSelectSourceImage(page, mediaFrame, mediaModal) {
+/**
+ * Prepares a real own attachment while leaving the picker open: upload,
+ * Media Library selection, native Attachment Details read and native Alt save.
+ * The final native confirmation is the caller's step, so a test can change the
+ * authoritative Source field exactly at that boundary without a product hook.
+ */
+async function uploadAndPrepareSourceImage(page, mediaFrame, mediaModal) {
   await mediaModal.getByRole('tab', { name: /上传文件|Upload files/u }).click();
   const uploadResponse = page.waitForResponse((response) => (
     'POST' === response.request().method()
@@ -755,8 +1287,64 @@ async function uploadAndSelectSourceImage(page, mediaFrame, mediaModal) {
     className: element.className,
     connected: element.isConnected
   }));
-  await selectButton.click();
-  return { attachmentState };
+  // The native Attachment Details view is the picker's real ownership
+  // surface: the file name it displays is what the insert path derives Alt
+  // from, so the expected Markdown is grounded in the native owner, not in a
+  // hard-coded fixture string.
+  const details = mediaFrame.locator('.attachment-details:visible');
+  await expect(details).toHaveCount(1);
+  const attachmentUrl = payload?.data?.url ?? '';
+  if ('string' !== typeof attachmentUrl || '' === attachmentUrl) {
+    throw new Error('editor-context-menu-source-media-attachment-url-missing');
+  }
+  const nativeAttachment = {
+    alt: await details.locator('textarea[id$="-alt-text"]').inputValue(),
+    filename: (await details.locator('.filename').innerText())
+      .replace(/^[^:：]*[:：]\s*/u, '')
+      .trim(),
+    url: attachmentUrl
+  };
+  if (!nativeAttachment.filename) {
+    throw new Error('editor-context-menu-source-media-attachment-filename-missing');
+  }
+  // Exercise the real Core Attachment Details write path: change Alt, let the
+  // native view save it, and require the owner's own success response. The
+  // inserted Markdown Alt stays filename-derived (see media-picker-session):
+  // this proves the native owner round-trip without inventing a second rule.
+  const altField = details.locator('textarea[id$="-alt-text"]');
+  const savedAltResponse = page.waitForResponse((response) => (
+    'POST' === response.request().method()
+    && new URL(response.url()).pathname.endsWith('/wp-admin/admin-ajax.php')
+    && new URLSearchParams(response.request().postData() ?? '').get('action')
+      === 'save-attachment'
+  ), { timeout: 15_000 });
+  await altField.fill(syntheticMediaAlt);
+  // Core binds its save to the native `change` event, so blur the field the
+  // way a user does instead of synthesizing the event.
+  await altField.press('Tab');
+  const savedAlt = await savedAltResponse;
+  let savedAltPayload;
+  try {
+    savedAltPayload = await savedAlt.json();
+  } catch (error) {
+    throw new Error('editor-context-menu-source-media-alt-response-invalid', { cause: error });
+  }
+  if (!savedAlt.ok() || true !== savedAltPayload?.success) {
+    throw new Error('editor-context-menu-source-media-alt-save-failed');
+  }
+  await expect(details).toHaveClass(/save-(complete|ready|waiting)/u);
+  await expect(altField).toHaveValue(syntheticMediaAlt);
+  const savedAltValue = await altField.inputValue();
+  if (savedAltValue !== syntheticMediaAlt) {
+    throw new Error('editor-context-menu-source-media-alt-roundtrip-mismatch');
+  }
+  return {
+    attachmentId,
+    attachmentState,
+    nativeAttachment,
+    savedAlt: savedAltValue,
+    selectButton
+  };
 }
 
 async function waitForSourceMediaInsertion(
@@ -796,12 +1384,34 @@ async function waitForSourceMediaInsertion(
     throw new Error(`editor-context-menu-source-media-outside-bytes-drift:${phase}`);
   }
   const inserted = actual.slice(prefix.length, actual.length - suffix.length);
-  if (!/^!\[[^\]\r\n]+\]\(https?:\/\/[^\r\n]+(?: "[^"\r\n]+")?\)$/u.test(inserted)) {
-    throw new Error(`editor-context-menu-source-media-insertion-invalid:${phase}`);
+  // `insertMarkdownBlockRelative` owns the block-safe separators: an "above"
+  // insertion on this paragraph emits exactly two newlines after the image,
+  // with no leading separator, so the block stays a parser-owned image block.
+  const expectedFragment = `${imageFragmentFor(diagnosticContext.nativeAttachment)}\n\n`;
+  if (inserted !== expectedFragment) {
+    throw new Error(
+      `editor-context-menu-source-media-insertion-invalid:${phase}:` +
+      `${JSON.stringify({
+        actual: privacySafeTextEvidence(inserted),
+        expected: privacySafeTextEvidence(expectedFragment)
+      })}`
+    );
   }
-  if (!inserted.includes('easymde context menu logo')) {
-    throw new Error(`editor-context-menu-source-media-alt-invalid:${phase}`);
+}
+
+function imageFragmentFor(nativeAttachment) {
+  const { filename, url } = nativeAttachment;
+  if (!filename || !url) {
+    throw new Error('editor-context-menu-source-media-native-attachment-incomplete');
   }
+  const alt = defaultImageAltFor(filename);
+  return `![${alt}](${url})`;
+}
+
+// Mirrors the shipped insertion contract (image-insertion.ts): the attachment
+// filename minus its suffix, with `-`/`_` collapsed to single spaces.
+function defaultImageAltFor(fileName) {
+  return fileName.replace(/\.[^.]+$/u, '').replace(/[-_]+/gu, ' ');
 }
 
 function assertClipboardTextExact(actual, expected, label) {
@@ -820,7 +1430,7 @@ async function prepareSourceContextAction(page, sourceEditor, markdown, selectio
 }
 
 async function exerciseMissingSourceActions(page, { markdown, source, sourceEditor, mode }) {
-  const mutationProbe = startGeneratedExportMutationProbe(page);
+  const mutationProbe = await startGeneratedExportMutationProbe(page);
   const selectedText = '普通文本';
   const replacementText = 'E2E paste replacement';
   const linkMarkdown = '[OpenAI 官网](https://openai.com)';
@@ -853,7 +1463,7 @@ async function exerciseMissingSourceActions(page, { markdown, source, sourceEdit
       if (JSON.stringify(before) !== JSON.stringify(after)) {
         throw new Error(`editor-context-menu-source-copy-dom-drift:${mode}-${action}`);
       }
-      mutationProbe.assertEmpty(`${mode}-${action}`);
+      await mutationProbe.assertEmpty(`${mode}-${action}`);
     }
 
     await assertSourceExactValue(source, markdown, `${mode}-cut-before`);
@@ -868,7 +1478,7 @@ async function exerciseMissingSourceActions(page, { markdown, source, sourceEdit
     assertClipboardTextExact(await readNativeClipboardText(page), selectedText, `${mode}-cut`);
     await sourceEditor.press('ControlOrMeta+z');
     await waitForSourceExactValue(source, markdown, `${mode}-cut-undo`);
-    mutationProbe.assertEmpty(`${mode}-cut`);
+    await mutationProbe.assertEmpty(`${mode}-cut`);
 
     await page.evaluate(async (value) => {
       if (!navigator.clipboard || 'function' !== typeof navigator.clipboard.writeText) {
@@ -884,7 +1494,7 @@ async function exerciseMissingSourceActions(page, { markdown, source, sourceEdit
     await waitForSourceExactValue(source, pastedMarkdown, `${mode}-paste-applied`);
     await sourceEditor.press('ControlOrMeta+z');
     await waitForSourceExactValue(source, markdown, `${mode}-paste-undo`);
-    mutationProbe.assertEmpty(`${mode}-paste`);
+    await mutationProbe.assertEmpty(`${mode}-paste`);
 
     await assertSourceExactValue(source, markdown, `${mode}-link-before`);
     await prepareSourceContextAction(page, sourceEditor, markdown, linkMarkdown);
@@ -896,7 +1506,7 @@ async function exerciseMissingSourceActions(page, { markdown, source, sourceEdit
       `${mode}-copy-link-address`
     );
     await assertSourceExactValue(source, markdown, `${mode}-link-after`);
-    mutationProbe.assertEmpty(`${mode}-copy-link-address`);
+    await mutationProbe.assertEmpty(`${mode}-copy-link-address`);
 
     await assertSourceExactValue(source, markdown, `${mode}-code-before`);
     await prepareSourceContextAction(page, sourceEditor, markdown, 'echo "Hello, Markdown!"', 'code-block');
@@ -908,7 +1518,7 @@ async function exerciseMissingSourceActions(page, { markdown, source, sourceEdit
       `${mode}-copy-code-block`
     );
     await assertSourceExactValue(source, markdown, `${mode}-code-after`);
-    mutationProbe.assertEmpty(`${mode}-copy-code-block`);
+    await mutationProbe.assertEmpty(`${mode}-copy-code-block`);
   } finally {
     mutationProbe.stop();
   }
@@ -971,52 +1581,31 @@ async function saveAndReloadImageScale(page, source, expected) {
   await savedNavigation;
   await expect(page.locator('#easymde-editor')).toBeVisible();
 
+  const nativeRead = await nativeWordPressReadOwner(page);
   const openingWrites = [];
   const onRequest = (request) => {
     if ('POST' !== request.method()) return;
     const url = new URL(request.url());
-    const body = request.postData() ?? '';
-    const parameters = new URLSearchParams(body);
-    let action = parameters.get('action');
-    const multipartValue = (name) => {
-      const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-      const match = body.match(
-        new RegExp(`name="${escapedName}"[^\\r\\n]*\\r?\\n\\r?\\n([^\\r\\n]*)`, 'u')
-      );
-      return match?.[1]?.trim() ?? null;
-    };
-    action ??= multipartValue('action');
-    if (!action && body.trim().startsWith('{')) {
-      try {
-        const payload = JSON.parse(body);
-        action = 'object' === typeof payload && payload && 'string' === typeof payload.action
-          ? payload.action
-          : null;
-      } catch {
-        action = null;
-      }
-    }
-    const isPreview = url.pathname.endsWith('/wp-json/easymde/v1/preview');
-    const isHeartbeat = url.pathname.endsWith('/wp-admin/admin-ajax.php')
-      && ('heartbeat' === url.searchParams.get('action')
-        || /(?:^|&)action=heartbeat(?:&|$)/u.test(body)
-        || 'heartbeat' === action);
-    const isPostLockRelease = 'wp-remove-post-lock' === action;
-    if (!isPreview && !isHeartbeat && !isPostLockRelease) {
-      openingWrites.push(
-        url.pathname.endsWith('/wp-admin/post.php')
-          ? 'post-form'
-          : url.pathname.endsWith('/wp-admin/admin-ajax.php')
-            ? `admin-ajax:${/^[a-z0-9_-]{1,40}$/iu.test(action ?? '') ? action : 'unknown'}`
-            : url.pathname.includes('/wp-json/')
-              ? 'rest'
-              : 'other'
-      );
-    }
+    const decoded = decodePostParameters(request);
+    const parameters = decoded.parameters;
+    const action = url.searchParams.get('action') ?? parameters.get('action');
+    if (url.pathname.endsWith('/wp-json/easymde/v1/preview')) return;
+    if (nativeRead(url, parameters, action, decoded)) return;
+    openingWrites.push(
+      url.pathname.endsWith('/wp-admin/post.php')
+        ? 'post-form'
+        : url.pathname.endsWith('/wp-admin/admin-ajax.php')
+          ? `admin-ajax:${/^[a-z0-9_-]{1,40}$/iu.test(action ?? '') ? action : 'unknown'}`
+          : url.pathname.includes('/wp-json/')
+            ? 'rest'
+            : 'other'
+    );
   };
   page.on('request', onRequest);
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
+    // The reloaded document republishes its own nonce/post identity.
+    await nativeRead.refresh();
     await expect(page.locator('#easymde-editor')).toBeVisible();
     await assertSourceExactValue(source, expected, 'after-reload');
     const reloadedPreview = page.locator('[data-easymde-preview-html-sink="1"]').last();
@@ -1091,8 +1680,73 @@ async function moveToSourceLineEnd(page, source, expectedEnd) {
   }
 }
 
+async function readSourceSelection(page) {
+  return page.locator('#easymde-source').evaluate((field) => ({
+    end: field.selectionEnd,
+    start: field.selectionStart,
+    value: field.value
+  }));
+}
+
+/**
+ * A state-preserving fast path: when the native source field already owns the
+ * exact selection this step wants for the same document, re-navigating the
+ * whole document with the keyboard would only re-derive known state. The
+ * exact-equality assertion still runs, and any mismatch keeps the existing
+ * native navigation intact.
+ */
+async function nativeSourceSelectionAlreadyExact(page, markdown, start, end) {
+  const state = await readSourceSelection(page);
+  return state.value === markdown
+    && state.start === start
+    && state.end === end;
+}
+
+/**
+ * The number of native caret steps in a string: arrow keys move one grapheme
+ * cluster at a time, so a surrogate pair or a combining sequence must not be
+ * counted as multiple presses.
+ */
+function graphemeCount(text) {
+  if ('' === text) return 0;
+  if ('function' === typeof Intl?.Segmenter) {
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+      .length;
+  }
+  return [...text].length;
+}
+
 async function moveSourceCaret(page, source, markdown, offset) {
+  const state = await readSourceSelection(page);
+  // Identity, not just length: a same-length replacement document must still
+  // take the full native navigation.
+  const sameDocument = state.value === markdown;
+  if (sameDocument && state.start === offset && state.end === offset) {
+    await expectSourceSelection(page, offset, offset);
+    await source.focus();
+    return;
+  }
   const { column, line } = sourceLineMetrics(markdown, offset);
+  const current = sameDocument && state.start === state.end
+    ? sourceLineMetrics(markdown, state.start)
+    : null;
+  if (current && current.line === line && current.column !== column) {
+    // The native caret already sits on the target line in the same document.
+    // Walking the whole document again would only re-derive a known position,
+    // so move along that line in the direction the sign of the delta gives,
+    // pressing one key per real grapheme cluster (what an arrow key moves).
+    // The exact UTF-16 equality assertion still runs afterwards.
+    const forward = offset > state.start;
+    const steps = graphemeCount(
+      forward ? markdown.slice(state.start, offset) : markdown.slice(offset, state.start)
+    );
+    await source.focus();
+    for (let index = 0; index < steps; index += 1) {
+      await page.keyboard.press(forward ? 'ArrowRight' : 'ArrowLeft');
+    }
+    await expectSourceSelection(page, offset, offset);
+    return;
+  }
   await source.focus();
   await source.press(sourceDocumentStartKey);
   await expectSourceSelection(page, 0, 0);
@@ -1104,7 +1758,11 @@ async function moveSourceCaret(page, source, markdown, offset) {
     lineStart = boundary.nextStart;
     await expectSourceSelection(page, lineStart, lineStart);
   }
-  for (let index = 0; index < column; index += 1) {
+  // Column steps are grapheme clusters, not UTF-16 units: an arrow key moves
+  // one cluster, so a surrogate pair inside the target line prefix must not
+  // cost two presses.
+  const columnSteps = graphemeCount(markdown.slice(lineStart, offset));
+  for (let index = 0; index < columnSteps; index += 1) {
     await page.keyboard.press('ArrowRight');
   }
   await expectSourceSelection(page, offset, offset);
@@ -1112,13 +1770,20 @@ async function moveSourceCaret(page, source, markdown, offset) {
 
 async function selectSourceText(page, source, markdown, value, occurrence = 0) {
   const start = occurrenceOffset(markdown, value, occurrence);
+  const end = start + value.length;
+  if (await nativeSourceSelectionAlreadyExact(page, markdown, start, end)) {
+    await expectSourceSelection(page, start, end);
+    await source.focus();
+    return;
+  }
   await moveSourceCaret(page, source, markdown, start);
   await page.keyboard.down('Shift');
-  for (let index = 0; index < value.length; index += 1) {
+  const steps = graphemeCount(markdown.slice(start, end));
+  for (let index = 0; index < steps; index += 1) {
     await page.keyboard.press('ArrowRight');
   }
   await page.keyboard.up('Shift');
-  await expectSourceSelection(page, start, start + value.length);
+  await expectSourceSelection(page, start, end);
 }
 
 async function selectSourceRange(page, source, markdown, start, end) {
@@ -1129,9 +1794,15 @@ async function selectSourceRange(page, source, markdown, start, end) {
     || end > markdown.length) {
     throw new Error('source-selection-range-invalid');
   }
+  if (await nativeSourceSelectionAlreadyExact(page, markdown, start, end)) {
+    await expectSourceSelection(page, start, end);
+    await source.focus();
+    return;
+  }
   await moveSourceCaret(page, source, markdown, start);
   await page.keyboard.down('Shift');
-  for (let index = 0; index < end - start; index += 1) {
+  const steps = graphemeCount(markdown.slice(start, end));
+  for (let index = 0; index < steps; index += 1) {
     await page.keyboard.press('ArrowRight');
   }
   await page.keyboard.up('Shift');
@@ -1141,7 +1812,8 @@ async function selectSourceRange(page, source, markdown, start, end) {
 async function replaceSourceWithNativeInput(page, sourceEditor, source, value, phase) {
   await sourceEditor.focus();
   await sourceEditor.press('ControlOrMeta+a');
-  await sourceEditor.press('Backspace');
+  // Let CodeMirror replace its complete selection in one native transaction.
+  // Mutating the virtualized contenteditable DOM only replaces mounted text.
   await page.keyboard.insertText(value);
   await waitForSourceExactValue(source, value, phase);
 }
@@ -3405,7 +4077,7 @@ async function repeatAfterFormalPreview(page, strings, source, markdown, occurre
   return reentered;
 }
 
-async function runVisualActionMatrix(page, visualEditor, source, markdown, occurrence = 0, suffix = 'full') {
+async function runVisualActionMatrix(page, visualEditor, source, markdown, occurrence, suffix, group) {
   const targetFor = (selector, text) => {
     const matches = visualEditor.locator(selector).filter({ hasText: text });
     return occurrence > 0 ? matches : matches.first();
@@ -3431,6 +4103,7 @@ async function runVisualActionMatrix(page, visualEditor, source, markdown, occur
     await ensureWindowedVisualTargetMounted(page, visualEditor.locator('h1').first(), 0);
   }
   for (const category of categories) {
+    if (category.id !== group) continue;
     const actions = 'windowed' === suffix
       ? ['bold']
       : ['bold', 'cut', 'paste-plain-text'];
@@ -3459,9 +4132,15 @@ async function runVisualActionMatrix(page, visualEditor, source, markdown, occur
   if ('windowed' === suffix) {
     await ensureWindowedVisualTargetMounted(page, visualEditor.locator('h1').first(), 0);
   }
-  await runVisualCrossHeadingBold(page, visualEditor, source, markdown, suffix, true);
-  await runVisualImageScaleAction(page, visualEditor, source, markdown, occurrence, suffix, true);
-  await runVisualTableAlignmentAction(page, visualEditor, source, markdown, occurrence, suffix, true);
+  if ('cross-heading' === group) {
+    await runVisualCrossHeadingBold(page, visualEditor, source, markdown, suffix, true);
+  }
+  if ('image' === group) {
+    await runVisualImageScaleAction(page, visualEditor, source, markdown, occurrence, suffix, true);
+  }
+  if ('table' === group) {
+    await runVisualTableAlignmentAction(page, visualEditor, source, markdown, occurrence, suffix, true);
+  }
 }
 
 async function visualElementCenterPoint(element) {
@@ -4119,7 +4798,6 @@ async function assertSourceCategoryMatrix(
       children: {
         'copy-generated': 'enabled',
         'delete-generated-content': 'enabled',
-        'edit-generated-content': 'enabled',
         'insert-paragraph-above-generated': 'enabled',
         'insert-paragraph-below-generated': 'enabled'
       },
@@ -4138,7 +4816,6 @@ async function assertSourceCategoryMatrix(
       children: {
         'copy-generated': 'enabled',
         'delete-generated-content': 'enabled',
-        'edit-generated-content': 'enabled',
         'insert-paragraph-above-generated': 'enabled',
         'insert-paragraph-below-generated': 'enabled'
       },
@@ -4225,7 +4902,344 @@ async function applySourceTableAlignment(
   }
 }
 
+const sourceMediaReadOnlyCode = 'media-picker-document-read-only';
+
+/**
+ * Opens the real formatted Source context-media insertion - context menu ->
+ * Insert -> `insert-image-above` -> real WordPress picker - and completes the
+ * real own upload, Media Library selection and native Alt save while the field
+ * is still editable. The caller flips exactly one authoritative native flag and
+ * clicks the real native confirmation itself, so the mutation-time race stays
+ * inside the test body where the independent monitor annotates its phase.
+ *
+ * Returns the picker/preparation evidence plus the exact pre-flag source,
+ * selection and the `finally`-safe permission restore closure.
+ */
+async function beginSourceMediaPermissionLoss(
+  page,
+  { flag, markdown, source, sourceEditor }
+) {
+  if ('readOnly' !== flag && 'disabled' !== flag) {
+    throw new Error(`editor-context-menu-source-media-permission-flag-unsupported:${flag}`);
+  }
+  const otherFlag = 'readOnly' === flag ? 'disabled' : 'readOnly';
+  const selectedText = '普通文本';
+  const canaryMarkdown = replaceVisualSourceOccurrence(
+    markdown,
+    selectedText,
+    `**${selectedText}**`
+  );
+
+  // 1. Independently reversible history canary through the real native Source
+  // context Bold action: Bold, native Undo, native Redo, each exact.
+  await selectSourceText(page, sourceEditor, markdown, selectedText);
+  await openSourceMenu(page, sourceEditor);
+  await expectMenuItemState(page, 'bold', 'enabled');
+  await rootItem(page, 'bold').click();
+  await waitForSourceExactValue(source, canaryMarkdown, `${flag}-canary-bold`);
+  await sourceEditor.press('ControlOrMeta+z');
+  await waitForSourceExactValue(source, markdown, `${flag}-canary-undo`);
+  await sourceEditor.press('ControlOrMeta+Shift+z');
+  await waitForSourceExactValue(source, canaryMarkdown, `${flag}-canary-redo`);
+  const canarySelection = await readSourceSelection(page);
+  if (canarySelection.value !== canaryMarkdown
+    || !Number.isInteger(canarySelection.start)
+    || !Number.isInteger(canarySelection.end)
+    || canarySelection.start < 0
+    || canarySelection.end < canarySelection.start
+    || canarySelection.end > canaryMarkdown.length) {
+    throw new Error(
+      `editor-context-menu-source-media-canary-invalid:${flag}:` +
+      `${JSON.stringify({
+        end: canarySelection.end,
+        start: canarySelection.start,
+        valueLength: canarySelection.value.length
+      })}`
+    );
+  }
+
+  // Expected-negative contract for the independent strict phase gate: exactly
+  // one stable `media-picker-document-read-only` error event, emitted between
+  // the real native confirmation (step 5) and its asserted terminal rejection,
+  // with no other code and no new failure popup during success/recovery. The
+  // caller (inside the test body, where the monitor injects its phase) owns the
+  // flag flip and the terminal assertion; this helper only drives the real
+  // native flow and never suppresses evidence.
+  let originalFlags = null;
+  let restored = false;
+  const restorePermission = async () => {
+    if (restored || !originalFlags) return;
+    await source.evaluate((field, flags) => {
+      field.readOnly = flags.readOnly;
+      field.disabled = flags.disabled;
+    }, originalFlags);
+    const current = await source.evaluate((field) => ({
+      disabled: field.disabled,
+      readOnly: field.readOnly
+    }));
+    if (current.readOnly !== originalFlags.readOnly
+      || current.disabled !== originalFlags.disabled) {
+      throw new Error(
+        `editor-context-menu-source-media-permission-restore-failed:${flag}:` +
+        `${JSON.stringify({ actual: current, expected: originalFlags })}`
+      );
+    }
+    // Only a verified restoration retires the obligation, so a failed attempt
+    // remains retryable by the caller's own `finally`.
+    restored = true;
+  };
+
+  // 2. Real Source context menu -> Insert -> insert-image-above, i.e. Root's
+  // insertionSelection + formatInsertion branch, not the toolbar Media path.
+  const picker = await openSourceInsertImagePicker(page, sourceEditor, canaryMarkdown);
+  await expect(picker.mediaModal).toBeVisible();
+  originalFlags = await source.evaluate((field) => ({
+    disabled: field.disabled,
+    readOnly: field.readOnly
+  }));
+  if (originalFlags.readOnly || originalFlags.disabled) {
+    throw new Error(
+      `editor-context-menu-source-media-permission-initially-closed:${flag}`
+    );
+  }
+
+  // 3. Real own upload, Media Library selection, native Attachment Details
+  // read and native Alt save, all while the field is still editable.
+  const prepared = await uploadAndPrepareSourceImage(
+    page,
+    picker.mediaFrame,
+    picker.mediaModal
+  );
+  if (!Number.isSafeInteger(prepared.attachmentId) || prepared.attachmentId <= 0) {
+    throw new Error(`editor-context-menu-source-media-own-attachment-missing:${flag}`);
+  }
+  await expect(picker.dialog).toBeVisible();
+  await expect(prepared.selectButton).toBeEnabled();
+  await assertSourceExactValue(source, canaryMarkdown, `${flag}-before-confirmation`);
+  const beforeFlag = await readSourceSelection(page);
+  if (beforeFlag.value !== canaryMarkdown) {
+    throw new Error(`editor-context-menu-source-media-source-changed:${flag}-before-flag`);
+  }
+
+  // 4. Hand the mutation-time race to the caller: it flips exactly one
+  // authoritative native flag, clicks the real native confirmation and
+  // asserts the single expected rejection inside the monitored phase.
+  const verifyPermission = async () => {
+    const permission = await source.evaluate((field) => ({
+      disabled: field.disabled,
+      readOnly: field.readOnly,
+      selectionEnd: field.selectionEnd,
+      selectionStart: field.selectionStart,
+      value: field.value
+    }));
+    if (true !== permission[flag] || false !== permission[otherFlag]) {
+      throw new Error(
+        `editor-context-menu-source-media-permission-flags-invalid:${flag}:` +
+        `${JSON.stringify({ disabled: permission.disabled, readOnly: permission.readOnly })}`
+      );
+    }
+    if (permission.value !== canaryMarkdown) {
+      throw new Error(`editor-context-menu-source-media-source-changed:${flag}-at-flag`);
+    }
+    if (permission.selectionStart !== beforeFlag.start
+      || permission.selectionEnd !== beforeFlag.end) {
+      throw new Error(
+        `editor-context-menu-source-media-selection-moved:${flag}-at-flag:` +
+        `${JSON.stringify({
+          actual: { end: permission.selectionEnd, start: permission.selectionStart },
+          expected: { end: beforeFlag.end, start: beforeFlag.start }
+        })}`
+      );
+    }
+  };
+  return {
+    beforeFlag,
+    canaryMarkdown,
+    otherFlag,
+    picker,
+    prepared,
+    restorePermission,
+    verifyPermission
+  };
+}
+
+/**
+ * The post-rejection half of a formatted Source context-media permission-loss
+ * case: unchanged canonical source and native selection, no article write, no
+ * insertion before or after restoration, a genuine subsequent native character
+ * with its accepted Preview, and untouched native history.
+ */
+async function completeSourceMediaPermissionLoss(
+  page,
+  {
+    beforeFlag,
+    canaryMarkdown,
+    consoleProbe,
+    flag,
+    markdown,
+    mutationProbe,
+    preview,
+    prepared,
+    source,
+    sourceEditor,
+    restorePermission
+  }
+) {
+  const insertedFragment = imageFragmentFor(prepared.nativeAttachment);
+
+  // 5. Before permission returns: byte-identical canonical source and exactly
+  // the same native selection as before confirmation, no article write and no
+  // insertion of any kind. Checking the image DOM alone is insufficient.
+  await assertSourceExactValue(source, canaryMarkdown, `${flag}-rejected-source`);
+  const afterRejection = await readSourceSelection(page);
+  if (afterRejection.value !== canaryMarkdown
+    || afterRejection.start !== beforeFlag.start
+    || afterRejection.end !== beforeFlag.end) {
+    throw new Error(
+      `editor-context-menu-source-media-rejected-state-drift:${flag}:` +
+      `${JSON.stringify({
+        actual: { end: afterRejection.end, start: afterRejection.start },
+        expected: { end: beforeFlag.end, start: beforeFlag.start }
+      })}`
+    );
+  }
+  mutationProbe.assertNoArticleWrites(`${flag}-rejected`);
+  if ((await source.inputValue()).includes(insertedFragment)) {
+    throw new Error(
+      `editor-context-menu-source-media-unexpected-insertion:${flag}-before-restore`
+    );
+  }
+
+  // 6. Restore the exact original flags, settle, and re-prove the state: the
+  // rejected media return must not defer an insertion past restoration.
+  await restorePermission();
+  await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+  await assertSourceExactValue(source, canaryMarkdown, `${flag}-after-restore`);
+  const afterRestore = await readSourceSelection(page);
+  if (afterRestore.value !== canaryMarkdown
+    || afterRestore.start !== beforeFlag.start
+    || afterRestore.end !== beforeFlag.end) {
+    throw new Error(
+      `editor-context-menu-source-media-no-restored-state:${flag}`
+    );
+  }
+  await waitForSourcePreviewAccepted(preview, `${flag}-after-restore`);
+  if ((await source.inputValue()).includes(insertedFragment)) {
+    throw new Error(
+      `editor-context-menu-source-media-unexpected-insertion:${flag}-after-restore`
+    );
+  }
+  mutationProbe.assertNoArticleWrites(`${flag}-after-restore`);
+
+  // 7. A genuine subsequent native Source character pumps the ordinary owner:
+  // accepted Preview for it, then native Undo back to the canary document.
+  const acceptanceBefore = await readSourcePreviewAcceptanceState(preview);
+  await sourceEditor.focus();
+  await sourceEditor.press('ControlOrMeta+End');
+  await page.keyboard.type('Z');
+  const typedMarkdown = `${canaryMarkdown}Z`;
+  await waitForSourceExactValue(source, typedMarkdown, `${flag}-typed`);
+  await waitForSourcePreviewAccepted(preview, `${flag}-typed`, acceptanceBefore.domHash);
+  await sourceEditor.press('ControlOrMeta+z');
+  await waitForSourceExactValue(source, canaryMarkdown, `${flag}-typed-undo`);
+  if ((await source.inputValue()).includes(insertedFragment)) {
+    throw new Error(
+      `editor-context-menu-source-media-unexpected-insertion:${flag}-after-input`
+    );
+  }
+
+  // 8. Native history over the surviving canonical transactions: Undo, Redo,
+  // Undo. Every step lands on an exact real document state through the native
+  // keyboard path - no direct fixture assignment stands in for a keyboard undo
+  // - so the failed media return provably added no transaction and consumed
+  // none of the canary pair.
+  await sourceEditor.press('ControlOrMeta+z');
+  await waitForSourceExactValue(source, markdown, `${flag}-history-undo`);
+  await sourceEditor.press('ControlOrMeta+Shift+z');
+  await waitForSourceExactValue(source, canaryMarkdown, `${flag}-history-redo`);
+  await sourceEditor.press('ControlOrMeta+z');
+  await waitForSourceExactValue(source, markdown, `${flag}-history-undo-final`);
+  const finalCodes = consoleProbe.codes();
+  if (1 !== finalCodes.length || sourceMediaReadOnlyCode !== finalCodes[0]) {
+    throw new Error(
+      `editor-context-menu-source-media-rejection-recurred:${flag}:` +
+      `${JSON.stringify({ codes: finalCodes })}`
+    );
+  }
+  // No transaction from the rejected return may materialise anywhere in the
+  // history cycle, and the field stays genuinely editable when flags are clear.
+  await assertSourceExactValue(source, markdown, `${flag}-complete`);
+  if ((await source.inputValue()).includes(insertedFragment)) {
+    throw new Error(
+      `editor-context-menu-source-media-unexpected-insertion:${flag}-after-history`
+    );
+  }
+  await expect(sourceEditor).toHaveAttribute('contenteditable', 'true');
+  mutationProbe.assertNoArticleWrites(`${flag}-complete`);
+}
+
 test.describe('Editor context menu production surfaces', () => {
+  test('moves the native Source caret relative and through the fallback to an exact UTF-16 offset', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page);
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    const line = '普通文本、**粗体文本**、*斜体文本*、***粗斜体文本***。';
+    const lineStart = occurrenceOffset(markdown, line);
+    const target = lineStart + occurrenceOffset(line, '粗斜体文本');
+    const assertCollapsedCaret = async (offset, phase) => {
+      const state = await readSourceSelection(page);
+      if (state.start !== offset || state.end !== offset) {
+        throw new Error(
+          `caret-not-collapsed:${phase}:${JSON.stringify({
+            end: state.end,
+            start: state.start,
+            expected: offset
+          })}`
+        );
+      }
+    };
+
+    // A non-collapsed selection first forces the document-start fallback, which
+    // establishes a real collapsed caret on the target line.
+    await selectSourceText(page, sourceEditor, markdown, '普通文本');
+    await moveSourceCaret(page, sourceEditor, markdown, lineStart + 1);
+    await assertCollapsedCaret(lineStart + 1, 'fallback-established');
+    await assertSourceExactValue(source, markdown, 'caret-fallback-exact');
+
+    // Forward relative step: the caret is already collapsed on this line after
+    // the target, so this must move forward rather than do nothing.
+    await moveSourceCaret(page, sourceEditor, markdown, target);
+    await expectSourceSelection(page, target, target);
+    await assertSourceExactValue(source, markdown, 'caret-forward-relative-exact');
+
+    // Backward relative step from that same collapsed caret.
+    await moveSourceCaret(page, sourceEditor, markdown, lineStart + 1);
+    await expectSourceSelection(page, lineStart + 1, lineStart + 1);
+    await assertSourceExactValue(source, markdown, 'caret-backward-relative-exact');
+
+    // A surrogate pair is one native step in both paths. This target is on a
+    // different line, so the fallback walks the target line prefix: two
+    // surrogate pairs before the emoji must cost two presses, not four.
+    const emojiLine = '支持 Emoji：😀 😎 🎉';
+    const emojiStart = occurrenceOffset(markdown, emojiLine);
+    const emojiTarget = emojiStart + occurrenceOffset(emojiLine, '🎉');
+    await moveSourceCaret(page, sourceEditor, markdown, emojiTarget);
+    await expectSourceSelection(page, emojiTarget, emojiTarget);
+    await assertSourceExactValue(source, markdown, 'caret-fallback-emoji-exact');
+
+    // The same unicode prefix reached from a collapsed caret on that line
+    // exercises the relative branch with surrogate pairs.
+    await moveSourceCaret(page, sourceEditor, markdown, emojiStart + 1);
+    await assertCollapsedCaret(emojiStart + 1, 'emoji-line-caret');
+    await moveSourceCaret(page, sourceEditor, markdown, emojiTarget);
+    await expectSourceSelection(page, emojiTarget, emojiTarget);
+    await assertSourceExactValue(source, markdown, 'caret-relative-emoji-exact');
+  });
+
   test('opens the generic Source menu when the caret is after the final rendered block', async ({ page }) => {
     await login(page);
     await openNewPost(page);
@@ -4295,7 +5309,7 @@ test.describe('Editor context menu production surfaces', () => {
     );
     await expect(source).toHaveValue(centeredTable);
 
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'source-image-reset');
     await expect(source).toHaveValue(markdown);
     const imageMarkdown = `![${imageSourceAlt}](${fixtureImageUrl})`;
     await selectSourceText(page, sourceEditor, markdown, imageMarkdown);
@@ -4311,7 +5325,7 @@ test.describe('Editor context menu production surfaces', () => {
     );
     await expect(source).toHaveValue(scaledImageMarkdown);
 
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'source-link-reset');
     await expect(source).toHaveValue(markdown);
     await selectSourceText(page, sourceEditor, markdown, '[OpenAI 官网](https://openai.com)');
     await openSourceMenu(page, sourceEditor);
@@ -4350,7 +5364,7 @@ test.describe('Editor context menu production surfaces', () => {
     const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
     const insertionOffset = occurrenceOffset(markdown, '普通文本');
     const consoleProbe = startSourceMediaConsoleProbe(page);
-    const mutationProbe = startSourceMediaMutationProbe(page);
+    const mutationProbe = await startSourceMediaMutationProbe(page);
     try {
       const cancelPicker = await openSourceInsertImagePicker(page, sourceEditor, markdown);
       await cancelPicker.mediaModal.locator('.media-modal-close').click();
@@ -4359,11 +5373,12 @@ test.describe('Editor context menu production surfaces', () => {
       mutationProbe.assertNoArticleWrites('source-media-cancel');
 
       const insertPicker = await openSourceInsertImagePicker(page, sourceEditor, markdown);
-      const selectionEvidence = await uploadAndSelectSourceImage(
+      const selectionEvidence = await uploadAndPrepareSourceImage(
         page,
         insertPicker.mediaFrame,
         insertPicker.mediaModal
       );
+      await selectionEvidence.selectButton.click();
       await expect(insertPicker.dialog).toBeHidden();
       await waitForSourceMediaInsertion(
         source,
@@ -4375,9 +5390,20 @@ test.describe('Editor context menu production surfaces', () => {
         {
           attachmentState: selectionEvidence.attachmentState,
           beforePicker: insertPicker.sourceState,
+          nativeAttachment: selectionEvidence.nativeAttachment,
+          nativeAltBeforeSave: selectionEvidence.savedAlt === syntheticMediaAlt,
           uploadCount: mutationProbe.uploadCount()
         }
       );
+      if (selectionEvidence.savedAlt !== syntheticMediaAlt) {
+        throw new Error('editor-context-menu-source-media-alt-save-not-applied');
+      }
+      const savedAltCount = mutationProbe.mediaActionCounts().get('save-attachment') ?? 0;
+      if (savedAltCount !== 1) {
+        throw new Error(
+          `editor-context-menu-source-media-alt-save-count:${savedAltCount}`
+        );
+      }
       mutationProbe.assertUpload('source-media-select');
       mutationProbe.assertNoArticleWrites('source-media-select');
       if (consoleProbe.codes().length > 0) {
@@ -4406,6 +5432,220 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
+  test('rejects formatted Source context media insertion after readOnly permission loss without changing history', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
+    const consoleProbe = startSourceMediaConsoleProbe(page);
+    const mutationProbe = await startSourceMediaMutationProbe(page);
+    const flag = 'readOnly';
+    let loss = null;
+    let primaryError = null;
+    let bodyFailed = false;
+    try {
+      loss = await beginSourceMediaPermissionLoss(page, {
+        flag,
+        markdown,
+        source,
+        sourceEditor
+      });
+      await expect(loss.picker.dialog).toBeVisible();
+      await expect(loss.prepared.selectButton).toBeEnabled();
+      // Only now, immediately before the real native confirmation, does the
+      // authoritative field lose its editability; the menu and picker had to
+      // open while it was still editable for this to be the mutation race.
+      await source.evaluate((field, key) => {
+        field[key] = true;
+      }, flag);
+      await loss.verifyPermission();
+      if (consoleProbe.codes().includes(sourceMediaReadOnlyCode)) {
+        throw new Error(`editor-context-menu-source-media-rejection-early:${flag}`);
+      }
+      await loss.prepared.selectButton.click();
+      await expect(loss.picker.dialog).toBeHidden();
+      const failureMessage = await page.evaluate(() => (
+        window.EasyMDEEditorRootBootstrap?.labels?.mediaPickerFailure ?? ''
+      ));
+      if (!failureMessage) {
+        throw new Error(`editor-context-menu-source-media-failure-label-missing:${flag}`);
+      }
+      const failureAlert = page.locator(
+        '.easymde-editor-message-alert-host [role="alert"]'
+      ).first();
+      await expect(failureAlert).toBeVisible();
+      await expect(failureAlert).toContainText(failureMessage);
+      await expect.poll(
+        () => consoleProbe.codes().filter(
+          (code) => code === 'media-picker-document-read-only'
+        ).length,
+        { message: `exactly one media-picker-document-read-only rejection: ${flag}` }
+      ).toBe(1);
+      // Event-counted equality: one event, this code, nothing else.
+      const rejectionCodes = consoleProbe.codes();
+      if (1 !== rejectionCodes.length
+        || sourceMediaReadOnlyCode !== rejectionCodes[0]) {
+        throw new Error(
+          `editor-context-menu-source-media-rejection-codes:${flag}:` +
+          `${JSON.stringify({ codes: rejectionCodes })}`
+        );
+      }
+      await completeSourceMediaPermissionLoss(page, {
+        ...loss,
+        consoleProbe,
+        flag,
+        markdown,
+        mutationProbe,
+        preview,
+        source,
+        sourceEditor
+      });
+    } catch (error) {
+      bodyFailed = true;
+      primaryError = error;
+    } finally {
+      // Restoring the authoritative flags must never be skipped, including on
+      // failure; the probes stay scoped to this test and no attachment is
+      // deleted here. Every cleanup step is attempted even when an earlier one
+      // throws, and no failure - primary or cleanup - is ever discarded.
+      const failures = bodyFailed ? [primaryError] : [];
+      try {
+        await loss?.restorePermission();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        consoleProbe.stop();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        mutationProbe.stop();
+      } catch (error) {
+        failures.push(error);
+      }
+      const cleanupFailures = bodyFailed ? failures.slice(1) : failures;
+      if (bodyFailed && cleanupFailures.length > 0) {
+        throw new AggregateError(
+          failures,
+          `editor-context-menu-source-media-body-and-cleanup-failed:readOnly:${cleanupFailures.length}`
+        );
+      }
+      if (bodyFailed) throw primaryError;
+      if (cleanupFailures.length > 1) {
+        throw new AggregateError(
+          failures,
+          `editor-context-menu-source-media-cleanup-failed:readOnly:${cleanupFailures.length}`
+        );
+      }
+      if (cleanupFailures.length === 1) throw cleanupFailures[0];
+    }
+  });
+
+  test('rejects formatted Source context media insertion after disabled permission loss without changing history', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
+    const consoleProbe = startSourceMediaConsoleProbe(page);
+    const mutationProbe = await startSourceMediaMutationProbe(page);
+    const flag = 'disabled';
+    let loss = null;
+    let primaryError = null;
+    let bodyFailed = false;
+    try {
+      loss = await beginSourceMediaPermissionLoss(page, {
+        flag,
+        markdown,
+        source,
+        sourceEditor
+      });
+      await expect(loss.picker.dialog).toBeVisible();
+      await expect(loss.prepared.selectButton).toBeEnabled();
+      // The same real mutation-time boundary as the readOnly case, exercised
+      // through the other authoritative native flag.
+      await source.evaluate((field, key) => {
+        field[key] = true;
+      }, flag);
+      await loss.verifyPermission();
+      if (consoleProbe.codes().includes(sourceMediaReadOnlyCode)) {
+        throw new Error(`editor-context-menu-source-media-rejection-early:${flag}`);
+      }
+      await loss.prepared.selectButton.click();
+      await expect(loss.picker.dialog).toBeHidden();
+      const failureMessage = await page.evaluate(() => (
+        window.EasyMDEEditorRootBootstrap?.labels?.mediaPickerFailure ?? ''
+      ));
+      if (!failureMessage) {
+        throw new Error(`editor-context-menu-source-media-failure-label-missing:${flag}`);
+      }
+      const failureAlert = page.locator(
+        '.easymde-editor-message-alert-host [role="alert"]'
+      ).first();
+      await expect(failureAlert).toBeVisible();
+      await expect(failureAlert).toContainText(failureMessage);
+      await expect.poll(
+        () => consoleProbe.codes().filter(
+          (code) => code === 'media-picker-document-read-only'
+        ).length,
+        { message: `exactly one media-picker-document-read-only rejection: ${flag}` }
+      ).toBe(1);
+      const rejectionCodes = consoleProbe.codes();
+      if (1 !== rejectionCodes.length
+        || sourceMediaReadOnlyCode !== rejectionCodes[0]) {
+        throw new Error(
+          `editor-context-menu-source-media-rejection-codes:${flag}:` +
+          `${JSON.stringify({ codes: rejectionCodes })}`
+        );
+      }
+      await completeSourceMediaPermissionLoss(page, {
+        ...loss,
+        consoleProbe,
+        flag,
+        markdown,
+        mutationProbe,
+        preview,
+        source,
+        sourceEditor
+      });
+    } catch (error) {
+      bodyFailed = true;
+      primaryError = error;
+    } finally {
+      // Same contract as the readOnly case: every cleanup step is attempted
+      // even when an earlier one throws, and no failure is ever discarded.
+      const failures = bodyFailed ? [primaryError] : [];
+      try {
+        await loss?.restorePermission();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        consoleProbe.stop();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        mutationProbe.stop();
+      } catch (error) {
+        failures.push(error);
+      }
+      const cleanupFailures = bodyFailed ? failures.slice(1) : failures;
+      if (bodyFailed && cleanupFailures.length > 0) {
+        throw new AggregateError(
+          failures,
+          `editor-context-menu-source-media-body-and-cleanup-failed:disabled:${cleanupFailures.length}`
+        );
+      }
+      if (bodyFailed) throw primaryError;
+      if (cleanupFailures.length > 1) {
+        throw new AggregateError(
+          failures,
+          `editor-context-menu-source-media-cleanup-failed:disabled:${cleanupFailures.length}`
+        );
+      }
+      if (cleanupFailures.length === 1) throw cleanupFailures[0];
+    }
+  });
+
   test('copies canonical Bash code content without fences in Source and Full Visual', async ({ page }) => {
     await login(page);
     await openNewPost(page);
@@ -4414,7 +5654,7 @@ test.describe('Editor context menu production surfaces', () => {
     const selectedText = 'echo "Hello, Markdown!"';
     const selectedStart = occurrenceOffset(markdown, selectedText);
     const selectedEnd = selectedStart + selectedText.length;
-    const mutationProbe = startGeneratedExportMutationProbe(page);
+    const mutationProbe = await startGeneratedExportMutationProbe(page);
     const copyCodeContentLabel = await page.evaluate(() => (
       window.EasyMDEEditorRootBootstrap?.strings?.contextMenu?.copyCodeContent ?? ''
     ));
@@ -4509,7 +5749,7 @@ test.describe('Editor context menu production surfaces', () => {
       } finally {
         await visualProbe.stop();
       }
-      mutationProbe.assertEmpty('copy-code-content');
+      await mutationProbe.assertEmpty('copy-code-content');
     } finally {
       mutationProbe.stop();
     }
@@ -4539,7 +5779,7 @@ test.describe('Editor context menu production surfaces', () => {
         url: 'https://github.com'
       }
     ];
-    const mutationProbe = startGeneratedExportMutationProbe(page);
+    const mutationProbe = await startGeneratedExportMutationProbe(page);
     const runSourceLinkCase = async (mode, editor, linkCase) => {
       await assertSourceExactValue(source, markdown, `${mode}-${linkCase.id}-before`);
       await selectSourceRange(
@@ -4580,7 +5820,7 @@ test.describe('Editor context menu production surfaces', () => {
       } finally {
         await sourceProbe.stop();
       }
-      mutationProbe.assertEmpty(`${mode}-${linkCase.id}`);
+      await mutationProbe.assertEmpty(`${mode}-${linkCase.id}`);
     };
 
     try {
@@ -4641,7 +5881,7 @@ test.describe('Editor context menu production surfaces', () => {
     if (!indentationLabels.block || !indentationLabels.selected) {
       throw new Error('bootstrap-code-indentation-labels-missing');
     }
-    const mutationProbe = startGeneratedExportMutationProbe(page);
+    const mutationProbe = await startGeneratedExportMutationProbe(page);
     const consoleProbe = startSourceMediaConsoleProbe(page);
     const assertIndentItems = async (mode, { selected }) => {
       const blockItem = anyMenuItem(page, 'indent-code-block').last();
@@ -4807,7 +6047,7 @@ test.describe('Editor context menu production surfaces', () => {
         throw new Error(`editor-context-menu-code-indent-stable-error:${unexpectedCodes.join(',')}`);
       }
       expect(fullAfter.selectionInsideCodeBlock).toBe(true);
-      mutationProbe.assertEmpty('code-indent');
+      await mutationProbe.assertEmpty('code-indent');
     } finally {
       consoleProbe.stop();
       mutationProbe.stop();
@@ -5069,6 +6309,512 @@ test.describe('Editor context menu production surfaces', () => {
     }
   });
 
+  test('keeps the real mutation probe behind the decoded-body guard for unreadable and file-bearing requests', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page);
+    const savePost = page.locator('#save-post');
+    await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
+    await savedNavigation;
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await assertSourceExactValue(source, markdown, 'probe-guard-saved');
+    const identity = await readNativeWordPressIdentity(page);
+    if (!identity.postId || '0' === identity.postId) {
+      throw new Error('probe-guard-identity-unavailable');
+    }
+
+    // Integration path: these requests go through the REAL probe wrapper the
+    // production assertions use, not the classifier called directly. A
+    // legitimate multipart lock release must be exempt, while an unreadable
+    // body and a file-bearing body carrying the same Action must be writes.
+    const probe = await startGeneratedExportMutationProbe(page);
+    const lockFields = [
+      ['action', 'wp-remove-post-lock'],
+      ['_wpnonce', await page.locator('#_wpnonce').inputValue()],
+      ['post_ID', identity.postId],
+      ['active_post_lock', await page.locator('#active_post_lock').inputValue()]
+    ];
+    const multipartBody = (entries, extraPart = '') => {
+      let body = '';
+      for (const [name, value] of entries) {
+        body += `--B\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+      }
+      return `${body}${extraPart}--B--\r\n`;
+    };
+    const sendBody = async (body, contentType) => page.evaluate(async ({ payload, type }) => {
+      const response = await fetch('/wp-admin/admin-ajax.php', {
+        body: payload,
+        headers: { 'content-type': type },
+        method: 'POST'
+      });
+      return response.status;
+    }, { payload: body, type: contentType });
+    // Fulfilled locally: the point is what the probe observes, and these bodies
+    // must not release a real lock or reach a real Action handler.
+    await page.route('**/wp-admin/admin-ajax.php', (route) => route.fulfill({
+      body: '{"success":true,"data":{}}',
+      contentType: 'application/json',
+      status: 200
+    }));
+
+    const filePart = '--B\r\nContent-Disposition: form-data; name="upload"; '
+      + 'filename="x.png"\r\nContent-Type: image/png\r\n\r\nBINARY\r\n';
+    try {
+      // 1. real shape -> exempt
+      await sendBody(
+        multipartBody(lockFields),
+        'multipart/form-data; boundary=B'
+      );
+      await probe.assertEmpty('probe-guard-multipart-own');
+
+      // 2. unreadable multipart -> write; the Action cannot be read, so it is
+      // recorded as an unknown owner rather than exempted by its URL.
+      await sendBody('not-a-multipart-body', 'multipart/form-data; boundary=B');
+      const afterBroken = probe.writes();
+      if (!afterBroken.includes('admin-ajax:unknown')) {
+        throw new Error(
+          `probe-guard-unreadable-not-recorded:${JSON.stringify(afterBroken)}`
+        );
+      }
+
+      // 3. file-bearing multipart -> write even though the Action decodes.
+      await sendBody(
+        multipartBody(lockFields, filePart),
+        'multipart/form-data; boundary=B'
+      );
+      const afterFile = probe.writes();
+      if (!afterFile.includes('admin-ajax:wp-remove-post-lock')) {
+        throw new Error(
+          `probe-guard-file-part-not-recorded:${JSON.stringify(afterFile)}`
+        );
+      }
+
+      // 4. the same benign fields urlencoded stay exempt through the probe.
+      const beforeUrlencoded = probe.writes().length;
+      await sendBody(
+        new URLSearchParams(lockFields).toString(),
+        'application/x-www-form-urlencoded; charset=UTF-8'
+      );
+      if (probe.writes().length !== beforeUrlencoded) {
+        throw new Error(
+          `probe-guard-urlencoded-recorded:${JSON.stringify(probe.writes())}`
+        );
+      }
+    } finally {
+      probe.stop();
+      await page.unroute('**/wp-admin/admin-ajax.php');
+    }
+    await assertSourceExactValue(source, markdown, 'probe-guard-complete');
+  });
+
+  test('decodes the real multipart Core lock release and denies foreign, duplicate, and autosave variants', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    // A saved draft is what gives Core a post id and an active post lock, the
+    // two fields its pagehide release beacon actually reads.
+    const { markdown, source } = await loadCanonicalFixture(page);
+    const savePost = page.locator('#save-post');
+    await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
+    await savedNavigation;
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await assertSourceExactValue(source, markdown, 'multipart-lock-saved');
+
+    const identity = await readNativeWordPressIdentity(page);
+    const activeLock = await page.locator('#active_post_lock').inputValue();
+    const nonce = await page.locator('#_wpnonce').inputValue();
+    if (!identity.postId || '0' === identity.postId || !activeLock || !nonce) {
+      throw new Error('multipart-lock-identity-unavailable');
+    }
+
+    // These are the exact fields wp-admin/js/post.js appends to its
+    // pagehide sendBeacon FormData.
+    const fields = [
+      ['action', 'wp-remove-post-lock'],
+      ['_wpnonce', nonce],
+      ['post_ID', identity.postId],
+      ['active_post_lock', activeLock]
+    ];
+    const multipartRequest = (entries) => {
+      let body = '';
+      for (const [name, value] of entries) {
+        body += `--B\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+      }
+      body += '--B--\r\n';
+      return {
+        headers: () => ({ 'content-type': 'multipart/form-data; boundary=B' }),
+        postData: () => body
+      };
+    };
+    const classifyMultipart = (entries) => {
+      const decoded = decodePostParameters(multipartRequest(entries));
+      return {
+        decoded,
+        accepted: classifyNativeWordPressRead(
+          identity,
+          new URL('/wp-admin/admin-ajax.php', page.url()),
+          decoded.parameters,
+          decoded.parameters.get('action'),
+          decoded
+        )
+      };
+    };
+
+    const own = classifyMultipart(fields);
+    if (own.decoded.unsupported || own.decoded.hasFilePart) {
+      throw new Error(`multipart-lock-decode-invalid:${JSON.stringify({
+        hasFilePart: own.decoded.hasFilePart,
+        unsupported: own.decoded.unsupported
+      })}`);
+    }
+    // The real shape must decode to the real scalars, not merely be exempt.
+    if (JSON.stringify([...own.decoded.parameters.entries()]) !== JSON.stringify(fields)) {
+      throw new Error(
+        `multipart-lock-fields-mismatch:${JSON.stringify(
+          [...own.decoded.parameters.entries()]
+        )}`
+      );
+    }
+    if (!own.accepted) {
+      throw new Error('multipart-lock-own-post-denied');
+    }
+
+    const foreignId = String(Number(identity.postId) + 1000);
+    const replaceField = (name, value) => fields.map(([key, current]) =>
+      (key === name ? [key, value] : [key, current]));
+    const variants = {
+      // PHP keeps the last duplicate, so any repeated field is not this read.
+      'duplicate-current-post-id': [...fields, ['post_ID', identity.postId]],
+      'duplicate-current-then-foreign': [...fields, ['post_ID', foreignId]],
+      'foreign-post': replaceField('post_ID', foreignId),
+      // An autosave owner has no business in a lock release.
+      'unknown-owner-field': [...fields, ['data[wp_autosave][post_id]', identity.postId]],
+      'unknown-scalar-field': [...fields, ['_easymde_markdown', 'x']]
+    };
+    for (const [name, entries] of Object.entries(variants)) {
+      const result = classifyMultipart(entries);
+      if (result.accepted) {
+        throw new Error(`multipart-lock-accepted-variant:${name}`);
+      }
+    }
+
+    // A part carrying a file is never this read.
+    let fileBody = '';
+    for (const [partName, value] of fields) {
+      fileBody += `--B\r\nContent-Disposition: form-data; name="${partName}"\r\n\r\n${value}\r\n`;
+    }
+    fileBody += '--B\r\nContent-Disposition: form-data; name="upload"; filename="x.png"'
+      + '\r\nContent-Type: image/png\r\n\r\nBINARY\r\n--B--\r\n';
+    const fileDecoded = decodePostParameters({
+      headers: () => ({ 'content-type': 'multipart/form-data; boundary=B' }),
+      postData: () => fileBody
+    });
+    if (!fileDecoded.hasFilePart) {
+      throw new Error('multipart-lock-file-part-undetected');
+    }
+    if (classifyNativeWordPressRead(
+      identity,
+      new URL('/wp-admin/admin-ajax.php', page.url()),
+      fileDecoded.parameters,
+      fileDecoded.parameters.get('action'),
+      fileDecoded
+    )) {
+      throw new Error('multipart-lock-accepted-file-part');
+    }
+
+    // An unreadable multipart body is an explicit failure, never a silent
+    // exemption by action name.
+    const broken = decodePostParameters({
+      headers: () => ({ 'content-type': 'multipart/form-data; boundary=Z' }),
+      postData: () => 'not-a-multipart-body'
+    });
+    if (!broken.unsupported) {
+      throw new Error('multipart-lock-broken-body-accepted');
+    }
+
+    // The real defect: the production probe is attached before a reload, so
+    // Core's pagehide multipart lock release must not be recorded as a write.
+    const beacons = [];
+    const reloadProbe = await startGeneratedExportMutationProbe(page);
+    const onRequest = (request) => {
+      if ('POST' !== request.method()) return;
+      const url = new URL(request.url());
+      if (!url.pathname.endsWith('/wp-admin/admin-ajax.php')) return;
+      const decoded = decodePostParameters(request);
+      const action = decoded.parameters.get('action');
+      if ('wp-remove-post-lock' !== action) return;
+      beacons.push({
+        accepted: classifyNativeWordPressRead(
+          identity,
+          url,
+          decoded.parameters,
+          action,
+          decoded
+        ),
+        contentType: request.headers()['content-type'] ?? ''
+      });
+    };
+    page.on('request', onRequest);
+    try {
+      await page.reload({ waitUntil: 'load', timeout: 15_000 });
+      await expect(page.locator('#easymde-editor')).toBeVisible();
+    } finally {
+      page.off('request', onRequest);
+    }
+    try {
+      const recorded = reloadProbe.writes();
+      if (recorded.length > 0) {
+        throw new Error(
+          `multipart-lock-release-recorded-as-write:${JSON.stringify(recorded)}`
+        );
+      }
+    } finally {
+      reloadProbe.stop();
+    }
+    // Core sends this release on pagehide through sendBeacon, so at least one
+    // real multipart lock release must have been observed and accepted.
+    if (0 === beacons.length) {
+      throw new Error('multipart-lock-beacon-not-observed');
+    }
+    const denied = beacons.filter((beacon) => !beacon.accepted);
+    if (denied.length > 0) {
+      throw new Error(
+        `multipart-lock-beacon-denied:${JSON.stringify(denied.map((beacon) => beacon.contentType))}`
+      );
+    }
+    if (!beacons.some((beacon) => beacon.contentType.includes('multipart/form-data'))) {
+      throw new Error(
+        `multipart-lock-beacon-not-multipart:${JSON.stringify(
+          beacons.map((beacon) => beacon.contentType)
+        )}`
+      );
+    }
+  });
+
+  test('classifies real Core heartbeat reads and denies real autosave, unknown owners, and foreign posts', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
+    // Persist the disposable draft once through the real native save so the
+    // page publishes a real post identity and Core lock maintenance engages;
+    // a post-new.php screen has neither.
+    const savePost = page.locator('#save-post');
+    await expect(savePost).not.toHaveClass(/\bdisabled\b/u, { timeout: 15_000 });
+    const savedNavigation = page.waitForNavigation({ waitUntil: 'load', timeout: 15_000 });
+    await savePost.click();
+    await savedNavigation;
+    await expect(page.locator('#easymde-editor')).toBeVisible();
+    await assertSourceExactValue(source, markdown, 'native-read-probe-saved');
+    const identity = await readNativeWordPressIdentity(page);
+    if (!identity.postId || '0' === identity.postId) {
+      throw new Error('native-read-identity-missing');
+    }
+    const heartbeatRequests = [];
+    const onRequest = (request) => {
+      if ('POST' !== request.method()) return;
+      const url = new URL(request.url());
+      if (!url.pathname.endsWith('/wp-admin/admin-ajax.php')) return;
+      const decoded = decodePostParameters(request);
+      const parameters = decoded.parameters;
+      if ('heartbeat' !== (url.searchParams.get('action') ?? parameters.get('action'))) return;
+      heartbeatRequests.push([...parameters.entries()]);
+    };
+    page.on('request', onRequest);
+    const classify = (entries) => {
+      const parameters = new URLSearchParams(entries);
+      return classifyNativeWordPressRead(
+        identity,
+        new URL('/wp-admin/admin-ajax.php', page.url()),
+        parameters,
+        parameters.get('action')
+      );
+    };
+    const hasOwner = (entries, owner) =>
+      entries.some(([key]) => key.startsWith(`data[${owner}]`));
+    try {
+      await page.evaluate(() => {
+        if (!window.jQuery || !window.wp?.autosave?.server?.triggerSave) {
+          throw new Error('native-autosave-owner-unavailable');
+        }
+        window.__easymdeCoreAutosaveProbe = { completed: 0, success: false };
+        window.jQuery(document).on('after-autosave.easymdeClassifierProbe', (_event, data) => {
+          window.__easymdeCoreAutosaveProbe.completed += 1;
+          window.__easymdeCoreAutosaveProbe.success = data?.success === true;
+        });
+      });
+      // A real Core maintenance heartbeat must be exempt: lock refresh,
+      // auth check, and nonce refresh all address the current post.
+      await page.evaluate(() => window.wp.heartbeat.connectNow());
+      await expect.poll(() => heartbeatRequests.length).toBeGreaterThan(0);
+      const maintenance = heartbeatRequests
+        .filter((entries) => entries.some(([key]) => key.startsWith('data[')))
+        .at(-1);
+      if (!maintenance) throw new Error('native-read-real-heartbeat-payload-missing');
+      if (!maintenance.some(([key]) => '_nonce' === key)) {
+        throw new Error('native-read-real-heartbeat-nonce-missing');
+      }
+      if (!classify(maintenance)) {
+        throw new Error(
+          `native-read-real-heartbeat-rejected:${JSON.stringify(
+            maintenance.map(([key]) => key)
+          )}`
+        );
+      }
+
+      // Derived from that exact real request: only the named mutations may
+      // flip it to a write.
+      const withoutNonce = maintenance.filter(([key]) => '_nonce' !== key);
+      if (classify(withoutNonce)) {
+        throw new Error('native-read-accepted-heartbeat-without-nonce');
+      }
+      const otherScreen = maintenance.map(
+        ([key, value]) => ('screen_id' === key ? [key, 'dashboard'] : [key, value])
+      );
+      if (classify(otherScreen)) {
+        throw new Error('native-read-accepted-other-screen-heartbeat');
+      }
+      const unknownOwner = [...maintenance, ['data[easymde_extension][post_id]', identity.postId]];
+      if (classify(unknownOwner)) {
+        throw new Error('native-read-accepted-unknown-owner');
+      }
+      const malformedOwners = {
+        'missing-post': [['data[wp-refresh-post-lock][lock]', 'synthetic-lock']],
+        'unknown-field': [['data[wp-refresh-post-lock][post_id]', identity.postId], ['data[wp-refresh-post-lock][content]', 'synthetic']],
+        'nested-post': [['data[wp-refresh-post-lock][post_id][nested]', identity.postId]],
+        'scalar-json': [['data', JSON.stringify({ 'wp-refresh-post-lock': true })]],
+        'missing-json-post': [['data', JSON.stringify({ 'wp-refresh-post-nonces': {} })]],
+        'foreign-json-post': [['data', JSON.stringify({ 'wp-refresh-post-lock': { post_id: String(Number(identity.postId) + 1000) } })]],
+        'mixed-encoding': [['data', '{}'], ['data[wp-refresh-post-lock][post_id]', identity.postId]]
+      };
+      const maintenanceEnvelope = maintenance.filter(([key]) => key !== 'data' && !key.startsWith('data['));
+      for (const [shape, fields] of Object.entries(malformedOwners)) {
+        if (classify([...maintenanceEnvelope, ...fields])) {
+          throw new Error(`native-read-accepted-malformed-owner:${shape}`);
+        }
+      }
+      const foreignPostId = String(Number(identity.postId) + 1000);
+      // Replace the real owner value: PHP keeps the last duplicate, so a
+      // replaced (not appended) foreign post id is what the server would use.
+      const replaceOwnerPostId = (entries, owner) => entries.map(([key, value]) =>
+        key === `data[${owner}][post_id]` ? [key, foreignPostId] : [key, value]);
+      let verifiedForeignOwners = 0;
+      for (const owner of ['wp-refresh-post-lock', 'wp-refresh-post-nonces']) {
+        if (!maintenance.some(([key]) => key === `data[${owner}][post_id]`)) continue;
+        verifiedForeignOwners += 1;
+        const foreignPost = replaceOwnerPostId(maintenance, owner);
+        if (!foreignPost.some(([key, value]) => key === `data[${owner}][post_id]`
+          && value === foreignPostId)) {
+          throw new Error(`native-read-foreign-post-replacement-missing:${owner}`);
+        }
+        if (classify(foreignPost)) {
+          throw new Error(`native-read-accepted-foreign-post:${owner}`);
+        }
+        // PHP keeps the last duplicate, so a current-then-foreign pair must
+        // also be denied rather than exempted on its first value.
+        const duplicate = [...maintenance, [`data[${owner}][post_id]`, foreignPostId]];
+        if (classify(duplicate)) {
+          throw new Error(`native-read-accepted-duplicate-foreign-post:${owner}`);
+        }
+      }
+      if (0 === verifiedForeignOwners) {
+        throw new Error(
+          `native-read-foreign-post-control-unavailable:${JSON.stringify(
+            maintenance.map(([key]) => key)
+          )}`
+        );
+      }
+      const autosaveOwner = [
+        ...maintenance.filter(([key]) => !key.startsWith('data[wp_autosave]')),
+        ['data[wp_autosave][post_id]', identity.postId],
+        ['data[wp_autosave][content]', 'synthetic autosave probe']
+      ];
+      if (classify(autosaveOwner)) {
+        throw new Error('native-read-accepted-autosave-owner');
+      }
+
+      // The real autosave path must also be denied, not only a derived shape.
+      await replaceSourceWithNativeInput(page, sourceEditor, source, `${markdown}\n\nReal autosave probe.`, 'autosave-first-input');
+      await expect(source).toHaveValue(`${markdown}\n\nReal autosave probe.`);
+      // Core decides whether to create wp_autosave before EasyMDE's heartbeat
+      // callback projects Markdown into #content. Change a real Core-owned
+      // field as well: never fabricate an autosave payload or write #content.
+      await page.locator('#title').fill('Synthetic Core autosave classifier first');
+      const autosaveCount = heartbeatRequests.length;
+      await page.evaluate(() => {
+        if (!window.wp?.autosave?.server?.triggerSave
+          || !window.wp.autosave.server.postChanged()) {
+          throw new Error('native-autosave-owner-unavailable');
+        }
+        window.wp.autosave.server.triggerSave();
+      });
+      await expect.poll(
+        async () => heartbeatRequests.slice(autosaveCount).some(
+          (entries) => hasOwner(entries, 'wp_autosave')
+        ) && await page.evaluate(() => window.__easymdeCoreAutosaveProbe.completed === 1
+          && window.__easymdeCoreAutosaveProbe.success),
+        { message: 'a real Core autosave heartbeat must be observed', timeout: 30_000 }
+      ).toBe(true);
+      const realAutosave = heartbeatRequests.slice(autosaveCount).find(
+        (entries) => hasOwner(entries, 'wp_autosave')
+      );
+      if (classify(realAutosave)) {
+        throw new Error(
+          `native-read-accepted-real-autosave:${JSON.stringify(
+            realAutosave.map(([key]) => key)
+          )}`
+        );
+      }
+      // The classifier denies it, so a write probe that used to exempt every
+      // heartbeat must now record this real autosave instead of masking it.
+      const generatedProbe = await startGeneratedExportMutationProbe(page);
+      try {
+        await replaceSourceWithNativeInput(page, sourceEditor, source, `${markdown}\n\nReal autosave probe 2.`, 'autosave-second-input');
+        await expect(source).toHaveValue(`${markdown}\n\nReal autosave probe 2.`);
+        await page.locator('#title').fill('Synthetic Core autosave classifier second');
+        const autosaveBefore = heartbeatRequests.length;
+        // Awaiting the actual first after-autosave callback above releases
+        // Core's in-flight block. Its public trigger resets only nextRun;
+        // the real native title supplies the second change-detection input.
+        await page.evaluate(() => {
+          if (!window.wp?.autosave?.server?.triggerSave
+            || !window.wp.autosave.server.postChanged()) {
+            throw new Error('native-autosave-owner-unavailable');
+          }
+          window.wp.autosave.server.triggerSave();
+        });
+        await expect.poll(
+          async () => heartbeatRequests.slice(autosaveBefore).some(
+            (entries) => hasOwner(entries, 'wp_autosave')
+          ) && await page.evaluate(() => window.__easymdeCoreAutosaveProbe.completed === 2
+            && window.__easymdeCoreAutosaveProbe.success),
+          { message: 'a second real autosave heartbeat must be observed', timeout: 30_000 }
+        ).toBe(true);
+        const recorded = generatedProbe.writes();
+        if (!recorded.includes('admin-ajax:heartbeat')) {
+          throw new Error(
+            `native-read-real-autosave-masked-by-probe:${JSON.stringify(recorded)}`
+          );
+        }
+      } finally {
+        generatedProbe.stop();
+      }
+    } finally {
+      page.off('request', onRequest);
+      await page.evaluate(() => {
+        window.jQuery?.(document).off('.easymdeClassifierProbe');
+        delete window.__easymdeCoreAutosaveProbe;
+      });
+    }
+    await assertSourceExactValue(
+      source,
+      `${markdown}\n\nReal autosave probe 2.`,
+      'native-read-probe-end'
+    );
+  });
+
   test('keeps Source image copying capability gated by the real local PNG load', async ({ page }) => {
     await login(page);
     await openNewPost(page);
@@ -5082,15 +6828,24 @@ test.describe('Editor context menu production surfaces', () => {
     ).first();
     const documentWrites = [];
     const dialogs = [];
+    const nativeRead = await nativeWordPressReadOwner(page);
     page.on('request', (request) => {
       if ('POST' !== request.method()) return;
       const url = new URL(request.url());
-      const body = request.postData() ?? '';
-      const isPreview = url.pathname.endsWith('/wp-json/easymde/v1/preview');
-      const isHeartbeat = url.pathname.endsWith('/wp-admin/admin-ajax.php')
-        && (url.searchParams.get('action') === 'heartbeat'
-          || /(?:^|&)action=heartbeat(?:&|$)/u.test(body));
-      if (!isPreview && !isHeartbeat) documentWrites.push(url.pathname);
+      const decoded = decodePostParameters(request);
+      const parameters = decoded.parameters;
+      const action = url.searchParams.get('action') ?? parameters.get('action');
+      if (url.pathname.endsWith('/wp-json/easymde/v1/preview')) return;
+      if (nativeRead(url, parameters, action, decoded)) return;
+      documentWrites.push(
+        url.pathname.endsWith('/wp-admin/post.php')
+          ? 'post-form'
+          : url.pathname.endsWith('/wp-admin/admin-ajax.php')
+            ? `admin-ajax:${/^[a-z0-9_-]{1,40}$/iu.test(action ?? '') ? action : 'unknown'}`
+            : url.pathname.includes('/wp-json/')
+              ? 'rest'
+              : 'other'
+      );
     });
     page.on('dialog', (dialog) => {
       dialogs.push(dialog.type());
@@ -5186,24 +6941,27 @@ test.describe('Editor context menu production surfaces', () => {
     await expect(preview.locator('.easymde-mermaid').first()).toBeVisible();
 
     const formulaSource = displayMathSource(markdown);
-    const formulaCodeBlock = displayMathMarkdown(markdown);
     const mermaidSource = fencedBlockSource(markdown, 'mermaid');
-    const mermaidCodeBlock = fencedBlockMarkdown(markdown, 'mermaid');
     const formulaExportSource = `\n${formulaSource}\n`;
     const mermaidExportSource = `${mermaidSource}\n`;
-    const mutationProbe = startGeneratedExportMutationProbe(page);
+    const mutationProbe = await startGeneratedExportMutationProbe(page);
+    const consoleProbe = startSourceMediaConsoleProbe(page);
+    const assertionCodes = new Set([
+      'generated-content-export-clipboard-failed',
+      'generated-content-export-clipboard-unsupported',
+      'generated-content-export-rasterization-failed'
+    ]);
     try {
+      let formulaPng;
       for (const [action, label] of [
         ['copy-generated-source', 'formula-copy-source'],
         ['copy-generated-mathml', 'formula-copy-mathml'],
-        ['copy-generated-image', 'formula-copy-png'],
-        ['copy-code-block', 'formula-copy-code-block']
+        ['copy-generated-image', 'formula-copy-png']
       ]) {
-        await runGeneratedExportAction(page, {
+        const evidence = await runGeneratedExportAction(page, {
           action,
-          expectedSource: 'copy-code-block' === action
-            ? formulaCodeBlock
-            : formulaExportSource,
+          expectedSource: formulaExportSource,
+          kind: 'math',
           label,
           markdown,
           mutationProbe,
@@ -5212,27 +6970,150 @@ test.describe('Editor context menu production surfaces', () => {
           source,
           sourceEditor
         });
+        if ('copy-generated-image' === action) formulaPng = evidence;
       }
+
+      let mermaidPng;
       for (const [action, label] of [
         ['copy-generated-source', 'mermaid-copy-source'],
-        ['copy-generated-image', 'mermaid-copy-png'],
-        ['copy-code-block', 'mermaid-copy-code-block']
+        ['copy-generated-image', 'mermaid-copy-png']
       ]) {
-        await runGeneratedExportAction(page, {
+        const evidence = await runGeneratedExportAction(page, {
           action,
-          expectedSource: 'copy-code-block' === action
-            ? mermaidCodeBlock
-            : mermaidExportSource,
+          expectedSource: mermaidExportSource,
+          kind: 'mermaid',
           label,
           markdown,
           mutationProbe,
           preview,
+          previousPngHash: formulaPng?.hash,
           selectText: 'flowchart TD',
           source,
           sourceEditor
         });
+        if ('copy-generated-image' === action) mermaidPng = evidence;
       }
+
+      if (!formulaPng || !mermaidPng) {
+        throw new Error('generated-export-png-evidence-missing');
+      }
+      if (formulaPng.hash === mermaidPng.hash) {
+        throw new Error('generated-export-png-hash-collision');
+      }
+
+      // Successful exports must not report any export/clipboard failure.
+      const unexpected = consoleProbe.codes().filter((code) => assertionCodes.has(code));
+      if (unexpected.length > 0) {
+        throw new Error(`generated-export-unexpected-failure:${unexpected.join(',')}`);
+      }
+
+      // Negative control: a genuine browser-level denial of clipboard writes
+      // must fail the second image export rather than silently accepting the
+      // previous PNG. The permission is restored afterwards and a real export
+      // must succeed again, proving the failure came from the denial.
+      // Leave a real native redo entry across the denied export. Neither the
+      // failure nor permission restoration may clear or consume that entry.
+      const historyCanary = replaceVisualSourceOccurrence(markdown, '普通文本', '**普通文本**');
+      await selectSourceText(page, sourceEditor, markdown, '普通文本');
+      await openSourceMenu(page, sourceEditor);
+      await rootItem(page, 'bold').click();
+      await waitForSourceExactValue(source, historyCanary, 'export-history-canary-bold');
+      await sourceEditor.press('ControlOrMeta+z');
+      await waitForSourceExactValue(source, markdown, 'export-history-canary-undo');
+      await waitForSourcePreviewAccepted(preview, 'export-history-canary-ready');
+      const origin = new URL(page.url()).origin;
+      const denial = await openClipboardWriteDenial(page, origin, 'formula-copy-png-denied');
+      const beforeDenialCodes = new Set(consoleProbe.codes());
+      try {
+        await seedTextClipboard(page, 'denied clipboard seed', 'formula-copy-png-denied');
+        await denial.deny();
+        await selectSourceText(page, sourceEditor, markdown, formulaSource);
+        await openSourceMenu(page, sourceEditor);
+        await openRootSubmenu(page, 'generated-content');
+        await openVisibleSubmenu(page, 'copy-generated');
+        await anyMenuItem(page, 'copy-generated-image').click();
+        await expect(page.locator(menuSelector)).toHaveCount(0);
+        await expect.poll(
+          () => consoleProbe.codes().some(
+            (code) => !beforeDenialCodes.has(code) && assertionCodes.has(code)
+          ),
+          { message: 'a denied clipboard write must report an export failure' }
+        ).toBe(true);
+        // The denial covers sanitized and unsanitized writes, which also
+        // blocks clipboard reads; permissions are restored before the seed is
+        // inspected. Restoration itself does not touch the clipboard.
+        await denial.restore();
+        const deniedState = await page.evaluate(async () => {
+          const items = await navigator.clipboard.read();
+          return {
+            hasPng: items.some((item) => item.types.includes('image/png')),
+            text: items.flatMap((item) => item.types).includes('text/plain')
+              ? await navigator.clipboard.readText()
+              : null
+          };
+        });
+        if (deniedState.hasPng) {
+          throw new Error('generated-export-denied-write-stale-png-accepted');
+        }
+        if (deniedState.text !== 'denied clipboard seed') {
+          throw new Error(
+            'generated-export-denied-write-clipboard-mutated:' +
+            JSON.stringify(privacySafeTextEvidence(deniedState.text ?? ''))
+          );
+        }
+        await expect(
+          page.locator('.easymde-editor-message-alert-host [role="alert"]').first()
+        ).toBeVisible();
+        await mutationProbe.assertEmpty('formula-copy-png-denied');
+        await assertSourceExactValue(source, markdown, 'formula-copy-png-denied');
+      } finally {
+        await denial.restore();
+        await denial.dispose();
+      }
+      await sourceEditor.press('ControlOrMeta+Shift+z');
+      await waitForSourceExactValue(source, historyCanary, 'export-denied-history-redo');
+      await sourceEditor.press('ControlOrMeta+z');
+      await waitForSourceExactValue(source, markdown, 'export-denied-history-undo');
+      await waitForSourcePreviewAccepted(preview, 'export-denied-history-ready');
+      const recoveryBefore = new Set(consoleProbe.codes());
+      const recovered = await runGeneratedExportAction(page, {
+        action: 'copy-generated-image',
+        expectedSource: formulaExportSource,
+        kind: 'math',
+        label: 'formula-copy-png-recovered',
+        markdown,
+        mutationProbe,
+        preview,
+        selectText: formulaSource,
+        source,
+        sourceEditor
+      });
+      if (!recovered) {
+        throw new Error('generated-export-png-recovery-missing');
+      }
+      const recoveryFailures = consoleProbe.codes().filter(
+        (code) => !recoveryBefore.has(code) && assertionCodes.has(code)
+      );
+      if (recoveryFailures.length > 0) {
+        throw new Error(`generated-export-png-recovery-failed:${recoveryFailures.join(',')}`);
+      }
+      // The same target at the same scale must rasterize to the same geometry.
+      const geometry = (evidence) => `${evidence.width}x${evidence.height}:${evidence.nonBlankPixels}`;
+      if (geometry(recovered) !== geometry(formulaPng)) {
+        throw new Error(
+          `generated-export-png-recovery-mismatch:${JSON.stringify({
+            actual: geometry(recovered),
+            expected: geometry(formulaPng)
+          })}`
+        );
+      }
+      await sourceEditor.press('ControlOrMeta+Shift+z');
+      await waitForSourceExactValue(source, historyCanary, 'export-recovered-history-redo');
+      await sourceEditor.press('ControlOrMeta+z');
+      await waitForSourceExactValue(source, markdown, 'export-recovered-history-undo');
+      await waitForSourcePreviewAccepted(preview, 'export-recovered-history-ready');
     } finally {
+      consoleProbe.stop();
       mutationProbe.stop();
     }
     await assertSourceExactValue(source, markdown, 'generated-export-complete');
@@ -5262,39 +7143,125 @@ test.describe('Editor context menu production surfaces', () => {
     await assertSourceExactValue(source, markdown, 'focused-full-list-cut-reset');
   });
 
-  test('accepts Full and Windowed Visual text/list/link/cross-heading/image/table actions through formal Preview re-entry', async ({ page }) => {
+  test('accepts Windowed Visual list Cut through accepted Preview and native Undo', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const { markdown, source } = await loadCanonicalFixture(page, 2);
+    // Two canonical fixtures are what the real document uses to reach the
+    // Windowed owner; no threshold or fixture flag is forced here.
+    const { visualEditor } = await enterFullVisual(page);
+    await expect.poll(
+      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'two canonical fixtures should activate the Windowed Visual owner' }
+    ).toBeGreaterThan(0);
+    const selectedText = '前端开发';
+    const expected = replaceVisualSourceOccurrence(markdown, selectedText, '');
+    const target = visualEditor.locator('li').filter({ hasText: selectedText }).first();
+    await ensureWindowedVisualTargetMounted(page, target, 0);
+    await expect(target).toHaveCount(1);
+    // The selected text has to exist in the mounted surface before the
+    // gesture, otherwise the range below would be satisfied by unrelated DOM.
+    await expect(target).toContainText(selectedText);
+    const mountedBefore = await visualEditor.evaluate((surface) =>
+      Array.from(surface.querySelectorAll('[data-easymde-visual-block-id]'))
+        .map((element) => element.getAttribute('data-easymde-visual-block-id'))
+    );
+    if (mountedBefore.length === 0 || new Set(mountedBefore).size !== mountedBefore.length) {
+      throw new Error(
+        `focused-windowed-list-cut-mounted-identities-invalid:${JSON.stringify(mountedBefore)}`
+      );
+    }
+
+    await runVisualMutationAction(page, visualEditor, source, markdown, {
+      action: 'cut',
+      expected,
+      label: 'focused-windowed-list-cut',
+      target,
+      selectText: selectedText
+    });
+    // The Cut payload is the browser's own Clipboard entry, checked before any
+    // fixture reset can stand in for the accepted action.
+    assertClipboardTextExact(
+      await readNativeClipboardText(page),
+      selectedText,
+      'focused-windowed-list-cut'
+    );
+    await assertSourceExactValue(source, markdown, 'focused-windowed-list-cut-reset');
+    await expect(visualEditor).toHaveAttribute('contenteditable', 'true');
+    await expect.poll(
+      () => visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'the Windowed owner keeps real spacers after Cut and history' }
+    ).toBeGreaterThan(0);
+    const mountedAfter = await visualEditor.evaluate((surface) =>
+      Array.from(surface.querySelectorAll('[data-easymde-visual-block-id]'))
+        .map((element) => element.getAttribute('data-easymde-visual-block-id'))
+    );
+    if (mountedAfter.length === 0
+      || new Set(mountedAfter).size !== mountedAfter.length
+      || mountedAfter.length > 160) {
+      throw new Error(
+        `focused-windowed-list-cut-mounted-window-invalid:${JSON.stringify({
+          cap: 160,
+          mountedAfter
+        })}`
+      );
+    }
+  });
+
+  // Each real action/history group gets the unchanged case budget. Keep the
+  // same-document owner transition separately rather than making the final
+  // render inherit every preceding group's elapsed time.
+  for (const owner of ['full', 'windowed']) {
+    for (const group of ['text', 'list', 'link', 'cross-heading', 'image', 'table']) {
+      test(`accepts ${owner} Visual ${group} actions and history through formal Preview re-entry`, async ({ page }) => {
+        await login(page);
+        await openNewPost(page);
+        const { markdown, source } = await loadCanonicalFixture(page, 'full' === owner ? 1 : 2);
+        const full = await enterFullVisual(page);
+        if ('windowed' === owner) {
+          await expect.poll(
+            () => full.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
+          ).toBeGreaterThan(0);
+        } else {
+          await expect(full.visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+        }
+        await runVisualActionMatrix(page, full.visualEditor, source, markdown, 0, owner, group);
+        await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
+        await assertSourceExactValue(source, markdown, `${owner}-${group}-actions-complete`);
+      });
+    }
+  }
+
+  test('retains the same document and root through Full-to-Windowed Visual transition and formal Preview re-entry', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
-    const full = await enterFullVisual(page);
-    await runVisualActionMatrix(page, full.visualEditor, source, markdown, 0, 'full');
-    await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
-    await assertSourceExactValue(source, markdown, 'full-visual-actions-complete');
-
-    await page.getByRole('button', { name: full.strings.exit, exact: true }).click();
-    await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
-
-    const windowedMarkdown = `${markdown}\n${markdown}`;
-    await sourceEditor.fill(windowedMarkdown);
-    await waitForSourceExactValue(source, windowedMarkdown, 'windowed-fixture-applied');
-    await expect(preview).toHaveAttribute('aria-busy', 'false');
-    const windowed = await enterFullVisual(page);
-    await expect.poll(
-      () => windowed.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
-    ).toBeGreaterThan(0);
-    await runVisualActionMatrix(
-      page,
-      windowed.visualEditor,
-      source,
-      windowedMarkdown,
-      0,
-      'windowed'
-    );
-    await page.getByRole('button', { name: windowed.strings.exit, exact: true }).click();
-    await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
-    await sourceEditor.fill(windowedMarkdown);
-    await waitForSourceExactValue(source, windowedMarkdown, 'windowed-fixture-restored');
-    await assertSourceExactValue(source, windowedMarkdown, 'windowed-visual-actions-complete');
+    const root = await page.locator('#easymde-editor-root').elementHandle();
+    let nativeSource;
+    try {
+      nativeSource = await source.elementHandle();
+      const full = await enterFullVisual(page);
+      await expect(full.visualEditor.locator('[data-easymde-preview-window-spacer]')).toHaveCount(0);
+      await repeatAfterFormalPreview(page, full.strings, source, markdown, 0);
+      await assertSourceExactValue(source, markdown, 'full-visual-actions-complete');
+      await page.getByRole('button', { name: full.strings.exit, exact: true }).click();
+      await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
+      const windowedMarkdown = `${markdown}\n${markdown}`;
+      await replaceSourceWithNativeInput(page, sourceEditor, source, windowedMarkdown, 'windowed-fixture-applied');
+      await waitForSourcePreviewAccepted(preview, 'full-to-windowed-preview');
+      const windowed = await enterFullVisual(page);
+      await expect.poll(
+        () => windowed.visualEditor.locator('[data-easymde-preview-window-spacer]').count()
+      ).toBeGreaterThan(0);
+      await repeatAfterFormalPreview(page, windowed.strings, source, windowedMarkdown, 0);
+      await page.getByRole('button', { name: windowed.strings.exit, exact: true }).click();
+      await expect(page.locator('.easymde-editor.is-immersive')).toHaveCount(0);
+      await assertSourceExactValue(source, windowedMarkdown, 'windowed-visual-actions-complete');
+      expect(await root.evaluate((element) => element === document.querySelector('#easymde-editor-root'))).toBe(true);
+      expect(await nativeSource.evaluate((element) => element === document.querySelector('#easymde-source'))).toBe(true);
+    } finally {
+      await Promise.all([root?.dispose(), nativeSource?.dispose()]);
+    }
   });
 
   test('opens image actions when directly right-clicking an unselected Full Visual image', async ({ page }) => {
@@ -5651,7 +7618,7 @@ test.describe('Editor context menu production surfaces', () => {
   test('accepts a Full Visual selection spanning text and an inline formula without exposing object actions', async ({ page }) => {
     await login(page);
     await openNewPost(page);
-    const { markdown, source } = await loadCanonicalFixture(page, 1, { nativeInput: true });
+    const { markdown, source } = await loadCanonicalFixture(page);
     const full = await enterFullVisual(page);
     await waitForVisualPreviewAccepted(full.visualEditor, 'mixed-formula-before');
 
@@ -5837,7 +7804,7 @@ test.describe('Editor context menu production surfaces', () => {
     const expected = 'before\n\n\nafter';
     const source = page.locator('#easymde-source');
     let sourceEditor = page.locator('.easymde-source-react .cm-content');
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'source-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'source-thematic-break-before');
     await runSourceThematicBreakDelete(page, {
       expected,
@@ -5851,7 +7818,7 @@ test.describe('Editor context menu production surfaces', () => {
     await page.getByRole('button', { name: strings.split, exact: true }).last().click();
     await expect(page.locator('.easymde-editor.is-immersive.is-immersive-split')).toBeVisible();
     sourceEditor = page.locator('.easymde-source-react .cm-content').last();
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'split-source-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'immersive-split-source-thematic-break-before');
     await runSourceThematicBreakDelete(page, {
       expected,
@@ -5872,7 +7839,7 @@ test.describe('Editor context menu production surfaces', () => {
     const preview = page.locator(
       '.easymde-pane-preview [data-easymde-preview-html-sink="1"]'
     ).first();
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'full-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'full-thematic-break-before');
     await waitForSourcePreviewAccepted(preview, 'full-thematic-break-before');
     const full = await enterFullVisual(page);
@@ -5896,10 +7863,17 @@ test.describe('Editor context menu production surfaces', () => {
       (_, index) => `windowed paragraph ${index}`
     ).join('\n\n');
     const markdown = `${leading}\n\n  ---  \n\nwindowed tail`;
-    const expected = `${leading}\n\n\nwindowed tail`;
+    const marker = '  ---  ';
+    const markerStart = markdown.indexOf(marker);
+    if (markerStart < 0 || markdown.indexOf(marker, markerStart + marker.length) >= 0) {
+      throw new Error('windowed-thematic-break-marker-offset-unavailable');
+    }
+    // The parser-owned thematic-break range is the marker line's content only;
+    // the structural owner never consumes the blank-line separators on either side.
+    const expected = `${markdown.slice(0, markerStart)}${markdown.slice(markerStart + marker.length)}`;
     const source = page.locator('#easymde-source');
     const sourceEditor = page.locator('.easymde-source-react .cm-content');
-    await sourceEditor.fill(markdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'windowed-thematic-break-input');
     await waitForSourceExactValue(source, markdown, 'windowed-thematic-break-before');
     const full = await enterFullVisual(page);
     await expect.poll(
@@ -5934,12 +7908,194 @@ test.describe('Editor context menu production surfaces', () => {
     });
   });
 
+  test('windowed code deletion recovery', async ({ page }) => {
+    await login(page);
+    await openNewPost(page);
+    const leading = Array.from(
+      { length: 220 },
+      (_, index) => `windowed paragraph ${index}`
+    ).join('\n\n');
+    const fence = '~~~bash\necho windowed\n~~~';
+    const trailing = '~~~js\nconst windowed = 1;\n~~~';
+    const markdown = `${leading}\n\n${fence}\n\nwindowed middle\n\n${trailing}\n\nwindowed tail`;
+    const fenceStart = markdown.indexOf(fence);
+    if (fenceStart < 0) throw new Error('windowed-code-recovery-fence-offset-unavailable');
+    // The structural owner removes exactly the fenced block offsets and never
+    // consumes the blank-line separators on either side.
+    const expected = `${markdown.slice(0, fenceStart)}${markdown.slice(fenceStart + fence.length)}`;
+    const source = page.locator('#easymde-source');
+    const sourceEditor = page.locator('.easymde-source-react .cm-content');
+    await replaceSourceWithNativeInput(page, sourceEditor, source, markdown, 'windowed-code-recovery-input');
+    await waitForSourceExactValue(source, markdown, 'windowed-code-recovery-before');
+    const full = await enterFullVisual(page);
+    await expect.poll(
+      () => full.visualEditor.locator('[data-easymde-preview-window-spacer]').count(),
+      { message: 'synthetic long source should activate the Windowed Visual owner' }
+    ).toBeGreaterThan(0);
+    const canvas = page.locator('.easymde-immersive-preview-canvas');
+    await canvas.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    const before = await waitForVisualPreviewAccepted(
+      full.visualEditor,
+      'windowed-code-recovery-before'
+    );
+    // The deleted fence is selected exactly as a browser selects a whole
+    // direct-child block, which is the shape the structural owner resolves.
+    const selectFence = () => full.visualEditor.locator('pre').first().evaluate(
+      (element) => {
+        const surface = element.parentElement;
+        if (!surface) throw new Error('windowed-code-surface-unavailable');
+        const selection = surface.ownerDocument.defaultView?.getSelection();
+        if (!selection) throw new Error('windowed-code-selection-unavailable');
+        const index = Array.prototype.indexOf.call(surface.children, element);
+        if (index < 0) throw new Error('windowed-code-index-unavailable');
+        surface.focus();
+        selection.removeAllRanges();
+        selection.setBaseAndExtent(surface, index, surface, index + 1);
+      }
+    );
+    const deletedFence = full.visualEditor.locator('pre').first();
+    await expect(deletedFence).toBeVisible();
+    await startContextMenuDiagnostics(page, 'windowed-code-recovery');
+    try {
+      await openVisualMenu(page, full.visualEditor, deletedFence, selectFence);
+      await openRootSubmenu(page, 'code-block');
+      await expectMenuItemState(page, 'delete-code-block', 'enabled');
+      await anyMenuItem(page, 'delete-code-block').last().click();
+      await expect(page.locator(menuSelector)).toHaveCount(0);
+    } catch (error) {
+      const diagnostic = await readContextMenuDiagnostics(
+        page,
+        'windowed-code-recovery',
+        'delete',
+        null,
+        [],
+        { expectedSource: markdown }
+      );
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n[editor-context-menu-diagnostic] ${JSON.stringify(diagnostic)}`,
+        { cause: error }
+      );
+    } finally {
+      await stopContextMenuDiagnostics(page);
+    }
+    await waitForSourceExactValue(source, expected, 'windowed-code-recovery-delete');
+    const after = await waitForVisualPreviewAccepted(
+      full.visualEditor,
+      'windowed-code-recovery-delete',
+      before.domHash
+    );
+    await full.visualEditor.press('ControlOrMeta+z');
+    await waitForSourceExactValue(source, markdown, 'windowed-code-recovery-undo');
+    await waitForVisualPreviewAccepted(
+      full.visualEditor,
+      'windowed-code-recovery-undo',
+      after.domHash
+    );
+    // Recovery post-conditions: the owner stays editable, the mounted window
+    // stays bounded, every visual block id stays unique, and the menu opens on
+    // both the restored area and an unaffected surviving code block.
+    const recovery = await full.visualEditor.evaluate((editor) => {
+      const blocks = Array.from(
+        editor.querySelectorAll('[data-easymde-visual-block-id]')
+      );
+      const ids = blocks.map((block) => block.getAttribute('data-easymde-visual-block-id'));
+      const surface = 'true' === editor.getAttribute('contenteditable')
+        ? editor
+        : editor.querySelector('[contenteditable="true"]');
+      return {
+        blockCount: blocks.length,
+        contentEditable: surface?.getAttribute('contenteditable') ?? null,
+        idCount: ids.length,
+        uniqueIds: new Set(ids).size,
+        windowSpacers: editor.querySelectorAll(
+          '[data-easymde-preview-window-spacer]'
+        ).length
+      };
+    });
+    expect(recovery.contentEditable).toBe('true');
+    expect(recovery.uniqueIds).toBe(recovery.idCount);
+    expect(recovery.blockCount).toBeGreaterThan(1);
+    expect(recovery.windowSpacers).toBeGreaterThan(0);
+    const restoredFence = full.visualEditor.locator('pre').first();
+    await expect(restoredFence).toBeVisible();
+    await startContextMenuDiagnostics(page, 'windowed-code-recovery-restored');
+    try {
+      await openVisualMenu(page, full.visualEditor, restoredFence, selectFence);
+      await openRootSubmenu(page, 'code-block');
+      await expectMenuItemState(page, 'delete-code-block', 'enabled');
+      await closeMenu(
+        page,
+        'windowed-code-recovery-restored',
+        { expectedSource: markdown, keepDiagnostics: true }
+      );
+    } catch (error) {
+      const diagnostic = await readContextMenuDiagnostics(
+        page,
+        'windowed-code-recovery-restored',
+        'restored',
+        null,
+        [],
+        { expectedSource: markdown }
+      );
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n[editor-context-menu-diagnostic] ${JSON.stringify(diagnostic)}`,
+        { cause: error }
+      );
+    } finally {
+      await stopContextMenuDiagnostics(page);
+    }
+    const survivingFence = full.visualEditor.locator('pre').last();
+    await expect(survivingFence).toBeVisible();
+    await startContextMenuDiagnostics(page, 'windowed-code-recovery-surviving');
+    try {
+      await openVisualMenu(page, full.visualEditor, survivingFence, () => survivingFence.evaluate(
+        (element) => {
+          const surface = element.parentElement;
+          if (!surface) throw new Error('windowed-code-surface-unavailable');
+          const selection = surface.ownerDocument.defaultView?.getSelection();
+          if (!selection) throw new Error('windowed-code-selection-unavailable');
+          const index = Array.prototype.indexOf.call(surface.children, element);
+          if (index < 0) throw new Error('windowed-code-index-unavailable');
+          surface.focus();
+          selection.removeAllRanges();
+          selection.setBaseAndExtent(surface, index, surface, index + 1);
+        }
+      ));
+      await openRootSubmenu(page, 'code-block');
+      await expectMenuItemState(page, 'delete-code-block', 'enabled');
+      await closeMenu(
+        page,
+        'windowed-code-recovery-surviving',
+        { expectedSource: markdown, keepDiagnostics: true }
+      );
+    } catch (error) {
+      const diagnostic = await readContextMenuDiagnostics(
+        page,
+        'windowed-code-recovery-surviving',
+        'surviving',
+        null,
+        [],
+        { expectedSource: markdown }
+      );
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}\n[editor-context-menu-diagnostic] ${JSON.stringify(diagnostic)}`,
+        { cause: error }
+      );
+    } finally {
+      await stopContextMenuDiagnostics(page);
+    }
+    await waitForSourceExactValue(source, markdown, 'windowed-code-recovery-final');
+  });
+
   test('deletes a Windowed Visual thematic break through native Backspace and restores Undo/Redo selection', async ({ page }) => {
     await login(page);
     await openNewPost(page);
     const { markdown, preview, source, sourceEditor } = await loadCanonicalFixture(page);
     const windowedMarkdown = `${markdown}\n${markdown}`;
-    await sourceEditor.fill(windowedMarkdown);
+    await replaceSourceWithNativeInput(page, sourceEditor, source, windowedMarkdown, 'windowed-hr-fixture-input');
     await waitForSourceExactValue(source, windowedMarkdown, 'windowed-hr-fixture-applied');
     await expect(preview).toHaveAttribute('aria-busy', 'false');
 
@@ -6090,11 +8246,7 @@ test.describe('Editor context menu production surfaces', () => {
 
       await page.goto('/wp-admin/post-new.php');
       await expect(page.locator('#easymde-editor')).toBeVisible();
-      const { markdown, source, sourceEditor } = await loadCanonicalFixture(
-        page,
-        1,
-        { nativeInput: true }
-      );
+      const { markdown, source, sourceEditor } = await loadCanonicalFixture(page);
       const selectedText = '普通文本';
       const boldMarkdown = markdown.replace(selectedText, `**${selectedText}**`);
       const sourcePreview = page.locator(

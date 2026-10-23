@@ -25,6 +25,7 @@ const composerPurposes = {
 };
 
 export const bundledFrontendPackages = {
+  '@codemirror/autocomplete': 'Completion support used by the official CodeMirror language packages for detached code formatting.',
   '@codemirror/commands': 'CodeMirror editing commands, keymaps, and undo history.',
   '@codemirror/lang-css': 'Official CSS language parsing and indentation for detached code formatting.',
   '@codemirror/lang-html': 'Official HTML language parsing and indentation for detached code formatting.',
@@ -38,9 +39,15 @@ export const bundledFrontendPackages = {
   '@codemirror/state': 'CodeMirror document, selection, transaction, and editor state.',
   '@codemirror/view': 'CodeMirror browser editor view and input handling.',
   '@lezer/common': 'Shared syntax-tree infrastructure required by CodeMirror.',
+  '@lezer/css': 'CSS parser used by official CSS language support for detached code formatting.',
   '@lezer/highlight': 'Highlighting infrastructure required by CodeMirror language support.',
+  '@lezer/html': 'HTML parser used by official HTML language support for detached code formatting.',
+  '@lezer/javascript': 'JavaScript and TypeScript parser used by official JavaScript language support for detached code formatting.',
+  '@lezer/json': 'JSON parser used by official JSON language support for detached code formatting.',
   '@lezer/lr': 'LR parser infrastructure required by CodeMirror language support.',
   '@lezer/markdown': 'Markdown parser used by CodeMirror language support.',
+  '@lezer/python': 'Python parser used by official Python language support for detached code formatting.',
+  '@lezer/yaml': 'YAML parser used by official YAML language support for detached code formatting.',
   '@marijn/find-cluster-break': 'Unicode grapheme boundary handling used by CodeMirror state.',
   crelt: 'DOM element construction used by CodeMirror view.',
   diff: 'Character-level change mapping used to preserve canonical Markdown during visual editing.',

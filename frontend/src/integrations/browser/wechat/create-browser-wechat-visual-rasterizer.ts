@@ -45,6 +45,58 @@ const SVG_VISUAL_STYLE_PROPERTIES = [
   'word-spacing'
 ] as const;
 
+// KaTeX lays its visual tree out with absolutely positioned vlist rows,
+// fraction rules, and per-glyph offsets. Those placements live in functional
+// geometry rather than in paint properties, so a math clone must carry them
+// across or fractions, scripts, radicals, and matrices collapse or drift.
+// Only geometry is added here: no background, filter, or resource-bearing
+// property may reintroduce a URL fetch into the copied image.
+const MATH_VISUAL_STYLE_PROPERTIES = [
+  ...SVG_VISUAL_STYLE_PROPERTIES,
+  'align-items',
+  'border-bottom-color',
+  'border-bottom-style',
+  'border-bottom-width',
+  'border-collapse',
+  'border-left-color',
+  'border-left-style',
+  'border-left-width',
+  'border-right-color',
+  'border-right-style',
+  'border-right-width',
+  'border-top-color',
+  'border-top-style',
+  'border-top-width',
+  'bottom',
+  'box-sizing',
+  'clip',
+  'flex-direction',
+  'float',
+  'height',
+  'left',
+  'margin-bottom',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'max-height',
+  'max-width',
+  'min-height',
+  'min-width',
+  'overflow',
+  'padding-bottom',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'position',
+  'right',
+  'table-layout',
+  'text-align',
+  'top',
+  'vertical-align',
+  'width',
+  'z-index'
+] as const;
+
 function computedStyle(
   document: Document,
   element: Element,
@@ -64,6 +116,7 @@ function inlineComputedStyles(
   original: Element,
   clone: Element,
   document: Document,
+  properties: readonly string[] = SVG_VISUAL_STYLE_PROPERTIES,
 ): void {
   const originals = [original, ...Array.from(original.querySelectorAll('*'))];
   const clones = [clone, ...Array.from(clone.querySelectorAll('*'))];
@@ -77,9 +130,15 @@ function inlineComputedStyles(
       continue;
     }
     const style = computedStyle(document, originalElement);
-    for (const property of SVG_VISUAL_STYLE_PROPERTIES) {
+    for (const property of properties) {
       const value = style.getPropertyValue(property);
-      if (value) cloneElement.style.setProperty(property, value);
+      if (!value) continue;
+      // The export contract forbids reactivating viewport-pinned layout in a
+      // copied image; only in-flow and relative/absolute geometry is portable.
+      if ('position' === property && !['static', 'relative', 'absolute'].includes(value)) {
+        continue;
+      }
+      cloneElement.style.setProperty(property, value);
     }
   }
 }
@@ -170,6 +229,17 @@ function assertRequest(
   return { height, pixelCount, scale: request.scale, width };
 }
 
+function normalizeMathClone(clone: Element): void {
+  // The WeChat contract keeps only the visual KaTeX tree: WeChat imports the
+  // MathML fallback as a second, duplicated text run. Removing it before style
+  // inlining keeps the fallback's hidden layout out of the rasterized image.
+  // KaTeX positions vlist rows relative to their own containing block, so the
+  // functional geometry inlined below stays correct without coordinate rebasing.
+  clone.querySelectorAll('.katex-mathml').forEach((element) => {
+    element.remove();
+  });
+}
+
 function serializedSvg(
   request: WechatVisualRasterizationRequest,
   dimensionsValue: Readonly<{ height: number; width: number }>,
@@ -210,7 +280,10 @@ function serializedSvg(
     const container = document.createElementNS(XHTML_NAMESPACE, 'div');
     container.setAttribute('xmlns', XHTML_NAMESPACE);
     const clone = request.source.cloneNode(true) as Element;
-    inlineComputedStyles(request.source, clone, document);
+    // Inline first: styles are paired with the original tree by node index, so
+    // removal of the MathML fallback must happen after that pairing is applied.
+    inlineComputedStyles(request.source, clone, document, MATH_VISUAL_STYLE_PROPERTIES);
+    normalizeMathClone(clone);
     container.appendChild(clone);
     foreignObject.appendChild(container);
     svg.appendChild(foreignObject);

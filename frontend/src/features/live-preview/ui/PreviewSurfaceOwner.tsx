@@ -1,11 +1,13 @@
 import {
 	createElement,
 	useCallback,
+	useEffect,
 	useLayoutEffect,
 	useRef,
 	useState,
 } from "@wordpress/element";
 import type { CSSProperties } from "react";
+import type { DocumentHistoryState } from "../../document-source/adapters/code-mirror-document-session";
 import type {
 	EditorMarkdownMathSpan,
 	EditorMarkdownSourceBlock,
@@ -17,6 +19,7 @@ import type {
 	PreviewRequestState,
 	SafePreviewHtml,
 } from "../../../contracts/ports/preview-request";
+import { prepareVisualProtectedNodeAdoption } from "../../../shared/dom/visual-protected-node-adoption";
 import {
 	isMarkdownTerminalWhitespaceSuffix,
 	markdownLineStarts,
@@ -36,6 +39,12 @@ import {
 	generatedImageTargetCount,
 } from "../../generated-content-export/generated-image-target";
 import {
+	projectVisualCodeFenceMetadata,
+	projectVisualCodeBodySelection,
+	serializeVisualMarkdownBlockFragment,
+	visualCodeBodyBoundaryAtOffset,
+} from "../../immersive-editor/visual-markdown";
+import {
 	createPreviewRequestSession,
 	type PreviewRequestSession,
 } from "../model/create-preview-request-session";
@@ -49,6 +58,7 @@ import type {
 	PreviewScrollSnapshot,
 } from "../ports/preview-scroll-port";
 import {
+	advancePreviewWindowFlowBoundary,
 	capturePreviewWindowFlowBoundary,
 	createPreviewWindowRepository,
 	fullMaterializedNodes,
@@ -56,6 +66,7 @@ import {
 	markPreviewWindowFlowGapUnknown,
 	markPreviewWindowFlowGeometryMeasured,
 	markPreviewWindowFlowGeometryUnknown,
+	measurePreviewWindowAdoptedBlock,
 	measurePreviewWindowBlockGeometry,
 	PREVIEW_WINDOW_SPACER_ATTRIBUTE,
 	PreviewWindowDomError,
@@ -73,7 +84,9 @@ import {
 import {
 	SafePreviewHtmlSink,
 	type SafePreviewHtmlSinkCommit,
+	type SafePreviewHtmlSinkCompositionGate,
 	type SafePreviewHtmlSinkMaterializeCommit,
+	type SafePreviewHtmlSinkSelectionHandoff,
 	type SafePreviewHtmlSinkWindowCommit,
 } from "./SafePreviewHtmlSink";
 
@@ -607,6 +620,10 @@ export type PreviewAcceptedWindowSnapshot = Readonly<{
 	>;
 	/** The exact child sequence installed by the accepted window commit. */
 	nodes: ReadonlyArray<Node>;
+	/** Present only while the accepted source still has its formal map. */
+	editMap?: PreviewEditMap;
+	sourceRevision?: number;
+	ownedGap?: HTMLElement;
 	/** The accepted Preview HTML revision represented by this certificate. */
 	revision: number;
 	signature: string;
@@ -645,18 +662,24 @@ type MutablePreviewWindowCommit = {
 	key: number;
 	nodes: Node[];
 	revision: number;
+	selectionHandoff?: SafePreviewHtmlSinkSelectionHandoff;
 };
 
 type AcceptedWindowBlockBaseline = Readonly<{
 	id: string;
 	innerHTML: string;
 	node: HTMLElement;
+	sourceRange: Readonly<{ start: number; end: number }> | null;
 }>;
 
 type AcceptedWindowBaseline = Readonly<{
 	blocks: ReadonlyMap<HTMLElement, AcceptedWindowBlockBaseline>;
 	revision: number;
 	signature: string;
+	markdown: string | null;
+	/** Local range transport does not renew the formal edit map. */
+	sourceMapCurrent: boolean;
+	sourceRevision: number | null;
 }>;
 
 type PendingPreviewScrollRestore = Readonly<{
@@ -681,6 +704,7 @@ function hasMeasuredMountedPreviewWindowGeometry(
 	if (0 === anchorIndex) return true;
 	for (const child of Array.from(surface.children)) {
 		if (child.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)) continue;
+		if (child === repository.ownedGap?.node) continue;
 		const index = previewWindowBlockIndexForNode(repository, surface, child);
 		if (null !== anchorIndex && null !== index && index > anchorIndex) break;
 		if (null === index || repository.flowGeometryEpoch[index] !== epoch) {
@@ -713,6 +737,23 @@ function verifyPreviewWindowFlowAnchor(
 	}
 }
 
+export type PreviewOwnedGap = Readonly<{
+	node: HTMLElement;
+	markdown: string;
+	sourceRevision: number;
+	html: string;
+	surface: HTMLElement;
+	historyState: DocumentHistoryState;
+	isLive: () => boolean;
+	before: Readonly<{ start: number; end: number; source: string }>;
+	after: Readonly<{ start: number; end: number; source: string }>;
+}>;
+
+export type PreviewCompositionSurfaceLease = Readonly<{
+	release: () => void;
+	retainGap?: (gap: PreviewOwnedGap) => void;
+}>;
+
 export type PreviewSurfaceRuntime = Readonly<{
 	getGeneratedPreviewIdentity: () => PreviewGeneratedPreviewIdentity | null;
 	getAcceptedWindowSnapshot: () => PreviewAcceptedWindowSnapshot | null;
@@ -737,6 +778,12 @@ export type PreviewSurfaceRuntime = Readonly<{
 		sourceSelection?: PreviewSourceSelection,
 	) => PreviewDocumentEndPinLease;
 	prepareWindowBlockAdoption: (node: HTMLElement) => (() => boolean) | null;
+	/**
+	 * Held by the immersive editor while an accepted composition lease owns the
+	 * surface. Releasing re-runs the sink effect with the newest props, so the
+	 * accepted commit installs only after the canonical text is published.
+	 */
+	retainCompositionSurface: () => PreviewCompositionSurfaceLease;
 	session: PreviewRequestSession;
 	surface: HTMLElement;
 }>;
@@ -1052,8 +1099,8 @@ function isFullMaterializedWindowSurface(
 		}
 	}
 	return (
-		roots.length === repository.nodes.length &&
-		repository.nodes.every(
+		roots.length === fullMaterializedNodes(repository).length &&
+		fullMaterializedNodes(repository).every(
 			(node, index) =>
 				roots[index] === node &&
 				node.isConnected &&
@@ -1090,6 +1137,7 @@ function createAcceptedWindowSnapshot(
 		return null;
 	}
 	const blocks = commit.nodes.flatMap((node) => {
+		if (node === repository.ownedGap?.node) return [];
 		if (
 			!(node instanceof HTMLElement) ||
 			node.hasAttribute(PREVIEW_WINDOW_SPACER_ATTRIBUTE)
@@ -1126,22 +1174,73 @@ function createAcceptedWindowSnapshot(
 		),
 		key: commit.key,
 		nodes: Object.freeze([...commit.nodes]),
+		...(baseline.sourceMapCurrent && state.editMap ? { editMap: state.editMap } : {}),
+		...(baseline.sourceRevision !== null ? { sourceRevision: baseline.sourceRevision } : {}),
+		...(repository.ownedGap ? { ownedGap: repository.ownedGap.node } : {}),
 		revision: commit.revision,
 		signature: state.signature,
 	});
 }
 
+function previewWindowFenceBindings(
+	repository: PreviewWindowNodeRepository,
+	markdown: string,
+): ((root: HTMLElement) => Readonly<{ end: number; start: number }> | null) | null {
+	if (!markdown) return null;
+	const lineStarts = markdownLineStarts(markdown);
+	const bindings = new Map<string, Readonly<{ end: number; start: number }>>();
+	let previousEndLine = 0;
+	for (const entry of repository.blocks) {
+		const block = entry.map;
+		if (
+			!Number.isInteger(block.startLine) ||
+			!Number.isInteger(block.endLine) ||
+			block.startLine < previousEndLine ||
+			block.startLine < 0 ||
+			block.endLine < block.startLine ||
+			block.endLine > lineStarts.length ||
+			(block.editable && block.endLine === block.startLine)
+		) {
+			return null;
+		}
+		previousEndLine = block.endLine;
+		if (!block.editable) continue;
+		const start = lineStarts[block.startLine];
+		const end =
+			block.endLine === lineStarts.length
+				? markdown.length
+				: lineStarts[block.endLine];
+		if (undefined === start || undefined === end) return null;
+		bindings.set(block.id, { end, start });
+	}
+	return (root: HTMLElement) => {
+		const id = root.getAttribute(VISUAL_BLOCK_ATTRIBUTE) ?? "";
+		return id ? (bindings.get(id) ?? null) : null;
+	};
+}
+
 function captureAcceptedWindowBaseline(
+	surface: HTMLElement,
 	repository: PreviewWindowNodeRepository,
 	revision: number,
 	signature: string,
+	markdown?: string | null,
+	sourceRevision: number | null = null,
 ): AcceptedWindowBaseline | null {
 	try {
 		validatePreviewWindowRepository(repository);
 	} catch {
 		return null;
 	}
+	if (markdown) {
+		const binding = previewWindowFenceBindings(repository, markdown);
+		if (binding) {
+			projectVisualCodeFenceMetadata(markdown, surface, binding);
+		}
+	}
+	prepareVisualProtectedNodeAdoption([], repository.nodes);
 	const blocks = new Map<HTMLElement, AcceptedWindowBlockBaseline>();
+	const starts = null != markdown ? markdownLineStarts(markdown) : null;
 	for (const entry of repository.blocks) {
 		const clone = entry.node.cloneNode(true);
 		if (!(clone instanceof HTMLElement)) return null;
@@ -1151,24 +1250,54 @@ function captureAcceptedWindowBaseline(
 				id: entry.map.id,
 				innerHTML: clone.innerHTML,
 				node: entry.node,
+				sourceRange: starts && null != markdown ? {
+					start: starts[entry.map.startLine] ?? markdown.length,
+					end: starts[entry.map.endLine] ?? markdown.length,
+				} : null,
 			}),
 		);
 	}
-	return Object.freeze({ blocks, revision, signature });
+	return Object.freeze({ blocks, revision, signature, markdown: markdown ?? null, sourceRevision, sourceMapCurrent: true });
 }
 
 function extendAcceptedWindowBaseline(
 	baseline: AcceptedWindowBaseline,
 	id: string,
 	node: HTMLElement,
+	sourceSnapshot: PreviewSourceSnapshot | null = null,
 ): AcceptedWindowBaseline {
 	const clone = node.cloneNode(true);
 	if (!(clone instanceof HTMLElement)) {
 		throw new PreviewWindowDomError("preview-window-baseline-capture-failed");
 	}
-	const blocks = new Map(baseline.blocks);
-	blocks.set(node, Object.freeze({ id, innerHTML: clone.innerHTML, node }));
-	return Object.freeze({ ...baseline, blocks });
+	const previous = baseline.blocks.get(node) ?? [...baseline.blocks.values()].find((block) => block.id === id);
+	const previousRange = previous?.sourceRange ?? null;
+	let markdown = baseline.markdown;
+	let sourceRevision = baseline.sourceRevision;
+	let changedRange = previousRange;
+	let delta = 0;
+	if (sourceSnapshot && markdown !== null && previousRange && sourceSnapshot.value !== markdown) {
+		delta = sourceSnapshot.value.length - markdown.length;
+		const end = previousRange.end + delta;
+		if (end < previousRange.start
+			|| !sourceSnapshot.value.startsWith(markdown.slice(0, previousRange.start))
+			|| sourceSnapshot.value.slice(end) !== markdown.slice(previousRange.end)) {
+			throw new PreviewWindowDomError("preview-window-local-source-witness-stale");
+		}
+		changedRange = { start: previousRange.start, end };
+		markdown = sourceSnapshot.value;
+		sourceRevision = sourceSnapshot.revision;
+	} else if (sourceSnapshot && sourceSnapshot.value === markdown) sourceRevision = sourceSnapshot.revision;
+	const blocks = new Map<HTMLElement, AcceptedWindowBlockBaseline>();
+	for (const [root, block] of baseline.blocks) {
+		if (block.id === id) continue;
+		const range = block.sourceRange;
+		blocks.set(root, delta && previousRange && range && range.start >= previousRange.end
+			? Object.freeze({ ...block, sourceRange: { start: range.start + delta, end: range.end + delta } }) : block);
+	}
+	blocks.set(node, Object.freeze({ id, innerHTML: clone.innerHTML, node, sourceRange: changedRange }));
+	return Object.freeze({ ...baseline, blocks, markdown, sourceRevision,
+		sourceMapCurrent: baseline.sourceMapCurrent && markdown === baseline.markdown });
 }
 
 function surfaceStatus(state: PreviewSurfaceState): PreviewSurfaceStatus {
@@ -1253,6 +1382,7 @@ async function measurePreviewWindowCandidateGeometry(
 			node,
 			repository.nodes[index + 1] ?? null,
 			previousGeometry,
+			repository.ownedGap?.node,
 		);
 		if (!measurement) continue;
 		repository.model.updateMeasuredHeight({
@@ -1526,6 +1656,8 @@ function annotateEnhancedVisualSources(
 
 export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	const surfaceRef = useRef<HTMLElement | null>(null);
+	const ownedGapRef = useRef<PreviewOwnedGap | null>(null);
+	const resumeDeferredEnhancementRef = useRef<(() => void) | null>(null);
 	const scrollSnapshotRef = useRef<PendingPreviewScrollRestore | null>(null);
 	const generationRef = useRef(0);
 	const enhancementCandidateRef = useRef<PreviewEnhancementCandidate | null>(
@@ -1550,6 +1682,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	const pendingWindowBaselineRef = useRef<AcceptedWindowBaseline | null>(null);
 	const acceptedWindowSnapshotRef =
 		useRef<PreviewAcceptedWindowSnapshot | null>(null);
+	const installedWindowSnapshotRef = useRef<PreviewAcceptedWindowSnapshot | null>(null);
 	const pendingWindowCommitRef = useRef<MutablePreviewWindowCommit | null>(
 		null,
 	);
@@ -1573,6 +1706,19 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	const materializedOverrideRef = useRef(false);
 	const ownerActiveRef = useRef(false);
 	const documentEndPinRef = useRef<MutablePreviewDocumentEndPin | null>(null);
+	const compositionSurfaceActivationRef = useRef(0);
+	const compositionSurfaceLeasesRef = useRef(0);
+	const compositionSurfaceHeldRef = useRef(false);
+	const [compositionSurfaceVersion, setCompositionSurfaceVersion] = useState(0);
+	const compositionSurfaceGate: SafePreviewHtmlSinkCompositionGate = {
+		isHeld: () => compositionSurfaceHeldRef.current,
+		version: compositionSurfaceVersion,
+	};
+	const retainCompositionSurfaceRef = useRef<
+		(activation: number) => PreviewCompositionSurfaceLease
+	>(() => {
+		throw new Error("preview-composition-surface-inactive");
+	});
 	const prepareWindowBlockAdoptionRef = useRef<
 		(node: HTMLElement) => (() => boolean) | null
 	>(() => null);
@@ -2090,7 +2236,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 	};
 
 	getAcceptedWindowSnapshotRef.current = () => {
-		const accepted = acceptedWindowSnapshotRef.current;
+		const accepted = acceptedWindowSnapshotRef.current ?? installedWindowSnapshotRef.current;
 		const surface = surfaceRef.current;
 		const current = stateRef.current;
 		const repository = previewWindowRepositoryRef.current;
@@ -2121,6 +2267,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			accepted.nodes.some((node, index) => commit.nodes[index] !== node)
 		)
 			return null;
+		if (accepted.sourceRevision !== undefined) {
+			const source = readCurrentSourceSnapshot();
+			// This certifies accepted content, not a live input lease.
+			// Preserve its recorded epoch; input owners compare that epoch with
+			// their current revision/history before authorizing any mutation.
+			if (!source || source.value !== acceptedWindowBaselineRef.current?.markdown) return null;
+		}
 		try {
 			validatePreviewWindowRepository(repository);
 		} catch {
@@ -2586,6 +2739,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		pendingWindowFlowAnchorRef.current = null;
 		pendingWindowBaselineRef.current = null;
 		acceptedWindowSnapshotRef.current = null;
+		installedWindowSnapshotRef.current = null;
 		discardEnhancementCandidate(enhancementCandidateRef.current);
 		enhancementCandidateRef.current = null;
 	}, []);
@@ -2672,7 +2826,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					pendingBaseline?.revision === revision &&
 					pendingBaseline.signature === committingState.signature
 				) {
-					acceptedWindowBaselineRef.current = pendingBaseline;
+					const installedSource = readCurrentSourceSnapshot();
+					// The formal frame may have waited behind a revoked IME lease.
+					// Certify its exact source at installation; this renews content
+					// ownership only, never the old input/history capability.
+					acceptedWindowBaselineRef.current = installedSource && installedSource.value === pendingBaseline.markdown
+						? Object.freeze({ ...pendingBaseline, sourceRevision: installedSource.revision })
+						: pendingBaseline;
 					pendingWindowBaselineRef.current = null;
 				}
 				const repository = previewWindowRepositoryRef.current;
@@ -2705,6 +2865,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					} catch (error) {
 						pendingWindowFlowAnchorRef.current = null;
 						acceptedWindowSnapshotRef.current = null;
+						installedWindowSnapshotRef.current = null;
 						props.onDiagnostic?.(previewFailureCode(error));
 						previewWindowRepositoryRef.current = null;
 						setState((current) =>
@@ -2723,17 +2884,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						return;
 					}
 				}
+				installedWindowSnapshotRef.current = repository && surface
+					? createAcceptedWindowSnapshot(surface, repository, committingState.windowedCommit, committingState, acceptedWindowBaselineRef.current)
+					: null;
 				if (!deferAnchorVerification) {
-					acceptedWindowSnapshotRef.current =
-						repository && surface
-							? createAcceptedWindowSnapshot(
-									surface,
-								repository,
-								committingState.windowedCommit,
-								committingState,
-								acceptedWindowBaselineRef.current,
-							)
-							: null;
+					acceptedWindowSnapshotRef.current = installedWindowSnapshotRef.current;
 					installedWindowGeometryContextRef.current = repository
 						? previewWindowGeometryEpochKey(repository.context)
 						: null;
@@ -2746,6 +2901,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				}
 			} else {
 				acceptedWindowSnapshotRef.current = null;
+				installedWindowSnapshotRef.current = null;
 				installedWindowGeometryContextRef.current = null;
 			}
 			if (
@@ -3009,6 +3165,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		materializePendingRef.current = null;
 		materializationPendingRef.current = false;
 		acceptedWindowSnapshotRef.current = null;
+		installedWindowSnapshotRef.current = null;
 		pending.resolve(true);
 		setState((current) =>
 			"html" === current.kind &&
@@ -3039,6 +3196,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			materializedOverrideRef.current = false;
 			windowCommitPendingRef.current = false;
 			acceptedWindowSnapshotRef.current = null;
+			installedWindowSnapshotRef.current = null;
 			previewWindowRepositoryRef.current = null;
 			pending.resolve(false);
 			props.onDiagnostic?.(previewFailureCode(error));
@@ -3136,6 +3294,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			materializedOverrideRef.current = true;
 			windowCommitPendingRef.current = false;
 			acceptedWindowSnapshotRef.current = null;
+			installedWindowSnapshotRef.current = null;
 			const materializeCommit: SafePreviewHtmlSinkMaterializeCommit = {
 				key,
 				nodes,
@@ -3241,8 +3400,27 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		)
 			return null;
 		const expectedContext = repository.context;
+		let replacementAdopted = false;
+		// A rejected adoption must leave the accepted window mounted: a
+		// foreign replacement root this finalize refuses has no accepted
+		// identity, so the row it claimed goes back to the node the repository
+		// still names. Restoring here keeps the sink self-healing for every
+		// refusal path without touching any accepting one.
+		const restoreAcceptedNode = (): void => {
+			if (
+				node.isConnected &&
+				node.parentNode === surface &&
+				!previousNode.isConnected &&
+				repository.nodes[index] === previousNode
+			) {
+				node.replaceWith(previousNode);
+			}
+		};
 		return () => {
-			if (!ownerActiveRef.current || !windowedRef.current) return false;
+			if (!ownerActiveRef.current || !windowedRef.current) {
+				restoreAcceptedNode();
+				return false;
+			}
 			const currentSurface = surfaceRef.current;
 			const currentRepository = previewWindowRepositoryRef.current;
 			const currentState = stateRef.current;
@@ -3270,13 +3448,16 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					(expectedChild, childIndex) =>
 						surface.children[childIndex] !== expectedChild,
 				)
-			)
+			) {
+				restoreAcceptedNode();
 				return false;
+			}
 
 			try {
 				validatePreviewWindowRepository(repository);
 			} catch {
-				return false;
+				restoreAcceptedNode();
+			return false;
 			}
 
 			const currentBlock = repository.blocks[index];
@@ -3285,16 +3466,77 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				currentBlock.index !== index ||
 				currentBlock.map.id !== id ||
 				repository.indexById.get(id) !== index
-			)
+			) {
+				restoreAcceptedNode();
 				return false;
+			}
 			if (currentBlock.node === node && repository.nodes[index] === node) {
+				// A root-preserving local edit keeps the mounted node, so the
+				// repository already names it and only its accepted content
+				// moved. Advance exactly this block's baselines and retire the
+				// published snapshot: re-reporting the previous content would
+				// describe a DOM this owner no longer has, and every later
+				// accepted-window registration would reject the live node.
+				if (
+					acceptedWindowBaselineRef.current?.revision !==
+						expectedContext.revision ||
+					acceptedWindowBaselineRef.current.signature !==
+						expectedContext.signature
+				) {
+					restoreAcceptedNode();
+					return false;
+				}
+				acceptedWindowBaselineRef.current = extendAcceptedWindowBaseline(
+					acceptedWindowBaselineRef.current,
+					id,
+					node,
+					readCurrentSourceSnapshot(),
+				);
+				if (
+					pendingWindowBaselineRef.current?.revision ===
+						expectedContext.revision &&
+					pendingWindowBaselineRef.current.signature ===
+						expectedContext.signature
+				) {
+					pendingWindowBaselineRef.current = extendAcceptedWindowBaseline(
+						pendingWindowBaselineRef.current,
+						id,
+						node,
+						readCurrentSourceSnapshot(),
+					);
+				}
+				// The retained root now describes accepted content the flow model
+				// has not measured. Record that exact content here, in the same
+				// accepted transition, so a later window commit can still compare
+				// its installed surface with a boundary that describes it.
+				// A second finalization after replacement adoption advances only
+				// the canonical witness; the replacement geometry was invalidated
+				// once by the pre-canonical DOM transaction below.
+				if (!replacementAdopted) measurePreviewWindowAdoptedBlock(repository, surface, index);
+				acceptedWindowSnapshotRef.current = null;
+				installedWindowSnapshotRef.current = null;
 				return true;
 			}
 			if (
 				currentBlock.node !== previousNode ||
 				repository.nodes[index] !== previousNode
-			)
+			) {
+				restoreAcceptedNode();
 				return false;
+			}
+
+			// Repository adoption and the sink's accepted child list are one
+			// transition. Otherwise loading rejects the old PRE identity and
+			// remounts HTML, destroying the pending native selection lease.
+			const acceptedCommit = currentState.windowedCommit;
+			const acceptedNodes = acceptedCommit?.nodes.map((child) => child === previousNode ? node : child);
+			if (acceptedCommit && (acceptedCommit.revision !== expectedContext.revision
+				|| !acceptedCommit.nodes.includes(previousNode)
+				|| acceptedNodes?.length !== surface.childNodes.length
+				|| acceptedNodes.some((child, childIndex) => surface.childNodes[childIndex] !== child))) {
+				restoreAcceptedNode();
+				return false;
+			}
 
 			const previousNodes = repository.nodes;
 			const previousBlocks = repository.blocks;
@@ -3323,7 +3565,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				entryIndex === index ? { ...entry, node } : entry,
 			);
 			const replacementGeometry = repository.model.flowGeometries[index];
-			if (!replacementGeometry) return false;
+			if (!replacementGeometry) {
+				restoreAcceptedNode();
+				return false;
+			}
 			const nextAcceptedBaseline =
 				acceptedWindowBaselineRef.current?.revision ===
 					expectedContext.revision &&
@@ -3333,6 +3578,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							acceptedWindowBaselineRef.current,
 							id,
 							node,
+							readCurrentSourceSnapshot(),
 						)
 					: acceptedWindowBaselineRef.current;
 			const nextPendingBaseline =
@@ -3343,6 +3589,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 							pendingWindowBaselineRef.current,
 							id,
 							node,
+							readCurrentSourceSnapshot(),
 						)
 					: pendingWindowBaselineRef.current;
 			repository.nodes = nextNodes;
@@ -3394,9 +3641,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				if (mutablePendingNodes && previousPendingNode) {
 					mutablePendingNodes[pendingNodeIndex] = previousPendingNode;
 				}
+				restoreAcceptedNode();
 				return false;
 			}
 			acceptedWindowSnapshotRef.current = null;
+			installedWindowSnapshotRef.current = null;
 			if (
 				index === 0 ||
 				index === repository.nodes.length - 1 ||
@@ -3410,10 +3659,63 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			}
 			acceptedWindowBaselineRef.current = nextAcceptedBaseline;
 			pendingWindowBaselineRef.current = nextPendingBaseline;
+			replacementAdopted = true;
+			if (acceptedCommit && acceptedNodes) {
+				setState((current) => current.kind === "html" && current.windowedCommit === acceptedCommit
+					? { ...current, windowedCommit: { ...acceptedCommit, nodes: acceptedNodes } }
+					: current);
+			}
 			return true;
 		};
 	};
 	prepareWindowBlockAdoptionRef.current = prepareWindowBlockAdoption;
+	useEffect(() => {
+		if (!compositionSurfaceHeldRef.current) scheduleWindowRef.current();
+	}, [compositionSurfaceVersion]);
+	retainCompositionSurfaceRef.current = (activation) => {
+		const surface = surfaceRef.current;
+		if (
+			activation !== compositionSurfaceActivationRef.current ||
+			!ownerActiveRef.current ||
+			!surface ||
+			!surface.isConnected
+		) {
+			// A runtime from a superseded activation must not lend the current
+			// surface; only the live owner activation can hold its own lease.
+			throw new Error("preview-composition-surface-inactive");
+		}
+		if (materializationPendingRef.current) {
+			// Gating future starts cannot stop a rollback already in flight; the
+			// admission must refuse instead of holding over it.
+			throw new Error("preview-composition-surface-busy");
+		}
+		compositionSurfaceLeasesRef.current += 1;
+		compositionSurfaceHeldRef.current = true;
+		setCompositionSurfaceVersion((version) => version + 1);
+		let released = false;
+		return {
+			retainGap: (gap) => {
+				if (released || activation !== compositionSurfaceActivationRef.current || gap.surface !== surface || gap.node.parentNode !== surface || !gap.isLive()) {
+					throw new Error("preview-owned-gap-stale");
+				}
+				ownedGapRef.current = gap;
+			},
+			release: () => {
+				// A late, duplicated, or pre-teardown release never lifts another
+				// lease: only this activation may settle its own token.
+				if (released) return;
+				released = true;
+				if (activation !== compositionSurfaceActivationRef.current) return;
+				compositionSurfaceLeasesRef.current = Math.max(
+					0,
+					compositionSurfaceLeasesRef.current - 1,
+				);
+				compositionSurfaceHeldRef.current = compositionSurfaceLeasesRef.current > 0;
+				if (!compositionSurfaceHeldRef.current) resumeDeferredEnhancementRef.current?.();
+				setCompositionSurfaceVersion((version) => version + 1);
+			},
+		};
+	};
 
 	useLayoutEffect(() => {
 		const pending = materializePendingRef.current;
@@ -3666,6 +3968,10 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		const surface = surfaceRef.current;
 		if (!surface) throw new Error("preview-surface-missing");
 		ownerActiveRef.current = true;
+		// This runtime belongs to exactly this owner activation. A later effect
+		// restart replaces the activation, so an old runtime must not acquire a
+		// lease against the new owner's surface.
+		const runtimeActivation = compositionSurfaceActivationRef.current;
 		const session = createPreviewRequestSession({
 			initialRevision: props.initialRevision,
 			onState: publishRequestState,
@@ -3693,6 +3999,8 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			prepareDocumentEndWindowPin,
 			prepareWindowBlockAdoption: (node: HTMLElement) =>
 				prepareWindowBlockAdoptionRef.current(node),
+			retainCompositionSurface: () =>
+				retainCompositionSurfaceRef.current(runtimeActivation),
 			session,
 			surface,
 		};
@@ -3707,8 +4015,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		}
 		return () => {
 			ownerActiveRef.current = false;
+			compositionSurfaceActivationRef.current += 1;
+			compositionSurfaceLeasesRef.current = 0;
+			compositionSurfaceHeldRef.current = false;
 			acceptedWindowSnapshotRef.current = null;
+			installedWindowSnapshotRef.current = null;
 			acceptedGeneratedPreviewRef.current = null;
+			ownedGapRef.current = null;
 			stagedPreviewImageElementsRef.current = null;
 			documentEndPinRef.current = null;
 			scrollSnapshotRef.current = null;
@@ -3726,6 +4039,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			return;
 		}
 		acceptedWindowSnapshotRef.current = null;
+		installedWindowSnapshotRef.current = null;
 		const documentEndPin = documentEndPinRef.current;
 		if (documentEndPin) clearDocumentEndPin(documentEndPin, false);
 	}, [props.windowed]);
@@ -4078,6 +4392,21 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 					);
 					windowGeometryRequiresMeasuredRef.current = false;
 					repository = previewWindowRepositoryRef.current;
+					let ownedGap = ownedGapRef.current;
+					if (ownedGap?.isLive() && ownedGap.markdown === activeCandidate.markdown) {
+						const starts = markdownLineStarts(activeCandidate.markdown);
+						const neighborIndices = [ownedGap.before, ownedGap.after].map((extent) => activeCandidate.editMap!.blocks.findIndex((block) =>
+							(starts[block.startLine] ?? activeCandidate.markdown.length) === extent.start
+							&& (starts[block.endLine] ?? activeCandidate.markdown.length) === extent.end
+							&& activeCandidate.markdown.slice(extent.start, extent.end) === extent.source));
+						const before = neighborIndices[0]!; const after = neighborIndices[1]!;
+						if (before >= 0 && after === before + 1 && /^(?:\r\n|\r|\n)+$/u.test(activeCandidate.markdown.slice(ownedGap.before.end, ownedGap.after.start))) {
+							const clone = ownedGap.node.cloneNode(true) as HTMLElement;
+							clone.removeAttribute(VISUAL_BLOCK_ATTRIBUTE);
+							repository.nodes[after]!.before(clone);
+							repository.ownedGap = { node: clone, before, after };
+						}
+					}
 					if (
 						!(await measurePreviewWindowCandidateGeometry(
 							repository,
@@ -4091,9 +4420,13 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						return;
 					}
 					pendingWindowBaselineRef.current = captureAcceptedWindowBaseline(
+						candidateSurface,
 						repository,
 						generation,
 						activeCandidate.signature,
+						activeCandidate.markdown ||
+							(readCurrentSourceSnapshot()?.value ?? null),
+						readCurrentSourceSnapshot()?.revision ?? null,
 					);
 					if (!pendingWindowBaselineRef.current) {
 						throw new PreviewWindowDomError(
@@ -4125,6 +4458,41 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						candidateSurface.remove();
 						return;
 					}
+					if (repository.ownedGap && compositionSurfaceHeldRef.current) {
+						// Native preedit owns the real paragraph. Its existing lease
+						// releases after composition settlement, never after ready.
+						await new Promise<void>((resolve) => {
+							const resume = (): void => {
+								controller.signal.removeEventListener("abort", resume);
+								if (resumeDeferredEnhancementRef.current === resume) resumeDeferredEnhancementRef.current = null;
+								resolve();
+							};
+							resumeDeferredEnhancementRef.current = resume;
+							controller.signal.addEventListener("abort", resume, { once: true });
+						});
+						if (!isCurrent() || controller.signal.aborted) {
+							candidateSurface.remove();
+							return;
+						}
+					}
+					if (repository.ownedGap && (!ownedGap || !ownedGap.isLive())) {
+						const renewed = ownedGapRef.current;
+						// A new input capability may retain the same physical blank
+						// while staging yields. Reconcile that exact presentation;
+						// a different source epoch, shape or neighbor is still stale.
+						if (!ownedGap || !renewed?.isLive() || renewed.node !== ownedGap.node
+							|| renewed.surface !== ownedGap.surface || renewed.surface !== surface
+							|| renewed.historyState.undoDepth !== ownedGap.historyState.undoDepth
+							|| renewed.historyState.redoDepth !== ownedGap.historyState.redoDepth
+							|| renewed.sourceRevision !== ownedGap.sourceRevision || renewed.markdown !== ownedGap.markdown
+							|| renewed.html !== ownedGap.html || renewed.node.innerHTML !== ownedGap.html
+							|| renewed.before.start !== ownedGap.before.start || renewed.before.end !== ownedGap.before.end
+							|| renewed.before.source !== ownedGap.before.source || renewed.after.start !== ownedGap.after.start
+							|| renewed.after.end !== ownedGap.after.end || renewed.after.source !== ownedGap.after.source) {
+							throw new PreviewWindowDomError("preview-owned-gap-stale");
+						}
+						ownedGap = renewed;
+					}
 					const currentDocumentEndPin = documentEndPinRef.current;
 					const initialPinnedIndices =
 						matchingDocumentEndPin &&
@@ -4132,11 +4500,94 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						matchingDocumentEndPin.generation === repository.context.revision &&
 						matchingDocumentEndPin.signature === repository.context.signature &&
 						matchingDocumentEndPin.targetIndices.length > 0
-							? matchingDocumentEndPin.targetIndices
+							? [...matchingDocumentEndPin.targetIndices]
 							: [];
+					if (repository.ownedGap && ownedGap?.isLive()) {
+						initialPinnedIndices.push(repository.ownedGap.before, repository.ownedGap.after);
+						repository.ownedGap.node.remove();
+						ownedGap.node.removeAttribute(VISUAL_BLOCK_ATTRIBUTE);
+						repository.ownedGap = { ...repository.ownedGap, node: ownedGap.node };
+					}
+					// A surviving accepted row is the native editing anchor, not a
+					// pixel offset to repair after replacing its selection subtree.
+					let selectionHandoff: SafePreviewHtmlSinkSelectionHandoff | undefined;
+					const native = surface.ownerDocument.defaultView?.getSelection();
+					let selectedRoot: Node | null = native?.isCollapsed ? native.anchorNode : null;
+					while (selectedRoot && selectedRoot.parentNode !== surface) selectedRoot = selectedRoot.parentNode;
+					const previousBaseline = acceptedWindowBaselineRef.current;
+					const previousBlock = selectedRoot instanceof HTMLElement ? previousBaseline?.blocks.get(selectedRoot) : null;
+					const previousRange = previousBlock?.sourceRange;
+					const currentSource = readCurrentSourceSnapshot();
+					if (selectedRoot instanceof HTMLElement && previousBlock && previousRange && previousBaseline
+						&& currentSource && currentSource.revision === previousBaseline.sourceRevision
+						&& currentSource.value === previousBaseline.markdown && currentSource.value === activeCandidate.markdown
+						&& selectedRoot.innerHTML === previousBlock.innerHTML
+						&& selectedRoot.getAttribute(VISUAL_BLOCK_ATTRIBUTE) === previousBlock.id) {
+						const starts = markdownLineStarts(activeCandidate.markdown);
+						const index = activeCandidate.editMap.blocks.findIndex((block) => block.editable
+							&& starts[block.startLine] === previousRange.start
+							&& (starts[block.endLine] ?? activeCandidate.markdown.length) === previousRange.end);
+						const candidateNode = repository.nodes[index];
+						if (candidateNode && candidateNode.tagName === selectedRoot.tagName && candidateNode.innerHTML === selectedRoot.innerHTML
+							&& activeCandidate.markdown.slice(previousRange.start, previousRange.end) === previousBaseline.markdown?.slice(previousRange.start, previousRange.end)) {
+							const id = repository.blocks[index]!.map.id;
+							selectedRoot.setAttribute(VISUAL_BLOCK_ATTRIBUTE, id);
+							repository.nodes = repository.nodes.map((node, ordinal) => ordinal === index ? selectedRoot as HTMLElement : node);
+							repository.blocks = repository.blocks.map((block, ordinal) => ordinal === index ? { ...block, node: selectedRoot as HTMLElement } : block);
+							if (pendingWindowBaselineRef.current) pendingWindowBaselineRef.current = extendAcceptedWindowBaseline(pendingWindowBaselineRef.current, id, selectedRoot);
+							initialPinnedIndices.push(index);
+						} else if (candidateNode && candidateNode.tagName === selectedRoot.tagName && native?.anchorNode && native.isCollapsed) {
+							const previousRoot = selectedRoot;
+							const previousPoint = { node: native.anchorNode, offset: native.anchorOffset };
+							const previousCodes = Array.from(previousRoot.querySelectorAll<HTMLElement>("pre > code"));
+							const previousCode = previousPoint.node instanceof Element ? previousPoint.node.closest("code") : previousPoint.node.parentElement?.closest("code");
+							const codeOrdinal = previousCode instanceof HTMLElement ? previousCodes.indexOf(previousCode) : -1;
+							const nextCodes = Array.from(candidateNode.querySelectorAll<HTMLElement>("pre > code"));
+							const nextCode = nextCodes[codeOrdinal];
+							if (previousCode instanceof HTMLElement && codeOrdinal >= 0 && nextCode && nextCodes.length === previousCodes.length) {
+								const sourceSlice = activeCandidate.markdown.slice(previousRange.start, previousRange.end);
+								const projection = projectVisualCodeBodySelection(previousCode, sourceSlice,
+									serializeVisualMarkdownBlockFragment([previousRoot]), codeOrdinal, { start: previousPoint, end: previousPoint });
+								const sourceBodyOffset = projection.sourceSelection.start - projection.sourceInterval.bodyStart;
+								const nextPoint = visualCodeBodyBoundaryAtOffset(nextCode, projection.sourceText.slice(0, sourceBodyOffset).replace(/\r\n|\r/g, "\n").length);
+								const nextProjection = projectVisualCodeBodySelection(nextCode, sourceSlice,
+									serializeVisualMarkdownBlockFragment([candidateNode]), codeOrdinal, { start: nextPoint, end: nextPoint });
+								if (nextProjection.sourceSelection.start !== projection.sourceSelection.start || nextProjection.sourceSelection.end !== projection.sourceSelection.end) {
+									throw new PreviewWindowDomError("preview-window-code-selection-projection-mismatch");
+								}
+								const nextHtml = candidateNode.innerHTML;
+								const nextId = repository.blocks[index]!.map.id;
+								selectionHandoff = {
+									previous: previousPoint, next: nextPoint,
+									isCurrent: () => {
+										const liveSource = readCurrentSourceSnapshot();
+										if (!ownerActiveRef.current || generationRef.current !== generation
+											|| liveSource?.revision !== currentSource.revision || liveSource.value !== currentSource.value
+											|| previousRoot.innerHTML !== previousBlock.innerHTML
+											|| previousRoot.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== previousBlock.id
+											|| candidateNode.innerHTML !== nextHtml || candidateNode.getAttribute(VISUAL_BLOCK_ATTRIBUTE) !== nextId
+											|| previousRoot.querySelectorAll("pre > code")[codeOrdinal] !== previousCode
+											|| candidateNode.querySelectorAll("pre > code")[codeOrdinal] !== nextCode
+											|| !previousCode.contains(previousPoint.node) || !nextCode.contains(nextPoint.node)
+											|| previousPoint.offset < 0 || previousPoint.offset > (previousPoint.node instanceof Text ? previousPoint.node.length : previousPoint.node.childNodes.length)
+											|| nextPoint.offset < 0 || nextPoint.offset > nextPoint.node.length) return false;
+										const livePrevious = projectVisualCodeBodySelection(previousCode, sourceSlice,
+											serializeVisualMarkdownBlockFragment([previousRoot]), codeOrdinal, { start: previousPoint, end: previousPoint });
+										const liveNext = projectVisualCodeBodySelection(nextCode, sourceSlice,
+											serializeVisualMarkdownBlockFragment([candidateNode]), codeOrdinal, { start: nextPoint, end: nextPoint });
+										return livePrevious.sourceSelection.start === projection.sourceSelection.start
+											&& livePrevious.sourceSelection.end === projection.sourceSelection.end
+											&& liveNext.sourceSelection.start === projection.sourceSelection.start
+											&& liveNext.sourceSelection.end === projection.sourceSelection.end;
+									},
+								};
+								initialPinnedIndices.push(index);
+							}
+						}
+					}
 					const initialWindow = repository.model.getWindow({
 						context: repository.context,
-						pinnedIndices: initialPinnedIndices,
+						pinnedIndices: [...new Set(initialPinnedIndices)],
 						...(initialPinnedIndices.length > 0
 							? { maxMaterialized: DEFAULT_PREVIEW_WINDOW_MAX_MOUNTED }
 							: {}),
@@ -4146,9 +4597,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						key: ++windowCommitKeyRef.current,
 						nodes: [...windowNodes(repository, initialWindow)],
 						revision: generation,
+						...(selectionHandoff ? { selectionHandoff } : {}),
 					};
 					windowCommitPendingRef.current = true;
 					acceptedWindowSnapshotRef.current = null;
+					installedWindowSnapshotRef.current = null;
 					pendingWindowCommitRef.current = windowedCommit;
 				} else {
 					stagedCommit = {
@@ -4284,10 +4737,21 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				acceptedWindowBaselineRef.current.revision !== state.generation ||
 				acceptedWindowBaselineRef.current.signature !== state.signature
 			) {
+				const currentSourceMarkdown =
+					committedEnhancementCandidateRef.current?.generation ===
+					state.generation
+						? committedEnhancementCandidateRef.current.markdown
+						: acceptedGeneratedPreviewRef.current?.generation ===
+								  state.generation
+							? acceptedGeneratedPreviewRef.current.markdown
+							: (readCurrentSourceSnapshot()?.value ?? null);
 				acceptedWindowBaselineRef.current = captureAcceptedWindowBaseline(
+					surface,
 					repository,
 					state.generation,
 					state.signature,
+					currentSourceMarkdown,
+					readCurrentSourceSnapshot()?.revision ?? null,
 				);
 				if (!acceptedWindowBaselineRef.current) {
 					props.onDiagnostic?.("preview-window-baseline-capture-failed");
@@ -4355,6 +4819,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 
 		const pinnedIndices = (): readonly number[] => {
 			const pins = new Set<number>();
+			if (activeRepository.ownedGap) { pins.add(activeRepository.ownedGap.before); pins.add(activeRepository.ownedGap.after); }
 			const selection = documentRef.getSelection?.();
 			if (
 				selection &&
@@ -4428,6 +4893,11 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			if (materializationPendingRef.current || materializedOverrideRef.current) {
 				// Do not race the sink or replace a consumer's full surface. Pending sink
 				// completion restarts setup; a later activation releases a completed hold.
+				return;
+			}
+			if (compositionSurfaceHeldRef.current) {
+				// A lease owns the surface: measuring the draft would certify its
+				// preedit height. Release re-runs this effect with fresh props.
 				return;
 			}
 			try {
@@ -4504,6 +4974,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						node,
 						activeRepository.nodes[index + 1] ?? null,
 						previousGeometry,
+						activeRepository.ownedGap?.node,
 					);
 					if (!measurement) {
 						if (activeRepository.flowGeometryEpoch[index] !== geometryEpoch()) {
@@ -4521,45 +4992,14 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						index,
 						measuredHeight: geometry.borderHeight,
 					});
-					const boundary = activeRepository.flowBoundary;
-					if (
-						boundary &&
-						boundary.epoch === geometryEpoch() &&
-						(boundary.first === node ||
-							index < activeRepository.nodes.length - 1)
-					) {
-						const nextBoundary = {
-							...boundary,
-							...(boundary.first === node
-								? {
-										origin: previewWindowFlowDocumentCoordinate(
-											surface,
-											rect.top,
-											"preview-window-flow-origin-invalid",
-										),
-									}
-								: {}),
-							...(boundary.last === node
-								? {
-										end:
-											previewWindowFlowDocumentCoordinate(
-												surface,
-												rect.bottom,
-												"preview-window-flow-end-invalid",
-											) + geometry.gapAfter,
-									}
-								: { end: boundary.end + update.delta }),
-						};
-						if (
-							!Number.isFinite(nextBoundary.origin) ||
-							!Number.isFinite(nextBoundary.end)
-						) {
-							throw new PreviewWindowDomError(
-								"preview-window-flow-boundary-invalid",
-							);
-						}
-						activeRepository.flowBoundary = nextBoundary;
-					}
+					advancePreviewWindowFlowBoundary(
+						activeRepository,
+						surface,
+						index,
+						geometry,
+						update.delta,
+						rect,
+					);
 					activeRepository.spacerContentHeights.clear();
 					activeRepository.flowGeometry[index] = geometry;
 					activeRepository.flowGeometryEpoch[index] = geometryEpoch();
@@ -4679,6 +5119,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				}
 				windowCommitPendingRef.current = true;
 				acceptedWindowSnapshotRef.current = null;
+				installedWindowSnapshotRef.current = null;
 				pendingWindowCommitRef.current = commit;
 				setState((current) =>
 					"html" === current.kind &&
@@ -4691,6 +5132,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				windowCommitPendingRef.current = false;
 				pendingWindowCommitRef.current = null;
 				acceptedWindowSnapshotRef.current = null;
+				installedWindowSnapshotRef.current = null;
 				previewWindowRepositoryRef.current = null;
 				props.onDiagnostic?.(previewFailureCode(error));
 				setState((current) =>
@@ -4711,6 +5153,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		};
 
 		const scheduleWindow = () => {
+			if (compositionSurfaceHeldRef.current) return;
 			if (disposed || geometryPreparationRef.current || null !== frame) return;
 			if (materializationPendingRef.current || materializedOverrideRef.current) {
 				// This is the same activation-scoped hold as commitWindow, not a dropped
@@ -4758,6 +5201,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			scheduleWindow();
 		};
 		const beginGeometryPreparation = (): boolean => {
+			if (compositionSurfaceHeldRef.current) return false;
 			const currentState = stateRef.current;
 			if (
 				"html" !== currentState.kind ||
@@ -4788,6 +5232,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 				return Boolean(
 					geometryPreparationRef.current === preparation &&
 						!controller.signal.aborted &&
+						!compositionSurfaceHeldRef.current &&
 						ownerActiveRef.current &&
 						previewWindowRepositoryRef.current === activeRepository &&
 						generationRef.current === preparation.revision &&
@@ -4832,6 +5277,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 						node,
 						activeRepository.nodes[index + 1] ?? null,
 						previousGeometry,
+						activeRepository.ownedGap?.node,
 					);
 					if (!measurement) {
 						throw new PreviewWindowDomError(
@@ -4945,6 +5391,9 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 		props.onDiagnostic,
 		props.onWindowReady,
 		props.style,
+		// A suspended setup must wake for the lease's release with the current
+		// props instead of staying asleep with stale measurement closures.
+		compositionSurfaceVersion,
 	]);
 
 	useLayoutEffect(() => {
@@ -4991,6 +5440,7 @@ export function PreviewSurfaceOwner(props: PreviewSurfaceOwnerProps) {
 			onMaterializeFailure={onMaterializeFailure}
 			onStagedCommit={onStagedCommit}
 			refreshing={busy}
+			compositionGate={compositionSurfaceGate}
 			acceptedHtml={
 				"html" === state.kind &&
 				Boolean(state.html.trim()) &&

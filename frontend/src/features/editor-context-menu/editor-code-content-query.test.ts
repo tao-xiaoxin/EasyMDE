@@ -6,9 +6,11 @@ import type {
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
 import {
-  createEditorMarkdownBlockIndex,
-  findEditorCodeContentTarget
+  createEditorMarkdownBlockIndex
 } from './editor-markdown-block-index';
+import {
+  findEditorCodeContentTarget
+} from './editor-code-content-target';
 import {
   createEditorCodeContentQuery,
   editorCodeContentReadinessBlocksMenu,

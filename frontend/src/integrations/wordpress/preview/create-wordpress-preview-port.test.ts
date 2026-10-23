@@ -246,6 +246,217 @@ describe("createWordPressPreviewPort", () => {
 		});
 	});
 
+	it("correlates touching projection entries with their ordered code leaves", async () => {
+		const adjacentRequest = {
+			...request,
+			markdown: "```js\none\n```\n```js\ntwo\n```",
+			signature: "projection-adjacent",
+		};
+		const port = createWordPressPreviewPort(
+			vi.fn().mockResolvedValue(
+				validResponse({
+					codeMap: rawCodeMap([
+						codeEntry("fenced", 0, 3),
+						codeEntry("fenced", 3, 6),
+					]),
+					codeProjection: rawProjection([
+						{
+							code: "preview-code-projection-source-unavailable" as const,
+							endLine: 3,
+							kind: "fenced" as const,
+							startLine: 0,
+							status: "unavailable" as const,
+						},
+						{
+							code: "preview-code-projection-info-limit" as const,
+							endLine: 6,
+							kind: "fenced" as const,
+							startLine: 3,
+							status: "unavailable" as const,
+						},
+					]),
+				}),
+			),
+			"/wp-json/easymde/v1/preview",
+			"nonce",
+			"https://example.test/wp-admin/post.php",
+		);
+
+		await expect(
+			port.render(adjacentRequest, new AbortController().signal),
+		).resolves.toMatchObject({
+			codeProjection: {
+				entries: [
+					{
+						code: "preview-code-projection-source-unavailable",
+						endLine: 3,
+						kind: "fenced",
+						startLine: 0,
+						status: "unavailable",
+					},
+					{
+						code: "preview-code-projection-info-limit",
+						endLine: 6,
+						kind: "fenced",
+						startLine: 3,
+						status: "unavailable",
+					},
+				],
+				signature: "projection-adjacent",
+				status: "available",
+			},
+		});
+	});
+
+	it("skips code leaves that a later projection entry does not cover", async () => {
+		const skippedLeafRequest = {
+			...request,
+			markdown: "```js\none\n```\n\tx\n\ty\n\n```js\ntwo\n```",
+			signature: "projection-skipped-leaf",
+		};
+		const port = createWordPressPreviewPort(
+			vi.fn().mockResolvedValue(
+				validResponse({
+					codeMap: rawCodeMap([
+						codeEntry("fenced", 0, 3),
+						codeEntry("indented", 3, 5, "x\ny\n"),
+						codeEntry("fenced", 6, 9),
+					]),
+					codeProjection: rawProjection([
+						{
+							code: "preview-code-projection-source-unavailable" as const,
+							endLine: 3,
+							kind: "fenced" as const,
+							startLine: 0,
+							status: "unavailable" as const,
+						},
+						{
+							code: "preview-code-projection-source-unavailable" as const,
+							endLine: 9,
+							kind: "fenced" as const,
+							startLine: 6,
+							status: "unavailable" as const,
+						},
+					]),
+				}),
+			),
+			"/wp-json/easymde/v1/preview",
+			"nonce",
+			"https://example.test/wp-admin/post.php",
+		);
+
+		await expect(
+			port.render(skippedLeafRequest, new AbortController().signal),
+		).resolves.toMatchObject({
+			codeProjection: {
+				entries: [
+					{ endLine: 3, kind: "fenced", startLine: 0 },
+					{ endLine: 9, kind: "fenced", startLine: 6 },
+				],
+				signature: "projection-skipped-leaf",
+				status: "available",
+			},
+		});
+	});
+
+	it.each([
+		{
+			name: "a projection entry without a code leaf",
+			codeMap: rawCodeMap([codeEntry("fenced", 0, 3)]),
+			entries: [
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 3,
+					kind: "fenced" as const,
+					startLine: 0,
+					status: "unavailable" as const,
+				},
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 7,
+					kind: "fenced" as const,
+					startLine: 4,
+					status: "unavailable" as const,
+				},
+			],
+		},
+		{
+			name: "a duplicated projection range",
+			codeMap: rawCodeMap([codeEntry("fenced", 0, 3)]),
+			entries: [
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 3,
+					kind: "fenced" as const,
+					startLine: 0,
+					status: "unavailable" as const,
+				},
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 3,
+					kind: "fenced" as const,
+					startLine: 0,
+					status: "unavailable" as const,
+				},
+			],
+		},
+		{
+			name: "a code leaf kind that differs at the same range",
+			codeMap: rawCodeMap([codeEntry("indented", 0, 3)]),
+			entries: [
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 3,
+					kind: "fenced" as const,
+					startLine: 0,
+					status: "unavailable" as const,
+				},
+			],
+		},
+		{
+			name: "a code leaf range that differs at the same start line",
+			codeMap: rawCodeMap([codeEntry("fenced", 0, 2)]),
+			entries: [
+				{
+					code: "preview-code-projection-source-unavailable" as const,
+					endLine: 3,
+					kind: "fenced" as const,
+					startLine: 0,
+					status: "unavailable" as const,
+				},
+			],
+		},
+	])(
+		"normalizes $name to an unavailable projection",
+		async ({ codeMap, entries }) => {
+			const uncorrelatedRequest = {
+				...request,
+				markdown: "```js\none\n```\n\n```js\ntwo\n```",
+				signature: "projection-uncorrelated",
+			};
+			const port = createWordPressPreviewPort(
+				vi
+					.fn()
+					.mockResolvedValue(
+						validResponse({ codeMap, codeProjection: rawProjection(entries) }),
+					),
+				"/wp-json/easymde/v1/preview",
+				"nonce",
+				"https://example.test/wp-admin/post.php",
+			);
+
+			await expect(
+				port.render(uncorrelatedRequest, new AbortController().signal),
+			).resolves.toMatchObject({
+				codeProjection: {
+					code: "preview-code-projection-unavailable",
+					signature: "projection-uncorrelated",
+					status: "unavailable",
+				},
+			});
+		},
+	);
+
 	it("accepts a shared tab proof and omits semantic blank rows", async () => {
 		const projectionRequest = {
 			...request,

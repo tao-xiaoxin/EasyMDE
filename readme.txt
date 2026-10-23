@@ -175,6 +175,9 @@ See `SECURITY.md`, `UPGRADING.md`, and `THIRD-PARTY-NOTICES.md` in the release p
 
 = 0.1.9 =
 
+* Preserve the native heading-tail caret through repeated empty-fence deletion, Enter and continued typing, without replaying old Preview HTML or jumping to the article start.
+* Keep typed tilde and backtick fence prefixes literal until Enter, convert only the active paragraph, and preserve long-document code-body text and caret positions through formal Preview refreshes.
+* Place the native caret at the start of a paragraph whose only child is the renderer's empty-block placeholder, so exiting an empty code fence and typing there no longer loses the IME composition when the formal Preview lands.
 * Add an opt-in WeChat PNG export setting, disabled by default: explicit ordinary or immersive Copy converts only rendered Mermaid diagrams and formulas, keeps normal tables and other content in HTML, and uploads generated PNGs through Image Hosting when enabled or WordPress Media Library when disabled.
 * Make Image Hosting opt-in: `imageHostingEnabled` defaults to disabled, so eligible local image paste and drag-and-drop use the WordPress Media Library owner while remote image import is off; enabling it selects Image Hosting, and a failed selected owner never switches to another owner.
 

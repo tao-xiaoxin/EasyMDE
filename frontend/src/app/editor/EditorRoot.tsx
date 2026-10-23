@@ -60,13 +60,10 @@ import type {
   MediaPickerFramePort
 } from '../../contracts/ports/media-picker-port';
 import type {
-  PreviewCodeBodyMap,
-  PreviewCodeProjection,
   PreviewEditMap,
   PreviewCodeProjectionEntry,
   PreviewRequest,
   PreviewRequestPort,
-  PreviewResponse,
   SafePreviewHtml
 } from '../../contracts/ports/preview-request';
 import type { RevisionPort } from '../../contracts/ports/revision-port';
@@ -153,32 +150,23 @@ import {
 } from '../../features/editor-context-menu/EditorContextMenuFeature';
 import { EditorTableDialog } from '../../features/editor-context-menu/ui/EditorTableDialog';
 import {
-  editorContextSelectionFitsRange,
   isEditorContextCurrent,
   findMarkdownBlock,
-  findMarkdownTable,
   insertMarkdownBlockRelative,
-  tableSelectionAt,
-  type EditorTextEdit,
   type EditorContextSnapshot
 } from '../../features/editor-context-menu/editor-context-menu-rules';
 import {
-  deleteThematicBreak,
-  editMarkdownTable,
-  formatMarkdownTableSource,
-  insertParagraphRelative,
-  setMarkdownTableAlignment,
-  type MarkdownTableOperation
-} from '../../features/editor-context-menu/editor-context-menu-rules';
+  blockRangeWithTrailingTerminator,
+  editorContextSelectionFitsRange,
+  type EditorTextEdit
+} from '../../features/editor-context-menu/editor-context-menu-text-edit';
 import {
-  createImageScaleReplacement,
-  createMarkdownImageDestinationReplacement,
-  findMarkdownImageAt,
-  parseMarkdownImageScale,
-  type MarkdownImageScaleMatch
-} from '../../features/image-scale/image-scale-contract';
+  createEditorContextMenuActionCoordinator,
+  type EditorContextMenuActionCapabilities,
+  type EditorContextMenuActionCoordinator
+} from '../../features/editor-context-menu/editor-context-menu-action-coordinator';
+import type { MarkdownImageScaleMatch } from '../../features/image-scale/image-scale-contract';
 import { tableMarkdown } from '../../features/immersive-editor/immersive-editor';
-import { cutEditorSelection } from '../../features/editor-context-menu/editor-context-menu-clipboard';
 import {
   EditorToolbar,
   type EditorToolbarSession,
@@ -202,7 +190,6 @@ import {
   type VisualPreviewSnapshot
 } from '../../features/immersive-editor/ui/ImmersiveVisualEditor';
 import {
-  resolveLiveWindowContextMenuTarget,
   WindowedImmersiveVisualEditor
 } from '../../features/immersive-editor/ui/WindowedImmersiveVisualEditor';
 import type { ImmersiveViewMode } from '../../features/immersive-editor/immersive-editor';
@@ -217,13 +204,7 @@ import {
   type EditorContextMenuBlockIndexCache
 } from '../../features/editor-context-menu/editor-context-menu-block-index-cache';
 import type {
-  EditorMarkdownBlockIndex,
-  EditorCodeContentTarget,
-  EditorCodeContentReadResult
-} from '../../features/editor-context-menu/editor-markdown-block-index';
-import {
-  findEditorCodeContentTarget,
-  readEditorCodeContent
+  EditorMarkdownBlockIndex
 } from '../../features/editor-context-menu/editor-markdown-block-index';
 import {
   createEditorCodeContentQuery,
@@ -232,24 +213,14 @@ import {
   type EditorCodeContentQuerySession,
   type EditorCodeContentQueryState
 } from '../../features/editor-context-menu/editor-code-content-query';
-import {
-  canIndentEditorCode,
-  indentEditorCode
-} from '../../features/editor-context-menu/editor-code-indentation';
-import {
-  encodeEditorCodeProjection,
-  type EditorCodeProjectionContentLineRange
-} from '../../features/editor-context-menu/editor-code-projection';
+import { canIndentEditorCode } from '../../features/editor-context-menu/editor-code-indentation';
 import {
   createEditorSourceLinkQuery,
   type EditorSourceLinkQueryBinding,
   type EditorSourceLinkQuerySession,
   type EditorSourceLinkQueryState
 } from '../../features/editor-context-menu/editor-source-link-query';
-import {
-  createSimplifiedFormattingPayload,
-  type SimplifiedFormattingDomParser
-} from '../../features/editor-context-menu/editor-simplified-formatting';
+import type { SimplifiedFormattingDomParser } from '../../features/editor-context-menu/editor-simplified-formatting';
 import type { GeneratedContentExportSession } from '../../features/generated-content-export/generated-content-export-session';
 import {
   hydrateGeneratedImageTargetIndex,
@@ -308,11 +279,7 @@ type ApplyVisualCanonicalChange = (
   change: VisualCanonicalChangeRequest['change']
 ) => boolean;
 
-type ContextMenuOperation = Readonly<{
-  captured: EditorContextSnapshot;
-  cleanup: () => void;
-  controller: AbortController;
-}>;
+
 
 type NativeVisualSelectionRoute =
   | 'boundary'
@@ -350,25 +317,6 @@ function nativeVisualSelectionRoute(
   } catch {
     return 'invalid';
   }
-}
-
-/**
- * A parser-owned block range stops before the block's own trailing line
- * terminator, while a whole-line selection - the selection a Visual surface
- * maps for one block - reaches past it. That terminator is not block content,
- * so a selection that only reaches it still belongs to the block.
- */
-function blockRangeWithTrailingTerminator(
-  source: string,
-  range: Readonly<{ from: number; to: number }>
-): Readonly<{ from: number; to: number }> {
-  const rest = source.slice(range.to, range.to + 2);
-  const terminator = rest.startsWith('\r\n')
-    ? 2
-    : rest.startsWith('\n') || rest.startsWith('\r')
-      ? 1
-      : 0;
-  return 0 === terminator ? range : { from: range.from, to: range.to + terminator };
 }
 
 function editorCodeContentActionContext(
@@ -443,319 +391,23 @@ function editorSourceLinkActionContext(
   return { href: state.href };
 }
 
-function editorCodeProjectionEntry(
-  code: NonNullable<EditorContextMenuActionContext['code']>
-): Extract<PreviewCodeProjectionEntry, { status: 'available' }> | null {
-  const projection = code.codeProjection;
-  if ('available' !== projection?.status || !code.target) {
-    return null;
-  }
-  return projection.entries.find(
-    (entry): entry is Extract<PreviewCodeProjectionEntry, { status: 'available' }> =>
-      'available' === entry.status
-      && entry.kind === code.target?.kind
-      && entry.startLine === code.target?.lineStart
-      && entry.endLine === code.target?.lineEnd
-  ) ?? null;
-}
 
-function editorCodeContentLineRange(
-  code: NonNullable<EditorContextMenuActionContext['code']>,
-  source: string,
-  selection: EditorContextSnapshot['selection'],
-  selected: boolean
-): EditorCodeProjectionContentLineRange | null {
-  const entry = editorCodeProjectionEntry(code);
-  if (!entry) return null;
-  const contentLines = code.content?.split(/\r\n|\r|\n/u) ?? [];
-  if (
-    contentLines.length > 1
-    && '' === contentLines[contentLines.length - 1]
-  ) contentLines.pop();
-  if (!contentLines.length) return null;
-  if (!selected) return { end: contentLines.length, start: 0 };
-  const starts = markdownLineStarts(source);
-  const rows = entry.rows.filter((row) => {
-    const lineStart = starts[row.sourceLine] ?? -1;
-    const lineEnd = starts[row.sourceLine + 1] ?? source.length;
-    return (
-      lineStart >= 0
-      && selection.start < lineEnd
-      && selection.end > lineStart
-      && row.contentLine >= 0
-      && row.contentLine < contentLines.length
-    );
-  });
-  if (!rows.length || selection.start >= selection.end) return null;
-  return {
-    end: Math.max(...rows.map((row) => row.contentLine)) + 1,
-    start: Math.min(...rows.map((row) => row.contentLine))
-  };
-}
 
-function rebaseEditorCodeBodyMap(
-  codeMap: PreviewCodeBodyMap,
-  lineOffset: number
-): PreviewCodeBodyMap {
-  if ('unavailable' === codeMap.status) return codeMap;
-  return {
-    ...codeMap,
-    entries: codeMap.entries.map((entry) => ({
-      ...entry,
-      endLine: entry.endLine + lineOffset,
-      startLine: entry.startLine + lineOffset
-    }))
-  };
-}
 
-function rebaseEditorCodeProjection(
-  projection: PreviewCodeProjection,
-  lineOffset: number
-): PreviewCodeProjection {
-  if ('unavailable' === projection.status) return projection;
-  return {
-    ...projection,
-    entries: projection.entries.map((entry) => ({
-      ...entry,
-      endLine: entry.endLine + lineOffset,
-      ...( 'available' === entry.status
-        ? {
-            rows: entry.rows.map((row) => ({
-              ...row,
-              sourceLine: row.sourceLine + lineOffset
-            }))
-          }
-        : {}),
-      startLine: entry.startLine + lineOffset
-    }))
-  };
-}
 
-function candidateEditorCodeTarget(
-  source: string,
-  selection: EditorContextSnapshot['selection'],
-  original: NonNullable<EditorContextMenuActionContext['code']>['target'],
-  changes: Readonly<{ from: number; insert: string; to: number }>
-): EditorCodeContentTarget | null {
-  if (!original) return null;
-  const delta = changes.insert.length - (changes.to - changes.from);
-  const ownerEnd = original.ownerEnd + delta;
-  if (
-    original.ownerFrom < 0
-    || ownerEnd <= original.ownerFrom
-    || ownerEnd > source.length
-    || selection.start < original.ownerFrom
-    || selection.end > ownerEnd
-  ) return null;
-  const ownerSource = source.slice(original.ownerFrom, ownerEnd);
-  const target = findEditorCodeContentTarget(ownerSource, {
-    end: selection.end - original.ownerFrom,
-    start: selection.start - original.ownerFrom
-  });
-  if ('unavailable' === target.status) return null;
-  return {
-    ...target.target,
-    bodyFrom: target.target.bodyFrom + original.ownerFrom,
-    bodyTo: target.target.bodyTo + original.ownerFrom,
-    from: target.target.from + original.ownerFrom,
-    ownerEnd,
-    ownerFrom: original.ownerFrom,
-    ownerLineEnd: target.target.ownerLineEnd + original.ownerLineStart,
-    ownerLineStart: original.ownerLineStart,
-    to: target.target.to + original.ownerFrom,
-    lineEnd: target.target.lineEnd + original.ownerLineStart,
-    lineStart: target.target.lineStart + original.ownerLineStart
-  };
-}
 
-function sameCandidateEditorCodeTarget(
-  candidate: EditorCodeContentTarget,
-  original: NonNullable<EditorContextMenuActionContext['code']>['target'],
-  changes: Readonly<{ from: number; insert: string; to: number }>
-): boolean {
-  if (!original) return false;
-  const delta = changes.insert.length - (changes.to - changes.from);
-  return candidate.kind === original.kind
-    && candidate.ownerFrom === original.ownerFrom
-    && candidate.ownerEnd === original.ownerEnd + delta
-    && candidate.from === original.from
-    && candidate.to === original.to + delta
-    && candidate.bodyFrom === original.bodyFrom
-    && candidate.bodyTo === original.bodyTo + delta
-    && candidate.lineStart === original.lineStart
-    && candidate.lineEnd === original.lineEnd
-    && candidate.ownerLineStart === original.ownerLineStart
-    && candidate.ownerLineEnd === original.ownerLineEnd;
-}
 
-function sameCandidateProjectionEntry(
-  candidate: Extract<PreviewCodeProjectionEntry, { status: 'available' }>,
-  original: Extract<PreviewCodeProjectionEntry, { status: 'available' }>
-): boolean {
-  if (
-    candidate.kind !== original.kind
-    || candidate.startLine !== original.startLine
-    || candidate.endLine !== original.endLine
-  ) return false;
-  if ('fenced' !== candidate.kind || 'fenced' !== original.kind) return true;
-  return candidate.info === original.info
-    && candidate.fenceOffset === original.fenceOffset;
-}
 
-type EditorCodeIndentationCandidateValidation =
-  | Readonly<{ status: 'available' }>
-  | Readonly<{
-      code:
-        | 'editor-code-projection-candidate-stale'
-        | 'editor-code-projection-candidate-unavailable';
-      status: 'unavailable';
-    }>;
 
-function validateEditorCodeIndentationCandidate(input: Readonly<{
-  candidateSource: string;
-  changes: Readonly<{ from: number; insert: string; to: number }>;
-  contentLineRange: EditorCodeProjectionContentLineRange;
-  desiredSemanticBody: string;
-  originalProjectionEntry: Extract<PreviewCodeProjectionEntry, { status: 'available' }>;
-  originalTarget: EditorCodeContentTarget;
-  response: PreviewResponse;
-  selection: EditorContextSnapshot['selection'];
-  signature: string;
-}>): EditorCodeIndentationCandidateValidation {
-  const responseCodeMap = input.response.codeMap;
-  const responseProjection = input.response.codeProjection;
-  if (!responseCodeMap || !responseProjection) {
-    return {
-      code: 'editor-code-projection-candidate-unavailable',
-      status: 'unavailable'
-    };
-  }
-  if (
-    responseCodeMap.signature !== input.signature
-    || responseProjection.signature !== input.signature
-  ) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
-  if (
-    'available' !== responseCodeMap.status
-    || 'available' !== responseProjection.status
-  ) {
-    return {
-      code: 'editor-code-projection-candidate-unavailable',
-      status: 'unavailable'
-    };
-  }
 
-  const candidateTarget = candidateEditorCodeTarget(
-    input.candidateSource,
-    input.selection,
-    input.originalTarget,
-    input.changes
-  );
-  if (
-    !candidateTarget
-    || !sameCandidateEditorCodeTarget(
-      candidateTarget,
-      input.originalTarget,
-      input.changes
-    )
-  ) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
 
-  const codeMap = rebaseEditorCodeBodyMap(
-    responseCodeMap,
-    candidateTarget.ownerLineStart
-  );
-  const projection = rebaseEditorCodeProjection(
-    responseProjection,
-    candidateTarget.ownerLineStart
-  );
-  if ('available' !== codeMap.status || 'available' !== projection.status) {
-    return {
-      code: 'editor-code-projection-candidate-unavailable',
-      status: 'unavailable'
-    };
-  }
-  const codeMapMatches = codeMap.entries.filter(
-    (entry) =>
-      entry.kind === candidateTarget.kind
-      && entry.startLine === candidateTarget.lineStart
-      && entry.endLine === candidateTarget.lineEnd
-      && 'available' === entry.status
-  );
-  const projectionMatches = projection.entries.filter(
-    (entry): entry is Extract<PreviewCodeProjectionEntry, { status: 'available' }> =>
-      entry.kind === candidateTarget.kind
-      && entry.startLine === candidateTarget.lineStart
-      && entry.endLine === candidateTarget.lineEnd
-      && 'available' === entry.status
-  );
-  if (1 !== codeMapMatches.length || 1 !== projectionMatches.length) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
-  const candidateProjectionEntry = projectionMatches[0];
-  if (
-    !candidateProjectionEntry
-    || !sameCandidateProjectionEntry(
-      candidateProjectionEntry,
-      input.originalProjectionEntry
-    )
-  ) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
 
-  const read: EditorCodeContentReadResult = readEditorCodeContent(
-    input.candidateSource,
-    input.selection,
-    undefined,
-    {
-      codeMap,
-      signature: input.signature,
-      source: input.candidateSource
-    }
-  );
-  if ('unavailable' === read.status || read.content !== input.desiredSemanticBody) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
 
-  const encoded = encodeEditorCodeProjection({
-    codeMap,
-    contentLineRange: input.contentLineRange,
-    desiredSemanticBody: input.desiredSemanticBody,
-    projection,
-    selection: input.selection,
-    signature: input.signature,
-    source: input.candidateSource,
-    target: {
-      endLine: candidateTarget.lineEnd,
-      kind: candidateTarget.kind,
-      startLine: candidateTarget.lineStart
-    }
-  });
-  if ('unavailable' === encoded.status || !encoded.noop) {
-    return {
-      code: 'editor-code-projection-candidate-stale',
-      status: 'unavailable'
-    };
-  }
-  return { status: 'available' };
-}
+
+
+
+
+
 
 type PendingGeneratedContentPin = {
   pin: NonNullable<
@@ -1297,6 +949,17 @@ function documentPort(
       if (!isActive()) {
         throw new Error('editor-root-document-session-inactive');
       }
+      // The media picker is a user gesture that can stay open across an
+      // arbitrary delay, so the authoritative Source field may become read-only
+      // or disabled before the user confirms. Re-check here, at the mutation,
+      // rather than only when the picker opened: a read-only surface must not
+      // gain a canonical write or a history entry it never permitted. The code
+      // follows this port's own `media-picker-*` namespace so the rejection
+      // reaches the user as a specific media failure instead of the generic
+      // `media-picker-operation-failed` fallback.
+      if (!session.document.isEditable()) {
+        throw new Error('media-picker-document-read-only');
+      }
       if (!insertionSelection || !formatInsertion) {
         session.document.applyTextChange(change);
         return;
@@ -1406,22 +1069,6 @@ function mediaPickerFailureCode(error: unknown): string {
     && /^media-picker-[a-z0-9-]+$/.test(error.message)
     ? error.message
     : 'media-picker-operation-failed';
-}
-
-const CONTEXT_MENU_ERROR_CODES = new Set([
-  'editor-context-menu-context-stale',
-  'editor-context-menu-image-stale',
-  'editor-context-menu-html-copy-failed',
-  'editor-context-menu-image-upload-failed',
-  'editor-context-menu-clipboard-deferred-unsupported'
-]);
-
-function contextMenuErrorCode(error: unknown, fallback: string): string {
-  return error instanceof Error
-    && (CONTEXT_MENU_ERROR_CODES.has(error.message)
-      || /^editor-simplified-formatting-[a-z0-9-]+$/u.test(error.message))
-    ? error.message
-    : fallback;
 }
 
 function editorBlockIndexFailureCode(error: unknown): string {
@@ -1678,20 +1325,7 @@ function imageActionContext(
  * visual owner would fail after the canonical write. Parsing the serialized
  * result also proves the replacement stayed one valid image before any write.
  */
-function imageTargetSelectionAfterEdit(
-  nextValue: string,
-  imageStart: number
-): Readonly<{ direction: 'forward' | 'none'; end: number; start: number }> | null {
-  const image = parseMarkdownImageScale(nextValue, imageStart);
-  if (!image || image.start !== imageStart) return null;
-  // A non-collapsed canonical selection is normalized to a real direction by
-  // the document session, so forward is the only truthful value here.
-  return {
-    direction: image.end > image.start ? 'forward' : 'none',
-    end: image.end,
-    start: image.start
-  };
-}
+
 
 function isPreviewSelectionUnavailable(error: unknown): boolean {
   return (
@@ -1743,6 +1377,9 @@ function articleMarkupProfile(
 }
 
 export function EditorRoot(props: EditorRootProps) {
+  const failureHandlerRef = useRef(props.onFailure);
+  failureHandlerRef.current = props.onFailure;
+  const reportFailure = useCallback((code: string) => failureHandlerRef.current(code), []);
   const rootRef = useRef<HTMLDivElement>(null);
   const contextMenuPortalOwnerRef = useRef<HTMLElement | null>(null);
   const registerContextMenuPortalOwner = useCallback(
@@ -1765,7 +1402,10 @@ export function EditorRoot(props: EditorRootProps) {
   const contextMenuExecutorRef = useRef<((commandId: string) => void) | null>(
     null
   );
-  const contextMenuOperationRef = useRef<ContextMenuOperation | null>(null);
+  const contextMenuActionCapabilitiesRef =
+    useRef<EditorContextMenuActionCapabilities | null>(null);
+  const contextMenuActionCoordinatorRef =
+    useRef<EditorContextMenuActionCoordinator | null>(null);
   const editorCodeContentQueryRef =
     useRef<EditorCodeContentQuerySession | null>(null);
   const editorCodeContentQuerySequenceRef = useRef(0);
@@ -1975,6 +1615,27 @@ export function EditorRoot(props: EditorRootProps) {
   const [visualEditorSurface, setVisualEditorSurface] =
     useState<HTMLElement | null>(null);
   const [visualEditorGeneration, setVisualEditorGeneration] = useState(0);
+  const readContextMenuCurrentContext = useCallback(
+    (surface: EditorContextSnapshot['surface']) => {
+      if (!documentSession) return null;
+      const revision = documentSession.document.getRevision?.();
+      return {
+        ...(undefined === revision ? {} : { revision }),
+        selection: documentSession.document.getSelection(),
+        ...('source' === surface
+          ? { surfaceIdentity: documentSession }
+          : visualEditorRuntimeRef.current
+            ? {
+                surfaceGeneration: visualEditorGeneration,
+                surfaceIdentity: visualEditorRuntimeRef.current
+              }
+            : {}),
+        surface,
+        value: documentSession.document.getValue()
+      };
+    },
+    [documentSession, visualEditorGeneration]
+  );
   const visualPreviewEditingRef = useRef(visualPreviewEditing);
   visualPreviewEditingRef.current = visualPreviewEditing;
   const [visualPreviewChanged, setVisualPreviewChanged] = useState(false);
@@ -2061,9 +1722,9 @@ export function EditorRoot(props: EditorRootProps) {
   visualPreviewSurfaceWindowedRef.current = visualPreviewSurfaceWindowed;
   useEffect(() => {
     if ('failed' === immersivePreferences.status) {
-      props.onFailure(immersivePreferences.code);
+      reportFailure(immersivePreferences.code);
     }
-  }, [immersivePreferences, props.onFailure]);
+  }, [immersivePreferences, reportFailure]);
   const [cursorPosition, setCursorPosition] = useState({ column: 1, line: 1 });
   const sessionSnapshot = useEditorSession(props.sessionPort);
   const publishEditorStatus = useCallback(
@@ -2178,10 +1839,10 @@ export function EditorRoot(props: EditorRootProps) {
         props.sessionPort.getSnapshot(),
         operation
       );
-      if (error) props.onFailure(error.message);
+      if (error) reportFailure(error.message);
       return error;
     },
-    [props.onFailure, props.sessionPort]
+    [reportFailure, props.sessionPort]
   );
   const handleDocumentReady = useCallback((session: EditorDocumentSession) => {
     session.registerSubmissionState(initialSubmissionStateRef.current);
@@ -2220,6 +1881,14 @@ export function EditorRoot(props: EditorRootProps) {
       const runtime = previewRuntimeRef.current;
       if (!runtime) return null;
       return runtime.prepareWindowBlockAdoption(node);
+    },
+    []
+  );
+  const retainCompositionSurface = useCallback(
+    (): Readonly<{ release: () => void }> => {
+      const runtime = previewRuntimeRef.current;
+      if (!runtime) throw new Error('preview-runtime-unavailable');
+      return runtime.retainCompositionSurface();
     },
     []
   );
@@ -2465,34 +2134,20 @@ export function EditorRoot(props: EditorRootProps) {
     [cancelWechatBackgroundPreparation]
   );
   useEffect(() => {
-    const operation = contextMenuOperationRef.current;
-    if (!operation || !documentSession) return;
-    const revision = documentSession.document.getRevision?.();
-    const current = {
-      ...(undefined === revision ? {} : { revision }),
-      selection: documentSession.document.getSelection(),
-      ...('source' === operation.captured.surface
-        ? { surfaceIdentity: documentSession }
-        : visualEditorRuntimeRef.current
-          ? {
-              surfaceGeneration: visualEditorGeneration,
-              surfaceIdentity: visualEditorRuntimeRef.current
-            }
-          : {}),
-      surface: operation.captured.surface,
-      value: documentSession.document.getValue()
-    };
-    if (!isEditorContextCurrent(operation.captured, current)) {
-      operation.controller.abort();
-    }
-  }, [documentSession, visualEditorGeneration, visualEditorSurface]);
+    const coordinator = contextMenuActionCoordinatorRef.current;
+    if (!coordinator || !documentSession) return;
+    coordinator.recheckOwner((captured) => {
+      const current = readContextMenuCurrentContext(captured.surface);
+      return Boolean(current && isEditorContextCurrent(captured, current));
+    });
+  }, [documentSession, readContextMenuCurrentContext, visualEditorGeneration, visualEditorSurface]);
   const focusVisualPreview = useCallback(() => {
     return focusVisualPreviewRuntime(
       visualEditorRuntimeRef.current,
       props.immersiveEnvironment.activeElement,
-      props.onFailure
+      reportFailure
     );
-  }, [props.immersiveEnvironment, props.onFailure]);
+  }, [props.immersiveEnvironment, reportFailure]);
   const closeForToolbar = useCallback((focusTarget?: HTMLElement) => {
     appearanceSessionRef.current?.close();
     fontControlsSessionRef.current?.close();
@@ -2525,13 +2180,32 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [documentSession, props.submissionField, schedulePreviewMarkdown]
   );
+  /**
+   * Failures that invalidate the accepted visual DOM itself: the owner has
+   * already restored its accepted snapshot, so it reports through `onFailure`
+   * only and never reaches `onTransferFailure`. A surface whose accepted
+   * provenance is gone cannot stay in visual editing, so Root leaves the mode
+   * here - the same terminal outcome the transfer-failure path produces.
+   */
+  const isAcceptedDomInvalidatingFailure = (code: string): boolean =>
+    'visual-editor-code-body-map-stale' === code
+    || 'visual-editor-canonical-change-map-stale' === code;
+  const leaveVisualPreviewRef = useRef<
+    (options?: Readonly<{ suppressRefresh?: boolean }>) => boolean
+  >(() => false);
   const handleVisualFailure = useCallback(
     (code: string) => {
       lastVisualFailureRef.current = code;
       rootRef.current?.setAttribute('data-easymde-visual-failure', code);
-      props.onFailure(code);
+      reportFailure(code);
+      if (isAcceptedDomInvalidatingFailure(code)) {
+        // Leaving because the accepted DOM is gone must not schedule a refresh
+        // of the source the user was editing. The leave owner is declared below
+        // this callback, so it is reached through the stable ref.
+        leaveVisualPreviewRef.current({ suppressRefresh: true });
+      }
     },
-    [props.onFailure]
+    [reportFailure]
   );
   const handleVisualMarkdownChange = useCallback(() => {
     lastVisualFailureRef.current = null;
@@ -2563,12 +2237,12 @@ export function EditorRoot(props: EditorRootProps) {
             syncedVisualCodeFramesRef.current.add(code);
           }
         } catch (error) {
-          props.onFailure(previewEnhancementFailureCode(error));
+          reportFailure(previewEnhancementFailureCode(error));
         }
       }
     }
     setVisualPreviewChanged(true);
-  }, [documentSession, props.enhancementPort, props.onFailure]);
+  }, [documentSession, props.enhancementPort, reportFailure]);
   const handleVisualPendingChange = useCallback(
     (pending: boolean) => {
       if (!rootActiveRef.current) return;
@@ -2629,7 +2303,20 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [documentSession, props.preview]
   );
-  const leaveVisualPreview = useCallback(() => {
+  const leaveVisualPreview = useCallback(
+    (
+      options: Readonly<{
+        /**
+         * The transfer failed terminally, so the accepted Preview for this
+         * source is already known to be unavailable. Scheduling the usual
+         * leave refresh would immediately re-request the exact markdown whose
+         * refresh just failed - an automatic retry of a protected mutation,
+         * which the contract forbids. Every other exit reason keeps the normal
+         * refresh.
+         */
+        suppressRefresh?: boolean;
+      }> = {}
+    ) => {
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
@@ -2646,10 +2333,15 @@ export function EditorRoot(props: EditorRootProps) {
     setVisualDocumentEndHistoryPending(false);
     setVisualWindowedHistoryBranchHeld(false);
     setVisualPreviewChanged(false);
-    previewRefreshPendingRef.current = true;
-    setPreviewRefreshRevision((revision) => revision + 1);
+    if (!options.suppressRefresh) {
+      previewRefreshPendingRef.current = true;
+      setPreviewRefreshRevision((revision) => revision + 1);
+    }
     return true;
-  }, []);
+    },
+    []
+  );
+  leaveVisualPreviewRef.current = leaveVisualPreview;
   const handlePreviewWindowReady = useCallback(() => {
     const accepted = getAcceptedWindowSnapshot();
     if (accepted && accepted.key !== acceptedWindowSnapshotKeyRef.current) {
@@ -2690,8 +2382,8 @@ export function EditorRoot(props: EditorRootProps) {
   const handleVisualCanonicalDocumentChange = useCallback(() => {
     lastVisualFailureRef.current = null;
     leaveVisualPreview();
-    props.onFailure('visual-editor-canonical-document-changed');
-  }, [leaveVisualPreview, props.onFailure]);
+    reportFailure('visual-editor-canonical-document-changed');
+  }, [leaveVisualPreview, reportFailure]);
   const requestVisualPreviewUnlock = useCallback(() => {
     const snapshot = visualPreviewSnapshotRef.current;
     if (
@@ -2779,7 +2471,7 @@ export function EditorRoot(props: EditorRootProps) {
         clearPreparation();
         if (current) {
           setVisualPreviewUnlocking(false);
-          props.onFailure(previewEnhancementFailureCode(error));
+          reportFailure(previewEnhancementFailureCode(error));
         }
         return;
       }
@@ -2797,7 +2489,7 @@ export function EditorRoot(props: EditorRootProps) {
         clearPreparation();
         if (current) {
           setVisualPreviewUnlocking(false);
-          props.onFailure(previewEnhancementFailureCode(error));
+          reportFailure(previewEnhancementFailureCode(error));
         }
         return;
       }
@@ -2812,7 +2504,7 @@ export function EditorRoot(props: EditorRootProps) {
     cancelWechatBackgroundPreparation,
     documentSession,
     props.enhancementPort,
-    props.onFailure
+    reportFailure
   ]);
   const prepareVisualSource = useCallback(() => {
     if (
@@ -2855,7 +2547,17 @@ export function EditorRoot(props: EditorRootProps) {
     },
     [leaveVisualPreview]
   );
-  const prepareSourceMutationWithPreview = useCallback(async () => {
+  /**
+   * Leave visual preview, materializing the full Preview surface first when the
+   * caller genuinely needs the accepted window as its result (appearance apply,
+   * custom CSS, WeChat export). A TEARDOWN caller - exiting immersive mode or
+   * switching view - only needs the canonical source and a safe exit: a
+   * not-ready surface is acceptable there, so it must not report a
+   * materialization diagnostic nor abort its transition on a `false`.
+   */
+  const prepareSourceMutationWithPreview = useCallback(async (
+    options: Readonly<{ materialize?: boolean; suppressRefresh?: boolean }> = {}
+  ) => {
     if (
       !visualPreviewEditingRef.current
       && !visualPreviewWindowRequestedRef.current
@@ -2886,13 +2588,17 @@ export function EditorRoot(props: EditorRootProps) {
         });
       });
     }
-    if (!(await previewRuntime.materialize())) {
-      visualPreviewLockingRef.current = false;
-      leaveVisualPreview();
-      return false;
+    const leaveOptions: Readonly<{ suppressRefresh?: boolean }> =
+      true === options.suppressRefresh ? { suppressRefresh: true } : {};
+    if (false !== options.materialize) {
+      if (!(await previewRuntime.materialize())) {
+        visualPreviewLockingRef.current = false;
+        leaveVisualPreview(leaveOptions);
+        return false;
+      }
     }
     visualPreviewLockingRef.current = false;
-    leaveVisualPreview();
+    leaveVisualPreview(leaveOptions);
     return true;
   }, [leaveVisualPreview, prepareVisualSource, visualPreviewNeedsWindow]);
   const appearancePort = useMemo<AppearancePort>(
@@ -2940,7 +2646,7 @@ export function EditorRoot(props: EditorRootProps) {
               && codeThemePreparationRef.current?.generation === generation
               && rootActiveRef.current
             ) {
-              props.onFailure(previewEnhancementFailureCode(error));
+              reportFailure(previewEnhancementFailureCode(error));
             }
             if (codeThemePreparationRef.current?.generation === generation) {
               codeThemePreparationRef.current = null;
@@ -2968,7 +2674,7 @@ export function EditorRoot(props: EditorRootProps) {
             codeThemePreparationRef.current = null;
           }
           if (rootActiveRef.current) {
-            props.onFailure('react-editor-appearance-failed');
+            reportFailure('react-editor-appearance-failed');
           }
           return false;
         }
@@ -3143,7 +2849,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.mediaPickerFrame?.cancel?.();
       setMediaPickerDialog(null);
       if (!rootActiveRef.current) return;
-      props.onFailure(mediaPickerFailureCode(error));
+      reportFailure(mediaPickerFailureCode(error));
       publishEditorStatus({
         id: 'media-picker',
         message: props.mediaPickerFailureMessage,
@@ -3154,7 +2860,7 @@ export function EditorRoot(props: EditorRootProps) {
     [
       props.mediaPickerFailureMessage,
       props.mediaPickerFrame,
-      props.onFailure,
+      reportFailure,
       publishEditorStatus
     ]
   );
@@ -3189,7 +2895,7 @@ export function EditorRoot(props: EditorRootProps) {
           if (!rootActiveRef.current) {
             return;
           }
-          props.onFailure(mediaPickerFailureCode(error));
+          reportFailure(mediaPickerFailureCode(error));
           publishEditorStatus({
             id: 'media-picker',
             message: props.mediaPickerFailureMessage,
@@ -3209,7 +2915,7 @@ export function EditorRoot(props: EditorRootProps) {
       props.mediaPicker,
       props.mediaPickerFailureMessage,
       props.mediaPickerFrame,
-      props.onFailure,
+      reportFailure,
       protectedOperationError,
       publishEditorStatus
     ]
@@ -3260,7 +2966,7 @@ export function EditorRoot(props: EditorRootProps) {
         visualEditorRuntimeRef.current?.surface
         ?? previewRuntimeRef.current?.surface
         ?? null,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       onStatus: setWechatStatus,
       strings: props.wechatExport.strings
     });
@@ -3270,7 +2976,7 @@ export function EditorRoot(props: EditorRootProps) {
     prepareVisualSource,
     props.imageUpload.maxBytes,
     props.imageUpload.postId,
-    props.onFailure,
+    reportFailure,
     props.wechatClipboard,
     props.wechatExport,
     props.wechatVisualRasterizationPort,
@@ -3292,7 +2998,7 @@ export function EditorRoot(props: EditorRootProps) {
     return createRemoteImageImportCoordinator({
       document: documentPort(documentSession, () => rootActiveRef.current),
       insertion: props.imageUpload.insertion,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       postId: props.imageUpload.postId,
       remoteImageImport: remoteImageImportPort
     });
@@ -3300,7 +3006,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     props.imageUpload.insertion,
     props.imageUpload.postId,
-    props.onFailure,
+    reportFailure,
     remoteImageImportPort
   ]);
   useEffect(
@@ -3362,7 +3068,7 @@ export function EditorRoot(props: EditorRootProps) {
           ].join(':');
           if (editorCodeContentFailureRef.current === key) return;
           editorCodeContentFailureRef.current = key;
-          props.onFailure(code);
+          reportFailure(code);
         },
         previewPort,
         requestFactory: ({ binding, markdown, target }) => {
@@ -3392,7 +3098,7 @@ export function EditorRoot(props: EditorRootProps) {
       }),
     [
       documentSession,
-      props.onFailure,
+      reportFailure,
       notifyContextMenuReadiness,
       previewPort,
       props.appearance.articleThemes,
@@ -3560,7 +3266,7 @@ export function EditorRoot(props: EditorRootProps) {
   );
   const reportContextMenuFailure = useCallback(
     (code: string, message?: string) => {
-      props.onFailure(code);
+      reportFailure(code);
       if (message) {
         publishEditorStatus({
           id: `context-menu-${code}`,
@@ -3570,7 +3276,7 @@ export function EditorRoot(props: EditorRootProps) {
         });
       }
     },
-    [props.onFailure, publishEditorStatus]
+    [reportFailure, publishEditorStatus]
   );
   const reportVisualToolbarFailure = useCallback(() => {
     const message = props.contextMenuStrings?.statusActionFailed;
@@ -3625,7 +3331,17 @@ export function EditorRoot(props: EditorRootProps) {
       return;
     }
     reportVisualTransferFailure(code);
-    leaveVisualPreview();
+    // A terminal transfer failure normally must not schedule a refresh of the
+    // same source: that would be an automatic retry of a protected mutation.
+    // One class is different - a paste whose Preview render failed. Its
+    // canonical write ALREADY landed, so the locked Preview is still showing
+    // the pre-paste document and must be allowed to catch up with exactly one
+    // leave-time render. Nothing here retries the failed request itself.
+    const needsCatchUpRender =
+      'visual-editor-markdown-paste-render-failed' === code;
+    leaveVisualPreview(
+      needsCatchUpRender ? {} : { suppressRefresh: true }
+    );
   }, [
     leaveVisualPreview,
     reportVisualTransferFailure
@@ -3663,1207 +3379,70 @@ export function EditorRoot(props: EditorRootProps) {
     [reportVisualCanonicalChangeFailure]
   );
   applyVisualCanonicalChangeRef.current = applyVisualCanonicalChange;
-  const handleContextMenuAction = useCallback(
-    async (
-      id: string,
-      captured: EditorContextSnapshot,
-      actionContext?: EditorContextMenuActionContext
-    ): Promise<void> => {
-      const clipboard = props.editorClipboardPort;
-      if (!documentSession || !clipboard) {
-        reportContextMenuFailure(
-          'editor-context-menu-owner-unavailable',
-          props.contextMenuStrings?.statusActionFailed
-        );
-        return;
-      }
-      const currentContext = (context: EditorContextSnapshot = captured) => {
-        const revision = documentSession.document.getRevision?.();
-        return {
-          ...(undefined === revision ? {} : { revision }),
-          selection: documentSession.document.getSelection(),
-          ...('source' === context.surface
-            ? { surfaceIdentity: documentSession }
-            : visualEditorRuntimeRef.current
-              ? {
-                  surfaceGeneration: visualEditorGeneration,
-                  surfaceIdentity: visualEditorRuntimeRef.current
-                }
-              : {}),
-          surface: context.surface,
-          value: documentSession.document.getValue()
-        };
-      };
-      const ensureCurrent = (
-        context: EditorContextSnapshot = captured
-      ): boolean => {
-        if (isCurrent(context)) return true;
-        reportContextMenuFailure(
-          'editor-context-menu-context-stale',
-          props.contextMenuStrings?.statusActionFailed
-        );
-        return false;
-      };
-      const ensureSelectionFitsTarget = (
-        range: Readonly<{ from: number; to: number }>
-      ): boolean => {
-        if (
-          editorContextSelectionFitsRange(
-            captured.selection,
-            blockRangeWithTrailingTerminator(captured.value, range)
-          )
-        ) {
-          return true;
-        }
-        reportContextMenuFailure(
-          'editor-context-menu-selection-outside-target',
-          props.contextMenuStrings?.statusActionFailed
-        );
-        return false;
-      };
-      const isCurrent = (context: EditorContextSnapshot = captured): boolean =>
-        isEditorContextCurrent(context, currentContext(context));
-      const currentBlockIndex = ():
-        | EditorMarkdownBlockIndex
-        | null
-        | undefined => {
-        if (!props.editorBlockIndexPort) return undefined;
-        const revision = documentSession.document.getRevision?.();
-        const owner =
-          'source' === captured.surface
-            ? documentSession
-            : visualEditorRuntimeRef.current;
-        if (undefined === revision || !owner) return null;
-        const index = contextMenuBlockIndexCacheRef.current?.peek({
-          generation:
-            'source' === captured.surface ? 0 : visualEditorGeneration,
-          owner,
-          revision
-        });
-        return index && index.source === documentSession.document.getValue()
-          ? index
-          : null;
-      };
-      const tableActionContext = (
-        value: string,
-        blockIndex: EditorMarkdownBlockIndex | null | undefined
-      ) => {
-        const table = findMarkdownTable(value, captured.selection.start, blockIndex ?? undefined);
-        if (!table) {
-          reportContextMenuFailure(
-            'editor-context-menu-table-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return null;
-        }
-        if (!ensureSelectionFitsTarget({ from: table.tableStart, to: table.tableEnd })) {
-          return null;
-        }
-        return table;
-      };
-      const beginOperation = (
-        context: EditorContextSnapshot
-      ): ContextMenuOperation => {
-        const previous = contextMenuOperationRef.current;
-        previous?.controller.abort();
-        previous?.cleanup();
-        const controller = new AbortController();
-        const check = (): void => {
-          if (!isCurrent(context)) controller.abort();
-        };
-        const unsubscribeDocument = documentSession.document.subscribe(check);
-        const unsubscribeSelection =
-          documentSession.document.subscribeSelection(check);
-        const operation: ContextMenuOperation = {
-          captured: context,
-          cleanup: () => {
-            unsubscribeDocument();
-            unsubscribeSelection();
-            if (contextMenuOperationRef.current === operation) {
-              contextMenuOperationRef.current = null;
-            }
+
+  const contextMenuActionCapabilities: EditorContextMenuActionCapabilities = {
+    ...(props.editorClipboardPort
+      ? { clipboard: props.editorClipboardPort }
+      : {}),
+    ...(props.contextMenuStrings
+      ? { contextMenuStrings: props.contextMenuStrings }
+      : {}),
+    document: documentSession
+      ? {
+          applyTextChange: (change) =>
+            documentSession.document.applyTextChange(change),
+          getBlockIndex: (surface) => {
+            if (!props.editorBlockIndexPort) return undefined;
+            const revision = documentSession.document.getRevision?.();
+            const owner =
+              'source' === surface
+                ? documentSession
+                : visualEditorRuntimeRef.current;
+            if (undefined === revision || !owner) return null;
+            const index = contextMenuBlockIndexCacheRef.current?.peek({
+              generation: 'source' === surface ? 0 : visualEditorGeneration,
+              owner,
+              revision
+            });
+            return index && index.source === documentSession.document.getValue()
+              ? index
+              : null;
           },
-          controller
-        };
-        contextMenuOperationRef.current = operation;
-        check();
-        return operation;
-      };
-      const finishOperation = (operation: ContextMenuOperation): void => {
-        if (contextMenuOperationRef.current === operation) operation.cleanup();
-      };
-      const sourceMutationContext = (): EditorContextSnapshot => {
-        if ('source' === captured.surface) return captured;
-        const { surfaceGeneration: _surfaceGeneration, ...sourceCaptured } =
-          captured;
-        return {
-          ...sourceCaptured,
-          surface: 'source',
-          surfaceIdentity: documentSession
-        };
-      };
-      const applyEdit = (
-        edit: Readonly<{
-          changes?: Readonly<{ from: number; insert: string; to: number }>;
-          selectionFallback?: 'caret' | 'reflow-caret';
-          selection: Readonly<{
-            direction: 'backward' | 'forward' | 'none';
-            end: number;
-            start: number;
-          }>;
-          value: string;
-        }> | null
-      ): boolean => {
-        if (!edit) {
-          reportContextMenuFailure(
-            'editor-context-menu-edit-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return false;
-        }
-        if (!edit.changes) {
-          if (edit.value === documentSession.document.getValue()) return true;
-          reportContextMenuFailure(
-            'editor-context-menu-edit-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return false;
-        }
-        if ('visual' === captured.surface) {
-          return applyVisualCanonicalChange(captured, {
-            changes: edit.changes,
-            selection: edit.selection,
-            ...(edit.selectionFallback
-              ? { selectionFallback: edit.selectionFallback }
-              : {}),
-            value: edit.value
-          });
-        }
-        documentSession.document.applyTextChange({
-          changes: edit.changes,
-          selection: edit.selection,
-          value: edit.value
-        });
-        return true;
-      };
-      if (
-        ('source' === captured.surface
-          && !documentSession.document.isEditable())
-        || ('visual' === captured.surface
-          && !visualEditorRuntimeRef.current?.isEditable())
-      ) {
-        reportContextMenuFailure(
-          'editor-context-menu-surface-read-only',
-          props.contextMenuStrings?.statusActionFailed
-        );
-        return;
-      }
-      if ('bold' === id) {
-        if (!ensureCurrent()) return;
-        if ('visual' === captured.surface) {
-          const command = props.toolbar.commands.find(({ id: commandId }) =>
-            commandId === 'bold'
-          );
-          const runtime = visualEditorRuntimeRef.current;
-          if (!command || !runtime) {
-            reportContextMenuFailure(
-              'editor-context-menu-command-unavailable',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          if (captured.selection.start !== captured.selection.end) {
-            const blockIndex = currentBlockIndex();
-            const block = findMarkdownBlock(
-              captured.value,
-              captured.selection.start,
-              blockIndex ?? undefined
-            );
-            const selectionSpansBlocks = !block || !editorContextSelectionFitsRange(
-              captured.selection,
-              { from: block.start, to: block.end }
-            );
-            if (selectionSpansBlocks) {
-              const prefix = command.prefix ?? '';
-              const suffix = command.suffix ?? '';
-              const selected = captured.value.slice(
-                captured.selection.start,
-                captured.selection.end
-              );
-              const nextValue =
-                captured.value.slice(0, captured.selection.start)
-                + prefix
-                + selected
-                + suffix
-                + captured.value.slice(captured.selection.end);
-              if (applyVisualCanonicalChange(captured, {
-                changes: {
-                  from: captured.selection.start,
-                  insert: `${prefix}${selected}${suffix}`,
-                  to: captured.selection.end
-                },
-                selection: {
-                  direction: 'none',
-                  end: captured.selection.start
-                    + prefix.length
-                    + selected.length
-                    + suffix.length,
-                  start: captured.selection.start
-                    + prefix.length
-                    + selected.length
-                    + suffix.length
-                },
-                selectionFallback: 'caret',
-                value: nextValue
-              })) return;
-              return;
+          getCurrentContext: (surface) => {
+            const current = readContextMenuCurrentContext(surface);
+            if (!current) {
+              throw new Error('editor-context-menu-owner-unavailable');
             }
-          }
-          const result = runtime.executeCommand(command, {
-            requestPreviewTransfer: true
-          });
-          if ('handled' === result) return;
-          if ('unsupported' === result && captured.selection.start !== captured.selection.end) {
-            const blockIndex = currentBlockIndex();
-            const block = findMarkdownBlock(
-              captured.value,
-              captured.selection.start,
-              blockIndex ?? undefined
-            );
-            const selectionSpansBlocks = !block || !editorContextSelectionFitsRange(
-              captured.selection,
-              { from: block.start, to: block.end }
-            );
-            if (selectionSpansBlocks) {
-              const prefix = command.prefix ?? '';
-              const suffix = command.suffix ?? '';
-              const selected = captured.value.slice(
-                captured.selection.start,
-                captured.selection.end
-              );
-              const nextValue =
-                captured.value.slice(0, captured.selection.start)
-                + prefix
-                + selected
-                + suffix
-                + captured.value.slice(captured.selection.end);
-              if (applyVisualCanonicalChange(captured, {
-                changes: {
-                  from: captured.selection.start,
-                  insert: `${prefix}${selected}${suffix}`,
-                  to: captured.selection.end
-                },
-                selection: {
-                  direction: 'none',
-                  end: captured.selection.start
-                    + prefix.length
-                    + selected.length
-                    + suffix.length,
-                  start: captured.selection.start
-                    + prefix.length
-                    + selected.length
-                    + suffix.length
-                },
-                selectionFallback: 'caret',
-                value: nextValue
-              })) return;
-            }
-          }
-          reportContextMenuFailure(
-            'editor-context-menu-command-failed',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        if (!contextMenuExecutorRef.current) {
-          reportContextMenuFailure(
-            'editor-context-menu-command-unavailable',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        contextMenuExecutorRef.current('bold');
-        return;
-      }
-      if (
-        props.toolbar.commands.some((command) =>
-          command.id === id
-          && 'heading-menu' === command.surface
-          && 'heading' === command.action
-        )
-      ) {
-        if (!ensureCurrent()) return;
-        const execute = contextMenuExecutorRef.current;
-        if (!execute) {
-          reportContextMenuFailure(
-            'editor-context-menu-command-unavailable',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        execute(id);
-        return;
-      }
-      if (['copy', 'copy-as-markdown'].includes(id)) {
-        if (!ensureCurrent()) return;
-        const text = captured.value.slice(
-          captured.selection.start,
-          captured.selection.end
-        );
-        const result = await clipboard.write(text);
-        if ('written' !== result.status) {
-          reportContextMenuFailure(
-            result.code,
-            props.contextMenuStrings?.statusClipboardUnavailable
-          );
-        }
-        return;
-      }
-      if ('copy-as-html' === id) {
-        if (!ensureCurrent()) return;
-        if (!clipboard.writeDeferred) {
-          reportContextMenuFailure(
-            'editor-context-menu-clipboard-deferred-unsupported',
-            props.contextMenuStrings?.statusClipboardUnavailable
-          );
-          return;
-        }
-        const markdown = captured.value.slice(
-          captured.selection.start,
-          captured.selection.end
-        );
-        const operation = beginOperation(captured);
-        const controller = operation.controller;
-        try {
-          const renderedHtml = previewPort
-            .render(
-              previewRequest(
-                markdown,
-                props.preview,
-                previewAppearanceRef.current,
-                ++previewRevisionRef.current
-              ),
-              controller.signal
-            )
-            .then((response) => response.html);
-          const writePromise = clipboard.writeDeferred(renderedHtml, {
-            signal: controller.signal
-          });
-          const [, result] = await Promise.all([renderedHtml, writePromise]);
-          if (!ensureCurrent()) return;
-          if ('written' !== result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          }
-        } catch (error) {
-          reportContextMenuFailure(
-            contextMenuErrorCode(error, 'editor-context-menu-html-copy-failed'),
-            props.contextMenuStrings?.statusActionFailed
-          );
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      if ('copy-simplified-formatting' === id) {
-        if (!ensureCurrent()) return;
-        if (!clipboard.writeRichDeferred || !props.simplifiedFormattingParser) {
-          reportContextMenuFailure(
-            'editor-context-menu-rich-clipboard-unsupported',
-            props.contextMenuStrings?.statusClipboardUnavailable
-          );
-          return;
-        }
-        const markdown = captured.value.slice(
-          captured.selection.start,
-          captured.selection.end
-        );
-        const operation = beginOperation(captured);
-        const controller = operation.controller;
-        const payload = previewPort
-          .render(
-            previewRequest(
-              markdown,
-              props.preview,
-              previewAppearanceRef.current,
-              ++previewRevisionRef.current
-            ),
-            controller.signal
-          )
-          .then((response) => {
-            if (controller.signal.aborted || !isCurrent(captured)) {
-              throw new Error('editor-context-menu-context-stale');
-            }
-            const converted = createSimplifiedFormattingPayload(response.html, {
-              parser:
-                props.simplifiedFormattingParser as SimplifiedFormattingDomParser
-            });
-            if ('failed' === converted.status) throw new Error(converted.code);
-            return converted.payload;
-          });
-        void payload.catch(() => undefined);
-        try {
-          const result = await clipboard.writeRichDeferred(payload, {
-            signal: controller.signal
-          });
-          if (!ensureCurrent()) return;
-          if ('written' !== result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          }
-        } catch (error) {
-          reportContextMenuFailure(
-            contextMenuErrorCode(error, 'editor-context-menu-rich-copy-failed'),
-            props.contextMenuStrings?.statusActionFailed
-          );
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      if (
-        (
-          'copy-code-block' === id
-          && Boolean(actionContext?.generated)
-        )
-        || [
-          'copy-generated-image',
-          'copy-generated-mathml',
-          'copy-generated-source',
-          'edit-generated-content',
-          'insert-paragraph-above-generated',
-          'insert-paragraph-below-generated',
-          'delete-generated-content'
-        ].includes(id)
-      ) {
-        const generated = actionContext?.generated;
-        if (!generated?.lease.isCurrent?.()) {
-          reportContextMenuFailure(
-            'generated-content-export-lease-stale',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        if (!ensureCurrent()) return;
-        const original = generated.lease.target.original;
-        const sourceBeforeTransfer = documentSession.document.getValue();
-        const sourceMatchesOriginal = (source: string): boolean =>
-          original.fullRange.from >= 0
-          && original.fullRange.to > original.fullRange.from
-          && original.fullRange.to <= source.length
-          && source.slice(original.fullRange.from, original.fullRange.to)
-            === original.full;
-        if (!sourceMatchesOriginal(sourceBeforeTransfer)) {
-          reportContextMenuFailure(
-            'generated-content-export-source-stale',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        if (!ensureSelectionFitsTarget(original.fullRange)) return;
-        if ('copy-code-block' === id) {
-          const result = await clipboard.write(generated.lease.target.original.full);
-          if (!ensureCurrent()) return;
-          if ('written' !== result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          }
-          return;
-        }
-        if ('copy-generated-source' === id) {
-          const result = await clipboard.write(
-            generated.lease.target.original.body
-          );
-          if (!ensureCurrent()) return;
-          if ('written' !== result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          }
-          return;
-        }
-        if ('copy-generated-image' === id || 'copy-generated-mathml' === id) {
-          if (!ensureCurrent()) return;
-          const exportSession = props.generatedContentExportSession;
-          if (!exportSession) {
-            reportContextMenuFailure(
-              'generated-content-export-unsupported',
-              props.contextMenuStrings?.unsupported
-            );
-            return;
-          }
-          const request = {
-            identity: generated.identity,
-            lease: generated.lease,
-            mode: generated.mode,
-            validateLease: generated.validateLease
-          };
-          const result =
-            'copy-generated-image' === id
-              ? await exportSession.copyAsImage(request)
-              : await exportSession.copyMathMl(request);
-          if ('failed' === result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-          }
-          return;
-        }
-        if ('edit-generated-content' === id) {
-          if ('visual' === captured.surface) {
-            const capturedRevision = captured.revision;
-            if (
-              'number' !== typeof capturedRevision
-              || !Number.isSafeInteger(capturedRevision)
-            ) {
-              reportContextMenuFailure(
-                'generated-content-export-source-stale',
-                props.contextMenuStrings?.statusActionFailed
-              );
-              return;
-            }
-            const expectedRevision = capturedRevision;
-            if (
-              !prepareGeneratedSourceNavigation(
-                { revision: expectedRevision, value: captured.value },
-                () => {
-                  const source = documentSession.document.getValue();
-                  return (
-                    source === captured.value && sourceMatchesOriginal(source)
-                  );
-                }
-              )
-            ) {
-              reportContextMenuFailure(
-                'editor-context-menu-visual-selection-unavailable',
-                props.contextMenuStrings?.statusActionFailed
-              );
-              return;
-            }
-          }
-          const sourceAfterTransfer = documentSession.document.getValue();
-          if (
-            sourceAfterTransfer !== captured.value
-            || sourceAfterTransfer.slice(
-              original.fullRange.from,
-              original.fullRange.to
-            ) !== original.full
-          ) {
-            reportContextMenuFailure(
-              'generated-content-export-source-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          documentSession.document.revealPosition(
-            generated.lease.target.original.fullRange.from
-          );
-          return;
-        }
-        if (
-          'insert-paragraph-above-generated' === id
-          || 'insert-paragraph-below-generated' === id
-        ) {
-          if (!ensureCurrent()) return;
-          if (!generated.lease.isCurrent?.()) {
-            reportContextMenuFailure(
-              'generated-content-export-lease-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          const value = documentSession.document.getValue();
-          const position = generated.lease.target.original.fullRange.from;
-          const blockIndex = currentBlockIndex();
-          if (null === blockIndex) {
-            reportContextMenuFailure(
-              'editor-context-menu-block-index-unavailable',
-              props.contextMenuStrings?.unsupported
-            );
-            return;
-          }
-          const edit = insertParagraphRelative(
-            value,
-            { direction: 'none', end: position, start: position },
-            'insert-paragraph-above-generated' === id ? 'before' : 'after',
-            blockIndex
-          );
-          applyEdit(edit);
-          return;
-        }
-        if ('delete-generated-content' === id) {
-          if (!ensureCurrent()) return;
-          if (!generated.lease.isCurrent?.()) {
-            reportContextMenuFailure(
-              'generated-content-export-lease-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          const value = documentSession.document.getValue();
-          const range = generated.lease.target.original.fullRange;
-          if (
-            range.from < 0
-            || range.to <= range.from
-            || range.to > value.length
-            || value.slice(range.from, range.to)
-              !== generated.lease.target.original.full
-          ) {
-            reportContextMenuFailure(
-              'generated-content-export-source-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          applyEdit({
-            changes: { from: range.from, insert: '', to: range.to },
-            selection: {
-              direction: 'none',
-              end: range.from,
-              start: range.from
-            },
-            value: value.slice(0, range.from) + value.slice(range.to)
-          });
-          return;
-        }
-      }
-      if ('cut' === id) {
-        if (!ensureCurrent()) return;
-        if ('visual' === captured.surface) {
-          const operation = beginOperation(captured);
-          try {
-            const result = await clipboard.write(
-              captured.value.slice(
-                captured.selection.start,
-                captured.selection.end
-              ),
-              { signal: operation.controller.signal }
-            );
-            if ('written' !== result.status) {
-              if (!operation.controller.signal.aborted) {
-                reportContextMenuFailure(
-                  result.code,
-                  props.contextMenuStrings?.statusActionFailed
-                );
-              }
-              return;
-            }
-            if (operation.controller.signal.aborted || !ensureCurrent()) return;
-            finishOperation(operation);
-            const value = documentSession.document.getValue();
-            applyVisualCanonicalChange(captured, {
-              changes: {
-                from: captured.selection.start,
-                insert: '',
-                to: captured.selection.end
-              },
-              selection: {
-                direction: 'none',
-                end: captured.selection.start,
-                start: captured.selection.start
-              },
-              value:
-                value.slice(0, captured.selection.start)
-                + value.slice(captured.selection.end)
-            });
-          } finally {
-            finishOperation(operation);
-          }
-          return;
-        }
-        const mutationContext = sourceMutationContext();
-        const operation = beginOperation(mutationContext);
-        try {
-          const result = await cutEditorSelection({
-            captured: mutationContext,
-            clipboard,
-            deleteSelection: () => {
-              const value = documentSession.document.getValue();
-              const position = captured.selection.start;
-              documentSession.document.applyTextChange({
-                changes: {
-                  from: captured.selection.start,
-                  insert: '',
-                  to: captured.selection.end
-                },
-                selection: {
-                  direction: 'none',
-                  end: position,
-                  start: position
-                },
-                value:
-                  value.slice(0, captured.selection.start)
-                  + value.slice(captured.selection.end)
-              });
-            },
-            getCurrentContext: () => currentContext(mutationContext),
-            signal: operation.controller.signal
-          });
-          if ('cut' !== result.status && !operation.controller.signal.aborted) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-          }
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      if (['paste', 'paste-plain-text'].includes(id)) {
-        if (!ensureCurrent()) return;
-        const operation = beginOperation(captured);
-        try {
-          const result = await clipboard.read({
-            signal: operation.controller.signal
-          });
-          if (operation.controller.signal.aborted || !ensureCurrent()) return;
-          if ('available' !== result.status) {
-            reportContextMenuFailure(
-              'code' in result
-                ? result.code
-                : 'editor-context-menu-clipboard-empty',
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-            return;
-          }
-          finishOperation(operation);
-          if ('visual' === captured.surface) {
-            const value = documentSession.document.getValue();
-            applyVisualCanonicalChange(captured, {
-              changes: {
-                from: captured.selection.start,
-                insert: result.text,
-                to: captured.selection.end
-              },
-              selection: {
-                direction: 'none',
-                end: captured.selection.start + result.text.length,
-                start: captured.selection.start + result.text.length
-              },
-              value:
-                value.slice(0, captured.selection.start)
-                + result.text
-                + value.slice(captured.selection.end)
-            });
-            return;
-          }
-          const value = documentSession.document.getValue();
-          const nextValue =
-            value.slice(0, captured.selection.start)
-            + result.text
-            + value.slice(captured.selection.end);
-          const position = captured.selection.start + result.text.length;
-          documentSession.document.applyTextChange({
-            changes: {
-              from: captured.selection.start,
-              insert: result.text,
-              to: captured.selection.end
-            },
-            selection: { direction: 'none', end: position, start: position },
-            value: nextValue
-          });
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      if (
-        [
-          'insert-paragraph-above',
-          'insert-paragraph-below',
-          'insert-paragraph-above-code',
-          'insert-paragraph-below-code',
-          'insert-paragraph-above-table',
-          'insert-paragraph-below-table'
-        ].includes(id)
-      ) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        const block = findMarkdownBlock(
-          value,
-          captured.selection.start,
-          blockIndex ?? undefined
-        );
-        const codeTarget = actionContext?.code?.target;
-        const codeRelative = id.includes('-code');
-        const targetRange = codeRelative
-          ? codeTarget
-            ? { from: codeTarget.from, to: codeTarget.to }
-            : null
-          : block
-            ? { from: block.start, to: block.end }
-            : null;
-        if (!targetRange) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        if (!ensureSelectionFitsTarget(targetRange)) return;
-        const edit = insertParagraphRelative(
-          value,
-          captured.selection,
-          id.includes('above') ? 'before' : 'after',
-          blockIndex,
-          codeRelative ? codeTarget : undefined
-        );
-        applyEdit(edit);
-        return;
-      }
-      if (['indent-code-block', 'indent-selected-code'].includes(id)) {
-        if (!ensureCurrent()) return;
-        const code = actionContext?.code;
-        const selected = 'indent-selected-code' === id;
-        if (
-          !code
-          || (selected
-            ? code.canIndentSelection !== true
-            : code.canIndentBlock !== true)
-          || !code.codeMap
-          || !code.codeProjection
-          || !code.target
-          || !code.content
-        ) {
-          reportContextMenuFailure(
-            'editor-code-projection-target-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const projectionEntry = editorCodeProjectionEntry(code);
-        const contentLineRange = editorCodeContentLineRange(
-          code,
-          captured.value,
-          captured.selection,
-          selected
-        );
-        if (!projectionEntry || !contentLineRange) {
-          reportContextMenuFailure(
-            'editor-code-projection-target-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const operation = beginOperation(captured);
-        try {
-          const indentation = await indentEditorCode({
-            content: code.content,
-            info: 'fenced' === projectionEntry.kind
-              ? projectionEntry.info
-              : '',
-            language: '',
-            lineRange: {
-              endLine: contentLineRange.end,
-              startLine: contentLineRange.start
-            },
-            signal: operation.controller.signal
-          });
-          if (operation.controller.signal.aborted || !ensureCurrent()) return;
-          if ('unavailable' === indentation.status) {
-            reportContextMenuFailure(
-              indentation.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          const encoded = encodeEditorCodeProjection({
-            codeMap: code.codeMap,
-            contentLineRange,
-            desiredSemanticBody: indentation.content,
-            projection: code.codeProjection,
-            selection: captured.selection,
-            signature: code.requestSignature ?? '',
-            source: captured.value,
-            target: {
-              endLine: code.target.lineEnd,
-              kind: code.target.kind,
-              startLine: code.target.lineStart
-            }
-          });
-          if ('unavailable' === encoded.status) {
-            reportContextMenuFailure(
-              encoded.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          if (encoded.noop || !encoded.changes) return;
-          const nextValue =
-            captured.value.slice(0, encoded.changes.from)
-            + encoded.changes.insert
-            + captured.value.slice(encoded.changes.to);
-          const candidateTarget = candidateEditorCodeTarget(
-            nextValue,
-            encoded.selection,
-            code.target,
-            encoded.changes
-          );
-          if (
-            !candidateTarget
-            || !sameCandidateEditorCodeTarget(
-              candidateTarget,
-              code.target,
-              encoded.changes
-            )
-          ) {
-            reportContextMenuFailure(
-              'editor-code-projection-candidate-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          const defaultArticleTheme = props.appearance.articleThemes.find(
-            ({ id: themeId }) => 'default' === themeId
-          );
-          if (
-            !defaultArticleTheme
-            || !props.appearance.codeThemes.some(
-              ({ id: themeId }) =>
-                themeId === defaultArticleTheme.defaultCodeTheme
-            )
-          ) {
-            reportContextMenuFailure(
-              'editor-code-projection-candidate-unavailable',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          const candidateRequest: PreviewRequest = {
-            codeTheme: defaultArticleTheme.defaultCodeTheme,
-            customCssId: '',
-            markdown: nextValue.slice(
-              candidateTarget.ownerFrom,
-              candidateTarget.ownerEnd
-            ),
-            markdownTheme: defaultArticleTheme.id,
-            postId: props.preview.postId,
-            signature:
-              `editor-code-indent-candidate:${++editorCodeIndentationCandidateSequenceRef.current}`
-          };
-          let candidateResponse: PreviewResponse;
-          try {
-            candidateResponse = await previewPort.render(
-              candidateRequest,
-              operation.controller.signal
-            );
-          } catch {
-            if (!rootActiveRef.current) return;
-            if (operation.controller.signal.aborted && !isCurrent()) {
-              reportContextMenuFailure(
-                'editor-code-projection-candidate-stale',
-                props.contextMenuStrings?.statusActionFailed
-              );
-            } else if (!operation.controller.signal.aborted) {
-              reportContextMenuFailure(
-                'editor-code-projection-candidate-unavailable',
-                props.contextMenuStrings?.statusActionFailed
-              );
-            }
-            return;
-          }
-          if (operation.controller.signal.aborted) {
-            if (rootActiveRef.current && !isCurrent()) {
-              reportContextMenuFailure(
-                'editor-code-projection-candidate-stale',
-                props.contextMenuStrings?.statusActionFailed
-              );
-            }
-            return;
-          }
-          if (!ensureCurrent()) return;
-          let candidateValidation: EditorCodeIndentationCandidateValidation;
-          try {
-            candidateValidation = validateEditorCodeIndentationCandidate({
-              candidateSource: nextValue,
-              changes: encoded.changes,
-              contentLineRange,
-              desiredSemanticBody: indentation.content,
-              originalProjectionEntry: projectionEntry,
-              originalTarget: code.target,
-              response: candidateResponse,
-              selection: encoded.selection,
-              signature: candidateRequest.signature
-            });
-          } catch {
-            reportContextMenuFailure(
-              'editor-code-projection-candidate-unavailable',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          if ('unavailable' === candidateValidation.status) {
-            reportContextMenuFailure(
-              candidateValidation.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          if (!ensureCurrent()) return;
-          finishOperation(operation);
-          applyEdit({
-            changes: encoded.changes,
-            selection: encoded.selection,
-            ...(captured.surface === 'visual'
-              ? { selectionFallback: 'reflow-caret' as const }
-              : {}),
-            value: nextValue
-          });
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      if (['copy-code-block', 'copy-code-content', 'delete-code-block'].includes(id)) {
-        if (!ensureCurrent()) return;
-        const value = documentSession.document.getValue();
-        const codeTarget = actionContext?.code?.target;
-        const codeBlock = findMarkdownBlock(
-          value,
-          captured.selection.start,
-          currentBlockIndex() ?? undefined
-        );
-        const targetRange = codeTarget
-          ? { from: codeTarget.from, to: codeTarget.to }
-          : codeBlock
-            ? { from: codeBlock.start, to: codeBlock.end }
-            : null;
-        if (!targetRange) {
-          reportContextMenuFailure(
-            'editor-context-menu-code-block-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        if (!ensureSelectionFitsTarget(targetRange)) return;
-        if ('copy-code-content' === id) {
-          const code = actionContext?.code;
-          if (!code?.canCopyContent || !code.content) {
-            reportContextMenuFailure(
-              'editor-code-content-map-unavailable',
-              props.contextMenuStrings?.unsupported
-            );
-            return;
-          }
-          const operation = beginOperation(captured);
-          try {
-            const result = await clipboard.write(code.content, {
-              signal: operation.controller.signal
-            });
-            if (operation.controller.signal.aborted || !ensureCurrent()) return;
-            if ('written' !== result.status) {
-              reportContextMenuFailure(
-                result.code,
-                props.contextMenuStrings?.statusClipboardUnavailable
-              );
-            }
-          } finally {
-            finishOperation(operation);
-          }
-          return;
-        }
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const block =
-          undefined === blockIndex
-            ? findMarkdownBlock(value, captured.selection.start)
-            : findMarkdownBlock(value, captured.selection.start, blockIndex);
-        if ('code' !== block?.kind && !codeTarget) {
-          reportContextMenuFailure(
-            'editor-context-menu-code-block-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        if ('copy-code-block' === id) {
-          const result = await clipboard.write(
-            value.slice(
-              codeTarget?.from ?? block?.start ?? 0,
-              codeTarget?.to ?? block?.end ?? 0
-            )
-          );
-          if ('written' !== result.status)
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          return;
-        }
-        const blockStart = codeTarget?.from ?? block?.start;
-        const blockEnd = codeTarget?.to ?? block?.end;
-        if (undefined === blockStart || undefined === blockEnd) {
-          reportContextMenuFailure(
-            'editor-context-menu-code-block-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const nextValue = value.slice(0, blockStart) + value.slice(blockEnd);
-        applyEdit({
-          changes: { from: blockStart, insert: '', to: blockEnd },
-          selection: {
-            direction: 'none',
-            end: blockStart,
-            start: blockStart
+            return current;
           },
-          value: nextValue
-        });
-        return;
-      }
-      if (
-        'insert-table-above' === id
-        || 'insert-table-below' === id
-      ) {
-        if (!ensureCurrent()) return;
-        setContextMenuTableRequest({
-          ...captured,
-          insertionDirection: 'insert-table-above' === id ? 'above' : 'below'
-        });
-        return;
-      }
-      if (
-        'insert-image-above' === id
-        || 'insert-image-below' === id
-      ) {
-        if (!ensureCurrent()) return;
-        const value = documentSession.document.getValue();
-        const blockIndex = currentBlockIndex();
-        const block = findMarkdownBlock(
-          value,
-          captured.selection.start,
-          blockIndex ?? undefined
-        );
-        if (!block) {
-          reportContextMenuFailure(
-            'editor-context-menu-insertion-target-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
+          getSelection: () => documentSession.document.getSelection(),
+          getValue: () => documentSession.document.getValue(),
+          isEditable: () => documentSession.document.isEditable(),
+          revealPosition: (position) =>
+            documentSession.document.revealPosition(position),
+          subscribe: (listener) => documentSession.document.subscribe(listener),
+          subscribeSelection: (listener) =>
+            documentSession.document.subscribeSelection(listener)
         }
-        const direction = 'insert-image-above' === id ? 'above' : 'below';
+      : null,
+    generated: {
+      ...(props.generatedContentExportSession
+        ? { exportSession: props.generatedContentExportSession }
+        : {}),
+      prepareSourceNavigation: (expected, validateSource) =>
+        prepareGeneratedSourceNavigation(expected, validateSource)
+    },
+    isActive: () => rootActiveRef.current,
+    media: {
+      ...(props.editorImagePixelsPort
+        ? { imagePixels: props.editorImagePixelsPort }
+        : {}),
+      imageUpload: {
+        postId: props.imageUpload.postId,
+        remoteImageUploadMode: props.imageUpload.remoteImageUploadMode
+      },
+      openInsertion: (captured, block, direction) => {
+        if (!documentSession) return;
         const position = 'above' === direction ? block.start : block.end;
         const insertionSelection = {
           direction: 'none' as const,
@@ -4904,442 +3483,97 @@ export function EditorRoot(props: EditorRootProps) {
                 formatInsertion
               );
         void openMediaPicker(documentSession, pickerDocument);
-        return;
-      }
-      if ('delete-thematic-break' === id) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        const block = findMarkdownBlock(
-          value,
-          captured.selection.start,
-          blockIndex ?? undefined
-        );
-        if ('thematic-break' !== block?.kind) {
-          reportContextMenuFailure(
-            'editor-context-menu-thematic-break-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        if (!ensureSelectionFitsTarget({ from: block.start, to: block.end })) return;
-        applyEdit(deleteThematicBreak(value, captured.selection, blockIndex ?? undefined));
-        return;
-      }
-      const tableOperationIds = new Set([
-        'insert-row-above',
-        'insert-row-below',
-        'insert-column-left',
-        'insert-column-right',
-        'delete-row',
-        'delete-column',
-        'delete-table'
-      ]);
-      if (tableOperationIds.has(id)) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        if (!tableActionContext(value, blockIndex)) return;
-        const edit = editMarkdownTable(
-          value,
-          captured.selection.start,
-          { type: id as MarkdownTableOperation['type'] },
-          blockIndex
-        );
-        applyEdit(edit);
-        return;
-      }
-      if ('copy-table' === id) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        if (!tableActionContext(value, blockIndex)) return;
-        const edit = editMarkdownTable(
-          value,
-          captured.selection.start,
-          { type: 'copy-table' },
-          blockIndex
-        );
-        if (!edit?.copiedText) {
-          reportContextMenuFailure(
-            'editor-context-menu-table-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const result = await clipboard.write(edit.copiedText);
-        if ('written' !== result.status) {
-          reportContextMenuFailure(
-            result.code,
-            props.contextMenuStrings?.statusClipboardUnavailable
-          );
-        }
-        return;
-      }
-      if ('format-table-source' === id) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        if (!tableActionContext(value, blockIndex)) return;
-        const edit = formatMarkdownTableSource(
-          value,
-          captured.selection,
-          blockIndex
-        );
-        if (!edit) {
-          reportContextMenuFailure(
-            'editor-context-menu-table-format-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        applyEdit(edit);
-        return;
-      }
-      if (['align-left', 'align-center', 'align-right'].includes(id)) {
-        if (!ensureCurrent()) return;
-        const blockIndex = currentBlockIndex();
-        if (null === blockIndex) {
-          reportContextMenuFailure(
-            'editor-context-menu-block-index-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        if (!tableActionContext(value, blockIndex)) return;
-        const edit = setMarkdownTableAlignment(
-          value,
-          captured.selection.start,
-          {
-            alignment: id.slice('align-'.length) as 'left' | 'center' | 'right',
-            selection: tableSelectionAt(
-              value,
-              captured.selection,
-              blockIndex
-            ) ?? { kind: 'whole-table' }
-          },
-          captured.selection,
-          blockIndex
-        );
-        if ('status' in edit) {
-          reportContextMenuFailure(
-            edit.code,
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        applyEdit(edit);
-        return;
-      }
-      if (/^image-scale-(25|33|50|67|100|150|200)$/u.test(id)) {
-        if (!ensureCurrent()) return;
-        const image = findMarkdownImageAt(
-          captured.value,
-          captured.selection.start,
-          captured.selection.end
-        );
-        if (!image) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const replacement = createImageScaleReplacement(
-          captured.value,
-          image,
-          Number(id.slice('image-scale-'.length)) as
-            | 25
-            | 33
-            | 50
-            | 67
-            | 100
-            | 150
-            | 200
-        );
-        const value = documentSession.document.getValue();
-        const nextValue =
-          value.slice(0, replacement.from)
-          + replacement.insert
-          + value.slice(replacement.to);
-        const selection = imageTargetSelectionAfterEdit(
-          nextValue,
-          image.start
-        );
-        if (!selection) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-stale',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        applyEdit({
-          changes: replacement,
-          selection,
-          value: nextValue
-        });
-        return;
-      }
-      if ('copy-image' === id) {
-        const imageContext = actionContext?.image;
-        const imagePixels = props.editorImagePixelsPort;
-        if (
-          !imageContext?.canCopyImage
-          || !imageContext.lease
-          || !imagePixels
-          || !clipboard.writeImageDeferred
-        ) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-copy-unsupported',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        if (!ensureCurrent() || !imageContext.lease.isCurrent()) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-stale',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        const operation = beginOperation(captured);
-        const controller = operation.controller;
-        let extractionFailure: string | null = null;
-        const imageLease: EditorImagePixelsLease = {
-          image: imageContext.lease.root,
-          isCurrent: imageContext.lease.isCurrent
-        };
-        const png = Promise.resolve()
-          .then(() =>
-            imagePixels.extractPng({
-              lease: imageLease,
-              signal: controller.signal
-            })
-          )
-          .then((result) => {
-            if ('failed' === result.status) {
-              extractionFailure = result.code;
-              throw new Error(result.code);
-            }
-            return result.blob;
-          });
-        void png.catch(() => undefined);
-        try {
-          // Start the native deferred Clipboard operation during the original click.
-          const result = await clipboard.writeImageDeferred(png, {
-            signal: controller.signal
-          });
-          if (!ensureCurrent() || !imageContext.lease.isCurrent()) return;
-          if ('written' !== result.status) {
-            controller.abort();
-            reportContextMenuFailure(
-              extractionFailure ?? result.code,
-              props.contextMenuStrings?.statusClipboardUnavailable
-            );
-          }
-        } catch (error) {
-          const wasAborted = controller.signal.aborted;
-          controller.abort();
-          if (!wasAborted) {
-            const code =
-              extractionFailure
-              ?? (error instanceof Error
-              && /^editor-image-pixels-[a-z0-9-]+$/u.test(error.message)
-                ? error.message
-                : 'editor-context-menu-image-copy-failed');
-            reportContextMenuFailure(
-              code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-          }
-        } finally {
-          if (controller.signal.aborted || extractionFailure)
-            controller.abort();
-          finishOperation(operation);
-        }
-        return;
-      }
-      if ('delete-image' === id) {
-        if (!ensureCurrent()) return;
-        const image = findMarkdownImageAt(
-          captured.value,
-          captured.selection.start,
-          captured.selection.end
-        );
-        if (!image) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-unavailable',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const value = documentSession.document.getValue();
-        const current = parseMarkdownImageScale(value, image.start);
-        if (!current || current.raw !== image.raw) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-stale',
-            props.contextMenuStrings?.statusActionFailed
-          );
-          return;
-        }
-        const nextValue =
-          value.slice(0, current.start) + value.slice(current.end);
-        applyEdit({
-          changes: { from: current.start, insert: '', to: current.end },
-          selection: {
-            direction: 'none',
-            end: current.start,
-            start: current.start
-          },
-          value: nextValue
-        });
-        return;
-      }
-      if ('copy-link-address' === id) {
-        if (!actionContext?.link || !ensureCurrent()) return;
-        const result = await clipboard.write(actionContext.link.href);
-        if (!ensureCurrent()) return;
-        if ('written' !== result.status) {
-          reportContextMenuFailure(
-            result.code,
-            props.contextMenuStrings?.statusClipboardUnavailable
-          );
-        }
-        return;
-      }
-      if ('upload-image' === id) {
-        if (!ensureCurrent()) return;
-        const image = findMarkdownImageAt(
-          captured.value,
-          captured.selection.start,
-          captured.selection.end
-        );
-        if (
-          !image
-          || !/^https?:\/\//iu.test(image.destination)
-          || 'off' === props.imageUpload.remoteImageUploadMode
-        ) {
-          reportContextMenuFailure(
-            'editor-context-menu-image-upload-unsupported',
-            props.contextMenuStrings?.unsupported
-          );
-          return;
-        }
-        const operation = beginOperation(captured);
-        const controller = operation.controller;
-        try {
-          const result = await remoteImageImportPort.import({
-            altText: image.alt,
-            postId: props.imageUpload.postId,
-            signal: controller.signal,
-            url: image.destination
-          });
-          if ('failed' === result.status) {
-            reportContextMenuFailure(
-              result.code,
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          if (controller.signal.aborted || !ensureCurrent()) return;
-          const current = documentSession.document.getValue();
-          const parsed = parseMarkdownImageScale(current, image.start);
-          if (!parsed) throw new Error('editor-context-menu-image-stale');
-          const replacement = createMarkdownImageDestinationReplacement(
-            current,
-            parsed,
-            result.url
-          );
-          if (!replacement) return;
-          const nextValue =
-            current.slice(0, replacement.from)
-            + replacement.insert
-            + current.slice(replacement.to);
-          const selection = imageTargetSelectionAfterEdit(
-            nextValue,
-            image.start
-          );
-          if (!selection) {
-            reportContextMenuFailure(
-              'editor-context-menu-image-stale',
-              props.contextMenuStrings?.statusActionFailed
-            );
-            return;
-          }
-          applyEdit({
-            changes: replacement,
-            selection,
-            value: nextValue
-          });
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            reportContextMenuFailure(
-              contextMenuErrorCode(
-                error,
-                'editor-context-menu-image-upload-failed'
-              ),
-              props.contextMenuStrings?.statusActionFailed
-            );
-          }
-        } finally {
-          finishOperation(operation);
-        }
-        return;
-      }
-      reportContextMenuFailure(
-        'editor-context-menu-action-unavailable',
-        props.contextMenuStrings?.unsupported
-      );
+      },
+      remoteImageImport: remoteImageImportPort,
+      requestTableInsertion: (captured, direction) =>
+        setContextMenuTableRequest({
+          ...captured,
+          insertionDirection: direction
+        })
     },
-    [
-      applyVisualCanonicalChange,
-      documentSession,
-      props.contextMenuStrings,
-      props.editorClipboardPort,
-      props.editorImagePixelsPort,
-      props.generatedContentExportSession,
-      props.imageUpload.postId,
-      props.imageUpload.remoteImageUploadMode,
-      props.preview,
-      props.simplifiedFormattingParser,
-      openMediaPicker,
-      previewPort,
-      reportContextMenuFailure,
-      prepareSourceMutation,
-      prepareGeneratedSourceNavigation,
-      remoteImageImportPort,
-      visualEditorGeneration
-    ]
+    preview: {
+      render: (markdown, signal) =>
+        previewPort.render(
+          previewRequest(
+            markdown,
+            props.preview,
+            previewAppearanceRef.current,
+            ++previewRevisionRef.current
+          ),
+          signal
+        ),
+      renderCodeIndentationCandidate: async (markdown, signal) => {
+        const defaultArticleTheme = props.appearance.articleThemes.find(
+          ({ id }) => 'default' === id
+        );
+        if (
+          !defaultArticleTheme
+          || !props.appearance.codeThemes.some(
+            ({ id }) => id === defaultArticleTheme.defaultCodeTheme
+          )
+        ) {
+          return {
+            code: 'editor-code-projection-candidate-unavailable',
+            status: 'unavailable' as const
+          };
+        }
+        const signature =
+          `editor-code-indent-candidate:${++editorCodeIndentationCandidateSequenceRef.current}`;
+        const response = await previewPort.render(
+          {
+            codeTheme: defaultArticleTheme.defaultCodeTheme,
+            customCssId: '',
+            markdown,
+            markdownTheme: defaultArticleTheme.id,
+            postId: props.preview.postId,
+            signature
+          },
+          signal
+        );
+        return { response, signature, status: 'available' as const };
+      }
+    },
+    report: reportContextMenuFailure,
+    ...(props.simplifiedFormattingParser
+      ? { simplifiedFormattingParser: props.simplifiedFormattingParser }
+      : {}),
+    toolbar: {
+      commands: props.toolbar.commands,
+      execute: (commandId) => {
+        const execute = contextMenuExecutorRef.current;
+        if (!execute) return false;
+        execute(commandId);
+        return true;
+      }
+    },
+    visual: {
+      applyCanonicalChange: (captured, change) =>
+        applyVisualCanonicalChangeRef.current?.(captured, change) ?? false,
+      executeCommand: (command, options) => {
+        const runtime = visualEditorRuntimeRef.current;
+        if (!runtime) return 'unavailable';
+        const result = runtime.executeCommand(command, options);
+        return 'handled' === result ? 'handled' : 'failed';
+      },
+      isEditable: () =>
+        Boolean(visualEditorRuntimeRef.current?.isEditable())
+    }
+  };
+  contextMenuActionCapabilitiesRef.current = contextMenuActionCapabilities;
+  const contextMenuActionCoordinator = useMemo(
+    () =>
+      createEditorContextMenuActionCoordinator({
+        getCapabilities: () => {
+          const capabilities = contextMenuActionCapabilitiesRef.current;
+          if (!capabilities) {
+            throw new Error('editor-context-menu-capabilities-unavailable');
+          }
+          return capabilities;
+        }
+      }),
+    []
   );
+  contextMenuActionCoordinatorRef.current = contextMenuActionCoordinator;
   const insertContextMenuTable = useCallback(
     (rows: number, columns: number): void => {
       const request = contextMenuTableRequest;
@@ -5429,6 +3663,16 @@ export function EditorRoot(props: EditorRootProps) {
       let applied: boolean;
       if ('visual' === request.surface) {
         applied = applyVisualCanonicalChange(request, canonicalChange);
+      } else if (!documentSession.document.isEditable()) {
+        // The dialog can stay open while the authoritative field becomes
+        // read-only or disabled. Confirming it must then fail explicitly and
+        // write neither the canonical document nor history.
+        setContextMenuTableRequest(null);
+        reportContextMenuFailure(
+          'editor-context-menu-surface-read-only',
+          props.contextMenuStrings?.statusActionFailed
+        );
+        return;
       } else {
         documentSession.document.applyTextChange(canonicalChange);
         applied = true;
@@ -5458,17 +3702,17 @@ export function EditorRoot(props: EditorRootProps) {
       try {
         props.nativePublishPort.apply(draft);
       } catch {
-        props.onFailure('immersive-publish-native-owner-unavailable');
+        reportFailure('immersive-publish-native-owner-unavailable');
         return false;
       }
       if (true !== props.publishPost(documentSession)) {
         try {
           props.nativePublishPort.apply(original);
         } catch {
-          props.onFailure('immersive-publish-native-restore-unavailable');
+          reportFailure('immersive-publish-native-restore-unavailable');
           return false;
         }
-        props.onFailure('immersive-publish-command-unavailable');
+        reportFailure('immersive-publish-command-unavailable');
         return false;
       }
       return true;
@@ -5477,7 +3721,7 @@ export function EditorRoot(props: EditorRootProps) {
       documentSession,
       props.nativePublishPort,
       props.immersiveStrings.publishFailed,
-      props.onFailure,
+      reportFailure,
       props.publishPost,
       protectedOperationError
     ]
@@ -5501,7 +3745,7 @@ export function EditorRoot(props: EditorRootProps) {
       setMediaPickerDialog('featured');
     }
     const reported = operation.catch((error: unknown) => {
-      props.onFailure(
+      reportFailure(
         error instanceof Error
           && /^featured-image-[a-z0-9-]+$/.test(error.message)
           ? error.message
@@ -5520,7 +3764,7 @@ export function EditorRoot(props: EditorRootProps) {
   }, [
     props.immersiveStrings.selectFeaturedImage,
     props.mediaPickerFrame,
-    props.onFailure,
+    reportFailure,
     protectedOperationError
   ]);
   const enterImmersive = useCallback(() => {
@@ -5550,7 +3794,15 @@ export function EditorRoot(props: EditorRootProps) {
       setImmersive(false);
       return;
     }
-    void prepareSourceMutationWithPreview().then((prepared) => {
+    // Exiting immersive mode is a user CANCELLATION of visual preview: the
+    // accepted source is already what the canonical document holds, so
+    // re-rendering it here would issue a session render for a demand the user
+    // just abandoned. Teardown therefore suppresses the leave-time refresh; a
+    // not-ready surface is also acceptable, so materialize is skipped.
+    void prepareSourceMutationWithPreview({
+      materialize: false,
+      suppressRefresh: true
+    }).then((prepared) => {
       if (!prepared || !rootActiveRef.current) return;
       immersiveRef.current = false;
       setImmersive(false);
@@ -5589,18 +3841,18 @@ export function EditorRoot(props: EditorRootProps) {
     codeThemeFrameSyncPendingRef.current = null;
     const surface = previewRuntimeRef.current?.surface;
     if (!surface) {
-      props.onFailure('preview-enhancement-runtime-unavailable');
+      reportFailure('preview-enhancement-runtime-unavailable');
       return;
     }
     try {
       props.enhancementPort.syncCodeFrameBackgrounds(surface);
       scheduleCurrentWechatPreviewPreparation();
     } catch (error) {
-      props.onFailure(previewEnhancementFailureCode(error));
+      reportFailure(previewEnhancementFailureCode(error));
     }
   }, [
     props.enhancementPort,
-    props.onFailure,
+    reportFailure,
     renderedCodeTheme,
     scheduleCurrentWechatPreviewPreparation
   ]);
@@ -5652,9 +3904,7 @@ export function EditorRoot(props: EditorRootProps) {
     rootActiveRef.current = true;
     return () => {
       rootActiveRef.current = false;
-      const operation = contextMenuOperationRef.current;
-      operation?.controller.abort();
-      operation?.cleanup();
+      contextMenuActionCoordinatorRef.current?.dispose();
       visualPreviewWindowUnlockRef.current = null;
       codeThemePreparationRef.current?.controller.abort();
       codeThemePreparationRef.current?.prepared?.cancel();
@@ -5705,7 +3955,7 @@ export function EditorRoot(props: EditorRootProps) {
       const sessionError = protectedOperationError('post-write');
       if (sessionError) return 'blocked';
       if (codeThemePreparationRef.current) {
-        props.onFailure('editor-appearance-pending');
+        reportFailure('editor-appearance-pending');
         return 'blocked';
       }
       if (visualPreviewEditingRef.current && !prepareSourceMutation()) {
@@ -5718,7 +3968,7 @@ export function EditorRoot(props: EditorRootProps) {
     documentSession,
     prepareSourceMutation,
     props.nativeSubmissionPort,
-    props.onFailure,
+    reportFailure,
     protectedOperationError
   ]);
 
@@ -5769,7 +4019,7 @@ export function EditorRoot(props: EditorRootProps) {
       insertion: props.imageUpload.insertion,
       maxBytes: props.imageUpload.maxBytes,
       nextOperationId: nextImageUploadOperationId,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       onStatus: setImageUploadStatus,
       postId: props.imageUpload.postId,
       remoteImageImportCoordinator,
@@ -5786,7 +4036,7 @@ export function EditorRoot(props: EditorRootProps) {
     imageUploadPort,
     leaveVisualPreview,
     nextImageUploadOperationId,
-    props.onFailure,
+    reportFailure,
     setImageUploadStatus,
     remoteImageImportCoordinator,
     visualEditorSurface,
@@ -5806,7 +4056,7 @@ export function EditorRoot(props: EditorRootProps) {
       },
       enabled: localDraftsEnabled,
       onCandidate: setDraftCandidate,
-      onDiagnostic: props.onFailure,
+      onDiagnostic: reportFailure,
       onUnreadable: setDraftUnreadable,
       onStatus: setLocalDraftStatus,
       savedFingerprint: props.localDrafts.savedFingerprint,
@@ -5831,7 +4081,7 @@ export function EditorRoot(props: EditorRootProps) {
     props.localDrafts,
     props.settings.general.autoSaveInterval,
     localDraftsEnabled,
-    props.onFailure,
+    reportFailure,
     setLocalDraftStatus
   ]);
   useEffect(() => {
@@ -5967,7 +4217,7 @@ export function EditorRoot(props: EditorRootProps) {
             revision,
             source
           };
-          props.onFailure(code);
+          reportFailure(code);
           notifyContextMenuReadiness();
         },
         owner,
@@ -5982,7 +4232,7 @@ export function EditorRoot(props: EditorRootProps) {
       documentSession,
       notifyContextMenuReadiness,
       props.editorBlockIndexPort,
-      props.onFailure
+      reportFailure
     ]
   );
   const subscribeContextMenuBlockIndex = useCallback(
@@ -6557,17 +4807,20 @@ export function EditorRoot(props: EditorRootProps) {
         && /^https?:\/\//iu.test(image.destination),
       boundaryElement,
       element: visualEditorSurface,
-      // A demand can outlive the element it was anchored to: an accepted
-      // Preview window commit replaces the block DOM while the demand still
-      // waits for readiness. The windowed owner keeps the visual block identity
-      // across that commit, so it re-anchors a replayed target onto the live
-      // element of the same document position.
-      ...(visualPreviewWindowed
-        ? {
-            resolveTarget: (target: Element | null) =>
-              resolveLiveWindowContextMenuTarget(visualEditorSurface, target)
-          }
-        : {}),
+      // The visual owner settles the native input it has already accepted from
+      // the user before this demand reads a document. A gesture that arrives
+      // inside the owner's input debounce would otherwise capture the
+      // pre-input source. The runtime performs only that existing flush plus
+      // its own eligibility checks; it maps no target, requests no render, and
+      // inserts nothing.
+      prepareDemand: () => runtime.prepareContextMenuDemand(),
+      // A demand outlives the element it was anchored to: an accepted Preview
+      // render replaces the block DOM while the demand still waits for
+      // readiness. The runtime issues a lease bound to its own current
+      // accepted source and ledger, so a replayed demand rebinds to the same
+      // authenticated block - not to a reused ordinal, a coordinate, or the
+      // retired element.
+      captureTarget: (target) => runtime.captureContextMenuTarget(target),
       getActionContext: (target, snapshot, blockIndex) => {
         const revision = documentSession.document.getRevision?.();
         const codeBinding: EditorCodeContentQueryBinding = {
@@ -6578,14 +4831,21 @@ export function EditorRoot(props: EditorRootProps) {
           source: snapshot.value,
           surface: 'visual'
         };
-        const codeContext = editorCodeContentActionContext(
-          editorCodeContentQuery.ensure({
-            binding: codeBinding,
-            ...(undefined === blockIndex ? {} : { blockIndex })
-          }),
-          snapshot.value,
-          snapshot.selection
-        );
+        // A demand authenticated without the asynchronous inventory (the
+        // certified structural HR gap) has no block to read code content from.
+        // Starting a query with a null index would leave it permanently
+        // pending and gate the generic menu, so it simply carries no code
+        // context until the index arrives.
+        const codeContext = null === blockIndex
+          ? null
+          : editorCodeContentActionContext(
+              editorCodeContentQuery.ensure({
+                binding: codeBinding,
+                ...(undefined === blockIndex ? {} : { blockIndex })
+              }),
+              snapshot.value,
+              snapshot.selection
+            );
         const generatedTarget =
           generatedRootAtTarget(target, 'math')
           ?? generatedRootAtTarget(target, 'mermaid');
@@ -6777,7 +5037,38 @@ export function EditorRoot(props: EditorRootProps) {
             // intentionally rejected, and the generic menu remains correct.
             // Only the no-source-match case is a stale Preview target and
             // must fail explicitly instead of silently degrading.
-            throw new Error('editor-context-menu-image-stale');
+            //
+            // A genuine mixed range (text + image + text) is the other valid
+            // case without a source match: no single image contains the whole
+            // selection, so `prepared` is null by definition. That gesture is
+            // still deliberate user intent, not a stale pointer target, and it
+            // is proved from the live native selection itself: one non-collapsed
+            // range whose endpoints are connected inside this runtime's surface
+            // and which actually intersects the hit image. Anything else - a
+            // collapsed caret, a foreign or detached range, or a range that does
+            // not cover the pointed image - stays an explicit stale-image
+            // failure.
+            const nativeSelection =
+              runtime.surface.ownerDocument.defaultView?.getSelection();
+            // An image-node selection (`selectNode(img)`) selects no text at
+            // all. A mixed range always contains text besides the image, so
+            // requiring non-blank selected text keeps the pointer-image stale
+            // case - where the retired `<img>` node range survives - failing
+            // exactly as before, while a real text+image range is admitted.
+            const deliberateSelectionCoversHitImage = Boolean(
+              nativeSelection
+              && 1 === nativeSelection.rangeCount
+              && !nativeSelection.isCollapsed
+              && nativeSelection.anchorNode?.isConnected
+              && nativeSelection.focusNode?.isConnected
+              && runtime.surface.contains(nativeSelection.anchorNode)
+              && runtime.surface.contains(nativeSelection.focusNode)
+              && '' !== nativeSelection.getRangeAt(0).toString().trim()
+              && nativeSelection.getRangeAt(0).intersectsNode(imageElement)
+            );
+            if (!deliberateSelectionCoversHitImage) {
+              throw new Error('editor-context-menu-image-stale');
+            }
           }
         }
         const baseContext = (
@@ -6868,6 +5159,17 @@ export function EditorRoot(props: EditorRootProps) {
         // readiness subscription and rebuilt from the same target once the
         // matching Preview is accepted, instead of throwing out of preparation
         // and surfacing as a generic menu-open failure.
+        // A trusted local edit advanced the canonical document without a
+        // render. The accepted edit map belongs to the previous document, so
+        // this demand cannot use it - but refusing would make the pointer
+        // gesture unavailable until the user manually left and re-entered the
+        // mode. Request the formal Preview for the canonical source here and
+        // keep the demand parked; readiness notifies again when that render is
+        // accepted and the same gesture is rebuilt against the new map.
+        if (runtime.needsAcceptedPreviewRefresh?.()) {
+          runtime.refreshAcceptedPreview?.();
+          return { status: 'pending' };
+        }
         if (
           runtime.isTransferPending()
           || 'loading' === previewSurfaceStatusRef.current
@@ -6891,7 +5193,33 @@ export function EditorRoot(props: EditorRootProps) {
           ) {
             return { code: failure.code, status: 'unavailable' };
           }
-          if (!blockIndex) return { status: 'pending' };
+          if (!blockIndex) {
+            const nativeSelection = runtime.surface.ownerDocument.defaultView?.getSelection();
+            const nativeRange = nativeSelection?.rangeCount === 1
+              ? nativeSelection.getRangeAt(0)
+              : null;
+            const nativeOffset = nativeSelection?.anchorOffset ?? -1;
+            const rootGapBesideHr = Boolean(
+              nativeSelection?.isCollapsed
+              && nativeRange?.collapsed
+              && nativeSelection.anchorNode === runtime.surface
+              && nativeSelection.focusNode === runtime.surface
+              && nativeSelection.anchorOffset === nativeSelection.focusOffset
+              && Number.isInteger(nativeOffset)
+              && nativeOffset >= 0
+              && nativeOffset <= runtime.surface.childNodes.length
+              && (
+                runtime.surface.childNodes[nativeOffset] instanceof HTMLHRElement
+                || runtime.surface.childNodes[nativeOffset - 1] instanceof HTMLHRElement
+              )
+            );
+            // The shared structural resolver authenticates an accepted HR from
+            // the Preview edit map/Windowed ledger. It does not need the
+            // asynchronous context-menu block index, so an HR demand must
+            // reach that resolver on its first activation rather than waiting
+            // for an unrelated inventory build.
+            if (!rootGapBesideHr) return { status: 'pending' };
+          }
         }
         const revision = documentSession.document.getRevision?.();
         const codeReadiness = editorCodeContentQuery.readiness({
@@ -7149,7 +5477,7 @@ export function EditorRoot(props: EditorRootProps) {
           direction={props.layout.direction}
           onCopyWechat={copyWechatFromImmersive}
           onExit={exitImmersive}
-          onFailure={props.onFailure}
+          onFailure={reportFailure}
           onBeforeSourceMutation={prepareSourceMutation}
           onConfirmPublish={publish}
           onSelectFeaturedImage={selectFeaturedImage}
@@ -7163,7 +5491,7 @@ export function EditorRoot(props: EditorRootProps) {
                 bootstrap={currentAppearance}
                 messageAlertTimer={props.immersiveEnvironment}
                 onFailure={() =>
-                  props.onFailure('react-editor-appearance-failed')
+                  reportFailure('react-editor-appearance-failed')
                 }
                 onNotification={setAppearanceNotification}
                 onNotificationDismiss={dismissAppearanceNotification}
@@ -7175,7 +5503,7 @@ export function EditorRoot(props: EditorRootProps) {
               />
               <FontControls
                 bootstrap={currentFonts}
-                onFailure={() => props.onFailure('react-editor-fonts-failed')}
+                onFailure={() => reportFailure('react-editor-fonts-failed')}
                 onReady={handleFontControlsReady}
                 port={fontControlsPort}
                 variant="immersive"
@@ -7319,7 +5647,7 @@ export function EditorRoot(props: EditorRootProps) {
               label={props.immersiveStrings.editorSettings}
               messageAlertTimer={props.immersiveEnvironment}
               onAppearanceReady={handleAppearanceReady}
-              onFailure={props.onFailure}
+              onFailure={reportFailure}
               onNotification={setAppearanceNotification}
               onNotificationDismiss={dismissAppearanceNotification}
               onFontControlsReady={handleFontControlsReady}
@@ -7492,7 +5820,7 @@ export function EditorRoot(props: EditorRootProps) {
               }}
               initialRevision={0}
               messages={props.preview.messages}
-              onDiagnostic={props.onFailure}
+              onDiagnostic={reportFailure}
               onDispose={handlePreviewDispose}
               onImageReadinessChange={handlePreviewImageReadinessChange}
               onReady={handlePreviewReady}
@@ -7538,7 +5866,7 @@ export function EditorRoot(props: EditorRootProps) {
                   onCanonicalDocumentChange={
                     handleVisualCanonicalDocumentChange
                   }
-                  onDiagnostic={props.onFailure}
+                  onDiagnostic={reportFailure}
                   onDispose={handleVisualEditorDispose}
                   onFailure={handleVisualFailure}
                   onMarkdownChange={handleVisualMarkdownChange}
@@ -7563,6 +5891,7 @@ export function EditorRoot(props: EditorRootProps) {
                     prepareVisualImageTargetBySelection
                   }
                   prepareWindowBlockAdoption={prepareVisualWindowBlockAdoption}
+                  retainCompositionSurface={retainCompositionSurface}
                   requestPreview={handleVisualPreviewRequest}
                   requestPreviewAtDocumentEnd={handleVisualPreviewAtDocumentEnd}
                   surface={previewRuntimeRef.current.surface}
@@ -7577,7 +5906,7 @@ export function EditorRoot(props: EditorRootProps) {
                   onCanonicalDocumentChange={
                     handleVisualCanonicalDocumentChange
                   }
-                  onDiagnostic={props.onFailure}
+                  onDiagnostic={reportFailure}
                   onDispose={handleVisualEditorDispose}
                   onFailure={handleVisualFailure}
                   onMarkdownChange={handleVisualMarkdownChange}
@@ -7618,7 +5947,7 @@ export function EditorRoot(props: EditorRootProps) {
           )}
           labels={props.contextMenuStrings}
           heading={contextMenuHeading}
-          onAction={handleContextMenuAction}
+          onAction={contextMenuActionCoordinator.onAction}
           onFailure={(code) =>
             reportContextMenuFailure(
               code,

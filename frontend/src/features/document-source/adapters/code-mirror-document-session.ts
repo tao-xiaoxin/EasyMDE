@@ -75,8 +75,26 @@ export type DocumentTextChange = Readonly<{
   deferNativeBridge?: boolean;
   holdNativeBridge?: boolean;
   isolateHistoryBefore?: boolean;
+  /**
+   * Joins this change to the previous canonical history event when
+   * CodeMirror's own adjacency and time rules allow it. Only an owner that
+   * knows both changes belong to ONE user operation may ask for that; every
+   * other caller keeps a separate undo step.
+   */
+  joinPreviousHistory?: boolean;
   /** Records the accepted post-edit selection in CodeMirror's history event. */
   recordHistorySelection?: boolean;
+  /**
+   * Carries the post-edit selection into the canonical selection field
+   * WITHOUT appending the separate history selection event. An owner that
+   * commits one typed run keystroke by keystroke needs this: the selection
+   * event would hang off the run's first character and block CodeMirror from
+   * joining the next keystroke onto it, splitting the run into one undo step
+   * per character.
+   */
+  carryHistorySelectionWithoutEvent?: boolean;
+  /** Authenticated native pre-edit selection, committed with the same edit. */
+  historySelectionBefore?: DocumentSelection;
   selection: DocumentSelection;
   value: string;
   changes?: DocumentTextChangeRange;
@@ -125,7 +143,7 @@ export type CodeMirrorDocumentSession = Readonly<{
   getSelection: () => DocumentSelection;
   getSnapshot: () => CodeMirrorDocumentSnapshot;
   getValue: () => string;
-  getRevision?: () => number;
+  getRevision: () => number;
   replaceSavedValue: (value: string) => void;
   redo: () => boolean;
   revealPosition: (position: number) => void;
@@ -672,11 +690,14 @@ export function createCodeMirrorDocumentSession({
 
   return {
     applyTextChange({
+      carryHistorySelectionWithoutEvent = false,
       changes,
       deferNativeBridge = false,
       holdNativeBridge = false,
       isolateHistoryBefore = false,
+      joinPreviousHistory = false,
       recordHistorySelection = false,
+      historySelectionBefore,
       selection,
       value
     }: DocumentTextChange) {
@@ -717,7 +738,7 @@ export function createCodeMirrorDocumentSession({
       const transactionSpec = {
         annotations: [
           Transaction.addToHistory.of(valueChanged),
-          Transaction.userEvent.of('input'),
+          Transaction.userEvent.of(joinPreviousHistory ? 'input.type' : 'input'),
           ...(valueChanged && isolateHistoryBefore
             ? [isolateHistory.of('before')]
             : [])
@@ -726,10 +747,10 @@ export function createCodeMirrorDocumentSession({
         ...(valueChanged
           ? {
             effects: [canonicalHistorySelectionEffect.of({
-              inverse: recordHistorySelection
-                ? selectionBefore
+              inverse: recordHistorySelection || carryHistorySelectionWithoutEvent
+                ? normalizedSelection(historySelectionBefore ?? selectionBefore, state.doc.length)
                 : null,
-              selection: recordHistorySelection
+              selection: recordHistorySelection || carryHistorySelectionWithoutEvent
                 ? normalizedSelection(selection, value.length)
                 : null
             })]
@@ -748,7 +769,12 @@ export function createCodeMirrorDocumentSession({
       } else {
         view.dispatch(transactionSpec);
       }
-      if (recordHistorySelection && valueChanged) {
+      if (recordHistorySelection && valueChanged && !joinPreviousHistory) {
+        // A joined typing run must not append a separate selection event to
+        // the history branch: CodeMirror refuses to join a later change onto
+        // an event that carries selectionsAfter, so the run would split into
+        // one undo step per character. The change's own selection effect has
+        // already recorded this edit's canonical caret.
         recordCanonicalHistorySelection();
       }
     },

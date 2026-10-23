@@ -11,7 +11,7 @@ import {
   type EditorCodeContentReadResult,
   type EditorCodeContentSelection,
   type EditorCodeContentTarget
-} from './editor-markdown-block-index';
+} from './editor-code-content-target';
 import type { EditorMarkdownBlockIndex } from './editor-markdown-block-index';
 
 export const MAX_EDITOR_CODE_CONTENT_QUERY_BYTES = 1_048_576;

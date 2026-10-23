@@ -711,6 +711,8 @@ describe('createEditorContextMenuModel', () => {
     expect(selectedCode.children.map((item) => item.id)).not.toContain('bold');
     expect(selectedCode.children.map((item) => item.id)).not.toContain('copy-paste-as');
     expect(selectedCode.children.map((item) => item.id)).not.toContain('insert');
+    expect(selectedCode.children.find((item) => item.id === 'copy-code-block')?.disabled).toBe(false);
+    expect(selectedCode.children.find((item) => item.id === 'delete-code-block')?.disabled).toBe(false);
   });
 
   it('adds the copy link address action only for a captured link target', () => {

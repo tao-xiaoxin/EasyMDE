@@ -2,24 +2,34 @@ import { describe, expect, it } from "vitest";
 
 import {
 	captureEditorContext,
-	createTextEdit,
 	deleteThematicBreak,
-	editMarkdownTable,
-	editorContextSelectionFitsRange,
 	findMarkdownBlock,
-	findMarkdownTable,
-	formatMarkdownTableSource,
 	insertMarkdownBlockRelative,
 	insertParagraphRelative,
 	isEditorContextCurrent,
 	markdownHeadingLevel,
-	setMarkdownTableAlignment,
-	tableSelectionAt,
 } from "./editor-context-menu-rules";
 import {
+	createTextEdit,
+	editorContextSelectionFitsRange,
+} from "./editor-context-menu-text-edit";
+import {
+	findMarkdownTable,
+	tableSelectionAt,
+} from "./editor-markdown-table";
+import {
+	formatMarkdownTableSource,
+} from "./editor-markdown-table-format";
+import {
+	editMarkdownTable,
+	setMarkdownTableAlignment,
+} from "./editor-markdown-table-mutation";
+import {
 	createEditorMarkdownBlockIndex,
-	findEditorCodeContentTarget,
 } from "./editor-markdown-block-index";
+import {
+	findEditorCodeContentTarget,
+} from "./editor-code-content-target";
 
 describe("editor context menu rules", () => {
 	it("rejects a stale block index for a changed same-length source", () => {
@@ -870,6 +880,94 @@ describe("editor context menu rules", () => {
 		expect(
 			edit?.value.slice(edit?.selection.start ?? 0, edit?.selection.end ?? 0),
 		).toBe("A");
+	});
+
+	it("treats only a 0-3 space indent as table syntax and rejects code-indented rows", () => {
+		// A real 0-3 space indented table keeps its own bytes and gains only
+		// outer padding.
+		for (const spaces of ["", " ", "  ", "   "]) {
+			const source = [
+				"before",
+				"",
+				`${spaces}| A | B |`,
+				`${spaces}| --- | --- |`,
+				`${spaces}| x | y |`,
+				"after",
+			].join("\n");
+			const position = source.indexOf("x | y");
+			const edit = formatMarkdownTableSource(source, {
+				direction: "none",
+				end: position,
+				start: position,
+			});
+			expect(edit?.value).toBe(
+				[
+					"before",
+					"",
+					`${spaces}| A   | B   |`,
+					`${spaces}| --- | --- |`,
+					`${spaces}| x   | y   |`,
+					"after",
+				].join("\n"),
+			);
+			expect(edit?.changes?.from).toBe(source.indexOf(`${spaces}| A`));
+		}
+
+		// Four spaces or a tab is indented code, with or without a leading
+		// pipe, including where the paragraph-to-table promotion is reached.
+		const codeShapes = [
+			"    | A | B |\n    | --- | --- |\n    | x | y |",
+			"    A | B\n    --- | ---\n    x | y",
+			"\t| A | B |\n\t| --- | --- |\n\t| x | y |",
+			"\tA | B\n\t--- | ---\n\tx | y",
+			// The paragraph-fallback promotion path, which the parser reports
+			// as a paragraph rather than a code block.
+			"p\n    | A | B |\n    | --- | --- |\n    | x | y |",
+			"p\n    A | B\n    --- | ---\n    x | y",
+			"p\n\tA | B\n\t--- | ---\n\tx | y",
+		];
+		for (const shape of codeShapes) {
+			const probe = shape.includes("x | y") ? "x | y" : "y";
+			const position = shape.indexOf(probe);
+			expect(findMarkdownBlock(shape, position)?.kind).not.toBe("table");
+			expect(findMarkdownTable(shape, position)).toBeNull();
+			expect(
+				formatMarkdownTableSource(shape, {
+					direction: "none",
+					end: position,
+					start: position,
+				}),
+			).toBeNull();
+		}
+	});
+
+	it("keeps a 0-3 space indented table without a leading pipe in place", () => {
+		const source = [
+			"before",
+			"",
+			"  A | B",
+			"  --- | ---",
+			"  x | y",
+			"after",
+		].join("\n");
+		const position = source.indexOf("x | y");
+		const edit = formatMarkdownTableSource(source, {
+			direction: "none",
+			end: position,
+			start: position,
+		});
+		expect(edit?.value).toBe(
+			[
+				"before",
+				"",
+				"  A   | B  ",
+				"  --- | ---",
+				"  x   | y  ",
+				"after",
+			].join("\n"),
+		);
+		expect(edit?.value.startsWith("before\n\n  A")).toBe(true);
+		expect(edit?.value.endsWith("\n  x   | y  \nafter")).toBe(true);
 	});
 
 	it("returns an unchanged edit for an aligned table and null for unsupported context", () => {

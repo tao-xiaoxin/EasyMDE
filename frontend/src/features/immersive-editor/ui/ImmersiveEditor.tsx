@@ -665,7 +665,18 @@ export function ImmersiveEditor({
   );
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ('Escape' !== event.key || event.isComposing) return;
+      // A dialog that already handled this Escape owns it: the modal calls
+      // preventDefault and stops React propagation, but this listener is a
+      // native document listener, so the cancelled event must also stop here
+      // instead of closing the surrounding mode as well. Safari reports an IME
+      // composition Escape with `keyCode` 229 and `isComposing` false, so that
+      // signal is checked at this same boundary rather than left to the dialog.
+      if (
+        'Escape' !== event.key
+        || event.isComposing
+        || 229 === event.keyCode
+        || event.defaultPrevented
+      ) return;
       if (environment.hasOpenToolbarPopover()) return;
       event.preventDefault();
       if (tableOpen) setTableOpen(false);

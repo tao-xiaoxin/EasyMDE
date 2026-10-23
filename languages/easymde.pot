@@ -442,7 +442,7 @@ msgstr ""
 msgid "Copy to WeChat"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:572 src/Frontend/FrontendAssets.php:109
+#: src/Admin/AdminAssets.php:572 src/Frontend/FrontendAssets.php:112
 msgid "Copied"
 msgstr ""
 
@@ -1152,7 +1152,7 @@ msgstr ""
 msgid "A different local draft was saved in another tab."
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1076 src/Frontend/FrontendAssets.php:107
+#: src/Admin/AdminAssets.php:1076 src/Frontend/FrontendAssets.php:110
 msgid "Rendering failed."
 msgstr ""
 
@@ -1281,7 +1281,7 @@ msgstr ""
 msgid "Copy Code Block Content"
 msgstr ""
 
-#: src/Admin/AdminAssets.php:1107 src/Frontend/FrontendAssets.php:108
+#: src/Admin/AdminAssets.php:1107 src/Frontend/FrontendAssets.php:111
 msgid "Copy code"
 msgstr ""
 
@@ -3124,11 +3124,11 @@ msgstr ""
 msgid "The EasyMDE settings route is not supported."
 msgstr ""
 
-#: src/Frontend/FrontendAssets.php:110
+#: src/Frontend/FrontendAssets.php:113
 msgid "Code copied"
 msgstr ""
 
-#: src/Frontend/FrontendAssets.php:111
+#: src/Frontend/FrontendAssets.php:114
 msgid "Unable to copy code. Try again."
 msgstr ""
 

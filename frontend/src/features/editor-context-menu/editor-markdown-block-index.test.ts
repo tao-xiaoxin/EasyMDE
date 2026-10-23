@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
 	createEditorMarkdownBlockIndex,
-	type EditorCodeBodyMap,
 	type EditorMarkdownBlockKind,
-	findEditorCodeContentTarget,
 	findEditorMarkdownBlock,
-	readEditorCodeContent,
 } from "./editor-markdown-block-index";
+import {
+	type EditorCodeBodyMap,
+	findEditorCodeContentTarget,
+	readEditorCodeContent,
+} from "./editor-code-content-target";
 
 function editorCodeBodyMap(
 	source: string,

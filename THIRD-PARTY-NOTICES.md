@@ -39,6 +39,7 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 
 | Name | Version | Source | License | Purpose | Bundled in ZIP | Notice location |
 | --- | --- | --- | --- | --- | --- | --- |
+| @codemirror/autocomplete | 6.20.3 | https://registry.npmjs.org/@codemirror/autocomplete/-/autocomplete-6.20.3.tgz | MIT | Completion support used by the official CodeMirror language packages for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @codemirror/commands | 6.10.4 | https://registry.npmjs.org/@codemirror/commands/-/commands-6.10.4.tgz | MIT | CodeMirror editing commands, keymaps, and undo history. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @codemirror/lang-css | 6.3.1 | https://registry.npmjs.org/@codemirror/lang-css/-/lang-css-6.3.1.tgz | MIT | Official CSS language parsing and indentation for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @codemirror/lang-html | 6.4.11 | https://registry.npmjs.org/@codemirror/lang-html/-/lang-html-6.4.11.tgz | MIT | Official HTML language parsing and indentation for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
@@ -52,9 +53,15 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | @codemirror/state | 6.7.1 | https://registry.npmjs.org/@codemirror/state/-/state-6.7.1.tgz | MIT | CodeMirror document, selection, transaction, and editor state. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @codemirror/view | 6.43.6 | https://registry.npmjs.org/@codemirror/view/-/view-6.43.6.tgz | MIT | CodeMirror browser editor view and input handling. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @lezer/common | 1.5.2 | https://registry.npmjs.org/@lezer/common/-/common-1.5.2.tgz | MIT | Shared syntax-tree infrastructure required by CodeMirror. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/css | 1.3.4 | https://registry.npmjs.org/@lezer/css/-/css-1.3.4.tgz | MIT | CSS parser used by official CSS language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @lezer/highlight | 1.2.3 | https://registry.npmjs.org/@lezer/highlight/-/highlight-1.2.3.tgz | MIT | Highlighting infrastructure required by CodeMirror language support. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/html | 1.3.13 | https://registry.npmjs.org/@lezer/html/-/html-1.3.13.tgz | MIT | HTML parser used by official HTML language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/javascript | 1.5.4 | https://registry.npmjs.org/@lezer/javascript/-/javascript-1.5.4.tgz | MIT | JavaScript and TypeScript parser used by official JavaScript language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/json | 1.0.3 | https://registry.npmjs.org/@lezer/json/-/json-1.0.3.tgz | MIT | JSON parser used by official JSON language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @lezer/lr | 1.4.10 | https://registry.npmjs.org/@lezer/lr/-/lr-1.4.10.tgz | MIT | LR parser infrastructure required by CodeMirror language support. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @lezer/markdown | 1.7.2 | https://registry.npmjs.org/@lezer/markdown/-/markdown-1.7.2.tgz | MIT | Markdown parser used by CodeMirror language support. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/python | 1.1.19 | https://registry.npmjs.org/@lezer/python/-/python-1.1.19.tgz | MIT | Python parser used by official Python language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
+| @lezer/yaml | 1.0.4 | https://registry.npmjs.org/@lezer/yaml/-/yaml-1.0.4.tgz | MIT | YAML parser used by official YAML language support for detached code formatting. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | @marijn/find-cluster-break | 1.0.3 | https://registry.npmjs.org/@marijn/find-cluster-break/-/find-cluster-break-1.0.3.tgz | MIT | Unicode grapheme boundary handling used by CodeMirror state. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | crelt | 1.0.7 | https://registry.npmjs.org/crelt/-/crelt-1.0.7.tgz | MIT | DOM element construction used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 | diff | 5.2.2 | https://registry.npmjs.org/diff/-/diff-5.2.2.tgz | BSD-3-Clause | Character-level change mapping used to preserve canonical Markdown during visual editing. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
@@ -67,6 +74,32 @@ Copied frontend assets are committed locally so the editor, preview, and fronten
 | w3c-keyname | 2.2.8 | https://registry.npmjs.org/w3c-keyname/-/w3c-keyname-2.2.8.tgz | MIT | Cross-browser keyboard key normalization used by CodeMirror view. | Yes, compiled into assets/build/ | THIRD-PARTY-NOTICES.md |
 
 These packages are compiled into production browser bundles. Their required license notices follow.
+
+### @codemirror/autocomplete
+
+```text
+MIT License
+
+Copyright (C) 2018-2021 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
 
 ### @codemirror/commands
 
@@ -406,12 +439,116 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
+### @lezer/css
+
+```text
+MIT License
+
+Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
 ### @lezer/highlight
 
 ```text
 MIT License
 
 Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/html
+
+```text
+MIT License
+
+Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/javascript
+
+```text
+MIT License
+
+Copyright (C) 2018 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/json
+
+```text
+MIT License
+
+Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin>, Arun Srinivasan <rulfzid@gmail.com>, and others
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -464,6 +601,58 @@ THE SOFTWARE.
 MIT License
 
 Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/python
+
+```text
+MIT License
+
+Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```
+
+### @lezer/yaml
+
+```text
+MIT License
+
+Copyright (C) 2024 by Marijn Haverbeke <marijnh@gmail.com> and others
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

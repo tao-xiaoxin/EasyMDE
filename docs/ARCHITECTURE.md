@@ -280,6 +280,67 @@ browser Markdown renderer. The block-index cache uses the local dedicated
 Worker; unavailable parser blocks retain complete provenance and never become
 editable math merely because their text contains delimiters.
 
+A demand is one gesture with one lifetime. For a Source or visual activation the
+Feature first settles work the owner has already accepted from the user
+(`prepareDemand`, supplied by a visual runtime and absent for Source); where the
+surface maps its own pointer driven selection before readiness (Source), that
+runs next, then the Feature captures the target of the gesture once, while that
+element is still live, and only then reads the snapshot and readiness. A visual
+owner instead maps its pointer selection inside the gated preparation that
+readiness releases, which is why it supplies no pointer-selection hook. The
+preflight commits the owner's own pending native input and nothing else: it maps
+no selection, requests no Preview, and inserts nothing, and it runs once per
+activation rather than on a readiness notification. A refused preflight ends the
+gesture before any target is captured, leaving the owner's own failure as the
+single report.
+
+Visual owners return a target lease (`EditorContextMenuTargetLease`,
+`captureTarget`) bound to their own current accepted source, ledger, and runtime
+instance. While readiness is pending - a transfer, an in-flight
+re-authentication, or a still-building inventory - the Feature keeps the parked
+demand and its lease without resolving a DOM node, because the accepted render
+that satisfies readiness may not be installed yet. This holds for every rebuild
+of a demand, including one whose menu is already on screen: a readiness
+notification is not permission to read the element the user originally pointed
+at, so an accepted render that replaces that block while the menu stays open is
+rebound through the same flow. Only a ready rebuild resolves the lease, and the
+owner either names the live element that carries the demanded block or returns
+null. Null retires the demand silently: there is no fallback to the retired
+element, no lookup by reused ordinal block id, no coordinate re-test, and no
+menu for a different block. A changed accepted source is therefore not silently
+rebound; the block must still be provable, and a Full re-authentication that
+renumbers roots still resolves the block the user pointed at. Every terminal path - dismissal, action close, cancellation,
+owner or surface replacement, readiness failure, and unmount - releases the
+lease idempotently, and a released lease never revives on a later notification,
+so a retired demand cannot reopen or act on stale bytes.
+
+While a demand is pending without a visible menu, the Feature owns Escape:
+its document-capture listener prevents the default and stops propagation before
+retiring the demand, so the immersive mode owner cannot also exit on that key.
+This cancellation neither restores editor focus nor changes an outside native
+selection. A late accepted Preview may complete its own presentation, but cannot
+reopen the cancelled demand or steal outside focus. Already-prevented chords,
+IME composition and keyCode 229 are not claimed; visible-menu Escape remains
+with the menu UI, Tab retains cancellation behavior, and ordinary Escape with no
+pending demand remains available to the immersive owner.
+
+An accepted render may also normalize its own presentation caret: the visual
+owner can adopt a newly proved block kind and publish the caret its mapper
+actually found, while the canonical value and revision stay exactly the same.
+That publication is the owner's, not the user's, so the lease carries one
+optional receipt (`consumeAcceptedSelectionTransition`) that the owner sets
+only inside that exact synchronous write and only once. The Feature consumes it
+at the start of a selection notification for the initial pending demand - before
+the refresh reentrancy guard - and then re-reads the demand to replace only its
+captured selection, after re-checking that the same pending demand still exists
+and that the surface still reports the exact snapshot the receipt authenticated
+(a different post-consumption snapshot is not evidence for that transition).
+Everything else stays with the existing matcher: a missing or false receipt is an
+ordinary miss that lets the unchanged comparison retire or keep the demand, and a
+visible menu, an in-flight action, a canceled or replaced demand, or a second
+publication can never be preserved by it. Source and Windowed publish no such
+transition and simply omit the member.
+
 Nonempty selections must fit wholly inside an authenticated object's source
 range before object-specific commands become available or execute. Mixed
 selections retain generic text commands, not one object's deletion, alignment
@@ -298,14 +359,26 @@ itself, the primary-button activation, selection drift, and the visible marker.
 Each visual runtime contributes only its own readiness rule, focus operation,
 canonical selection publication, and failure reporting, so the two runtimes share
 no duplicated image handlers and no cross-owner feedback registry. A pointer
-demand may replace only the exact range that owner placed for an earlier image, a
-keyboard activation replaces no selection, and the primary button on the image
-itself replaces whatever the selection was. A deliberate mixed text/object range
-keeps its extent, and the Root still requires the hit image's block-id, image
-ordinal, source, revision, and live lease to agree before image commands are
-exposed. Replacing an already-open menu keeps the existing demand lifecycle: the
-previous demand is retired before the next pointer target is published, and a
-lease owned by an asynchronous action is never released early.
+demand may replace only the exact range that owner placed for an earlier image or
+the selection that same owner placed itself while adopting a render, a keyboard
+activation replaces no selection, and the primary button on the image itself
+replaces whatever the selection was. "Placed itself" is tracked, not inferred: the
+runtime records the native selection at the adoption and history-restore points it
+publishes, drops the record when the selection drifts, and reports that predicate
+to the shared owner. A selection the user made is therefore never discarded, while
+a selection a history restore left behind (for example the code-block range after
+an Undo) no longer blocks image commands for a pointer on an image. A deliberate
+mixed text/object range keeps its extent, and the Root still requires the hit
+image's block-id, image ordinal, source, revision, and live lease to agree before
+image commands are exposed. A range that genuinely spans text on both sides of
+the pointed image contains no single image source range, so it is recognised as
+that deliberate gesture - one non-collapsed range, both endpoints connected
+inside the surface, and non-blank selected text covering the image - and keeps
+the generic text menu; an image-node selection carries no selected text, so a
+retired `<img>` still fails `editor-context-menu-image-stale`. Replacing an
+already-open menu keeps the existing demand lifecycle: the previous demand is
+retired before the next pointer target is published, and a lease owned by an
+asynchronous action is never released early.
 
 A primary-button activation also focuses the visual surface, selects the image
 node, and publishes the corresponding source range through the existing
@@ -350,6 +423,59 @@ stale, read-only, mixed and spacer paths fail without a source write. The local
 browser acceptance covers the native Windowed source deletion and accepted
 Undo/Redo Preview flow; exact DOM selection restoration remains covered by the
 focused Windowed and CodeMirror tests.
+
+Exiting an empty Windowed code fence between two mounted editable rows records
+the exact canonical blank-gap caret, source/revision/history state, and both
+source-owned neighbor extents. Local acceptance of its exact `P > BR` placeholder
+already owns the gap; either side of that sole BR maps to the same canonical empty
+caret. A sole-BR paragraph carries no content of its own, so its logical content
+end lies before the placeholder and the owner places the native caret at the block
+start (P offset 0); collapsing after the placeholder instead treats renderer
+scaffolding as trailing content, which can lose native composition completion for
+the gap this certificate then relies on.
+Neighbor lookup may cross only retained renderer whitespace, never a spacer or
+foreign root. Enter inserts the detected source line ending once, and text
+arriving before its formal response must authenticate the same pending lease,
+native selection, protected DOM and canonical state, not demand ready state.
+Preview's local replacement adoption advances both the repository node and its
+accepted sink child sequence under the same revision/signature and exact-node
+proof. Loading retains that accepted sequence; retaining only the repository
+would let the sink remount old HTML and destroy the pending native caret.
+Owner-authorized structural mutations remain the editing presentation while a
+replacement response is loading. The matching formal commit replaces that
+presentation atomically; loading neither replays the preceding formal HTML nor
+adopts a transient layout jump as the next scroll baseline.
+A later formal renderer may omit the temporary empty paragraph. Only this
+command-issued proof can restore
+the same source gap at the following accepted row's native boundary; it cannot
+derive a gap from a spacer, a reused block label, or an unrelated row. The
+accepted proof also owns immediate text, Enter and IME insertion at that exact
+caret, rather than serializing the following heading as the insertion target.
+Plain-text Paste and drop at that certified caret consume the same certificate
+instead of remapping the substitute presentation position into the following
+row. An IME that begins while the Enter response is still outstanding keeps the
+pending canonical lease; the ready-only gap path never pre-empts it, so the
+draft is discarded and its committed data is inserted once at the recorded gap.
+Native Undo can recover a matching known gap from bounded owner history; source,
+revision, selection, accepted DOM and history checks still precede reuse.
+Outside focus, source ABA, navigation and pointer movement do not reacquire it.
+
+A certified empty-code-gap IME session also retains the Preview surface for its
+own lifetime. The Windowed owner takes one runtime lease, so the sink installs
+no commit and publishes no certificate for the held content, and mounted
+geometry measurement cannot certify preedit height; the last release re-runs
+the sink effect with the current props and restarts geometry setup for the
+current state. Leases are activation-bound: concurrent sessions keep the hold
+until each releases once, repeated or late releases are inert, owner disposal
+invalidates them, and acquisition is refused while a materialization is already
+able to roll back into the surface. `compositionend` publishes the committed
+data at the captured canonical range before releasing; cancellation, both
+history entry points, an external source change (including a revision ABA),
+Windowed unmount, whole-owner teardown, and a late superseded response release
+without serializing the draft or restoring old DOM over newer source. Ordinary
+pending-caret composition acquires no lease and keeps its existing
+accept-while-composing behavior.
+
 
 Formal Preview may also return a versioned, line-coordinate `codeMap` from the
 same CommonMark Document. It describes fenced and indented code leaves, not a
@@ -514,6 +640,19 @@ equally wide backtick fence while its info string is retained. Accepted or
 pasted tilde fences retain their source family. Inline shortcuts skip `CODE`
 and `PRE` content, block shortcuts skip code bodies, and the serializer scopes
 list, image, and caret-marker cleanup outside code.
+Full Visual projects a literal opener from the already authenticated native
+caret. Equal raw spans use linear boundary proof; raw or mixed backslash-escape
+spellings use a bounded Markdown-unit walk in both canonical and visual text,
+not a fresh global text search. An owner-created idless paragraph may become an
+empty code block only through the synchronous command's exact owned-node,
+source/revision, prior-HTML and lexical-span witness, with unchanged neighboring
+source and a validated empty code placeholder. This local command authority does
+not refresh an older formal edit map or admit foreign same-ID replacements.
+Block-shortcut feedback animates opacity only: a newly adopted root must retain
+measurable normal-flow coordinates while the bounded Preview window certifies
+its replacement geometry. The geometry owner still rejects unmeasured transforms;
+it does not delay editing admission or substitute estimated geometry to hide a
+presentation animation failure.
 Preview scroll snapshots belong to their request generation. The existing
 ratio-based restoration runs after that generation's accepted DOM commit reaches
 ready; loading and enhancement do not consume it. Failure, supersession, and
@@ -528,7 +667,16 @@ and visual ranges to apply one localized canonical transaction. A cached
 interval map is retained across an accepted paste; a unique visible text node
 with an exact one-to-one source range takes the hot path without cloning,
 serializing, diffing, replacing the Preview root, or requesting Preview.
-Ambiguous edits fall back to the strict serializer and merge path. Ordinary
+Ambiguous edits fall back to the strict serializer and merge path. A supplied
+interval map is accepted only for the exact canonical source and visual baseline
+it was built from: equal normalized text does not prove that its recorded hidden
+ranges, original offsets, or escape gaps still describe these bytes, and that
+identity check runs before the unchanged fast path. The only change that may be
+treated as a serializer no-op is one recorded escape gap — a single backslash the
+alignment recorded directly before source-owned escapable punctuation whose two
+endpoints still map to that source offset — and it is proven after, never before,
+the hidden-range overlap and boundary checks, so a new visual slash or an
+unowned gap stays a real edit or an explicit failure. Ordinary
 visual input uses a trailing 80-millisecond debounce, composition cancels an
 older pending timer, and lock, view changes, autosave, publish, toolbar, and
 teardown flush pending input before their owner runs. If the serialized visual
@@ -598,6 +746,70 @@ an accepted source state for formal Preview rematerialization. Ordinary exact
 text input does not serialize the whole DOM or reuse stale accepted HTML to
 manufacture a snapshot. Exact snapshots restore code DOM and caret after
 browser-created formatting or a scripted terminal newline is normalized.
+
+Full paragraph topology fallback serializes and indexes element roots, while
+retaining renderer whitespace Text nodes in the exact owned child-node ledger.
+It verifies that ledger before omitting whitespace from block serialization;
+foreign replacements, changed whitespace data and non-whitespace root text do
+not gain authority. A pending pure insertion extends both source-extent edges
+only for its actual insertion-owning root. Prefix and suffix bytes are rebuilt
+from the real operation descriptor; another root's boundary insertion is
+excluded, and an ambiguous unowned empty extent is rejected.
+
+
+Full table presentation has a separate known-history proof; it is not an ordinary
+edit origin relabelled with the history target's source or revision. Before a real
+CodeMirror Undo/Redo, the owner authenticates the source-owned current DOM and
+protected state and captures a coherent pre-command origin. After the command,
+the actual target source, numeric revision, selection, both history depths and
+exact existing target-slot identity bind that one pending transfer. A previously
+proved paragraph-to-table presentation retains only its owner, exact source-row
+extent, mapped first-header offset and source in the existing history snapshot.
+Unknown or source-only slots cannot mint that capability.
+
+The formal Preview still supplies a fresh accepted map and protected table root.
+`acceptTablePresentation` revalidates the pending transfer, current owner, exact
+known slot/source/revision/selection/depths, and one editable row matching that
+source extent; old block IDs are not authority. Detached row serialization,
+interval-map endpoint proof and editable ancestry still prove the first nonempty
+header Text boundary. Normalization additionally requires the trusted collapsed
+pre-command paragraph origin and an eligible collapsed target caret. It places
+the native and canonical point at the positively mapped header offset without
+changing source, document revision or history depths, adding a history entry or
+issuing another render. The exact row end is inclusive; row-end-plus-one is not
+an EOF fallback. Ordinary representable history selections keep their existing
+placement path.
+
+An existing known anchor also survives fresh ordinary or ranged history
+placement: the `retain` path reauthenticates that same anchor against the newly
+accepted protected row and offset, then returns it before reading or changing
+native focus, selection or any receipt. The fresh snapshot explicitly keeps that
+same provenance without reordering the history ledger; retention never creates
+new normalization authority or collapses a deliberate range. Thus Undoing a
+table mutation may restore its ordinary row range, Undoing the earlier deletion
+may restore the malformed paragraph, and Redoing that deletion may still use the
+previously proved table presentation. The context-menu action has already
+dismissed and released its demand before these native history commands: neither
+history placement nor anchor retention rearms that lease or its one-shot
+accepted-selection receipt. CodeMirror, the existing history slots and the
+formal Preview remain the sole document/history/render owners.
+
+Native mapped text intents carry their already-proved pre-key source selection
+into the same canonical transaction as their edit and post-selection. A deletion's
+target range is not its native caret; the existing boundary mapper supplies both
+independently. CodeMirror records the explicit inverse and post-selection without
+a preliminary selection write, DOM serialization or extra document history entry.
+This prevents a stale hidden Source caret at a trailing neighbor from becoming the
+table promotion's Undo/Redo caret.
+
+History snapshots also record whether their accepted Preview was mapped. An empty
+current Preview cannot make a previously mapped snapshot restorable in place:
+Undoing the last table's removal requests a fresh formal map and restores its row
+range there. The existing table anchor's retention proof binds the authenticated
+pre-command source even when that accepted empty origin has no map certificate;
+it cannot borrow a third source's inventory or manufacture a new anchor.
+
+
 For an exact canonical deletion in the Full visual owner, a replacement
 certificate may retain the verified native Range's Text-node path and offsets.
 It never searches for matching text. Removing an empty loose-list paragraph
@@ -625,7 +837,16 @@ failed snapshot caret restore rolls the canonical history change back.
 Accepted open-EOF fences retain source-derived ending metadata. Serialization
 removes its synthetic closing delimiter after Turndown, preserving code-tail
 whitespace and source-owned line endings. Code-body commits refresh this
-metadata; the windowed source-range adapter restores it for the active region.
+metadata; the windowed source-range adapter restores it for the active region
+through the same proof as setup. That proof parses the full canonical source
+once and takes each fenced leaf's absolute interval, exact family/info, and
+container ancestry from the structural Markdown parser. A mounted PRE is written
+only when its owning root's accepted interval contains the leaf's opening line
+and its own DOM container path matches exactly one leaf path inside that
+interval; an unbound or structurally ambiguous root keeps its current attributes
+and is never cleaned globally. An open-at-EOF claim additionally requires the
+complete canonical interval, so a region that ends before the canonical
+document end can never claim EOF and is rejected explicitly instead.
 An actual empty-code Backspace shortcut flushes pending input before its
 structural change and records the corresponding canonical history transition.
 Focused windowed structural edits prepare a Preview-owned selection pin
@@ -639,6 +860,14 @@ endpoints. A canonical EOF selection still uses the document-end form of the
 same lease. The lease releases after caret restoration or cancellation, error,
 or teardown; invalid range, map, generation, signature, and owner transitions
 remain explicit Preview failures.
+Focused native Windowed Undo/Redo also acquires the existing source-selection
+pin for collapsed non-EOF points, including a thematic-break boundary outside
+the currently mounted window. The matching formal render must mount and restore
+that exact canonical point before releasing the lease. Outside focus acquires
+no ordinary history pin and is never reclaimed. Unmappable source, stale state,
+protected content and failed mounting keep their explicit failure paths; an
+editable surface alone is not evidence that a history selection restored.
+
 A canonical removal that takes whole blocks with it (a context-menu code-block
 or thematic-break deletion) reports its caret where the removed block started.
 An editable block's ledger range ends at the next block's first line, so it
@@ -698,6 +927,41 @@ entry is created, and the recovered position is reported through
 `onDiagnostic` (`visual-editor-selection-restore-projection`) rather than a
 failure. Stale, render, protection, history, and non-collapsed failures keep
 their existing explicit failure path.
+A canonical caret at the document end sits one line terminator past the last
+visible character. When the last accepted block's source range owns that byte,
+the block-local projection has no node that represents it, so that call fails
+its documented mapping check. The accepted placement then uses the accepted
+document-end presentation, and only while the source ends with a line
+terminator, the last accepted block's range ends at the canonical document end,
+no later accepted block is editable, and that terminal row's own serialized
+Markdown equals its source slice with the terminal line terminator removed. A
+same-id row whose text was replaced, or that cannot project onto its slice at
+all, fails that proof and keeps the original mapping failure. The placed caret
+must be the accepted terminal row or inside it; any disagreement with the
+accepted map or ledger rethrows the original mapping failure. The accepted source bytes, revision,
+Undo depth, and Preview request are unchanged, and this branch never applies to
+an empty accepted source or to a fence body, whose own projection resolves
+first.
+A preview-only surface never hands the visual caret to the canonical session,
+so the history slot captured at mount keeps the selection that session happened
+to hold then while the user's caret sits elsewhere. Before the first accepted
+input of a debounce group, the owner captures the operation's own pre-edit
+native caret as a witness together with everything it was read against: the
+canonical source and revision, the history depth, the accepted Preview identity
+and HTML, and the exact slot object whose render is still the live DOM. Nothing
+is written at capture time, so a cancelled input cannot alter history. The
+witness travels with the pending intent and is applied only by the commit that
+retires that slot, and only while every captured fact still holds - a different
+source, revision, history depth, accepted identity, accepted HTML or slot object
+is an ABA, a replacement or a foreign acceptance, and the slot keeps its own
+recorded selection. Later characters of the same group inherit the witness by
+that certified origin, never by the rolling pending source, so the group's
+earliest pre-edit caret is the one kept. The witness is captured for every
+authenticated generic input operation, ranged and structural edits included, so
+the slot records the position the user actually started from rather than a
+per-input-type whitelist. The canonical commit records that same caret as the
+inverse of its history event, so an in-place Undo restores the authored position
+in both owners instead of the untouched mount-time selection.
 When that exact request resolves to a document at or below the Windowed
 threshold, the owner releases the matching lease and continues the normal full
 staged commit because the complete DOM already contains the editable EOF.
@@ -819,7 +1083,11 @@ blockquote bodies use the same empty-Backspace presentation rule while
 non-empty LI, P, PRE, and CODE content remains source-owned. An empty
 structural body keeps its accepted local snapshot through immediate next input,
 Undo, and Redo; equivalent protected generated regions retain their node
-identity without a formal Preview request.
+identity without a formal Preview request. The accepted render of an empty
+document is the paper placeholder and carries no edit map, so an accepted empty
+source adopts by resetting the same empty paragraph and placing its terminal
+caret; a non-empty accepted source still requires its edit map and fails
+explicitly without one.
 
 During a bounded window child replacement, the Safe HTML sink derives the
 focused full-root Selection from the connected surface and preserves its
@@ -1060,9 +1328,11 @@ original alt text, destination, and non-marker title remain part of the same
 image syntax. Unsupported, repeated, or malformed markers fail explicitly.
 The renderer emits `data-easymde-image-scale` only for those validated values.
 Shared `frontend/base.css`, loaded in both editor and public output, applies
-the exact percentage and removes responsive theme caps only for those images.
-Unmarked images retain the theme's responsive sizing. Percentage sizing is
-relative to the containing content box; theme image borders remain decoration.
+the exact percentage up to 100%, and caps 150% and 200% at `max-width: 100%` so
+rendered output is capped by containing content width with no horizontal overflow,
+while preserving canonical scale markers. Unmarked images retain the theme's
+responsive sizing. Percentage sizing is relative to the containing content box;
+theme image borders remain decoration.
 
 Rendering behavior:
 

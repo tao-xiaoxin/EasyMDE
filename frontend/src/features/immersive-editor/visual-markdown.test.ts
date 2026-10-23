@@ -54,7 +54,8 @@ import {
   visualThematicBreakSourceSelection,
   visualCodeBodyOrdinalForSourceRange,
   createVisualCodeBodyOrdinalsForPreviewBlocks,
-  visualCodeBlockStructureSignature
+  visualCodeBlockStructureSignature,
+  visualStructuralBoundaryRows
 } from './visual-markdown';
 
 function editor(html: string): HTMLElement {
@@ -151,6 +152,18 @@ describe('visual Markdown editing', () => {
       expect(event.defaultPrevented).toBe(true);
       expect(surface.firstElementChild?.tagName).toBe('P');
       expect(block.tagName).toBe(tagName);
+      // The replacement paragraph carries only the renderer's BR placeholder, so
+      // the native caret must sit at the block start rather than after it.
+      const replacement = surface.firstElementChild;
+      if (!(replacement instanceof HTMLParagraphElement)) {
+        throw new Error('visual-empty-structural-replacement-missing');
+      }
+      expect(replacement.childNodes).toHaveLength(1);
+      expect(replacement.firstChild).toBeInstanceOf(HTMLBRElement);
+      const caret = window.getSelection();
+      expect(caret?.isCollapsed).toBe(true);
+      expect(caret?.anchorNode).toBe(replacement);
+      expect(caret?.anchorOffset).toBe(0);
       surface.remove();
     }
   );
@@ -607,6 +620,82 @@ describe('visual Markdown editing', () => {
       '~~~js\nAlpha\n~~~',
       previewEditMap(blocks)
     )).toThrow('visual-editor-code-block-map-invalid');
+  });
+
+  it('anchors a trailing noneditable generated row at end of file', () => {
+    // The formal renderer places a generated root after a final block that has
+    // no terminal newline, so its exclusive line coordinate is one past the
+    // last line start. That sentinel is a real zero-width anchor at the end of
+    // the source, not an out-of-range row.
+    const markdown = '~~~js\nAlpha\n~~~';
+    const rows = visualStructuralBoundaryRows(
+      markdown,
+      previewEditMap([
+        previewBlock('b0', 0, 3, false),
+        previewBlock('b1', 3, 3, false)
+      ])
+    );
+
+    expect(rows).toEqual([
+      { editable: false, end: markdown.length, id: 'b0', start: 0 },
+      { editable: false, end: markdown.length, id: 'b1', start: markdown.length }
+    ]);
+  });
+
+  it('keeps repeated zero-width EOF anchors in their own order', () => {
+    const markdown = 'Beta';
+    const rows = visualStructuralBoundaryRows(
+      markdown,
+      previewEditMap([
+        previewBlock('b0', 0, 1),
+        previewBlock('b1', 1, 1, false),
+        previewBlock('b2', 1, 1, false)
+      ])
+    );
+
+    expect(rows).toEqual([
+      { editable: true, end: 4, id: 'b0', start: 0 },
+      { editable: false, end: 4, id: 'b1', start: 4 },
+      { editable: false, end: 4, id: 'b2', start: 4 }
+    ]);
+  });
+
+  it.each([
+    {
+      blocks: [previewBlock('b0', 0, 1), previewBlock('b1', 1, 1)],
+      name: 'an editable EOF sentinel',
+      source: 'Beta'
+    },
+    {
+      blocks: [previewBlock('b0', 0, 1), previewBlock('b1', 2, 2, false)],
+      name: 'an EOF row past the sentinel line',
+      source: 'Beta'
+    },
+    {
+      blocks: [previewBlock('b0', 0, 1), previewBlock('b1', 1, 2, false)],
+      name: 'a positive-width EOF row',
+      source: 'Beta'
+    },
+    {
+      blocks: [previewBlock('b0', 1, 0, false)],
+      name: 'a descending EOF row',
+      source: ''
+    },
+    {
+      blocks: [previewBlock('b0', -1, 0, false)],
+      name: 'a negative EOF row',
+      source: ''
+    }
+  ])('rejects $name in the structural row projection', ({ blocks, source }) => {
+    expect(visualStructuralBoundaryRows(source, previewEditMap(blocks)))
+      .toEqual([]);
+  });
+
+  it('anchors a generated row at the end of an empty document', () => {
+    expect(visualStructuralBoundaryRows(
+      '',
+      previewEditMap([previewBlock('b0', 1, 1, false)])
+    )).toEqual([{ editable: false, end: 0, id: 'b0', start: 0 }]);
   });
 
   it.each(['~~~', '```'])(
@@ -2230,6 +2319,65 @@ A--&gt;B</code></pre>
     expect(selectImage(surface, second, 'activation')).toBe(true);
     expect(selection.anchorNode).toBe(secondParagraph);
     expect(selection.isCollapsed).toBe(false);
+  });
+
+  it('replaces only an owner-placed selection for a pointer image demand', () => {
+    const surface = editor(
+      '<p>Before <img alt="first" src="https://example.test/first.png"> after</p>'
+    );
+    const paragraph = surface.querySelector('p');
+    const before = paragraph?.firstChild;
+    const after = paragraph?.lastChild;
+    const image = surface.querySelector('img');
+    const selection = window.getSelection();
+    if (
+      !(paragraph instanceof HTMLElement)
+      || !(before instanceof Text)
+      || !(after instanceof Text)
+      || !(image instanceof HTMLImageElement)
+      || !selection
+    ) {
+      throw new Error('visual-image-owner-selection-fixture-missing');
+    }
+    // An owner-placed range is a non-collapsed range inside the surface, which
+    // is exactly the shape a history restore publishes: a code-block or text
+    // range the user never made.
+    let ownerPlaced = true;
+    const interaction = createVisualImageInteraction(surface, {
+      canActivate: () => true,
+      focus: () => undefined,
+      ownsSelection: () => ownerPlaced,
+      report: () => undefined,
+      synchronizeSelection: () => true
+    });
+    try {
+      const owned = document.createRange();
+      owned.setStart(before, 0);
+      owned.setEnd(after, after.length);
+      selection.removeAllRanges();
+      selection.addRange(owned);
+
+      // The owner states this exact range is its own publication, so a pointer
+      // demand on the image replaces it and resolves an image target.
+      expect(interaction.select(image, 'pointer')).toBe(true);
+      expect(selection.anchorNode).toBe(paragraph);
+      expect(selection.isCollapsed).toBe(false);
+
+      // Once the selection drifts from what the owner published, the same
+      // pointer demand is a deliberate user selection and keeps it.
+      const deliberate = document.createRange();
+      deliberate.setStart(before, 1);
+      deliberate.setEnd(after, after.length);
+      selection.removeAllRanges();
+      selection.addRange(deliberate);
+      ownerPlaced = false;
+      expect(interaction.select(image, 'pointer')).toBe(false);
+      expect(selection.anchorNode).toBe(before);
+      expect(selection.anchorOffset).toBe(1);
+      expect(selection.focusNode).toBe(after);
+    } finally {
+      interaction.dispose();
+    }
   });
 
   it('marks the selected image outside the editable DOM and clears the marker on drift', () => {
@@ -4116,8 +4264,10 @@ A--&gt;B</code></pre>
     expect(serializeVisualMarkdown(surface)).toBe(expected);
     expect(surface.querySelector(`p > ${tag}`)?.textContent).toBe('Toolbar');
     expect(selection?.toString()).toBe('Toolbar');
-    expect(selection?.anchorNode).toBe(surface.querySelector(tag));
-    expect(selection?.focusNode).toBe(surface.querySelector(tag));
+    expect(selection?.anchorNode).toBe(surface.querySelector(tag)?.firstChild);
+    expect(selection?.focusNode).toBe(surface.querySelector(tag)?.firstChild);
+    expect(selection?.anchorOffset).toBe(0);
+    expect(selection?.focusOffset).toBe(7);
   });
 
   it('inserts an empty local inline wrapper at a collapsed selection', () => {
@@ -6116,6 +6266,94 @@ A--&gt;B</code></pre>
       node: paragraph.firstChild,
       offset: (paragraph.firstChild as Text).data.length
     });
+  });
+
+  it('preserves LF and CRLF parity for an interior source-only caret forcing exhausted-walk recovery after preceding CRLFs', () => {
+    const surface = document.createElement('article');
+    const before = Array.from(
+      { length: 13 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="b${index}">第${index}段<b>加粗</b>正文，普通文本。</p>`
+    ).join('');
+    const target =
+      '<p data-easymde-visual-block-id="b13">普通文本、粗体文本、普通```bash\necho hi</p>';
+    const after = Array.from(
+      { length: 100 },
+      (_value, index) =>
+        `<p data-easymde-visual-block-id="a${index}">第${index}段<i>斜体</i>后续正文，普通文本。</p>`
+    ).join('');
+    surface.innerHTML = `${before}${target}${after}`;
+    const paragraph = surface.querySelector<HTMLElement>(
+      '[data-easymde-visual-block-id="b13"]'
+    );
+    if (!paragraph) throw new Error('post-fence-paragraph-missing');
+    const beforeSource = Array.from(
+      { length: 13 },
+      (_value, index) => `第${index}段**加粗**正文，普通文本。`
+    ).join('\n\n');
+    const targetSource =
+      '普通文本、**粗体文本**、普通```bash\necho hi\n```后续文本、粗体文本、普通文本、粗体文本';
+    const afterSource = Array.from(
+      { length: 100 },
+      (_value, index) => `第${index}段*斜体*后续正文，普通文本。`
+    ).join('\n\n');
+    const source = `${beforeSource}\n\n${targetSource}\n\n${afterSource}`;
+    const baseline = serializeVisualMarkdown(surface);
+    const textNode = paragraph.firstChild as Text;
+    const expected = { node: textNode, offset: textNode.data.length };
+
+    // Interior source-only caret inside the unrepresented hidden run
+    const lfOffset = source.indexOf('echo hi') + 'echo hi'.length + '\n```后续'.length;
+    const lfBoundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      source,
+      baseline,
+      lfOffset
+    );
+    expect(lfBoundary).toEqual(expected);
+
+    const crlfSource = source.replace(/\n/gu, '\r\n');
+    const crlfOffset = crlfSource.indexOf('echo hi') + 'echo hi'.length + '\r\n```后续'.length;
+    const crlfBoundary = visualCaretBoundaryFromSourceOffset(
+      surface,
+      crlfSource,
+      baseline,
+      crlfOffset
+    );
+    expect(crlfBoundary).toEqual(expected);
+  });
+
+  it('resolves a wide nested list caret past the attempt constant', () => {
+    // The real full-capability fixture renders this list as one 87-segment
+    // block. The attempt constant is 32, so a Cut inside it used to exhaust the
+    // walk before the row was covered and the whole visual surface was torn
+    // down. The walk's second pass uses the row's own segment count.
+    const surface = document.createElement('article');
+    surface.innerHTML =
+      '<ul data-easymde-visual-block-id="b36">'
+      + '<li>前端开发</li>'
+      + '<li>后端开发<ul><li>Python</li><li>Node.js</li><li>Go</li></ul></li>'
+      + '<li>运维部署<ul><li>Docker</li><li>Nginx</li><li>Kubernetes</li></ul></li>'
+      + '</ul>';
+    const source = '* 前端开发\n* 后端开发\n\n  * Python\n  * Node.js\n  * Go'
+      + '\n* 运维部署\n\n  * Docker\n  * Nginx\n  * Kubernetes';
+    const list = surface.querySelector('ul');
+    if (!(list instanceof HTMLElement)) {
+      throw new Error('wide-list-fixture-missing');
+    }
+    const visual = serializeVisualMarkdownBlockFragment([list]);
+    // Offsets 12, 79, 80 and 87 sit at the boundaries this row could not reach
+    // within the constant; each one now resolves to the list item it belongs
+    // to instead of tearing the surface down.
+    expect(visualCaretBoundaryFromSourceOffset(list, source, visual, 12))
+      .toEqual({ node: expect.any(Text), offset: 3 });
+    expect(visualCaretBoundaryFromSourceOffset(list, source, visual, 87))
+      .toEqual({ node: expect.any(Text), offset: 9 });
+    // An offset with no representable caret still keeps the budget failure: the
+    // second pass is a larger budget, never a weakened proof.
+    expect(() =>
+      visualCaretBoundaryFromSourceOffset(list, source, visual, 55)
+    ).toThrowError('visual-editor-selection-map-budget-exceeded');
   });
 
   it('keeps the budget failure for an offset no source proof owns', () => {

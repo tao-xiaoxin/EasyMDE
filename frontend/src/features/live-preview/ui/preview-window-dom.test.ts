@@ -6,6 +6,7 @@ import {
 } from "../model/preview-window-model";
 import {
 	capturePreviewWindowFlowBoundary,
+	measurePreviewWindowAdoptedBlock,
 	measurePreviewWindowBlockGeometry,
 	type PreviewWindowNodeRepository,
 	reconcilePreviewWindowSpacerFlow,
@@ -552,6 +553,111 @@ describe("preview-window-dom", () => {
 		canvas.scrollTop = 40;
 		spacer.style.blockSize = "80px";
 		surfaceRect.mockReturnValue(rect(0, 165));
+		expect(() =>
+			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch),
+		).toThrow("preview-window-flow-boundary-verification-failed");
+		canvas.remove();
+	});
+
+	it("keeps the full-flow boundary like-for-like after a retained-root 47.6px deletion", () => {
+		const canvas = document.createElement("div");
+		const surface = document.createElement("div");
+		const previous = root("b0");
+		const hiddenFirst = root("b1");
+		const hiddenLast = root("b2");
+		const spacer = document.createElement("div");
+		spacer.setAttribute("data-easymde-preview-window-spacer", "1");
+		spacer.setAttribute("data-easymde-preview-window-start", "1");
+		spacer.setAttribute("data-easymde-preview-window-end", "3");
+		spacer.style.blockSize = "120px";
+		canvas.append(surface);
+		surface.append(previous, spacer);
+		document.body.append(canvas);
+		vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue(rect(50, 400));
+		let previousHeight = 100;
+		let surfaceTail = 15;
+		vi.spyOn(previous, "getBoundingClientRect").mockImplementation(() =>
+			rect(70, previousHeight),
+		);
+		vi.spyOn(spacer, "getBoundingClientRect").mockImplementation(() => {
+			const height = Number.parseFloat(spacer.style.blockSize);
+			return rect(70 + previousHeight, height);
+		});
+		vi.spyOn(surface, "getBoundingClientRect").mockImplementation(() =>
+			rect(0, spacer.getBoundingClientRect().bottom + surfaceTail),
+		);
+		const flowEpoch = "2:flow-geometry:1:1";
+		const model = createPreviewWindowModel(
+			[
+				{ ...block("b0", 0, 100), gapAfter: 10 },
+				{ ...block("b1", 1, 40), gapAfter: 20 },
+				{ ...block("b2", 2, 50), gapAfter: 15 },
+			],
+			context,
+			{ maxMounted: 1 },
+		);
+		const repository = {
+			blocks: [
+				{ index: 0, map: block("b0", 0), node: previous },
+				{ index: 1, map: block("b1", 1), node: hiddenFirst },
+				{ index: 2, map: block("b2", 2), node: hiddenLast },
+			],
+			context,
+			indexById: new Map([
+				["b0", 0],
+				["b1", 1],
+				["b2", 2],
+			]),
+			model,
+			nodes: [previous, hiddenFirst, hiddenLast],
+			flowGeometry: [
+				{ borderHeight: 100, marginBefore: 0, marginAfter: 0, gapAfter: 10 },
+				{ borderHeight: 40, marginBefore: 0, marginAfter: 0, gapAfter: 20 },
+				{ borderHeight: 50, marginBefore: 0, marginAfter: 0, gapAfter: 15 },
+			],
+			flowGeometryEpoch: [flowEpoch, flowEpoch, flowEpoch],
+			flowGapEpoch: [flowEpoch, flowEpoch, flowEpoch],
+			flowBoundary: {
+				epoch: flowEpoch,
+				first: previous,
+				last: hiddenLast,
+				origin: 20,
+				end: 255,
+			},
+			spacerContentHeights: new Map(),
+			spacers: new Map(),
+		} satisfies PreviewWindowNodeRepository;
+
+		expect(
+			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch)
+				?.contentHeight,
+		).toBe(120);
+
+		// The accepted retained-root deletion reflows the mounted block. Until it
+		// is measured in that same transition, the captured full-flow tail and
+		// the installed surface are 47.6px apart.
+		previousHeight = 52.4;
+		expect(() =>
+			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch),
+		).toThrow("preview-window-flow-boundary-verification-failed");
+
+		measurePreviewWindowAdoptedBlock(repository, surface, 0);
+		expect(repository.flowBoundary?.origin).toBeCloseTo(20, 5);
+		expect(repository.flowBoundary?.end).toBeCloseTo(207.4, 5);
+		expect(repository.flowGeometry[0]?.borderHeight).toBeCloseTo(52.4, 5);
+
+		expect(
+			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch),
+		).toEqual({
+			contentHeight: 120,
+			desiredSpan: 135,
+			range: { start: 1, end: 3 },
+		});
+		expect(spacer.style.blockSize).toBe("120px");
+
+		// The authenticated update does not weaken the tail refusal: an
+		// unexplained surface drift still fails closed.
+		surfaceTail = 35;
 		expect(() =>
 			reconcilePreviewWindowSpacerFlow(repository, surface, spacer, flowEpoch),
 		).toThrow("preview-window-flow-boundary-verification-failed");

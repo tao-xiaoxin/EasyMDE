@@ -21,6 +21,80 @@ function createFixture(value = 'alpha beta') {
 }
 
 describe('createCodeMirrorDocumentSession', () => {
+  it.each([false, true])('records the earliest interior inverse for an aggregated visual a/b/c burst (detached=%s)', (detached) => {
+    vi.useFakeTimers();
+    const initial = 'prefix interior target suffix';
+    const { container, submissionField } = createFixture(initial);
+    submissionField.setSelectionRange(0, 0);
+    const session = createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField });
+    try {
+      session.setVisualEditingActive(detached);
+      expect(session.getSelection()).toEqual({ direction: 'none', end: 0, start: 0 });
+      const caret = 8;
+      // The visual owner aggregates its rapid native burst before handing one
+      // canonical transaction to this adapter; distinct flushed transactions
+      // are not required to merge across canonical selection-history events.
+      const value = initial.slice(0, caret) + 'abc' + initial.slice(caret);
+      session.applyTextChange({
+        changes: { from: caret, insert: 'abc', to: caret },
+        historySelectionBefore: { direction: 'none', end: caret, start: caret },
+        recordHistorySelection: true,
+        selection: { direction: 'none', end: caret + 3, start: caret + 3 },
+        value
+      });
+      expect(session.getValue()).toBe(value);
+      expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+      for (const redo of [false, true, false]) {
+        expect(redo ? session.redo() : session.undo()).toBe(true);
+        expect(session.getValue()).toBe(redo ? value : initial);
+        const position = redo ? caret + 3 : caret;
+        expect(session.getSelection()).toEqual({ direction: 'none', end: position, start: position });
+      }
+      session.flush();
+      expect(submissionField.value).toBe(initial);
+      expect([submissionField.selectionStart, submissionField.selectionEnd]).toEqual([caret, caret]);
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['', 'PASTE', 'DROP'])('restores a backward pre-operation range from cold CM0 for replacement %s', (insert) => {
+    const initial = 'prefix selected suffix';
+    const { container, submissionField } = createFixture(initial);
+    submissionField.setSelectionRange(0, 0);
+    const session = createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField });
+    try {
+      session.setVisualEditingActive(true);
+      const before = { direction: 'backward' as const, end: 15, start: 7 };
+      const caret = before.start + insert.length;
+      const value = initial.slice(0, before.start) + insert + initial.slice(before.end);
+      const observations: Array<{ value: string; selection: DocumentSelection }> = [];
+      session.subscribeSelection(() => observations.push({ value: session.getValue(), selection: session.getSelection() }));
+      session.applyTextChange({
+        changes: { from: before.start, insert, to: before.end },
+        historySelectionBefore: before,
+        recordHistorySelection: true,
+        selection: { direction: 'none', end: caret, start: caret },
+        value
+      });
+      expect(observations).toEqual([{ value, selection: { direction: 'none', end: caret, start: caret } }]);
+      expect(session.getRevision?.()).toBe(1);
+      expect(session.getHistoryState()).toEqual({ redoDepth: 0, undoDepth: 1 });
+      for (const redo of [false, true, false]) {
+        expect(redo ? session.redo() : session.undo()).toBe(true);
+        expect(session.getValue()).toBe(redo ? value : initial);
+        expect(session.getSelection()).toEqual(redo ? { direction: 'none', end: caret, start: caret } : before);
+      }
+    } finally {
+      session.destroy();
+      container.remove();
+      submissionField.remove();
+    }
+  });
+
   it('publishes a canonical document revision only when the document value changes', () => {
     const { container, submissionField } = createFixture('source');
     const session = createCodeMirrorDocumentSession({
@@ -1010,6 +1084,37 @@ describe('createCodeMirrorDocumentSession', () => {
     expect(session.getValue()).toBe('~~~\nx\n~~~');
 
     session.destroy();
+  });
+
+  it('records a proved native pre-key caret atomically instead of the stale Source caret', () => {
+    const initial = 'a | b\n---x | ---\n\nTrailing native neighbor.';
+    const promoted = initial.slice(0, 9) + initial.slice(10);
+    const { container, submissionField } = createFixture(initial);
+    submissionField.setSelectionRange(initial.length, initial.length);
+    const session = createCodeMirrorDocumentSession({ container, label: 'Markdown source', submissionField });
+    try {
+      session.setVisualEditingActive(true);
+      const observed: Array<Readonly<{ value: string; selection: DocumentSelection }>> = [];
+      session.subscribeSelection(() => observed.push({ value: session.getValue(), selection: session.getSelection() }));
+      session.applyTextChange({
+        changes: { from: 9, to: 10, insert: '' },
+        historySelectionBefore: { direction: 'none', start: 10, end: 10 },
+        recordHistorySelection: true,
+        selection: { direction: 'none', start: 9, end: 9 },
+        value: promoted
+      });
+      expect(observed).toEqual([{ value: promoted, selection: { direction: 'none', start: 9, end: 9 } }]);
+      expect(session.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+      expect(session.undo()).toBe(true);
+      expect(session.getValue()).toBe(initial);
+      expect(session.getSelection()).toEqual({ direction: 'none', start: 10, end: 10 });
+      expect(session.redo()).toBe(true);
+      expect(session.getValue()).toBe(promoted);
+      expect(session.getSelection()).toEqual({ direction: 'none', start: 9, end: 9 });
+      expect(session.getHistoryState()).toEqual({ undoDepth: 1, redoDepth: 0 });
+    } finally {
+      session.destroy();
+    }
   });
 
   it('records accepted visual post-selections in the canonical undo history', () => {

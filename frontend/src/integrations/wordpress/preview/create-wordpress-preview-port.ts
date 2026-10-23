@@ -615,9 +615,10 @@ function parseCodeProjection(
 	const markdownRows = splitProjectionSourceRows(markdown);
 	const maximumLine = markdownRows.length;
 	const entries: PreviewCodeProjectionEntry[] = [];
-	const seenRanges = new Set<string>();
+	const mapEntries = codeMap.entries;
 	let previousEnd = 0;
 	let rowCount = 0;
+	let mapIndex = 0;
 	for (const rawEntry of value.entries) {
 		if (!isSafeRecord(rawEntry)) return unavailableCodeProjection(signature);
 		const kind = rawEntry.kind;
@@ -629,23 +630,29 @@ function parseCodeProjection(
 			!Number.isSafeInteger(endLineValue) ||
 			(startLineValue as number) < previousEnd ||
 			(endLineValue as number) <= (startLineValue as number) ||
-			(endLineValue as number) > maximumLine ||
-			seenRanges.has(`${kind}:${startLineValue}:${endLineValue}`)
+			(endLineValue as number) > maximumLine
 		) {
 			return unavailableCodeProjection(signature);
 		}
 		const startLine = startLineValue as number;
 		const endLine = endLineValue as number;
-		seenRanges.add(`${kind}:${startLine}:${endLine}`);
-		const mapMatches = codeMap.entries.filter(
-			(entry) =>
-				entry.kind === kind &&
-				entry.startLine === startLine &&
-				entry.endLine === endLine,
-		);
-		if (1 !== mapMatches.length) return unavailableCodeProjection(signature);
-		const mapEntry = mapMatches[0];
-		if (!mapEntry) return unavailableCodeProjection(signature);
+		// The validated code map is sorted by start line and does not overlap, so
+		// one cursor matches every projection entry in a single pass. The
+		// non-overlap bound on previousEnd still rejects repeated ranges.
+		let mapEntry = mapEntries[mapIndex];
+		while (undefined !== mapEntry && mapEntry.startLine < startLine) {
+			mapIndex += 1;
+			mapEntry = mapEntries[mapIndex];
+		}
+		if (
+			undefined === mapEntry ||
+			mapEntry.startLine !== startLine ||
+			mapEntry.endLine !== endLine ||
+			mapEntry.kind !== kind
+		) {
+			return unavailableCodeProjection(signature);
+		}
+		mapIndex += 1;
 		if ("unavailable" === rawEntry.status) {
 			if (
 				rawEntry.code !== "preview-code-projection-source-unavailable" &&

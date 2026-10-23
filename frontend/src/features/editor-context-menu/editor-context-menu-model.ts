@@ -1,8 +1,6 @@
 import type { EditorClipboardState } from '../../contracts/ports/editor-clipboard-port';
-import type {
-  MarkdownBlockKind,
-  TableSelection
-} from './editor-context-menu-rules';
+import type { MarkdownBlockKind } from './editor-context-menu-rules';
+import type { TableSelection } from './editor-markdown-table';
 
 export type EditorContextMenuActionItem = Readonly<{
   checked?: boolean;
@@ -301,6 +299,8 @@ function codeItems(
         action('insert-image-below', context.labels.insertImageBelow, !canInsert)
       ])
     );
+  }
+  if (hasCodeBlock) {
     children.push(action('copy-code-block', context.labels.copyCodeBlock, false));
   }
   if (context.code?.canCopyContent === true) {

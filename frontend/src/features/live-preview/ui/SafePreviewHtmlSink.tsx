@@ -1,5 +1,6 @@
 import {
   createElement,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef
@@ -21,10 +22,17 @@ export type SafePreviewHtmlSinkCommit = Readonly<{
   revision: number;
 }>;
 
+export type SafePreviewHtmlSinkSelectionHandoff = Readonly<{
+  isCurrent: () => boolean;
+  previous: Readonly<{ node: Node; offset: number }>;
+  next: Readonly<{ node: Node; offset: number }>;
+}>;
+
 export type SafePreviewHtmlSinkWindowCommit = Readonly<{
   key: number;
   nodes: ReadonlyArray<Node>;
   revision: number;
+  selectionHandoff?: SafePreviewHtmlSinkSelectionHandoff;
 }>;
 
 export type SafePreviewHtmlSinkMaterializeCommit = Readonly<{
@@ -37,10 +45,21 @@ export type SafePreviewHtmlSinkScheduler = Readonly<{
   yield: () => Promise<void>;
 }>;
 
+/**
+ * Synchronous retainedness for a live composition lease plus the version that
+ * wakes the sink effect on the last release. The lease is the authority; no DOM
+ * attribute or native listener order participates.
+ */
+export type SafePreviewHtmlSinkCompositionGate = Readonly<{
+  isHeld: () => boolean;
+  version: number;
+}>;
+
 type SafePreviewHtmlSinkProps = Readonly<{
   ariaBusy?: boolean;
   acceptedHtml?: boolean;
   className?: string;
+  compositionGate?: SafePreviewHtmlSinkCompositionGate;
   contentEditable?: boolean;
   error?: boolean;
   html: SafePreviewHtml | null;
@@ -278,12 +297,36 @@ function startMaterializeChildrenCommit(
   };
 }
 
+function validWindowSelectionPoint(
+  surface: HTMLElement,
+  point: SafePreviewHtmlSinkSelectionHandoff['next']
+): boolean {
+  const limit = point.node.nodeType === Node.TEXT_NODE
+    ? point.node.nodeValue?.length ?? 0
+    : point.node.childNodes.length;
+  return point.node.ownerDocument === surface.ownerDocument
+    && Number.isInteger(point.offset) && point.offset >= 0 && point.offset <= limit;
+}
+
 function startWindowChildrenCommit(
   surface: HTMLElement,
   desiredNodes: ReadonlyArray<Node>,
-  onComplete: () => void
+  onComplete: () => void,
+  selectionHandoff?: SafePreviewHtmlSinkSelectionHandoff
 ): () => void {
   validateWindowChildren(surface, desiredNodes);
+  const nativeSelection = surface.ownerDocument.defaultView?.getSelection();
+  const restoreSemanticCaret = Boolean(selectionHandoff
+    && validWindowSelectionPoint(surface, selectionHandoff.previous)
+    && validWindowSelectionPoint(surface, selectionHandoff.next)
+    && nativeSelection?.isCollapsed && surface.ownerDocument.activeElement === surface
+    && nativeSelection.anchorNode === selectionHandoff.previous.node
+    && nativeSelection.focusNode === selectionHandoff.previous.node
+    && nativeSelection.anchorOffset === selectionHandoff.previous.offset
+    && nativeSelection.focusOffset === selectionHandoff.previous.offset
+    && surface.contains(selectionHandoff.previous.node)
+    && desiredNodes.some((node) => node === selectionHandoff.next.node || node.contains(selectionHandoff.next.node))
+    && selectionHandoff.isCurrent());
   if (!hasExactChildren(surface, desiredNodes)) {
     const selection = surface.ownerDocument.defaultView?.getSelection();
 		const directRootSelection = (() => {
@@ -433,6 +476,11 @@ function startWindowChildrenCommit(
       selection.addRange(range);
     }
   }
+  if (restoreSemanticCaret && selectionHandoff
+    && validWindowSelectionPoint(surface, selectionHandoff.next)
+    && surface.contains(selectionHandoff.next.node) && selectionHandoff.isCurrent()) {
+    nativeSelection?.collapse(selectionHandoff.next.node, selectionHandoff.next.offset);
+  }
   onComplete();
   return () => undefined;
 }
@@ -441,6 +489,7 @@ export function SafePreviewHtmlSink({
   acceptedHtml = false,
   ariaBusy = false,
   className,
+  compositionGate,
   contentEditable,
   error = false,
   html,
@@ -469,6 +518,10 @@ export function SafePreviewHtmlSink({
 }: SafePreviewHtmlSinkProps) {
   const htmlSurfaceRef = useRef<HTMLElement | null>(null);
   const appliedSurfaceStateRef = useRef<AppliedSurfaceState | null>(null);
+  const deferredByHoldRef = useRef(false);
+  useEffect(() => () => {
+    deferredByHoldRef.current = false;
+  }, []);
   useImperativeHandle(surfaceRef, () => {
     if (!htmlSurfaceRef.current) throw new Error('preview-surface-missing');
     return htmlSurfaceRef.current;
@@ -476,6 +529,14 @@ export function SafePreviewHtmlSink({
   useLayoutEffect(() => {
     const surface = htmlSurfaceRef.current;
     if (!surface) throw new Error('preview-surface-missing');
+    if (compositionGate?.isHeld()) {
+      // The lease owner publishes the canonical text and its new Preview
+      // request before releasing, so this effect re-runs with the newest
+      // props and never replays a commit captured before the draft. Nothing
+      // is applied or completed here, so callers see no commit.
+      deferredByHoldRef.current = true;
+      return undefined;
+    }
     const appliedSurfaceState = appliedSurfaceStateRef.current;
     const activeMaterializeCommit = materializeCommit?.revision === htmlRevision
       ? materializeCommit
@@ -486,6 +547,17 @@ export function SafePreviewHtmlSink({
     const commit = stagedCommit?.revision === htmlRevision
       ? stagedCommit
       : null;
+    // Pending HTML metadata may describe a candidate that never reached this
+    // sink before supersession. Only an installable DOM commit can replace an
+    // existing HTML presentation while loading or enhancing; raw metadata is
+    // not permission to replay over its enhanced nodes or native draft.
+    if (!windowCommit && !commit && !activeMaterializeCommit
+      && (phase === "loading" || phase === "enhancing")
+      && html !== null && appliedSurfaceState
+      && appliedSurfaceState.html !== null) return undefined;
+    if (windowCommit || commit || activeMaterializeCommit) {
+      deferredByHoldRef.current = false;
+    }
     if (
       !windowCommit
       &&
@@ -592,7 +664,8 @@ export function SafePreviewHtmlSink({
             windowedCommitKey: windowCommit.key
           };
           onStagedCommit?.(windowCommit.revision);
-        }
+        },
+        windowCommit.selectionHandoff
       );
     }
 
@@ -640,8 +713,21 @@ export function SafePreviewHtmlSink({
       return undefined;
     }
 
+    if (
+      null !== html
+      && deferredByHoldRef.current
+      && ("loading" === phase || "enhancing" === phase)
+      && appliedSurfaceStateRef.current
+    ) {
+      // The release woke this effect for a request whose accepted frame has
+      // not landed yet. Replaying this candidate would replace the surface the
+      // draft just produced, so the last applied DOM stands until its formal
+      // commit arrives. Failed/ordinary paths never reach this branch.
+      return undefined;
+    }
     if (null !== html) {
       // This is the sole sink for PHP-rendered, server-sanitized Preview HTML.
+      deferredByHoldRef.current = false;
       surface.innerHTML = html;
     } else {
       surface.replaceChildren();
@@ -681,7 +767,9 @@ export function SafePreviewHtmlSink({
     statusClassName,
     statusMessage,
     statusRole,
-    windowedCommit
+    windowedCommit,
+    phase,
+    compositionGate?.version
   ]);
 
   return (

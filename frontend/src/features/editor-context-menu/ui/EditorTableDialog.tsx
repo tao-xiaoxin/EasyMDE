@@ -6,6 +6,17 @@ import type { ImmersiveStrings } from '../../immersive-editor/ui/immersive-edito
 
 const TABLE_DIMENSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
+/**
+ * True when a key event belongs to an in-progress IME composition. React's
+ * synthetic KeyboardEvent does not expose `isComposing`, and Safari reports
+ * composition keystrokes with `keyCode` 229 instead, so both native signals
+ * are read rather than a single synthetic flag.
+ */
+function isComposingKey(event: ReactKeyboardEvent<HTMLElement>): boolean {
+  const native = event.nativeEvent;
+  return true === native.isComposing || 229 === native.keyCode;
+}
+
 export function trapFocus(event: ReactKeyboardEvent<HTMLElement>): void {
   if ('Tab' !== event.key) return;
   const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
@@ -40,8 +51,32 @@ function Modal({
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = environment.activeElement();
-    ref.current?.querySelector<HTMLElement>('[data-autofocus], button, input')?.focus();
-    return () => previous?.focus();
+    const root = ref.current;
+    // `[data-autofocus]` is the dialog's declared initial focus. Falling back
+    // to the first control would otherwise land on the close button, which
+    // sits earlier in document order.
+    const initial =
+      root?.querySelector<HTMLElement>('[data-autofocus]')
+      ?? root?.querySelector<HTMLElement>('button, input');
+    initial?.focus();
+    return () => {
+      // Confirming a table moves focus to the edited surface before this
+      // dialog unmounts, so restoring the opening control afterwards would
+      // steal focus back. Only a close that still owns focus - Cancel, the
+      // close button, Escape - returns it, and only when that owner is still
+      // connected; the context menu that opened the dialog is often gone.
+      const ownerDocument = root?.ownerDocument;
+      const active = ownerDocument?.activeElement ?? null;
+      const focusMovedOutside = Boolean(
+        active
+        && ownerDocument
+        && active !== ownerDocument.body
+        && active !== ownerDocument.documentElement
+        && !(root?.contains(active))
+      );
+      if (focusMovedOutside) return;
+      if (previous?.isConnected) previous.focus();
+    };
   }, [environment]);
   return (
     <div className="easymde-immersive-modal-backdrop">
@@ -51,7 +86,16 @@ function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={label}
-        onKeyDown={trapFocus}
+        onKeyDown={(event) => {
+          trapFocus(event);
+          if ('Escape' !== event.key || isComposingKey(event) || event.defaultPrevented) return;
+          // The dialog owns Escape while it is open: the immersive host must
+          // not also dismiss the surrounding mode. The effect cleanup still
+          // returns focus to the opening control when it is still connected.
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }}
       >
         <button type="button" className="easymde-immersive-modal-close" onClick={onClose} aria-label={closeLabel}>
           <X size={16} />
